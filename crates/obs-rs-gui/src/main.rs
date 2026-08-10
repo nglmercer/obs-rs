@@ -27,7 +27,10 @@ pub(crate) use callbacks::{
     source_filters_document, source_transform_document, toggle_source_locked_and_refresh,
     toggle_source_visibility_and_refresh,
 };
-pub(crate) use callbacks::{install_callbacks, install_settings_window, start_preview_timer};
+pub(crate) use callbacks::{
+    install_add_source_window, install_callbacks, install_settings_window,
+    install_source_properties_window, start_preview_timer,
+};
 pub(crate) use fixtures::{initial_project, platform_capture_summary, source_settings};
 pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewRenderer};
@@ -36,8 +39,9 @@ pub(crate) use refresh::{
 };
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
-    I18n, LocaleOption, MainWindow, MixerRow, Palette, ProfileRow, SceneRow, SettingsText,
-    SettingsWindow, SourceRow, ThemeTokens, UiText,
+    AddSourceText, AddSourceWindow, I18n, LocaleOption, MainWindow, MixerRow, Palette, ProfileRow,
+    SceneRow, SettingsText, SettingsWindow, SourceCandidate, SourceKindRow, SourcePropertiesWindow,
+    SourceRow, ThemeTokens, UiText,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -80,7 +84,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     install_callbacks(&ui, &state, &renderer, &output);
     // Keeps the settings window alive for the whole session; dropping the
     // controller would close it.
-    let _settings_window = install_settings_window(&ui, &state, &renderer, settings)?;
+    let add_source_window = install_add_source_window(&ui, &state, &renderer)?;
+    let properties_window = install_source_properties_window(&ui, &state, &renderer)?;
+    let _settings_window = install_settings_window(
+        &ui,
+        &state,
+        &renderer,
+        settings,
+        &add_source_window,
+        &properties_window,
+    )?;
 
     if smoke {
         return Ok(());

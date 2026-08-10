@@ -1,8 +1,10 @@
+pub(crate) mod add_source;
 mod output;
 mod project;
 mod scene;
 mod settings;
 mod source;
+pub(crate) mod source_properties;
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
@@ -13,6 +15,9 @@ use crate::{
     refresh_output_ui, refresh_preview_frames, MainWindow, OutputRuntime, PreviewRenderer,
 };
 
+pub(crate) use add_source::install_add_source_window;
+#[cfg(test)]
+pub(crate) use add_source::{add_source_window, populate_add_source_window};
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
 pub(crate) use project::{install_project_callbacks, project_store, rename_scene_and_refresh};
 pub(crate) use scene::install_scene_callbacks;
@@ -25,6 +30,7 @@ pub(crate) use source::{
     remove_source_and_refresh, source_filters_document, source_transform_document,
     toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
 };
+pub(crate) use source_properties::install_source_properties_window;
 
 pub(crate) fn start_preview_timer(
     ui: &MainWindow,

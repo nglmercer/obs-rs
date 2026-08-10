@@ -13,14 +13,14 @@ import {
     ProjectDialog,
     RenameSceneDialog,
     SceneDialog,
-    SourceDialog,
-    SourceFiltersDialog,
-    SourcePropertiesDialog,
 } from "dialogs.slint";
 
-export { I18n, SettingsText, UiText } from "i18n.slint";
+export { AddSourceText, I18n, SettingsText, UiText } from "i18n.slint";
 export { Palette, ThemeTokens } from "palette.slint";
 export { SettingsWindow } from "settings_window.slint";
+export { AddSourceWindow } from "add_source_window.slint";
+export { SourcePropertiesWindow } from "source_properties_window.slint";
+export { SourceCandidate, SourceKindRow } from "models.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
@@ -129,6 +129,8 @@ export component MainWindow inherits Window {
         callback add-source(string, string, string);
         callback move-panel(int, int);
         callback open-settings-window();
+        callback open-add-source-window();
+        callback open-source-properties-window();
 
         // A mode of -1 means "toggle studio mode", which is how both the View
         // menu and the controls dock drive the canvas.
@@ -253,10 +255,8 @@ export component MainWindow inherits Window {
                         root.export-diagnostics();
                     } else if action == "settings" {
                         root.open-settings-window();
-                    } else if action == "source-properties" {
-                        root.active-modal = 6;
-                    } else if action == "source-filters" {
-                        root.active-modal = 7;
+                    } else if action == "source-properties" || action == "source-filters" {
+                        root.open-source-properties-window();
                     } else if action == "toggle-sources" {
                         root.show-sources = !root.show-sources;
                     } else if action == "toggle-scenes" {
@@ -284,8 +284,8 @@ export component MainWindow inherits Window {
                 canvas-height: root.canvas-height;
                 selected-source: root.selected-source;
                 view-mode: root.view-mode;
-                open-source-properties() => { root.active-modal = 6; }
-                open-source-filters() => { root.active-modal = 7; }
+                open-source-properties() => { root.open-source-properties-window(); }
+                open-source-filters() => { root.open-source-properties-window(); }
             }
 
             HorizontalSplitter {
@@ -321,7 +321,17 @@ export component MainWindow inherits Window {
                         recording: root.recording;
                         streaming: root.streaming;
                         move-panel(kind, delta) => { root.move-panel(kind, delta); }
-                        open-modal(modal) => { root.active-modal = modal; }
+                        open-modal(modal) => {
+                            // Adding a source has its own window now; the
+                            // remaining modals stay in-window.
+                            if modal == 3 {
+                                root.open-add-source-window();
+                            } else if modal == 6 {
+                                root.open-source-properties-window();
+                            } else {
+                                root.active-modal = modal;
+                            }
+                        }
                         select-preview(id) => { root.select-preview(id); }
                         select-program(id) => { root.select-program(id); }
                         remove-scene(id) => { root.remove-scene(id); }
@@ -384,17 +394,6 @@ export component MainWindow inherits Window {
         close => { root.active-modal = 0; }
         accepted => { root.active-modal = 0; }
     }
-    SourceDialog {
-        open: root.active-modal == 3;
-        locale: root.locale;
-        preview-scene: root.preview-scene;
-        new-source-id <=> root.new-source-id;
-        new-source-kind <=> root.new-source-kind;
-        new-source-name <=> root.new-source-name;
-        add-source(id, kind, name) => { root.add-source(id, kind, name); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
     OutputDialog {
         open: root.active-modal == 4;
         locale: root.locale;
@@ -408,27 +407,6 @@ export component MainWindow inherits Window {
         locale: root.locale;
         scene-name <=> root.scene-name;
         rename-scene() => { root.rename-scene(); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    SourcePropertiesDialog {
-        open: root.active-modal == 6;
-        locale: root.locale;
-        selected-source: root.selected-source;
-        capture-capabilities: root.capture-capabilities;
-        source-settings <=> root.source-settings;
-        source-transform <=> root.source-transform;
-        apply-source-settings() => { root.apply-source-settings(); }
-        apply-source-transform() => { root.apply-source-transform(); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    SourceFiltersDialog {
-        open: root.active-modal == 7;
-        locale: root.locale;
-        selected-source: root.selected-source;
-        source-filters <=> root.source-filters;
-        apply-source-filters() => { root.apply-source-filters(); }
         close => { root.active-modal = 0; }
         accepted => { root.active-modal = 0; }
     }

@@ -12,6 +12,8 @@ use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
+    callbacks::add_source::AddSourceController,
+    callbacks::source_properties::SourcePropertiesController,
     refresh_ui,
     settings::{
         AppSettings, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES, SETTINGS_FILE, THEMES,
@@ -24,6 +26,9 @@ pub(crate) struct SettingsController {
     window: SettingsWindow,
     settings: Rc<RefCell<AppSettings>>,
     path: PathBuf,
+    /// Repainted alongside this window so a theme change reaches every surface.
+    add_source: Rc<AddSourceController>,
+    properties: Rc<SourcePropertiesController>,
 }
 
 impl SettingsController {
@@ -47,6 +52,8 @@ pub(crate) fn install_settings_window(
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
     settings: AppSettings,
+    add_source: &Rc<AddSourceController>,
+    properties: &Rc<SourcePropertiesController>,
 ) -> Result<Rc<SettingsController>, slint::PlatformError> {
     let window = SettingsWindow::new()?;
     let path = PathBuf::from(SETTINGS_FILE);
@@ -54,11 +61,13 @@ pub(crate) fn install_settings_window(
         window,
         settings: Rc::new(RefCell::new(settings)),
         path,
+        add_source: Rc::clone(add_source),
+        properties: Rc::clone(properties),
     });
 
     populate_static_models(&controller.window);
     apply_to_studio(ui, &controller.settings.borrow());
-    push_palette(ui, &controller.window, &controller.settings.borrow());
+    push_palette(ui, &controller, &controller.settings.borrow());
     controller.sync_theme(state.borrow().locale());
 
     install_open(ui, state, renderer, &controller);
@@ -215,7 +224,7 @@ fn install_previews(
         };
         let mut preview = theme_controller.settings.borrow().clone();
         preview.theme = usize::try_from(index).unwrap_or(0).min(THEMES.len() - 1);
-        push_palette(&ui, &theme_controller.window, &preview);
+        push_palette(&ui, &theme_controller, &preview);
     });
 
     let weak = ui.as_weak();
@@ -283,7 +292,7 @@ fn install_commit(
         // Theme and language were previewed live, so Cancel has to put the
         // committed document back rather than merely closing the window.
         let committed = cancel_controller.settings.borrow().clone();
-        push_palette(&ui, &cancel_controller.window, &committed);
+        push_palette(&ui, &cancel_controller, &committed);
         let locale = committed.ui_locale();
         if state.borrow().locale() != locale
             && state
@@ -375,7 +384,7 @@ fn commit(
 
     *controller.settings.borrow_mut() = settings.clone();
     apply_to_studio(ui, &settings);
-    push_palette(ui, window, &settings);
+    push_palette(ui, controller, &settings);
     window.set_preview_swatch(settings.tokens().preview_border);
     window.set_program_swatch(settings.tokens().program_border);
     window.set_dirty(false);
@@ -416,11 +425,16 @@ fn apply_to_studio(ui: &MainWindow, settings: &AppSettings) {
     ui.set_streaming_address(settings.streaming_address.as_str().into());
 }
 
-/// Globals are per component tree, so both windows are painted explicitly.
-fn push_palette(ui: &MainWindow, window: &SettingsWindow, settings: &AppSettings) {
+/// Globals are per component tree, so every window is painted explicitly.
+fn push_palette(ui: &MainWindow, controller: &SettingsController, settings: &AppSettings) {
     let tokens = settings.tokens();
     ui.global::<Palette>().set_tokens(tokens.clone());
-    window.global::<Palette>().set_tokens(tokens);
+    controller
+        .window
+        .global::<Palette>()
+        .set_tokens(tokens.clone());
+    controller.add_source.set_tokens(tokens.clone());
+    controller.properties.set_tokens(tokens);
 }
 
 fn string_model(values: impl Iterator<Item = SharedString>) -> ModelRc<SharedString> {

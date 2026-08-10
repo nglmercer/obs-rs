@@ -1,0 +1,292 @@
+import { Button, CheckBox, ScrollView } from "std-widgets.slint";
+import { Icon } from "theme.slint";
+import { SourceCandidate, SourceKindRow } from "models.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// One row of the kind list on the left.
+component KindRow inherits Rectangle {
+    in property <string> label;
+    in property <string> icon-name;
+    in property <bool> active;
+    callback clicked();
+
+    height: 32px;
+    background: active
+        ? Palette.tokens.accent
+        : (touch.has-hover ? Palette.tokens.row-bg : transparent);
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Icon {
+            name: root.icon-name;
+            icon-size: 17px;
+            y: (parent.height - 17px) / 2;
+        }
+        Text {
+            text: root.label;
+            color: root.active ? white : Palette.tokens.text;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+    touch := TouchArea {
+        clicked => root.clicked();
+    }
+}
+
+// A source card: a large icon plate above a name strip, selected state drawn as
+// an accent border and fill the way OBS marks a chosen source.
+component SourceCard inherits Rectangle {
+    in property <string> name;
+    in property <string> scene;
+    in property <string> icon-name;
+    in property <bool> selected;
+    callback clicked();
+
+    height: 138px;
+    background: Palette.tokens.panel-bg;
+    border-width: selected ? 2px : 1px;
+    border-color: selected ? Palette.tokens.accent : Palette.tokens.border;
+    border-radius: 4px;
+
+    VerticalLayout {
+        padding: 4px;
+        spacing: 0px;
+        Rectangle {
+            vertical-stretch: 1;
+            background: Palette.tokens.canvas-bg;
+            Icon {
+                name: root.icon-name;
+                icon-size: 44px;
+                x: (parent.width - 44px) / 2;
+                y: (parent.height - 44px) / 2;
+            }
+        }
+        Rectangle {
+            height: 36px;
+            background: selected ? Palette.tokens.row-selected-bg : transparent;
+            Text {
+                x: 6px;
+                y: 4px;
+                width: parent.width - 12px;
+                text: root.name;
+                color: Palette.tokens.text;
+                font-size: 11px;
+                overflow: elide;
+            }
+            // Names repeat across scenes, so the owning scene disambiguates.
+            Text {
+                x: 6px;
+                y: 20px;
+                width: parent.width - 12px;
+                text: root.scene;
+                color: Palette.tokens.text-muted;
+                font-size: 9px;
+                overflow: elide;
+            }
+        }
+    }
+    TouchArea {
+        clicked => root.clicked();
+    }
+}
+
+// The OBS "Add source" browser as its own top-level window: a kind list, a grid
+// of candidates, and a footer that distinguishes creating a new source from
+// adding one that already exists elsewhere in the project.
+export component AddSourceWindow inherits Window {
+    title: I18n.text.add_source_ui.window_title;
+    width: 940px;
+    height: 640px;
+    background: Palette.tokens.window-bg;
+
+    in property <[SourceKindRow]> kind-rows;
+    in property <[SourceCandidate]> candidates;
+    in property <string> selected-kind;
+    in property <string> selected-kind-label;
+    in property <string> target-scene;
+    in property <int> selected-count;
+    in property <bool> can-create;
+    in-out property <bool> make-visible: true;
+
+    callback select-kind(string);
+    callback toggle-candidate(string);
+    callback create-source();
+    callback add-selected();
+    callback close-window();
+
+    // Slint has no wrapping flow layout, so the grid is a fixed four columns
+    // whose card width is derived from the window rather than from the cards.
+    // Deriving it from the content would close a binding loop.
+    property <int> columns: 4;
+    property <length> grid-width: root.width - 300px - 62px;
+    property <length> card-width: (grid-width - (columns - 1) * 10px) / columns;
+
+    HorizontalLayout {
+        padding: 10px;
+        spacing: 10px;
+
+        Rectangle {
+            width: 300px;
+            background: Palette.tokens.panel-bg;
+            border-width: 1px;
+            border-color: Palette.tokens.border;
+            ScrollView {
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 1px;
+                    alignment: start;
+                    for kind in root.kind-rows : VerticalLayout {
+                        // A blank id marks the "Obsolete" divider rather than a
+                        // selectable kind.
+                        if kind.id == "" : Text {
+                            text: kind.label;
+                            color: Palette.tokens.text-muted;
+                            font-size: 11px;
+                            height: 30px;
+                            vertical-alignment: bottom;
+                        }
+                        if kind.id != "" : KindRow {
+                            label: kind.label;
+                            icon-name: kind.icon;
+                            active: root.selected-kind == kind.id;
+                            clicked => { root.select-kind(kind.id); }
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 8px;
+
+            Text {
+                text: root.selected-kind-label;
+                color: Palette.tokens.text-strong;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            Text {
+                text: I18n.text.add_source_ui.subtitle;
+                color: Palette.tokens.text-muted;
+                font-size: 11px;
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                background: Palette.tokens.panel-bg;
+                border-width: 1px;
+                border-color: Palette.tokens.border;
+
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 12px;
+
+                    // "Recently added" lists what already exists, so it offers
+                    // no creation affordance.
+                    if root.can-create : Rectangle {
+                        height: 62px;
+                        background: transparent;
+                        border-width: 1px;
+                        border-color: create-touch.has-hover
+                            ? Palette.tokens.accent
+                            : Palette.tokens.border-strong;
+                        border-radius: 4px;
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 8px;
+                            Icon {
+                                name: "plus-large";
+                                icon-size: 18px;
+                                y: (parent.height - 18px) / 2;
+                            }
+                            Text {
+                                text: I18n.text.add_source_ui.create_new;
+                                color: Palette.tokens.text;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                            }
+                        }
+                        create-touch := TouchArea {
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.create-source(); }
+                        }
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            alignment: start;
+                            if root.candidates.length == 0 : Text {
+                                text: I18n.text.add_source_ui.empty_kind;
+                                color: Palette.tokens.text-muted;
+                                font-size: 11px;
+                                height: 28px;
+                                vertical-alignment: center;
+                            }
+                            for row in [0, 1, 2, 3, 4, 5, 6, 7] : HorizontalLayout {
+                                spacing: 10px;
+                                alignment: start;
+                                padding-bottom: root.candidates.length > row * 4 ? 10px : 0px;
+                                for column in [0, 1, 2, 3] : VerticalLayout {
+                                    if root.candidates.length > row * 4 + column : SourceCard {
+                                        width: root.card-width;
+                                        name: root.candidates[row * 4 + column].name;
+                                        scene: root.candidates[row * 4 + column].scene;
+                                        icon-name: root.candidates[row * 4 + column].icon;
+                                        selected: root.candidates[row * 4 + column].selected;
+                                        clicked => {
+                                            root.toggle-candidate(root.candidates[row * 4 + column].id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Button {
+                        height: 32px;
+                        enabled: root.selected-count > 0;
+                        text: root.selected-count > 0
+                            ? I18n.text.add_source_ui.add_existing_count + root.selected-count
+                            : I18n.text.add_source_ui.add_existing;
+                        clicked => { root.add-selected(); }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                height: 32px;
+                spacing: 10px;
+                CheckBox {
+                    text: I18n.text.add_source_ui.make_visible;
+                    checked <=> root.make-visible;
+                }
+                Text {
+                    text: root.target-scene == ""
+                        ? I18n.text.add_source_ui.no_scene
+                        : root.target-scene;
+                    color: root.target-scene == ""
+                        ? Palette.tokens.warning
+                        : Palette.tokens.text-muted;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                Button {
+                    text: I18n.text.add_source_ui.close;
+                    width: 110px;
+                    clicked => { root.close-window(); }
+                }
+            }
+        }
+    }
+}

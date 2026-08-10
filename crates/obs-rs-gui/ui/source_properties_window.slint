@@ -1,0 +1,88 @@
+import { Button, LineEdit, TextEdit } from "std-widgets.slint";
+import { FieldHeading, MutedText } from "theme.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// The OBS source properties dialog as its own window, so it can be moved aside
+// while the canvas is watched. Edits stay local until OK, which is what lets
+// Cancel and Defaults both be meaningful.
+export component SourcePropertiesWindow inherits Window {
+    title: I18n.text.add_source_ui.properties_for + "'" + root.source-name + "'";
+    width: 720px;
+    height: 560px;
+    background: Palette.tokens.window-bg;
+
+    in property <string> source-name;
+    in property <string> source-kind;
+    in property <string> capture-capabilities;
+    in-out property <string> source-settings;
+    in-out property <string> source-transform;
+    in-out property <string> source-filters;
+
+    callback accept-properties();
+    callback cancel-properties();
+    callback restore-defaults();
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+
+        Text {
+            text: root.source-name + "  ·  " + root.source-kind;
+            color: Palette.tokens.text-strong;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Palette.tokens.panel-bg;
+            border-width: 1px;
+            border-color: Palette.tokens.border;
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+
+                FieldHeading { text: I18n.text.source_settings; }
+                TextEdit {
+                    text <=> root.source-settings;
+                    placeholder-text: "width=640\nheight=360\ncolor=#202840FF";
+                    vertical-stretch: 1;
+                    min-height: 150px;
+                }
+                FieldHeading { text: I18n.text.transform; }
+                LineEdit {
+                    text <=> root.source-transform;
+                    placeholder-text: "1000,1000,0,0,0,0,255";
+                }
+                FieldHeading { text: I18n.text.filters_prefix; }
+                LineEdit {
+                    text <=> root.source-filters;
+                    placeholder-text: "gray,brightness:750,opacity:200";
+                }
+                MutedText { text: root.capture-capabilities; }
+            }
+        }
+
+        HorizontalLayout {
+            height: 32px;
+            spacing: 8px;
+            Button {
+                text: I18n.text.add_source_ui.defaults;
+                width: 130px;
+                clicked => { root.restore-defaults(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: I18n.text.add_source_ui.ok;
+                width: 110px;
+                clicked => { root.accept-properties(); }
+            }
+            Button {
+                text: I18n.text.cancel;
+                width: 110px;
+                clicked => { root.cancel-properties(); }
+            }
+        }
+    }
+}

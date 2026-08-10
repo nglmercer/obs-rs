@@ -7,7 +7,7 @@
 use obs_rs_ui::UiLocale;
 use slint::{ComponentHandle, SharedString};
 
-use crate::{I18n, MainWindow, SettingsText, UiText};
+use crate::{AddSourceText, I18n, MainWindow, SettingsText, UiText};
 
 /// Applies the complete catalog for `locale` to the live Slint tree.
 pub(crate) fn apply(ui: &MainWindow, locale: UiLocale) {
@@ -26,6 +26,28 @@ pub(crate) fn catalog(locale: UiLocale) -> UiText {
 #[allow(clippy::too_many_lines)]
 fn english() -> UiText {
     UiText {
+        add_source_ui: AddSourceText {
+            window_title: s("Add source"),
+            recently_added: s("Recently added"),
+            obsolete: s("Obsolete"),
+            subtitle: s("Select which source(s) to add to your current scene."),
+            create_new: s("Create new source"),
+            add_existing: s("Add existing"),
+            add_existing_count: s("Add existing: "),
+            make_visible: s("Make source visible"),
+            close: s("Close"),
+            empty_kind: s("No source of this kind exists yet. Create one to get started."),
+            no_scene: s("Select a scene before adding a source."),
+            kind_color_source: s("Color"),
+            kind_test_pattern: s("Test pattern"),
+            kind_screen_capture: s("Screen capture"),
+            kind_window_capture: s("Window capture"),
+            kind_camera_capture: s("Video capture device"),
+            kind_x11_screen_capture: s("Screen capture (X11)"),
+            properties_for: s("Properties for "),
+            defaults: s("Defaults"),
+            ok: s("OK"),
+        },
         settings_ui: SettingsText {
             window_title: s("Settings"),
             ok: s("OK"),
@@ -261,6 +283,28 @@ fn english() -> UiText {
 #[allow(clippy::too_many_lines)]
 fn spanish() -> UiText {
     UiText {
+        add_source_ui: AddSourceText {
+            window_title: s("Añadir fuente"),
+            recently_added: s("Añadido recientemente"),
+            obsolete: s("Obsoleto"),
+            subtitle: s("Selecciona qué fuente(s) añadir a la escena actual."),
+            create_new: s("Crear nueva fuente"),
+            add_existing: s("Añadir existente"),
+            add_existing_count: s("Añadir existentes: "),
+            make_visible: s("Hacer visible la fuente"),
+            close: s("Cerrar"),
+            empty_kind: s("Todavía no existe ninguna fuente de este tipo. Crea una para empezar."),
+            no_scene: s("Selecciona una escena antes de añadir una fuente."),
+            kind_color_source: s("Color"),
+            kind_test_pattern: s("Patrón de prueba"),
+            kind_screen_capture: s("Captura de pantalla"),
+            kind_window_capture: s("Captura de ventana"),
+            kind_camera_capture: s("Dispositivo de captura de vídeo"),
+            kind_x11_screen_capture: s("Captura de pantalla (X11)"),
+            properties_for: s("Propiedades para "),
+            defaults: s("Por defecto"),
+            ok: s("Aceptar"),
+        },
         settings_ui: SettingsText {
             window_title: s("Ajustes"),
             ok: s("Aceptar"),

@@ -31,3 +31,24 @@
         peak: float,
         muted: bool,
     }
+
+    // One entry in the Add Source kind list. `obsolete` groups deprecated kinds
+    // under their own heading the way OBS does.
+    export struct SourceKindRow {
+        id: string,
+        label: string,
+        icon: string,
+        obsolete: bool,
+    }
+
+    // One card in the Add Source grid: either an existing source that can be
+    // added to the current scene, or a preview of what a new one would be.
+    export struct SourceCandidate {
+        id: string,
+        name: string,
+        kind: string,
+        kind_label: string,
+        scene: string,
+        icon: string,
+        selected: bool,
+    }

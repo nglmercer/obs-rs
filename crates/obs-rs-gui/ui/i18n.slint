@@ -71,8 +71,32 @@ export struct SettingsText {
 // All user-facing copy lives in this catalog. The Rust side selects one
 // complete catalog when the locale changes, so panels never need to know how
 // a language is implemented.
+export struct AddSourceText {
+    window_title: string,
+    recently_added: string,
+    obsolete: string,
+    subtitle: string,
+    create_new: string,
+    add_existing: string,
+    add_existing_count: string,
+    make_visible: string,
+    close: string,
+    empty_kind: string,
+    no_scene: string,
+    kind_color_source: string,
+    kind_test_pattern: string,
+    kind_screen_capture: string,
+    kind_window_capture: string,
+    kind_camera_capture: string,
+    kind_x11_screen_capture: string,
+    properties_for: string,
+    defaults: string,
+    ok: string,
+}
+
 export struct UiText {
     settings_ui: SettingsText,
+    add_source_ui: AddSourceText,
     app_name: string,
     shortcuts: string,
     profile: string,

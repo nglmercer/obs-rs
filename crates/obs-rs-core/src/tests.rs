@@ -346,3 +346,34 @@ fn lifecycle_requires_detach_before_source_destruction() {
     assert_eq!(runtime.source_count(), 0);
     assert_eq!(runtime.scene_count(), 0);
 }
+
+#[test]
+fn source_kinds_lists_registered_factories_in_identifier_order() {
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let mut runtime = Runtime::new();
+    assert!(runtime.source_kinds().is_empty());
+
+    runtime
+        .register_plugin(&plugin)
+        .expect("registration succeeds");
+    let kinds = runtime
+        .source_kinds()
+        .iter()
+        .map(|kind| kind.as_str().to_owned())
+        .collect::<Vec<_>>();
+
+    assert!(kinds.contains(&"color_source".to_owned()));
+    assert!(kinds.contains(&"test_pattern".to_owned()));
+    let mut sorted = kinds.clone();
+    sorted.sort();
+    assert_eq!(kinds, sorted, "kinds are returned in identifier order");
+    // Every advertised kind must actually construct.
+    for kind in &kinds {
+        assert!(
+            runtime
+                .create_source(kind, "probe", &settings(2, 2, "#0000FFFF"))
+                .is_ok(),
+            "advertised kind {kind} should create a source"
+        );
+    }
+}

@@ -141,6 +141,13 @@ impl Runtime {
         self.registry.plugins.values().cloned().collect()
     }
 
+    /// Returns the source kinds contributed by registered plugins, in
+    /// identifier order.
+    #[must_use]
+    pub fn source_kinds(&self) -> Vec<Identifier> {
+        self.registry.sources.keys().cloned().collect()
+    }
+
     /// Creates a named scene.
     ///
     /// # Errors
