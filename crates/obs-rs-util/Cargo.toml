@@ -1,0 +1,6 @@
+[package]
+name = "obs-rs-util"
+description = "Foundational Rust utilities for incremental OBS Studio migration"
+edition.workspace = true
+publish.workspace = true
+version.workspace = true
