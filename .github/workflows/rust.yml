@@ -66,6 +66,26 @@ jobs:
           printf 'program program\nrecord start\ntransition fade 500\nquit\n' \
             | cargo run -p obs-rs-app --bin obs-rs-console --release
 
+      - name: Run the accessible browser frontend smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run -p obs-rs-app --bin obs-rs-web --release -- --once --bind 127.0.0.1:18765 \
+            > web-frontend.log 2>&1 &
+          server_pid=$!
+          for attempt in $(seq 1 50); do
+            if curl --silent --show-error --fail http://127.0.0.1:18765/ \
+              | grep -q 'OBS-RS control room'; then
+              break
+            fi
+            if [ "$attempt" -eq 50 ]; then
+              cat web-frontend.log
+              exit 1
+            fi
+            sleep 0.1
+          done
+          wait "$server_pid"
+
       - name: Run sustained video benchmark fixture
         run: cargo run -p obs-rs-app --bin obs-rs-benchmark --release
 

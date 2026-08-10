@@ -23,7 +23,8 @@ The current vertical slice is a deterministic, headless engine:
   `AudioWorker` with exact block contracts.
 - `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
   catalog/provider contracts, atomic discovery refresh, and deterministic animated
-  test backends for test-pattern, screen, window, and camera source kinds.
+  test backends for test-pattern, screen, window, and camera source kinds, plus a
+  bounded `OBSFRM01` RGBA frame-stream adapter for Rust pipes/TCP readers.
 - `obs-rs-plugin-api` defines versioned Rust plugin and source interfaces.
 - `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
   camera CPU-fallback source factories.
@@ -51,9 +52,11 @@ The current vertical slice is a deterministic, headless engine:
   strict decoding, and atomic recovery-file finalization.
 - `obs-rs-ui` provides a toolkit-neutral desktop state machine for preview/program
   selection, transitions, output lifecycle, shortcuts, notices, project commands,
-  and a deterministic labeled accessibility/terminal snapshot.
-- `obs-rs-app` runs a small end-to-end demo and a scriptable accessible terminal
-  frontend without a native host dependency.
+  deterministic labeled accessibility snapshots, strict terminal/HTTP command
+  parsers, and an accessible browser page.
+- `obs-rs-app` runs a small end-to-end demo, a scriptable accessible terminal
+  frontend, and a loopback-only accessible browser control surface without a native
+  host dependency.
 
 This is an engine foundation, not yet a production recorder or streamer. The
 complete target and its acceptance gates are described in the roadmap.
@@ -67,6 +70,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo run -p obs-rs-app
 cargo run -p obs-rs-app --bin obs-rs-console
+cargo run -p obs-rs-app --bin obs-rs-web
 cargo run -p obs-rs-app --bin obs-rs-benchmark --release
 ```
 
@@ -74,11 +78,12 @@ The demo registers the built-in plugin, creates a scene, adds two sources, appli
 scene-item transform/filter, renders through the bounded video pipeline and render
 backend, mixes and paces audio blocks, muxes and streams one packet, round-trips one
 raw recording, persists project state, commits and reopens a diagnostics bundle, and
-encodes an interoperable PNG screenshot, exercises independent audio/video clock drift,
-then prints a stable summary. `obs-rs-console`
-exposes the same Rust-owned desktop state
+encodes an interoperable PNG screenshot, round-trips one `OBSFRM01` capture packet,
+exercises independent audio/video clock drift, then prints a stable summary.
+`obs-rs-console` exposes the same Rust-owned desktop state
 through line-oriented scene selection, preview/program swap, transitions, recording,
-streaming, and snapshot commands. The benchmark
+streaming, and snapshot commands. `obs-rs-web` serves the same state through an
+accessible local browser page and bounded `POST /command` requests. The benchmark
 runs the cancellation-aware wall-clock video worker for 120 frames and reports
 deadline misses, lateness, drops, elapsed time, and compositor work counters. All
 behavior is exercised through safe Rust APIs and Rust tests.

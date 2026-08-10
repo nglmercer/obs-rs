@@ -184,8 +184,11 @@ hot-plug events, start/stop state, format validation, timestamped frames, and
 deterministic animated test backends for test-pattern, screen, window, and camera
 devices. `obs-rs-builtins` exposes all four CPU fallbacks, and the demo exercises the
 provider snapshot plus the `screen_capture` path through the normal runtime/plugin
-pipeline. These are deterministic stand-ins for future platform adapters, not
-claims of hardware access.
+pipeline. `StreamCaptureDevice<R>` adds a bounded `OBSFRM01` packet stream that can
+carry frames from a separate Rust process over a pipe or TCP reader. These are safe
+integration boundaries and deterministic stand-ins for future OS adapters, not claims
+of direct hardware access. The headless demo round-trips one packet through this
+adapter, while direct Linux, macOS, and Windows discovery remains future work.
 
 `obs-rs-render` now supplies the portable render-backend contract and a deterministic
 CPU fallback for texture allocation, upload, ordered composition, readback, resource
@@ -253,11 +256,12 @@ The first Rust application-state slices are now present in `obs-rs-project` and
 `obs-rs-ui`: profiles, ordered scenes and sources, transform/filter state, validated
 commands, dirty-state tracking, deterministic escaped persistence, preview/program
 selection, transitions, output lifecycle, bounded notices, and shortcut bindings.
-They are toolkit-neutral control-plane foundations; concrete desktop views,
-GUI integration, and crash-report collection are still outstanding. `DesktopState`
-now renders a deterministic labeled text snapshot, and `obs-rs-console` provides a
-scriptable terminal presentation with validated scene, transition, recording, and
-streaming commands.
+They are toolkit-neutral control-plane foundations; native desktop views and GUI
+toolkit integration remain outstanding. `DesktopState` now renders a deterministic
+labeled text snapshot, `obs-rs-console` provides a scriptable terminal presentation,
+and `obs-rs-web` provides an accessible loopback browser presentation with validated
+scene, transition, recording, and streaming commands. Crash-report collection is
+still outstanding.
 
 `ProjectFileStore` adds atomic standard-library project-file save/load semantics and
 keeps the session dirty when a write fails.

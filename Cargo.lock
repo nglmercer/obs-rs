@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "obs-rs-audio",
  "obs-rs-builtins",
+ "obs-rs-capture",
  "obs-rs-clock",
  "obs-rs-config",
  "obs-rs-core",

@@ -22,7 +22,9 @@ hardware callbacks.
 
 Screen capture, cameras, window enumeration, permissions, GPU contexts, and audio
 devices differ by operating system. Portable traits must be designed before adapters;
-each adapter needs a CPU/test fallback and explicit capability reporting.
+each adapter needs a CPU/test fallback and explicit capability reporting. The bounded
+`OBSFRM01` stream provides a safe Rust IPC seam for adapters, but does not itself
+implement OS discovery or permission prompts.
 
 ### Codec and protocol availability
 

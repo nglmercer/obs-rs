@@ -162,6 +162,9 @@ fn declared_content_length(header: &[u8]) -> io::Result<usize> {
     let header = std::str::from_utf8(header)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "HTTP header is not UTF-8"))?;
     for line in header.split("\r\n").skip(1) {
+        if line.is_empty() {
+            continue;
+        }
         let Some((name, value)) = line.split_once(':') else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

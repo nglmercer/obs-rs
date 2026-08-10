@@ -10,6 +10,7 @@ use obs_rs_audio::{
     AudioScheduler, AudioWorker, AudioWorkerReport, AvSyncController, MonotonicAudioClock,
 };
 use obs_rs_builtins::BuiltinPlugin;
+use obs_rs_capture::{encode_frame_packet, CaptureKind, StreamCaptureDevice, VideoCaptureDevice};
 use obs_rs_clock::{
     IndependentMediaClock, MediaSession, MediaSessionReport, MediaTimeline,
     SessionCancellationToken,
@@ -69,6 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("rendered frame has no first pixel")?;
     let metrics = pipeline.metrics();
     let renderer_checksum = renderer_fixture(format, &frame)?;
+    let capture_stream_bytes = capture_stream_fixture(format, &frame)?;
     let mut recording = RawRecordingSession::new(format);
     recording.push(frame.clone())?;
     let recording_bytes = recording.finalize()?;
@@ -117,7 +119,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         )?;
 
     println!(
-        "obs-rs demo: plugins={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} rendered={} dropped_oldest={} png_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
+        "obs-rs demo: plugins={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} rendered={} dropped_oldest={} png_bytes={} capture_stream_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
         runtime.plugins().len(),
         capture_devices,
         runtime.scene_count(),
@@ -129,6 +131,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         metrics.produced_frames(),
         metrics.dropped_oldest(),
         png_bytes,
+        capture_stream_bytes,
         audio_output.samples(),
         sync,
         timeline_in_sync,
@@ -162,6 +165,27 @@ fn renderer_fixture(
     renderer.upload(source_texture, frame)?;
     renderer.composite(target_texture, &[source_texture])?;
     Ok(renderer.readback(target_texture)?.checksum())
+}
+
+fn capture_stream_fixture(
+    format: VideoFormat,
+    frame: &VideoFrame,
+) -> Result<usize, Box<dyn Error>> {
+    let packet = encode_frame_packet(frame)?;
+    let mut device = StreamCaptureDevice::new(
+        "demo-stream",
+        "Demo Rust frame stream",
+        CaptureKind::Screen,
+        std::io::Cursor::new(packet.clone()),
+    )?;
+    device.start(format)?;
+    let received = device
+        .next_frame(Timestamp::ZERO)?
+        .ok_or("frame stream ended before one frame")?;
+    if received != *frame {
+        return Err("frame stream changed the captured frame".into());
+    }
+    Ok(packet.len())
 }
 
 fn wav_fixture(format: AudioFormat, buffer: &AudioBuffer) -> Result<usize, Box<dyn Error>> {

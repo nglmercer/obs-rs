@@ -6,12 +6,22 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    io::{self, Read},
+};
 
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, MediaError, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
+
+/// Magic header for the safe Rust RGBA frame-stream protocol.
+pub const FRAME_STREAM_MAGIC: &[u8; 8] = b"OBSFRM01";
+const FRAME_STREAM_HEADER_BYTES: usize = 8 + 4 * 4 + 8 + 8;
+/// Maximum encoded frame-stream packet accepted by one device.
+pub const MAX_FRAME_STREAM_PACKET_BYTES: usize = 64 * 1024 * 1024 + 64;
 
 /// The kind of video device represented by a capture descriptor.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -273,6 +283,23 @@ pub enum CaptureError {
     PermissionUnavailable,
     /// The backend's frame counter cannot advance.
     FrameCounterExhausted,
+    /// A frame-stream reader failed.
+    Io { message: String },
+    /// A frame-stream packet did not begin with [`FRAME_STREAM_MAGIC`].
+    InvalidFrameHeader,
+    /// A frame-stream packet ended before its declared fields or pixels.
+    TruncatedFrame,
+    /// A frame-stream packet uses a different format than the started device.
+    FrameFormatMismatch {
+        /// Format requested when the device was started.
+        expected: VideoFormat,
+        /// Format declared by the packet.
+        actual: VideoFormat,
+    },
+    /// A frame-stream packet declares a pixel length different from its format.
+    FrameBufferSize { expected: usize, actual: usize },
+    /// A frame-stream packet exceeds the bounded reader budget.
+    FramePacketTooLarge { bytes: u64 },
     /// A media invariant failed while producing a frame.
     Media(MediaError),
 }
@@ -294,6 +321,25 @@ impl fmt::Display for CaptureError {
                 formatter.write_str("capture permission handling is unavailable")
             }
             Self::FrameCounterExhausted => formatter.write_str("capture frame counter exhausted"),
+            Self::Io { message } => write!(formatter, "capture frame stream I/O failed: {message}"),
+            Self::InvalidFrameHeader => {
+                formatter.write_str("capture frame stream header is invalid")
+            }
+            Self::TruncatedFrame => formatter.write_str("capture frame stream packet is truncated"),
+            Self::FrameFormatMismatch { expected, actual } => write!(
+                formatter,
+                "capture frame stream format {actual:?} does not match {expected:?}"
+            ),
+            Self::FrameBufferSize { expected, actual } => write!(
+                formatter,
+                "capture frame stream declares {actual} payload bytes; expected {expected}"
+            ),
+            Self::FramePacketTooLarge { bytes } => {
+                write!(
+                    formatter,
+                    "capture frame stream packet is too large: {bytes} bytes"
+                )
+            }
             Self::Media(error) => error.fmt(formatter),
         }
     }
@@ -327,6 +373,209 @@ pub trait VideoCaptureDevice: Send {
     /// Returns [`CaptureError::NotRunning`] before `start` or a backend-specific
     /// capture error.
     fn next_frame(&mut self, timestamp: Timestamp) -> Result<Option<VideoFrame>, CaptureError>;
+}
+
+/// Encodes one RGBA frame for the safe Rust frame-stream protocol.
+///
+/// The packet carries dimensions, reduced frame-rate components, the source
+/// timestamp, and an exact RGBA8 payload. It is suitable for a platform adapter in
+/// another Rust process to send over a pipe or [`std::net::TcpStream`].
+///
+/// # Errors
+///
+/// Returns [`CaptureError::FramePacketTooLarge`] only when the bounded packet size
+/// cannot represent the validated frame.
+pub fn encode_frame_packet(frame: &VideoFrame) -> Result<Vec<u8>, CaptureError> {
+    let payload_bytes = frame.pixels().len();
+    let packet_bytes = FRAME_STREAM_HEADER_BYTES
+        .checked_add(payload_bytes)
+        .ok_or(CaptureError::FramePacketTooLarge { bytes: u64::MAX })?;
+    if packet_bytes > MAX_FRAME_STREAM_PACKET_BYTES {
+        return Err(CaptureError::FramePacketTooLarge {
+            bytes: u64::try_from(packet_bytes).unwrap_or(u64::MAX),
+        });
+    }
+
+    let format = frame.format();
+    let rate = format.frame_rate();
+    let mut packet = Vec::with_capacity(packet_bytes);
+    packet.extend_from_slice(FRAME_STREAM_MAGIC);
+    packet.extend_from_slice(&format.width().to_le_bytes());
+    packet.extend_from_slice(&format.height().to_le_bytes());
+    packet.extend_from_slice(&rate.numerator().to_le_bytes());
+    packet.extend_from_slice(&rate.denominator().to_le_bytes());
+    packet.extend_from_slice(&frame.timestamp().as_nanos().to_le_bytes());
+    packet.extend_from_slice(
+        &u64::try_from(payload_bytes)
+            .unwrap_or(u64::MAX)
+            .to_le_bytes(),
+    );
+    packet.extend_from_slice(frame.pixels());
+    Ok(packet)
+}
+
+/// A capture device that reads length-checked RGBA frames from any Rust reader.
+///
+/// `R` can be a file, pipe, in-memory cursor, or `TcpStream`. The reader is kept
+/// behind the same lifecycle and permission contract as platform capture devices;
+/// no native ABI or unsafe callback is required.
+pub struct StreamCaptureDevice<R> {
+    info: CaptureDeviceInfo,
+    reader: R,
+    format: Option<VideoFormat>,
+    frame_index: u64,
+}
+
+impl<R> StreamCaptureDevice<R>
+where
+    R: Read + Send,
+{
+    /// Creates a stream-backed device with a caller-selected capture kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::InvalidDevice`] when the ID or name is invalid.
+    pub fn new(id: &str, name: &str, kind: CaptureKind, reader: R) -> Result<Self, CaptureError> {
+        Ok(Self {
+            info: CaptureDeviceInfo::new(id, name, kind)?,
+            reader,
+            format: None,
+            frame_index: 0,
+        })
+    }
+
+    /// Returns the number of packets decoded since the last start.
+    #[must_use]
+    pub const fn frame_index(&self) -> u64 {
+        self.frame_index
+    }
+
+    /// Updates the permission state used by the lifecycle gate.
+    pub const fn set_permission(&mut self, permission: CapturePermission) {
+        self.info.set_permission(permission);
+    }
+
+    fn read_packet(&mut self, format: VideoFormat) -> Result<Option<VideoFrame>, CaptureError> {
+        let mut header = [0_u8; FRAME_STREAM_HEADER_BYTES];
+        let first_read = self
+            .reader
+            .read(&mut header)
+            .map_err(|error| io_error(&error))?;
+        if first_read == 0 {
+            return Ok(None);
+        }
+        if first_read < header.len() {
+            read_exact_capture(&mut self.reader, &mut header[first_read..])?;
+        }
+        if &header[..FRAME_STREAM_MAGIC.len()] != FRAME_STREAM_MAGIC {
+            return Err(CaptureError::InvalidFrameHeader);
+        }
+
+        let width = u32::from_le_bytes(header[8..12].try_into().expect("fixed header width"));
+        let height = u32::from_le_bytes(header[12..16].try_into().expect("fixed header height"));
+        let numerator =
+            u32::from_le_bytes(header[16..20].try_into().expect("fixed header numerator"));
+        let denominator =
+            u32::from_le_bytes(header[20..24].try_into().expect("fixed header denominator"));
+        let timestamp =
+            u64::from_le_bytes(header[24..32].try_into().expect("fixed header timestamp"));
+        let payload_bytes = u64::from_le_bytes(
+            header[32..40]
+                .try_into()
+                .expect("fixed header payload length"),
+        );
+        let rate = FrameRate::new(numerator, denominator).map_err(CaptureError::Media)?;
+        let actual_format = VideoFormat::new(width, height, rate).map_err(CaptureError::Media)?;
+        if actual_format != format {
+            return Err(CaptureError::FrameFormatMismatch {
+                expected: format,
+                actual: actual_format,
+            });
+        }
+        let expected_bytes = format.rgba_bytes();
+        let actual_bytes = usize::try_from(payload_bytes).unwrap_or(usize::MAX);
+        if actual_bytes != expected_bytes {
+            return Err(CaptureError::FrameBufferSize {
+                expected: expected_bytes,
+                actual: actual_bytes,
+            });
+        }
+        let packet_bytes = FRAME_STREAM_HEADER_BYTES
+            .checked_add(actual_bytes)
+            .ok_or(CaptureError::FramePacketTooLarge { bytes: u64::MAX })?;
+        if packet_bytes > MAX_FRAME_STREAM_PACKET_BYTES {
+            return Err(CaptureError::FramePacketTooLarge {
+                bytes: u64::try_from(packet_bytes).unwrap_or(u64::MAX),
+            });
+        }
+        let mut pixels = vec![0_u8; expected_bytes];
+        read_exact_capture(&mut self.reader, &mut pixels)?;
+        VideoFrame::new(format, Timestamp::from_nanos(timestamp), pixels)
+            .map(Some)
+            .map_err(CaptureError::Media)
+    }
+}
+
+impl<R> VideoCaptureDevice for StreamCaptureDevice<R>
+where
+    R: Read + Send,
+{
+    fn info(&self) -> &CaptureDeviceInfo {
+        &self.info
+    }
+
+    fn start(&mut self, format: VideoFormat) -> Result<(), CaptureError> {
+        if self.format.is_some() {
+            return Err(CaptureError::AlreadyRunning);
+        }
+        match self.info.permission() {
+            CapturePermission::Granted => {}
+            CapturePermission::PromptRequired => return Err(CaptureError::PermissionRequired),
+            CapturePermission::Denied => return Err(CaptureError::PermissionDenied),
+            CapturePermission::Unavailable => return Err(CaptureError::PermissionUnavailable),
+        }
+        self.format = Some(format);
+        self.frame_index = 0;
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        self.format = None;
+    }
+
+    fn is_running(&self) -> bool {
+        self.format.is_some()
+    }
+
+    fn next_frame(&mut self, _timestamp: Timestamp) -> Result<Option<VideoFrame>, CaptureError> {
+        let Some(format) = self.format else {
+            return Err(CaptureError::NotRunning);
+        };
+        let frame = self.read_packet(format)?;
+        if frame.is_some() {
+            self.frame_index = self
+                .frame_index
+                .checked_add(1)
+                .ok_or(CaptureError::FrameCounterExhausted)?;
+        }
+        Ok(frame)
+    }
+}
+
+fn read_exact_capture(reader: &mut impl Read, bytes: &mut [u8]) -> Result<(), CaptureError> {
+    reader.read_exact(bytes).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            CaptureError::TruncatedFrame
+        } else {
+            io_error(&error)
+        }
+    })
+}
+
+fn io_error(error: &io::Error) -> CaptureError {
+    CaptureError::Io {
+        message: error.to_string(),
+    }
 }
 
 /// A deterministic animated checkerboard capture device.
@@ -849,6 +1098,77 @@ mod tests {
         assert_eq!(device.frame_index(), 2);
         device.stop();
         assert!(!device.is_running());
+    }
+
+    #[test]
+    fn stream_device_round_trips_bounded_rgba_packets() {
+        let format = format();
+        let first = VideoFrame::solid(format, Timestamp::from_millis(10), [1, 2, 3, 255]);
+        let second = VideoFrame::solid(format, Timestamp::from_millis(20), [4, 5, 6, 255]);
+        let mut bytes = encode_frame_packet(&first).expect("first packet");
+        bytes.extend_from_slice(&encode_frame_packet(&second).expect("second packet"));
+        let mut device = StreamCaptureDevice::new(
+            "stream",
+            "Rust frame stream",
+            CaptureKind::Screen,
+            std::io::Cursor::new(bytes),
+        )
+        .expect("device");
+        device.start(format).expect("start");
+        assert_eq!(
+            device.next_frame(Timestamp::ZERO).expect("first read"),
+            Some(first)
+        );
+        assert_eq!(
+            device
+                .next_frame(Timestamp::from_millis(33))
+                .expect("second read"),
+            Some(second)
+        );
+        assert_eq!(device.next_frame(Timestamp::from_millis(66)), Ok(None));
+        assert_eq!(device.frame_index(), 2);
+    }
+
+    #[test]
+    fn stream_device_rejects_truncation_and_format_mismatch() {
+        let format = format();
+        let frame = VideoFrame::solid(format, Timestamp::ZERO, [0, 0, 0, 255]);
+        let mut truncated = encode_frame_packet(&frame).expect("packet");
+        let _ = truncated.pop();
+        let mut device = StreamCaptureDevice::new(
+            "stream",
+            "Rust frame stream",
+            CaptureKind::Screen,
+            std::io::Cursor::new(truncated),
+        )
+        .expect("device");
+        device.start(format).expect("start");
+        assert_eq!(
+            device.next_frame(Timestamp::ZERO),
+            Err(CaptureError::TruncatedFrame)
+        );
+
+        let other_format =
+            VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let packet = encode_frame_packet(&VideoFrame::solid(
+            other_format,
+            Timestamp::ZERO,
+            [0, 0, 0, 255],
+        ))
+        .expect("packet");
+        let mut mismatch = StreamCaptureDevice::new(
+            "stream-other",
+            "Rust frame stream",
+            CaptureKind::Screen,
+            std::io::Cursor::new(packet),
+        )
+        .expect("device");
+        mismatch.start(format).expect("start");
+        assert!(matches!(
+            mismatch.next_frame(Timestamp::ZERO),
+            Err(CaptureError::FrameFormatMismatch { expected, actual })
+                if expected == format && actual == other_format
+        ));
     }
 
     #[test]

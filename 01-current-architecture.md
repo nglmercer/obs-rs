@@ -95,6 +95,8 @@ OS device clock adapters remain platform work.
 `SimulatedCaptureProvider` supplies deterministic descriptors for all four fallback
 kinds. `TestPatternDevice` is the first lifecycle-complete backend: it starts at a
 validated format, emits timestamped owned frames, and stops without leaking state.
+`StreamCaptureDevice<R>` adds a bounded `OBSFRM01` RGBA packet protocol for safe
+Rust pipes or TCP readers, with exact format/payload validation and clean EOF handling.
 Platform devices will implement the same provider/device traits later.
 
 The compositor still uses CPU-owned RGBA frames. Packed/planar inputs are converted
@@ -143,7 +145,8 @@ the same plugin registry and scene compositor as the deterministic capture
 fallbacks. The app demo creates a background and a semi-transparent foreground,
 sets an item transform, renders through `VideoPipeline::render_next`, and reports
 the resulting pixel, checksum, and pipeline metrics. `obs-rs-console` provides a
-scriptable terminal presentation over the same state machine. The companion benchmark runs
+scriptable terminal presentation, and `obs-rs-web` provides an accessible loopback
+browser presentation over the same state machine. The companion benchmark runs
 120 equivalent scene frames while draining output and reports the measured elapsed
 time, deadline misses, lateness, queue behavior, and compositor-work counters.
 
@@ -168,8 +171,8 @@ Current and future crates keep these concerns separate:
 - `obs-rs-diagnostics`: bounded deterministic recovery sections and atomic bundle
   finalization;
 - `obs-rs-ui`: toolkit-neutral desktop application state, commands, a labeled
-  accessibility snapshot, and a strict line-oriented terminal command parser; a
-  concrete GUI presentation toolkit remains a product integration.
+  accessibility snapshot, strict terminal/HTTP command parsers, and an accessible
+  browser page; a native desktop GUI toolkit remains a product integration.
 
 These are implementation boundaries, not promises that every future integration is
 available in the current slice. `obs-rs-diagnostics` defines the bounded `OBSRDG01`
