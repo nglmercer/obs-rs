@@ -134,8 +134,10 @@ malformed frame or incompatible format is an explicit error.
 
 The implementation keeps the scene definition borrowed during rendering: it does not
 clone the ordered item list or filter vectors for each frame, and it bypasses the
-transform allocation for identity items. This is still a CPU reference compositor,
-but its avoidable work is explicit in the benchmark counters.
+transform allocation for identity items. `CpuRenderBackend` additionally reports
+texture creation/destruction, upload, composition, readback, context recovery,
+current bytes, and peak allocation counters. This is still a CPU reference
+compositor, but its avoidable work is explicit in the benchmark counters.
 
 ## First vertical slice
 
@@ -163,7 +165,9 @@ Current and future crates keep these concerns separate:
   behind a backend trait;
 - `obs-rs-audio`: sample formats, mixer, resampler, and monitoring (buffer, queue,
   and mixer MVP implemented);
-- `obs-rs-capture-*`: platform or device adapters behind Rust traits;
+- `obs-rs-capture-*`: platform or device adapters behind Rust traits (the Linux X11
+  root-screen path is implemented without a foreign binding; other platforms remain
+  separate adapters);
 - `obs-rs-codec-*`: encoder contracts and reviewed codec integrations;
 - `obs-rs-output`: muxing, files, network protocols, reconnect, and back-pressure;
 - `obs-rs-project`: profiles, scene collections, source definitions, commands, and
@@ -182,9 +186,10 @@ temporary file plus rename.
 
 The current `obs-rs-output` crate contains validated packet and video-encoder traits,
 a byte-bounded packet queue, a deterministic in-memory muxer fixture, explicit
-finalized/aborted recording sessions, raw and lossless RLE video plus a
-standards-based pure-Rust PNG screenshot encoder and raw audio reference encoders,
-an RLE decoder fixture, an atomic standard-library raw-file writer, an atomic
+finalized/aborted recording sessions, raw and lossless RLE video plus standards-based
+pure-Rust PNG screenshot and YUV4MPEG2 reference recording writers and raw audio
+reference encoders,
+an RLE decoder fixture, atomic standard-library raw/Y4M-file writers, an atomic
 interleaved `OBSRPKT1` packet-container writer, a canonical PCM16 WAV writer,
 timestamp-order validation, a reconnectable packet-transport session, and the
 intentionally uncompressed `OBSRRAW1` format, plus a length-framed standard-library

@@ -22,11 +22,11 @@ use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, Timestamp, VideoForma
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, MemoryMuxer, MemoryPacketTransport, PacketDropPolicy,
     PacketMuxer, PacketQueue, PngVideoEncoder, RawAudioEncoder, RawRecording, RawRecordingSession,
-    ReconnectPolicy, RleVideoEncoder, StreamSession, VideoEncoder, WavRecording,
+    ReconnectPolicy, RleVideoEncoder, StreamSession, VideoEncoder, WavRecording, Y4mRecording,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Profile, Project, ProjectCommand, SceneSpec, SourceSpec};
-use obs_rs_render::{CpuRenderBackend, RenderBackend};
+use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderMetrics};
 use obs_rs_ui::{DesktopState, UiCommand};
 use obs_rs_video::{DropPolicy, RenderOutcome, VideoMetrics, VideoPacer, VideoPipeline};
 
@@ -69,8 +69,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .pixel(0, 0)
         .ok_or("rendered frame has no first pixel")?;
     let metrics = pipeline.metrics();
-    let renderer_checksum = renderer_fixture(format, &frame)?;
+    let (renderer_checksum, renderer_metrics) = renderer_fixture(format, &frame)?;
     let capture_stream_bytes = capture_stream_fixture(format, &frame)?;
+    let y4m_bytes = y4m_fixture(format, &frame)?;
     let mut recording = RawRecordingSession::new(format);
     recording.push(frame.clone())?;
     let recording_bytes = recording.finalize()?;
@@ -119,7 +120,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         )?;
 
     println!(
-        "obs-rs demo: plugins={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} rendered={} dropped_oldest={} png_bytes={} capture_stream_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
+        "obs-rs demo: plugins={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} renderer_created={} renderer_uploads={} renderer_compositions={} renderer_readbacks={} renderer_peak_bytes={} rendered={} dropped_oldest={} png_bytes={} capture_stream_bytes={} y4m_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
         runtime.plugins().len(),
         capture_devices,
         runtime.scene_count(),
@@ -128,10 +129,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         frame.format().height(),
         frame.checksum(),
         renderer_checksum,
+        renderer_metrics.textures_created(),
+        renderer_metrics.uploads(),
+        renderer_metrics.compositions(),
+        renderer_metrics.readbacks(),
+        renderer_metrics.peak_allocated_bytes(),
         metrics.produced_frames(),
         metrics.dropped_oldest(),
         png_bytes,
         capture_stream_bytes,
+        y4m_bytes,
         audio_output.samples(),
         sync,
         timeline_in_sync,
@@ -158,13 +165,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn renderer_fixture(
     format: VideoFormat,
     frame: &obs_rs_media::VideoFrame,
-) -> Result<u64, Box<dyn Error>> {
+) -> Result<(u64, RenderMetrics), Box<dyn Error>> {
     let mut renderer = CpuRenderBackend::new(2)?;
     let source_texture = renderer.create_texture(format)?;
     let target_texture = renderer.create_texture(format)?;
     renderer.upload(source_texture, frame)?;
     renderer.composite(target_texture, &[source_texture])?;
-    Ok(renderer.readback(target_texture)?.checksum())
+    let checksum = renderer.readback(target_texture)?.checksum();
+    Ok((checksum, renderer.metrics()))
 }
 
 fn capture_stream_fixture(
@@ -186,6 +194,12 @@ fn capture_stream_fixture(
         return Err("frame stream changed the captured frame".into());
     }
     Ok(packet.len())
+}
+
+fn y4m_fixture(format: VideoFormat, frame: &VideoFrame) -> Result<usize, Box<dyn Error>> {
+    let mut recording = Y4mRecording::new(format);
+    recording.push(frame.clone())?;
+    Ok(recording.encode()?.len())
 }
 
 fn wav_fixture(format: AudioFormat, buffer: &AudioBuffer) -> Result<usize, Box<dyn Error>> {

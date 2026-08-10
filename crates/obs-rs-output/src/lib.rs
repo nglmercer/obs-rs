@@ -253,6 +253,8 @@ pub enum OutputError {
         /// Format supplied by the caller.
         actual: VideoFormat,
     },
+    /// A standard output format cannot represent the requested video layout.
+    UnsupportedFormat { reason: String },
     /// An audio buffer does not match an audio encoder's format.
     AudioFormatMismatch {
         /// Format expected by the encoder.
@@ -328,6 +330,9 @@ impl fmt::Display for OutputError {
                     formatter,
                     "frame format {actual:?} does not match {expected:?}"
                 )
+            }
+            Self::UnsupportedFormat { reason } => {
+                write!(formatter, "output format is unsupported: {reason}")
             }
             Self::AudioFormatMismatch { expected, actual } => {
                 write!(
@@ -1042,6 +1047,194 @@ impl WavRecording {
         }
         Ok(bytes)
     }
+}
+
+/// An interoperable YUV4MPEG2 recording with pure-Rust RGBA-to-4:2:0 conversion.
+///
+/// Y4M is an uncompressed frame container intended for exchange and reference
+/// tooling. It is deliberately not presented as a distribution codec; it gives the
+/// output pipeline a standard file artifact without a native encoder dependency.
+pub struct Y4mRecording {
+    format: VideoFormat,
+    frames: Vec<VideoFrame>,
+    encoded_bytes: usize,
+    last_timestamp: Option<Timestamp>,
+}
+
+impl Y4mRecording {
+    /// Creates an empty Y4M recording for one fixed video format.
+    #[must_use]
+    pub const fn new(format: VideoFormat) -> Self {
+        Self {
+            format,
+            frames: Vec::new(),
+            encoded_bytes: 0,
+            last_timestamp: None,
+        }
+    }
+
+    /// Adds one RGBA frame after validating dimensions, timestamps, and budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::UnsupportedFormat`] for odd dimensions,
+    /// [`OutputError::FormatMismatch`] for another video format,
+    /// [`OutputError::NonMonotonicTimestamp`] for backward timestamps, or
+    /// [`OutputError::TooLarge`] when the Y4M recording exceeds the reference
+    /// recording budget.
+    pub fn push(&mut self, frame: VideoFrame) -> Result<(), OutputError> {
+        self.validate_format()?;
+        if frame.format() != self.format {
+            return Err(OutputError::FormatMismatch {
+                expected: self.format,
+                actual: frame.format(),
+            });
+        }
+        if let Some(previous) = self.last_timestamp {
+            if frame.timestamp() < previous {
+                return Err(OutputError::NonMonotonicTimestamp {
+                    previous,
+                    actual: frame.timestamp(),
+                });
+            }
+        }
+        if self.frames.len() >= MAX_RECORDING_FRAMES {
+            return Err(OutputError::TooManyFrames {
+                frames: self.frames.len() as u64 + 1,
+            });
+        }
+        let encoded_bytes = y4m_encoded_size(self.format, self.frames.len() + 1)?;
+        if encoded_bytes > MAX_RECORDING_BYTES {
+            return Err(OutputError::TooLarge {
+                bytes: encoded_bytes as u64,
+            });
+        }
+        self.frames.push(frame);
+        self.encoded_bytes = encoded_bytes;
+        self.last_timestamp = self.frames.last().map(VideoFrame::timestamp);
+        Ok(())
+    }
+
+    /// Returns the fixed recording format.
+    #[must_use]
+    pub const fn format(&self) -> VideoFormat {
+        self.format
+    }
+
+    /// Returns the number of accepted frames.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// Returns whether no frames have been accepted.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// Encodes the recording as a YUV4MPEG2 byte stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::UnsupportedFormat`] for odd dimensions or a write
+    /// error from the in-memory output path.
+    pub fn encode(&self) -> Result<Vec<u8>, OutputError> {
+        self.validate_format()?;
+        let header = y4m_header(self.format);
+        let mut bytes = Vec::with_capacity(self.encoded_bytes.max(header.len()));
+        write_all(&mut bytes, header.as_bytes())?;
+        for frame in &self.frames {
+            write_y4m_frame(&mut bytes, frame);
+        }
+        Ok(bytes)
+    }
+
+    fn validate_format(&self) -> Result<(), OutputError> {
+        if !self.format.width().is_multiple_of(2) || !self.format.height().is_multiple_of(2) {
+            return Err(OutputError::UnsupportedFormat {
+                reason: "YUV4MPEG2 4:2:0 requires even width and height".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
+fn y4m_header(format: VideoFormat) -> String {
+    format!(
+        "YUV4MPEG2 W{} H{} F{}:{} Ip A0:0 C420jpeg\n",
+        format.width(),
+        format.height(),
+        format.frame_rate().numerator(),
+        format.frame_rate().denominator()
+    )
+}
+
+fn y4m_encoded_size(format: VideoFormat, frames: usize) -> Result<usize, OutputError> {
+    let header_bytes = y4m_header(format).len();
+    let frame_bytes = 6_usize
+        .checked_add(format.pixel_count())
+        .and_then(|bytes| bytes.checked_add(format.pixel_count() / 2))
+        .ok_or(OutputError::TooLarge { bytes: u64::MAX })?;
+    header_bytes
+        .checked_add(
+            frames
+                .checked_mul(frame_bytes)
+                .ok_or(OutputError::TooLarge { bytes: u64::MAX })?,
+        )
+        .ok_or(OutputError::TooLarge { bytes: u64::MAX })
+}
+
+fn write_y4m_frame(output: &mut Vec<u8>, frame: &VideoFrame) {
+    output.extend_from_slice(b"FRAME\n");
+    let format = frame.format();
+    let width = usize::try_from(format.width()).unwrap_or(usize::MAX);
+    let height = usize::try_from(format.height()).unwrap_or(usize::MAX);
+    let mut luma = Vec::with_capacity(format.pixel_count());
+    for pixel in frame.pixels().chunks_exact(4) {
+        let (y, _, _) = rgb_to_yuv(pixel[0], pixel[1], pixel[2]);
+        luma.push(y);
+    }
+    output.extend_from_slice(&luma);
+
+    let mut chroma_u = Vec::with_capacity(format.pixel_count() / 4);
+    let mut chroma_v = Vec::with_capacity(format.pixel_count() / 4);
+    for block_y in (0..height).step_by(2) {
+        for block_x in (0..width).step_by(2) {
+            let mut u_sum = 0_u32;
+            let mut v_sum = 0_u32;
+            for y in block_y..block_y + 2 {
+                for x in block_x..block_x + 2 {
+                    let offset = (y * width + x) * 4;
+                    let (_, u, v) = rgb_to_yuv(
+                        frame.pixels()[offset],
+                        frame.pixels()[offset + 1],
+                        frame.pixels()[offset + 2],
+                    );
+                    u_sum += u32::from(u);
+                    v_sum += u32::from(v);
+                }
+            }
+            chroma_u.push(u8::try_from((u_sum + 2) / 4).unwrap_or(u8::MAX));
+            chroma_v.push(u8::try_from((v_sum + 2) / 4).unwrap_or(u8::MAX));
+        }
+    }
+    output.extend_from_slice(&chroma_u);
+    output.extend_from_slice(&chroma_v);
+}
+
+fn rgb_to_yuv(red: u8, green: u8, blue: u8) -> (u8, u8, u8) {
+    let red = i32::from(red);
+    let green = i32::from(green);
+    let blue = i32::from(blue);
+    let y = (77 * red + 150 * green + 29 * blue + 128) >> 8;
+    let u = (-43 * red - 85 * green + 128 * blue + 32_768) >> 8;
+    let v = (128 * red - 107 * green - 21 * blue + 32_768) >> 8;
+    (clamp_byte(y), clamp_byte(u), clamp_byte(v))
+}
+
+fn clamp_byte(value: i32) -> u8 {
+    u8::try_from(value.clamp(0, i32::from(u8::MAX))).unwrap_or_default()
 }
 
 /// Muxer boundary for encoded packets.
@@ -2009,6 +2202,168 @@ impl AtomicRawFileWriter {
     }
 }
 
+/// A crash-safe YUV4MPEG2 writer using temp-file plus rename finalization.
+///
+/// The writer keeps the standard Y4M stream in memory while frames are being
+/// validated, then publishes it only after the complete file has been written
+/// and synchronized. This keeps a cancelled recording from becoming a file
+/// that looks complete to another process.
+pub struct AtomicY4mFileWriter {
+    recording: Y4mRecording,
+    final_path: PathBuf,
+    temp_path: PathBuf,
+    state: OutputState,
+    committed_bytes: Option<usize>,
+}
+
+impl AtomicY4mFileWriter {
+    /// Starts an open Y4M writer with explicit final and temporary paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::InvalidPaths`] when either path is empty or both
+    /// paths are equal.
+    pub fn new(
+        final_path: impl Into<PathBuf>,
+        temp_path: impl Into<PathBuf>,
+        format: VideoFormat,
+    ) -> Result<Self, OutputError> {
+        let final_path = final_path.into();
+        let temp_path = temp_path.into();
+        if final_path.as_os_str().is_empty() || temp_path.as_os_str().is_empty() {
+            return Err(OutputError::InvalidPaths {
+                reason: "paths must be non-empty".to_owned(),
+            });
+        }
+        if final_path == temp_path {
+            return Err(OutputError::InvalidPaths {
+                reason: "temporary and final paths must differ".to_owned(),
+            });
+        }
+        Ok(Self {
+            recording: Y4mRecording::new(format),
+            final_path,
+            temp_path,
+            state: OutputState::Open,
+            committed_bytes: None,
+        })
+    }
+
+    /// Appends one frame while the writer is open.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::InvalidState`] after finalization or abort, or a
+    /// Y4M validation error for the frame itself.
+    pub fn push(&mut self, frame: VideoFrame) -> Result<(), OutputError> {
+        self.ensure_open("push a frame")?;
+        self.recording.push(frame)
+    }
+
+    /// Writes, synchronizes, and atomically renames the complete Y4M stream.
+    ///
+    /// On a filesystem failure the temporary path is removed on a best-effort
+    /// basis and the final path is left untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::InvalidState`] when the writer is not open,
+    /// [`OutputError::Write`] for filesystem failures, or a Y4M encoding error
+    /// before either path is changed.
+    pub fn finalize(&mut self) -> Result<usize, OutputError> {
+        self.ensure_open("finalize")?;
+        let bytes = self.recording.encode()?;
+        let write_result = (|| {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&self.temp_path)
+                .map_err(|error| OutputError::Write(format!("open temporary Y4M file: {error}")))?;
+            file.write_all(&bytes).map_err(|error| {
+                OutputError::Write(format!("write temporary Y4M file: {error}"))
+            })?;
+            file.sync_all()
+                .map_err(|error| OutputError::Write(format!("sync temporary Y4M file: {error}")))?;
+            fs::rename(&self.temp_path, &self.final_path)
+                .map_err(|error| OutputError::Write(format!("rename Y4M recording: {error}")))?;
+            Ok::<(), OutputError>(())
+        })();
+
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&self.temp_path);
+            return Err(error);
+        }
+
+        self.committed_bytes = Some(bytes.len());
+        self.state = OutputState::Finalized;
+        Ok(bytes.len())
+    }
+
+    /// Aborts the writer and removes an uncommitted temporary file if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::InvalidState`] when the writer is not open or
+    /// [`OutputError::Write`] when the temporary file cannot be removed.
+    pub fn abort(&mut self) -> Result<(), OutputError> {
+        self.ensure_open("abort")?;
+        if let Err(error) = fs::remove_file(&self.temp_path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(OutputError::Write(format!(
+                    "remove temporary Y4M file: {error}"
+                )));
+            }
+        }
+        self.recording.frames.clear();
+        self.recording.encoded_bytes = 0;
+        self.recording.last_timestamp = None;
+        self.state = OutputState::Aborted;
+        Ok(())
+    }
+
+    /// Returns the current lifecycle state.
+    #[must_use]
+    pub const fn state(&self) -> OutputState {
+        self.state
+    }
+
+    /// Returns the number of accepted frames.
+    #[must_use]
+    pub fn frame_count(&self) -> usize {
+        self.recording.len()
+    }
+
+    /// Returns the final path selected for this writer.
+    #[must_use]
+    pub fn final_path(&self) -> &std::path::Path {
+        &self.final_path
+    }
+
+    /// Returns the temporary path selected for this writer.
+    #[must_use]
+    pub fn temp_path(&self) -> &std::path::Path {
+        &self.temp_path
+    }
+
+    /// Returns the number of bytes committed by a successful finalization.
+    #[must_use]
+    pub const fn committed_bytes(&self) -> Option<usize> {
+        self.committed_bytes
+    }
+
+    fn ensure_open(&self, operation: &'static str) -> Result<(), OutputError> {
+        if self.state == OutputState::Open {
+            Ok(())
+        } else {
+            Err(OutputError::InvalidState {
+                operation,
+                state: self.state,
+            })
+        }
+    }
+}
+
 /// A crash-safe packet-container writer using temp-file plus rename finalization.
 ///
 /// The bytes use the deterministic `OBSRPKT1` packet container emitted by
@@ -2517,6 +2872,53 @@ mod tests {
     }
 
     #[test]
+    fn y4m_recording_emits_standard_header_and_420_planes() {
+        let format = VideoFormat::new(4, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let frame = VideoFrame::solid(format, Timestamp::from_millis(10), [255, 0, 0, 255]);
+        let mut recording = Y4mRecording::new(format);
+        recording.push(frame).expect("append frame");
+        let bytes = recording.encode().expect("Y4M encode");
+        let header = b"YUV4MPEG2 W4 H2 F30:1 Ip A0:0 C420jpeg\n";
+        assert_eq!(recording.len(), 1);
+        assert_eq!(&bytes[..header.len()], header);
+        assert_eq!(&bytes[header.len()..header.len() + 6], b"FRAME\n");
+        assert_eq!(bytes.len(), header.len() + 6 + 8 + 2 + 2);
+        assert_eq!(bytes[header.len() + 6], 77);
+    }
+
+    #[test]
+    fn y4m_recording_rejects_odd_dimensions_and_backward_timestamps() {
+        let odd_format =
+            VideoFormat::new(3, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let mut odd_recording = Y4mRecording::new(odd_format);
+        assert!(matches!(
+            odd_recording.push(VideoFrame::solid(
+                odd_format,
+                Timestamp::ZERO,
+                [0, 0, 0, 255]
+            )),
+            Err(OutputError::UnsupportedFormat { .. })
+        ));
+
+        let format = VideoFormat::new(4, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let mut recording = Y4mRecording::new(format);
+        recording
+            .push(VideoFrame::solid(
+                format,
+                Timestamp::from_millis(10),
+                [0, 0, 0, 255],
+            ))
+            .expect("first frame");
+        assert_eq!(
+            recording.push(VideoFrame::solid(format, Timestamp::ZERO, [0, 0, 0, 255])),
+            Err(OutputError::NonMonotonicTimestamp {
+                previous: Timestamp::from_millis(10),
+                actual: Timestamp::ZERO,
+            })
+        );
+    }
+
+    #[test]
     fn packet_decoder_rejects_oversized_declared_payload_before_allocation() {
         let mut bytes = Vec::from(PACKET_MAGIC.as_slice());
         bytes.extend_from_slice(&1_u64.to_le_bytes());
@@ -2719,6 +3121,55 @@ mod tests {
             writer.push(VideoFrame::solid(format, Timestamp::ZERO, [0, 0, 0, 255])),
             Err(OutputError::InvalidState {
                 operation: "push a frame",
+                state: OutputState::Aborted
+            })
+        ));
+    }
+
+    #[test]
+    fn atomic_y4m_writer_publishes_only_a_complete_standard_stream() {
+        let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("valid rate"))
+            .expect("valid Y4M format");
+        let (final_path, temp_path) = unique_paths("y4m-finalize");
+        let mut writer = AtomicY4mFileWriter::new(&final_path, &temp_path, format)
+            .expect("valid Y4M writer paths");
+        writer
+            .push(VideoFrame::solid(format, Timestamp::ZERO, [255, 0, 0, 255]))
+            .expect("push Y4M frame");
+
+        let byte_count = writer.finalize().expect("finalize Y4M file");
+        assert_eq!(writer.state(), OutputState::Finalized);
+        assert_eq!(writer.frame_count(), 1);
+        assert_eq!(writer.committed_bytes(), Some(byte_count));
+        assert!(!temp_path.exists());
+        let bytes = std::fs::read(&final_path).expect("read Y4M file");
+        assert_eq!(bytes.len(), byte_count);
+        assert!(bytes.starts_with(b"YUV4MPEG2 W2 H2 F30:1 Ip A0:0 C420jpeg\n"));
+        assert!(bytes.windows(6).any(|window| window == b"FRAME\n"));
+        std::fs::remove_file(final_path).expect("remove Y4M fixture");
+    }
+
+    #[test]
+    fn atomic_y4m_writer_abort_removes_temp_and_rejects_equal_paths() {
+        let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("valid rate"))
+            .expect("valid Y4M format");
+        let (final_path, temp_path) = unique_paths("y4m-abort");
+        assert!(matches!(
+            AtomicY4mFileWriter::new(&final_path, &final_path, format),
+            Err(OutputError::InvalidPaths { .. })
+        ));
+
+        let mut writer =
+            AtomicY4mFileWriter::new(&final_path, &temp_path, format).expect("valid paths");
+        writer.abort().expect("abort Y4M writer");
+        assert_eq!(writer.state(), OutputState::Aborted);
+        assert_eq!(writer.frame_count(), 0);
+        assert!(!final_path.exists());
+        assert!(!temp_path.exists());
+        assert!(matches!(
+            writer.finalize(),
+            Err(OutputError::InvalidState {
+                operation: "finalize",
                 state: OutputState::Aborted
             })
         ));

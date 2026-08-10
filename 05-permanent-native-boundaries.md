@@ -25,18 +25,23 @@ workspace. A backend may have platform-specific implementation details, but it m
 
 The current workspace contains only Rust source and Cargo metadata. The portable
 crates forbid unsafe code, and the CI workflow invokes Cargo checks and tests only.
-The headless demo exercises the complete current path from plugin registration to
-rendered frame.
+The headless demo exercises the current path from plugin registration through
+rendering, PNG output, an `OBSFRM01` frame-stream round trip, independent clock drift,
+and recovery diagnostics. On Linux, the built-in `x11_screen_capture` source contains
+a direct Rust X11 wire-protocol adapter with fixture-tested setup and pixel decoding.
+The terminal and loopback browser frontends reuse the same validated Rust-owned UI
+state.
 
-This is evidence of a Rust-native foundation, not evidence that capture, GPU, audio,
-codec, streaming, or desktop UI are complete. Those capabilities remain on the
-roadmap and must supply their own evidence.
+This is evidence of a Rust-native foundation and safe integration seams, not evidence
+that direct OS capture, GPU acceleration, production codecs/protocols, or native
+desktop packaging are complete. Those capabilities remain on the roadmap and must
+supply their own evidence.
 
 ## Integration decision matrix
 
 | Integration | First implementation | Acceptance gate |
 | --- | --- | --- |
-| Video capture | simulated/test source, then a safe Rust adapter | device lifecycle, permissions, timestamps, fallback |
+| Video capture | simulated/test source, then direct Rust platform protocol | device lifecycle, permissions, timestamps, fallback |
 | Audio input/output | offline buffers and simulated clock | sample count, drift, underflow, latency |
 | GPU rendering | CPU reference renderer first | format parity, context loss, resource cleanup |
 | Encoding | Rust packet/encoder traits | deterministic fixtures, quality, bounded back-pressure |

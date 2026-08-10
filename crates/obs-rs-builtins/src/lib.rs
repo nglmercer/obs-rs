@@ -10,6 +10,8 @@ use obs_rs_capture::{
     SimulatedCaptureProvider, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
     SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
 };
+#[cfg(target_os = "linux")]
+use obs_rs_capture::{VideoCaptureDevice, X11CaptureDevice, X11_SCREEN_CAPTURE_SOURCE_KIND};
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{
@@ -28,6 +30,9 @@ pub use obs_rs_capture::SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_SCREEN_SOURCE_KIND
 pub use obs_rs_capture::TEST_PATTERN_SOURCE_KIND as BUILTIN_TEST_PATTERN_SOURCE_KIND;
 /// Re-exported stable kind for the simulated window source.
 pub use obs_rs_capture::WINDOW_CAPTURE_SOURCE_KIND as BUILTIN_WINDOW_SOURCE_KIND;
+/// Re-exported stable kind for the direct Linux X11 screen source.
+#[cfg(target_os = "linux")]
+pub use obs_rs_capture::X11_SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_X11_SCREEN_SOURCE_KIND;
 
 /// The built-in plugin bundle shipped with the headless engine.
 pub struct BuiltinPlugin {
@@ -53,15 +58,19 @@ impl BuiltinPlugin {
         let camera_factory =
             SimulatedCaptureFactory::new(CAMERA_CAPTURE_SOURCE_KIND, CaptureKind::Camera)?;
 
+        let mut factories: Vec<Arc<dyn SourceFactory>> = vec![
+            Arc::new(color_factory),
+            Arc::new(test_pattern_factory),
+            Arc::new(screen_factory),
+            Arc::new(window_factory),
+            Arc::new(camera_factory),
+        ];
+        #[cfg(target_os = "linux")]
+        factories.push(Arc::new(X11CaptureFactory::new()?));
+
         Ok(Self {
             manifest,
-            factories: vec![
-                Arc::new(color_factory),
-                Arc::new(test_pattern_factory),
-                Arc::new(screen_factory),
-                Arc::new(window_factory),
-                Arc::new(camera_factory),
-            ],
+            factories,
         })
     }
 
@@ -168,6 +177,94 @@ impl Source for ColorSource {
             self.color,
         )))
     }
+}
+
+#[cfg(target_os = "linux")]
+struct X11CaptureFactory {
+    kind: Identifier,
+}
+
+#[cfg(target_os = "linux")]
+impl X11CaptureFactory {
+    fn new() -> Result<Self, PluginError> {
+        Ok(Self {
+            kind: Identifier::new(X11_SCREEN_CAPTURE_SOURCE_KIND)
+                .map_err(PluginError::InvalidIdentifier)?,
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl SourceFactory for X11CaptureFactory {
+    fn kind(&self) -> &Identifier {
+        &self.kind
+    }
+
+    fn create(&self, name: &str, settings: &Config) -> Result<Box<dyn Source>, SourceError> {
+        let format = parse_format(settings)?;
+        let display = settings.get("display").unwrap_or(":0").to_owned();
+        let device = x11_device(name, &display, format)?;
+        Ok(Box::new(X11CaptureSource {
+            kind: self.kind.clone(),
+            name: name.to_owned(),
+            format,
+            device,
+        }))
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct X11CaptureSource {
+    kind: Identifier,
+    name: String,
+    format: VideoFormat,
+    device: X11CaptureDevice,
+}
+
+#[cfg(target_os = "linux")]
+impl Source for X11CaptureSource {
+    fn kind(&self) -> &Identifier {
+        &self.kind
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn update(&mut self, settings: &Config) -> Result<(), SourceError> {
+        let format = parse_format(settings)?;
+        let display = settings.get("display").unwrap_or(":0").to_owned();
+        let device = x11_device(&self.name, &display, format)?;
+        self.format = format;
+        self.device = device;
+        Ok(())
+    }
+
+    fn render(&mut self, request: &VideoRequest) -> Result<Option<VideoFrame>, SourceError> {
+        if request.format() != self.format {
+            return Err(SourceError::UnsupportedFormat {
+                configured: self.format,
+                requested: request.format(),
+            });
+        }
+        self.device
+            .next_frame(request.timestamp())
+            .map_err(|error| SourceError::Unavailable(error.to_string()))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn x11_device(
+    name: &str,
+    display: &str,
+    format: VideoFormat,
+) -> Result<X11CaptureDevice, SourceError> {
+    let mut device = X11CaptureDevice::connect(display, "x11-root", name)
+        .map_err(|error| SourceError::Unavailable(error.to_string()))?;
+    device
+        .start(format)
+        .map_err(|error| SourceError::Unavailable(error.to_string()))?;
+    Ok(device)
 }
 
 fn parse_format(settings: &Config) -> Result<VideoFormat, SourceError> {
@@ -306,6 +403,16 @@ mod tests {
                 .expect("frame");
             assert_eq!(frame.format(), format);
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn builtins_expose_the_direct_linux_x11_source_kind() {
+        let plugin = BuiltinPlugin::new().expect("builtins are valid");
+        assert!(plugin
+            .source_factories()
+            .iter()
+            .any(|factory| factory.kind().as_str() == BUILTIN_X11_SCREEN_SOURCE_KIND));
     }
 
     #[test]

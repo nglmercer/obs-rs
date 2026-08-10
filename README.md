@@ -22,12 +22,12 @@ The current vertical slice is a deterministic, headless engine:
   monitoring taps, bounded long-run A/V drift telemetry, and a cancellation-aware
   `AudioWorker` with exact block contracts.
 - `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
-  catalog/provider contracts, atomic discovery refresh, and deterministic animated
-  test backends for test-pattern, screen, window, and camera source kinds, plus a
-  bounded `OBSFRM01` RGBA frame-stream adapter for Rust pipes/TCP readers.
+  catalog/provider contracts, atomic discovery refresh, deterministic animated test
+  backends, a direct Linux X11 root-screen adapter, and a bounded `OBSFRM01` RGBA
+  frame-stream adapter for Rust pipes/TCP readers.
 - `obs-rs-plugin-api` defines versioned Rust plugin and source interfaces.
 - `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
-  camera CPU-fallback source factories.
+  camera CPU-fallback factories plus the Linux `x11_screen_capture` source.
 - `obs-rs-core` owns the plugin registry, sources, scenes, CPU compositor, and
   compositor-work counters.
 - `obs-rs-video` provides rational frame scheduling, callback-driven rendering,
@@ -38,11 +38,13 @@ The current vertical slice is a deterministic, headless engine:
   traits, models independent device-clock drift deterministically, and runs bounded
   synchronized `MediaSession` ticks.
 - `obs-rs-render` defines portable texture/composition contracts and a deterministic
-  CPU backend with readback and context-loss recovery.
+  CPU backend with bounded texture bytes, lifecycle/readback metrics, and context-loss
+  recovery.
 - `obs-rs-output` provides validated video/audio packet encoders, muxer contracts,
   bounded packet back-pressure, a lossless Rust RLE video reference codec, a
-  standards-based pure-Rust PNG screenshot encoder, atomic raw-file and interleaved
-  packet-container finalization, a canonical PCM16 WAV reference writer,
+  standards-based pure-Rust PNG screenshot encoder, a pure-Rust YUV4MPEG2 reference
+  recording writer, atomic raw/Y4M-file and interleaved packet-container finalization,
+  a canonical PCM16 WAV reference writer,
   timestamp-order validation, a reconnectable memory transport fixture, and a
   length-framed standard-library TCP transport.
 - `obs-rs-project` provides Rust-owned profiles, ordered scenes/source definitions,
@@ -78,8 +80,9 @@ The demo registers the built-in plugin, creates a scene, adds two sources, appli
 scene-item transform/filter, renders through the bounded video pipeline and render
 backend, mixes and paces audio blocks, muxes and streams one packet, round-trips one
 raw recording, persists project state, commits and reopens a diagnostics bundle, and
-encodes an interoperable PNG screenshot, round-trips one `OBSFRM01` capture packet,
-exercises independent audio/video clock drift, then prints a stable summary.
+encodes an interoperable PNG screenshot and YUV4MPEG2 frame, round-trips one
+`OBSFRM01` capture packet, exercises independent audio/video clock drift, then prints
+a stable summary.
 `obs-rs-console` exposes the same Rust-owned desktop state
 through line-oriented scene selection, preview/program swap, transitions, recording,
 streaming, and snapshot commands. `obs-rs-web` serves the same state through an
@@ -117,5 +120,7 @@ state/command/persistence slice. The CPU compositor now reports source, transfor
 filter, and blend work while avoiding per-frame scene-item/filter snapshots and
 redundant identity transforms in its hot path. The project is intentionally not
 claiming feature parity with OBS Studio. The
-next priority is platform capture, hardware rendering, real codecs, network output,
-and desktop UX.
+current reference also includes independent device-clock drift modeling, a bounded
+`OBSFRM01` Rust frame-stream adapter, an accessible terminal/browser control surface,
+and deterministic recovery diagnostics. The next priority is direct platform capture,
+hardware rendering, real codecs, network output, and native desktop UX.

@@ -93,6 +93,76 @@ impl RenderCapabilities {
     }
 }
 
+/// Counters for render-resource lifetime and data movement.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RenderMetrics {
+    textures_created: u64,
+    textures_destroyed: u64,
+    uploads: u64,
+    compositions: u64,
+    readbacks: u64,
+    context_losses: u64,
+    recoveries: u64,
+    allocated_bytes: usize,
+    peak_allocated_bytes: usize,
+}
+
+impl RenderMetrics {
+    /// Returns the number of successfully created textures.
+    #[must_use]
+    pub const fn textures_created(self) -> u64 {
+        self.textures_created
+    }
+
+    /// Returns the number of successfully destroyed textures.
+    #[must_use]
+    pub const fn textures_destroyed(self) -> u64 {
+        self.textures_destroyed
+    }
+
+    /// Returns the number of successful frame uploads.
+    #[must_use]
+    pub const fn uploads(self) -> u64 {
+        self.uploads
+    }
+
+    /// Returns the number of successful ordered compositions.
+    #[must_use]
+    pub const fn compositions(self) -> u64 {
+        self.compositions
+    }
+
+    /// Returns the number of successful readbacks.
+    #[must_use]
+    pub const fn readbacks(self) -> u64 {
+        self.readbacks
+    }
+
+    /// Returns the number of simulated context-loss events.
+    #[must_use]
+    pub const fn context_losses(self) -> u64 {
+        self.context_losses
+    }
+
+    /// Returns the number of successful context recoveries.
+    #[must_use]
+    pub const fn recoveries(self) -> u64 {
+        self.recoveries
+    }
+
+    /// Returns current aggregate texture storage in bytes.
+    #[must_use]
+    pub const fn allocated_bytes(self) -> usize {
+        self.allocated_bytes
+    }
+
+    /// Returns the high-water mark of aggregate texture storage in bytes.
+    #[must_use]
+    pub const fn peak_allocated_bytes(self) -> usize {
+        self.peak_allocated_bytes
+    }
+}
+
 /// Errors raised by render resources and composition.
 #[derive(Debug, Eq, PartialEq)]
 pub enum RenderError {
@@ -166,6 +236,12 @@ pub trait RenderBackend {
     /// Returns the current context state.
     fn state(&self) -> RenderState;
 
+    /// Returns resource and data-movement counters collected by the backend.
+    #[must_use]
+    fn metrics(&self) -> RenderMetrics {
+        RenderMetrics::default()
+    }
+
     /// Allocates an empty texture resource.
     ///
     /// # Errors
@@ -216,7 +292,7 @@ pub trait RenderBackend {
     ///
     /// Returns [`RenderError`] when readback is unsupported or the texture is not
     /// ready.
-    fn readback(&self, texture: TextureId) -> Result<VideoFrame, RenderError>;
+    fn readback(&mut self, texture: TextureId) -> Result<VideoFrame, RenderError>;
 
     /// Recovers a lost context and invalidates uploaded resource contents.
     ///
@@ -238,6 +314,7 @@ pub struct CpuRenderBackend {
     textures: BTreeMap<TextureId, Texture>,
     next_texture: u64,
     allocated_bytes: usize,
+    metrics: RenderMetrics,
 }
 
 impl CpuRenderBackend {
@@ -270,12 +347,14 @@ impl CpuRenderBackend {
             textures: BTreeMap::new(),
             next_texture: 1,
             allocated_bytes: 0,
+            metrics: RenderMetrics::default(),
         })
     }
 
     /// Forces a simulated device/context loss.
     pub fn lose_context(&mut self) {
         self.state = RenderState::Lost;
+        self.metrics.context_losses = self.metrics.context_losses.saturating_add(1);
     }
 
     /// Returns the current number of allocated texture handles.
@@ -288,6 +367,12 @@ impl CpuRenderBackend {
     #[must_use]
     pub const fn allocated_bytes(&self) -> usize {
         self.allocated_bytes
+    }
+
+    /// Returns resource and data-movement counters collected by the backend.
+    #[must_use]
+    pub const fn metrics(&self) -> RenderMetrics {
+        self.metrics
     }
 
     fn ensure_ready(&self) -> Result<(), RenderError> {
@@ -318,6 +403,10 @@ impl RenderBackend for CpuRenderBackend {
 
     fn state(&self) -> RenderState {
         self.state
+    }
+
+    fn metrics(&self) -> RenderMetrics {
+        self.metrics
     }
 
     fn create_texture(&mut self, format: VideoFormat) -> Result<TextureId, RenderError> {
@@ -354,6 +443,9 @@ impl RenderBackend for CpuRenderBackend {
             },
         );
         self.allocated_bytes = new_total;
+        self.metrics.textures_created = self.metrics.textures_created.saturating_add(1);
+        self.metrics.allocated_bytes = new_total;
+        self.metrics.peak_allocated_bytes = self.metrics.peak_allocated_bytes.max(new_total);
         Ok(id)
     }
 
@@ -366,6 +458,8 @@ impl RenderBackend for CpuRenderBackend {
         self.allocated_bytes = self
             .allocated_bytes
             .saturating_sub(removed.format.rgba_bytes());
+        self.metrics.textures_destroyed = self.metrics.textures_destroyed.saturating_add(1);
+        self.metrics.allocated_bytes = self.allocated_bytes;
         Ok(())
     }
 
@@ -379,6 +473,7 @@ impl RenderBackend for CpuRenderBackend {
             });
         }
         target.frame = Some(frame.clone());
+        self.metrics.uploads = self.metrics.uploads.saturating_add(1);
         Ok(())
     }
 
@@ -412,15 +507,19 @@ impl RenderBackend for CpuRenderBackend {
             result.blend_over(&frame).map_err(RenderError::Media)?;
         }
         self.texture_mut(target)?.frame = Some(result);
+        self.metrics.compositions = self.metrics.compositions.saturating_add(1);
         Ok(())
     }
 
-    fn readback(&self, texture: TextureId) -> Result<VideoFrame, RenderError> {
+    fn readback(&mut self, texture: TextureId) -> Result<VideoFrame, RenderError> {
         self.ensure_ready()?;
-        self.texture(texture)?
+        let frame = self
+            .texture(texture)?
             .frame
             .clone()
-            .ok_or(RenderError::TextureNotReady(texture))
+            .ok_or(RenderError::TextureNotReady(texture))?;
+        self.metrics.readbacks = self.metrics.readbacks.saturating_add(1);
+        Ok(frame)
     }
 
     fn recover(&mut self) -> Result<(), RenderError> {
@@ -428,6 +527,7 @@ impl RenderBackend for CpuRenderBackend {
         for texture in self.textures.values_mut() {
             texture.frame = None;
         }
+        self.metrics.recoveries = self.metrics.recoveries.saturating_add(1);
         Ok(())
     }
 }
@@ -468,6 +568,14 @@ mod tests {
         assert_eq!(frame.pixel(0, 0), Some([128, 0, 127, 255]));
         assert!(!backend.capabilities().accelerated());
         assert!(backend.capabilities().readback());
+        let metrics = backend.metrics();
+        assert_eq!(metrics.textures_created(), 3);
+        assert_eq!(metrics.textures_destroyed(), 0);
+        assert_eq!(metrics.uploads(), 2);
+        assert_eq!(metrics.compositions(), 1);
+        assert_eq!(metrics.readbacks(), 1);
+        assert_eq!(metrics.allocated_bytes(), format.rgba_bytes() * 3);
+        assert_eq!(metrics.peak_allocated_bytes(), format.rgba_bytes() * 3);
     }
 
     #[test]
@@ -490,6 +598,10 @@ mod tests {
             backend.readback(texture),
             Err(RenderError::TextureNotReady(texture))
         );
+        let metrics = backend.metrics();
+        assert_eq!(metrics.context_losses(), 1);
+        assert_eq!(metrics.recoveries(), 1);
+        assert_eq!(metrics.readbacks(), 0);
     }
 
     #[test]
@@ -547,5 +659,12 @@ mod tests {
         );
         backend.destroy_texture(texture).expect("destroy");
         assert_eq!(backend.allocated_bytes(), 0);
+        let metrics = backend.metrics();
+        assert_eq!(metrics.textures_created(), 1);
+        assert_eq!(metrics.textures_destroyed(), 1);
+        assert_eq!(metrics.uploads(), 1);
+        assert_eq!(metrics.readbacks(), 1);
+        assert_eq!(metrics.allocated_bytes(), 0);
+        assert_eq!(metrics.peak_allocated_bytes(), format.rgba_bytes());
     }
 }

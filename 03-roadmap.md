@@ -82,8 +82,9 @@ Turn the reference compositor into a clocked video engine suitable for live work
 - scene transitions, filters, cropping, scaling, and transforms (cut/cross-fade
   transitions, transform, and basic grayscale/brightness/opacity filter MVP
   implemented in `obs-rs-media` and `obs-rs-core`);
-- resource accounting and frame diagnostics (the runtime now exposes compositor
-  counters for source requests/results, transforms, in-place filters, and blends).
+- resource accounting and frame diagnostics (the runtime exposes compositor counters
+  for source requests/results, transforms, in-place filters, and blends; the CPU render
+  backend exposes bounded texture lifecycle, movement, and peak-byte metrics).
 
 ### Entry criteria
 
@@ -108,9 +109,10 @@ conversion; scene-item scale/translation/flip/opacity transforms, filters, cuts,
 cross-fades are covered by `obs-rs-media` and `obs-rs-core` tests. The compositor
 applies filter chains in place, borrows scene/filter definitions without per-frame
 snapshots, bypasses identity transforms, and avoids creating a transparent
-accumulator for the first layer. The remaining work is wall-clock deadline
-measurement in a long-running multi-worker design, allocation/resource profiling,
-more conversion formats, and performance tuning.
+accumulator for the first layer. The CPU render backend reports bounded texture
+lifecycle, movement, and peak-byte metrics. The remaining work is wall-clock deadline
+measurement in a long-running multi-worker design, allocation tracing beyond those
+resource counters, more conversion formats, and performance tuning.
 
 ## Phase 4 — Audio engine
 
@@ -161,7 +163,10 @@ remain incomplete.
 `obs-rs-output` adds a canonical PCM16 WAV reference writer for offline inspection and
 an interoperable pure-Rust PNG screenshot encoder using deterministic zlib stored
 blocks. The PNG path proves a standards-based image artifact without introducing a
-native codec dependency; it is not a production video codec.
+native codec dependency; it is not a production video codec. `Y4mRecording` now
+emits a standards-based YUV4MPEG2 stream with deterministic RGBA-to-4:2:0 conversion,
+even-dimension and timestamp validation, and bounded recording size. It is an
+uncompressed reference container, not a production compression path.
 
 ## Phase 5 — Capture and render backends
 
@@ -182,13 +187,14 @@ The current repository implements the portable capture contract in `obs-rs-captu
 device descriptors/provider discovery, atomic catalog refresh, permission and
 hot-plug events, start/stop state, format validation, timestamped frames, and
 deterministic animated test backends for test-pattern, screen, window, and camera
-devices. `obs-rs-builtins` exposes all four CPU fallbacks, and the demo exercises the
-provider snapshot plus the `screen_capture` path through the normal runtime/plugin
-pipeline. `StreamCaptureDevice<R>` adds a bounded `OBSFRM01` packet stream that can
-carry frames from a separate Rust process over a pipe or TCP reader. These are safe
-integration boundaries and deterministic stand-ins for future OS adapters, not claims
-of direct hardware access. The headless demo round-trips one packet through this
-adapter, while direct Linux, macOS, and Windows discovery remains future work.
+devices. `StreamCaptureDevice<R>` adds a bounded `OBSFRM01` packet stream that can
+carry frames from a separate Rust process over a pipe or TCP reader. On Linux,
+`X11CaptureDevice` speaks the local X11 setup and `GetImage` protocol directly over
+the Unix socket, performs magic-cookie authentication when an Xauthority record is
+available, converts TrueColor masks to RGBA, and is wired into the built-in
+`x11_screen_capture` source. The parser and pixel conversion are covered by protocol
+fixtures; an X server is still required for a live capture run. macOS and Windows
+discovery remain separate future adapters.
 
 `obs-rs-render` now supplies the portable render-backend contract and a deterministic
 CPU fallback for texture allocation, upload, ordered composition, readback, resource
@@ -220,9 +226,9 @@ Produce files and network output with back-pressure, recovery, and observable st
 
 The repository now has validated `EncodedPacket`, `VideoEncoder`, and `PacketMuxer`
 contracts, byte-bounded packet transport, deterministic raw and lossless RLE video
-reference encoders with a decoder fixture, an interoperable pure-Rust PNG screenshot
-encoder, an in-memory muxer, explicit
-finalized/aborted recording sessions, an atomic standard-library raw-file writer,
+reference encoders with a decoder fixture, interoperable pure-Rust PNG screenshot
+and YUV4MPEG2 reference recording writers, an in-memory muxer, explicit
+finalized/aborted recording sessions, atomic standard-library raw/Y4M-file writers,
 raw audio encoding, a canonical PCM16 WAV reference writer, a reconnectable
 packet-transport session with a memory fixture, an atomic interleaved `OBSRPKT1`
 packet-container writer with timestamp-order validation, an explicit length-framed

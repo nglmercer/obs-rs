@@ -17,6 +17,12 @@ use obs_rs_media::{FrameRate, MediaError, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
 
+#[cfg(target_os = "linux")]
+mod x11;
+
+#[cfg(target_os = "linux")]
+pub use x11::X11CaptureDevice;
+
 /// Magic header for the safe Rust RGBA frame-stream protocol.
 pub const FRAME_STREAM_MAGIC: &[u8; 8] = b"OBSFRM01";
 const FRAME_STREAM_HEADER_BYTES: usize = 8 + 4 * 4 + 8 + 8;
@@ -285,6 +291,12 @@ pub enum CaptureError {
     FrameCounterExhausted,
     /// A frame-stream reader failed.
     Io { message: String },
+    /// A platform capture service is unavailable on this host.
+    PlatformUnavailable { message: String },
+    /// A platform capture protocol returned an invalid response.
+    Protocol { message: String },
+    /// A platform capture reply exceeds the bounded decoder budget.
+    ReplyTooLarge { bytes: u64 },
     /// A frame-stream packet did not begin with [`FRAME_STREAM_MAGIC`].
     InvalidFrameHeader,
     /// A frame-stream packet ended before its declared fields or pixels.
@@ -322,6 +334,18 @@ impl fmt::Display for CaptureError {
             }
             Self::FrameCounterExhausted => formatter.write_str("capture frame counter exhausted"),
             Self::Io { message } => write!(formatter, "capture frame stream I/O failed: {message}"),
+            Self::PlatformUnavailable { message } => {
+                write!(formatter, "platform capture is unavailable: {message}")
+            }
+            Self::Protocol { message } => {
+                write!(formatter, "platform capture protocol failed: {message}")
+            }
+            Self::ReplyTooLarge { bytes } => {
+                write!(
+                    formatter,
+                    "platform capture reply is too large: {bytes} bytes"
+                )
+            }
             Self::InvalidFrameHeader => {
                 formatter.write_str("capture frame stream header is invalid")
             }
@@ -418,7 +442,7 @@ pub fn encode_frame_packet(frame: &VideoFrame) -> Result<Vec<u8>, CaptureError> 
 ///
 /// `R` can be a file, pipe, in-memory cursor, or `TcpStream`. The reader is kept
 /// behind the same lifecycle and permission contract as platform capture devices;
-/// no native ABI or unsafe callback is required.
+/// no native ABI or unchecked callback is required.
 pub struct StreamCaptureDevice<R> {
     info: CaptureDeviceInfo,
     reader: R,
@@ -765,6 +789,9 @@ fn simulated_frame(
 pub const TEST_PATTERN_SOURCE_KIND: &str = "test_pattern";
 /// Stable source kind for the simulated screen fallback.
 pub const SCREEN_CAPTURE_SOURCE_KIND: &str = "screen_capture";
+/// Stable source kind for the direct Linux X11 screen adapter.
+#[cfg(target_os = "linux")]
+pub const X11_SCREEN_CAPTURE_SOURCE_KIND: &str = "x11_screen_capture";
 /// Stable source kind for the simulated window fallback.
 pub const WINDOW_CAPTURE_SOURCE_KIND: &str = "window_capture";
 /// Stable source kind for the simulated camera fallback.
