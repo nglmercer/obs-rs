@@ -497,4 +497,23 @@ mod tests {
             Brush::SolidColor(colour([0x00, 0xFF, 0x00]))
         );
     }
+
+    #[test]
+    fn settings_document_persists_to_disk_and_reloads() {
+        let path = std::env::temp_dir().join("obs-rs-settings-persist-test.txt");
+        let settings = AppSettings {
+            theme: 3,
+            locale: "es".to_owned(),
+            hotkey_start_streaming: "F9".to_owned(),
+            program_border_color: "#123456".to_owned(),
+            ..AppSettings::default()
+        };
+
+        settings.save(&path).expect("settings should persist");
+        let reloaded = AppSettings::load(&path);
+
+        assert_eq!(reloaded, settings);
+        assert_eq!(reloaded.ui_locale(), UiLocale::Spanish);
+        std::fs::remove_file(&path).expect("remove settings fixture");
+    }
 }
