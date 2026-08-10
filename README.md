@@ -55,3 +55,14 @@ cargo test --workspace --all-targets
 ```
 
 The same checks run in [`.github/workflows/rust.yml`](.github/workflows/rust.yml).
+
+## Phase status
+
+- Phase 0 — tooling and workspace: complete.
+- Phase 1 — leaf utility evaluation: complete for the isolated
+  `obs-rs-util` identifier candidate. Its C ABI contract is declared in
+  [`include/obs_rs_util.h`](include/obs_rs_util.h), with Rust-side tests covering
+  invalid input, error translation, and paired allocation/free behavior. The C
+  contract is additionally exercised by [`tests/ffi_smoke.c`](tests/ffi_smoke.c).
+  No OBS call sites were changed because this workspace does not contain the native
+  OBS source tree; integration remains a later, repository-level step.
