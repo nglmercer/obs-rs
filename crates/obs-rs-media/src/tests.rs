@@ -134,7 +134,7 @@ fn transitions_are_deterministic_and_validate_progress() {
     let source = VideoFrame::solid(format(), Timestamp::ZERO, [0, 0, 0, 0]);
     let destination = VideoFrame::solid(format(), Timestamp::from_millis(10), [100, 200, 255, 255]);
     let transition = FrameTransition::cross_fade(500).expect("valid progress");
-    let halfway = VideoFrame::transitioned(&source, &destination, transition).expect("transition");
+    let halfway = VideoFrame::transitioned(&source, destination, transition).expect("transition");
     assert_eq!(halfway.timestamp(), Timestamp::from_millis(10));
     assert_eq!(halfway.pixel(0, 0), Some([50, 100, 128, 128]));
     assert_eq!(

@@ -10,7 +10,7 @@ use super::{
     error::{protocol_error, read_exact_x11, x11_io_error},
     image::{decode_pixels, packed_row_bytes, padded_row_bytes},
     protocol::{
-        read_u32_le, write_u16_le, write_u32_le, ServerInfo, X11_GET_IMAGE, X11_MAX_REPLY_BYTES,
+        read_u32_le, ServerInfo, X11_GET_IMAGE, X11_MAX_REPLY_BYTES,
         X11_Z_PIXMAP,
     },
 };
@@ -93,21 +93,22 @@ impl X11CaptureDevice {
             u16::try_from(format.width()).map_err(|_| CaptureError::UnsupportedFormat(format))?;
         let height =
             u16::try_from(format.height()).map_err(|_| CaptureError::UnsupportedFormat(format))?;
-        let mut request = Vec::with_capacity(20);
-        request.push(X11_GET_IMAGE);
-        request.push(X11_Z_PIXMAP);
-        write_u16_le(&mut request, 5);
-        write_u32_le(&mut request, self.server.root);
-        write_u16_le(&mut request, 0);
-        write_u16_le(&mut request, 0);
-        write_u16_le(&mut request, width);
-        write_u16_le(&mut request, height);
         let plane_mask = if self.server.depth == 32 {
             u32::MAX
         } else {
             (1_u32 << self.server.depth) - 1
         };
-        write_u32_le(&mut request, plane_mask);
+        // GetImage is a fixed 20-byte request, so it is built on the stack
+        // rather than in a per-frame heap buffer. The x and y fields at
+        // [8..12] stay zero.
+        let mut request = [0_u8; 20];
+        request[0] = X11_GET_IMAGE;
+        request[1] = X11_Z_PIXMAP;
+        request[2..4].copy_from_slice(&5_u16.to_le_bytes());
+        request[4..8].copy_from_slice(&self.server.root.to_le_bytes());
+        request[12..14].copy_from_slice(&width.to_le_bytes());
+        request[14..16].copy_from_slice(&height.to_le_bytes());
+        request[16..20].copy_from_slice(&plane_mask.to_le_bytes());
         self.stream
             .write_all(&request)
             .map_err(|error| x11_io_error(&error))?;

@@ -172,26 +172,40 @@ fn simulated_frame(
         CaptureKind::Camera => 48,
         CaptureKind::External => 64,
     };
-    for y in 0..height {
-        for x in 0..width {
-            let tile = ((x / 16 + y / 16) as u64 + phase) % 2;
-            let offset = (y * width + x) * 4;
-            pixels[offset] = if tile == 0 {
+    // The column gradient repeats for every scanline and the row gradient is
+    // constant across one, so both are tabulated once instead of recomputed per
+    // pixel.
+    let column_gradient: Vec<u8> = (0..width)
+        .map(|x| gradient_byte(x, width).saturating_add(variant / 2))
+        .collect();
+
+    for (y, row) in pixels.chunks_exact_mut(width * 4).enumerate() {
+        let row_gradient = gradient_byte(y, height).saturating_add(variant / 3);
+        let row_tile = y / 16;
+        for (x, (pixel, column)) in row.chunks_exact_mut(4).zip(&column_gradient).enumerate() {
+            let tile = ((x / 16 + row_tile) as u64 + phase) % 2;
+            pixel[0] = if tile == 0 {
                 32_u8.saturating_add(variant)
             } else {
                 224_u8.saturating_sub(variant)
             };
-            pixels[offset + 1] = gradient_byte(x, width).saturating_add(variant / 2);
-            pixels[offset + 2] = gradient_byte(y, height).saturating_add(variant / 3);
-            pixels[offset + 3] = 255;
+            pixel[1] = *column;
+            pixel[2] = row_gradient;
+            pixel[3] = 255;
         }
     }
     VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "min constrains the value to 0..=255, so the cast is exact"
+)]
 fn gradient_byte(value: usize, size: usize) -> u8 {
-    let value = u64::try_from(value).unwrap_or(u64::MAX);
-    let size = u64::try_from(size.max(1)).unwrap_or(u64::MAX);
+    // Both inputs are frame dimensions or indices bounded by them, so widening
+    // to u64 is lossless on every supported target.
+    let value = value as u64;
+    let size = (size.max(1)) as u64;
     let scaled = value.saturating_mul(255) / size;
-    u8::try_from(scaled.min(u64::from(u8::MAX))).unwrap_or(u8::MAX)
+    scaled.min(u64::from(u8::MAX)) as u8
 }

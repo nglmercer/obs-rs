@@ -106,8 +106,25 @@ where
                 bytes: u64::try_from(packet_bytes).unwrap_or(u64::MAX),
             });
         }
-        let mut pixels = vec![0_u8; expected_bytes];
-        read_exact_capture(&mut self.reader, &mut pixels)?;
+        // Each decoded frame owns its pixels, so one buffer per frame is
+        // inherent. What is avoidable is zero-filling it first: `read_to_end`
+        // over a bounded `take` fills the reserved capacity directly, skipping a
+        // full-frame memset that the payload immediately overwrites.
+        let mut pixels = Vec::new();
+        pixels
+            .try_reserve_exact(expected_bytes)
+            .map_err(|_| CaptureError::FrameBufferSize {
+                expected: expected_bytes,
+                actual: 0,
+            })?;
+        let read_bytes = (&mut self.reader)
+            .take(payload_bytes)
+            .read_to_end(&mut pixels)
+            .map_err(|error| io_error(&error))?;
+        if read_bytes != expected_bytes {
+            return Err(CaptureError::TruncatedFrame);
+        }
+
         VideoFrame::new(format, Timestamp::from_nanos(timestamp), pixels)
             .map(Some)
             .map_err(CaptureError::Media)

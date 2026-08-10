@@ -136,16 +136,33 @@ impl CaptureCatalog {
     }
 
     /// Returns descriptors in stable ID order.
+    ///
+    /// Borrows the stored descriptors, so listing the catalog does not clone
+    /// every device. Callers that need owned values can `.cloned().collect()`.
     #[must_use]
-    pub fn devices(&self) -> Vec<CaptureDeviceInfo> {
-        self.devices.values().cloned().collect()
+    pub fn devices(&self) -> impl ExactSizeIterator<Item = &CaptureDeviceInfo> {
+        self.devices.values()
+    }
+
+    /// Returns the number of registered descriptors.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.devices.len()
+    }
+
+    /// Returns whether the catalog holds no descriptors.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.devices.is_empty()
     }
 
     /// Looks up one descriptor.
+    ///
+    /// The lookup borrows `id` as a `str` key, so it neither allocates nor
+    /// revalidates an [`Identifier`].
     #[must_use]
     pub fn get(&self, id: &str) -> Option<&CaptureDeviceInfo> {
-        let id = Identifier::new(id).ok()?;
-        self.devices.get(&id)
+        self.devices.get(id)
     }
 
     /// Applies one hot-plug or permission event atomically.

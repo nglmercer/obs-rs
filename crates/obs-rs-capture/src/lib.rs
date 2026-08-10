@@ -33,7 +33,9 @@ pub use factories::{
     SimulatedCaptureFactory, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
     SCREEN_CAPTURE_SOURCE_KIND, TEST_PATTERN_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
 };
-pub use protocol::{encode_frame_packet, FRAME_STREAM_MAGIC, MAX_FRAME_STREAM_PACKET_BYTES};
+pub use protocol::{
+    encode_frame_packet, write_frame_packet, FRAME_STREAM_MAGIC, MAX_FRAME_STREAM_PACKET_BYTES,
+};
 pub use provider::{CaptureProvider, PlatformCaptureProvider, SimulatedCaptureProvider};
 pub use simulated::{SimulatedCaptureDevice, TestPatternDevice};
 pub use stream_device::StreamCaptureDevice;

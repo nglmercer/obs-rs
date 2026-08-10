@@ -17,8 +17,8 @@ fn catalog_is_deterministic_and_rejects_duplicates() {
     catalog.register(first.clone()).expect("first device");
     catalog.register(second).expect("second device");
     assert_eq!(
-        catalog.devices()[0],
-        catalog.get("screen_a").cloned().expect("lookup")
+        catalog.devices().next().expect("first device"),
+        &catalog.get("screen_a").cloned().expect("lookup")
     );
     assert_eq!(
         catalog.register(first),
@@ -66,12 +66,11 @@ fn provider_refreshes_catalog_atomically_and_deterministically() {
         .expect("register old device");
     provider.refresh(&mut catalog).expect("refresh catalog");
 
-    let devices = catalog.devices();
-    assert_eq!(devices.len(), 4);
-    assert_eq!(devices[0].id().as_str(), "camera-0");
-    assert_eq!(devices[1].id().as_str(), "screen-0");
-    assert_eq!(devices[2].id().as_str(), "test-pattern");
-    assert_eq!(devices[3].id().as_str(), "window-0");
+    let devices: Vec<&str> = catalog.devices().map(|device| device.id().as_str()).collect();
+    assert_eq!(
+        devices,
+        vec!["camera-0", "screen-0", "test-pattern", "window-0"]
+    );
     assert!(catalog.get("old").is_none());
 }
 

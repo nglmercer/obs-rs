@@ -58,27 +58,33 @@ impl VideoFormat {
         self.frame_rate
     }
 
+    /// Returns the frame width as a host index without a fallible conversion.
+    ///
+    /// [`VideoFormat::new`] rejects any format whose pixel count exceeds
+    /// [`VideoFormat::MAX_PIXELS`], so both dimensions are always representable
+    /// as a `usize` on every target this workspace builds for.
+    #[must_use]
+    pub(crate) const fn width_index(self) -> usize {
+        self.width as usize
+    }
+
+    /// Returns the frame height as a host index without a fallible conversion.
+    ///
+    /// See [`VideoFormat::width_index`] for why this conversion cannot lose data.
+    #[must_use]
+    pub(crate) const fn height_index(self) -> usize {
+        self.height as usize
+    }
+
     /// Returns the required RGBA8 byte count.
     #[must_use]
-    pub fn rgba_bytes(self) -> usize {
-        let Ok(width) = usize::try_from(self.width) else {
-            return 0;
-        };
-        let Ok(height) = usize::try_from(self.height) else {
-            return 0;
-        };
-        width.saturating_mul(height).saturating_mul(4)
+    pub const fn rgba_bytes(self) -> usize {
+        self.pixel_count().saturating_mul(4)
     }
 
     /// Returns the validated pixel count.
     #[must_use]
-    pub fn pixel_count(self) -> usize {
-        let Ok(width) = usize::try_from(self.width) else {
-            return 0;
-        };
-        let Ok(height) = usize::try_from(self.height) else {
-            return 0;
-        };
-        width.saturating_mul(height)
+    pub const fn pixel_count(self) -> usize {
+        self.width_index().saturating_mul(self.height_index())
     }
 }

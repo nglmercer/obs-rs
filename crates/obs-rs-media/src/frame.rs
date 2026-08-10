@@ -37,19 +37,39 @@ impl VideoFrame {
         })
     }
 
-    /// Creates a solid-color frame.
-    #[must_use]
-    pub fn solid(format: VideoFormat, timestamp: Timestamp, color: [u8; 4]) -> Self {
-        let mut pixels = vec![0; format.rgba_bytes()];
-        for pixel in pixels.chunks_exact_mut(4) {
-            pixel.copy_from_slice(&color);
-        }
-
+    /// Creates a frame from a buffer whose length is already known to match.
+    ///
+    /// Internal fast path for call sites that derive `pixels` from
+    /// [`VideoFormat::rgba_bytes`] and therefore cannot violate the length
+    /// invariant. Callers outside this crate must use [`VideoFrame::new`].
+    pub(crate) const fn new_unchecked(
+        format: VideoFormat,
+        timestamp: Timestamp,
+        pixels: Vec<u8>,
+    ) -> Self {
+        debug_assert!(pixels.len() == format.rgba_bytes());
         Self {
             format,
             timestamp,
             pixels,
         }
+    }
+
+    /// Creates a solid-color frame.
+    #[must_use]
+    pub fn solid(format: VideoFormat, timestamp: Timestamp, color: [u8; 4]) -> Self {
+        let len = format.rgba_bytes();
+        let mut pixels = Vec::with_capacity(len);
+        pixels.extend_from_slice(&color);
+        // Exponential doubling: each `extend_from_within` copies the whole
+        // prefix as one block instead of writing pixel by pixel.
+        while pixels.len().saturating_mul(2) <= len {
+            pixels.extend_from_within(..);
+        }
+        let remaining = len - pixels.len();
+        pixels.extend_from_within(..remaining);
+
+        Self::new_unchecked(format, timestamp, pixels)
     }
 
     /// Returns the frame format.
@@ -71,16 +91,18 @@ impl VideoFrame {
     }
 
     /// Returns one pixel if `(x, y)` is inside the frame.
+    ///
+    /// The bounds check above makes the index conversions exact, so this reads
+    /// the four bytes directly rather than running fallible conversions.
     #[must_use]
     pub fn pixel(&self, x: u32, y: u32) -> Option<[u8; 4]> {
         if x >= self.format.width || y >= self.format.height {
             return None;
         }
 
-        let width = usize::try_from(self.format.width).ok()?;
-        let offset = (usize::try_from(y).ok()? * width + usize::try_from(x).ok()?) * 4;
-        let pixel = self.pixels.get(offset..offset + 4)?;
-        Some([pixel[0], pixel[1], pixel[2], pixel[3]])
+        let offset = (y as usize * self.format.width_index() + x as usize) * 4;
+        let pixel: &[u8; 4] = self.pixels.get(offset..offset + 4)?.try_into().ok()?;
+        Some(*pixel)
     }
 
     /// Overlays `foreground` using straight-alpha RGBA blending.
@@ -106,30 +128,21 @@ impl VideoFrame {
             let inverse_alpha = 255 - source_alpha;
             let background_alpha = u32::from(background[3]);
             let output_alpha = source_alpha + background_alpha * inverse_alpha / 255;
-            background[0] = blend_channel(
-                background[0],
-                source[0],
-                source_alpha,
-                background_alpha,
-                inverse_alpha,
-                output_alpha,
-            );
-            background[1] = blend_channel(
-                background[1],
-                source[1],
-                source_alpha,
-                background_alpha,
-                inverse_alpha,
-                output_alpha,
-            );
-            background[2] = blend_channel(
-                background[2],
-                source[2],
-                source_alpha,
-                background_alpha,
-                inverse_alpha,
-                output_alpha,
-            );
+            if output_alpha == 0 {
+                background.fill(0);
+                continue;
+            }
+
+            // The denominator and both alpha weights are identical for all three
+            // colour channels, so they are computed once per pixel.
+            let denominator = output_alpha * 255;
+            let source_weight = source_alpha * 255;
+            let background_weight = background_alpha * inverse_alpha;
+            for channel in 0..3 {
+                let numerator = u32::from(source[channel]) * source_weight
+                    + u32::from(background[channel]) * background_weight;
+                background[channel] = to_byte(numerator / denominator);
+            }
             background[3] = to_byte(output_alpha);
         }
 
@@ -138,9 +151,12 @@ impl VideoFrame {
 
     /// Produces a deterministic transition between two same-format frames.
     ///
-    /// The destination timestamp is used for the result. Cross-fades interpolate
-    /// every RGBA byte with integer arithmetic, which makes offline previews and
-    /// live output use the same correctness oracle.
+    /// `destination` is taken by value and becomes the result buffer: a cut
+    /// returns it untouched and a cross-fade blends `source` into it in place,
+    /// so neither path copies a frame. The destination timestamp is used for the
+    /// result. Cross-fades interpolate every RGBA byte with integer arithmetic,
+    /// which makes offline previews and live output use the same correctness
+    /// oracle.
     ///
     /// # Errors
     ///
@@ -148,7 +164,7 @@ impl VideoFrame {
     /// [`MediaError::InvalidTransition`] for an invalid cross-fade progress value.
     pub fn transitioned(
         source: &Self,
-        destination: &Self,
+        mut destination: Self,
         transition: FrameTransition,
     ) -> Result<Self, MediaError> {
         if source.format != destination.format {
@@ -159,24 +175,22 @@ impl VideoFrame {
         }
 
         match transition {
-            FrameTransition::Cut => Ok(destination.clone()),
+            FrameTransition::Cut => Ok(destination),
             FrameTransition::CrossFade { progress_milli } => {
                 if progress_milli > 1_000 {
                     return Err(MediaError::InvalidTransition { progress_milli });
                 }
                 let destination_weight = u32::from(progress_milli);
                 let source_weight = 1_000 - destination_weight;
-                let pixels = source
-                    .pixels
-                    .iter()
-                    .zip(&destination.pixels)
-                    .map(|(source, destination)| {
-                        let value = u32::from(*source) * source_weight
-                            + u32::from(*destination) * destination_weight;
-                        u8::try_from((value + 500) / 1_000).unwrap_or(u8::MAX)
-                    })
-                    .collect();
-                Self::new(destination.format, destination.timestamp, pixels)
+                // Both buffers have the same format and therefore the same
+                // length, so this is a straight paired walk with no branching
+                // and no intermediate allocation.
+                for (target, source_byte) in destination.pixels.iter_mut().zip(&source.pixels) {
+                    let value = u32::from(*source_byte) * source_weight
+                        + u32::from(*target) * destination_weight;
+                    *target = to_byte((value + 500) / 1_000);
+                }
+                Ok(destination)
             }
         }
     }
@@ -190,6 +204,12 @@ impl VideoFrame {
     ///
     /// Returns [`MediaError::InvalidTransform`] if the transform was not constructed
     /// through a valid constructor.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "source_x/source_y are bounds-checked against the validated frame \
+                  dimensions above, so both are non-negative and below u32::MAX"
+    )]
     pub fn transformed(&self, transform: FrameTransform) -> Result<Self, MediaError> {
         if transform.scale_x_milli == 0
             || transform.scale_y_milli == 0
@@ -204,43 +224,54 @@ impl VideoFrame {
         let height = i64::from(self.format.height);
         let scale_x = i64::from(transform.scale_x_milli);
         let scale_y = i64::from(transform.scale_y_milli);
-        let output_width =
-            usize::try_from(self.format.width).map_err(|_| MediaError::FrameTooLarge)?;
+        let output_width = self.format.width_index();
+        let translate_x = i64::from(transform.translate_x);
+        let translate_y = i64::from(transform.translate_y);
+        let opacity = u32::from(transform.opacity);
 
         for y in 0..self.format.height {
+            let local_y = i64::from(y) - translate_y;
+            if local_y < 0 {
+                continue;
+            }
+            let mut source_y = local_y * 1_000 / scale_y;
+            if source_y >= height {
+                continue;
+            }
+            if transform.flip_y {
+                source_y = height - 1 - source_y;
+            }
+            // Both row bases are constant across the scanline. `source_y` and
+            // `y` are within the validated frame height here, so the index
+            // conversions are exact.
+            let source_row = source_y as usize * output_width;
+            let output_row = y as usize * output_width;
+
             for x in 0..self.format.width {
-                let local_x = i64::from(x) - i64::from(transform.translate_x);
-                let local_y = i64::from(y) - i64::from(transform.translate_y);
-                if local_x < 0 || local_y < 0 {
+                let local_x = i64::from(x) - translate_x;
+                if local_x < 0 {
                     continue;
                 }
                 let mut source_x = local_x * 1_000 / scale_x;
-                let mut source_y = local_y * 1_000 / scale_y;
-                if source_x >= width || source_y >= height {
+                if source_x >= width {
                     continue;
                 }
                 if transform.flip_x {
                     source_x = width - 1 - source_x;
                 }
-                if transform.flip_y {
-                    source_y = height - 1 - source_y;
-                }
 
-                let source_offset = (usize::try_from(source_y)
-                    .map_err(|_| MediaError::FrameTooLarge)?
-                    * output_width
-                    + usize::try_from(source_x).map_err(|_| MediaError::FrameTooLarge)?)
-                    * 4;
-                let output_offset = (usize::try_from(y).map_err(|_| MediaError::FrameTooLarge)?
-                    * output_width
-                    + usize::try_from(x).map_err(|_| MediaError::FrameTooLarge)?)
-                    * 4;
-                output.pixels[output_offset..output_offset + 4]
-                    .copy_from_slice(&self.pixels[source_offset..source_offset + 4]);
-                let alpha = u32::from(output.pixels[output_offset + 3])
-                    * u32::from(transform.opacity)
-                    / u32::from(u8::MAX);
-                output.pixels[output_offset + 3] = to_byte(alpha);
+                let source_offset = (source_row + source_x as usize) * 4;
+                let output_offset = (output_row + x as usize) * 4;
+                let Some(source_pixel) = self.pixels.get(source_offset..source_offset + 4) else {
+                    return Err(MediaError::FrameTooLarge);
+                };
+                let Some(target_pixel) = output.pixels.get_mut(output_offset..output_offset + 4)
+                else {
+                    return Err(MediaError::FrameTooLarge);
+                };
+                target_pixel.copy_from_slice(source_pixel);
+                let alpha = u32::from(target_pixel[3]) * opacity / u32::from(u8::MAX);
+                target_pixel[3] = to_byte(alpha);
             }
         }
 
@@ -248,6 +279,10 @@ impl VideoFrame {
     }
 
     /// Applies one CPU filter and returns a new owned frame.
+    ///
+    /// This allocates and copies a full frame buffer (roughly 33 MB at 4K), so
+    /// it suits offline and test call sites. On a media callback or any other
+    /// per-frame path, use [`VideoFrame::apply_filter`] to filter in place.
     #[must_use]
     pub fn filtered(&self, filter: FrameFilter) -> Self {
         let mut output = self.clone();
@@ -296,29 +331,18 @@ impl VideoFrame {
     /// Calculates a stable FNV-1a checksum of the frame bytes.
     #[must_use]
     pub fn checksum(&self) -> u64 {
-        self.pixels
-            .iter()
-            .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-                (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
-            })
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        for byte in &self.pixels {
+            hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
+        }
+        hash
     }
-}
-fn blend_channel(
-    background: u8,
-    source: u8,
-    source_alpha: u32,
-    background_alpha: u32,
-    inverse_alpha: u32,
-    output_alpha: u32,
-) -> u8 {
-    if output_alpha == 0 {
-        return 0;
-    }
-    let numerator = u32::from(source) * source_alpha * 255
-        + u32::from(background) * background_alpha * inverse_alpha;
-    to_byte(numerator / (output_alpha * 255))
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "min constrains the value to 0..=255, so the cast is exact"
+)]
 fn to_byte(value: u32) -> u8 {
-    u8::try_from(value.min(u32::from(u8::MAX))).unwrap_or(u8::MAX)
+    value.min(u32::from(u8::MAX)) as u8
 }

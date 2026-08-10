@@ -79,6 +79,18 @@ impl AsRef<str> for Identifier {
     }
 }
 
+/// Lets keyed collections look up an [`Identifier`] from a plain `&str`.
+///
+/// `Ord`, `Eq`, and `Hash` all delegate to the identifier text, so they agree
+/// with the borrowed `str` implementations as `Borrow` requires. This is what
+/// allows `map.get("name")` on an `Identifier`-keyed map without constructing
+/// and validating a temporary owned identifier.
+impl std::borrow::Borrow<str> for Identifier {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl fmt::Display for Identifier {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())

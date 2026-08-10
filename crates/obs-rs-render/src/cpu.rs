@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 
@@ -17,7 +17,9 @@ struct Texture {
 pub struct CpuRenderBackend {
     capabilities: RenderCapabilities,
     state: RenderState,
-    textures: BTreeMap<TextureId, Texture>,
+    /// Keyed lookup only: the catalog is never iterated in key order, so a hash
+    /// map gives O(1) access without costing determinism.
+    textures: HashMap<TextureId, Texture>,
     next_texture: u64,
     allocated_bytes: usize,
     metrics: RenderMetrics,
@@ -50,7 +52,7 @@ impl CpuRenderBackend {
                 max_texture_bytes,
             ),
             state: RenderState::Ready,
-            textures: BTreeMap::new(),
+            textures: HashMap::new(),
             next_texture: 1,
             allocated_bytes: 0,
             metrics: RenderMetrics::default(),
@@ -189,7 +191,11 @@ impl RenderBackend for CpuRenderBackend {
             return Err(RenderError::EmptyComposition);
         }
         let target_format = self.texture(target)?.format;
-        let mut frames = Vec::with_capacity(layers.len());
+
+        // Validate every layer up front so a rejected composition leaves the
+        // backend untouched, then blend from borrowed frames. The target is only
+        // written at the end, so a layer that aliases the target still reads its
+        // pre-composition contents without needing a defensive copy.
         for layer in layers {
             let texture = self.texture(*layer)?;
             if texture.format != target_format {
@@ -198,19 +204,24 @@ impl RenderBackend for CpuRenderBackend {
                     actual: texture.format,
                 });
             }
-            frames.push(
-                texture
-                    .frame
-                    .clone()
-                    .ok_or(RenderError::TextureNotReady(*layer))?,
-            );
+            if texture.frame.is_none() {
+                return Err(RenderError::TextureNotReady(*layer));
+            }
         }
-        let timestamp = frames
+
+        let timestamp = layers
             .first()
+            .and_then(|layer| self.textures.get(layer))
+            .and_then(|texture| texture.frame.as_ref())
             .map_or(Timestamp::ZERO, VideoFrame::timestamp);
         let mut result = VideoFrame::solid(target_format, timestamp, [0, 0, 0, 0]);
-        for frame in frames {
-            result.blend_over(&frame).map_err(RenderError::Media)?;
+        for layer in layers {
+            let frame = self
+                .textures
+                .get(layer)
+                .and_then(|texture| texture.frame.as_ref())
+                .ok_or(RenderError::TextureNotReady(*layer))?;
+            result.blend_over(frame).map_err(RenderError::Media)?;
         }
         self.texture_mut(target)?.frame = Some(result);
         self.metrics.compositions = self.metrics.compositions.saturating_add(1);

@@ -118,7 +118,7 @@ impl Runtime {
         let destination = destination.unwrap_or_else(|| {
             VideoFrame::solid(request.format(), request.timestamp(), [0, 0, 0, 0])
         });
-        VideoFrame::transitioned(&source, &destination, transition)
+        VideoFrame::transitioned(&source, destination, transition)
             .map(Some)
             .map_err(RuntimeError::Media)
     }
