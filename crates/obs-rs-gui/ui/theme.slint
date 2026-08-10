@@ -1,26 +1,27 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Palette } from "palette.slint";
 
 export component StudioPanel inherits Rectangle {
-    background: rgb(31, 41, 55);
+    background: Palette.tokens.panel-bg;
     border-width: 1px;
-    border-color: rgb(45, 58, 78);
+    border-color: Palette.tokens.border;
     border-radius: 8px;
 }
 
 export component PanelHeading inherits Text {
-    color: rgb(249, 250, 251);
+    color: Palette.tokens.text-strong;
     font-size: 16px;
     font-weight: 700;
 }
 
 export component FieldHeading inherits Text {
-    color: rgb(203, 213, 225);
+    color: Palette.tokens.text-muted;
     font-size: 12px;
     font-weight: 700;
 }
 
 export component MutedText inherits Text {
-    color: rgb(148, 163, 184);
+    color: Palette.tokens.text-muted;
     font-size: 11px;
     wrap: word-wrap;
 }
@@ -52,6 +53,14 @@ export component Icon inherits Rectangle {
             : root.name == "volume" ? @image-url("icons/volume.svg")
             : root.name == "volume-mute" ? @image-url("icons/volume-mute.svg")
             : root.name == "brand" ? @image-url("icons/brand.svg")
+            : root.name == "appearance" ? @image-url("icons/appearance.svg")
+            : root.name == "stream" ? @image-url("icons/stream.svg")
+            : root.name == "output" ? @image-url("icons/output.svg")
+            : root.name == "audio" ? @image-url("icons/audio.svg")
+            : root.name == "video" ? @image-url("icons/video.svg")
+            : root.name == "hotkeys" ? @image-url("icons/hotkeys.svg")
+            : root.name == "accessibility" ? @image-url("icons/accessibility.svg")
+            : root.name == "advanced" ? @image-url("icons/advanced.svg")
             : root.name == "drag" ? @image-url("icons/drag.svg")
             : root.name == "file" ? @image-url("icons/file.svg")
             : root.name == "edit" ? @image-url("icons/edit.svg")
@@ -70,12 +79,12 @@ export component TabButton inherits Rectangle {
     callback clicked();
     min-width: 64px;
     height: 34px;
-    background: active ? rgb(45, 61, 83) : rgb(25, 34, 48);
+    background: active ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
     border-radius: 5px;
 
     Text {
         text: root.label;
-        color: root.active ? rgb(249, 250, 251) : rgb(148, 163, 184);
+        color: root.active ? Palette.tokens.text-strong : Palette.tokens.text-muted;
         font-size: 12px;
         font-weight: root.active ? 700 : 500;
         horizontal-alignment: center;
@@ -85,7 +94,7 @@ export component TabButton inherits Rectangle {
         y: parent.height - 2px;
         width: parent.width;
         height: 2px;
-        background: root.active ? rgb(96, 165, 250) : transparent;
+        background: root.active ? Palette.tokens.preview-border : transparent;
     }
     TouchArea {
         clicked => root.clicked();
@@ -99,7 +108,7 @@ export component NavMenuButton inherits Rectangle {
     callback clicked();
     height: 32px;
     min-width: 58px;
-    background: active ? rgb(61, 66, 75) : transparent;
+    background: active ? Palette.tokens.header-active-bg : transparent;
     border-radius: 3px;
 
     HorizontalBox {
@@ -112,7 +121,7 @@ export component NavMenuButton inherits Rectangle {
         }
         Text {
             text: root.label;
-            color: rgb(226, 232, 240);
+            color: Palette.tokens.text;
             font-size: 12px;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -136,7 +145,7 @@ export component MenuEntry inherits Rectangle {
         text: root.label;
         x: 12px;
         width: parent.width - 24px;
-        color: root.destructive ? rgb(252, 165, 165) : rgb(226, 232, 240);
+        color: root.destructive ? rgb(252, 165, 165) : Palette.tokens.text;
         font-size: 12px;
         vertical-alignment: center;
         overflow: elide;
@@ -152,12 +161,12 @@ export component ModeButton inherits Rectangle {
     callback clicked();
     min-width: 76px;
     height: 26px;
-    background: active ? rgb(59, 130, 246) : rgb(39, 45, 54);
+    background: active ? Palette.tokens.accent : Palette.tokens.row-bg;
     border-radius: 3px;
 
     Text {
         text: root.label;
-        color: root.active ? white : rgb(203, 213, 225);
+        color: root.active ? white : Palette.tokens.text-muted;
         font-size: 11px;
         font-weight: root.active ? 700 : 500;
         horizontal-alignment: center;
@@ -176,9 +185,9 @@ export component CompactButton inherits Rectangle {
     width: 28px;
     height: 24px;
     opacity: enabled ? 1 : 0.45;
-    background: rgb(39, 52, 73);
+    background: Palette.tokens.control-bg;
     border-width: 1px;
-    border-color: rgb(71, 85, 105);
+    border-color: Palette.tokens.border-strong;
     border-radius: 3px;
 
     Icon {
@@ -204,15 +213,15 @@ export component DockHeader inherits Rectangle {
     property <bool> dragging: drag-area.pressed;
 
     height: 24px;
-    background: dragging ? rgb(58, 63, 74) : rgb(43, 47, 56);
+    background: dragging ? Palette.tokens.header-active-bg : Palette.tokens.header-bg;
     border-width: 1px;
-    border-color: rgb(58, 63, 73);
+    border-color: Palette.tokens.border;
 
     Text {
         x: 8px;
         width: parent.width - 34px;
         text: root.title;
-        color: rgb(226, 232, 240);
+        color: Palette.tokens.text;
         font-size: 11px;
         vertical-alignment: center;
         overflow: elide;
@@ -249,7 +258,7 @@ export component HorizontalSplitter inherits Rectangle {
     property <length> origin-y: 0px;
 
     height: 6px;
-    background: handle.pressed || handle.has-hover ? rgb(59, 130, 246) : rgb(38, 42, 50);
+    background: handle.pressed || handle.has-hover ? Palette.tokens.accent : Palette.tokens.header-bg;
 
     handle := TouchArea {
         mouse-cursor: MouseCursor.row-resize;
@@ -270,11 +279,11 @@ export component MenuBarButton inherits Rectangle {
     callback clicked();
     height: 24px;
     width: text-label.preferred-width + 18px;
-    background: active ? rgb(61, 66, 75) : transparent;
+    background: active ? Palette.tokens.header-active-bg : transparent;
 
     text-label := Text {
         text: root.label;
-        color: rgb(226, 232, 240);
+        color: Palette.tokens.text;
         font-size: 12px;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -314,9 +323,9 @@ export component ModalShell inherits Rectangle {
         y: Math.max(18px, (root.height - root.panel-height) / 2);
         width: Math.min(root.panel-width, root.width - 36px);
         height: Math.min(root.panel-height, root.height - 36px);
-        background: rgb(31, 41, 55);
+        background: Palette.tokens.panel-bg;
         border-width: 1px;
-        border-color: rgb(71, 85, 105);
+        border-color: Palette.tokens.border-strong;
         border-radius: 9px;
 
         TouchArea { }
@@ -326,13 +335,13 @@ export component ModalShell inherits Rectangle {
             spacing: 12px;
             Text {
                 text: root.title;
-                color: rgb(249, 250, 251);
+                color: Palette.tokens.text-strong;
                 font-size: 18px;
                 font-weight: 700;
             }
             Text {
                 text: root.subtitle;
-                color: rgb(148, 163, 184);
+                color: Palette.tokens.text-muted;
                 font-size: 12px;
                 wrap: word-wrap;
             }

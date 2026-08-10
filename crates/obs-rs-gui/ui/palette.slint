@@ -1,0 +1,50 @@
+// Every colour the Appearance and Accessibility settings pages can change lives
+// here. Rust owns the presets and pushes one complete token set, so components
+// never branch on a theme name and a new theme is a new value, not new markup.
+export struct ThemeTokens {
+    window-bg: brush,
+    panel-bg: brush,
+    header-bg: brush,
+    header-active-bg: brush,
+    border: brush,
+    border-strong: brush,
+    row-bg: brush,
+    row-selected-bg: brush,
+    control-bg: brush,
+    text: brush,
+    text-strong: brush,
+    text-muted: brush,
+    accent: brush,
+    canvas-bg: brush,
+    preview-border: brush,
+    program-border: brush,
+    meter: brush,
+    meter-muted: brush,
+    warning: brush,
+}
+
+export global Palette {
+    // The default matches the dark preset in `settings.rs` so the UI renders
+    // correctly before Rust pushes the stored theme.
+    in property <ThemeTokens> tokens: {
+        window-bg: rgb(24, 26, 31),
+        panel-bg: rgb(31, 34, 41),
+        header-bg: rgb(43, 47, 56),
+        header-active-bg: rgb(58, 63, 74),
+        border: rgb(55, 60, 69),
+        border-strong: rgb(75, 85, 99),
+        row-bg: rgb(39, 43, 50),
+        row-selected-bg: rgb(51, 73, 105),
+        control-bg: rgb(39, 52, 73),
+        text: rgb(226, 232, 240),
+        text-strong: rgb(249, 250, 251),
+        text-muted: rgb(148, 163, 184),
+        accent: rgb(59, 130, 246),
+        canvas-bg: rgb(0, 0, 0),
+        preview-border: rgb(96, 165, 250),
+        program-border: rgb(248, 113, 113),
+        meter: rgb(34, 197, 94),
+        meter-muted: rgb(127, 29, 29),
+        warning: rgb(251, 191, 36),
+    };
+}

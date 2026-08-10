@@ -263,6 +263,11 @@ impl Profile {
         self.video_format
     }
 
+    /// Replaces the canvas resolution and frame rate used to render this profile.
+    pub const fn set_video_format(&mut self, video_format: VideoFormat) {
+        self.video_format = video_format;
+    }
+
     /// Adds a scene while rejecting duplicate IDs.
     ///
     /// # Errors

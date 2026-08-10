@@ -1,6 +1,7 @@
 import { Button, ComboBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { Icon } from "theme.slint";
 import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
 
 // The canvas widget OBS draws into: a flat dark surface with the rendered
 // frame letterboxed inside it, so the black bars belong to the canvas rather
@@ -11,7 +12,7 @@ component StageCanvas inherits Rectangle {
     in property <bool> program;
     in property <bool> labelled;
 
-    background: rgb(0, 0, 0);
+    background: Palette.tokens.canvas-bg;
     horizontal-stretch: 1;
     vertical-stretch: 1;
 
@@ -31,7 +32,7 @@ component StageCanvas inherits Rectangle {
         Text {
             x: 6px;
             text: root.label;
-            color: root.program ? rgb(248, 113, 113) : rgb(96, 165, 250);
+            color: root.program ? Palette.tokens.program-border : Palette.tokens.preview-border;
             font-size: 10px;
             font-weight: 700;
             vertical-alignment: center;
@@ -65,7 +66,7 @@ export component StagePanel inherits Rectangle {
 
     horizontal-stretch: 1;
     vertical-stretch: 1;
-    background: rgb(24, 26, 31);
+    background: Palette.tokens.window-bg;
 
     VerticalBox {
         padding: 0px;
@@ -73,7 +74,7 @@ export component StagePanel inherits Rectangle {
 
         canvas-area := Rectangle {
             vertical-stretch: 1;
-            background: rgb(24, 26, 31);
+            background: Palette.tokens.window-bg;
             HorizontalBox {
                 padding: 12px;
                 spacing: 8px;
@@ -100,9 +101,9 @@ export component StagePanel inherits Rectangle {
 
         Rectangle {
             height: 24px;
-            background: rgb(31, 34, 41);
+            background: Palette.tokens.panel-bg;
             border-width: 1px;
-            border-color: rgb(45, 49, 58);
+            border-color: Palette.tokens.border;
             // Laid out by hand: the zoom readout depends on the canvas height,
             // so letting its text feed a layout would close a binding loop.
             Icon { x: 8px; y: 6px; name: "remove"; icon-size: 12px; }
@@ -112,7 +113,7 @@ export component StagePanel inherits Rectangle {
                 width: 40px;
                 height: 100%;
                 text: Math.round(root.fit-scale * 100) + "%";
-                color: rgb(203, 213, 225);
+                color: Palette.tokens.text-muted;
                 font-size: 10px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -123,15 +124,15 @@ export component StagePanel inherits Rectangle {
                 y: 2px;
                 width: 148px;
                 height: parent.height - 4px;
-                background: rgb(39, 43, 50);
+                background: Palette.tokens.row-bg;
                 border-width: 1px;
-                border-color: rgb(58, 63, 73);
+                border-color: Palette.tokens.border;
                 Text {
                     x: 6px;
                     width: parent.width - 20px;
                     height: 100%;
                     text: I18n.text.fit_to_window;
-                    color: rgb(203, 213, 225);
+                    color: Palette.tokens.text-muted;
                     font-size: 10px;
                     vertical-alignment: center;
                     overflow: elide;
@@ -147,9 +148,9 @@ export component StagePanel inherits Rectangle {
 
         Rectangle {
             height: 38px;
-            background: rgb(31, 34, 41);
+            background: Palette.tokens.panel-bg;
             border-width: 1px;
-            border-color: rgb(45, 49, 58);
+            border-color: Palette.tokens.border;
             HorizontalBox {
                 padding-left: 8px;
                 padding-right: 8px;
@@ -160,7 +161,7 @@ export component StagePanel inherits Rectangle {
                     text: root.selected-source == ""
                         ? I18n.text.no_source_selected
                         : root.selected-source;
-                    color: rgb(148, 163, 184);
+                    color: Palette.tokens.text-muted;
                     font-size: 11px;
                     vertical-alignment: center;
                     overflow: elide;

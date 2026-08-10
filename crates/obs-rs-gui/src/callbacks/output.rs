@@ -103,6 +103,14 @@ fn install_streaming_callback(
             Ok(message) => {
                 refresh_ui(&ui, &streaming_state, &streaming_renderer);
                 ui.set_status_message(message.into());
+                // "Automatically record when streaming" only ever starts a
+                // recording; stopping the stream leaves it to the user.
+                if ui.get_auto_record_when_streaming()
+                    && streaming_state.borrow().streaming()
+                    && !streaming_state.borrow().recording()
+                {
+                    ui.invoke_toggle_recording();
+                }
             }
             Err(error) => ui.set_status_message(format!("Streaming failed: {error}").into()),
         }

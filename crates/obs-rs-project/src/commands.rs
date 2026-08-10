@@ -4,7 +4,7 @@ use super::{
     validation::{identifier, source_id},
 };
 use obs_rs_config::Config;
-use obs_rs_media::{FrameFilter, FrameTransform};
+use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
 /// Commands that mutate project state through one validated path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectCommand {
@@ -12,6 +12,11 @@ pub enum ProjectCommand {
     AddProfile(Profile),
     /// Selects an existing profile.
     SetActiveProfile { id: String },
+    /// Replaces one profile's canvas resolution and frame rate.
+    SetProfileVideoFormat {
+        profile: String,
+        format: VideoFormat,
+    },
     /// Adds a scene to a profile.
     AddScene { profile: String, scene: SceneSpec },
     /// Adds a source to a profile scene.
@@ -96,6 +101,9 @@ impl Project {
         match command {
             ProjectCommand::AddProfile(profile) => self.add_profile(profile),
             ProjectCommand::SetActiveProfile { id } => self.set_active_profile(&id),
+            ProjectCommand::SetProfileVideoFormat { profile, format } => {
+                set_profile_video_format(self, &profile, format)
+            }
             ProjectCommand::AddScene { profile, scene } => {
                 let profile_id = identifier(&profile, "profile id")?;
                 let profile = self
@@ -190,6 +198,19 @@ impl Project {
             } => remove_source(self, &profile, &scene, &source),
         }
     }
+}
+
+fn set_profile_video_format(
+    project: &mut Project,
+    profile: &str,
+    format: VideoFormat,
+) -> Result<(), ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    project
+        .profile_mut(&profile_id)
+        .ok_or(ProjectError::UnknownProfile(profile_id))?
+        .set_video_format(format);
+    Ok(())
 }
 
 fn scene_mut<'a>(

@@ -3,6 +3,7 @@ import { MenuBarButton, MenuEntry } from "theme.slint";
 import { ProfileRow } from "models.slint";
 import { LocaleOption } from "models.slint";
 import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
 
 // Mirrors the OBS menu bar: a plain text strip flush with the window edge, no
 // branding or iconography. Each dropdown anchors to the x of its own button so
@@ -18,7 +19,7 @@ export component AppNavbar inherits Rectangle {
 
     property <int> open-menu: 0;
     height: 26px;
-    background: rgb(39, 43, 50);
+    background: Palette.tokens.row-bg;
     z: 10;
 
     HorizontalBox {
@@ -80,9 +81,9 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         width: 224px;
         height: 200px;
-        background: rgb(39, 43, 50);
+        background: Palette.tokens.row-bg;
         border-width: 1px;
-        border-color: rgb(75, 85, 99);
+        border-color: Palette.tokens.border-strong;
         z: 30;
         VerticalBox {
             padding: 6px;
@@ -92,7 +93,7 @@ export component AppNavbar inherits Rectangle {
             MenuEntry { label: I18n.text.menu_save; clicked => { root.menu-action("save-project"); root.open-menu = 0; } }
             MenuEntry { label: I18n.text.menu_recover_project; clicked => { root.menu-action("recover-project"); root.open-menu = 0; } }
             MenuEntry { label: I18n.text.menu_export_diagnostics; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
-            Rectangle { height: 1px; background: rgb(75, 85, 99); }
+            Rectangle { height: 1px; background: Palette.tokens.border-strong; }
             MenuEntry { label: I18n.text.menu_settings; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
             MenuEntry { label: I18n.text.menu_exit; destructive: true; clicked => { root.menu-action("exit"); root.open-menu = 0; } }
         }
@@ -102,9 +103,9 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         width: 224px;
         height: 108px;
-        background: rgb(39, 43, 50);
+        background: Palette.tokens.row-bg;
         border-width: 1px;
-        border-color: rgb(75, 85, 99);
+        border-color: Palette.tokens.border-strong;
         z: 30;
         VerticalBox {
             padding: 6px;
@@ -119,9 +120,9 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         width: 224px;
         height: 80px;
-        background: rgb(39, 43, 50);
+        background: Palette.tokens.row-bg;
         border-width: 1px;
-        border-color: rgb(75, 85, 99);
+        border-color: Palette.tokens.border-strong;
         z: 30;
         VerticalBox {
             padding: 6px;
@@ -135,9 +136,9 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         width: 224px;
         height: 164px;
-        background: rgb(39, 43, 50);
+        background: Palette.tokens.row-bg;
         border-width: 1px;
-        border-color: rgb(75, 85, 99);
+        border-color: Palette.tokens.border-strong;
         z: 30;
         VerticalBox {
             padding: 6px;
@@ -154,9 +155,9 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         width: 224px;
         height: 140px;
-        background: rgb(39, 43, 50);
+        background: Palette.tokens.row-bg;
         border-width: 1px;
-        border-color: rgb(75, 85, 99);
+        border-color: Palette.tokens.border-strong;
         z: 30;
         VerticalBox {
             padding: 6px;
@@ -165,7 +166,7 @@ export component AppNavbar inherits Rectangle {
                 label: profile.name;
                 clicked => { root.select-profile(profile.id); root.open-menu = 0; }
             }
-            Rectangle { height: 1px; background: rgb(75, 85, 99); }
+            Rectangle { height: 1px; background: Palette.tokens.border-strong; }
             MenuEntry { label: I18n.text.menu_manage_profiles; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
         }
     }
@@ -174,9 +175,9 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         width: 224px;
         height: 108px;
-        background: rgb(39, 43, 50);
+        background: Palette.tokens.row-bg;
         border-width: 1px;
-        border-color: rgb(75, 85, 99);
+        border-color: Palette.tokens.border-strong;
         z: 30;
         VerticalBox {
             padding: 6px;
@@ -191,9 +192,9 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         width: 224px;
         height: 108px;
-        background: rgb(39, 43, 50);
+        background: Palette.tokens.row-bg;
         border-width: 1px;
-        border-color: rgb(75, 85, 99);
+        border-color: Palette.tokens.border-strong;
         z: 30;
         VerticalBox {
             padding: 6px;
@@ -208,9 +209,9 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         width: 224px;
         height: 80px;
-        background: rgb(39, 43, 50);
+        background: Palette.tokens.row-bg;
         border-width: 1px;
-        border-color: rgb(75, 85, 99);
+        border-color: Palette.tokens.border-strong;
         z: 30;
         VerticalBox {
             padding: 6px;

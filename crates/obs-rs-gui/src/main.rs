@@ -5,7 +5,7 @@
 
 use std::{cell::RefCell, error::Error, rc::Rc};
 
-use obs_rs_ui::DesktopState;
+use obs_rs_ui::{DesktopState, UiCommand};
 use slint::ComponentHandle;
 
 mod callbacks;
@@ -14,6 +14,7 @@ mod i18n;
 mod output;
 mod preview;
 mod refresh;
+mod settings;
 mod view;
 
 #[cfg(test)]
@@ -26,15 +27,17 @@ pub(crate) use callbacks::{
     source_filters_document, source_transform_document, toggle_source_locked_and_refresh,
     toggle_source_visibility_and_refresh,
 };
-pub(crate) use callbacks::{install_callbacks, start_preview_timer};
+pub(crate) use callbacks::{install_callbacks, install_settings_window, start_preview_timer};
 pub(crate) use fixtures::{initial_project, platform_capture_summary, source_settings};
 pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewRenderer};
 pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames, refresh_ui,
 };
+pub(crate) use settings::AppSettings;
 pub(crate) use view::{
-    I18n, LocaleOption, MainWindow, MixerRow, ProfileRow, SceneRow, SourceRow, UiText,
+    I18n, LocaleOption, MainWindow, MixerRow, Palette, ProfileRow, SceneRow, SettingsText,
+    SettingsWindow, SourceRow, ThemeTokens, UiText,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -43,10 +46,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         i_slint_backend_testing::init_no_event_loop();
     }
     let ui = MainWindow::new()?;
-    ui.set_project_path("obs-rs-project.txt".into());
-    ui.set_diagnostics_path("obs-rs-diagnostics.obsrdg".into());
-    ui.set_recording_path("obs-rs-recording.y4m".into());
-    ui.set_streaming_address("127.0.0.1:9000".into());
+    // Stored settings own the file paths and the stream destination, so they
+    // are loaded before anything reads them.
+    let settings = AppSettings::load(std::path::Path::new(settings::SETTINGS_FILE));
     ui.set_new_source_kind("test_pattern".into());
     ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
@@ -59,10 +61,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
     let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SetLocale {
+            locale: settings.ui_locale(),
+        })
+        .map_err(|error| format!("stored language: {error}"))?;
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SetAudioFormat {
+            sample_rate: settings.sample_rate_hz(),
+            channels: settings.channel_count(),
+        })
+        .map_err(|error| format!("stored audio format: {error}"))?;
 
     refresh_ui(&ui, &state, &renderer);
     refresh_output_ui(&ui, &output);
     install_callbacks(&ui, &state, &renderer, &output);
+    // Keeps the settings window alive for the whole session; dropping the
+    // controller would close it.
+    let _settings_window = install_settings_window(&ui, &state, &renderer, settings)?;
 
     if smoke {
         return Ok(());

@@ -6,7 +6,9 @@ import { StagePanel } from "stage.slint";
 import { DockSlot } from "dock_slot.slint";
 import { HorizontalSplitter } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
+import { Palette } from "palette.slint";
 import {
+    ConfirmDialog,
     OutputDialog,
     ProjectDialog,
     RenameSceneDialog,
@@ -16,13 +18,15 @@ import {
     SourcePropertiesDialog,
 } from "dialogs.slint";
 
-export { I18n, UiText } from "i18n.slint";
+export { I18n, SettingsText, UiText } from "i18n.slint";
+export { Palette, ThemeTokens } from "palette.slint";
+export { SettingsWindow } from "settings_window.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
         height: 900px;
         title: I18n.text.app_name;
-        background: rgb(24, 26, 31);
+        background: Palette.tokens.window-bg;
 
         in property <string> project-title;
         in property <string> profile-name;
@@ -71,6 +75,17 @@ export component MainWindow inherits Window {
         in-out property <string> new-source-kind;
         in-out property <string> new-source-name;
 
+        // Driven by the settings window; empty means the action is unbound.
+        in property <string> hotkey-swap;
+        in property <string> hotkey-start-recording;
+        in property <string> hotkey-stop-recording;
+        in property <string> hotkey-start-streaming;
+        in property <string> hotkey-stop-streaming;
+        in property <bool> confirm-start-stream;
+        in property <bool> confirm-stop-stream;
+        in property <bool> confirm-stop-recording;
+        in property <bool> auto-record-when-streaming;
+
         // 0 = studio mode (preview + program), 1 = the single-canvas default.
         property <int> view-mode: 1;
         property <bool> show-sources: true;
@@ -78,10 +93,11 @@ export component MainWindow inherits Window {
         property <bool> show-mixer: true;
         property <bool> show-transitions: true;
         property <bool> show-controls: true;
-        property <bool> settings-open: false;
         // 1 project · 2 add scene · 3 add source · 4 output · 5 rename scene
         // · 6 source properties · 7 source filters
         property <int> active-modal: 0;
+        // 0 none · 1 start stream · 2 stop stream · 3 stop recording
+        property <int> pending-confirm: 0;
         property <length> dock-height: 248px;
 
         callback swap-scenes();
@@ -112,6 +128,7 @@ export component MainWindow inherits Window {
         callback add-scene(string, string);
         callback add-source(string, string, string);
         callback move-panel(int, int);
+        callback open-settings-window();
 
         // A mode of -1 means "toggle studio mode", which is how both the View
         // menu and the controls dock drive the canvas.
@@ -119,10 +136,89 @@ export component MainWindow inherits Window {
             root.view-mode = mode == -1 ? (root.view-mode == 0 ? 1 : 0) : mode;
         }
 
+        // Output actions route through these so the General settings page can
+        // insert a confirmation without every caller knowing about it.
+        function request-streaming() {
+            if (!root.streaming && root.confirm-start-stream) {
+                root.pending-confirm = 1;
+            } else if (root.streaming && root.confirm-stop-stream) {
+                root.pending-confirm = 2;
+            } else {
+                root.toggle-streaming();
+            }
+        }
+        function request-recording() {
+            if (root.recording && root.confirm-stop-recording) {
+                root.pending-confirm = 3;
+            } else {
+                root.toggle-recording();
+            }
+        }
+        function resolve-confirm() {
+            if (root.pending-confirm == 3) {
+                root.toggle-recording();
+            } else {
+                root.toggle-streaming();
+            }
+            root.pending-confirm = 0;
+        }
+
+        // Rebuilds the "Ctrl+Shift+R" form the settings window stores, so a
+        // binding is compared as text rather than as a compiled key list.
+        pure function key-name(text: string) -> string {
+            text == " " ? "Space"
+                : text == Key.Return ? "Enter"
+                : text == Key.Tab ? "Tab"
+                : text == Key.F1 ? "F1"
+                : text == Key.F2 ? "F2"
+                : text == Key.F3 ? "F3"
+                : text == Key.F4 ? "F4"
+                : text == Key.F5 ? "F5"
+                : text == Key.F6 ? "F6"
+                : text == Key.F7 ? "F7"
+                : text == Key.F8 ? "F8"
+                : text == Key.F9 ? "F9"
+                : text == Key.F10 ? "F10"
+                : text == Key.F11 ? "F11"
+                : text == Key.F12 ? "F12"
+                : text.to-uppercase();
+        }
+        pure function hotkey-label(event: KeyEvent) -> string {
+            (event.modifiers.control ? "Ctrl+" : "")
+                + (event.modifiers.shift ? "Shift+" : "")
+                + (event.modifiers.alt ? "Alt+" : "")
+                + root.key-name(event.text);
+        }
+
     FocusScope {
         key-pressed(event) => {
-            if (event.text == Key.Space) {
-                swap-scenes();
+            // An unbound action stores an empty string, which must never match.
+            if (root.hotkey-swap != "" && root.hotkey-label(event) == root.hotkey-swap) {
+                root.swap-scenes();
+                return accept;
+            }
+            if (root.hotkey-start-recording != ""
+                && root.hotkey-label(event) == root.hotkey-start-recording
+                && !root.recording) {
+                root.request-recording();
+                return accept;
+            }
+            if (root.hotkey-stop-recording != ""
+                && root.hotkey-label(event) == root.hotkey-stop-recording
+                && root.recording) {
+                root.request-recording();
+                return accept;
+            }
+            if (root.hotkey-start-streaming != ""
+                && root.hotkey-label(event) == root.hotkey-start-streaming
+                && !root.streaming) {
+                root.request-streaming();
+                return accept;
+            }
+            if (root.hotkey-stop-streaming != ""
+                && root.hotkey-label(event) == root.hotkey-stop-streaming
+                && root.streaming) {
+                root.request-streaming();
                 return accept;
             }
             reject
@@ -156,7 +252,7 @@ export component MainWindow inherits Window {
                     } else if action == "export-diagnostics" {
                         root.export-diagnostics();
                     } else if action == "settings" {
-                        root.settings-open = true;
+                        root.open-settings-window();
                     } else if action == "source-properties" {
                         root.active-modal = 6;
                     } else if action == "source-filters" {
@@ -203,7 +299,7 @@ export component MainWindow inherits Window {
 
             Rectangle {
                 height: root.dock-height;
-                background: rgb(24, 26, 31);
+                background: Palette.tokens.window-bg;
                 HorizontalBox {
                     padding: 0px;
                     spacing: 1px;
@@ -224,7 +320,6 @@ export component MainWindow inherits Window {
                         transition: root.transition;
                         recording: root.recording;
                         streaming: root.streaming;
-                        settings-open <=> root.settings-open;
                         move-panel(kind, delta) => { root.move-panel(kind, delta); }
                         open-modal(modal) => { root.active-modal = modal; }
                         select-preview(id) => { root.select-preview(id); }
@@ -239,8 +334,9 @@ export component MainWindow inherits Window {
                         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
                         cut-transition() => { root.cut-transition(); }
                         fade-transition() => { root.fade-transition(); }
-                        toggle-recording() => { root.toggle-recording(); }
-                        toggle-streaming() => { root.toggle-streaming(); }
+                        toggle-recording() => { root.request-recording(); }
+                        toggle-streaming() => { root.request-streaming(); }
+                        open-settings-window() => { root.open-settings-window(); }
                         set-view-mode(mode) => { root.apply-view-mode(mode); }
                     }
                 }
@@ -259,20 +355,25 @@ export component MainWindow inherits Window {
 
     // Modals live at the window root so their scrim covers the whole window
     // instead of being clipped to the dock that opened them.
+    ConfirmDialog {
+        open: root.pending-confirm != 0;
+        locale: root.locale;
+        message: root.pending-confirm == 1
+            ? I18n.text.settings_ui.prompt_start_stream
+            : root.pending-confirm == 2
+                ? I18n.text.settings_ui.prompt_stop_stream
+                : I18n.text.settings_ui.prompt_stop_recording;
+        close => { root.pending-confirm = 0; }
+        accepted => { root.resolve-confirm(); }
+    }
     ProjectDialog {
-        open: root.active-modal == 1 || root.settings-open;
+        open: root.active-modal == 1;
         locale: root.locale;
         project-path <=> root.project-path;
         diagnostics-path <=> root.diagnostics-path;
         save-project() => { root.save-project(); }
-        close => {
-            root.active-modal = 0;
-            root.settings-open = false;
-        }
-        accepted => {
-            root.active-modal = 0;
-            root.settings-open = false;
-        }
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
     }
     SceneDialog {
         open: root.active-modal == 2;

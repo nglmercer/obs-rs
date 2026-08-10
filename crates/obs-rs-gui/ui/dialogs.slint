@@ -59,6 +59,21 @@ export component SceneDialog inherits ModalShell {
     }
 }
 
+// Guards the output actions the General settings page can require confirmation
+// for. The window owns which action is pending, so this stays a plain prompt.
+export component ConfirmDialog inherits ModalShell {
+    in property <string> locale;
+    in property <string> message;
+
+    title: I18n.text.settings;
+    subtitle: message;
+    accept-label: I18n.text.settings_ui.ok;
+    cancel-label: I18n.text.cancel;
+    panel-height: 190px;
+
+    Rectangle { }
+}
+
 export component RenameSceneDialog inherits ModalShell {
     in property <string> locale;
     in-out property <string> scene-name;

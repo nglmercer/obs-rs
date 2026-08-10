@@ -390,3 +390,63 @@ fn locale_parser_accepts_case_and_region_variants() {
     assert_eq!(UiLocale::from_code("  english  "), Some(UiLocale::English));
     assert_eq!(UiLocale::from_code("fr-FR"), None);
 }
+
+#[test]
+fn set_audio_format_rebuilds_the_mixer_and_keeps_channel_state() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SetMixerGain {
+            id: "mic".to_owned(),
+            gain_milli: 250,
+        })
+        .expect("gain applies");
+    state
+        .dispatch(UiCommand::ToggleMixerMute {
+            id: "desktop".to_owned(),
+        })
+        .expect("mute applies");
+
+    state
+        .dispatch(UiCommand::SetAudioFormat {
+            sample_rate: 44_100,
+            channels: 1,
+        })
+        .expect("audio format applies");
+
+    assert_eq!(state.audio_format().sample_rate(), 44_100);
+    assert_eq!(state.audio_format().channels(), 1);
+    let channels = state.mixer_channels().collect::<Vec<_>>();
+    let desktop = channels
+        .iter()
+        .find(|channel| channel.id() == "desktop")
+        .expect("desktop channel survives the rebuild");
+    let mic = channels
+        .iter()
+        .find(|channel| channel.id() == "mic")
+        .expect("mic channel survives the rebuild");
+    assert!(desktop.muted());
+    assert_eq!(mic.gain_milli(), 250);
+
+    // The rebuilt mixer still resolves the same UI channel labels.
+    state
+        .dispatch(UiCommand::SetMixerGain {
+            id: "mic".to_owned(),
+            gain_milli: 900,
+        })
+        .expect("gain still applies after the rebuild");
+}
+
+#[test]
+fn set_audio_format_rejects_an_unsupported_format() {
+    let mut state = DesktopState::new(project());
+
+    let error = state
+        .dispatch(UiCommand::SetAudioFormat {
+            sample_rate: 0,
+            channels: 2,
+        })
+        .expect_err("a zero sample rate is rejected");
+
+    assert!(matches!(error, UiError::Audio(_)));
+    assert_eq!(state.audio_format().sample_rate(), 48_000);
+}

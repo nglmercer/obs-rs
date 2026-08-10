@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+
+use obs_rs_audio::{AudioFormat, AudioMixer};
 use obs_rs_media::FrameTransition;
 
 use super::{
@@ -125,6 +128,32 @@ impl DesktopState {
             .get_mut(id)
             .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
         channel.gain_milli = gain_milli;
+        Ok(())
+    }
+
+    /// Rebuilds the mixer at a new format, carrying every channel's gain and
+    /// mute across so changing the sample rate does not reset the desk.
+    pub(crate) fn set_audio_format(
+        &mut self,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<(), UiError> {
+        let format = AudioFormat::new(sample_rate, channels).map_err(UiError::Audio)?;
+        if format == self.audio_mixer.format() {
+            return Ok(());
+        }
+        let mut mixer = AudioMixer::new(format);
+        let mut sources = BTreeMap::new();
+        for (id, channel) in &self.mixer_channels {
+            let gain = f32::from(channel.gain_milli) / 1_000.0;
+            let source = mixer.add_source(gain).map_err(UiError::Audio)?;
+            mixer
+                .set_muted(source, channel.muted)
+                .map_err(UiError::Audio)?;
+            sources.insert(id.clone(), source);
+        }
+        self.audio_mixer = mixer;
+        self.mixer_sources = sources;
         Ok(())
     }
 

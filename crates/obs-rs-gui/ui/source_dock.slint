@@ -2,6 +2,7 @@ import { ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { SourceRow } from "models.slint";
 import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
 
 export component SourceDock inherits Rectangle {
     in property <string> locale;
@@ -17,9 +18,9 @@ export component SourceDock inherits Rectangle {
     callback move-source(string, int);
     callback remove-source(string);
 
-    background: rgb(31, 34, 41);
+    background: Palette.tokens.panel-bg;
     border-width: 1px;
-    border-color: rgb(55, 60, 69);
+    border-color: Palette.tokens.border;
     VerticalBox {
         padding: 0px;
         spacing: 0px;
@@ -42,9 +43,9 @@ export component SourceDock inherits Rectangle {
                         spacing: 1px;
                     for source in source-rows : Rectangle {
                         height: 36px;
-                        background: source.selected ? rgb(51, 73, 105) : rgb(39, 43, 50);
+                        background: source.selected ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
                         border-width: 1px;
-                        border-color: rgb(55, 60, 69);
+                        border-color: Palette.tokens.border;
                         TouchArea {
                             clicked => select-source(source.id);
                         }
@@ -57,7 +58,7 @@ export component SourceDock inherits Rectangle {
                                 horizontal-stretch: 1;
                                 Text {
                                     text: source.name;
-                                    color: rgb(226, 232, 240);
+                                    color: Palette.tokens.text;
                                     font-size: 11px;
                                     overflow: elide;
                                 }

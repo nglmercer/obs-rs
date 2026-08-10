@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 
-use obs_rs_audio::{AudioBuffer, AudioMixer, AudioSourceId};
+use obs_rs_audio::{AudioBuffer, AudioFormat, AudioMixer, AudioSourceId};
 use obs_rs_media::{FrameTransition, Timestamp};
 use obs_rs_project::{Project, ProjectCommand, ProjectFileStore, ProjectSession};
 use obs_rs_util::Identifier;
@@ -117,6 +117,13 @@ impl DesktopState {
                 "mixer gain updated"
             }
             UiCommand::ToggleMixerMute { id } => self.toggle_mixer_mute(&id)?,
+            UiCommand::SetAudioFormat {
+                sample_rate,
+                channels,
+            } => {
+                self.set_audio_format(sample_rate, channels)?;
+                "audio format updated"
+            }
             UiCommand::StartRecording => self.set_recording(true)?,
             UiCommand::StopRecording => self.set_recording(false)?,
             UiCommand::StartStreaming => self.set_streaming(true)?,
@@ -271,6 +278,12 @@ impl DesktopState {
     /// Returns mixer channels in deterministic display order.
     pub fn mixer_channels(&self) -> impl Iterator<Item = &MixerChannel> {
         self.mixer_channels.values()
+    }
+
+    /// Returns the mixer's current sample rate and channel count.
+    #[must_use]
+    pub const fn audio_format(&self) -> AudioFormat {
+        self.audio_mixer.format()
     }
 
     /// Mixes one UI-labeled set of audio inputs and updates the visible peak

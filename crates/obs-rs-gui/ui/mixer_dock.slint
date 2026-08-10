@@ -2,6 +2,7 @@ import { Button, ScrollView, HorizontalBox, VerticalBox, Slider } from "std-widg
 import { CompactButton, DockHeader } from "theme.slint";
 import { MixerRow } from "models.slint";
 import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
 
 export component MixerDock inherits Rectangle {
     in property <string> locale;
@@ -11,9 +12,9 @@ export component MixerDock inherits Rectangle {
     callback set-mixer-gain(string, int);
     callback toggle-mixer-mute(string);
 
-    background: rgb(31, 34, 41);
+    background: Palette.tokens.panel-bg;
     border-width: 1px;
-    border-color: rgb(55, 60, 69);
+    border-color: Palette.tokens.border;
     VerticalBox {
         padding: 0px;
         spacing: 0px;
@@ -36,9 +37,9 @@ export component MixerDock inherits Rectangle {
                         spacing: 1px;
                     for channel in mixer-rows : Rectangle {
                         height: 78px;
-                        background: rgb(39, 43, 50);
+                        background: Palette.tokens.row-bg;
                         border-width: 1px;
-                        border-color: rgb(55, 60, 69);
+                        border-color: Palette.tokens.border;
                         VerticalBox {
                             padding: 7px;
                             spacing: 3px;
@@ -46,14 +47,14 @@ export component MixerDock inherits Rectangle {
                                 spacing: 5px;
                                 Text {
                                     text: channel.name;
-                                    color: rgb(226, 232, 240);
+                                    color: Palette.tokens.text;
                                     font-size: 11px;
                                     horizontal-stretch: 1;
                                     overflow: elide;
                                 }
                                 Text {
                                     text: channel.muted ? "MUTE" : "0.0 dB";
-                                    color: rgb(148, 163, 184);
+                                    color: Palette.tokens.text-muted;
                                     font-size: 9px;
                                 }
                             }
@@ -67,11 +68,11 @@ export component MixerDock inherits Rectangle {
                             Rectangle {
                                 width: 100%;
                                 height: 7px;
-                                background: rgb(15, 23, 42);
+                                background: Palette.tokens.window-bg;
                                 Rectangle {
                                     width: channel.peak * 100px;
                                     height: 100%;
-                                    background: channel.muted ? rgb(127, 29, 29) : rgb(34, 197, 94);
+                                    background: channel.muted ? Palette.tokens.meter-muted : Palette.tokens.meter;
                                 }
                             }
                             HorizontalBox {

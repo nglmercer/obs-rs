@@ -1,0 +1,274 @@
+import { Button, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { CategoryRow } from "settings_widgets.slint";
+import {
+    AccessibilityPage,
+    AdvancedPage,
+    AppearancePage,
+    AudioPage,
+    GeneralPage,
+    HotkeysPage,
+    OutputPage,
+    StreamPage,
+    VideoPage,
+} from "settings_pages.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// A real top-level window, not a modal inside the main one, so it can be moved,
+// resized, and left open beside the studio the way the OBS settings window is.
+//
+// Every editable value here is *draft* state: the window mutates its own copy
+// and only pushes it to the application on Apply or OK, which is what makes
+// Cancel meaningful.
+export component SettingsWindow inherits Window {
+    title: I18n.text.settings_ui.window_title;
+    width: 1020px;
+    height: 680px;
+    background: Palette.tokens.window-bg;
+
+    in-out property <int> category: 0;
+    in-out property <bool> dirty: false;
+
+    // General
+    in property <[string]> language-names;
+    in-out property <int> language-index;
+    in-out property <bool> confirm-start-stream;
+    in-out property <bool> confirm-stop-stream;
+    in-out property <bool> confirm-stop-recording;
+    in-out property <bool> auto-record-when-streaming;
+    // Appearance
+    in property <[string]> theme-names;
+    in-out property <int> theme-index;
+    // Stream / Output
+    in-out property <string> streaming-address;
+    in-out property <string> recording-path;
+    in property <string> recording-format;
+    // Audio
+    in property <[string]> sample-rate-names;
+    in-out property <int> sample-rate-index;
+    in property <[string]> channel-names;
+    in-out property <int> channel-index;
+    in property <string> devices-summary;
+    // Video
+    in property <[string]> resolution-names;
+    in-out property <int> base-resolution-index;
+    in property <string> output-resolution;
+    in property <[string]> frame-rate-names;
+    in-out property <int> frame-rate-index;
+    // Hotkeys
+    in-out property <string> hotkey-swap;
+    in-out property <string> hotkey-start-recording;
+    in-out property <string> hotkey-stop-recording;
+    in-out property <string> hotkey-start-streaming;
+    in-out property <string> hotkey-stop-streaming;
+    // Accessibility
+    in-out property <string> preview-border-color;
+    in-out property <string> program-border-color;
+    in property <brush> preview-swatch;
+    in property <brush> program-swatch;
+    // Advanced
+    in-out property <string> project-path;
+    in-out property <string> diagnostics-path;
+
+    callback apply-settings();
+    callback accept-settings();
+    callback cancel-settings();
+    // Appearance and language preview live immediately so the choice is visible
+    // before the user commits it.
+    callback preview-theme(int);
+    callback preview-language(int);
+
+    HorizontalLayout {
+        padding: 10px;
+        spacing: 10px;
+
+        Rectangle {
+            width: 208px;
+            background: Palette.tokens.panel-bg;
+            border-width: 1px;
+            border-color: Palette.tokens.border;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 2px;
+                alignment: start;
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_general;
+                    icon-name: "settings";
+                    active: root.category == 0;
+                    clicked => { root.category = 0; }
+                }
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_appearance;
+                    icon-name: "appearance";
+                    active: root.category == 1;
+                    clicked => { root.category = 1; }
+                }
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_stream;
+                    icon-name: "stream";
+                    active: root.category == 2;
+                    clicked => { root.category = 2; }
+                }
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_output;
+                    icon-name: "output";
+                    active: root.category == 3;
+                    clicked => { root.category = 3; }
+                }
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_audio;
+                    icon-name: "audio";
+                    active: root.category == 4;
+                    clicked => { root.category = 4; }
+                }
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_video;
+                    icon-name: "video";
+                    active: root.category == 5;
+                    clicked => { root.category = 5; }
+                }
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_hotkeys;
+                    icon-name: "hotkeys";
+                    active: root.category == 6;
+                    clicked => { root.category = 6; }
+                }
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_accessibility;
+                    icon-name: "accessibility";
+                    active: root.category == 7;
+                    clicked => { root.category = 7; }
+                }
+                CategoryRow {
+                    label: I18n.text.settings_ui.cat_advanced;
+                    icon-name: "advanced";
+                    active: root.category == 8;
+                    clicked => { root.category = 8; }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 10px;
+            horizontal-stretch: 1;
+
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding-right: 12px;
+                    alignment: start;
+                    if root.category == 0 : GeneralPage {
+                        language-names: root.language-names;
+                        language-index: root.language-index;
+                        confirm-start-stream <=> root.confirm-start-stream;
+                        confirm-stop-stream <=> root.confirm-stop-stream;
+                        confirm-stop-recording <=> root.confirm-stop-recording;
+                        auto-record-when-streaming <=> root.auto-record-when-streaming;
+                        select-language(index) => {
+                            root.language-index = index;
+                            root.dirty = true;
+                            root.preview-language(index);
+                        }
+                        changed => { root.dirty = true; }
+                    }
+                    if root.category == 1 : AppearancePage {
+                        theme-names: root.theme-names;
+                        theme-index: root.theme-index;
+                        select-theme(index) => {
+                            root.theme-index = index;
+                            root.dirty = true;
+                            root.preview-theme(index);
+                        }
+                    }
+                    if root.category == 2 : StreamPage {
+                        streaming-address <=> root.streaming-address;
+                        changed => { root.dirty = true; }
+                    }
+                    if root.category == 3 : OutputPage {
+                        recording-path <=> root.recording-path;
+                        recording-format: root.recording-format;
+                        changed => { root.dirty = true; }
+                    }
+                    if root.category == 4 : AudioPage {
+                        sample-rate-names: root.sample-rate-names;
+                        sample-rate-index: root.sample-rate-index;
+                        channel-names: root.channel-names;
+                        channel-index: root.channel-index;
+                        devices-summary: root.devices-summary;
+                        select-sample-rate(index) => {
+                            root.sample-rate-index = index;
+                            root.dirty = true;
+                        }
+                        select-channels(index) => {
+                            root.channel-index = index;
+                            root.dirty = true;
+                        }
+                    }
+                    if root.category == 5 : VideoPage {
+                        resolution-names: root.resolution-names;
+                        base-resolution-index: root.base-resolution-index;
+                        output-resolution: root.output-resolution;
+                        frame-rate-names: root.frame-rate-names;
+                        frame-rate-index: root.frame-rate-index;
+                        select-base-resolution(index) => {
+                            root.base-resolution-index = index;
+                            root.dirty = true;
+                        }
+                        select-frame-rate(index) => {
+                            root.frame-rate-index = index;
+                            root.dirty = true;
+                        }
+                    }
+                    if root.category == 6 : HotkeysPage {
+                        hotkey-swap <=> root.hotkey-swap;
+                        hotkey-start-recording <=> root.hotkey-start-recording;
+                        hotkey-stop-recording <=> root.hotkey-stop-recording;
+                        hotkey-start-streaming <=> root.hotkey-start-streaming;
+                        hotkey-stop-streaming <=> root.hotkey-stop-streaming;
+                        changed => { root.dirty = true; }
+                    }
+                    if root.category == 7 : AccessibilityPage {
+                        preview-border-color <=> root.preview-border-color;
+                        program-border-color <=> root.program-border-color;
+                        preview-swatch: root.preview-swatch;
+                        program-swatch: root.program-swatch;
+                        changed => { root.dirty = true; }
+                    }
+                    if root.category == 8 : AdvancedPage {
+                        project-path <=> root.project-path;
+                        diagnostics-path <=> root.diagnostics-path;
+                        changed => { root.dirty = true; }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                height: 32px;
+                spacing: 8px;
+                Text {
+                    text: root.dirty ? I18n.text.settings_ui.unsaved_changes : "";
+                    color: Palette.tokens.warning;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: I18n.text.settings_ui.ok;
+                    width: 96px;
+                    clicked => { root.accept-settings(); }
+                }
+                Button {
+                    text: I18n.text.settings_ui.apply;
+                    width: 96px;
+                    enabled: root.dirty;
+                    clicked => { root.apply-settings(); }
+                }
+                Button {
+                    text: I18n.text.settings_ui.cancel;
+                    width: 96px;
+                    clicked => { root.cancel-settings(); }
+                }
+            }
+        }
+    }
+}

@@ -1,6 +1,8 @@
 use super::i18n::catalog;
 use super::refresh::transition_label_for_locale;
-use super::{initial_project, refresh_ui, MainWindow, OutputRuntime, PreviewRenderer};
+use super::{
+    initial_project, refresh_ui, I18n, MainWindow, OutputRuntime, PreviewRenderer, SettingsWindow,
+};
 use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::encode_png;
 use obs_rs_project::{ProjectCommand, SceneSpec};
@@ -193,4 +195,34 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert!(path.metadata().expect("snapshot metadata").len() > 0);
     std::fs::remove_file(path).expect("remove snapshot");
     ui.hide().expect("testing window should hide");
+
+    // The settings window is a second top-level window with its own globals, so
+    // it is exercised here rather than in its own test: only one test may own
+    // the platform backend.
+    render_every_settings_category();
+}
+
+/// Renders each settings category so a page that fails to lay out — an empty
+/// model, a binding loop, a missing catalog field — fails the suite.
+fn render_every_settings_category() {
+    let window = SettingsWindow::new().expect("settings window should instantiate");
+    crate::callbacks::populate_settings_models(&window);
+    window.show().expect("settings window should show");
+    for locale in UiLocale::supported() {
+        window
+            .global::<I18n>()
+            .set_text(crate::i18n::catalog(*locale));
+        for category in 0..9 {
+            window.set_category(category);
+            let snapshot = window
+                .window()
+                .take_snapshot()
+                .expect("settings category should render");
+            assert!(
+                snapshot.width() > 0 && snapshot.height() > 0,
+                "settings category {category} rendered an empty surface"
+            );
+        }
+    }
+    window.hide().expect("settings window should hide");
 }

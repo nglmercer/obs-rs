@@ -280,3 +280,40 @@ fn project_file_store_recovers_a_valid_unswitched_temporary_file() {
     assert!(!final_path.exists());
     std::fs::remove_file(temp_path).expect("remove recovery fixture");
 }
+
+#[test]
+fn set_profile_video_format_command_applies_and_round_trips() {
+    let mut project = project();
+    let updated =
+        VideoFormat::new(1920, 1080, FrameRate::new(60, 1).expect("rate")).expect("format");
+
+    project
+        .apply(ProjectCommand::SetProfileVideoFormat {
+            profile: "live".to_owned(),
+            format: updated,
+        })
+        .expect("video format applies");
+
+    let profile = project.profiles().next().expect("profile");
+    assert_eq!(profile.video_format(), updated);
+
+    let decoded = Project::parse(&project.serialize()).expect("parse project");
+    assert_eq!(
+        decoded.profiles().next().expect("profile").video_format(),
+        updated
+    );
+}
+
+#[test]
+fn set_profile_video_format_command_rejects_an_unknown_profile() {
+    let mut project = project();
+
+    let error = project
+        .apply(ProjectCommand::SetProfileVideoFormat {
+            profile: "missing".to_owned(),
+            format: format(),
+        })
+        .expect_err("unknown profile is rejected");
+
+    assert!(matches!(error, ProjectError::UnknownProfile(_)));
+}

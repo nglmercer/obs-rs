@@ -1,6 +1,7 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
 
 // The OBS controls dock: one full-width button per output action, with the
 // virtual camera gear docked beside its button.
@@ -8,16 +9,16 @@ export component ControlsDock inherits Rectangle {
     in property <bool> recording;
     in property <bool> streaming;
     in property <int> panel-kind;
-    in-out property <bool> settings-open;
 
     callback move-panel(int, int);
     callback toggle-recording();
     callback toggle-streaming();
     callback set-view-mode(int);
+    callback open-settings-window();
 
-    background: rgb(31, 34, 41);
+    background: Palette.tokens.panel-bg;
     border-width: 1px;
-    border-color: rgb(55, 60, 69);
+    border-color: Palette.tokens.border;
 
     VerticalBox {
         padding: 0px;
@@ -70,7 +71,7 @@ export component ControlsDock inherits Rectangle {
             Button {
                 text: I18n.text.settings;
                 height: 30px;
-                clicked => { root.settings-open = true; }
+                clicked => { root.open-settings-window(); }
             }
             Rectangle { vertical-stretch: 1; }
         }

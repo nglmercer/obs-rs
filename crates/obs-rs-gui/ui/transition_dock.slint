@@ -1,6 +1,7 @@
 import { Button, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
 
 export component TransitionDock inherits Rectangle {
     in property <string> locale;
@@ -11,9 +12,9 @@ export component TransitionDock inherits Rectangle {
     callback fade-transition();
     property <string> duration: "300";
 
-    background: rgb(31, 34, 41);
+    background: Palette.tokens.panel-bg;
     border-width: 1px;
-    border-color: rgb(55, 60, 69);
+    border-color: Palette.tokens.border;
 
     VerticalBox {
         padding: 0px;
@@ -37,7 +38,7 @@ export component TransitionDock inherits Rectangle {
                     spacing: 5px;
                     Text {
                         text: I18n.text.duration;
-                        color: rgb(203, 213, 225);
+                        color: Palette.tokens.text-muted;
                         font-size: 11px;
                         vertical-alignment: center;
                     }
@@ -48,7 +49,7 @@ export component TransitionDock inherits Rectangle {
                     }
                     Text {
                         text: "ms";
-                        color: rgb(148, 163, 184);
+                        color: Palette.tokens.text-muted;
                         font-size: 10px;
                         vertical-alignment: center;
                     }

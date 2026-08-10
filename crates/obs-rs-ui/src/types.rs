@@ -187,6 +187,8 @@ pub enum UiCommand {
     TakePreview { transition: FrameTransition },
     /// Set one mixer channel's linear gain in thousandths.
     SetMixerGain { id: String, gain_milli: u16 },
+    /// Rebuild the audio mixer at a new sample rate and channel count.
+    SetAudioFormat { sample_rate: u32, channels: u16 },
     /// Toggle one mixer channel's mute state.
     ToggleMixerMute { id: String },
     /// Begin recording.
