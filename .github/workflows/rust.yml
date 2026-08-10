@@ -55,3 +55,12 @@ jobs:
 
       - name: Run the configuration C ABI smoke test
         run: ./target/release/config_ffi_smoke
+
+      - name: Compile the plugin ABI smoke test
+        run: >-
+          cc -std=c11 -Wall -Wextra -Werror
+          -I include tests/plugin_abi_smoke.c
+          -ldl -o target/release/plugin_abi_smoke
+
+      - name: Run the plugin ABI smoke test
+        run: ./target/release/plugin_abi_smoke

@@ -10,5 +10,9 @@ dependencies = [
 ]
 
 [[package]]
+name = "obs-rs-plugin-probe"
+version = "0.1.0"
+
+[[package]]
 name = "obs-rs-util"
 version = "0.1.0"

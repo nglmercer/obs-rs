@@ -71,3 +71,10 @@ The same checks run in [`.github/workflows/rust.yml`](.github/workflows/rust.yml
   parsing, validation, round-tripping, explicit buffer ownership, and an opaque
   non-thread-safe C handle. No global OBS state or platform hotkey backend is
   present in this workspace, so those native boundaries remain untouched.
+- Phase 3 — plugin-by-plugin evaluation: complete as an ABI evaluation harness with
+  [`obs-rs-plugin-probe`](crates/obs-rs-plugin-probe/). It exports the required
+  `obs_module_load`, `obs_module_set_pointer`, and `obs_module_ver` symbol shapes,
+  checks them through a dynamic-loader smoke test, and requires
+  `OBS_LIBOBS_API_VER` for a real OBS integration build. The default probe version
+  is deliberately `0` and is not production-compatible; the native OBS loader is
+  unavailable in this workspace.

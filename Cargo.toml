@@ -1,5 +1,9 @@
 [workspace]
-members = ["crates/obs-rs-config", "crates/obs-rs-util"]
+members = [
+    "crates/obs-rs-config",
+    "crates/obs-rs-plugin-probe",
+    "crates/obs-rs-util",
+]
 resolver = "2"
 
 [workspace.package]
