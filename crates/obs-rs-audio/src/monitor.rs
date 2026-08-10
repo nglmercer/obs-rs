@@ -1,10 +1,13 @@
 use super::{buffer::AudioBuffer, error::AudioError};
-use std::collections::VecDeque;
-/// A bounded queue of cloned post-mix buffers for monitoring or diagnostics.
+use std::{collections::VecDeque, sync::Arc};
+/// A bounded queue of shared post-mix buffers for monitoring or diagnostics.
+///
+/// Buffers are retained behind an [`Arc`], so observing a mix costs a
+/// reference-count bump rather than a full copy of the sample payload.
 pub struct AudioMonitorTap {
     capacity_buffers: usize,
     dropped_buffers: u64,
-    buffers: VecDeque<AudioBuffer>,
+    buffers: VecDeque<Arc<AudioBuffer>>,
 }
 
 impl AudioMonitorTap {
@@ -24,16 +27,16 @@ impl AudioMonitorTap {
         })
     }
 
-    pub(super) fn observe(&mut self, buffer: &AudioBuffer) {
+    pub(super) fn observe(&mut self, buffer: &Arc<AudioBuffer>) {
         if self.buffers.len() == self.capacity_buffers {
             let _ = self.buffers.pop_front();
             self.dropped_buffers = self.dropped_buffers.saturating_add(1);
         }
-        self.buffers.push_back(buffer.clone());
+        self.buffers.push_back(Arc::clone(buffer));
     }
 
     /// Removes and returns the oldest monitored buffer.
-    pub fn pop(&mut self) -> Option<AudioBuffer> {
+    pub fn pop(&mut self) -> Option<Arc<AudioBuffer>> {
         self.buffers.pop_front()
     }
 

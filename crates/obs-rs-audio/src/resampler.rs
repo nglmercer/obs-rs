@@ -54,18 +54,43 @@ impl AudioResampler {
         let channels = usize::from(self.input.channels);
         let mut samples = vec![0.0; output_frames * channels];
 
-        for output_frame in 0..output_frames {
-            let position = output_frame as u128 * u128::from(self.input.sample_rate) * 1_000_000
-                / u128::from(self.output.sample_rate);
+        // Bresenham-style rational accumulator. `position` is the same value the
+        // closed form `output_frame * input_rate * 1_000_000 / output_rate`
+        // produces, but it is reached by addition: `step` is added each frame and
+        // the remainder carries, so the per-frame 128-bit multiply, divide, and
+        // modulo disappear from the loop.
+        let denominator = u64::from(self.output.sample_rate);
+        let step = u64::from(self.input.sample_rate) * 1_000_000;
+        let whole_step = step / denominator;
+        let remainder_step = step % denominator;
+        let mut position = 0_u64;
+        let mut remainder = 0_u64;
+
+        let last_frame = input.frames() - 1;
+        let input_samples = input.samples();
+
+        for output_frame in samples.chunks_exact_mut(channels) {
             let base = usize::try_from(position / 1_000_000).unwrap_or(usize::MAX);
             let fraction = (position % 1_000_000) as f32 / 1_000_000.0;
-            let first = base.min(input.frames() - 1);
-            let second = (first + 1).min(input.frames() - 1);
-            for channel in 0..channels {
-                let first_sample = input.sample(first, channel).unwrap_or(0.0);
-                let second_sample = input.sample(second, channel).unwrap_or(first_sample);
-                samples[output_frame * channels + channel] =
-                    first_sample + (second_sample - first_sample) * fraction;
+            let first = base.min(last_frame);
+            let second = (first + 1).min(last_frame);
+            let first_base = first * channels;
+            let second_base = second * channels;
+
+            for (channel, output) in output_frame.iter_mut().enumerate() {
+                let first_sample = input_samples.get(first_base + channel).copied().unwrap_or(0.0);
+                let second_sample = input_samples
+                    .get(second_base + channel)
+                    .copied()
+                    .unwrap_or(first_sample);
+                *output = first_sample + (second_sample - first_sample) * fraction;
+            }
+
+            position += whole_step;
+            remainder += remainder_step;
+            if remainder >= denominator {
+                remainder -= denominator;
+                position += 1;
             }
         }
 

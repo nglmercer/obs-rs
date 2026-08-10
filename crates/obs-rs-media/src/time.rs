@@ -1,4 +1,5 @@
 use super::error::MediaError;
+use std::time::{Duration, Instant};
 /// A monotonic media position expressed in nanoseconds.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Timestamp(u64);
@@ -87,4 +88,30 @@ const fn greatest_common_divisor(mut left: u32, mut right: u32) -> u32 {
         right = remainder;
     }
     left
+}
+
+/// Window before a deadline in which [`sleep_until_precise`] busy-waits.
+///
+/// `std::thread::sleep` only guarantees a *minimum* duration and typically
+/// overshoots by around a millisecond, which is enough to miss deadlines above
+/// 60 fps. The final stretch is therefore spun rather than parked.
+pub const SLEEP_SPIN_WINDOW: Duration = Duration::from_micros(1_500);
+
+/// Sleeps for `duration` with sub-millisecond accuracy.
+///
+/// Parks the thread for everything beyond [`SLEEP_SPIN_WINDOW`] and busy-waits
+/// the remainder, trading up to `SLEEP_SPIN_WINDOW` of one core per call for a
+/// wake-up that lands close to the requested instant. Callers that do not need
+/// tight deadlines should keep using [`std::thread::sleep`].
+pub fn sleep_precise(duration: Duration) {
+    if duration.is_zero() {
+        return;
+    }
+    let deadline = Instant::now() + duration;
+    if let Some(parked) = duration.checked_sub(SLEEP_SPIN_WINDOW) {
+        std::thread::sleep(parked);
+    }
+    while Instant::now() < deadline {
+        std::hint::spin_loop();
+    }
 }

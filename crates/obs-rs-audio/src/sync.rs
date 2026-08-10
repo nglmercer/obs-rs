@@ -1,5 +1,6 @@
 use super::{buffer::AudioBuffer, error::AudioError};
 use obs_rs_media::Timestamp;
+use std::borrow::Cow;
 /// Whether audio is aligned with, early relative to, or late relative to video.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyncState {
@@ -247,14 +248,47 @@ impl AvSyncController {
         self,
         video_timestamp: Timestamp,
         buffer: &AudioBuffer,
-    ) -> Result<Option<AudioBuffer>, AudioError> {
+    ) -> Result<Option<Cow<'_, AudioBuffer>>, AudioError> {
         let observation = self.observe(video_timestamp, buffer.timestamp());
         let correction = correction_for(observation, buffer.format().sample_rate())?;
         match correction {
-            AudioCorrection::Keep => Ok(Some(buffer.clone())),
-            AudioCorrection::TrimLeading { frames } => buffer.trim_front(frames),
+            // Already in sync: hand back the caller's buffer rather than
+            // copying a payload that no correction would change.
+            AudioCorrection::Keep => Ok(Some(Cow::Borrowed(buffer))),
+            AudioCorrection::TrimLeading { frames } => {
+                Ok(buffer.trim_front(frames)?.map(Cow::Owned))
+            }
+            AudioCorrection::InsertSilence { frames } => Ok(Some(Cow::Owned(
+                buffer.prepend_silence(frames, video_timestamp)?,
+            ))),
+        }
+    }
+
+    /// Reconciles one audio buffer in place against a video timestamp.
+    ///
+    /// Equivalent to [`AvSyncController::reconcile`] but reuses `buffer`'s
+    /// allocation for every correction, so an in-sync buffer costs nothing and a
+    /// trim or silence insert grows or shrinks the existing payload. Returns
+    /// `Ok(false)` when trimming would consume the whole buffer, in which case
+    /// `buffer` is left unchanged and the caller may drop it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::ScheduleOverflow`] if the sample-count conversion or
+    /// corrected timestamp cannot be represented.
+    pub fn reconcile_in_place(
+        self,
+        video_timestamp: Timestamp,
+        buffer: &mut AudioBuffer,
+    ) -> Result<bool, AudioError> {
+        let observation = self.observe(video_timestamp, buffer.timestamp());
+        let correction = correction_for(observation, buffer.format().sample_rate())?;
+        match correction {
+            AudioCorrection::Keep => Ok(true),
+            AudioCorrection::TrimLeading { frames } => buffer.trim_front_in_place(frames),
             AudioCorrection::InsertSilence { frames } => {
-                Ok(Some(buffer.prepend_silence(frames, video_timestamp)?))
+                buffer.prepend_silence_in_place(frames, video_timestamp)?;
+                Ok(true)
             }
         }
     }

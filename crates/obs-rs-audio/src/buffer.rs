@@ -147,6 +147,33 @@ impl AudioBuffer {
         )?))
     }
 
+    /// Drops complete leading sample frames in place, advancing the timestamp.
+    ///
+    /// The owning buffer is reused, so unlike [`AudioBuffer::trim_front`] this
+    /// performs no allocation. Returns `Ok(false)` and leaves the buffer
+    /// untouched when the trim would consume every frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::ScheduleOverflow`] when the new timestamp cannot be
+    /// represented.
+    pub fn trim_front_in_place(&mut self, frames: usize) -> Result<bool, AudioError> {
+        if frames >= self.frames() {
+            return Ok(false);
+        }
+        let timestamp = self
+            .timestamp
+            .checked_add(audio_duration_nanos(frames, self.format.sample_rate())?)
+            .ok_or(AudioError::ScheduleOverflow)?;
+        let channels = usize::from(self.format.channels);
+        let start = frames
+            .checked_mul(channels)
+            .ok_or(AudioError::ScheduleOverflow)?;
+        self.samples.drain(..start);
+        self.timestamp = timestamp;
+        Ok(true)
+    }
+
     /// Prefixes complete silence frames and assigns `timestamp` to the new buffer.
     ///
     /// # Errors
@@ -162,11 +189,54 @@ impl AudioBuffer {
         let silence_samples = frames
             .checked_mul(channels)
             .ok_or(AudioError::BufferTooLarge { frames })?;
-        let mut samples = vec![0.0; silence_samples];
+        // One exact allocation for the combined buffer instead of allocating the
+        // silence prefix and then growing it with the payload.
+        let mut samples = Vec::with_capacity(silence_samples + self.samples.len());
+        samples.resize(silence_samples, 0.0);
         samples.extend_from_slice(&self.samples);
         Self::new(self.format, timestamp, samples).inspect(|buffer| {
             debug_assert_eq!(buffer.frames(), total_frames);
         })
+    }
+
+    /// Prefixes silence frames in place, reusing this buffer's allocation.
+    ///
+    /// Grows the existing buffer rather than building a second one, so it suits
+    /// the A/V sync path where the corrected buffer replaces the original.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::BufferTooLarge`] if the combined buffer exceeds the
+    /// reference limit.
+    pub fn prepend_silence_in_place(
+        &mut self,
+        frames: usize,
+        timestamp: Timestamp,
+    ) -> Result<(), AudioError> {
+        frames
+            .checked_add(self.frames())
+            .filter(|total| *total <= MAX_AUDIO_FRAMES)
+            .ok_or(AudioError::BufferTooLarge { frames })?;
+        let channels = usize::from(self.format.channels);
+        let silence_samples = frames
+            .checked_mul(channels)
+            .ok_or(AudioError::BufferTooLarge { frames })?;
+        self.samples.splice(..0, std::iter::repeat_n(0.0, silence_samples));
+        self.timestamp = timestamp;
+        Ok(())
+    }
+
+    /// Replaces the timestamp without touching the sample payload.
+    pub const fn set_timestamp(&mut self, timestamp: Timestamp) {
+        self.timestamp = timestamp;
+    }
+
+    /// Returns the interleaved samples for in-place mixing.
+    ///
+    /// Crate-internal: the caller is responsible for restoring the finiteness
+    /// invariant that [`AudioBuffer::new`] enforces before the buffer escapes.
+    pub(crate) fn samples_mut(&mut self) -> &mut [f32] {
+        &mut self.samples
     }
 }
 

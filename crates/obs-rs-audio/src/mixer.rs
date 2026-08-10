@@ -5,7 +5,10 @@ use super::{
     types::{AudioFormat, AudioMonitorTapId, AudioSourceId, MAX_AUDIO_FRAMES},
 };
 use obs_rs_media::Timestamp;
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 struct SourceControl {
     gain: f32,
     muted: bool,
@@ -167,7 +170,7 @@ impl AudioMixer {
     pub fn pop_monitor_buffer(
         &mut self,
         tap: AudioMonitorTapId,
-    ) -> Result<Option<AudioBuffer>, AudioError> {
+    ) -> Result<Option<Arc<AudioBuffer>>, AudioError> {
         self.monitor_taps
             .get_mut(&tap)
             .ok_or(AudioError::UnknownMonitorTap(tap))
@@ -201,24 +204,57 @@ impl AudioMixer {
         frames: usize,
         inputs: &[(AudioSourceId, &AudioBuffer)],
     ) -> Result<AudioBuffer, AudioError> {
+        let mut output = AudioBuffer::silence(self.format, timestamp, frames)?;
+        self.mix_into(timestamp, &mut output, inputs)?;
+        Ok(output)
+    }
+
+    /// Mixes `inputs` into a caller-owned buffer, clamping to `[-1.0, 1.0]`.
+    ///
+    /// This is the allocation-free form of [`AudioMixer::mix`] and the one
+    /// suitable for an audio callback: `output` supplies the storage, so the
+    /// mix itself performs no allocation, takes no locks, and copies no buffer.
+    /// Monitor taps, when registered, are the one exception — each observation
+    /// retains a reference-counted snapshot, which costs one small allocation
+    /// per mix regardless of tap count.
+    ///
+    /// `output` must already carry the mixer format and the requested frame
+    /// count; its existing contents are overwritten. Its timestamp is set to
+    /// `timestamp`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError`] when `output` does not match the mixer format or
+    /// frame count, when an input is duplicated, unknown, mismatched, or has a
+    /// different frame count, or when the sum becomes non-finite.
+    pub fn mix_into(
+        &mut self,
+        timestamp: Timestamp,
+        output: &mut AudioBuffer,
+        inputs: &[(AudioSourceId, &AudioBuffer)],
+    ) -> Result<(), AudioError> {
+        if output.format() != self.format {
+            return Err(AudioError::FormatMismatch {
+                expected: self.format,
+                actual: output.format(),
+            });
+        }
+        let frames = output.frames();
         if frames > MAX_AUDIO_FRAMES {
             return Err(AudioError::BufferTooLarge { frames });
         }
         let channels = usize::from(self.format.channels);
-        let sample_count = frames
-            .checked_mul(channels)
-            .ok_or(AudioError::BufferTooLarge { frames })?;
-        let mut mixed = vec![0.0; sample_count];
-        let mut seen = BTreeSet::new();
 
+        // Validate every input before mutating `output`, so a rejected mix
+        // leaves the caller's buffer and the source peaks unchanged.
+        let mut seen = HashSet::with_capacity(inputs.len());
         for (source, buffer) in inputs {
             if !seen.insert(*source) {
                 return Err(AudioError::DuplicateInput(*source));
             }
-            let control = self
-                .sources
-                .get(source)
-                .ok_or(AudioError::UnknownSource(*source))?;
+            if !self.sources.contains_key(source) {
+                return Err(AudioError::UnknownSource(*source));
+            }
             if buffer.format() != self.format {
                 return Err(AudioError::FormatMismatch {
                     expected: self.format,
@@ -231,42 +267,66 @@ impl AudioMixer {
                     actual: buffer.frames(),
                 });
             }
-            if control.muted {
-                if let Some(control) = self.sources.get_mut(source) {
-                    control.peak_milli = 0;
-                }
-                continue;
-            }
-            let mut peak = 0.0_f32;
-            for (sample_index, (output, input)) in
-                mixed.iter_mut().zip(buffer.samples()).enumerate()
-            {
-                let channel = sample_index % channels;
-                let pan_gain = match channel {
-                    0 => 1.0 - control.pan.max(0.0),
-                    1 => 1.0 + control.pan.min(0.0),
-                    _ => 1.0,
-                };
-                let contribution = *input * control.gain * pan_gain;
-                *output += contribution;
-                peak = peak.max(contribution.abs());
-                if !output.is_finite() {
-                    return Err(AudioError::MixOverflow);
-                }
-            }
-            if let Some(control) = self.sources.get_mut(source) {
-                control.peak_milli = peak_to_milli(peak);
-            }
         }
 
-        for sample in &mut mixed {
+        let mixed = output.samples_mut();
+        mixed.fill(0.0);
+
+        for (source, buffer) in inputs {
+            // One mutable lookup per source covers the gain read, the mix, and
+            // the peak write.
+            let Some(control) = self.sources.get_mut(source) else {
+                return Err(AudioError::UnknownSource(*source));
+            };
+            if control.muted {
+                control.peak_milli = 0;
+                continue;
+            }
+
+            // Pan is constant for the whole buffer, so the per-channel gains are
+            // folded into the source gain once instead of being recomputed (with
+            // a modulo) for every sample.
+            let left_gain = control.gain * (1.0 - control.pan.max(0.0));
+            let right_gain = control.gain * (1.0 + control.pan.min(0.0));
+            let mut peak = 0.0_f32;
+
+            for (output_frame, input_frame) in mixed
+                .chunks_exact_mut(channels)
+                .zip(buffer.samples().chunks_exact(channels))
+            {
+                for (channel, (output, input)) in
+                    output_frame.iter_mut().zip(input_frame).enumerate()
+                {
+                    let gain = match channel {
+                        0 => left_gain,
+                        1 => right_gain,
+                        _ => control.gain,
+                    };
+                    let contribution = *input * gain;
+                    *output += contribution;
+                    peak = peak.max(contribution.abs());
+                    if !output.is_finite() {
+                        return Err(AudioError::MixOverflow);
+                    }
+                }
+            }
+
+            control.peak_milli = peak_to_milli(peak);
+        }
+
+        for sample in mixed.iter_mut() {
             *sample = sample.clamp(-1.0, 1.0);
         }
-        let output = AudioBuffer::new(self.format, timestamp, mixed)?;
-        for tap in self.monitor_taps.values_mut() {
-            tap.observe(&output);
+        output.set_timestamp(timestamp);
+
+        if !self.monitor_taps.is_empty() {
+            // One shared snapshot for every tap rather than one deep copy each.
+            let snapshot = Arc::new(output.clone());
+            for tap in self.monitor_taps.values_mut() {
+                tap.observe(&snapshot);
+            }
         }
-        Ok(output)
+        Ok(())
     }
 
     /// Returns the mixer format.

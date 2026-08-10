@@ -20,6 +20,6 @@ pub use filters::FrameFilter;
 pub use format::VideoFormat;
 pub use frame::VideoFrame;
 pub use pixel::{PixelFormat, RawVideoFrame};
-pub use time::{FrameRate, Timestamp};
+pub use time::{sleep_precise, FrameRate, Timestamp, SLEEP_SPIN_WINDOW};
 pub use transform::FrameTransform;
 pub use transition::FrameTransition;

@@ -1,5 +1,5 @@
 use super::{error::AudioError, types::AudioFormat};
-use obs_rs_media::Timestamp;
+use obs_rs_media::{sleep_precise, Timestamp};
 use std::time::{Duration, Instant};
 /// One exact sample-clock deadline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,9 +186,9 @@ impl AudioClock for MonotonicAudioClock {
     fn sleep_until(&mut self, deadline: Timestamp) {
         let current = Self::now(self);
         let remaining = deadline.as_nanos().saturating_sub(current.as_nanos());
-        if remaining != 0 {
-            std::thread::sleep(Duration::from_nanos(remaining));
-        }
+        // Plain `thread::sleep` overshoots by roughly a millisecond, which is a
+        // large fraction of a short audio block; spin the final stretch instead.
+        sleep_precise(Duration::from_nanos(remaining));
     }
 }
 impl AudioPacer {

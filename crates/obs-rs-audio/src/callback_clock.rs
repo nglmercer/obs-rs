@@ -51,6 +51,13 @@ pub struct AudioCallbackClock {
     last_timestamp: Timestamp,
     delivered_frames: u64,
     correction_ppm: i32,
+    /// Running `delivered_frames * 1e9 * (1e6 + correction_ppm)`.
+    ///
+    /// Each callback adds only its own contribution instead of re-deriving the
+    /// product from the running frame total, which keeps the wide multiply out
+    /// of the callback path. It is rebuilt from scratch whenever the correction
+    /// changes, so the value stays bit-identical to the closed form.
+    elapsed_numerator: i128,
 }
 
 impl AudioCallbackClock {
@@ -63,6 +70,7 @@ impl AudioCallbackClock {
             last_timestamp: Timestamp::ZERO,
             delivered_frames: 0,
             correction_ppm: 0,
+            elapsed_numerator: 0,
         }
     }
 
@@ -88,19 +96,20 @@ impl AudioCallbackClock {
             });
         }
         let origin = *self.origin.get_or_insert(timestamp);
-        let elapsed = corrected_audio_duration_nanos(
-            self.delivered_frames,
-            self.format.sample_rate(),
-            self.correction_ppm,
-        )?;
+        let elapsed = scale_elapsed_nanos(self.elapsed_numerator, self.format.sample_rate())?;
         let expected_timestamp = origin
             .checked_add(elapsed)
             .ok_or(AudioError::ScheduleOverflow)?;
         let drift = i128::from(timestamp.as_nanos())
             .saturating_sub(i128::from(expected_timestamp.as_nanos()));
+        let delivered = u64::try_from(frames).map_err(|_| AudioError::ScheduleOverflow)?;
         self.delivered_frames = self
             .delivered_frames
-            .checked_add(u64::try_from(frames).map_err(|_| AudioError::ScheduleOverflow)?)
+            .checked_add(delivered)
+            .ok_or(AudioError::ScheduleOverflow)?;
+        self.elapsed_numerator = self
+            .elapsed_numerator
+            .checked_add(frame_numerator(delivered, self.correction_ppm)?)
             .ok_or(AudioError::ScheduleOverflow)?;
         self.last_timestamp = timestamp;
         Ok(AudioCallbackObservation {

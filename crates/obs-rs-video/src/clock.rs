@@ -1,11 +1,24 @@
-use obs_rs_media::{FrameRate, Timestamp};
+use obs_rs_media::{sleep_precise, FrameRate, Timestamp};
 use std::time::{Duration, Instant};
 
 use super::error::VideoError;
 /// A rational frame deadline generator with no floating-point drift.
+///
+/// Deadlines advance by exact rational addition rather than being re-derived
+/// from the frame index, so producing a deadline is a handful of 64-bit adds
+/// instead of a 128-bit multiply and divide per frame. The values it yields are
+/// identical to `index * 1_000_000_000 * denominator / numerator`.
 pub struct VideoScheduler {
     frame_rate: FrameRate,
     next_index: u64,
+    /// Nanosecond timestamp of the next deadline.
+    next_nanos: u64,
+    /// Sub-nanosecond carry, in units of `frame_rate.numerator()`.
+    remainder: u64,
+    /// Whole nanoseconds added per frame.
+    whole_step: u64,
+    /// Carry added per frame, in units of `frame_rate.numerator()`.
+    remainder_step: u64,
 }
 
 /// A monotonic wall-clock origin for render-loop integration.
@@ -46,9 +59,9 @@ impl VideoClock for MonotonicClock {
     fn sleep_until(&mut self, deadline: Timestamp) {
         let current = Self::now(self);
         let remaining = deadline.as_nanos().saturating_sub(current.as_nanos());
-        if remaining != 0 {
-            std::thread::sleep(Duration::from_nanos(remaining));
-        }
+        // Millisecond-granularity parking misses deadlines above 60 fps, so the
+        // last stretch before the deadline is spun.
+        sleep_precise(Duration::from_nanos(remaining));
     }
 }
 
@@ -221,9 +234,17 @@ impl VideoScheduler {
     /// Creates a scheduler beginning at frame index zero.
     #[must_use]
     pub const fn new(frame_rate: FrameRate) -> Self {
+        // One frame lasts `1e9 * denominator / numerator` nanoseconds. The whole
+        // part and the leftover carry are constant, so both are resolved here.
+        let step = 1_000_000_000_u64.saturating_mul(frame_rate.denominator() as u64);
+        let numerator = frame_rate.numerator() as u64;
         Self {
             frame_rate,
             next_index: 0,
+            next_nanos: 0,
+            remainder: 0,
+            whole_step: step / numerator,
+            remainder_step: step % numerator,
         }
     }
 
@@ -235,17 +256,35 @@ impl VideoScheduler {
     /// no longer fits in the public integer representation.
     pub fn next_deadline(&mut self) -> Result<FrameDeadline, VideoError> {
         let index = self.next_index;
-        let timestamp = timestamp_for(index, self.frame_rate)?;
-        self.next_index = self
+        let timestamp = Timestamp::from_nanos(self.next_nanos);
+
+        let mut next_nanos = self
+            .next_nanos
+            .checked_add(self.whole_step)
+            .ok_or(VideoError::ScheduleOverflow)?;
+        let mut remainder = self.remainder + self.remainder_step;
+        if remainder >= u64::from(self.frame_rate.numerator()) {
+            remainder -= u64::from(self.frame_rate.numerator());
+            next_nanos = next_nanos
+                .checked_add(1)
+                .ok_or(VideoError::ScheduleOverflow)?;
+        }
+        let next_index = self
             .next_index
             .checked_add(1)
             .ok_or(VideoError::ScheduleOverflow)?;
+
+        self.next_nanos = next_nanos;
+        self.remainder = remainder;
+        self.next_index = next_index;
         Ok(FrameDeadline { index, timestamp })
     }
 
     /// Resets the scheduler to frame index zero.
     pub fn reset(&mut self) {
         self.next_index = 0;
+        self.next_nanos = 0;
+        self.remainder = 0;
     }
 
     /// Returns the configured frame rate.
@@ -253,13 +292,4 @@ impl VideoScheduler {
     pub const fn frame_rate(&self) -> FrameRate {
         self.frame_rate
     }
-}
-fn timestamp_for(index: u64, frame_rate: FrameRate) -> Result<Timestamp, VideoError> {
-    let numerator = u128::from(index)
-        .checked_mul(1_000_000_000)
-        .and_then(|value| value.checked_mul(u128::from(frame_rate.denominator())))
-        .ok_or(VideoError::ScheduleOverflow)?;
-    let nanoseconds = numerator / u128::from(frame_rate.numerator());
-    let nanoseconds = u64::try_from(nanoseconds).map_err(|_| VideoError::ScheduleOverflow)?;
-    Ok(Timestamp::from_nanos(nanoseconds))
 }
