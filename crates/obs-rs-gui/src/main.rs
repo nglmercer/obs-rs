@@ -131,7 +131,25 @@ slint::slint! {
         callback add-scene(string, string);
         callback add-source(string, string, string);
 
-        VerticalBox {
+        FocusScope {
+            key-pressed(event) => {
+                if (event.text == Key.Space) {
+                    swap-scenes();
+                    return accept;
+                }
+                reject
+            }
+
+            KeyBinding {
+                keys: @keys(Control + S);
+                activated => save-project();
+            }
+            KeyBinding {
+                keys: @keys(Control + Shift + F);
+                activated => fade-transition();
+            }
+
+            VerticalBox {
             padding: 22px;
             spacing: 14px;
 
@@ -150,6 +168,13 @@ slint::slint! {
                         text: project-title + "  /  " + profile-name;
                         color: rgb(156, 163, 175);
                         font-size: 14px;
+                    }
+                    Text {
+                        text: locale == "es"
+                            ? "Atajos: Espacio intercambia · Ctrl+S guarda · Ctrl+Shift+F fundido"
+                            : "Shortcuts: Space swaps · Ctrl+S saves · Ctrl+Shift+F fades";
+                        color: rgb(100, 116, 139);
+                        font-size: 11px;
                     }
                     HorizontalBox {
                         spacing: 6px;
@@ -722,8 +747,8 @@ slint::slint! {
                         }
                         Text {
                             text: locale == "es"
-                                ? "Dirección de transmisión (paquetes TCP Rust)"
-                                : "Streaming address (Rust TCP packets)";
+                                ? "Dirección de transmisión (TCP Rust o ws://)"
+                                : "Streaming address (Rust TCP or ws://)";
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                         }
@@ -798,6 +823,7 @@ slint::slint! {
                         vertical-stretch: 1;
                     }
                 }
+            }
             }
         }
     }

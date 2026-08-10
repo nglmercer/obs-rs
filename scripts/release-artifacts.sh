@@ -10,7 +10,7 @@ mkdir -p "$artifact_dir"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
 CARGO_INCREMENTAL=0 cargo build --workspace --release
 
-for binary in obs-rs obs-rs-benchmark obs-rs-console obs-rs-web obs-rs-gui; do
+for binary in obs-rs obs-rs-benchmark obs-rs-console obs-rs-web obs-rs-gui obs-rs-sandbox-source; do
     source="target/release/$binary"
     if [[ -x "$source" ]]; then
         cp "$source" "$artifact_dir/$binary"

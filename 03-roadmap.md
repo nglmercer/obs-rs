@@ -289,9 +289,11 @@ reference previews rather than platform capture/device-backed feeds. The desktop
 also has a scene/source editor plus project save/load/recover controls backed by the
 crash-safe `ProjectFileStore`, atomic Y4M/TCP output, output telemetry, bilingual
 accessible snapshots, persisted source visibility/locking, and a diagnostics export
-action. Per-field property dialogs, full translation of every static desktop label,
-guided crash-recovery dialogs, and a policy for remote crash-report collection remain
-product work.
+action. The Slint surface also exposes keyboard focus-scope bindings for scene
+swapping, save, and fade actions and advertises those bindings in the control room.
+Per-field property dialogs, full translation of every static desktop label, richer
+guided crash-recovery dialogs, and a policy for remote crash-report collection
+remain product work.
 
 `ProjectFileStore` adds atomic standard-library project-file save/load semantics and
 keeps the session dirty when a write fails.
@@ -326,9 +328,11 @@ Make extensions and releases sustainable without weakening Rust ownership.
 - fuzzing, sanitizers where applicable, dependency audits, and soak testing.
 
 The current hardening evidence is the versioned compile-time plugin contract, newer
-API rejection, a bounded `OBSRPLUGIN1` subprocess manifest, direct no-shell launch,
-fixed environment negotiation, bounded `OBSFRM01` frame handoff, a two-frame queue,
-and a frame-delivery timeout. It also includes explicit runtime quotas for
+API rejection, a bounded `OBSRPLUGIN1` subprocess manifest probe before source
+creation, direct no-shell launch, fixed environment negotiation, bounded
+`OBSFRM01` frame handoff, a two-frame queue, and a frame-delivery timeout. It also
+includes the safe `obs-rs-sandbox-source` reference executable and explicit runtime
+quotas for
 plugins/source kinds/scenes/sources and filters, a `RuntimeUsage` snapshot included
 in desktop diagnostics, a pinned-toolchain quality workflow, a deterministic release
 profile, and a checksum-producing release artifact script. Signed dynamic discovery,

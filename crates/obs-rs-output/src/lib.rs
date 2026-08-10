@@ -38,6 +38,8 @@ const WEBSOCKET_PACKET_MAGIC: &[u8; 8] = b"OBSRWS01";
 const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 /// Maximum HTTP handshake header accepted by the WebSocket transport.
 pub const MAX_WEBSOCKET_HEADER_BYTES: usize = 16 * 1024;
+/// Maximum time one reference network write may wait before it fails.
+pub const NETWORK_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Whether an encoded packet carries video or audio data.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1587,6 +1589,11 @@ impl PacketTransport for TcpPacketTransport {
         stream
             .set_nodelay(true)
             .map_err(|error| OutputError::Transport(format!("TCP setup failed: {error}")))?;
+        stream
+            .set_write_timeout(Some(NETWORK_WRITE_TIMEOUT))
+            .map_err(|error| {
+                OutputError::Transport(format!("TCP timeout setup failed: {error}"))
+            })?;
         self.stream = Some(stream);
         Ok(())
     }
@@ -1666,6 +1673,11 @@ impl PacketTransport for WebSocketPacketTransport {
             .map_err(|error| {
                 OutputError::Transport(format!("WebSocket timeout setup failed: {error}"))
             })?;
+        stream
+            .set_write_timeout(Some(NETWORK_WRITE_TIMEOUT))
+            .map_err(|error| {
+                OutputError::Transport(format!("WebSocket write timeout setup failed: {error}"))
+            })?;
         let key = websocket_key();
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
@@ -1712,17 +1724,37 @@ fn parse_websocket_endpoint(endpoint: &str) -> Result<(String, String, String), 
         || (endpoint, "/".to_owned()),
         |(host, path)| (host, format!("/{path}")),
     );
-    if authority.is_empty() || authority.contains('@') || authority.contains('\0') {
+    if authority.is_empty()
+        || authority.contains('@')
+        || authority.contains('\0')
+        || authority.chars().any(char::is_whitespace)
+        || authority.contains(['\r', '\n'])
+    {
         return Err(OutputError::Transport(
             "WebSocket endpoint authority is invalid".to_owned(),
         ));
     }
-    if !authority.contains(':') {
+    let Some((host, port)) = authority.rsplit_once(':') else {
         return Err(OutputError::Transport(
             "WebSocket endpoint must include host:port".to_owned(),
         ));
+    };
+    if host.is_empty()
+        || (host.starts_with('[') && !host.ends_with(']'))
+        || port.parse::<u16>().map_or(true, |port| port == 0)
+    {
+        return Err(OutputError::Transport(
+            "WebSocket endpoint host:port is invalid".to_owned(),
+        ));
     }
     let path = if path.is_empty() { "/" } else { path.as_str() };
+    if path.chars().any(|character| {
+        character == '\0' || character == '\r' || character == '\n' || character.is_control()
+    }) {
+        return Err(OutputError::Transport(
+            "WebSocket endpoint path contains a control character".to_owned(),
+        ));
+    }
     Ok((authority.to_owned(), authority.to_owned(), path.to_owned()))
 }
 
@@ -1841,7 +1873,10 @@ fn websocket_binary_frame(body: &[u8]) -> Result<Vec<u8>, OutputError> {
         frame.push(0x80 | 127);
         frame.extend_from_slice(&length.to_be_bytes());
     }
-    let mask = [0x4d_u8, 0x53, 0x52, 0x53];
+    let nonce = NEXT_WEBSOCKET_NONCE.fetch_add(1, Ordering::Relaxed);
+    let mask = nonce.to_le_bytes()[..4]
+        .try_into()
+        .unwrap_or([0x4d_u8, 0x53, 0x52, 0x53]);
     frame.extend_from_slice(&mask);
     frame.extend(
         body.iter()
@@ -3397,6 +3432,29 @@ mod tests {
         assert_eq!(
             error,
             OutputError::Transport("wss:// endpoints require an explicit TLS transport".to_owned())
+        );
+    }
+
+    #[test]
+    fn websocket_endpoint_validates_authority_and_path_bounds() {
+        for endpoint in [
+            "ws://example.test:not-a-port/live",
+            "ws://example.test:0/live",
+            "ws://example.test:443/live\r\nHost: injected",
+            "ws://example.test:443/li\nve",
+        ] {
+            assert!(
+                parse_websocket_endpoint(endpoint).is_err(),
+                "endpoint should be rejected: {endpoint:?}"
+            );
+        }
+        assert_eq!(
+            parse_websocket_endpoint("ws://[::1]:443/live").expect("IPv6 endpoint"),
+            (
+                "[::1]:443".to_owned(),
+                "[::1]:443".to_owned(),
+                "/live".to_owned()
+            )
         );
     }
 

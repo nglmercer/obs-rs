@@ -3,7 +3,7 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::error::Error;
+use std::{error::Error, path::PathBuf};
 
 use obs_rs_audio::{
     AudioBuffer, AudioCancellationToken, AudioDropPolicy, AudioFormat, AudioMixer, AudioPacer,
@@ -37,11 +37,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let plugin = BuiltinPlugin::new()?;
     let capture_devices = plugin.discover_capture_devices()?.len();
     let sandbox_manifest = sandbox_manifest()?;
-    let sandbox_plugin = SandboxedPlugin::new(
-        &sandbox_manifest,
-        "obs-rs-sandbox-source",
-        vec!["--frames".to_owned()],
-    )?;
+    let sandbox_command = sandbox_source_command();
+    let sandbox_discovered = sandbox_command.is_file();
+    let sandbox_arguments = vec!["--frames".to_owned()];
+    let sandbox_plugin = if sandbox_discovered {
+        SandboxedPlugin::from_process(&sandbox_command, sandbox_arguments)?
+    } else {
+        SandboxedPlugin::new(&sandbox_manifest, sandbox_command, sandbox_arguments)?
+    };
     let sandbox_source_kinds = sandbox_plugin.source_factories().len();
     let mut runtime = Runtime::new();
     runtime.register_plugin(&plugin)?;
@@ -130,7 +133,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         )?;
 
     println!(
-        "obs-rs demo: plugins={}, sandbox_source_kinds={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} renderer_created={} renderer_uploads={} renderer_compositions={} renderer_readbacks={} renderer_peak_bytes={} rendered={} dropped_oldest={} png_bytes={} capture_stream_bytes={} y4m_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
+        "obs-rs demo: plugins={}, sandbox_discovered={sandbox_discovered}, sandbox_source_kinds={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} renderer_created={} renderer_uploads={} renderer_compositions={} renderer_readbacks={} renderer_peak_bytes={} rendered={} dropped_oldest={} png_bytes={} capture_stream_bytes={} y4m_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
         runtime.plugins().len(),
         sandbox_source_kinds,
         capture_devices,
@@ -489,6 +492,16 @@ fn sandbox_manifest() -> Result<SandboxedPluginManifest, Box<dyn Error>> {
         manifest,
         [Identifier::new("sandbox_pattern")?],
     )?)
+}
+
+fn sandbox_source_command() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(PathBuf::from))
+        .map_or_else(
+            || PathBuf::from("obs-rs-sandbox-source"),
+            |directory| directory.join("obs-rs-sandbox-source"),
+        )
 }
 
 fn color_settings(width: &str, height: &str, color: &str) -> Config {

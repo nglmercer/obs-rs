@@ -100,10 +100,11 @@ kinds. `TestPatternDevice` is the first lifecycle-complete backend: it starts at
 validated format, emits timestamped owned frames, and stops without leaking state.
 `StreamCaptureDevice<R>` adds a bounded `OBSFRM01` RGBA packet protocol for safe
 Rust pipes or TCP readers, with exact format/payload validation and clean EOF handling.
-`obs-rs-sandbox` uses that protocol behind a direct subprocess boundary: manifest
-and argument limits are checked before launch, stdout is isolated from stderr, the
-reader is moved to a bounded two-frame handoff queue, and a stalled child is
-terminated after the frame-delivery deadline.
+`obs-rs-sandbox` uses that protocol behind a direct subprocess boundary: a bounded
+manifest probe and API check run before source creation, manifest and argument
+limits are checked before launch, stdout is isolated from stderr, the reader is
+moved to a bounded two-frame handoff queue, and a stalled child is terminated
+after the frame-delivery deadline.
 `PlatformCaptureProvider` reports host capability state, with a live Linux X11
 descriptor when `DISPLAY` is available and typed unavailable errors elsewhere. The
 Slint control room surfaces that distinction and retains simulated CPU sources as a

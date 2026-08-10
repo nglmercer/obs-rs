@@ -30,9 +30,10 @@ control surfaces:
   frame-stream adapter for Rust pipes/TCP readers.
 - `obs-rs-plugin-api` defines versioned Rust plugin and source interfaces.
 - `obs-rs-sandbox` adds a bounded subprocess extension boundary: versioned
-  `OBSRPLUGIN1` manifests, direct no-shell process launch, fixed environment
-  negotiation, bounded `OBSFRM01` frame packets, a two-frame handoff queue, and
-  frame-delivery timeouts.
+  `OBSRPLUGIN1` manifests, bounded manifest probing before source creation,
+  direct no-shell process launch, fixed environment negotiation, bounded
+  `OBSFRM01` frame packets, a two-frame handoff queue, and frame-delivery
+  timeouts.
 - `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
   camera CPU-fallback factories plus the Linux `x11_screen_capture` source.
 - `obs-rs-core` owns the plugin registry, sources, scenes, CPU compositor, and
@@ -98,7 +99,8 @@ cargo run -p obs-rs-app --bin obs-rs-benchmark --release
 scripts/release-artifacts.sh [dist]
 ```
 
-The demo registers the built-in plugin, creates a scene, adds two sources, applies a
+The demo registers the built-in plugin, probes and registers the reference sandbox
+source executable when it is available, creates a scene, adds two sources, applies a
 scene-item transform/filter, renders through the bounded video pipeline and render
 backend, mixes and paces audio blocks, muxes and streams one packet, round-trips one
 raw recording, persists project state, commits and reopens a diagnostics bundle, and
@@ -143,5 +145,5 @@ WebSocket packet transport are now present as reference boundaries. The release
 profile, pinned-toolchain CI workflow, and checksum manifest script are also
 present. The project intentionally does not claim feature parity with OBS Studio:
 macOS/Windows capture, GPU/zero-copy rendering, production codecs and protocols,
-full GUI localization/property dialogs, dynamic discovery, signing, and update
-channels remain roadmap work.
+full GUI localization/property dialogs, signed plugin distribution, signing, and
+update channels remain roadmap work.

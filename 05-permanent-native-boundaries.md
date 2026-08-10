@@ -25,9 +25,10 @@ workspace. A backend may have platform-specific implementation details, but it m
 
 The current workspace contains only Rust source and Cargo metadata. The portable
 crates forbid unsafe code, and the CI workflow invokes Cargo checks and tests only.
-The headless demo exercises the current path from plugin registration through
-rendering, PNG output, an `OBSFRM01` frame-stream round trip, independent clock drift,
-and recovery diagnostics. On Linux, the built-in `x11_screen_capture` source contains
+The headless demo exercises the current path from built-in and probed subprocess plugin
+registration through rendering, PNG output, an `OBSFRM01` frame-stream round trip,
+independent clock drift, and recovery diagnostics. On Linux, the built-in
+`x11_screen_capture` source contains
 a direct Rust X11 wire-protocol adapter with fixture-tested setup and pixel decoding.
 The terminal and loopback browser frontends reuse the same validated Rust-owned UI
 state. `obs-rs-gui` adds a Slint desktop control room whose callbacks dispatch into
