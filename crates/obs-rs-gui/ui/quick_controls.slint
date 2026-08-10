@@ -1,4 +1,5 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
 
 export component QuickControls inherits Rectangle {
     in property <string> locale;
@@ -21,24 +22,24 @@ export component QuickControls inherits Rectangle {
             spacing: 4px;
             Button {
                 text: streaming
-                    ? (locale == "es" ? "Detener" : "Stop stream")
-                    : (locale == "es" ? "Transmitir" : "Stream");
+                    ? I18n.text.stop_short
+                    : I18n.text.stream_short;
                 width: 68px;
                 height: 26px;
                 clicked => toggle-streaming();
             }
             Button {
                 text: recording
-                    ? (locale == "es" ? "Detener" : "Stop rec")
-                    : (locale == "es" ? "Grabar" : "Record");
+                    ? I18n.text.stop_short
+                    : I18n.text.record_short;
                 width: 68px;
                 height: 26px;
                 clicked => toggle-recording();
             }
             Button {
                 text: virtual-camera
-                    ? (locale == "es" ? "Cámara: sí" : "Camera: on")
-                    : (locale == "es" ? "Cámara" : "Camera");
+                    ? I18n.text.camera_on
+                    : I18n.text.camera;
                 width: 68px;
                 height: 26px;
                 clicked => { root.virtual-camera = !root.virtual-camera; }
@@ -48,14 +49,14 @@ export component QuickControls inherits Rectangle {
             spacing: 4px;
             Button {
                 text: view-mode == 0
-                    ? (locale == "es" ? "Modo Studio" : "Studio Mode")
-                    : (locale == "es" ? "Solo vista previa" : "Preview Only");
+                    ? I18n.text.studio_mode
+                    : I18n.text.preview_only;
                 width: 134px;
                 height: 26px;
                 clicked => set-view-mode(view-mode == 0 ? 1 : 0);
             }
             Button {
-                text: locale == "es" ? "Ajustes" : "Settings";
+                text: I18n.text.settings;
                 width: 68px;
                 height: 26px;
                 clicked => open-settings();

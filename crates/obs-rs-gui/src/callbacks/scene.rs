@@ -102,7 +102,9 @@ fn install_scene_selection_callbacks(
     ui.on_set_locale(move |code| {
         let Some(locale) = UiLocale::from_code(code.as_str()) else {
             if let Some(ui) = weak.upgrade() {
-                ui.set_status_message(format!("Unsupported language: {code}").into());
+                let prefix =
+                    crate::i18n::catalog(locale_state.borrow().locale()).unsupported_language;
+                ui.set_status_message(format!("{prefix}{code}").into());
             }
             return;
         };

@@ -10,6 +10,7 @@ use slint::ComponentHandle;
 
 mod callbacks;
 mod fixtures;
+mod i18n;
 mod output;
 mod preview;
 mod refresh;
@@ -32,7 +33,9 @@ pub(crate) use preview::{frame_to_image, PreviewRenderer};
 pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames, refresh_ui,
 };
-pub(crate) use view::{MainWindow, MixerRow, ProfileRow, SceneRow, SourceRow};
+pub(crate) use view::{
+    I18n, LocaleOption, MainWindow, MixerRow, ProfileRow, SceneRow, SourceRow, UiText,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let smoke = std::env::args().any(|argument| argument == "--smoke");

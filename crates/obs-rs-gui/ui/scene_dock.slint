@@ -1,6 +1,7 @@
 import { ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { SceneRow } from "models.slint";
+import { I18n } from "i18n.slint";
 
 export component SceneDock inherits Rectangle {
     in property <string> locale;
@@ -16,7 +17,7 @@ export component SceneDock inherits Rectangle {
     border-color: rgb(55, 60, 69);
     VerticalBox {
         DockHeader {
-            title: locale == "es" ? "Escenas" : "Scenes";
+            title: I18n.text.scenes_title;
             panel-kind: root.panel-kind;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
         }
@@ -55,9 +56,9 @@ export component SceneDock inherits Rectangle {
                 }
                 HorizontalBox {
                     spacing: 4px;
-                    CompactButton { label: "+"; hint: locale == "es" ? "Añadir escena" : "Add scene"; }
-                    CompactButton { label: "−"; hint: locale == "es" ? "Eliminar escena" : "Remove scene"; }
-                    CompactButton { label: "⚙"; hint: locale == "es" ? "Propiedades de escena" : "Scene properties"; }
+                    CompactButton { icon-name: "add"; hint: I18n.text.add_scene; }
+                    CompactButton { icon-name: "remove"; hint: I18n.text.remove_scene; }
+                    CompactButton { icon-name: "settings"; hint: I18n.text.scene_properties; }
                     Rectangle { horizontal-stretch: 1; }
                 }
             }

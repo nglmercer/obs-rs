@@ -1,6 +1,7 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { ProjectDialog, SceneDialog, SourceDialog, OutputDialog } from "dialogs.slint";
 import { DockHeader } from "theme.slint";
+import { I18n } from "i18n.slint";
 
 export component ControlsDock inherits Rectangle {
     in property <string> locale;
@@ -60,7 +61,7 @@ export component ControlsDock inherits Rectangle {
 
     VerticalBox {
         DockHeader {
-            title: locale == "es" ? "Controles" : "Controls";
+            title: I18n.text.controls_title;
             panel-kind: root.panel-kind;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
         }
@@ -71,25 +72,25 @@ export component ControlsDock inherits Rectangle {
                 spacing: 6px;
                 Button {
                     text: streaming
-                        ? (locale == "es" ? "Detener transmisión" : "Stop Streaming")
-                        : (locale == "es" ? "Iniciar transmisión" : "Start Streaming");
+                        ? I18n.text.stop_streaming
+                        : I18n.text.start_streaming;
                     height: 32px;
                     clicked => toggle-streaming();
                 }
                 Button {
                     text: recording
-                        ? (locale == "es" ? "Detener grabación" : "Stop Recording")
-                        : (locale == "es" ? "Iniciar grabación" : "Start Recording");
+                        ? I18n.text.stop_recording
+                        : I18n.text.start_recording;
                     height: 32px;
                     clicked => toggle-recording();
                 }
                 Button {
-                    text: locale == "es" ? "Modo Studio" : "Studio Mode";
+                    text: I18n.text.studio_mode;
                     height: 32px;
                     clicked => set-view-mode(0);
                 }
                 Button {
-                    text: locale == "es" ? "Ajustes" : "Settings";
+                    text: I18n.text.settings;
                     height: 32px;
                     clicked => { root.settings-open = true; }
                 }

@@ -1,5 +1,6 @@
 import { Button, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
 import { FieldHeading, ModalShell, MutedText } from "theme.slint";
+import { I18n } from "i18n.slint";
 
 export component ProjectDialog inherits ModalShell {
     in property <string> locale;
@@ -7,30 +8,26 @@ export component ProjectDialog inherits ModalShell {
     in-out property <string> diagnostics-path;
     callback save-project();
 
-    title: locale == "es" ? "Configuración del proyecto" : "Project configuration";
-    subtitle: locale == "es"
-        ? "Define los archivos que usa OBS-RS para guardar y diagnosticar la sesión."
-        : "Choose the files OBS-RS uses to save and diagnose this session.";
-    accept-label: locale == "es" ? "Guardar" : "Save";
-    cancel-label: locale == "es" ? "Cancelar" : "Cancel";
+    title: I18n.text.project_dialog_title;
+    subtitle: I18n.text.project_dialog_description;
+    accept-label: I18n.text.menu_save;
+    cancel-label: I18n.text.cancel;
     accepted => save-project();
 
     VerticalBox {
         spacing: 8px;
-        FieldHeading { text: locale == "es" ? "Archivo del proyecto" : "Project file"; }
+        FieldHeading { text: I18n.text.project_file; }
         LineEdit {
             text <=> project-path;
             placeholder-text: "obs-rs-project.txt";
         }
-        FieldHeading { text: locale == "es" ? "Archivo de diagnóstico" : "Diagnostics file"; }
+        FieldHeading { text: I18n.text.diagnostics_file; }
         LineEdit {
             text <=> diagnostics-path;
             placeholder-text: "obs-rs-diagnostics.obsrdg";
         }
         MutedText {
-            text: locale == "es"
-                ? "Los guardados usan escritura atómica para conservar una recuperación temporal."
-                : "Saves use atomic writes so an interrupted session can be recovered.";
+            text: I18n.text.atomic_save_hint;
         }
     }
 }
@@ -41,25 +38,23 @@ export component SceneDialog inherits ModalShell {
     in-out property <string> new-scene-name;
     callback add-scene(string, string);
 
-    title: locale == "es" ? "Añadir escena" : "Add scene";
-    subtitle: locale == "es"
-        ? "Crea una escena nueva para el perfil activo."
-        : "Create a new scene in the active profile.";
-    accept-label: locale == "es" ? "Añadir escena" : "Add scene";
-    cancel-label: locale == "es" ? "Cancelar" : "Cancel";
+    title: I18n.text.add_scene;
+    subtitle: I18n.text.scene_dialog_description;
+    accept-label: I18n.text.add_scene;
+    cancel-label: I18n.text.cancel;
     accepted => add-scene(new-scene-id, new-scene-name);
 
     VerticalBox {
         spacing: 8px;
-        FieldHeading { text: locale == "es" ? "Identificador" : "Scene id"; }
+        FieldHeading { text: I18n.text.identifier; }
         LineEdit {
             text <=> new-scene-id;
             placeholder-text: "scene-id";
         }
-        FieldHeading { text: locale == "es" ? "Nombre visible" : "Display name"; }
+        FieldHeading { text: I18n.text.display_name; }
         LineEdit {
             text <=> new-scene-name;
-            placeholder-text: locale == "es" ? "Nombre de escena" : "Scene name";
+            placeholder-text: I18n.text.scene_name_placeholder;
         }
     }
 }
@@ -72,28 +67,28 @@ export component SourceDialog inherits ModalShell {
     in-out property <string> new-source-name;
     callback add-source(string, string, string);
 
-    title: locale == "es" ? "Añadir fuente" : "Add source";
-    subtitle: (locale == "es" ? "Añade una fuente a " : "Add a source to ") + preview-scene + ".";
-    accept-label: locale == "es" ? "Añadir fuente" : "Add source";
-    cancel-label: locale == "es" ? "Cancelar" : "Cancel";
+    title: I18n.text.source_dialog_title;
+    subtitle: I18n.text.source_dialog_description + preview-scene + ".";
+    accept-label: I18n.text.add_source;
+    cancel-label: I18n.text.cancel;
     accepted => add-source(new-source-id, new-source-kind, new-source-name);
 
     VerticalBox {
         spacing: 8px;
-        FieldHeading { text: locale == "es" ? "Identificador" : "Source id"; }
+        FieldHeading { text: I18n.text.identifier; }
         LineEdit {
             text <=> new-source-id;
             placeholder-text: "source-id";
         }
-        FieldHeading { text: locale == "es" ? "Tipo" : "Kind"; }
+        FieldHeading { text: I18n.text.kind; }
         LineEdit {
             text <=> new-source-kind;
             placeholder-text: "test_pattern";
         }
-        FieldHeading { text: locale == "es" ? "Nombre visible" : "Display name"; }
+        FieldHeading { text: I18n.text.display_name; }
         LineEdit {
             text <=> new-source-name;
-            placeholder-text: locale == "es" ? "Nombre de fuente" : "Source name";
+            placeholder-text: I18n.text.source_name_placeholder;
         }
     }
 }
@@ -103,33 +98,29 @@ export component OutputDialog inherits ModalShell {
     in-out property <string> recording-path;
     in-out property <string> streaming-address;
 
-    title: locale == "es" ? "Configuración de salida" : "Output configuration";
-    subtitle: locale == "es"
-        ? "Configura la ruta de grabación y el destino de transmisión."
-        : "Configure the recording path and streaming destination.";
-    accept-label: locale == "es" ? "Aplicar" : "Apply";
-    cancel-label: locale == "es" ? "Cancelar" : "Cancel";
+    title: I18n.text.output_dialog_title;
+    subtitle: I18n.text.output_dialog_description;
+    accept-label: I18n.text.apply;
+    cancel-label: I18n.text.cancel;
 
     VerticalBox {
         spacing: 8px;
         FieldHeading {
-            text: locale == "es" ? "Archivo de grabación" : "Recording file";
+            text: I18n.text.recording_file;
         }
         LineEdit {
             text <=> recording-path;
             placeholder-text: "obs-rs-recording.y4m";
         }
         FieldHeading {
-            text: locale == "es" ? "Dirección de transmisión" : "Streaming address";
+            text: I18n.text.streaming_address;
         }
         LineEdit {
             text <=> streaming-address;
             placeholder-text: "127.0.0.1:9000";
         }
         MutedText {
-            text: locale == "es"
-                ? "Admite TCP Rust y destinos ws://."
-                : "Supports Rust TCP and ws:// destinations.";
+            text: I18n.text.output_hint;
         }
     }
 }

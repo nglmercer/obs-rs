@@ -1,4 +1,5 @@
 import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
 
 component StageCard inherits Rectangle {
     in property <string> title;
@@ -64,20 +65,20 @@ export component StagePanel inherits Rectangle {
             spacing: 6px;
             vertical-stretch: 1;
             StageCard {
-                title: locale == "es" ? "VISTA PREVIA" : "PREVIEW";
+                title: I18n.text.preview;
                 scene: preview-scene;
                 frame: preview-image;
                 program: false;
             }
             StageCard {
-                title: locale == "es" ? "PROGRAMA" : "PROGRAM";
+                title: I18n.text.program;
                 scene: program-scene;
                 frame: program-image;
                 program: true;
             }
         }
         if view-mode == 1 : StageCard {
-            title: locale == "es" ? "VISTA PREVIA" : "PREVIEW";
+            title: I18n.text.preview;
             scene: preview-scene;
             frame: preview-image;
             program: false;

@@ -381,3 +381,12 @@ fn accessible_snapshot_contains_labeled_state_and_scene_markers() {
     assert!(snapshot.contains("- program: Program [program]"));
     assert!(snapshot.contains("Recent notices:"));
 }
+
+#[test]
+fn locale_parser_accepts_case_and_region_variants() {
+    assert_eq!(UiLocale::supported().len(), 2);
+    assert_eq!(UiLocale::from_code("EN_us"), Some(UiLocale::English));
+    assert_eq!(UiLocale::from_code("es-ES"), Some(UiLocale::Spanish));
+    assert_eq!(UiLocale::from_code("  english  "), Some(UiLocale::English));
+    assert_eq!(UiLocale::from_code("fr-FR"), None);
+}

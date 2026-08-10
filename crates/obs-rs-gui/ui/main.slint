@@ -1,14 +1,17 @@
 import { HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
+import { LocaleOption, ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
+import { I18n } from "i18n.slint";
 import { AppNavbar } from "navbar.slint";
 import { StagePanel } from "stage.slint";
 import { DockSlot } from "dock_slot.slint";
 import { StatusBar } from "status_bar.slint";
 
+export { I18n, UiText } from "i18n.slint";
+
 export component MainWindow inherits Window {
         width: 1180px;
         height: 900px;
-        title: "OBS-RS Studio";
+        title: I18n.text.app_name;
         background: rgb(17, 24, 39);
 
         in property <string> project-title;
@@ -31,6 +34,7 @@ export component MainWindow inherits Window {
         in property <[SceneRow]> scene-rows;
         in property <[SourceRow]> source-rows;
         in property <[ProfileRow]> profile-rows;
+        in property <[LocaleOption]> locale-options;
         in property <string> source-scene;
         in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
@@ -116,6 +120,8 @@ export component MainWindow inherits Window {
             AppNavbar {
                 locale: root.locale;
                 profile-rows: root.profile-rows;
+                locale-options: root.locale-options;
+                set-locale(code) => { root.set-locale(code); }
                 menu-action(action) => {
                     if action == "save-project" {
                         root.save-project();

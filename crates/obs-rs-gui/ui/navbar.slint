@@ -1,13 +1,17 @@
-import { HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { MenuEntry, NavMenuButton } from "theme.slint";
+import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Icon, MenuEntry, NavMenuButton } from "theme.slint";
 import { ProfileRow } from "models.slint";
+import { LocaleOption } from "models.slint";
+import { I18n } from "i18n.slint";
 
 export component AppNavbar inherits Rectangle {
     in property <string> locale;
     in property <[ProfileRow]> profile-rows;
+    in property <[LocaleOption]> locale-options;
     callback menu-action(string);
     callback select-view-mode(int);
     callback select-profile(string);
+    callback set-locale(string);
 
     property <int> open-menu: 0;
     height: 36px;
@@ -20,12 +24,9 @@ export component AppNavbar inherits Rectangle {
         padding-left: 8px;
         padding-right: 8px;
         spacing: 3px;
-        Text {
-            text: "◉";
-            color: rgb(249, 250, 251);
-            font-size: 17px;
-            width: 22px;
-            vertical-alignment: center;
+        Icon {
+            name: "brand";
+            icon-size: 18px;
         }
         Text {
             text: "OBS-RS";
@@ -36,47 +37,65 @@ export component AppNavbar inherits Rectangle {
             width: 58px;
         }
         NavMenuButton {
-            label: locale == "es" ? "Archivo" : "File";
+            label: I18n.text.nav_file;
+            icon-name: "file";
             active: open-menu == 1;
             clicked => { root.open-menu = open-menu == 1 ? 0 : 1; }
         }
         NavMenuButton {
-            label: locale == "es" ? "Editar" : "Edit";
+            label: I18n.text.nav_edit;
+            icon-name: "edit";
             active: open-menu == 2;
             clicked => { root.open-menu = open-menu == 2 ? 0 : 2; }
         }
         NavMenuButton {
-            label: locale == "es" ? "Vista" : "View";
+            label: I18n.text.nav_view;
+            icon-name: "view";
             active: open-menu == 3;
             clicked => { root.open-menu = open-menu == 3 ? 0 : 3; }
         }
         NavMenuButton {
-            label: locale == "es" ? "Paneles" : "Docks";
+            label: I18n.text.nav_docks;
+            icon-name: "panels";
             active: open-menu == 4;
             clicked => { root.open-menu = open-menu == 4 ? 0 : 4; }
         }
         NavMenuButton {
-            label: locale == "es" ? "Perfil" : "Profile";
+            label: I18n.text.nav_profile;
+            icon-name: "profile";
             active: open-menu == 5;
             clicked => { root.open-menu = open-menu == 5 ? 0 : 5; }
         }
         NavMenuButton {
-            label: locale == "es" ? "Colección de escenas" : "Scene Collection";
+            label: I18n.text.nav_scene_collection;
+            icon-name: "collection";
             active: open-menu == 6;
             min-width: 132px;
             clicked => { root.open-menu = open-menu == 6 ? 0 : 6; }
         }
         NavMenuButton {
-            label: locale == "es" ? "Herramientas" : "Tools";
+            label: I18n.text.nav_tools;
+            icon-name: "tools";
             active: open-menu == 7;
             clicked => { root.open-menu = open-menu == 7 ? 0 : 7; }
         }
         NavMenuButton {
-            label: locale == "es" ? "Ayuda" : "Help";
+            label: I18n.text.nav_help;
+            icon-name: "help";
             active: open-menu == 8;
             clicked => { root.open-menu = open-menu == 8 ? 0 : 8; }
         }
         Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: I18n.text.language;
+            color: rgb(148, 163, 184);
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+        for option in locale-options : Button {
+            text: option.label;
+            clicked => root.set-locale(option.code);
+        }
     }
 
     if open-menu == 1 : Rectangle {
@@ -91,14 +110,14 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: locale == "es" ? "Nuevo proyecto" : "New project"; clicked => { root.menu-action("new-project"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Abrir proyecto..." : "Open project..."; clicked => { root.menu-action("load-project"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Guardar" : "Save"; clicked => { root.menu-action("save-project"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Recuperar proyecto" : "Recover project"; clicked => { root.menu-action("recover-project"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Exportar diagnóstico" : "Export diagnostics"; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_new_project; clicked => { root.menu-action("new-project"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_open_project; clicked => { root.menu-action("load-project"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_save; clicked => { root.menu-action("save-project"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_recover_project; clicked => { root.menu-action("recover-project"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_export_diagnostics; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
             Rectangle { height: 1px; background: rgb(75, 85, 99); }
-            MenuEntry { label: locale == "es" ? "Configuración" : "Settings"; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Salir" : "Exit"; destructive: true; clicked => { root.menu-action("exit"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_settings; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_exit; destructive: true; clicked => { root.menu-action("exit"); root.open-menu = 0; } }
         }
     }
     if open-menu == 2 : Rectangle {
@@ -113,9 +132,9 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: locale == "es" ? "Deshacer" : "Undo"; clicked => { root.menu-action("undo"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Rehacer" : "Redo"; clicked => { root.menu-action("redo"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Preferencias" : "Preferences"; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_undo; clicked => { root.menu-action("undo"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_redo; clicked => { root.menu-action("redo"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_preferences; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
         }
     }
     if open-menu == 3 : Rectangle {
@@ -130,8 +149,8 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: locale == "es" ? "Modo Studio" : "Studio mode"; clicked => { root.select-view-mode(0); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Proyector de vista previa" : "Preview projector"; clicked => { root.menu-action("fullscreen"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_studio_mode; clicked => { root.select-view-mode(0); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("fullscreen"); root.open-menu = 0; } }
         }
     }
     if open-menu == 4 : Rectangle {
@@ -146,11 +165,11 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: locale == "es" ? "Fuentes" : "Sources"; clicked => { root.menu-action("toggle-sources"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Escenas" : "Scenes"; clicked => { root.menu-action("toggle-scenes"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Mezclador de audio" : "Audio Mixer"; clicked => { root.menu-action("toggle-mixer"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Transiciones" : "Transitions"; clicked => { root.menu-action("toggle-transitions"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Controles" : "Controls"; clicked => { root.menu-action("toggle-controls"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_sources; clicked => { root.menu-action("toggle-sources"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_scenes; clicked => { root.menu-action("toggle-scenes"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_audio_mixer; clicked => { root.menu-action("toggle-mixer"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_transitions; clicked => { root.menu-action("toggle-transitions"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_controls; clicked => { root.menu-action("toggle-controls"); root.open-menu = 0; } }
         }
     }
     if open-menu == 5 : Rectangle {
@@ -170,7 +189,7 @@ export component AppNavbar inherits Rectangle {
                 clicked => { root.select-profile(profile.id); root.open-menu = 0; }
             }
             Rectangle { height: 1px; background: rgb(75, 85, 99); }
-            MenuEntry { label: locale == "es" ? "Administrar perfiles" : "Manage profiles"; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_manage_profiles; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
         }
     }
     if open-menu == 6 : Rectangle {
@@ -185,9 +204,9 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: locale == "es" ? "Nueva colección" : "New collection"; clicked => { root.menu-action("new-collection"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Cargar colección" : "Load collection"; clicked => { root.menu-action("load-collection"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Guardar colección" : "Save collection"; clicked => { root.menu-action("save-collection"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_new_collection; clicked => { root.menu-action("new-collection"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_load_collection; clicked => { root.menu-action("load-collection"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_save_collection; clicked => { root.menu-action("save-collection"); root.open-menu = 0; } }
         }
     }
     if open-menu == 7 : Rectangle {
@@ -202,9 +221,9 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: locale == "es" ? "Propiedades de fuente" : "Source properties"; clicked => { root.menu-action("source-properties"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Filtros de fuente" : "Source filters"; clicked => { root.menu-action("source-filters"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Registro de diagnóstico" : "Diagnostic log"; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_source_properties; clicked => { root.menu-action("source-properties"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_source_filters; clicked => { root.menu-action("source-filters"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_diagnostic_log; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
         }
     }
     if open-menu == 8 : Rectangle {
@@ -219,8 +238,8 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: locale == "es" ? "Documentación" : "Documentation"; clicked => { root.menu-action("documentation"); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Acerca de OBS-RS" : "About OBS-RS"; clicked => { root.menu-action("about"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_documentation; clicked => { root.menu-action("documentation"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_about; clicked => { root.menu-action("about"); root.open-menu = 0; } }
         }
     }
 }

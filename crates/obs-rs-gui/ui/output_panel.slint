@@ -1,5 +1,6 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { MutedText, PanelHeading, StudioPanel } from "theme.slint";
+import { I18n } from "i18n.slint";
 
 export component OutputPanel inherits Rectangle {
     in property <string> locale;
@@ -21,12 +22,10 @@ export component OutputPanel inherits Rectangle {
     VerticalBox {
         spacing: 10px;
         PanelHeading {
-            text: locale == "es" ? "Salida" : "Output";
+            text: I18n.text.output_title;
         }
         MutedText {
-            text: locale == "es"
-                ? "Control de transición, grabación y transmisión en directo."
-                : "Transition, recording, and live streaming controls.";
+            text: I18n.text.output_description;
         }
         StudioPanel {
             height: 94px;
@@ -34,7 +33,7 @@ export component OutputPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 8px;
                 Text {
-                    text: (locale == "es" ? "Transición actual: " : "Current transition: ") + transition;
+                    text: I18n.text.current_transition + transition;
                     color: rgb(226, 232, 240);
                     font-size: 12px;
                     font-weight: 700;
@@ -42,15 +41,15 @@ export component OutputPanel inherits Rectangle {
                 HorizontalBox {
                     spacing: 6px;
                     Button {
-                        text: locale == "es" ? "Intercambiar" : "Swap preview / program";
+                        text: I18n.text.swap_preview_program;
                         clicked => swap-scenes();
                     }
                     Button {
-                        text: locale == "es" ? "Corte" : "Cut";
+                        text: I18n.text.cut;
                         clicked => cut-transition();
                     }
                     Button {
-                        text: locale == "es" ? "Fundido" : "Fade";
+                        text: I18n.text.fade;
                         clicked => fade-transition();
                     }
                 }
@@ -62,19 +61,19 @@ export component OutputPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 7px;
                 Text {
-                    text: locale == "es" ? "Destinos" : "Destinations";
+                    text: I18n.text.destinations;
                     color: rgb(226, 232, 240);
                     font-size: 12px;
                     font-weight: 700;
                 }
                 Text {
-                    text: (locale == "es" ? "Grabar: " : "Record: ") + recording-path;
+                    text: I18n.text.record_prefix + recording-path;
                     color: rgb(148, 163, 184);
                     font-size: 11px;
                     overflow: elide;
                 }
                 Text {
-                    text: (locale == "es" ? "Transmitir: " : "Stream: ") + streaming-address;
+                    text: I18n.text.stream_prefix + streaming-address;
                     color: rgb(148, 163, 184);
                     font-size: 11px;
                     overflow: elide;
@@ -82,19 +81,19 @@ export component OutputPanel inherits Rectangle {
                 HorizontalBox {
                     spacing: 6px;
                     Button {
-                        text: locale == "es" ? "Configurar" : "Configure";
+                        text: I18n.text.configure;
                         clicked => open-output-dialog();
                     }
                     Button {
                         text: recording
-                            ? (locale == "es" ? "Detener grabación" : "Stop recording")
-                            : (locale == "es" ? "Iniciar grabación" : "Start recording");
+                            ? I18n.text.stop_recording
+                            : I18n.text.start_recording;
                         clicked => toggle-recording();
                     }
                     Button {
                         text: streaming
-                            ? (locale == "es" ? "Detener transmisión" : "Stop streaming")
-                            : (locale == "es" ? "Iniciar transmisión" : "Start streaming");
+                            ? I18n.text.stop_streaming
+                            : I18n.text.start_streaming;
                         clicked => toggle-streaming();
                     }
                 }

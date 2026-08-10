@@ -1,5 +1,6 @@
 import { Button, VerticalBox } from "std-widgets.slint";
 import { MutedText, PanelHeading, StudioPanel } from "theme.slint";
+import { I18n } from "i18n.slint";
 
 export component DiagnosticsPanel inherits Rectangle {
     in property <string> locale;
@@ -15,12 +16,10 @@ export component DiagnosticsPanel inherits Rectangle {
     VerticalBox {
         spacing: 10px;
         PanelHeading {
-            text: locale == "es" ? "Diagnóstico" : "Diagnostics";
+            text: I18n.text.diagnostics_title;
         }
         MutedText {
-            text: locale == "es"
-                ? "Observa el estado de captura, render y salida sin salir del control room."
-                : "Inspect capture, render, and output state without leaving the control room.";
+            text: I18n.text.diagnostics_description;
         }
         StudioPanel {
             height: 80px;
@@ -28,7 +27,7 @@ export component DiagnosticsPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 6px;
                 Text {
-                    text: locale == "es" ? "Runtime" : "Runtime";
+                    text: I18n.text.runtime;
                     color: rgb(226, 232, 240);
                     font-size: 12px;
                     font-weight: 700;
@@ -43,7 +42,7 @@ export component DiagnosticsPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 5px;
                 Text {
-                    text: locale == "es" ? "Salida" : "Output";
+                    text: I18n.text.tabs_output;
                     color: rgb(226, 232, 240);
                     font-size: 12px;
                     font-weight: 700;
@@ -59,7 +58,7 @@ export component DiagnosticsPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 6px;
                 Text {
-                    text: locale == "es" ? "Resumen accesible" : "Accessible snapshot";
+                        text: I18n.text.accessible_snapshot;
                     color: rgb(226, 232, 240);
                     font-size: 12px;
                     font-weight: 700;
@@ -80,7 +79,7 @@ export component DiagnosticsPanel inherits Rectangle {
             wrap: word-wrap;
         }
         Button {
-            text: locale == "es" ? "Exportar diagnóstico" : "Export diagnostics";
+            text: I18n.text.export_diagnostics;
             clicked => export-diagnostics();
         }
     }

@@ -1,5 +1,6 @@
 import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 import { FieldHeading, MutedText, PanelHeading, StudioPanel } from "theme.slint";
+import { I18n } from "i18n.slint";
 
 export component EditorPanel inherits Rectangle {
     in property <string> locale;
@@ -24,19 +25,19 @@ export component EditorPanel inherits Rectangle {
     VerticalBox {
         spacing: 10px;
         PanelHeading {
-            text: locale == "es" ? "Editor" : "Editor";
+            text: I18n.text.editor_title;
         }
         MutedText {
-            text: (locale == "es" ? "Escena de vista previa: " : "Preview scene: ") + preview-scene;
+            text: I18n.text.preview_scene_prefix + preview-scene;
         }
         HorizontalBox {
             spacing: 8px;
             Button {
-                text: locale == "es" ? "Nueva escena" : "New scene";
+                text: I18n.text.new_scene;
                 clicked => open-scene-dialog();
             }
             Button {
-                text: locale == "es" ? "Nueva fuente" : "New source";
+                text: I18n.text.new_source;
                 clicked => open-source-dialog();
             }
         }
@@ -46,17 +47,17 @@ export component EditorPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 7px;
                 FieldHeading {
-                    text: locale == "es" ? "Nombre de la escena" : "Scene name";
+                    text: I18n.text.scene_name;
                 }
                 HorizontalBox {
                     spacing: 6px;
                     LineEdit {
                         text <=> scene-name;
-                        placeholder-text: locale == "es" ? "Nombre de escena" : "Scene name";
+                        placeholder-text: I18n.text.scene_name_placeholder;
                         horizontal-stretch: 1;
                     }
                     Button {
-                        text: locale == "es" ? "Renombrar" : "Rename";
+                        text: I18n.text.rename;
                         clicked => rename-scene();
                     }
                 }
@@ -69,20 +70,20 @@ export component EditorPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 7px;
                 Text {
-                    text: (locale == "es" ? "Fuente seleccionada: " : "Selected source: ") + selected-source;
+                    text: I18n.text.selected_source_prefix + selected-source;
                     color: rgb(226, 232, 240);
                     font-size: 12px;
                     font-weight: 700;
                 }
                 Text {
                     text: source-settings-version == ""
-                        ? (locale == "es" ? "Selecciona una fuente para editar sus propiedades." : "Select a source to edit its properties.")
-                        : (locale == "es" ? "Propiedades sincronizadas" : "Properties synchronized");
+                        ? I18n.text.select_source_hint
+                        : I18n.text.properties_synced;
                     color: rgb(134, 239, 172);
                     font-size: 11px;
                 }
                 FieldHeading {
-                    text: locale == "es" ? "Ajustes" : "Settings";
+                    text: I18n.text.source_settings;
                 }
                 TextEdit {
                     text <=> source-settings;
@@ -90,13 +91,11 @@ export component EditorPanel inherits Rectangle {
                     height: 54px;
                 }
                 Button {
-                    text: locale == "es" ? "Aplicar ajustes" : "Apply settings";
+                    text: I18n.text.apply_settings;
                     clicked => apply-source-settings();
                 }
                 FieldHeading {
-                    text: locale == "es"
-                        ? "Transformación · escala-x,escala-y,x,y,voltear-x,voltear-y,opacidad"
-                        : "Transform · scale-x,scale-y,x,y,flip-x,flip-y,opacity";
+                    text: I18n.text.transform;
                 }
                 HorizontalBox {
                     spacing: 6px;
@@ -106,12 +105,12 @@ export component EditorPanel inherits Rectangle {
                         horizontal-stretch: 1;
                     }
                     Button {
-                        text: locale == "es" ? "Aplicar" : "Apply";
+                        text: I18n.text.apply;
                         clicked => apply-source-transform();
                     }
                 }
                 FieldHeading {
-                    text: (locale == "es" ? "Filtros: " : "Filters: ") + source-filters;
+                    text: I18n.text.filters_prefix + source-filters;
                     overflow: elide;
                 }
                 HorizontalBox {
@@ -122,7 +121,7 @@ export component EditorPanel inherits Rectangle {
                         horizontal-stretch: 1;
                     }
                     Button {
-                        text: locale == "es" ? "Aplicar" : "Apply";
+                        text: I18n.text.apply;
                         clicked => apply-source-filters();
                     }
                 }

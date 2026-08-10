@@ -1,4 +1,5 @@
 import { VerticalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
 
 export component SnapshotPanel inherits Rectangle {
     in property <string> locale;
@@ -14,9 +15,7 @@ export component SnapshotPanel inherits Rectangle {
                     padding: 12px;
                     spacing: 5px;
                     Text {
-                        text: locale == "es"
-                            ? "Resumen de estado accesible"
-                            : "Accessible state snapshot";
+                        text: I18n.text.snapshot_title;
                         color: rgb(203, 213, 225);
                         font-size: 13px;
                         font-weight: 700;

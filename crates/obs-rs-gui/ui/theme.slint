@@ -25,6 +25,45 @@ export component MutedText inherits Text {
     wrap: word-wrap;
 }
 
+// SVGs are embedded by Slint at build time. Keeping the name-to-resource map
+// in one component gives every panel the same sizing and visual treatment.
+export component Icon inherits Rectangle {
+    in property <string> name;
+    in property <length> icon-size: 16px;
+    width: icon-size;
+    height: icon-size;
+    background: transparent;
+
+    Image {
+        width: parent.width;
+        height: parent.height;
+        image-fit: contain;
+        source: root.name == "add" ? @image-url("icons/add.svg")
+            : root.name == "remove" ? @image-url("icons/remove.svg")
+            : root.name == "settings" ? @image-url("icons/settings.svg")
+            : root.name == "pause" ? @image-url("icons/pause.svg")
+            : root.name == "more" ? @image-url("icons/more.svg")
+            : root.name == "eye" ? @image-url("icons/eye.svg")
+            : root.name == "eye-off" ? @image-url("icons/eye-off.svg")
+            : root.name == "lock" ? @image-url("icons/lock.svg")
+            : root.name == "unlock" ? @image-url("icons/unlock.svg")
+            : root.name == "up" ? @image-url("icons/up.svg")
+            : root.name == "down" ? @image-url("icons/down.svg")
+            : root.name == "volume" ? @image-url("icons/volume.svg")
+            : root.name == "volume-mute" ? @image-url("icons/volume-mute.svg")
+            : root.name == "brand" ? @image-url("icons/brand.svg")
+            : root.name == "drag" ? @image-url("icons/drag.svg")
+            : root.name == "file" ? @image-url("icons/file.svg")
+            : root.name == "edit" ? @image-url("icons/edit.svg")
+            : root.name == "view" ? @image-url("icons/view.svg")
+            : root.name == "panels" ? @image-url("icons/panels.svg")
+            : root.name == "profile" ? @image-url("icons/profile.svg")
+            : root.name == "collection" ? @image-url("icons/collection.svg")
+            : root.name == "tools" ? @image-url("icons/tools.svg")
+            : @image-url("icons/help.svg");
+    }
+}
+
 export component TabButton inherits Rectangle {
     in property <string> label;
     in property <bool> active;
@@ -55,6 +94,7 @@ export component TabButton inherits Rectangle {
 
 export component NavMenuButton inherits Rectangle {
     in property <string> label;
+    in property <string> icon-name;
     in property <bool> active;
     callback clicked();
     height: 32px;
@@ -62,12 +102,22 @@ export component NavMenuButton inherits Rectangle {
     background: active ? rgb(61, 66, 75) : transparent;
     border-radius: 3px;
 
-    Text {
-        text: root.label;
-        color: rgb(226, 232, 240);
-        font-size: 12px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    HorizontalBox {
+        padding-left: 7px;
+        padding-right: 7px;
+        spacing: 4px;
+        Icon {
+            name: root.icon-name;
+            icon-size: 14px;
+        }
+        Text {
+            text: root.label;
+            color: rgb(226, 232, 240);
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
     }
     TouchArea {
         clicked => root.clicked();
@@ -119,7 +169,7 @@ export component ModeButton inherits Rectangle {
 }
 
 export component CompactButton inherits Rectangle {
-    in property <string> label;
+    in property <string> icon-name;
     in property <string> hint;
     in property <bool> enabled: true;
     callback clicked();
@@ -131,12 +181,11 @@ export component CompactButton inherits Rectangle {
     border-color: rgb(71, 85, 105);
     border-radius: 3px;
 
-    Text {
-        text: root.label;
-        color: rgb(226, 232, 240);
-        font-size: 11px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    Icon {
+        x: (parent.width - 15px) / 2;
+        y: (parent.height - 15px) / 2;
+        name: root.icon-name;
+        icon-size: 15px;
     }
     TouchArea {
         enabled: root.enabled;
@@ -165,14 +214,11 @@ export component DockHeader inherits Rectangle {
         vertical-alignment: center;
         overflow: elide;
     }
-    Text {
+    Icon {
         x: parent.width - 31px;
-        width: 22px;
-        text: "⋮⋮";
-        color: rgb(148, 163, 184);
-        font-size: 12px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+        y: 6px;
+        name: "drag";
+        icon-size: 16px;
     }
     TouchArea {
         x: parent.width - 34px;

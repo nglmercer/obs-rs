@@ -1,5 +1,6 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { ProfileRow } from "models.slint";
+import { LocaleOption, ProfileRow } from "models.slint";
+import { I18n } from "i18n.slint";
 
 export component StudioHeader inherits Rectangle {
     in property <string> project-title;
@@ -7,6 +8,7 @@ export component StudioHeader inherits Rectangle {
     in property <string> locale;
     in property <bool> dirty;
     in property <[ProfileRow]> profile-rows;
+    in property <[LocaleOption]> locale-options;
     callback select-profile(string);
     callback set-locale(string);
     horizontal-stretch: 1;
@@ -17,7 +19,7 @@ export component StudioHeader inherits Rectangle {
                 VerticalBox {
                     spacing: 3px;
                     Text {
-                        text: "OBS-RS Studio";
+                        text: I18n.text.app_name;
                         color: rgb(249, 250, 251);
                         font-size: 26px;
                         font-weight: 700;
@@ -28,16 +30,14 @@ export component StudioHeader inherits Rectangle {
                         font-size: 14px;
                     }
                     Text {
-                        text: locale == "es"
-                            ? "Atajos: Espacio intercambia · Ctrl+S guarda · Ctrl+Shift+F fundido"
-                            : "Shortcuts: Space swaps · Ctrl+S saves · Ctrl+Shift+F fades";
+                        text: I18n.text.shortcuts;
                         color: rgb(100, 116, 139);
                         font-size: 11px;
                     }
                     HorizontalBox {
                         spacing: 6px;
                         Text {
-                            text: locale == "es" ? "Perfil:" : "Profile:";
+                            text: I18n.text.profile;
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                             vertical-alignment: center;
@@ -47,26 +47,22 @@ export component StudioHeader inherits Rectangle {
                             clicked => select-profile(profile.id);
                         }
                         Text {
-                            text: locale == "es" ? "Idioma:" : "Language:";
+                            text: I18n.text.language;
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                             vertical-alignment: center;
                         }
-                        Button {
-                            text: "EN";
-                            clicked => set-locale("en");
-                        }
-                        Button {
-                            text: "ES";
-                            clicked => set-locale("es");
+                        for option in locale-options : Button {
+                            text: option.label;
+                            clicked => set-locale(option.code);
                         }
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
                 Text {
                     text: dirty
-                        ? (locale == "es" ? "● Proyecto sin guardar" : "● Unsaved project")
-                        : (locale == "es" ? "● Proyecto guardado" : "● Saved project");
+                        ? I18n.text.unsaved_project
+                        : I18n.text.saved_project;
                     color: dirty ? rgb(251, 191, 36) : rgb(134, 239, 172);
                     vertical-alignment: center;
                     font-size: 14px;

@@ -1,6 +1,7 @@
 import { ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { SourceRow } from "models.slint";
+import { I18n } from "i18n.slint";
 
 export component SourceDock inherits Rectangle {
     in property <string> locale;
@@ -19,7 +20,7 @@ export component SourceDock inherits Rectangle {
     border-color: rgb(55, 60, 69);
     VerticalBox {
         DockHeader {
-            title: (locale == "es" ? "Fuentes · " : "Sources · ") + source-scene;
+            title: I18n.text.sources_title + source-scene;
             panel-kind: root.panel-kind;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
         }
@@ -53,17 +54,17 @@ export component SourceDock inherits Rectangle {
                                 }
                             }
                             CompactButton {
-                                label: source.visible ? "◉" : "○";
+                                icon-name: source.visible ? "eye" : "eye-off";
                                 hint: source.visible
-                                    ? (locale == "es" ? "Ocultar fuente" : "Hide source")
-                                    : (locale == "es" ? "Mostrar fuente" : "Show source");
+                                    ? I18n.text.source_hide
+                                    : I18n.text.source_show;
                                 clicked => toggle-source-visibility(source.id);
                             }
                             CompactButton {
-                                label: source.locked ? "▣" : "□";
+                                icon-name: source.locked ? "lock" : "unlock";
                                 hint: source.locked
-                                    ? (locale == "es" ? "Desbloquear fuente" : "Unlock source")
-                                    : (locale == "es" ? "Bloquear fuente" : "Lock source");
+                                    ? I18n.text.source_unlock
+                                    : I18n.text.source_lock;
                                 clicked => toggle-source-locked(source.id);
                             }
                         }
@@ -71,13 +72,13 @@ export component SourceDock inherits Rectangle {
                 }
                 HorizontalBox {
                     spacing: 4px;
-                    CompactButton { width: 22px; label: "+"; hint: locale == "es" ? "Añadir fuente" : "Add source"; }
-                    CompactButton { width: 22px; label: "▥"; hint: locale == "es" ? "Eliminar fuente seleccionada" : "Remove selected source"; }
-                    CompactButton { width: 22px; label: "⚙"; hint: locale == "es" ? "Propiedades de fuente" : "Source properties"; }
-                    CompactButton { width: 22px; label: "↑"; hint: locale == "es" ? "Subir fuente" : "Move source up"; }
-                    CompactButton { width: 22px; label: "↓"; hint: locale == "es" ? "Bajar fuente" : "Move source down"; }
+                    CompactButton { width: 22px; icon-name: "add"; hint: I18n.text.add_source; }
+                    CompactButton { width: 22px; icon-name: "remove"; hint: I18n.text.remove_source; }
+                    CompactButton { width: 22px; icon-name: "settings"; hint: I18n.text.source_properties; }
+                    CompactButton { width: 22px; icon-name: "up"; hint: I18n.text.source_move_up; }
+                    CompactButton { width: 22px; icon-name: "down"; hint: I18n.text.source_move_down; }
                     Rectangle { horizontal-stretch: 1; }
-                    CompactButton { width: 22px; label: "⋮"; hint: locale == "es" ? "Más opciones" : "More options"; }
+                    CompactButton { width: 22px; icon-name: "more"; hint: I18n.text.more_options; }
                 }
             }
         }

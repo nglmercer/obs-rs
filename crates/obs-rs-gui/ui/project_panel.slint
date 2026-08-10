@@ -1,5 +1,6 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { MutedText, PanelHeading, StudioPanel } from "theme.slint";
+import { I18n } from "i18n.slint";
 
 export component ProjectPanel inherits Rectangle {
     in property <string> locale;
@@ -16,12 +17,10 @@ export component ProjectPanel inherits Rectangle {
     VerticalBox {
         spacing: 10px;
         PanelHeading {
-            text: locale == "es" ? "Proyecto" : "Project";
+            text: I18n.text.project_title;
         }
         MutedText {
-            text: locale == "es"
-                ? "Administra el archivo activo y las operaciones de recuperación."
-                : "Manage the active project file and recovery operations.";
+            text: I18n.text.project_description;
         }
         StudioPanel {
             height: 86px;
@@ -29,7 +28,7 @@ export component ProjectPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 7px;
                 Text {
-                    text: (locale == "es" ? "Archivo: " : "File: ") + project-path;
+                    text: I18n.text.file_prefix + project-path;
                     color: rgb(226, 232, 240);
                     font-size: 12px;
                     overflow: elide;
@@ -37,15 +36,15 @@ export component ProjectPanel inherits Rectangle {
                 HorizontalBox {
                     spacing: 6px;
                     Button {
-                        text: locale == "es" ? "Configurar" : "Configure";
+                        text: I18n.text.configure;
                         clicked => open-project-dialog();
                     }
                     Button {
-                        text: locale == "es" ? "Guardar" : "Save";
+                        text: I18n.text.menu_save;
                         clicked => save-project();
                     }
                     Button {
-                        text: locale == "es" ? "Cargar" : "Load";
+                        text: I18n.text.load;
                         clicked => load-project();
                     }
                 }
@@ -57,7 +56,7 @@ export component ProjectPanel inherits Rectangle {
                 padding: 12px;
                 spacing: 7px;
                 Text {
-                    text: locale == "es" ? "Recuperación y diagnóstico" : "Recovery and diagnostics";
+                    text: I18n.text.recovery_title;
                     color: rgb(226, 232, 240);
                     font-size: 12px;
                     font-weight: 700;
@@ -71,18 +70,18 @@ export component ProjectPanel inherits Rectangle {
                 HorizontalBox {
                     spacing: 6px;
                     Button {
-                        text: locale == "es" ? "Recuperar" : "Recover";
+                        text: I18n.text.recover;
                         clicked => recover-project();
                     }
                     Button {
-                        text: locale == "es" ? "Diagnóstico" : "Diagnostics";
+                        text: I18n.text.tabs_diagnostics;
                         clicked => export-diagnostics();
                     }
                 }
             }
         }
         MutedText {
-            text: (locale == "es" ? "Diagnóstico: " : "Diagnostics: ") + diagnostics-path;
+            text: I18n.text.diagnostics_prefix + diagnostics-path;
             overflow: elide;
         }
         Rectangle { vertical-stretch: 1; }

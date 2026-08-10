@@ -1,4 +1,5 @@
 import { HorizontalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
 
 export component StatusBar inherits Rectangle {
     in property <string> locale;
@@ -19,16 +20,16 @@ export component StatusBar inherits Rectangle {
         Rectangle { horizontal-stretch: 1; }
         Text {
             text: streaming
-                ? (locale == "es" ? "● TRANSMITIENDO" : "● STREAMING")
-                : (locale == "es" ? "○ transmisión detenida" : "○ stream stopped");
+                ? I18n.text.streaming_status
+                : I18n.text.stream_stopped;
             color: streaming ? rgb(248, 113, 113) : rgb(100, 116, 139);
             font-size: 10px;
             vertical-alignment: center;
         }
         Text {
             text: recording
-                ? (locale == "es" ? "● GRABANDO" : "● RECORDING")
-                : (locale == "es" ? "○ grabación detenida" : "○ recording stopped");
+                ? I18n.text.recording_status
+                : I18n.text.recording_stopped;
             color: recording ? rgb(248, 113, 113) : rgb(100, 116, 139);
             font-size: 10px;
             vertical-alignment: center;

@@ -1,9 +1,10 @@
-use super::refresh::transition_label;
+use super::i18n::catalog;
+use super::refresh::transition_label_for_locale;
 use super::{initial_project, refresh_ui, MainWindow, OutputRuntime, PreviewRenderer};
 use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::encode_png;
 use obs_rs_project::{ProjectCommand, SceneSpec};
-use obs_rs_ui::DesktopState;
+use obs_rs_ui::{DesktopState, UiLocale};
 use slint::ComponentHandle;
 use std::{cell::RefCell, rc::Rc};
 
@@ -23,13 +24,30 @@ fn gui_project_has_control_room_scenes() {
 
 #[test]
 fn transition_labels_are_user_facing() {
-    assert_eq!(transition_label(FrameTransition::Cut), "Cut");
     assert_eq!(
-        transition_label(FrameTransition::CrossFade {
-            progress_milli: 500
-        }),
+        transition_label_for_locale(UiLocale::English, FrameTransition::Cut),
+        "Cut"
+    );
+    assert_eq!(
+        transition_label_for_locale(
+            UiLocale::English,
+            FrameTransition::CrossFade {
+                progress_milli: 500,
+            },
+        ),
         "Fade 500/1000"
     );
+}
+
+#[test]
+fn gui_catalog_switches_complete_copy_between_supported_locales() {
+    let english = catalog(UiLocale::English);
+    let spanish = catalog(UiLocale::Spanish);
+    assert_eq!(english.scenes_title, "Scenes");
+    assert_eq!(spanish.scenes_title, "Escenas");
+    assert_eq!(english.add_source, "Add source");
+    assert_eq!(spanish.add_source, "Añadir fuente");
+    assert_ne!(english.shortcuts, spanish.shortcuts);
 }
 
 #[test]

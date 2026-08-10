@@ -2,12 +2,13 @@ use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_media::{FrameTransform, FrameTransition, VideoFrame};
 use obs_rs_project::{Profile, SourceSpec};
-use obs_rs_ui::{DesktopState, UiCommand};
+use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, ModelRc, VecModel, Weak};
 
 use crate::{
-    frame_to_image, project_store, source_filters_document, source_transform_document, MainWindow,
-    MixerRow, OutputRuntime, PreviewRenderer, ProfileRow, SceneRow, SourceRow,
+    frame_to_image, project_store, source_filters_document, source_transform_document,
+    LocaleOption, MainWindow, MixerRow, OutputRuntime, PreviewRenderer, ProfileRow, SceneRow,
+    SourceRow,
 };
 
 pub(crate) fn dispatch_and_refresh(
@@ -21,7 +22,8 @@ pub(crate) fn dispatch_and_refresh(
         return;
     };
     if let Err(error) = result {
-        ui.set_status_message(format!("Command failed: {error}").into());
+        let prefix = crate::i18n::catalog(state.borrow().locale()).command_failed;
+        ui.set_status_message(format!("{prefix}{error}").into());
     } else {
         refresh_ui(&ui, state, renderer);
     }
@@ -33,25 +35,36 @@ pub(crate) fn refresh_ui(
     renderer: &Rc<RefCell<PreviewRenderer>>,
 ) {
     let state = state.borrow();
+    crate::i18n::apply(ui, state.locale());
     let project = state.project_session().project();
     let profile_id = project.active_profile();
     let profile = project
         .profiles()
         .find(|profile| profile.id() == profile_id);
-    let profile_name =
-        profile.map_or_else(|| "No profile".to_owned(), |value| value.name().to_owned());
+    let profile_name = profile.map_or_else(
+        || crate::i18n::catalog(state.locale()).no_profile.to_string(),
+        |value| value.name().to_owned(),
+    );
 
     ui.set_project_title(project.title().into());
     ui.set_profile_name(profile_name.into());
     ui.set_locale(state.locale().code().into());
+    let locale_options = UiLocale::supported()
+        .iter()
+        .map(|locale| LocaleOption {
+            code: locale.code().into(),
+            label: locale.code().to_ascii_uppercase().into(),
+        })
+        .collect::<Vec<_>>();
+    ui.set_locale_options(ModelRc::new(VecModel::from(locale_options)));
     ui.set_preview_scene(state.preview_scene().unwrap_or("none").into());
     ui.set_program_scene(state.program_scene().unwrap_or("none").into());
-    ui.set_transition(transition_label(state.transition()).into());
+    ui.set_transition(transition_label_for_locale(state.locale(), state.transition()).into());
     ui.set_recording(state.recording());
     ui.set_streaming(state.streaming());
     ui.set_dirty(state.is_dirty());
     ui.set_snapshot(state.accessible_snapshot().into());
-    refresh_recovery_ui(ui);
+    refresh_recovery_ui(ui, state.locale());
 
     let profile_rows = project
         .profiles()
@@ -144,24 +157,12 @@ pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRunti
     ui.set_output_metrics(output.output_metrics().into());
 }
 
-fn refresh_recovery_ui(ui: &MainWindow) {
-    let spanish = ui.get_locale().as_str() == "es";
+fn refresh_recovery_ui(ui: &MainWindow, locale: UiLocale) {
+    let text = crate::i18n::catalog(locale);
     let path = ui.get_project_path().to_string();
     let status = match project_store(&path) {
-        Ok(store) if store.recovery_available() => {
-            if spanish {
-                "Recuperación disponible: elige Recuperar para revisar el archivo temporal"
-            } else {
-                "Recovery available: choose Recover to review the temporary project"
-            }
-        }
-        Ok(_) => {
-            if spanish {
-                "No hay archivo de recuperación"
-            } else {
-                "No recovery file detected"
-            }
-        }
+        Ok(store) if store.recovery_available() => text.recovery_available.to_string(),
+        Ok(_) => text.no_recovery.to_string(),
         Err(error) => {
             return ui.set_recovery_status(format!("Recovery check failed: {error}").into())
         }
@@ -175,7 +176,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .scenes()
             .map(|scene| {
                 let id = scene.id().to_string();
-                let role = scene_role(state, &id);
+                let role = scene_role(state, &id, state.locale());
                 SceneRow {
                     id: id.into(),
                     name: scene.name().into(),
@@ -275,23 +276,25 @@ fn latest_notice(state: &DesktopState) -> &str {
         .map_or("Ready", |notice| notice.message())
 }
 
-fn scene_role(state: &DesktopState, id: &str) -> &'static str {
+fn scene_role(state: &DesktopState, id: &str, locale: UiLocale) -> String {
+    let text = crate::i18n::catalog(locale);
     match (
         state.preview_scene() == Some(id),
         state.program_scene() == Some(id),
     ) {
-        (true, true) => "Preview / Program",
-        (true, false) => "Preview",
-        (false, true) => "Program",
-        (false, false) => "",
+        (true, true) => text.preview_program_role.to_string(),
+        (true, false) => text.preview_role.to_string(),
+        (false, true) => text.program_role.to_string(),
+        (false, false) => String::new(),
     }
 }
 
-pub(crate) fn transition_label(transition: FrameTransition) -> String {
+pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTransition) -> String {
+    let text = crate::i18n::catalog(locale);
     match transition {
-        FrameTransition::Cut => "Cut".to_owned(),
+        FrameTransition::Cut => text.cut.to_string(),
         FrameTransition::CrossFade { progress_milli } => {
-            format!("Fade {progress_milli}/1000")
+            format!("{} {progress_milli}/1000", text.fade)
         }
     }
 }

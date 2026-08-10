@@ -1,6 +1,7 @@
 import { Button, ScrollView, HorizontalBox, VerticalBox, Slider } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { MixerRow } from "models.slint";
+import { I18n } from "i18n.slint";
 
 export component MixerDock inherits Rectangle {
     in property <string> locale;
@@ -15,7 +16,7 @@ export component MixerDock inherits Rectangle {
     border-color: rgb(55, 60, 69);
     VerticalBox {
         DockHeader {
-            title: locale == "es" ? "Mezclador de audio" : "Audio Mixer";
+            title: I18n.text.mixer_title;
             panel-kind: root.panel-kind;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
         }
@@ -69,10 +70,10 @@ export component MixerDock inherits Rectangle {
                             HorizontalBox {
                                 alignment: end;
                                 CompactButton {
-                                    label: channel.muted ? "🔇" : "🔊";
+                                    icon-name: channel.muted ? "volume-mute" : "volume";
                                     hint: channel.muted
-                                        ? (locale == "es" ? "Activar" : "Unmute")
-                                        : (locale == "es" ? "Silenciar" : "Mute");
+                                        ? I18n.text.unmute
+                                        : I18n.text.mute;
                                     clicked => toggle-mixer-mute(channel.id);
                                 }
                             }
@@ -81,8 +82,8 @@ export component MixerDock inherits Rectangle {
                 }
                 HorizontalBox {
                     spacing: 4px;
-                    CompactButton { label: "Ⅱ"; hint: locale == "es" ? "Pausar medidores" : "Pause meters"; }
-                    CompactButton { label: "⚙"; hint: locale == "es" ? "Opciones del mezclador" : "Mixer options"; }
+                    CompactButton { icon-name: "pause"; hint: I18n.text.pause_meters; }
+                    CompactButton { icon-name: "settings"; hint: I18n.text.mixer_options; }
                     Rectangle { horizontal-stretch: 1; }
                 }
             }

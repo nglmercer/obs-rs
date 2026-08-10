@@ -22,6 +22,12 @@ pub enum UiLocale {
 }
 
 impl UiLocale {
+    /// Returns the locales exposed by the current UI build.
+    #[must_use]
+    pub const fn supported() -> &'static [Self] {
+        &[Self::English, Self::Spanish]
+    }
+
     /// Returns the stable language code used by frontends and project settings.
     #[must_use]
     pub const fn code(self) -> &'static str {
@@ -34,7 +40,8 @@ impl UiLocale {
     /// Parses a supported language code.
     #[must_use]
     pub fn from_code(code: &str) -> Option<Self> {
-        match code {
+        let language = code.trim().split(['-', '_']).next()?.to_ascii_lowercase();
+        match language.as_str() {
             "en" | "english" => Some(Self::English),
             "es" | "spanish" => Some(Self::Spanish),
             _ => None,
