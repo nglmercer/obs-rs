@@ -8,6 +8,7 @@ members = [
     "crates/obs-rs-config",
     "crates/obs-rs-core",
     "crates/obs-rs-diagnostics",
+    "crates/obs-rs-gui",
     "crates/obs-rs-media",
     "crates/obs-rs-output",
     "crates/obs-rs-plugin-api",
