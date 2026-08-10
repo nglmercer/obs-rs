@@ -59,6 +59,13 @@ jobs:
       - name: Run the end-to-end demo
         run: cargo run -p obs-rs-app --release
 
+      - name: Run the accessible terminal frontend smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'program program\nrecord start\ntransition fade 500\nquit\n' \
+            | cargo run -p obs-rs-app --bin obs-rs-console --release
+
       - name: Run sustained video benchmark fixture
         run: cargo run -p obs-rs-app --bin obs-rs-benchmark --release
 

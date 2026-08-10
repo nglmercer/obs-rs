@@ -16,6 +16,10 @@ use obs_rs_util::Identifier;
 pub const MAX_UI_NOTICES: usize = 256;
 /// Maximum UTF-8 byte length of a shortcut key name.
 pub const MAX_SHORTCUT_KEY_BYTES: usize = 32;
+/// Maximum UTF-8 byte length accepted by the terminal command parser.
+pub const MAX_CONSOLE_COMMAND_BYTES: usize = 256;
+/// Maximum complete HTTP request accepted by the local browser frontend.
+pub const MAX_WEB_REQUEST_BYTES: usize = 64 * 1024;
 
 /// Which scene view a desktop surface is showing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -102,6 +106,8 @@ impl UiNotice {
 /// Commands consumed by the toolkit-specific frontend.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UiCommand {
+    /// Swap the selected preview and program scenes.
+    SwapPreviewProgram,
     /// Apply one validated project mutation.
     Project(ProjectCommand),
     /// Select an active profile.
@@ -129,6 +135,241 @@ pub enum UiCommand {
     UnbindShortcut { shortcut: Shortcut },
     /// Execute a previously bound action.
     TriggerShortcut { shortcut: Shortcut },
+}
+
+/// A command understood by the safe terminal frontend.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConsoleCommand {
+    /// Print the current accessible snapshot.
+    Show,
+    /// Print command help.
+    Help,
+    /// Apply one desktop-state command.
+    Apply(UiCommand),
+    /// End the frontend session.
+    Quit,
+}
+
+/// Errors raised while parsing terminal frontend commands.
+#[derive(Debug, Eq, PartialEq)]
+pub enum ConsoleCommandError {
+    /// The command contained no non-whitespace text.
+    Empty,
+    /// The command exceeded [`MAX_CONSOLE_COMMAND_BYTES`].
+    TooLong,
+    /// The first word is not a supported command.
+    UnknownCommand(String),
+    /// A command did not contain a required argument.
+    MissingArgument(&'static str),
+    /// A command contained an invalid subcommand or extra argument.
+    InvalidArgument {
+        command: &'static str,
+        value: String,
+    },
+    /// A fade transition was outside the valid range.
+    InvalidTransition(MediaError),
+}
+
+impl fmt::Display for ConsoleCommandError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("console command is empty"),
+            Self::TooLong => formatter.write_str("console command is too long"),
+            Self::UnknownCommand(command) => write!(formatter, "unknown console command {command}"),
+            Self::MissingArgument(argument) => {
+                write!(formatter, "missing console argument {argument}")
+            }
+            Self::InvalidArgument { command, value } => {
+                write!(formatter, "invalid argument for {command}: {value}")
+            }
+            Self::InvalidTransition(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for ConsoleCommandError {}
+
+/// A route understood by the local browser presentation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WebRoute {
+    /// Serve the accessible control page.
+    Home,
+    /// Return the current labeled state snapshot as plain text.
+    Snapshot,
+    /// Parse and dispatch one line-oriented desktop command.
+    Command(String),
+}
+
+/// Errors raised while parsing a bounded local HTTP request.
+#[derive(Debug, Eq, PartialEq)]
+pub enum WebRequestError {
+    /// The request exceeded [`MAX_WEB_REQUEST_BYTES`].
+    TooLarge,
+    /// The request was not valid UTF-8.
+    InvalidUtf8,
+    /// The request line or required headers were malformed.
+    Malformed,
+    /// The HTTP method is not supported by the local frontend.
+    UnsupportedMethod(String),
+    /// The path is not a supported local frontend route.
+    InvalidPath(String),
+    /// The request body exceeded [`MAX_CONSOLE_COMMAND_BYTES`].
+    BodyTooLong,
+    /// The declared body size did not match the received bytes.
+    ContentLengthMismatch { expected: usize, actual: usize },
+}
+
+impl fmt::Display for WebRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooLarge => formatter.write_str("web request is too large"),
+            Self::InvalidUtf8 => formatter.write_str("web request is not valid UTF-8"),
+            Self::Malformed => formatter.write_str("web request is malformed"),
+            Self::UnsupportedMethod(method) => {
+                write!(formatter, "web method {method} is not supported")
+            }
+            Self::InvalidPath(path) => write!(formatter, "web path {path} is not supported"),
+            Self::BodyTooLong => formatter.write_str("web command body is too long"),
+            Self::ContentLengthMismatch { expected, actual } => write!(
+                formatter,
+                "web content length declares {expected} bytes but received {actual}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WebRequestError {}
+
+/// Parses one line for the terminal frontend without mutating desktop state.
+///
+/// # Errors
+///
+/// Returns [`ConsoleCommandError`] when the line is empty, oversized, unknown,
+/// missing an argument, or contains an invalid transition/output action.
+pub fn parse_console_command(line: &str) -> Result<ConsoleCommand, ConsoleCommandError> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Err(ConsoleCommandError::Empty);
+    }
+    if line.len() > MAX_CONSOLE_COMMAND_BYTES {
+        return Err(ConsoleCommandError::TooLong);
+    }
+
+    let mut words = line.split_whitespace();
+    let command = words.next().ok_or(ConsoleCommandError::Empty)?;
+    match command {
+        "help" => ensure_no_extra("help", words).map(|()| ConsoleCommand::Help),
+        "show" => ensure_no_extra("show", words).map(|()| ConsoleCommand::Show),
+        "snapshot" => ensure_no_extra("snapshot", words).map(|()| ConsoleCommand::Show),
+        "quit" => ensure_no_extra("quit", words).map(|()| ConsoleCommand::Quit),
+        "exit" => ensure_no_extra("exit", words).map(|()| ConsoleCommand::Quit),
+        "swap" => ensure_no_extra("swap", words)
+            .map(|()| ConsoleCommand::Apply(UiCommand::SwapPreviewProgram)),
+        "preview" => {
+            let id = required_word(&mut words, "preview scene")?;
+            ensure_no_extra("preview", words)?;
+            Ok(ConsoleCommand::Apply(UiCommand::SelectPreviewScene {
+                id: id.to_owned(),
+            }))
+        }
+        "program" => {
+            let id = required_word(&mut words, "program scene")?;
+            ensure_no_extra("program", words)?;
+            Ok(ConsoleCommand::Apply(UiCommand::SelectProgramScene {
+                id: id.to_owned(),
+            }))
+        }
+        "profile" => {
+            let id = required_word(&mut words, "profile")?;
+            ensure_no_extra("profile", words)?;
+            Ok(ConsoleCommand::Apply(UiCommand::SelectProfile {
+                id: id.to_owned(),
+            }))
+        }
+        "record" => parse_output_command("record", words, true),
+        "stream" => parse_output_command("stream", words, false),
+        "transition" => parse_transition_command("transition", words),
+        _ => Err(ConsoleCommandError::UnknownCommand(command.to_owned())),
+    }
+}
+
+/// Parses one bounded HTTP/1.x request for the local browser frontend.
+///
+/// Only `GET /`, `GET /snapshot`, and `POST /command` are accepted. Chunked
+/// requests, arbitrary paths, and bodies larger than the terminal command limit are
+/// rejected so the browser surface shares the same validated command model.
+///
+/// # Errors
+///
+/// Returns [`WebRequestError`] when the request is malformed, oversized, or uses an
+/// unsupported route or method.
+pub fn parse_web_request(request: &[u8]) -> Result<WebRoute, WebRequestError> {
+    if request.len() > MAX_WEB_REQUEST_BYTES {
+        return Err(WebRequestError::TooLarge);
+    }
+    let request = std::str::from_utf8(request).map_err(|_| WebRequestError::InvalidUtf8)?;
+    let (head, body) = request
+        .split_once("\r\n\r\n")
+        .ok_or(WebRequestError::Malformed)?;
+    let mut lines = head.split("\r\n");
+    let request_line = lines.next().ok_or(WebRequestError::Malformed)?;
+    let mut request_words = request_line.split_whitespace();
+    let method = request_words.next().ok_or(WebRequestError::Malformed)?;
+    let path = request_words.next().ok_or(WebRequestError::Malformed)?;
+    let version = request_words.next().ok_or(WebRequestError::Malformed)?;
+    if request_words.next().is_some() || (version != "HTTP/1.0" && version != "HTTP/1.1") {
+        return Err(WebRequestError::Malformed);
+    }
+
+    let mut content_length = None;
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or(WebRequestError::Malformed)?;
+        if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() {
+                return Err(WebRequestError::Malformed);
+            }
+            content_length = Some(
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| WebRequestError::Malformed)?,
+            );
+        }
+    }
+    let actual_length = body.len();
+    let expected_length = content_length.unwrap_or(0);
+    if expected_length != actual_length {
+        return Err(WebRequestError::ContentLengthMismatch {
+            expected: expected_length,
+            actual: actual_length,
+        });
+    }
+
+    match method {
+        "GET" => {
+            if !body.is_empty() {
+                return Err(WebRequestError::Malformed);
+            }
+            match path {
+                "/" => Ok(WebRoute::Home),
+                "/snapshot" => Ok(WebRoute::Snapshot),
+                _ => Err(WebRequestError::InvalidPath(path.to_owned())),
+            }
+        }
+        "POST" => {
+            if path != "/command" {
+                return Err(WebRequestError::InvalidPath(path.to_owned()));
+            }
+            if body.len() > MAX_CONSOLE_COMMAND_BYTES {
+                return Err(WebRequestError::BodyTooLong);
+            }
+            if body.trim().is_empty() {
+                return Err(WebRequestError::Malformed);
+            }
+            Ok(WebRoute::Command(body.to_owned()))
+        }
+        _ => Err(WebRequestError::UnsupportedMethod(method.to_owned())),
+    }
 }
 
 /// Errors from the toolkit-neutral application state.
@@ -230,6 +471,10 @@ impl DesktopState {
     /// or lifecycle checks fail.
     pub fn dispatch(&mut self, command: UiCommand) -> Result<(), UiError> {
         let message = match command {
+            UiCommand::SwapPreviewProgram => {
+                std::mem::swap(&mut self.preview_scene, &mut self.program_scene);
+                "preview and program scenes swapped"
+            }
             UiCommand::Project(command) => {
                 self.project.dispatch(command)?;
                 "project updated"
@@ -461,6 +706,20 @@ impl DesktopState {
         snapshot
     }
 
+    /// Renders the accessible local browser control page for the current state.
+    #[must_use]
+    pub fn web_page(&self) -> String {
+        let mut page = String::new();
+        page.push_str(
+            "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>OBS-RS control room</title>\n<style>body{font-family:system-ui,sans-serif;line-height:1.45;max-width:60rem;margin:2rem auto;padding:0 1rem;background:#101419;color:#edf2f7}main{display:grid;gap:1rem}section{border:1px solid #52606d;border-radius:.5rem;padding:1rem;background:#1b222c}button,input{font:inherit;padding:.5rem;margin:.25rem;border-radius:.35rem;border:1px solid #829ab1}button{background:#2f80ed;color:white;cursor:pointer}button:focus,input:focus{outline:3px solid #f6c344;outline-offset:2px}pre{white-space:pre-wrap;overflow:auto}#status{min-height:1.5rem}</style>\n</head>\n<body>\n<main id=\"main\" aria-labelledby=\"title\">\n<h1 id=\"title\">OBS-RS control room</h1>\n<p>Rust-native local control surface using the validated desktop state model.</p>\n<section aria-labelledby=\"state-label\">\n<h2 id=\"state-label\">Current state</h2>\n<pre id=\"snapshot\" tabindex=\"0\">",
+        );
+        page.push_str(&escape_html(&self.accessible_snapshot()));
+        page.push_str(
+            "</pre>\n</section>\n<section aria-labelledby=\"actions-label\">\n<h2 id=\"actions-label\">Actions</h2>\n<div role=\"group\" aria-label=\"Output and scene actions\">\n<button type=\"button\" data-command=\"swap\">Swap preview/program</button>\n<button type=\"button\" data-command=\"record start\">Start recording</button>\n<button type=\"button\" data-command=\"record stop\">Stop recording</button>\n<button type=\"button\" data-command=\"stream start\">Start streaming</button>\n<button type=\"button\" data-command=\"stream stop\">Stop streaming</button>\n<button type=\"button\" data-command=\"transition cut\">Cut transition</button>\n<button type=\"button\" data-command=\"transition fade 500\">50% fade</button>\n</div>\n<form id=\"command-form\">\n<label for=\"command\">Validated command</label>\n<input id=\"command\" name=\"command\" maxlength=\"256\" size=\"32\" autocomplete=\"off\">\n<button type=\"submit\">Apply</button>\n</form>\n<p id=\"status\" role=\"status\" aria-live=\"polite\"></p>\n</section>\n</main>\n<script>\nasync function applyCommand(command){const response=await fetch('/command',{method:'POST',headers:{'Content-Type':'text/plain'},body:command});const body=await response.text();if(response.ok){document.getElementById('snapshot').textContent=body;document.getElementById('status').textContent='Command applied';}else{document.getElementById('status').textContent=body;}}\ndocument.querySelectorAll('[data-command]').forEach((button)=>button.addEventListener('click',()=>applyCommand(button.dataset.command)));\ndocument.getElementById('command-form').addEventListener('submit',(event)=>{event.preventDefault();const input=document.getElementById('command');applyCommand(input.value);input.value='';});\n</script>\n</body>\n</html>\n",
+        );
+        page
+    }
+
     fn ensure_scene(&self, id: &str) -> Result<(), UiError> {
         let profile = self
             .project
@@ -511,12 +770,114 @@ impl DesktopState {
     }
 }
 
+fn escape_html(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            character => escaped.push(character),
+        }
+    }
+    escaped
+}
+
 fn first_scene_id(project: &Project) -> Option<Identifier> {
     project
         .profiles()
         .find(|profile| profile.id() == project.active_profile())
         .and_then(|profile| profile.scenes().next())
         .map(|scene| scene.id().clone())
+}
+
+fn required_word<'a>(
+    words: &mut impl Iterator<Item = &'a str>,
+    argument: &'static str,
+) -> Result<&'a str, ConsoleCommandError> {
+    words
+        .next()
+        .ok_or(ConsoleCommandError::MissingArgument(argument))
+}
+
+fn ensure_no_extra<'a>(
+    command: &'static str,
+    mut words: impl Iterator<Item = &'a str>,
+) -> Result<(), ConsoleCommandError> {
+    if let Some(value) = words.next() {
+        return Err(ConsoleCommandError::InvalidArgument {
+            command,
+            value: value.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn parse_output_command<'a>(
+    command: &'static str,
+    mut words: impl Iterator<Item = &'a str>,
+    recording: bool,
+) -> Result<ConsoleCommand, ConsoleCommandError> {
+    let action = required_word(&mut words, "start or stop")?;
+    ensure_no_extra(command, words)?;
+    let start = match action {
+        "start" => true,
+        "stop" => false,
+        value => {
+            return Err(ConsoleCommandError::InvalidArgument {
+                command,
+                value: value.to_owned(),
+            });
+        }
+    };
+    let command = if recording {
+        if start {
+            UiCommand::StartRecording
+        } else {
+            UiCommand::StopRecording
+        }
+    } else if start {
+        UiCommand::StartStreaming
+    } else {
+        UiCommand::StopStreaming
+    };
+    Ok(ConsoleCommand::Apply(command))
+}
+
+fn parse_transition_command<'a>(
+    command: &'static str,
+    mut words: impl Iterator<Item = &'a str>,
+) -> Result<ConsoleCommand, ConsoleCommandError> {
+    let kind = required_word(&mut words, "cut or fade")?;
+    let transition = match kind {
+        "cut" => {
+            ensure_no_extra(command, words)?;
+            FrameTransition::Cut
+        }
+        "fade" => {
+            let progress = required_word(&mut words, "fade progress in 0..1000")?;
+            ensure_no_extra(command, words)?;
+            let progress =
+                progress
+                    .parse::<u16>()
+                    .map_err(|_| ConsoleCommandError::InvalidArgument {
+                        command,
+                        value: progress.to_owned(),
+                    })?;
+            FrameTransition::cross_fade(progress).map_err(ConsoleCommandError::InvalidTransition)?
+        }
+        value => {
+            return Err(ConsoleCommandError::InvalidArgument {
+                command,
+                value: value.to_owned(),
+            });
+        }
+    };
+    Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+        transition,
+    }))
 }
 
 fn identifier(input: &str, kind: &'static str) -> Result<Identifier, UiError> {
@@ -628,6 +989,105 @@ mod tests {
             Err(UiError::Media(MediaError::InvalidTransition {
                 progress_milli: 1_001
             }))
+        );
+    }
+
+    #[test]
+    fn console_parser_covers_state_and_output_commands() {
+        assert_eq!(
+            parse_console_command("preview program"),
+            Ok(ConsoleCommand::Apply(UiCommand::SelectPreviewScene {
+                id: "program".to_owned(),
+            }))
+        );
+        assert_eq!(
+            parse_console_command("record start"),
+            Ok(ConsoleCommand::Apply(UiCommand::StartRecording))
+        );
+        assert_eq!(
+            parse_console_command("transition fade 500"),
+            Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+                transition: FrameTransition::CrossFade {
+                    progress_milli: 500,
+                },
+            }))
+        );
+        assert_eq!(
+            parse_console_command("not-a-command"),
+            Err(ConsoleCommandError::UnknownCommand(
+                "not-a-command".to_owned()
+            ))
+        );
+        assert_eq!(
+            parse_console_command("transition fade 1001"),
+            Err(ConsoleCommandError::InvalidTransition(
+                MediaError::InvalidTransition {
+                    progress_milli: 1_001,
+                },
+            ))
+        );
+    }
+
+    #[test]
+    fn console_commands_drive_desktop_state_without_duplicate_logic() {
+        let mut state = DesktopState::new(project());
+        for line in ["program program", "swap", "record start", "stream start"] {
+            let command = parse_console_command(line).expect("console command");
+            if let ConsoleCommand::Apply(command) = command {
+                state.dispatch(command).expect("state command");
+            }
+        }
+
+        assert_eq!(state.preview_scene(), Some("program"));
+        assert_eq!(state.program_scene(), Some("preview"));
+        assert!(state.recording());
+        assert!(state.streaming());
+    }
+
+    #[test]
+    fn web_request_parser_routes_bounded_browser_commands() {
+        assert_eq!(
+            parse_web_request(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+            Ok(WebRoute::Home)
+        );
+        assert_eq!(
+            parse_web_request(b"GET /snapshot HTTP/1.1\r\n\r\n"),
+            Ok(WebRoute::Snapshot)
+        );
+        let body = "transition fade 500";
+        let request = format!(
+            "POST /command HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        assert_eq!(
+            parse_web_request(request.as_bytes()),
+            Ok(WebRoute::Command(body.to_owned()))
+        );
+        assert_eq!(
+            parse_web_request(b"POST /command HTTP/1.1\r\nContent-Length: 2\r\n\r\nswap"),
+            Err(WebRequestError::ContentLengthMismatch {
+                expected: 2,
+                actual: 4
+            })
+        );
+        assert_eq!(
+            parse_web_request(b"DELETE / HTTP/1.1\r\n\r\n"),
+            Err(WebRequestError::UnsupportedMethod("DELETE".to_owned()))
+        );
+    }
+
+    #[test]
+    fn web_page_is_accessible_and_escapes_snapshot_text() {
+        let state = DesktopState::new(project());
+        let page = state.web_page();
+        assert!(page.contains("<main id=\"main\""));
+        assert!(page.contains("aria-live=\"polite\""));
+        assert!(page.contains("data-command=\"swap\""));
+        assert!(page.contains("OBS-RS desktop state"));
+        assert_eq!(escape_html("<&\"'>"), "&lt;&amp;&quot;&#39;&gt;");
+        assert_eq!(
+            parse_web_request(&vec![b'x'; MAX_WEB_REQUEST_BYTES + 1]),
+            Err(WebRequestError::TooLarge)
         );
     }
 

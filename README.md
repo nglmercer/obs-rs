@@ -34,21 +34,26 @@ The current vertical slice is a deterministic, headless engine:
   fixture plus a cancellation-aware wall-clock `VideoWorker`.
 - `obs-rs-clock` coordinates rational audio/video deadlines, aggregates shared A/V
   drift diagnostics, provides one monotonic clock implementation for both worker
-  traits, and runs bounded synchronized `MediaSession` ticks.
+  traits, models independent device-clock drift deterministically, and runs bounded
+  synchronized `MediaSession` ticks.
 - `obs-rs-render` defines portable texture/composition contracts and a deterministic
   CPU backend with readback and context-loss recovery.
 - `obs-rs-output` provides validated video/audio packet encoders, muxer contracts,
-  bounded packet back-pressure, a lossless Rust RLE video reference codec, atomic
-  raw-file and interleaved packet-container finalization, a canonical PCM16 WAV
-  reference writer, timestamp-order validation, a reconnectable memory transport
-  fixture, and a length-framed standard-library TCP transport.
+  bounded packet back-pressure, a lossless Rust RLE video reference codec, a
+  standards-based pure-Rust PNG screenshot encoder, atomic raw-file and interleaved
+  packet-container finalization, a canonical PCM16 WAV reference writer,
+  timestamp-order validation, a reconnectable memory transport fixture, and a
+  length-framed standard-library TCP transport.
 - `obs-rs-project` provides Rust-owned profiles, ordered scenes/source definitions,
   command dispatch, dirty-state tracking, deterministic escaped persistence, and
   atomic project-file save/load.
+- `obs-rs-diagnostics` provides bounded deterministic project/UI/runtime bundles,
+  strict decoding, and atomic recovery-file finalization.
 - `obs-rs-ui` provides a toolkit-neutral desktop state machine for preview/program
   selection, transitions, output lifecycle, shortcuts, notices, project commands,
   and a deterministic labeled accessibility/terminal snapshot.
-- `obs-rs-app` runs a small end-to-end demo without a native host dependency.
+- `obs-rs-app` runs a small end-to-end demo and a scriptable accessible terminal
+  frontend without a native host dependency.
 
 This is an engine foundation, not yet a production recorder or streamer. The
 complete target and its acceptance gates are described in the roadmap.
@@ -61,13 +66,19 @@ cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo run -p obs-rs-app
+cargo run -p obs-rs-app --bin obs-rs-console
 cargo run -p obs-rs-app --bin obs-rs-benchmark --release
 ```
 
 The demo registers the built-in plugin, creates a scene, adds two sources, applies a
 scene-item transform/filter, renders through the bounded video pipeline and render
 backend, mixes and paces audio blocks, muxes and streams one packet, round-trips one
-raw recording, persists project state, and prints a stable summary. The benchmark
+raw recording, persists project state, commits and reopens a diagnostics bundle, and
+encodes an interoperable PNG screenshot, exercises independent audio/video clock drift,
+then prints a stable summary. `obs-rs-console`
+exposes the same Rust-owned desktop state
+through line-oriented scene selection, preview/program swap, transitions, recording,
+streaming, and snapshot commands. The benchmark
 runs the cancellation-aware wall-clock video worker for 120 frames and reports
 deadline misses, lateness, drops, elapsed time, and compositor work counters. All
 behavior is exercised through safe Rust APIs and Rust tests.
@@ -98,7 +109,8 @@ contract/test backend,
 and the first Phase 6 packet/muxer/recording lifecycle contracts including atomic
 file finalization are implemented, together with the first Phase 7 project
 state/command/persistence slice. The CPU compositor now reports source, transform,
-filter, and blend work while avoiding redundant filter/frame allocations in its hot
-path. The project is intentionally not claiming feature parity with OBS Studio. The
+filter, and blend work while avoiding per-frame scene-item/filter snapshots and
+redundant identity transforms in its hot path. The project is intentionally not
+claiming feature parity with OBS Studio. The
 next priority is platform capture, hardware rendering, real codecs, network output,
 and desktop UX.

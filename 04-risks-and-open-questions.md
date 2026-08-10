@@ -14,7 +14,9 @@ feature parity.
 Video and audio workloads punish unbounded allocations, hidden locks, and accidental
 copies. The first compositor is a correctness reference, not a production scheduler.
 Every move into a hot path needs queue-pressure tests, allocation measurements, and
-long-duration synchronization evidence.
+long-duration synchronization evidence. The deterministic independent-clock fixture
+now exposes rate drift, but it does not replace measurements from real audio/video
+hardware callbacks.
 
 ### Platform coverage
 

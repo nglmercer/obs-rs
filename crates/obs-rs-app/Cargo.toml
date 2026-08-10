@@ -1,6 +1,6 @@
 [package]
 name = "obs-rs-app"
-description = "Headless OBS-RS demonstration application"
+description = "OBS-RS demonstration and accessible terminal application"
 default-run = "obs-rs"
 edition.workspace = true
 publish.workspace = true
@@ -16,6 +16,7 @@ obs-rs-clock = { path = "../obs-rs-clock" }
 obs-rs-builtins = { path = "../obs-rs-builtins" }
 obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-core = { path = "../obs-rs-core" }
+obs-rs-diagnostics = { path = "../obs-rs-diagnostics" }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-output = { path = "../obs-rs-output" }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }

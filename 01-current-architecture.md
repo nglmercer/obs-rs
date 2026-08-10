@@ -15,6 +15,7 @@ obs-rs-app
 │                └── obs-rs-video ─── obs-rs-media
 ├── obs-rs-output ─── obs-rs-audio / obs-rs-media
 ├── obs-rs-project ─── obs-rs-config / obs-rs-media
+├── obs-rs-diagnostics ─── standalone bounded recovery format
 ├── obs-rs-ui ─── obs-rs-project / obs-rs-media
 └── obs-rs-render ─── obs-rs-media
 
@@ -82,10 +83,12 @@ model; it does not open a platform device or spawn a callback thread itself.
 
 `obs-rs-clock` owns `MediaTimeline`, which advances the rational video and audio
 domains together and feeds the same bounded A/V drift monitor. `MonotonicMediaClock`
-implements both worker clock traits, so a session can use one wall-clock origin while
-platform device clocks remain explicit adapters. `MediaSession` drives one audio
-block and one video frame per tick, consumes bounded output, and aggregates
-cancellation, underflow, drop, deadline, wait, and render-time diagnostics.
+implements both worker clock traits, while `IndependentMediaClock` deterministically
+models separate audio/video device rates and preserves each pacer's wait contract.
+`MediaSession` drives one audio block and one video frame per tick, consumes bounded
+output, and aggregates cancellation, underflow, drop, deadline, wait, and render-time
+diagnostics. The demo exercises a 300-tick independent-clock drift fixture; actual
+OS device clock adapters remain platform work.
 
 `obs-rs-capture` defines `VideoCaptureDevice`, `CaptureDeviceInfo`,
 `CaptureProvider`, and `CaptureCatalog`. Catalog snapshots replace atomically, and
@@ -122,10 +125,15 @@ flowchart LR
     Compositor --> Output[Rendered frame]
 ```
 
-`Runtime::render_scene` snapshots the source IDs and transforms in scene order,
+`Runtime::render_scene` walks source IDs, transforms, and filters in scene order,
 requests a frame from each source, applies the item transform and filter chain, and
 composites the returned frames in order. A missing frame is a valid source result; a
 malformed frame or incompatible format is an explicit error.
+
+The implementation keeps the scene definition borrowed during rendering: it does not
+clone the ordered item list or filter vectors for each frame, and it bypasses the
+transform allocation for identity items. This is still a CPU reference compositor,
+but its avoidable work is explicit in the benchmark counters.
 
 ## First vertical slice
 
@@ -134,7 +142,8 @@ The built-in color source is intentionally small but real. It reads validated
 the same plugin registry and scene compositor as the deterministic capture
 fallbacks. The app demo creates a background and a semi-transparent foreground,
 sets an item transform, renders through `VideoPipeline::render_next`, and reports
-the resulting pixel, checksum, and pipeline metrics. The companion benchmark runs
+the resulting pixel, checksum, and pipeline metrics. `obs-rs-console` provides a
+scriptable terminal presentation over the same state machine. The companion benchmark runs
 120 equivalent scene frames while draining output and reports the measured elapsed
 time, deadline misses, lateness, queue behavior, and compositor-work counters.
 
@@ -156,21 +165,27 @@ Current and future crates keep these concerns separate:
 - `obs-rs-output`: muxing, files, network protocols, reconnect, and back-pressure;
 - `obs-rs-project`: profiles, scene collections, source definitions, commands, and
   deterministic persistence;
-- `obs-rs-ui`: toolkit-neutral desktop application state, commands, and a labeled
-  accessibility/terminal snapshot (implemented); a concrete GUI presentation
-  toolkit remains a product integration.
+- `obs-rs-diagnostics`: bounded deterministic recovery sections and atomic bundle
+  finalization;
+- `obs-rs-ui`: toolkit-neutral desktop application state, commands, a labeled
+  accessibility snapshot, and a strict line-oriented terminal command parser; a
+  concrete GUI presentation toolkit remains a product integration.
 
 These are implementation boundaries, not promises that every future integration is
-available in the current slice.
+available in the current slice. `obs-rs-diagnostics` defines the bounded `OBSRDG01`
+recovery bundle: sections are validated, emitted in deterministic name order,
+decoded with truncation/trailing-byte checks, and committed through a synchronized
+temporary file plus rename.
 
 The current `obs-rs-output` crate contains validated packet and video-encoder traits,
 a byte-bounded packet queue, a deterministic in-memory muxer fixture, explicit
-finalized/aborted recording sessions, raw and lossless RLE video plus raw audio
-reference encoders, an RLE decoder fixture, an atomic standard-library raw-file
-writer, an atomic interleaved `OBSRPKT1` packet-container writer, a canonical PCM16
-WAV writer, timestamp-order validation, a reconnectable packet-transport session,
-and the intentionally uncompressed `OBSRRAW1` format, plus a length-framed
-standard-library TCP transport fixture. These prove packet validation,
+finalized/aborted recording sessions, raw and lossless RLE video plus a
+standards-based pure-Rust PNG screenshot encoder and raw audio reference encoders,
+an RLE decoder fixture, an atomic standard-library raw-file writer, an atomic
+interleaved `OBSRPKT1` packet-container writer, a canonical PCM16 WAV writer,
+timestamp-order validation, a reconnectable packet-transport session, and the
+intentionally uncompressed `OBSRRAW1` format, plus a length-framed standard-library
+TCP transport fixture. These prove packet validation,
 back-pressure, lifecycle behavior, crash-safe finalization, reconnect/requeue behavior,
 fixed-format frame validation, timestamps, truncation detection, and encode/decode
 round-trips without deciding the final production codec, container, or network

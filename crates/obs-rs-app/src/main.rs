@@ -6,25 +6,30 @@
 use std::error::Error;
 
 use obs_rs_audio::{
-    AudioBuffer, AudioCancellationToken, AudioDropPolicy, AudioFormat, AudioMixer, AudioScheduler,
-    AudioWorker, AudioWorkerReport, AvSyncController, MonotonicAudioClock,
+    AudioBuffer, AudioCancellationToken, AudioDropPolicy, AudioFormat, AudioMixer, AudioPacer,
+    AudioScheduler, AudioWorker, AudioWorkerReport, AvSyncController, MonotonicAudioClock,
 };
 use obs_rs_builtins::BuiltinPlugin;
-use obs_rs_clock::{MediaSession, MediaSessionReport, MediaTimeline, SessionCancellationToken};
+use obs_rs_clock::{
+    IndependentMediaClock, MediaSession, MediaSessionReport, MediaTimeline,
+    SessionCancellationToken,
+};
 use obs_rs_config::Config;
-use obs_rs_core::Runtime;
+use obs_rs_core::{CompositorMetrics, Runtime};
+use obs_rs_diagnostics::{AtomicDiagnosticFileWriter, DiagnosticBundle};
 use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, MemoryMuxer, MemoryPacketTransport, PacketDropPolicy,
-    PacketMuxer, PacketQueue, RawAudioEncoder, RawRecording, RawRecordingSession, ReconnectPolicy,
-    RleVideoEncoder, StreamSession, VideoEncoder, WavRecording,
+    PacketMuxer, PacketQueue, PngVideoEncoder, RawAudioEncoder, RawRecording, RawRecordingSession,
+    ReconnectPolicy, RleVideoEncoder, StreamSession, VideoEncoder, WavRecording,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Profile, Project, ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_render::{CpuRenderBackend, RenderBackend};
 use obs_rs_ui::{DesktopState, UiCommand};
-use obs_rs_video::{DropPolicy, RenderOutcome, VideoPipeline};
+use obs_rs_video::{DropPolicy, RenderOutcome, VideoMetrics, VideoPacer, VideoPipeline};
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
     let plugin = BuiltinPlugin::new()?;
     let capture_devices = plugin.discover_capture_devices()?.len();
@@ -71,6 +76,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut encoder = RleVideoEncoder::new(format);
     let packet = encoder.encode(&frame)?;
+    let mut png_encoder = PngVideoEncoder::new(format);
+    let png_bytes = png_encoder.encode(&frame)?.byte_len();
     let packet_bytes_per_frame = packet.byte_len();
     let mut packet_queue = PacketQueue::new(packet_bytes_per_frame, PacketDropPolicy::DropOldest)?;
     packet_queue.push(packet.clone())?;
@@ -81,6 +88,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let audio_format = AudioFormat::new(48_000, 2)?;
     let timeline_in_sync = timeline_fixture(format.frame_rate(), audio_format)?;
+    let clock_drift_nanos = independent_clock_fixture(format.frame_rate(), audio_format)?;
     let (audio_output, audio_worker, wav_bytes) = audio_fixture(audio_format)?;
     let session_report = media_session_fixture(format, audio_format)?;
     let sync = av_sync_state(frame.timestamp(), audio_output.timestamp());
@@ -100,10 +108,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     stream.flush()?;
     let stream_metrics = stream.metrics();
 
-    let (project_bytes, project_profiles, ui_snapshot_bytes) = project_fixture(format)?;
+    let (project_bytes, project_profiles, ui_snapshot_bytes, diagnostic_bytes) =
+        project_diagnostics_fixture(
+            format,
+            runtime.compositor_metrics(),
+            metrics,
+            frame.checksum(),
+        )?;
 
     println!(
-        "obs-rs demo: plugins={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} rendered={} dropped_oldest={} audio={:?} sync={:?} timeline_in_sync={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={}",
+        "obs-rs demo: plugins={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} rendered={} dropped_oldest={} png_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
         runtime.plugins().len(),
         capture_devices,
         runtime.scene_count(),
@@ -114,9 +128,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         renderer_checksum,
         metrics.produced_frames(),
         metrics.dropped_oldest(),
+        png_bytes,
         audio_output.samples(),
         sync,
         timeline_in_sync,
+        clock_drift_nanos,
         session_report.completed_ticks(),
         audio_worker.processed_blocks(),
         audio_worker.missed_deadlines(),
@@ -129,7 +145,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         decoded_recording.len(),
         project_bytes,
         project_profiles,
-        ui_snapshot_bytes
+        ui_snapshot_bytes,
+        diagnostic_bytes
     );
 
     Ok(())
@@ -187,6 +204,29 @@ fn timeline_fixture(
         let _ = timeline.observe(video.timestamp(), audio.timestamp());
     }
     Ok(timeline.metrics().in_sync())
+}
+
+fn independent_clock_fixture(
+    video_rate: FrameRate,
+    audio_format: AudioFormat,
+) -> Result<i64, Box<dyn Error>> {
+    let mut clock = IndependentMediaClock::new(1_000, -1_000)?;
+    let mut audio_pacer = AudioPacer::new(audio_format);
+    let mut video_pacer = VideoPacer::new(video_rate);
+    let controller = AvSyncController::new(1_000_000);
+    let audio_frames = usize::try_from(
+        u64::from(audio_format.sample_rate()) * u64::from(video_rate.denominator())
+            / u64::from(video_rate.numerator()),
+    )?;
+    for _ in 0..300 {
+        audio_pacer.next(&mut clock, audio_frames)?;
+        video_pacer.next(&mut clock)?;
+    }
+    let observation = controller.observe(clock.video_now(), clock.audio_now());
+    if observation.state() != obs_rs_audio::SyncState::AudioAhead {
+        return Err("independent clock fixture did not observe positive audio drift".into());
+    }
+    Ok(observation.delta_nanos())
 }
 
 fn media_session_fixture(
@@ -277,7 +317,12 @@ fn screen_source(runtime: &mut Runtime) -> Result<obs_rs_core::SourceId, Box<dyn
     )?)
 }
 
-fn project_fixture(format: VideoFormat) -> Result<(usize, usize, usize), Box<dyn Error>> {
+fn project_fixture(
+    format: VideoFormat,
+    compositor_metrics: CompositorMetrics,
+    video_metrics: VideoMetrics,
+    checksum: u64,
+) -> Result<(usize, usize, usize, DiagnosticBundle), Box<dyn Error>> {
     let mut project = Project::new("obs-rs demo")?;
     let mut profile = Profile::new("live", "Live profile", format)?;
     let mut scene = SceneSpec::new("main", "Main scene")?;
@@ -312,14 +357,80 @@ fn project_fixture(format: VideoFormat) -> Result<(usize, usize, usize), Box<dyn
         source: "foreground".to_owned(),
         filter: FrameFilter::Grayscale,
     }))?;
-    let ui_snapshot_bytes = desktop.accessible_snapshot().len();
+    let ui_snapshot = desktop.accessible_snapshot();
+    let ui_snapshot_bytes = ui_snapshot.len();
     let project_document = desktop.project_document();
     let restored_project = Project::parse(&project_document)?;
+    let mut diagnostics = DiagnosticBundle::new();
+    diagnostics.insert_text(
+        "application",
+        &format!(
+            "format={}x{}\nframe_checksum={checksum}\n",
+            format.width(),
+            format.height()
+        ),
+    )?;
+    diagnostics.insert_text("project", &project_document)?;
+    diagnostics.insert_text("ui", &ui_snapshot)?;
+    diagnostics.insert_text(
+        "runtime",
+        &format!(
+            "renders={}\nsource_requests={}\nsource_frames={}\ntransformed={}\nfiltered={}\nblends={}\nvideo_produced={}\nvideo_missed={}\nvideo_lateness_ns={}\n",
+            compositor_metrics.render_calls(),
+            compositor_metrics.source_requests(),
+            compositor_metrics.source_frames(),
+            compositor_metrics.transformed_frames(),
+            compositor_metrics.filtered_frames(),
+            compositor_metrics.blended_layers(),
+            video_metrics.produced_frames(),
+            video_metrics.missed_deadlines(),
+            video_metrics.total_lateness_nanos(),
+        ),
+    )?;
     Ok((
         project_document.len(),
         restored_project.profiles().count(),
         ui_snapshot_bytes,
+        diagnostics,
     ))
+}
+
+fn project_diagnostics_fixture(
+    format: VideoFormat,
+    compositor_metrics: CompositorMetrics,
+    video_metrics: VideoMetrics,
+    checksum: u64,
+) -> Result<(usize, usize, usize, usize), Box<dyn Error>> {
+    let (project_bytes, project_profiles, ui_snapshot_bytes, bundle) =
+        project_fixture(format, compositor_metrics, video_metrics, checksum)?;
+    let diagnostic_bytes = diagnostic_file_fixture(&bundle)?;
+    Ok((
+        project_bytes,
+        project_profiles,
+        ui_snapshot_bytes,
+        diagnostic_bytes,
+    ))
+}
+
+fn diagnostic_file_fixture(bundle: &DiagnosticBundle) -> Result<usize, Box<dyn Error>> {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let root = std::env::temp_dir();
+    let final_path = root.join(format!("obs-rs-demo-{}-{token}.diag", std::process::id()));
+    let temp_path = root.join(format!(
+        "obs-rs-demo-{}-{token}.diag.part",
+        std::process::id()
+    ));
+    let mut writer = AtomicDiagnosticFileWriter::new(&final_path, &temp_path)?;
+    let committed = writer.finalize(bundle)?;
+    let persisted = std::fs::read(writer.final_path())?;
+    let restored = DiagnosticBundle::decode(&persisted)?;
+    if &restored != bundle || persisted.len() != committed {
+        return Err("diagnostic bundle changed after atomic commit".into());
+    }
+    std::fs::remove_file(writer.final_path())?;
+    Ok(committed)
 }
 
 fn color_settings(width: &str, height: &str, color: &str) -> Config {

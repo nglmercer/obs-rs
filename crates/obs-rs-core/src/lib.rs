@@ -444,42 +444,35 @@ impl Runtime {
     ) -> Result<Option<VideoFrame>, RuntimeError> {
         self.metrics.render_calls = self.metrics.render_calls.saturating_add(1);
         let scene = identifier(scene, "scene")?;
-        let scene_state = self
-            .scenes
+        let (scenes, sources, metrics) = (&self.scenes, &mut self.sources, &mut self.metrics);
+        let scene_state = scenes
             .get(&scene)
             .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
-        let source_items = scene_state
-            .sources
-            .iter()
-            .map(|source| {
-                (
-                    *source,
-                    scene_state
-                        .transforms
-                        .get(source)
-                        .copied()
-                        .unwrap_or(FrameTransform::IDENTITY),
-                    scene_state.filters.get(source).cloned().unwrap_or_default(),
-                )
-            })
-            .collect::<Vec<_>>();
         let mut result: Option<VideoFrame> = None;
 
-        for (source_id, transform, filters) in source_items {
-            self.metrics.source_requests = self.metrics.source_requests.saturating_add(1);
-            let instance = self
-                .sources
-                .get_mut(&source_id)
-                .ok_or(RuntimeError::UnknownSource(source_id))?;
+        for source_id in &scene_state.sources {
+            let transform = scene_state
+                .transforms
+                .get(source_id)
+                .copied()
+                .unwrap_or(FrameTransform::IDENTITY);
+            let filters = scene_state
+                .filters
+                .get(source_id)
+                .map_or(&[][..], Vec::as_slice);
+            metrics.source_requests = metrics.source_requests.saturating_add(1);
+            let instance = sources
+                .get_mut(source_id)
+                .ok_or(RuntimeError::UnknownSource(*source_id))?;
             let frame = instance
                 .source
                 .render(request)
                 .map_err(RuntimeError::Source)?;
             let Some(frame) = frame else {
-                self.metrics.empty_sources = self.metrics.empty_sources.saturating_add(1);
+                metrics.empty_sources = metrics.empty_sources.saturating_add(1);
                 continue;
             };
-            self.metrics.source_frames = self.metrics.source_frames.saturating_add(1);
+            metrics.source_frames = metrics.source_frames.saturating_add(1);
             if frame.format() != request.format() {
                 return Err(RuntimeError::Media(MediaError::FormatMismatch {
                     expected: request.format(),
@@ -487,17 +480,21 @@ impl Runtime {
                 }));
             }
             if transform != FrameTransform::IDENTITY {
-                self.metrics.transformed_frames = self.metrics.transformed_frames.saturating_add(1);
+                metrics.transformed_frames = metrics.transformed_frames.saturating_add(1);
             }
-            let mut frame = frame.transformed(transform).map_err(RuntimeError::Media)?;
-            for filter in &filters {
-                self.metrics.filtered_frames = self.metrics.filtered_frames.saturating_add(1);
+            let mut frame = if transform == FrameTransform::IDENTITY {
+                frame
+            } else {
+                frame.transformed(transform).map_err(RuntimeError::Media)?
+            };
+            for filter in filters {
+                metrics.filtered_frames = metrics.filtered_frames.saturating_add(1);
                 frame.apply_filter(*filter);
             }
 
             if let Some(composite) = result.as_mut() {
                 composite.blend_over(&frame).map_err(RuntimeError::Media)?;
-                self.metrics.blended_layers = self.metrics.blended_layers.saturating_add(1);
+                metrics.blended_layers = metrics.blended_layers.saturating_add(1);
             } else {
                 frame.clear_transparent_rgb();
                 result = Some(frame);

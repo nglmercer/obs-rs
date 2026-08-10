@@ -106,10 +106,11 @@ output-draining sustained-run fixture. The release benchmark exercises the worke
 counts, wait time, render time, and worst lateness. `obs-rs-media` validates packed/planar input buffers and deterministic
 conversion; scene-item scale/translation/flip/opacity transforms, filters, cuts, and
 cross-fades are covered by `obs-rs-media` and `obs-rs-core` tests. The compositor
-applies filter chains in place and avoids creating a transparent accumulator for the
-first layer. The remaining work is wall-clock deadline measurement in a long-running
-multi-worker design, allocation/resource profiling, more conversion formats, and
-performance tuning.
+applies filter chains in place, borrows scene/filter definitions without per-frame
+snapshots, bypasses identity transforms, and avoids creating a transparent
+accumulator for the first layer. The remaining work is wall-clock deadline
+measurement in a long-running multi-worker design, allocation/resource profiling,
+more conversion formats, and performance tuning.
 
 ## Phase 4 — Audio engine
 
@@ -151,8 +152,16 @@ video/audio boundaries, `MonotonicMediaClock` implements both worker clock trait
 and `MediaSession` runs synchronized bounded audio/video ticks with aggregate
 diagnostics. A 10,000-tick exact-boundary soak test keeps both rational domains at
 zero measured drift. Real device clocks and long-duration synchronization under
-independent hardware clocks still remain incomplete.
-`obs-rs-output` adds a canonical PCM16 WAV reference writer for offline inspection.
+independent hardware clocks are modeled by `IndependentMediaClock`, which applies
+bounded signed ppm rates to separate audio/video domains while preserving monotonic
+wait semantics. A 3,000-tick test proves accumulated drift is classified and remains
+observable through `AvSyncController`; the demo runs the same fixture for 300 ticks.
+Actual OS device clock adapters and correction against hardware callbacks still
+remain incomplete.
+`obs-rs-output` adds a canonical PCM16 WAV reference writer for offline inspection and
+an interoperable pure-Rust PNG screenshot encoder using deterministic zlib stored
+blocks. The PNG path proves a standards-based image artifact without introducing a
+native codec dependency; it is not a production video codec.
 
 ## Phase 5 — Capture and render backends
 
@@ -208,7 +217,8 @@ Produce files and network output with back-pressure, recovery, and observable st
 
 The repository now has validated `EncodedPacket`, `VideoEncoder`, and `PacketMuxer`
 contracts, byte-bounded packet transport, deterministic raw and lossless RLE video
-reference encoders with a decoder fixture, an in-memory muxer, explicit
+reference encoders with a decoder fixture, an interoperable pure-Rust PNG screenshot
+encoder, an in-memory muxer, explicit
 finalized/aborted recording sessions, an atomic standard-library raw-file writer,
 raw audio encoding, a canonical PCM16 WAV reference writer, a reconnectable
 packet-transport session with a memory fixture, an atomic interleaved `OBSRPKT1`
@@ -244,12 +254,18 @@ The first Rust application-state slices are now present in `obs-rs-project` and
 commands, dirty-state tracking, deterministic escaped persistence, preview/program
 selection, transitions, output lifecycle, bounded notices, and shortcut bindings.
 They are toolkit-neutral control-plane foundations; concrete desktop views,
-GUI integration, and crash diagnostics are still outstanding. `DesktopState` now
-also renders a deterministic labeled text snapshot suitable for a terminal frontend
-or as the semantic source for an accessible GUI.
+GUI integration, and crash-report collection are still outstanding. `DesktopState`
+now renders a deterministic labeled text snapshot, and `obs-rs-console` provides a
+scriptable terminal presentation with validated scene, transition, recording, and
+streaming commands.
 
 `ProjectFileStore` adds atomic standard-library project-file save/load semantics and
 keeps the session dirty when a write fails.
+
+`obs-rs-diagnostics` adds a bounded deterministic `OBSRDG01` bundle containing
+project, UI, and runtime sections, with strict decoding and atomic recovery-file
+finalization. The headless demo creates and reopens this artifact. A concrete desktop
+presentation and crash-report collection policy are still outstanding.
 
 The plugin contract also carries an explicit API major/minor version, and
 `obs-rs-core` rejects newer incompatible manifests before registering any factories.

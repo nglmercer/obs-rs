@@ -170,6 +170,167 @@ impl VideoClock for MonotonicMediaClock {
     }
 }
 
+const CLOCK_PPM_SCALE: i128 = 1_000_000;
+
+/// Maximum supported simulated device-clock error in parts per million.
+pub const MAX_CLOCK_DRIFT_PPM: i32 = 500_000;
+
+/// Errors raised while configuring a deterministic device-clock model.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClockRateError {
+    /// The requested rate would make the simulated clock non-positive or too
+    /// different from the shared reference clock.
+    DriftOutOfRange { ppm: i32 },
+}
+
+impl fmt::Display for ClockRateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DriftOutOfRange { ppm } => write!(
+                formatter,
+                "device clock drift {ppm} ppm is outside +/-{MAX_CLOCK_DRIFT_PPM} ppm"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ClockRateError {}
+
+/// A validated clock-rate offset expressed in parts per million.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClockRate {
+    drift_ppm: i32,
+}
+
+impl ClockRate {
+    /// Creates a rate offset bounded to [`MAX_CLOCK_DRIFT_PPM`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClockRateError::DriftOutOfRange`] when the requested offset is
+    /// outside the safe positive-rate interval.
+    pub const fn new(drift_ppm: i32) -> Result<Self, ClockRateError> {
+        if drift_ppm < -MAX_CLOCK_DRIFT_PPM || drift_ppm > MAX_CLOCK_DRIFT_PPM {
+            return Err(ClockRateError::DriftOutOfRange { ppm: drift_ppm });
+        }
+        Ok(Self { drift_ppm })
+    }
+
+    /// Returns the signed rate offset in parts per million.
+    #[must_use]
+    pub const fn drift_ppm(self) -> i32 {
+        self.drift_ppm
+    }
+
+    fn scale(self) -> i128 {
+        CLOCK_PPM_SCALE + i128::from(self.drift_ppm)
+    }
+
+    fn observed_at(self, reference: Timestamp) -> Timestamp {
+        let nanos = i128::from(reference.as_nanos()) * self.scale() / CLOCK_PPM_SCALE;
+        Timestamp::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+    }
+
+    fn reference_for(self, deadline: Timestamp) -> Timestamp {
+        let numerator = i128::from(deadline.as_nanos()) * CLOCK_PPM_SCALE;
+        let reference = (numerator + self.scale() - 1) / self.scale();
+        Timestamp::from_nanos(u64::try_from(reference).unwrap_or(u64::MAX))
+    }
+}
+
+/// A deterministic adapter that models independent audio and video device clocks.
+///
+/// The adapter advances one shared reference timeline whenever either domain waits,
+/// then exposes each domain's independently scaled reading. This makes hardware
+/// clock drift testable without an operating-system dependency while preserving the
+/// [`AudioClock`] and [`VideoClock`] contracts used by production adapters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IndependentMediaClock {
+    reference_nanos: u64,
+    audio_rate: ClockRate,
+    video_rate: ClockRate,
+}
+
+impl IndependentMediaClock {
+    /// Creates a two-domain clock from signed audio and video drift in ppm.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClockRateError::DriftOutOfRange`] when either domain is outside
+    /// the supported rate interval.
+    pub fn new(audio_drift_ppm: i32, video_drift_ppm: i32) -> Result<Self, ClockRateError> {
+        Ok(Self::with_rates(
+            ClockRate::new(audio_drift_ppm)?,
+            ClockRate::new(video_drift_ppm)?,
+        ))
+    }
+
+    /// Creates a two-domain clock from already validated rates.
+    #[must_use]
+    pub const fn with_rates(audio_rate: ClockRate, video_rate: ClockRate) -> Self {
+        Self {
+            reference_nanos: 0,
+            audio_rate,
+            video_rate,
+        }
+    }
+
+    /// Returns the configured audio-domain rate.
+    #[must_use]
+    pub const fn audio_rate(self) -> ClockRate {
+        self.audio_rate
+    }
+
+    /// Returns the configured video-domain rate.
+    #[must_use]
+    pub const fn video_rate(self) -> ClockRate {
+        self.video_rate
+    }
+
+    /// Returns the shared reference time used by the deterministic adapter.
+    #[must_use]
+    pub const fn reference_now(self) -> Timestamp {
+        Timestamp::from_nanos(self.reference_nanos)
+    }
+
+    /// Returns the current audio-device clock reading.
+    #[must_use]
+    pub fn audio_now(self) -> Timestamp {
+        self.audio_rate.observed_at(self.reference_now())
+    }
+
+    /// Returns the current video-device clock reading.
+    #[must_use]
+    pub fn video_now(self) -> Timestamp {
+        self.video_rate.observed_at(self.reference_now())
+    }
+
+    fn wait_until(&mut self, rate: ClockRate, deadline: Timestamp) {
+        let required = rate.reference_for(deadline).as_nanos();
+        self.reference_nanos = self.reference_nanos.max(required);
+    }
+}
+
+impl AudioClock for IndependentMediaClock {
+    fn now(&self) -> Timestamp {
+        self.audio_now()
+    }
+
+    fn sleep_until(&mut self, deadline: Timestamp) {
+        self.wait_until(self.audio_rate, deadline);
+    }
+}
+
+impl VideoClock for IndependentMediaClock {
+    fn now(&self) -> Timestamp {
+        self.video_now()
+    }
+
+    fn sleep_until(&mut self, deadline: Timestamp) {
+        self.wait_until(self.video_rate, deadline);
+    }
+}
+
 /// A thread-safe cancellation request for a coordinated media session.
 #[derive(Clone, Debug)]
 pub struct SessionCancellationToken {
@@ -683,6 +844,47 @@ mod tests {
         let audio = audio_pacer.next(&mut clock, 1_600).expect("audio pacing");
         assert_eq!(video.deadline().timestamp(), Timestamp::ZERO);
         assert_eq!(audio.deadline().timestamp(), Timestamp::ZERO);
+    }
+
+    #[test]
+    fn independent_clock_rejects_non_safe_rates() {
+        assert_eq!(
+            ClockRate::new(MAX_CLOCK_DRIFT_PPM + 1),
+            Err(ClockRateError::DriftOutOfRange {
+                ppm: MAX_CLOCK_DRIFT_PPM + 1
+            })
+        );
+        assert_eq!(
+            IndependentMediaClock::new(-MAX_CLOCK_DRIFT_PPM - 1, 0),
+            Err(ClockRateError::DriftOutOfRange {
+                ppm: -MAX_CLOCK_DRIFT_PPM - 1
+            })
+        );
+    }
+
+    #[test]
+    fn independent_device_clocks_accumulate_drift_without_missed_wait_contracts() {
+        const TICKS: usize = 3_000;
+        let mut clock = IndependentMediaClock::new(1_000, -1_000).expect("valid drift rates");
+        let mut audio_pacer = obs_rs_audio::AudioPacer::new(audio_format());
+        let mut video_pacer = obs_rs_video::VideoPacer::new(video_rate());
+        let controller = obs_rs_audio::AvSyncController::new(1_000_000);
+
+        for _ in 0..TICKS {
+            let audio = audio_pacer
+                .next(&mut clock, 1_600)
+                .expect("audio pacing succeeds");
+            let video = video_pacer.next(&mut clock).expect("video pacing succeeds");
+            assert!(audio.observed_at() >= audio.deadline().timestamp());
+            assert!(video.observed_at() >= video.deadline().timestamp());
+        }
+
+        let observation = controller.observe(clock.video_now(), clock.audio_now());
+        assert_eq!(observation.state(), obs_rs_audio::SyncState::AudioAhead);
+        assert!(observation.delta_nanos() > 100_000_000);
+        assert!(clock.audio_now() > clock.video_now());
+        assert_eq!(clock.audio_rate().drift_ppm(), 1_000);
+        assert_eq!(clock.video_rate().drift_ppm(), -1_000);
     }
 
     #[test]
