@@ -23,5 +23,7 @@ obs-rs-output = { path = "../obs-rs-output" }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
 obs-rs-project = { path = "../obs-rs-project" }
 obs-rs-render = { path = "../obs-rs-render" }
+obs-rs-sandbox = { path = "../obs-rs-sandbox" }
 obs-rs-ui = { path = "../obs-rs-ui" }
 obs-rs-video = { path = "../obs-rs-video" }
+obs-rs-util = { path = "../obs-rs-util" }

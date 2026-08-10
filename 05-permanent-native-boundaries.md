@@ -32,8 +32,9 @@ a direct Rust X11 wire-protocol adapter with fixture-tested setup and pixel deco
 The terminal and loopback browser frontends reuse the same validated Rust-owned UI
 state. `obs-rs-gui` adds a Slint desktop control room whose callbacks dispatch into
 that state and whose CPU preview bridge renders project scenes into image surfaces;
-the GUI crate's smoke mode constructs and exercises that path without requiring a
-long-running event loop.
+The GUI reports platform-capture capability, source visibility/locking, output
+telemetry, recovery controls, and diagnostics export; its smoke mode constructs and
+exercises that path without requiring a long-running event loop.
 
 This is evidence of a Rust-native foundation and safe integration seams, not evidence
 that direct OS capture, GPU acceleration, production codecs/protocols, or native
@@ -49,8 +50,8 @@ supply their own evidence.
 | GPU rendering | CPU reference renderer first | format parity, context loss, resource cleanup |
 | Encoding | Rust packet/encoder traits | deterministic fixtures, quality, bounded back-pressure |
 | Streaming | output trait with a fake transport | reconnect, cancellation, no capture-thread blocking |
-| Plugins | compile-time Rust registration with API versioning | version checks, isolation, diagnostics |
-| Desktop UI | Rust application state plus Slint control-room and CPU preview adapter | capture-backed preview/editor workflows, accessibility audit, recovery, cross-platform packaging |
+| Plugins | compile-time Rust registration with API versioning, plus bounded subprocess frame protocol | version checks, isolation, bounded handoff, diagnostics |
+| Desktop UI | Rust application state plus Slint control-room and CPU preview adapter | capture-backed preview/editor workflows, full translation, accessibility audit, guided recovery, cross-platform packaging |
 
 ## Prohibited shortcuts
 

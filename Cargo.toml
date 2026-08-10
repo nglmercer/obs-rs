@@ -14,6 +14,7 @@ members = [
     "crates/obs-rs-plugin-api",
     "crates/obs-rs-project",
     "crates/obs-rs-render",
+    "crates/obs-rs-sandbox",
     "crates/obs-rs-ui",
     "crates/obs-rs-util",
     "crates/obs-rs-video",
@@ -24,3 +25,11 @@ resolver = "2"
 edition = "2021"
 version = "0.1.0"
 publish = false
+
+[profile.release]
+codegen-units = 1
+debug = 0
+incremental = false
+lto = "thin"
+panic = "abort"
+strip = "symbols"

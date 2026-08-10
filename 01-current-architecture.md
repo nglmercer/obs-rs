@@ -79,8 +79,10 @@ audio. `AvSyncMonitor` aggregates bounded counters and absolute-drift diagnostic
 across long runs. `AudioClock`, `MonotonicAudioClock`, and `AudioPacer` provide
 injectable block-level callback timing. `AudioWorker` adds thread-safe cancellation,
 exact format/frame/timestamp validation, bounded output, underflow/drop counters,
-and post-callback deadline measurements. It is still an offline/reference device
-model; it does not open a platform device or spawn a callback thread itself.
+and post-callback deadline measurements. `AudioCallbackClock` accepts timestamped
+hardware callback edges, rejects regressions, and applies bounded ppm correction. It
+is still an offline/reference device model; it does not open a platform device or
+spawn a callback thread itself.
 
 `obs-rs-clock` owns `MediaTimeline`, which advances the rational video and audio
 domains together and feeds the same bounded A/V drift monitor. `MonotonicMediaClock`
@@ -98,7 +100,14 @@ kinds. `TestPatternDevice` is the first lifecycle-complete backend: it starts at
 validated format, emits timestamped owned frames, and stops without leaking state.
 `StreamCaptureDevice<R>` adds a bounded `OBSFRM01` RGBA packet protocol for safe
 Rust pipes or TCP readers, with exact format/payload validation and clean EOF handling.
-Platform devices will implement the same provider/device traits later.
+`obs-rs-sandbox` uses that protocol behind a direct subprocess boundary: manifest
+and argument limits are checked before launch, stdout is isolated from stderr, the
+reader is moved to a bounded two-frame handoff queue, and a stalled child is
+terminated after the frame-delivery deadline.
+`PlatformCaptureProvider` reports host capability state, with a live Linux X11
+descriptor when `DISPLAY` is available and typed unavailable errors elsewhere. The
+Slint control room surfaces that distinction and retains simulated CPU sources as a
+fallback. Platform devices still implement the same provider/device traits.
 
 The compositor still uses CPU-owned RGBA frames. Packed/planar inputs are converted
 at the media boundary; GPU textures, device clocks, and zero-copy buffers remain
@@ -110,9 +119,12 @@ Plugins implement `obs-rs-plugin-api::Plugin`. A plugin exposes a manifest and s
 factories. A factory validates settings and constructs a source. The runtime only
 knows the trait contracts; it does not know the concrete source type.
 
-The first extension mechanism is compile-time registration. This provides strong
-Rust typing, simple tests, and no unstable binary layout. Dynamic discovery and
-sandboxing will be designed after the source contract is exercised by real modules.
+The first extension mechanism remains compile-time registration. This provides strong
+Rust typing, simple tests, and no unstable binary layout. The separate
+`obs-rs-sandbox` crate now supplies a reviewed subprocess extension contract with
+`OBSRPLUGIN1` metadata and `OBSFRM01` frame delivery. It is a bounded reference
+boundary, not yet a signed dynamic plugin marketplace or an OS-level resource
+container.
 
 ## Scene data flow
 
@@ -167,15 +179,20 @@ Current and future crates keep these concerns separate:
 - `obs-rs-render`: texture ownership, composition, readback, capabilities,
   aggregate byte quotas, packed/planar upload conversion, and context-loss recovery
   behind a backend trait;
+- `obs-rs-core`: plugin/source/scene ownership, compositor metrics, explicit runtime
+  quotas, and bounded usage snapshots for diagnostics;
 - `obs-rs-audio`: sample formats, mixer, resampler, and monitoring (buffer, queue,
   and mixer MVP implemented);
 - `obs-rs-capture-*`: platform or device adapters behind Rust traits (the Linux X11
   root-screen path is implemented without a foreign binding; other platforms remain
   separate adapters);
 - `obs-rs-codec-*`: encoder contracts and reviewed codec integrations;
-- `obs-rs-output`: muxing, files, network protocols, reconnect, and back-pressure;
-- `obs-rs-project`: profiles, scene collections, source definitions, commands, and
-  deterministic persistence;
+- `obs-rs-output`: muxing, files, TCP/WebSocket network protocols, reconnect, and
+  back-pressure;
+- `obs-rs-sandbox`: subprocess extension manifests, direct process lifecycle, and
+  bounded frame handoff;
+- `obs-rs-project`: profiles, scene collections, source definitions, commands, source
+  visibility/locking, and deterministic persistence;
 - `obs-rs-diagnostics`: bounded deterministic recovery sections and atomic bundle
   finalization;
 - `obs-rs-ui`: toolkit-neutral desktop application state, commands, a labeled
@@ -183,9 +200,10 @@ Current and future crates keep these concerns separate:
   browser page;
 - `obs-rs-gui`: Slint desktop control-room adapter. It owns view properties and
   callbacks, the CPU preview-render bridge, and image conversion, translating
-  scene/output actions into `obs-rs-ui::UiCommand`. It also exposes a small
-  scene/source editor and crash-safe project save/load controls; capture-backed
-  source configuration, richer property editors, and recovery dialogs remain
+  scene/output actions into `obs-rs-ui::UiCommand`. It also exposes scene/source
+  ordering and visibility/lock controls, capture capability reporting, output
+  telemetry, and crash-safe project save/load/recover controls; capture-backed
+  preview selection, richer property editors, and guided recovery dialogs remain
   product work.
 
 These are implementation boundaries, not promises that every future integration is
@@ -203,8 +221,9 @@ an RLE decoder fixture, atomic standard-library raw/Y4M-file writers, an atomic
 interleaved `OBSRPKT1` packet-container writer, a canonical PCM16 WAV writer,
 timestamp-order validation, a reconnectable packet-transport session, and the
 intentionally uncompressed `OBSRRAW1` format, plus a length-framed standard-library
-TCP transport fixture. These prove packet validation,
+TCP transport fixture and an RFC 6455 WebSocket client with a typed `OBSRWS01`
+envelope. These prove packet validation,
 back-pressure, lifecycle behavior, crash-safe finalization, reconnect/requeue behavior,
 fixed-format frame validation, timestamps, truncation detection, and encode/decode
-round-trips without deciding the final production codec, container, or network
-protocol.
+round-trips without deciding the final production codec, container, TLS policy, or
+streaming service protocol.

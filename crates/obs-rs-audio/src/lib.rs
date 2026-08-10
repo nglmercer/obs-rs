@@ -1622,6 +1622,7 @@ struct SourceControl {
     gain: f32,
     muted: bool,
     pan: f32,
+    peak_milli: u16,
 }
 
 /// A deterministic mixer for registered audio sources.
@@ -1667,6 +1668,7 @@ impl AudioMixer {
                 gain,
                 muted: false,
                 pan: 0.0,
+                peak_milli: 0,
             },
         );
         Ok(id)
@@ -1842,8 +1844,12 @@ impl AudioMixer {
                 });
             }
             if control.muted {
+                if let Some(control) = self.sources.get_mut(source) {
+                    control.peak_milli = 0;
+                }
                 continue;
             }
+            let mut peak = 0.0_f32;
             for (sample_index, (output, input)) in
                 mixed.iter_mut().zip(buffer.samples()).enumerate()
             {
@@ -1853,10 +1859,15 @@ impl AudioMixer {
                     1 => 1.0 + control.pan.min(0.0),
                     _ => 1.0,
                 };
-                *output += *input * control.gain * pan_gain;
+                let contribution = *input * control.gain * pan_gain;
+                *output += contribution;
+                peak = peak.max(contribution.abs());
                 if !output.is_finite() {
                     return Err(AudioError::MixOverflow);
                 }
+            }
+            if let Some(control) = self.sources.get_mut(source) {
+                control.peak_milli = peak_to_milli(peak);
             }
         }
 
@@ -1881,6 +1892,24 @@ impl AudioMixer {
     pub fn source_count(&self) -> usize {
         self.sources.len()
     }
+
+    /// Returns the latest bounded post-gain peak for one source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::UnknownSource`] for an unknown source.
+    pub fn source_peak_milli(&self, source: AudioSourceId) -> Result<u16, AudioError> {
+        self.sources
+            .get(&source)
+            .map(|control| control.peak_milli)
+            .ok_or(AudioError::UnknownSource(source))
+    }
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn peak_to_milli(peak: f32) -> u16 {
+    let scaled = (peak.clamp(0.0, 1.0) * 1_000.0).round();
+    u16::try_from(scaled as u32).unwrap_or(u16::MAX)
 }
 
 fn audio_timestamp_for(index: u64, sample_rate: u32) -> Result<Timestamp, AudioError> {

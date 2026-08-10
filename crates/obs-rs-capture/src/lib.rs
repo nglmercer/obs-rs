@@ -43,6 +43,8 @@ pub enum CaptureKind {
     Window,
     /// A future camera adapter.
     Camera,
+    /// A source delivered by a separately sandboxed Rust process.
+    External,
 }
 
 /// Permission state reported by a capture provider.
@@ -830,6 +832,7 @@ fn simulated_frame(
         CaptureKind::Screen => 16,
         CaptureKind::Window => 32,
         CaptureKind::Camera => 48,
+        CaptureKind::External => 64,
     };
     for y in 0..height {
         for x in 0..width {
@@ -1273,6 +1276,7 @@ mod tests {
                 CaptureKind::Window => "window",
                 CaptureKind::Camera => "camera",
                 CaptureKind::TestPattern => "pattern",
+                CaptureKind::External => "external",
             };
             let mut device = SimulatedCaptureDevice::new(id, id, kind).expect("device");
             device.start(format()).expect("start");

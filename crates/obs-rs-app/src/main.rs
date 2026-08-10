@@ -24,18 +24,28 @@ use obs_rs_output::{
     PacketMuxer, PacketQueue, PngVideoEncoder, RawAudioEncoder, RawRecording, RawRecordingSession,
     ReconnectPolicy, RleVideoEncoder, StreamSession, VideoEncoder, WavRecording, Y4mRecording,
 };
-use obs_rs_plugin_api::VideoRequest;
+use obs_rs_plugin_api::{Plugin, PluginManifest, VideoRequest};
 use obs_rs_project::{Profile, Project, ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderMetrics};
+use obs_rs_sandbox::{SandboxedPlugin, SandboxedPluginManifest};
 use obs_rs_ui::{DesktopState, UiCommand};
+use obs_rs_util::Identifier;
 use obs_rs_video::{DropPolicy, RenderOutcome, VideoMetrics, VideoPacer, VideoPipeline};
 
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
     let plugin = BuiltinPlugin::new()?;
     let capture_devices = plugin.discover_capture_devices()?.len();
+    let sandbox_manifest = sandbox_manifest()?;
+    let sandbox_plugin = SandboxedPlugin::new(
+        &sandbox_manifest,
+        "obs-rs-sandbox-source",
+        vec!["--frames".to_owned()],
+    )?;
+    let sandbox_source_kinds = sandbox_plugin.source_factories().len();
     let mut runtime = Runtime::new();
     runtime.register_plugin(&plugin)?;
+    runtime.register_plugin(&sandbox_plugin)?;
     runtime.create_scene("main")?;
 
     let background = runtime.create_source(
@@ -120,8 +130,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         )?;
 
     println!(
-        "obs-rs demo: plugins={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} renderer_created={} renderer_uploads={} renderer_compositions={} renderer_readbacks={} renderer_peak_bytes={} rendered={} dropped_oldest={} png_bytes={} capture_stream_bytes={} y4m_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
+        "obs-rs demo: plugins={}, sandbox_source_kinds={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} renderer_created={} renderer_uploads={} renderer_compositions={} renderer_readbacks={} renderer_peak_bytes={} rendered={} dropped_oldest={} png_bytes={} capture_stream_bytes={} y4m_bytes={} audio={:?} sync={:?} timeline_in_sync={} clock_drift_ns={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={} diagnostic_bytes={}",
         runtime.plugins().len(),
+        sandbox_source_kinds,
         capture_devices,
         runtime.scene_count(),
         runtime.source_count(),
@@ -469,6 +480,15 @@ fn diagnostic_file_fixture(bundle: &DiagnosticBundle) -> Result<usize, Box<dyn E
     }
     std::fs::remove_file(writer.final_path())?;
     Ok(committed)
+}
+
+fn sandbox_manifest() -> Result<SandboxedPluginManifest, Box<dyn Error>> {
+    let manifest =
+        PluginManifest::new("obs_rs_sandbox_demo", "OBS-RS sandbox demo source", "0.1.0")?;
+    Ok(SandboxedPluginManifest::new(
+        manifest,
+        [Identifier::new("sandbox_pattern")?],
+    )?)
 }
 
 fn color_settings(width: &str, height: &str, color: &str) -> Config {

@@ -21,16 +21,23 @@ control surfaces:
 - `obs-rs-audio` defines owned sample buffers, bounded audio queues, a reference
   mixer, a deterministic linear resampler, sample-clock pacing, reconciliation,
   monitoring taps, bounded long-run A/V drift telemetry, and a cancellation-aware
-  `AudioWorker` with exact block contracts.
+  `AudioWorker` with exact block contracts. Callback timestamp observation rejects
+  device-clock regressions and applies bounded ppm correction; mixer peak telemetry
+  is available to the desktop state.
 - `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
   catalog/provider contracts, atomic discovery refresh, deterministic animated test
   backends, a direct Linux X11 root-screen adapter, and a bounded `OBSFRM01` RGBA
   frame-stream adapter for Rust pipes/TCP readers.
 - `obs-rs-plugin-api` defines versioned Rust plugin and source interfaces.
+- `obs-rs-sandbox` adds a bounded subprocess extension boundary: versioned
+  `OBSRPLUGIN1` manifests, direct no-shell process launch, fixed environment
+  negotiation, bounded `OBSFRM01` frame packets, a two-frame handoff queue, and
+  frame-delivery timeouts.
 - `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
   camera CPU-fallback factories plus the Linux `x11_screen_capture` source.
 - `obs-rs-core` owns the plugin registry, sources, scenes, CPU compositor, and
-  compositor-work counters.
+  compositor-work counters. It also enforces explicit plugin/source/scene/filter
+  quotas and exposes resource usage for diagnostics.
 - `obs-rs-video` provides rational frame scheduling, callback-driven rendering,
   bounded frame transport, render/drop/timing metrics, and a sustained-run benchmark
   fixture plus a cancellation-aware wall-clock `VideoWorker`.
@@ -47,26 +54,32 @@ control surfaces:
   recording writer, atomic raw/Y4M-file and interleaved packet-container finalization,
   a canonical PCM16 WAV reference writer,
   timestamp-order validation, a reconnectable memory transport fixture, and a
-  length-framed standard-library TCP transport.
+  length-framed standard-library TCP transport plus an RFC 6455 WebSocket client
+  with reconnect/drop telemetry and an explicit `OBSRWS01` packet envelope.
 - `obs-rs-project` provides Rust-owned profiles, ordered scenes/source definitions,
   command dispatch, dirty-state tracking, deterministic escaped persistence, and
-  atomic project-file save/load.
+  atomic project-file save/load/recovery. Source visibility and lock state are
+  persisted with backward-compatible parsing.
 - `obs-rs-diagnostics` provides bounded deterministic project/UI/runtime bundles,
   strict decoding, and atomic recovery-file finalization.
 - `obs-rs-ui` provides a toolkit-neutral desktop state machine for preview/program
   selection, transitions, output lifecycle, shortcuts, notices, project commands,
-  deterministic labeled accessibility snapshots, strict terminal/HTTP command
-  parsers, and an accessible browser page.
+  real preview-to-program takes, mixer peak telemetry, deterministic bilingual
+  labeled accessibility snapshots, strict terminal/HTTP command parsers, and an
+  accessible browser page.
 - `obs-rs-gui` provides the first Slint desktop control room: preview/program
   status cards with CPU-rendered RGBA scene frames, scene selection, transitions,
-  recording/streaming controls, a small scene/source editor, crash-safe project
-  save/load, and a visible accessible state snapshot backed by the same
-  `DesktopState` commands.
+  recording/streaming controls, scene/source ordering and visibility/lock controls,
+  a mixer with gain/mute/peak state, source properties, crash-safe project
+  save/load/recover, platform-capture capability reporting, output telemetry, and
+  a visible bilingual accessible state snapshot backed by the same `DesktopState`
+  commands.
 - `obs-rs-app` runs a small end-to-end demo, a scriptable accessible terminal
   frontend, and a loopback-only accessible browser control surface without a native
   host dependency.
 
-This is an engine foundation, not yet a production recorder or streamer. The
+This is an engine foundation with usable reference recording and TCP/WebSocket packet
+output, not yet a production codec/protocol stack or full OBS Studio parity. The
 complete target and its acceptance gates are described in the roadmap.
 
 ## Build and run
@@ -82,6 +95,7 @@ cargo run -p obs-rs-gui -- --smoke
 cargo run -p obs-rs-app --bin obs-rs-console
 cargo run -p obs-rs-app --bin obs-rs-web
 cargo run -p obs-rs-app --bin obs-rs-benchmark --release
+scripts/release-artifacts.sh [dist]
 ```
 
 The demo registers the built-in plugin, creates a scene, adds two sources, applies a
@@ -95,8 +109,8 @@ a stable summary.
 through line-oriented scene selection, preview/program swap, transitions, recording,
 streaming, and snapshot commands. `obs-rs-web` serves the same state through an
 accessible local browser page and bounded `POST /command` requests. The benchmark
-runs the cancellation-aware wall-clock video worker for 120 frames and reports
-deadline misses, lateness, drops, elapsed time, and compositor work counters. All
+runs cancellation-aware wall-clock video workers and reports deadline misses,
+lateness, drops, elapsed time, owned-frame footprint, and compositor work counters. All
 behavior is exercised through safe Rust APIs and Rust tests.
 `obs-rs-gui` opens the native Slint control room; its `--smoke` mode constructs the
 window, renders the project preview path, and binds the state without entering the
@@ -119,20 +133,15 @@ event loop, which keeps GUI wiring checkable in headless validation.
 
 ## Current status
 
-Phase 0 (workspace and policy), the Phase 1/2 vertical slice, the Phase 3 reference
-render loop, injected-clock pacer, packed/planar conversion, transitions, and
-sustained benchmark fixture, the first Phase 4 audio primitives including stereo
-pan, monitoring taps, sample-clock/A/V reconciliation, and the cancellation-aware
-audio worker, plus the shared media-clock coordinator, the Phase 5 capture
-contract/test backend,
-and the first Phase 6 packet/muxer/recording lifecycle contracts including atomic
-file finalization are implemented, together with the first Phase 7 project
-state/command/persistence slice. The CPU compositor now reports source, transform,
-filter, and blend work while avoiding per-frame scene-item/filter snapshots and
-redundant identity transforms in its hot path. The project is intentionally not
-claiming feature parity with OBS Studio. The
-current reference also includes independent device-clock drift modeling, a bounded
-`OBSFRM01` Rust frame-stream adapter, accessible terminal/browser/Slint control
-surfaces, and deterministic recovery diagnostics. The next priority is richer
-editor/recovery UX and capture-backed preview sources, followed by direct platform
-capture, hardware rendering, real codecs, and network output.
+Phase 0 (workspace, policy, and pinned-toolchain CI), the Phase 1/2 vertical slice, the Phase 3 reference
+render loop and multi-worker soak, Phase 4 callback-clock/audio-worker primitives,
+the shared media-clock coordinator, the Phase 5 capture contract plus Linux X11
+adapter, and the Phase 6 packet/muxer/atomic recording lifecycle contracts are
+implemented, together with a growing Phase 7 project/GUI workflow and Phase 8
+resource diagnostics. A bounded subprocess extension contract and a tested
+WebSocket packet transport are now present as reference boundaries. The release
+profile, pinned-toolchain CI workflow, and checksum manifest script are also
+present. The project intentionally does not claim feature parity with OBS Studio:
+macOS/Windows capture, GPU/zero-copy rendering, production codecs and protocols,
+full GUI localization/property dialogs, dynamic discovery, signing, and update
+channels remain roadmap work.

@@ -171,6 +171,19 @@ impl SceneSpec {
         &self.sources
     }
 
+    /// Replaces the scene's display name after validating that it is non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::InvalidName`] when the new name is empty.
+    pub fn set_name(&mut self, name: &str) -> Result<(), ProjectError> {
+        if name.trim().is_empty() {
+            return Err(ProjectError::InvalidName { kind: "scene" });
+        }
+        name.clone_into(&mut self.name);
+        Ok(())
+    }
+
     /// Appends a source definition while rejecting duplicate IDs.
     ///
     /// # Errors
@@ -278,6 +291,17 @@ impl Profile {
         }
         self.scenes.insert(scene.id().clone(), scene);
         Ok(())
+    }
+
+    /// Removes a scene by ID and returns its definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::UnknownScene`] when the scene is absent.
+    pub fn remove_scene(&mut self, id: &Identifier) -> Result<SceneSpec, ProjectError> {
+        self.scenes
+            .remove(id)
+            .ok_or_else(|| ProjectError::UnknownScene(id.clone()))
     }
 
     /// Returns scenes in deterministic ID order.
@@ -506,6 +530,14 @@ pub enum ProjectCommand {
         scene: String,
         source: SourceSpec,
     },
+    /// Removes a scene from a profile.
+    RemoveScene { profile: String, scene: String },
+    /// Renames a scene in a profile.
+    SetSceneName {
+        profile: String,
+        scene: String,
+        name: String,
+    },
     /// Replaces one source's validated settings document.
     SetSourceSettings {
         profile: String,
@@ -595,6 +627,29 @@ impl Project {
                     .scene_mut(&scene_id)
                     .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
                 scene.add_source(source)
+            }
+            ProjectCommand::RemoveScene { profile, scene } => {
+                let profile_id = identifier(&profile, "profile id")?;
+                let profile = self
+                    .profile_mut(&profile_id)
+                    .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+                let scene_id = identifier(&scene, "scene id")?;
+                profile.remove_scene(&scene_id).map(|_| ())
+            }
+            ProjectCommand::SetSceneName {
+                profile,
+                scene,
+                name,
+            } => {
+                let profile_id = identifier(&profile, "profile id")?;
+                let profile = self
+                    .profile_mut(&profile_id)
+                    .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+                let scene_id = identifier(&scene, "scene id")?;
+                let scene = profile
+                    .scene_mut(&scene_id)
+                    .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+                scene.set_name(&name)
             }
             ProjectCommand::SetSourceSettings {
                 profile,
@@ -819,6 +874,12 @@ impl ProjectFileStore {
             message: error.to_string(),
         })?;
         Project::parse(&document).map(Some)
+    }
+
+    /// Returns whether an interrupted-save temporary file is present.
+    #[must_use]
+    pub fn recovery_available(&self) -> bool {
+        self.temp_path.is_file()
     }
 
     /// Returns the final project path.
@@ -1331,6 +1392,31 @@ mod tests {
     }
 
     #[test]
+    fn parser_keeps_legacy_sources_visible_and_unlocked() {
+        let encoded = project().serialize();
+        let legacy = encoded
+            .lines()
+            .map(|line| {
+                if line.starts_with("source|") {
+                    line.split('|').take(9).collect::<Vec<_>>().join("|")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let decoded = Project::parse(&legacy).expect("legacy project parses");
+        let source = decoded
+            .profiles()
+            .next()
+            .and_then(|profile| profile.scenes().next())
+            .and_then(|scene| scene.sources().first())
+            .expect("legacy source");
+        assert!(source.visible());
+        assert!(!source.locked());
+    }
+
+    #[test]
     fn command_session_tracks_dirty_state_and_rejects_bad_references() {
         let mut session = ProjectSession::new(project());
         assert!(!session.is_dirty());
@@ -1428,6 +1514,57 @@ mod tests {
             ))
         );
         assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn remove_scene_command_updates_project_without_partial_mutation() {
+        let mut project = project();
+        let extra = SceneSpec::new("extra", "Extra").expect("scene");
+        project
+            .apply(ProjectCommand::AddScene {
+                profile: "live".to_owned(),
+                scene: extra,
+            })
+            .expect("add scene");
+        project
+            .apply(ProjectCommand::SetSceneName {
+                profile: "live".to_owned(),
+                scene: "extra".to_owned(),
+                name: "Renamed".to_owned(),
+            })
+            .expect("rename scene");
+        assert_eq!(
+            project
+                .profiles()
+                .next()
+                .expect("profile")
+                .scenes()
+                .find(|scene| scene.id().as_str() == "extra")
+                .expect("renamed scene")
+                .name(),
+            "Renamed"
+        );
+        project
+            .apply(ProjectCommand::RemoveScene {
+                profile: "live".to_owned(),
+                scene: "extra".to_owned(),
+            })
+            .expect("remove scene");
+        assert!(project
+            .profiles()
+            .next()
+            .expect("profile")
+            .scenes()
+            .all(|scene| scene.id().as_str() != "extra"));
+        assert_eq!(
+            project.apply(ProjectCommand::RemoveScene {
+                profile: "live".to_owned(),
+                scene: "missing".to_owned(),
+            }),
+            Err(ProjectError::UnknownScene(
+                Identifier::new("missing").expect("id")
+            ))
+        );
     }
 
     #[test]

@@ -8,8 +8,8 @@ use std::{
     fmt::{self, Write as _},
 };
 
-use obs_rs_audio::{AudioError, AudioFormat, AudioMixer, AudioSourceId};
-use obs_rs_media::{FrameTransition, MediaError};
+use obs_rs_audio::{AudioBuffer, AudioError, AudioFormat, AudioMixer, AudioSourceId};
+use obs_rs_media::{FrameTransition, MediaError, Timestamp};
 use obs_rs_project::{Project, ProjectCommand, ProjectError, ProjectFileStore, ProjectSession};
 use obs_rs_util::Identifier;
 
@@ -195,6 +195,8 @@ pub enum UiCommand {
     SetLocale { locale: UiLocale },
     /// Replace the current scene transition policy.
     SetTransition { transition: FrameTransition },
+    /// Send the selected preview scene to program using one transition.
+    TakePreview { transition: FrameTransition },
     /// Set one mixer channel's linear gain in thousandths.
     SetMixerGain { id: String, gain_milli: u16 },
     /// Toggle one mixer channel's mute state.
@@ -381,6 +383,7 @@ pub fn parse_console_command(line: &str) -> Result<ConsoleCommand, ConsoleComman
         "stream" => parse_output_command("stream", words, false),
         "mixer" => parse_mixer_command("mixer", words),
         "transition" => parse_transition_command("transition", words),
+        "take" => parse_take_command("take", words),
         _ => Err(ConsoleCommandError::UnknownCommand(command.to_owned())),
     }
 }
@@ -641,6 +644,7 @@ impl DesktopState {
                 self.set_transition(transition)?;
                 "transition updated"
             }
+            UiCommand::TakePreview { transition } => self.take_preview(transition)?,
             UiCommand::SetMixerGain { id, gain_milli } => {
                 self.set_mixer_gain(&id, gain_milli)?;
                 "mixer gain updated"
@@ -800,6 +804,48 @@ impl DesktopState {
     /// Returns mixer channels in deterministic display order.
     pub fn mixer_channels(&self) -> impl Iterator<Item = &MixerChannel> {
         self.mixer_channels.values()
+    }
+
+    /// Mixes one UI-labeled set of audio inputs and updates the visible peak
+    /// meters from the real mixer result.
+    ///
+    /// The frontend supplies stable channel IDs rather than audio-internal IDs;
+    /// unknown labels are rejected before the mixer is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::UnknownMixerChannel`] or an audio validation error.
+    pub fn mix_audio(
+        &mut self,
+        timestamp: Timestamp,
+        frames: usize,
+        inputs: &[(&str, &AudioBuffer)],
+    ) -> Result<AudioBuffer, UiError> {
+        let resolved = inputs
+            .iter()
+            .map(|(id, buffer)| {
+                let source = *self
+                    .mixer_sources
+                    .get(*id)
+                    .ok_or_else(|| UiError::UnknownMixerChannel((*id).to_owned()))?;
+                Ok((source, *buffer))
+            })
+            .collect::<Result<Vec<_>, UiError>>()?;
+        let output = self.audio_mixer.mix(timestamp, frames, &resolved)?;
+        for channel in self.mixer_channels.values_mut() {
+            channel.peak_milli = 0;
+        }
+        for (id, _) in inputs {
+            let source = self
+                .mixer_sources
+                .get(*id)
+                .ok_or_else(|| UiError::UnknownMixerChannel((*id).to_owned()))?;
+            let peak = self.audio_mixer.source_peak_milli(*source)?;
+            if let Some(channel) = self.mixer_channels.get_mut(*id) {
+                channel.peak_milli = peak;
+            }
+        }
+        Ok(output)
     }
 
     /// Returns a bounded snapshot of notices from oldest to newest.
@@ -991,6 +1037,42 @@ impl DesktopState {
         page.push_str(
             "</pre>\n</section>\n<section aria-labelledby=\"actions-label\">\n<h2 id=\"actions-label\">Actions</h2>\n<div role=\"group\" aria-label=\"Output and scene actions\">\n<button type=\"button\" data-command=\"swap\">Swap preview/program</button>\n<button type=\"button\" data-command=\"record start\">Start recording</button>\n<button type=\"button\" data-command=\"record stop\">Stop recording</button>\n<button type=\"button\" data-command=\"stream start\">Start streaming</button>\n<button type=\"button\" data-command=\"stream stop\">Stop streaming</button>\n<button type=\"button\" data-command=\"transition cut\">Cut transition</button>\n<button type=\"button\" data-command=\"transition fade 500\">50% fade</button>\n</div>\n<form id=\"command-form\">\n<label for=\"command\">Validated command</label>\n<input id=\"command\" name=\"command\" maxlength=\"256\" size=\"32\" autocomplete=\"off\">\n<button type=\"submit\">Apply</button>\n</form>\n<p id=\"status\" role=\"status\" aria-live=\"polite\"></p>\n</section>\n</main>\n<script>\nasync function applyCommand(command){const response=await fetch('/command',{method:'POST',headers:{'Content-Type':'text/plain'},body:command});const body=await response.text();if(response.ok){document.getElementById('snapshot').textContent=body;document.getElementById('status').textContent='Command applied';}else{document.getElementById('status').textContent=body;}}\ndocument.querySelectorAll('[data-command]').forEach((button)=>button.addEventListener('click',()=>applyCommand(button.dataset.command)));\ndocument.getElementById('command-form').addEventListener('submit',(event)=>{event.preventDefault();const input=document.getElementById('command');applyCommand(input.value);input.value='';});\n</script>\n</body>\n</html>\n",
         );
+        page = page.replace(
+            "<html lang=\"en\">",
+            &format!("<html lang=\"{}\">", self.locale.code()),
+        );
+        page = page.replace(
+            "<button type=\"button\" data-command=\"transition fade 500\">50% fade</button>\n</div>",
+            "<button type=\"button\" data-command=\"transition fade 500\">50% fade</button>\n<button type=\"button\" data-command=\"take cut\">Take preview (cut)</button>\n<button type=\"button\" data-command=\"take fade 500\">Take preview (50% fade)</button>\n<button type=\"button\" data-command=\"language en\">English</button>\n<button type=\"button\" data-command=\"language es\">Español</button>\n</div>",
+        );
+        if self.locale == UiLocale::Spanish {
+            for (english, spanish) in [
+                (
+                    "Rust-native local control surface using the validated desktop state model.",
+                    "Superficie de control local en Rust que usa el modelo de estado validado.",
+                ),
+                ("Current state", "Estado actual"),
+                ("Actions", "Acciones"),
+                ("Output and scene actions", "Acciones de salida y escena"),
+                ("Swap preview/program", "Intercambiar vista previa/al aire"),
+                ("Start recording", "Iniciar grabación"),
+                ("Stop recording", "Detener grabación"),
+                ("Start streaming", "Iniciar transmisión"),
+                ("Stop streaming", "Detener transmisión"),
+                ("Cut transition", "Transición de corte"),
+                ("50% fade", "Fundido al 50%"),
+                ("Take preview (cut)", "Enviar vista previa (corte)"),
+                (
+                    "Take preview (50% fade)",
+                    "Enviar vista previa (fundido al 50%)",
+                ),
+                ("Validated command", "Comando validado"),
+                ("Apply", "Aplicar"),
+                ("Command applied", "Comando aplicado"),
+            ] {
+                page = page.replace(english, spanish);
+            }
+        }
         page
     }
 
@@ -1149,6 +1231,19 @@ impl DesktopState {
         }
         self.transition = transition;
         Ok(())
+    }
+
+    fn take_preview(&mut self, transition: FrameTransition) -> Result<&'static str, UiError> {
+        let preview = self
+            .preview_scene
+            .clone()
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "preview scene",
+                id: "none".to_owned(),
+            })?;
+        self.set_transition(transition)?;
+        self.program_scene = Some(preview);
+        Ok("preview sent to program")
     }
 
     fn toggle_mixer_mute(&mut self, id: &str) -> Result<&'static str, UiError> {
@@ -1377,10 +1472,28 @@ fn parse_output_command<'a>(
 
 fn parse_transition_command<'a>(
     command: &'static str,
-    mut words: impl Iterator<Item = &'a str>,
+    words: impl Iterator<Item = &'a str>,
 ) -> Result<ConsoleCommand, ConsoleCommandError> {
+    Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+        transition: parse_transition_value(command, words)?,
+    }))
+}
+
+fn parse_take_command<'a>(
+    command: &'static str,
+    words: impl Iterator<Item = &'a str>,
+) -> Result<ConsoleCommand, ConsoleCommandError> {
+    Ok(ConsoleCommand::Apply(UiCommand::TakePreview {
+        transition: parse_transition_value(command, words)?,
+    }))
+}
+
+fn parse_transition_value<'a>(
+    command: &'static str,
+    mut words: impl Iterator<Item = &'a str>,
+) -> Result<FrameTransition, ConsoleCommandError> {
     let kind = required_word(&mut words, "cut or fade")?;
-    let transition = match kind {
+    Ok(match kind {
         "cut" => {
             ensure_no_extra(command, words)?;
             FrameTransition::Cut
@@ -1403,10 +1516,7 @@ fn parse_transition_command<'a>(
                 value: value.to_owned(),
             });
         }
-    };
-    Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
-        transition,
-    }))
+    })
 }
 
 fn parse_mixer_command<'a>(
@@ -1461,8 +1571,9 @@ fn identifier(input: &str, kind: &'static str) -> Result<Identifier, UiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obs_rs_audio::AudioBuffer;
     use obs_rs_config::Config;
-    use obs_rs_media::{FrameRate, VideoFormat};
+    use obs_rs_media::{FrameRate, Timestamp, VideoFormat};
     use obs_rs_project::{Profile, SceneSpec, SourceSpec};
 
     fn project() -> Project {
@@ -1579,6 +1690,12 @@ mod tests {
                 progress_milli: 1_001
             }))
         );
+        state
+            .dispatch(UiCommand::TakePreview {
+                transition: FrameTransition::Cut,
+            })
+            .expect("take preview");
+        assert_eq!(state.program_scene(), state.preview_scene());
     }
 
     #[test]
@@ -1609,6 +1726,25 @@ mod tests {
                 gain_milli: 2_001,
             }),
             Err(UiError::InvalidMixerGain(2_001))
+        );
+    }
+
+    #[test]
+    fn mixer_updates_visible_peak_meters_from_real_audio() {
+        let mut state = DesktopState::new(project());
+        let format = AudioFormat::new(48_000, 2).expect("audio format");
+        let input = AudioBuffer::new(format, Timestamp::ZERO, vec![0.75; 8]).expect("audio input");
+        let output = state
+            .mix_audio(Timestamp::ZERO, 4, &[("desktop", &input)])
+            .expect("audio mix");
+        assert_eq!(output.samples(), &[0.75; 8]);
+        assert_eq!(
+            state
+                .mixer_channels()
+                .find(|channel| channel.id() == "desktop")
+                .expect("desktop channel")
+                .peak_milli(),
+            750
         );
     }
 
@@ -1659,6 +1795,14 @@ mod tests {
         assert_eq!(
             parse_console_command("transition fade 500"),
             Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+                transition: FrameTransition::CrossFade {
+                    progress_milli: 500,
+                },
+            }))
+        );
+        assert_eq!(
+            parse_console_command("take fade 500"),
+            Ok(ConsoleCommand::Apply(UiCommand::TakePreview {
                 transition: FrameTransition::CrossFade {
                     progress_milli: 500,
                 },
@@ -1768,7 +1912,17 @@ mod tests {
         assert!(page.contains("<main id=\"main\""));
         assert!(page.contains("aria-live=\"polite\""));
         assert!(page.contains("data-command=\"swap\""));
+        assert!(page.contains("data-command=\"take fade 500\""));
         assert!(page.contains("OBS-RS desktop state"));
+        let mut spanish = DesktopState::new(project());
+        spanish
+            .dispatch(UiCommand::SetLocale {
+                locale: UiLocale::Spanish,
+            })
+            .expect("locale selection");
+        let spanish_page = spanish.web_page();
+        assert!(spanish_page.contains("<html lang=\"es\">"));
+        assert!(spanish_page.contains("Estado actual"));
         assert_eq!(escape_html("<&\"'>"), "&lt;&amp;&quot;&#39;&gt;");
         assert_eq!(
             parse_web_request(&vec![b'x'; MAX_WEB_REQUEST_BYTES + 1]),

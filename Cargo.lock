@@ -2932,7 +2932,9 @@ dependencies = [
  "obs-rs-plugin-api",
  "obs-rs-project",
  "obs-rs-render",
+ "obs-rs-sandbox",
  "obs-rs-ui",
+ "obs-rs-util",
  "obs-rs-video",
 ]
 
@@ -3047,6 +3049,17 @@ name = "obs-rs-render"
 version = "0.1.0"
 dependencies = [
  "obs-rs-media",
+]
+
+[[package]]
+name = "obs-rs-sandbox"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-capture",
+ "obs-rs-config",
+ "obs-rs-media",
+ "obs-rs-plugin-api",
+ "obs-rs-util",
 ]
 
 [[package]]

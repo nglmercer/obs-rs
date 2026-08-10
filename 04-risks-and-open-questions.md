@@ -23,8 +23,10 @@ hardware callbacks.
 Screen capture, cameras, window enumeration, permissions, GPU contexts, and audio
 devices differ by operating system. Portable traits must be designed before adapters;
 each adapter needs a CPU/test fallback and explicit capability reporting. The bounded
-`OBSFRM01` stream provides a safe Rust IPC seam for adapters, but does not itself
-implement OS discovery or permission prompts.
+`OBSFRM01` stream provides a safe Rust IPC seam for adapters. The current
+`PlatformCaptureProvider` reports Linux/X11 availability and typed unavailable
+states on other targets, while the catalog still owns permission/hot-plug policy;
+macOS/Windows OS discovery and audio-device adapters remain open work.
 
 ### Codec and protocol availability
 
@@ -44,7 +46,9 @@ model, and a compatibility test suite before they are enabled.
 
 Scenes, sources, frame queues, GPU resources, devices, and outputs have different
 lifetime rules. Runtime-owned IDs and explicit removal are preferred to shared global
-references. Each new resource type must have create, update, stop, and destroy tests.
+references. `RuntimeLimits` and `RuntimeUsage` now bound and report the core-owned
+plugin/source/scene/filter resources; each new resource type must still have create,
+update, stop, and destroy tests.
 
 ### Dependency supply chain
 

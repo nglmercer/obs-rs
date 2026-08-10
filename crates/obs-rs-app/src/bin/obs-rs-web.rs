@@ -181,7 +181,7 @@ fn declared_content_length(header: &[u8]) -> io::Result<usize> {
 }
 
 fn help_text() -> String {
-    "Commands:\n  show | snapshot\n  preview <scene-id>\n  program <scene-id>\n  profile <profile-id>\n  swap\n  transition cut | transition fade <0..1000>\n  record start|stop\n  stream start|stop\n  help".to_owned()
+    "Commands:\n  show | snapshot\n  preview <scene-id>\n  program <scene-id>\n  profile <profile-id>\n  swap\n  transition cut | transition fade <0..1000>\n  take cut | take fade <0..1000>\n  language en|es\n  record start|stop\n  stream start|stop\n  help".to_owned()
 }
 
 fn initial_project() -> Result<Project, Box<dyn Error>> {

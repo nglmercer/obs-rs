@@ -6,9 +6,10 @@ Deliver a complete OBS-like application from zero in Rust. The roadmap is organi
 by usable capabilities and verification evidence, not by copying source files or
 counting converted lines.
 
-The current repository implements MVP slices in Phases 0–7 and reference recording
-and transport fixtures in Phase 6. All later work remains active; this document is the
-source of truth for sequencing.
+The current repository implements MVP slices in Phases 0–7, reference recording and
+transport fixtures in Phase 6, and the first bounded resource/diagnostic hardening in
+Phase 8. Production platform, codec, packaging, and full desktop-parity work remains
+active; this document is the source of truth for sequencing.
 
 ## Status legend
 
@@ -110,9 +111,10 @@ cross-fades are covered by `obs-rs-media` and `obs-rs-core` tests. The composito
 applies filter chains in place, borrows scene/filter definitions without per-frame
 snapshots, bypasses identity transforms, and avoids creating a transparent
 accumulator for the first layer. The CPU render backend reports bounded texture
-lifecycle, movement, and peak-byte metrics. The remaining work is wall-clock deadline
-measurement in a long-running multi-worker design, allocation tracing beyond those
-resource counters, more conversion formats, and performance tuning.
+lifecycle, movement, and peak-byte metrics. The multi-worker soak reports wall-clock
+elapsed time, deadline misses, lateness, owned-frame bytes, and peak queue footprint.
+Remaining work is allocation tracing beyond safe owned-buffer accounting, more
+conversion formats, and performance tuning.
 
 ## Phase 4 — Audio engine
 
@@ -159,7 +161,9 @@ bounded signed ppm rates to separate audio/video domains while preserving monoto
 wait semantics. A 3,000-tick test proves accumulated drift is classified and remains
 observable through `AvSyncController`; the demo runs the same fixture for 300 ticks.
 Actual OS device clock adapters and correction against hardware callbacks still
-remain incomplete.
+remain incomplete. `AudioCallbackClock` now accepts timestamped hardware callback
+observations, rejects regressions, and applies bounded ppm correction; it is the safe
+callback contract, not an OS device adapter.
 `obs-rs-output` adds a canonical PCM16 WAV reference writer for offline inspection and
 an interoperable pure-Rust PNG screenshot encoder using deterministic zlib stored
 blocks. The PNG path proves a standards-based image artifact without introducing a
@@ -199,8 +203,11 @@ discovery remain separate future adapters.
 `obs-rs-render` now supplies the portable render-backend contract and a deterministic
 CPU fallback for texture allocation, upload, ordered composition, readback, resource
 limits including aggregate byte accounting, raw packed/planar upload conversion, and
-simulated context-loss recovery. Hardware acceleration, native device contexts, and
-zero-copy resources remain separate integrations.
+simulated context-loss recovery. `PlatformCaptureProvider` exposes the host capability
+state to applications, and the Slint control room reports that state while retaining
+the deterministic CPU fallback. Hardware acceleration, native device contexts, and
+zero-copy resources remain separate integrations; macOS and Windows devices are not
+implemented yet.
 
 ### Exit criteria
 
@@ -236,7 +243,12 @@ standard-library TCP transport, and an uncompressed `OBSRRAW1` reference recordi
 format in `obs-rs-output` for correctness and recovery fixtures. The TCP framing is
 a real Rust transport path, not a claim of RTMP/SRT/WebRTC compatibility.
 It is not yet a production codec, protocol client, or hardware/network streaming
-implementation.
+implementation. The same runtime now has a standard RFC 6455 `ws://` client that
+validates the HTTP upgrade, sends masked binary frames, and wraps each packet in an
+explicit `OBSRWS01` envelope. `wss://` remains unavailable until a reviewed TLS
+boundary is selected. The desktop output runtime exposes reconnect, sent, dropped,
+and queued-packet telemetry and chooses WebSocket when its address uses the
+`ws://` scheme; otherwise it uses the bounded TCP reference path.
 
 ### Exit criteria
 
@@ -261,7 +273,9 @@ Expose the engine as a usable desktop production application.
 The first Rust application-state slices are now present in `obs-rs-project` and
 `obs-rs-ui`: profiles, ordered scenes and sources, transform/filter state, validated
 commands, dirty-state tracking, deterministic escaped persistence, preview/program
-selection, transitions, output lifecycle, bounded notices, and shortcut bindings.
+selection, transitions, real preview-to-program takes, output lifecycle, bounded
+notices, shortcut bindings, source visibility/locking, ordered source management, and
+real mixer peak telemetry.
 They remain toolkit-neutral control-plane foundations; `obs-rs-gui` is the first
 desktop adapter over them. `DesktopState` now renders a deterministic
 labeled text snapshot, `obs-rs-console` provides a scriptable terminal presentation,
@@ -272,18 +286,21 @@ transition controls, output lifecycle buttons, and a visible snapshot backed by
 those same commands. The preview/program surfaces now render project scene sources
 through `obs-rs-core::Runtime` into Slint images on a bounded UI timer. They are CPU
 reference previews rather than platform capture/device-backed feeds. The desktop
-also has a small scene/source editor plus project save/load controls backed by the
-crash-safe `ProjectFileStore`; richer property editing, crash recovery dialogs,
-localization, and crash-report collection are still outstanding.
+also has a scene/source editor plus project save/load/recover controls backed by the
+crash-safe `ProjectFileStore`, atomic Y4M/TCP output, output telemetry, bilingual
+accessible snapshots, persisted source visibility/locking, and a diagnostics export
+action. Per-field property dialogs, full translation of every static desktop label,
+guided crash-recovery dialogs, and a policy for remote crash-report collection remain
+product work.
 
 `ProjectFileStore` adds atomic standard-library project-file save/load semantics and
 keeps the session dirty when a write fails.
 
 `obs-rs-diagnostics` adds a bounded deterministic `OBSRDG01` bundle containing
-project, UI, and runtime sections, with strict decoding and atomic recovery-file
-finalization. The headless demo creates and reopens this artifact. A complete desktop
-workflow and crash-report collection policy are still outstanding; the initial Slint
-presentation is covered by the GUI crate's smoke mode and unit tests.
+project, UI, runtime compositor, and quota-usage sections, with strict decoding and
+atomic recovery-file finalization. The headless demo creates and reopens this
+artifact; the desktop exports it from the Controls dock. Remote crash-report
+collection and a guided recovery dialog are intentionally still outstanding.
 
 The plugin contract also carries an explicit API major/minor version, and
 `obs-rs-core` rejects newer incompatible manifests before registering any factories.
@@ -308,6 +325,16 @@ Make extensions and releases sustainable without weakening Rust ownership.
 - reproducible release builds, signing, update channels, and support tooling;
 - fuzzing, sanitizers where applicable, dependency audits, and soak testing.
 
+The current hardening evidence is the versioned compile-time plugin contract, newer
+API rejection, a bounded `OBSRPLUGIN1` subprocess manifest, direct no-shell launch,
+fixed environment negotiation, bounded `OBSFRM01` frame handoff, a two-frame queue,
+and a frame-delivery timeout. It also includes explicit runtime quotas for
+plugins/source kinds/scenes/sources and filters, a `RuntimeUsage` snapshot included
+in desktop diagnostics, a pinned-toolchain quality workflow, a deterministic release
+profile, and a checksum-producing release artifact script. Signed dynamic discovery,
+OS-level process quotas, update channels, and fuzz/sanitizer automation remain
+incomplete.
+
 ### Exit criteria
 
 Third-party Rust authors can build a documented plugin, incompatible versions fail
@@ -316,11 +343,11 @@ can be reproduced and verified.
 
 ## Current priority order
 
-1. Wall-clock video timing/diagnostics, resource profiling, and longer soak runs.
-2. Device-clock audio behavior and long-duration synchronization tests.
-3. Platform capture discovery/permissions behind the existing Rust capture traits.
+1. Capture-backed desktop preview/editor/recovery workflows and full GUI parity.
+2. Device-clock audio adapters and long-duration synchronization under real hardware.
+3. macOS/Windows capture and accelerated render backends.
 4. Production codec/container/protocol decisions beyond the raw and RLE references.
-5. Capture-backed desktop preview/editor/recovery workflows and plugin/release hardening.
+5. Dynamic-plugin threat modeling, signed release artifacts, and fuzz/soak automation.
 
 ## Go/no-go rule
 

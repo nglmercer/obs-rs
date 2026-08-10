@@ -55,6 +55,8 @@ fn print_help(output: &mut impl Write) -> io::Result<()> {
     writeln!(output, "  profile <profile-id>")?;
     writeln!(output, "  swap")?;
     writeln!(output, "  transition cut | transition fade <0..1000>")?;
+    writeln!(output, "  take cut | take fade <0..1000>")?;
+    writeln!(output, "  language en|es")?;
     writeln!(output, "  record start|stop")?;
     writeln!(output, "  stream start|stop")?;
     writeln!(output, "  help | quit")

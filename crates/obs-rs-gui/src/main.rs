@@ -14,7 +14,7 @@ use obs_rs_media::{
 };
 use obs_rs_output::{
     AtomicY4mFileWriter, PacketDropPolicy, ReconnectPolicy, RleVideoEncoder, StreamSession,
-    StreamState, TcpPacketTransport, VideoEncoder,
+    StreamState, TcpPacketTransport, VideoEncoder, WebSocketPacketTransport,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Profile, Project, ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
@@ -72,8 +72,10 @@ slint::slint! {
         in property <bool> streaming;
         in property <bool> dirty;
         in property <string> status-message;
+        in property <string> recovery-status;
         in property <string> output-status;
         in property <string> output-metrics;
+        in property <string> preview-metrics;
         in property <string> snapshot;
         in property <image> preview-image;
         in property <image> program-image;
@@ -83,6 +85,8 @@ slint::slint! {
         in property <string> source-scene;
         in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
+        in property <string> scene-name-version;
+        in-out property <string> scene-name;
         in property <string> selected-source;
         in property <string> source-settings-version;
         in property <string> source-properties-version;
@@ -106,6 +110,8 @@ slint::slint! {
         callback fade-transition();
         callback select-preview(string);
         callback select-program(string);
+        callback remove-scene(string);
+        callback rename-scene();
         callback select-profile(string);
         callback set-locale(string);
         callback select-source(string);
@@ -148,7 +154,7 @@ slint::slint! {
                     HorizontalBox {
                         spacing: 6px;
                         Text {
-                            text: "Profile:";
+                            text: locale == "es" ? "Perfil:" : "Profile:";
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                             vertical-alignment: center;
@@ -158,7 +164,7 @@ slint::slint! {
                             clicked => select-profile(profile.id);
                         }
                         Text {
-                            text: "Language:";
+                            text: locale == "es" ? "Idioma:" : "Language:";
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                             vertical-alignment: center;
@@ -175,7 +181,9 @@ slint::slint! {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 Text {
-                    text: dirty ? "● Unsaved project" : "● Saved project";
+                    text: dirty
+                        ? (locale == "es" ? "● Proyecto sin guardar" : "● Unsaved project")
+                        : (locale == "es" ? "● Proyecto guardado" : "● Saved project");
                     color: dirty ? rgb(251, 191, 36) : rgb(134, 239, 172);
                     vertical-alignment: center;
                     font-size: 14px;
@@ -196,7 +204,7 @@ slint::slint! {
                         padding: 16px;
                         spacing: 8px;
                         Text {
-                            text: "PREVIEW";
+                            text: locale == "es" ? "VISTA PREVIA" : "PREVIEW";
                             color: rgb(96, 165, 250);
                             font-size: 13px;
                             font-weight: 700;
@@ -219,7 +227,7 @@ slint::slint! {
                             horizontal-alignment: center;
                         }
                         Text {
-                            text: "Queued scene";
+                            text: locale == "es" ? "Escena en cola" : "Queued scene";
                             color: rgb(148, 163, 184);
                             horizontal-alignment: center;
                         }
@@ -237,7 +245,7 @@ slint::slint! {
                         padding: 16px;
                         spacing: 8px;
                         Text {
-                            text: "PROGRAM";
+                            text: locale == "es" ? "AL AIRE" : "PROGRAM";
                             color: rgb(248, 113, 113);
                             font-size: 13px;
                             font-weight: 700;
@@ -260,7 +268,7 @@ slint::slint! {
                             horizontal-alignment: center;
                         }
                         Text {
-                            text: "On air scene";
+                            text: locale == "es" ? "Escena al aire" : "On air scene";
                             color: rgb(252, 165, 165);
                             horizontal-alignment: center;
                         }
@@ -278,7 +286,7 @@ slint::slint! {
                         padding: 14px;
                         spacing: 8px;
                         Text {
-                            text: "Scenes";
+                            text: locale == "es" ? "Escenas" : "Scenes";
                             color: rgb(249, 250, 251);
                             font-size: 18px;
                             font-weight: 700;
@@ -307,12 +315,17 @@ slint::slint! {
                                     }
                                     Rectangle { horizontal-stretch: 1; }
                                     Button {
-                                        text: "Preview";
+                                        text: locale == "es" ? "Vista previa" : "Preview";
                                         clicked => select-preview(scene.id);
                                     }
                                     Button {
-                                        text: "Program";
+                                        text: locale == "es" ? "Al aire" : "Program";
                                         clicked => select-program(scene.id);
+                                    }
+                                    Button {
+                                        text: "×";
+                                        accessible-label: locale == "es" ? "Eliminar escena" : "Remove scene";
+                                        clicked => remove-scene(scene.id);
                                     }
                                 }
                             }
@@ -328,13 +341,13 @@ slint::slint! {
                         padding: 14px;
                         spacing: 8px;
                         Text {
-                            text: "Sources  ·  " + source-scene;
+                            text: (locale == "es" ? "Fuentes  ·  " : "Sources  ·  ") + source-scene;
                             color: rgb(249, 250, 251);
                             font-size: 18px;
                             font-weight: 700;
                         }
                         Text {
-                            text: "Scene item order";
+                            text: locale == "es" ? "Orden de elementos" : "Scene item order";
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                         }
@@ -368,25 +381,32 @@ slint::slint! {
                                     }
                                     Rectangle { horizontal-stretch: 1; }
                                     Button {
-                                        text: source.visible ? "Hide" : "Show";
+                                        text: source.visible
+                                            ? (locale == "es" ? "Ocultar" : "Hide")
+                                            : (locale == "es" ? "Mostrar" : "Show");
                                         clicked => toggle-source-visibility(source.id);
                                     }
                                     Button {
-                                        text: source.locked ? "Unlock" : "Lock";
+                                        text: source.locked
+                                            ? (locale == "es" ? "Desbloquear" : "Unlock")
+                                            : (locale == "es" ? "Bloquear" : "Lock");
                                         clicked => toggle-source-locked(source.id);
                                     }
                                     Button {
                                         text: "↑";
+                                        accessible-label: locale == "es" ? "Mover fuente arriba" : "Move source up";
                                         enabled: !source.locked;
                                         clicked => move-source(source.id, -1);
                                     }
                                     Button {
                                         text: "↓";
+                                        accessible-label: locale == "es" ? "Mover fuente abajo" : "Move source down";
                                         enabled: !source.locked;
                                         clicked => move-source(source.id, 1);
                                     }
                                     Button {
                                         text: "×";
+                                        accessible-label: locale == "es" ? "Eliminar fuente" : "Remove source";
                                         enabled: !source.locked;
                                         clicked => remove-source(source.id);
                                     }
@@ -394,7 +414,9 @@ slint::slint! {
                             }
                         }
                         Text {
-                            text: source-rows.length == 0 ? "No source items" : "";
+                            text: source-rows.length == 0
+                                ? (locale == "es" ? "Sin fuentes" : "No source items")
+                                : "";
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                         }
@@ -409,7 +431,7 @@ slint::slint! {
                         padding: 14px;
                         spacing: 8px;
                         Text {
-                            text: "Audio Mixer";
+                            text: locale == "es" ? "Mezclador de audio" : "Audio Mixer";
                             color: rgb(249, 250, 251);
                             font-size: 18px;
                             font-weight: 700;
@@ -432,12 +454,16 @@ slint::slint! {
                                             horizontal-stretch: 1;
                                         }
                                         Text {
-                                            text: channel.muted ? "MUTED" : "LIVE";
+                                            text: channel.muted
+                                                ? (locale == "es" ? "SILENCIADO" : "MUTED")
+                                                : (locale == "es" ? "ACTIVO" : "LIVE");
                                             color: channel.muted ? rgb(252, 165, 165) : rgb(134, 239, 172);
                                             font-size: 10px;
                                         }
                                         Button {
-                                            text: channel.muted ? "Unmute" : "Mute";
+                                            text: channel.muted
+                                                ? (locale == "es" ? "Activar" : "Unmute")
+                                                : (locale == "es" ? "Silenciar" : "Mute");
                                             clicked => toggle-mixer-mute(channel.id);
                                         }
                                     }
@@ -472,13 +498,13 @@ slint::slint! {
                         padding: 14px;
                         spacing: 8px;
                         Text {
-                            text: "Controls";
+                            text: locale == "es" ? "Controles" : "Controls";
                             color: rgb(249, 250, 251);
                             font-size: 18px;
                             font-weight: 700;
                         }
                         Text {
-                            text: "Project file";
+                            text: locale == "es" ? "Archivo del proyecto" : "Project file";
                             color: rgb(203, 213, 225);
                             font-size: 13px;
                             font-weight: 700;
@@ -491,19 +517,19 @@ slint::slint! {
                                 horizontal-stretch: 1;
                             }
                             Button {
-                                text: "Save";
+                                text: locale == "es" ? "Guardar" : "Save";
                                 clicked => save-project();
                             }
                             Button {
-                                text: "Load";
+                                text: locale == "es" ? "Cargar" : "Load";
                                 clicked => load-project();
                             }
                             Button {
-                                text: "Recover";
+                                text: locale == "es" ? "Recuperar" : "Recover";
                                 clicked => recover-project();
                             }
                             Button {
-                                text: "Diagnostics";
+                                text: locale == "es" ? "Diagnóstico" : "Diagnostics";
                                 clicked => export-diagnostics();
                             }
                         }
@@ -512,7 +538,7 @@ slint::slint! {
                             placeholder-text: "obs-rs-diagnostics.obsrdg";
                         }
                         Text {
-                            text: "Scene editor";
+                            text: locale == "es" ? "Editor de escenas" : "Scene editor";
                             color: rgb(203, 213, 225);
                             font-size: 13px;
                             font-weight: 700;
@@ -530,12 +556,24 @@ slint::slint! {
                                 horizontal-stretch: 1;
                             }
                             Button {
-                                text: "Add";
+                                text: locale == "es" ? "Añadir" : "Add";
                                 clicked => add-scene(new-scene-id, new-scene-name);
                             }
                         }
+                        HorizontalBox {
+                            spacing: 6px;
+                            LineEdit {
+                                text <=> scene-name;
+                                placeholder-text: locale == "es" ? "Nombre de escena" : "Scene name";
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: locale == "es" ? "Renombrar" : "Rename";
+                                clicked => rename-scene();
+                            }
+                        }
                         Text {
-                            text: "Source editor";
+                            text: locale == "es" ? "Editor de fuentes" : "Source editor";
                             color: rgb(203, 213, 225);
                             font-size: 13px;
                             font-weight: 700;
@@ -558,7 +596,7 @@ slint::slint! {
                                 horizontal-stretch: 1;
                             }
                             Button {
-                                text: "Add";
+                                text: locale == "es" ? "Añadir" : "Add";
                                 clicked => add-source(
                                     new-source-id,
                                     new-source-kind,
@@ -567,7 +605,7 @@ slint::slint! {
                             }
                         }
                         Text {
-                            text: "Adds to preview scene: " + preview-scene;
+                            text: (locale == "es" ? "Añade a la escena de vista previa: " : "Adds to preview scene: ") + preview-scene;
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                         }
@@ -578,7 +616,21 @@ slint::slint! {
                             wrap: word-wrap;
                         }
                         Text {
-                            text: "Selected source: " + selected-source;
+                            text: preview-metrics;
+                            color: rgb(100, 116, 139);
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: locale == "es"
+                                ? "Tipos: color_source · test_pattern · screen_capture · window_capture · camera_capture · x11_screen_capture"
+                                : "Kinds: color_source · test_pattern · screen_capture · window_capture · camera_capture · x11_screen_capture";
+                            color: rgb(100, 116, 139);
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: (locale == "es" ? "Fuente seleccionada: " : "Selected source: ") + selected-source;
                             color: rgb(203, 213, 225);
                             font-size: 13px;
                             font-weight: 700;
@@ -590,11 +642,13 @@ slint::slint! {
                             vertical-stretch: 0;
                         }
                         Button {
-                            text: "Apply source settings";
+                            text: locale == "es" ? "Aplicar ajustes" : "Apply source settings";
                             clicked => apply-source-settings();
                         }
                         Text {
-                            text: "Transform  ·  scale-x,scale-y,x,y,flip-x,flip-y,opacity";
+                            text: locale == "es"
+                                ? "Transformación  ·  escala-x,escala-y,x,y,voltear-x,voltear-y,opacidad"
+                                : "Transform  ·  scale-x,scale-y,x,y,flip-x,flip-y,opacity";
                             color: rgb(203, 213, 225);
                             font-size: 12px;
                         }
@@ -603,11 +657,11 @@ slint::slint! {
                             placeholder-text: "1000,1000,0,0,0,0,255";
                         }
                         Button {
-                            text: "Apply transform";
+                            text: locale == "es" ? "Aplicar transformación" : "Apply transform";
                             clicked => apply-source-transform();
                         }
                         Text {
-                            text: "Filters  ·  " + source-filters;
+                            text: (locale == "es" ? "Filtros  ·  " : "Filters  ·  ") + source-filters;
                             color: rgb(203, 213, 225);
                             font-size: 12px;
                             wrap: word-wrap;
@@ -617,42 +671,48 @@ slint::slint! {
                             placeholder-text: "gray,brightness:750,opacity:200";
                         }
                         Button {
-                            text: "Apply filters";
+                            text: locale == "es" ? "Aplicar filtros" : "Apply filters";
                             clicked => apply-source-filters();
                         }
                         Button {
-                            text: "Swap preview / program";
+                            text: locale == "es" ? "Intercambiar vista / aire" : "Swap preview / program";
                             clicked => swap-scenes();
                         }
                         HorizontalBox {
                             spacing: 8px;
                             Button {
-                                text: "Cut";
+                                text: locale == "es" ? "Corte" : "Cut";
                                 clicked => cut-transition();
                             }
                             Button {
-                                text: "Fade";
+                                text: locale == "es" ? "Fundido" : "Fade";
                                 clicked => fade-transition();
                             }
                         }
                         Text {
-                            text: "Transition: " + transition;
+                            text: (locale == "es" ? "Transición: " : "Transition: ") + transition;
                             color: rgb(203, 213, 225);
                             font-size: 13px;
                         }
                         HorizontalBox {
                             spacing: 8px;
                             Button {
-                                text: recording ? "Stop recording" : "Start recording";
+                                text: recording
+                                    ? (locale == "es" ? "Detener grabación" : "Stop recording")
+                                    : (locale == "es" ? "Iniciar grabación" : "Start recording");
                                 clicked => toggle-recording();
                             }
                             Button {
-                                text: streaming ? "Stop streaming" : "Start streaming";
+                                text: streaming
+                                    ? (locale == "es" ? "Detener transmisión" : "Stop streaming")
+                                    : (locale == "es" ? "Iniciar transmisión" : "Start streaming");
                                 clicked => toggle-streaming();
                             }
                         }
                         Text {
-                            text: "Recording file (atomic Y4M)";
+                            text: locale == "es"
+                                ? "Archivo de grabación (Y4M atómico)"
+                                : "Recording file (atomic Y4M)";
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                         }
@@ -661,7 +721,9 @@ slint::slint! {
                             placeholder-text: "obs-rs-recording.y4m";
                         }
                         Text {
-                            text: "Streaming address (Rust TCP packets)";
+                            text: locale == "es"
+                                ? "Dirección de transmisión (paquetes TCP Rust)"
+                                : "Streaming address (Rust TCP packets)";
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                         }
@@ -670,12 +732,22 @@ slint::slint! {
                             placeholder-text: "127.0.0.1:9000";
                         }
                         Text {
-                            text: recording ? "Recording: active" : "Recording: stopped";
+                            text: recovery-status;
+                            color: rgb(251, 191, 36);
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: recording
+                                ? (locale == "es" ? "Grabación: activa" : "Recording: active")
+                                : (locale == "es" ? "Grabación: detenida" : "Recording: stopped");
                             color: recording ? rgb(252, 165, 165) : rgb(148, 163, 184);
                             font-size: 13px;
                         }
                         Text {
-                            text: streaming ? "Streaming: active" : "Streaming: stopped";
+                            text: streaming
+                                ? (locale == "es" ? "Transmisión: activa" : "Streaming: active")
+                                : (locale == "es" ? "Transmisión: detenida" : "Streaming: stopped");
                             color: streaming ? rgb(252, 165, 165) : rgb(148, 163, 184);
                             font-size: 13px;
                         }
@@ -711,7 +783,9 @@ slint::slint! {
                     padding: 12px;
                     spacing: 5px;
                     Text {
-                        text: "Accessible state snapshot";
+                        text: locale == "es"
+                            ? "Resumen de estado accesible"
+                            : "Accessible state snapshot";
                         color: rgb(203, 213, 225);
                         font-size: 13px;
                         font-weight: 700;
@@ -732,9 +806,94 @@ slint::slint! {
 struct OutputRuntime {
     format: VideoFormat,
     recording: Option<AtomicY4mFileWriter>,
-    streaming: Option<StreamSession<TcpPacketTransport>>,
+    streaming: Option<StreamOutput>,
     encoder: RleVideoEncoder,
     frames_pushed: u64,
+}
+
+enum StreamOutput {
+    Tcp(StreamSession<TcpPacketTransport>),
+    WebSocket(StreamSession<WebSocketPacketTransport>),
+}
+
+impl StreamOutput {
+    fn connect(address: &str) -> Result<Self, Box<dyn Error>> {
+        let address = address.trim();
+        if address.starts_with("ws://") {
+            let mut stream = StreamSession::new(
+                WebSocketPacketTransport::new(address),
+                8 * 1024 * 1024,
+                PacketDropPolicy::DropNewest,
+                ReconnectPolicy::new(3),
+            )?;
+            stream.connect()?;
+            Ok(Self::WebSocket(stream))
+        } else {
+            let mut stream = StreamSession::new(
+                TcpPacketTransport::new(address),
+                8 * 1024 * 1024,
+                PacketDropPolicy::DropNewest,
+                ReconnectPolicy::new(3),
+            )?;
+            stream.connect()?;
+            Ok(Self::Tcp(stream))
+        }
+    }
+
+    fn state(&self) -> StreamState {
+        match self {
+            Self::Tcp(stream) => stream.state(),
+            Self::WebSocket(stream) => stream.state(),
+        }
+    }
+
+    fn reconnect(&mut self) -> Result<(), Box<dyn Error>> {
+        match self {
+            Self::Tcp(stream) => stream.reconnect()?,
+            Self::WebSocket(stream) => stream.reconnect()?,
+        }
+        Ok(())
+    }
+
+    fn submit(&mut self, packet: obs_rs_output::EncodedPacket) -> Result<(), Box<dyn Error>> {
+        match self {
+            Self::Tcp(stream) => {
+                stream.submit(packet)?;
+            }
+            Self::WebSocket(stream) => {
+                stream.submit(packet)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Result<usize, Box<dyn Error>> {
+        match self {
+            Self::Tcp(stream) => Ok(stream.flush()?),
+            Self::WebSocket(stream) => Ok(stream.flush()?),
+        }
+    }
+
+    fn close(&mut self) {
+        match self {
+            Self::Tcp(stream) => stream.close(),
+            Self::WebSocket(stream) => stream.close(),
+        }
+    }
+
+    fn queued_bytes(&self) -> usize {
+        match self {
+            Self::Tcp(stream) => stream.queued_bytes(),
+            Self::WebSocket(stream) => stream.queued_bytes(),
+        }
+    }
+
+    fn metrics(&self) -> obs_rs_output::StreamMetrics {
+        match self {
+            Self::Tcp(stream) => stream.metrics(),
+            Self::WebSocket(stream) => stream.metrics(),
+        }
+    }
 }
 
 impl OutputRuntime {
@@ -797,14 +956,7 @@ impl OutputRuntime {
             )
             .into());
         }
-        let mut stream = StreamSession::new(
-            TcpPacketTransport::new(address.trim()),
-            8 * 1024 * 1024,
-            PacketDropPolicy::DropNewest,
-            ReconnectPolicy::new(3),
-        )?;
-        stream.connect()?;
-        self.streaming = Some(stream);
+        self.streaming = Some(StreamOutput::connect(address)?);
         Ok(())
     }
 
@@ -861,7 +1013,7 @@ impl OutputRuntime {
             (
                 metrics.sent_packets(),
                 metrics.dropped_packets(),
-                stream.queued_bytes(),
+                stream.queued_bytes() as u64,
                 metrics.reconnects(),
             )
         });
@@ -984,6 +1136,28 @@ fn install_scene_selection_callbacks(
             &program_state,
             &program_renderer,
             UiCommand::SelectProgramScene { id: id.to_string() },
+        );
+    });
+
+    let weak = ui.as_weak();
+    let remove_state = Rc::clone(state);
+    let remove_renderer = Rc::clone(renderer);
+    ui.on_remove_scene(move |id| {
+        remove_scene_and_refresh(&weak, &remove_state, &remove_renderer, id.as_str());
+    });
+
+    let weak = ui.as_weak();
+    let rename_state = Rc::clone(state);
+    let rename_renderer = Rc::clone(renderer);
+    ui.on_rename_scene(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        rename_scene_and_refresh(
+            &ui,
+            &rename_state,
+            &rename_renderer,
+            ui.get_scene_name().as_str(),
         );
     });
 
@@ -1218,31 +1392,65 @@ fn install_transition_callbacks(
     let cut_state = Rc::clone(state);
     let cut_renderer = Rc::clone(renderer);
     ui.on_cut_transition(move || {
-        dispatch_and_refresh(
-            &weak,
-            &cut_state,
-            &cut_renderer,
-            UiCommand::SetTransition {
-                transition: FrameTransition::Cut,
-            },
-        );
+        take_transition_and_refresh(&weak, &cut_state, &cut_renderer, FrameTransition::Cut);
     });
 
     let weak = ui.as_weak();
     let fade_state = Rc::clone(state);
     let fade_renderer = Rc::clone(renderer);
     ui.on_fade_transition(move || {
-        dispatch_and_refresh(
+        take_transition_and_refresh(
             &weak,
             &fade_state,
             &fade_renderer,
-            UiCommand::SetTransition {
-                transition: FrameTransition::CrossFade {
-                    progress_milli: 500,
-                },
+            FrameTransition::CrossFade {
+                progress_milli: 500,
             },
         );
     });
+}
+
+fn take_transition_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    transition: FrameTransition,
+) {
+    let target = state.borrow().preview_scene().map(str::to_owned);
+    let Some(target) = target else {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_status_message("Transition failed: no preview scene is selected".into());
+        }
+        return;
+    };
+    let source = state.borrow().program_scene().map(str::to_owned);
+    let result: Result<(), Box<dyn Error>> = (|| {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::TakePreview { transition })?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => {
+            refresh_ui(&ui, state, renderer);
+            if let (Some(source), FrameTransition::CrossFade { .. }) = (source, transition) {
+                match renderer
+                    .borrow_mut()
+                    .render_transition(&source, &target, transition)
+                {
+                    Ok(Some(frame)) => ui.set_program_image(frame_to_image(&frame)),
+                    Ok(None) => {}
+                    Err(error) => {
+                        ui.set_status_message(format!("Transition preview failed: {error}").into());
+                    }
+                }
+            }
+        }
+        Err(error) => ui.set_status_message(format!("Transition failed: {error}").into()),
+    }
 }
 
 fn push_program_frame(
@@ -1466,20 +1674,32 @@ fn export_diagnostics(
         let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
         let state = state.borrow();
         let metrics = renderer.borrow().runtime.compositor_metrics();
+        let usage = renderer.borrow().runtime.usage();
+        let limits = renderer.borrow().runtime.limits();
         let mut bundle = DiagnosticBundle::new();
         bundle.insert_text("project", &state.project_document())?;
         bundle.insert_text("ui", &state.accessible_snapshot())?;
         bundle.insert_text(
             "runtime",
             &format!(
-                "render_calls={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={}",
+                "render_calls={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_scenes={} limit_sources={} limit_filters_per_item={}",
                 metrics.render_calls(),
                 metrics.source_requests(),
                 metrics.source_frames(),
                 metrics.empty_sources(),
                 metrics.transformed_frames(),
                 metrics.filtered_frames(),
-                metrics.blended_layers()
+                metrics.blended_layers(),
+                usage.plugins(),
+                usage.source_kinds(),
+                usage.scenes(),
+                usage.sources(),
+                usage.filters(),
+                limits.max_plugins(),
+                limits.max_source_kinds(),
+                limits.max_scenes(),
+                limits.max_sources(),
+                limits.max_filters_per_item()
             ),
         )?;
         let mut writer = AtomicDiagnosticFileWriter::new(final_path, temp_path)?;
@@ -1524,6 +1744,39 @@ fn add_scene_and_refresh(
             ui.set_new_scene_name("".into());
         }
         Err(error) => ui.set_status_message(format!("Add scene failed: {error}").into()),
+    }
+}
+
+fn rename_scene_and_refresh(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    name: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let profile = state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile()
+            .to_string();
+        let scene = state
+            .borrow()
+            .preview_scene()
+            .map(str::to_owned)
+            .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneName {
+                profile,
+                scene,
+                name: name.to_owned(),
+            }))?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => refresh_ui(ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Rename scene failed: {error}").into()),
     }
 }
 
@@ -1573,6 +1826,33 @@ fn add_source_and_refresh(
     }
 }
 
+fn remove_scene_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    scene_id: &str,
+) {
+    let profile = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile()
+        .to_string();
+    let result = state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveScene {
+            profile,
+            scene: scene_id.to_owned(),
+        }));
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Remove scene failed: {error}").into()),
+    }
+}
+
 fn move_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -1581,20 +1861,14 @@ fn move_source_and_refresh(
     delta: i32,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
-        let (profile, scene) = {
-            let state = state.borrow();
-            (
-                state
-                    .project_session()
-                    .project()
-                    .active_profile()
-                    .to_string(),
-                state
-                    .preview_scene()
-                    .map(str::to_owned)
-                    .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?,
+        let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
+        if locked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "source is locked",
             )
-        };
+            .into());
+        }
         let target_index = {
             let state = state.borrow();
             let project = state.project_session().project();
@@ -1643,7 +1917,14 @@ fn remove_source_and_refresh(
     source_id: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
-        let (profile, scene, _) = selected_source_context(&state.borrow())?;
+        let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
+        if locked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "source is locked",
+            )
+            .into());
+        }
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::RemoveSource {
@@ -1985,6 +2266,7 @@ fn refresh_ui(
     ui.set_streaming(state.streaming());
     ui.set_dirty(state.is_dirty());
     ui.set_snapshot(state.accessible_snapshot().into());
+    refresh_recovery_ui(ui);
 
     let profile_rows = project
         .profiles()
@@ -2006,6 +2288,7 @@ fn refresh_ui(
     };
     ui.set_preview_image(preview_image);
     ui.set_program_image(program_image);
+    ui.set_preview_metrics(renderer.borrow().metrics_summary().into());
     let render_error = preview_error.or(program_error);
     ui.set_status_message(
         render_error
@@ -2020,6 +2303,31 @@ fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {
     let output = output.borrow();
     ui.set_output_status(output.output_status().into());
     ui.set_output_metrics(output.output_metrics().into());
+}
+
+fn refresh_recovery_ui(ui: &MainWindow) {
+    let spanish = ui.get_locale().as_str() == "es";
+    let path = ui.get_project_path().to_string();
+    let status = match project_store(&path) {
+        Ok(store) if store.recovery_available() => {
+            if spanish {
+                "Recuperación disponible: elige Recuperar para revisar el archivo temporal"
+            } else {
+                "Recovery available: choose Recover to review the temporary project"
+            }
+        }
+        Ok(_) => {
+            if spanish {
+                "No hay archivo de recuperación"
+            } else {
+                "No recovery file detected"
+            }
+        }
+        Err(error) => {
+            return ui.set_recovery_status(format!("Recovery check failed: {error}").into())
+        }
+    };
+    ui.set_recovery_status(status.into());
 }
 
 fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile>) {
@@ -2040,6 +2348,17 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     ui.set_scene_rows(ModelRc::new(VecModel::from(scene_rows)));
 
     let source_scene = state.preview_scene().unwrap_or("none");
+    let selected_scene_name = profile
+        .and_then(|profile| {
+            profile
+                .scenes()
+                .find(|scene| scene.id().as_str() == source_scene)
+        })
+        .map_or_else(String::new, |scene| scene.name().to_owned());
+    if ui.get_scene_name_version().as_str() != selected_scene_name {
+        ui.set_scene_name(selected_scene_name.into());
+        ui.set_scene_name_version(ui.get_scene_name().clone());
+    }
     let selected_source = state.selected_source().unwrap_or("none");
     let source_rows = profile
         .and_then(|profile| {
@@ -2196,6 +2515,28 @@ impl PreviewRenderer {
     fn render(&mut self, scene: &str) -> Result<Option<VideoFrame>, Box<dyn Error>> {
         let request = VideoRequest::new(self.timestamp, self.format);
         let frame = self.runtime.render_scene(scene, &request)?;
+        self.advance_timestamp();
+        Ok(frame)
+    }
+
+    fn render_transition(
+        &mut self,
+        source_scene: &str,
+        destination_scene: &str,
+        transition: FrameTransition,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        let request = VideoRequest::new(self.timestamp, self.format);
+        let frame = self.runtime.render_scene_transition(
+            source_scene,
+            destination_scene,
+            &request,
+            transition,
+        )?;
+        self.advance_timestamp();
+        Ok(frame)
+    }
+
+    fn advance_timestamp(&mut self) {
         let period = self
             .format
             .frame_rate()
@@ -2205,7 +2546,20 @@ impl PreviewRenderer {
             .timestamp
             .checked_add(period)
             .unwrap_or(Timestamp::ZERO);
-        Ok(frame)
+    }
+
+    fn metrics_summary(&self) -> String {
+        let metrics = self.runtime.compositor_metrics();
+        format!(
+            "Preview work: renders={} · source requests={} · frames={} · empty={} · transforms={} · filters={} · blends={}",
+            metrics.render_calls(),
+            metrics.source_requests(),
+            metrics.source_frames(),
+            metrics.empty_sources(),
+            metrics.transformed_frames(),
+            metrics.filtered_frames(),
+            metrics.blended_layers()
+        )
     }
 }
 
@@ -2296,6 +2650,11 @@ fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
     if kind.trim() == "color_source" {
         settings.set("color", "#405070FF")?;
     }
+    if kind.trim() == "x11_screen_capture" {
+        if let Ok(display) = std::env::var("DISPLAY") {
+            settings.set("display", &display)?;
+        }
+    }
     Ok(settings)
 }
 
@@ -2357,6 +2716,23 @@ mod tests {
     }
 
     #[test]
+    fn preview_renderer_composes_scene_transitions() {
+        let project = initial_project().expect("initial GUI project should validate");
+        let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+        let frame = renderer
+            .render_transition(
+                "preview",
+                "program",
+                FrameTransition::CrossFade {
+                    progress_milli: 500,
+                },
+            )
+            .expect("transition should render")
+            .expect("transition should produce a frame");
+        assert_eq!(frame.pixel(0, 0), Some([0x18, 0x28, 0x38, 0xff]));
+    }
+
+    #[test]
     fn preview_renderer_advances_animated_capture_sources() {
         let project = initial_project().expect("initial GUI project should validate");
         let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
@@ -2388,6 +2764,24 @@ mod tests {
         assert!(renderer
             .render("new-scene")
             .expect("empty scene should be renderable")
+            .is_none());
+    }
+
+    #[test]
+    fn preview_renderer_honors_hidden_scene_sources() {
+        let mut project = initial_project().expect("initial GUI project should validate");
+        project
+            .apply(ProjectCommand::SetSourceVisibility {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                source: "background".to_owned(),
+                visible: false,
+            })
+            .expect("hide source");
+        let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+        assert!(renderer
+            .render("preview")
+            .expect("hidden scene should render")
             .is_none());
     }
 
