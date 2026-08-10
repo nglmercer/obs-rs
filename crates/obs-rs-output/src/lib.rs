@@ -270,6 +270,13 @@ pub enum OutputError {
     InvalidPacketKind { tag: u8 },
     /// A serialized packet has a keyframe flag other than zero or one.
     InvalidPacketFlag { value: u8 },
+    /// A packet timestamp moved backward within one muxed stream.
+    NonMonotonicTimestamp {
+        /// Timestamp of the previously accepted packet.
+        previous: Timestamp,
+        /// Timestamp of the packet that moved backward.
+        actual: Timestamp,
+    },
     /// A packet queue or recording capacity is zero.
     ZeroCapacity,
     /// An encoded reference-codec payload is structurally invalid.
@@ -338,6 +345,10 @@ impl fmt::Display for OutputError {
             Self::InvalidPacketFlag { value } => {
                 write!(formatter, "invalid encoded packet keyframe flag: {value}")
             }
+            Self::NonMonotonicTimestamp { previous, actual } => write!(
+                formatter,
+                "packet timestamp {actual:?} is before the previous {previous:?}"
+            ),
             Self::ZeroCapacity => formatter.write_str("output queue capacity must be non-zero"),
             Self::InvalidCodecPayload(reason) => {
                 write!(formatter, "invalid reference codec payload: {reason}")
@@ -1251,6 +1262,7 @@ pub struct MemoryMuxer {
     state: OutputState,
     committed: Option<Vec<u8>>,
     encoded_bytes: usize,
+    last_timestamp: Option<Timestamp>,
 }
 
 impl MemoryMuxer {
@@ -1262,6 +1274,7 @@ impl MemoryMuxer {
             state: OutputState::Open,
             committed: None,
             encoded_bytes: PACKET_HEADER_BYTES,
+            last_timestamp: None,
         }
     }
 
@@ -1299,6 +1312,7 @@ impl MemoryMuxer {
 
         let mut packets = Vec::with_capacity(usize::try_from(packet_count).unwrap_or(0));
         let mut encoded_bytes = PACKET_HEADER_BYTES;
+        let mut last_timestamp = None;
         for _ in 0..packet_count {
             let kind = PacketKind::from_tag(read_u8(&mut cursor)?)?;
             let keyframe = match read_u8(&mut cursor)? {
@@ -1307,6 +1321,15 @@ impl MemoryMuxer {
                 value => return Err(OutputError::InvalidPacketFlag { value }),
             };
             let timestamp = Timestamp::from_nanos(read_u64(&mut cursor)?);
+            if let Some(previous) = last_timestamp {
+                if timestamp < previous {
+                    return Err(OutputError::NonMonotonicTimestamp {
+                        previous,
+                        actual: timestamp,
+                    });
+                }
+            }
+            last_timestamp = Some(timestamp);
             let payload_bytes = read_u64(&mut cursor)?;
             let payload_bytes = usize::try_from(payload_bytes)
                 .map_err(|_| OutputError::PacketTooLarge { bytes: usize::MAX })?;
@@ -1329,6 +1352,11 @@ impl MemoryMuxer {
             let mut payload = vec![0_u8; payload_bytes];
             read_exact(&mut cursor, &mut payload)?;
             packets.push(EncodedPacket::new(kind, timestamp, keyframe, payload)?);
+        }
+        if cursor.position() != u64::try_from(bytes.len()).unwrap_or(u64::MAX) {
+            return Err(OutputError::InvalidCodecPayload(
+                "packet container has trailing bytes".to_owned(),
+            ));
         }
         Ok(packets)
     }
@@ -1353,6 +1381,14 @@ impl PacketMuxer for MemoryMuxer {
                 frames: self.packets.len() as u64 + 1,
             });
         }
+        if let Some(previous) = self.last_timestamp {
+            if packet.timestamp() < previous {
+                return Err(OutputError::NonMonotonicTimestamp {
+                    previous,
+                    actual: packet.timestamp(),
+                });
+            }
+        }
         let packet_bytes = 18_usize
             .checked_add(packet.byte_len())
             .ok_or(OutputError::TooLarge { bytes: u64::MAX })?;
@@ -1367,6 +1403,7 @@ impl PacketMuxer for MemoryMuxer {
         }
         self.packets.push(packet);
         self.encoded_bytes = encoded_bytes;
+        self.last_timestamp = self.packets.last().map(EncodedPacket::timestamp);
         Ok(())
     }
 
@@ -1391,6 +1428,7 @@ impl PacketMuxer for MemoryMuxer {
             });
         }
         self.packets.clear();
+        self.last_timestamp = None;
         self.state = OutputState::Aborted;
         Ok(())
     }
@@ -1812,6 +1850,163 @@ impl AtomicRawFileWriter {
     }
 }
 
+/// A crash-safe packet-container writer using temp-file plus rename finalization.
+///
+/// The bytes use the deterministic `OBSRPKT1` packet container emitted by
+/// [`MemoryMuxer`]. It is an inspectable Rust-native container fixture, not a
+/// claim of compatibility with a broadcast container such as Matroska or MPEG-TS.
+pub struct AtomicPacketFileWriter {
+    muxer: MemoryMuxer,
+    final_path: PathBuf,
+    temp_path: PathBuf,
+    state: OutputState,
+    committed_bytes: Option<usize>,
+}
+
+impl AtomicPacketFileWriter {
+    /// Starts an open writer with explicit final and temporary paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::InvalidPaths`] when either path is empty or both
+    /// paths are equal.
+    pub fn new(
+        final_path: impl Into<PathBuf>,
+        temp_path: impl Into<PathBuf>,
+    ) -> Result<Self, OutputError> {
+        let final_path = final_path.into();
+        let temp_path = temp_path.into();
+        if final_path.as_os_str().is_empty() || temp_path.as_os_str().is_empty() {
+            return Err(OutputError::InvalidPaths {
+                reason: "paths must be non-empty".to_owned(),
+            });
+        }
+        if final_path == temp_path {
+            return Err(OutputError::InvalidPaths {
+                reason: "temporary and final paths must differ".to_owned(),
+            });
+        }
+        Ok(Self {
+            muxer: MemoryMuxer::new(),
+            final_path,
+            temp_path,
+            state: OutputState::Open,
+            committed_bytes: None,
+        })
+    }
+
+    /// Appends one encoded packet while the writer is open.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::InvalidState`] after finalization or abort, or a
+    /// packet-container validation error.
+    pub fn push(&mut self, packet: EncodedPacket) -> Result<(), OutputError> {
+        self.ensure_open("push a packet")?;
+        self.muxer.push(packet)
+    }
+
+    /// Writes, synchronizes, and atomically renames the packet container.
+    ///
+    /// On a filesystem failure the temporary path is removed on a best-effort
+    /// basis and the final path is left untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::InvalidState`] when the writer is not open,
+    /// [`OutputError::Write`] for filesystem failures, or a container encoding
+    /// error before any path is changed.
+    pub fn finalize(&mut self) -> Result<usize, OutputError> {
+        self.ensure_open("finalize")?;
+        let bytes = encode_packets(self.muxer.packets())?;
+        let write_result = (|| {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&self.temp_path)
+                .map_err(|error| OutputError::Write(format!("open temporary file: {error}")))?;
+            file.write_all(&bytes)
+                .map_err(|error| OutputError::Write(format!("write temporary file: {error}")))?;
+            file.sync_all()
+                .map_err(|error| OutputError::Write(format!("sync temporary file: {error}")))?;
+            fs::rename(&self.temp_path, &self.final_path)
+                .map_err(|error| OutputError::Write(format!("rename packet container: {error}")))?;
+            Ok::<(), OutputError>(())
+        })();
+
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&self.temp_path);
+            return Err(error);
+        }
+
+        self.committed_bytes = Some(bytes.len());
+        self.state = OutputState::Finalized;
+        Ok(bytes.len())
+    }
+
+    /// Aborts the writer and removes an uncommitted temporary file if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::InvalidState`] when the writer is not open or
+    /// [`OutputError::Write`] when the temporary file cannot be removed.
+    pub fn abort(&mut self) -> Result<(), OutputError> {
+        self.ensure_open("abort")?;
+        if let Err(error) = fs::remove_file(&self.temp_path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(OutputError::Write(format!(
+                    "remove temporary file: {error}"
+                )));
+            }
+        }
+        self.muxer.abort()?;
+        self.state = OutputState::Aborted;
+        Ok(())
+    }
+
+    /// Returns the current lifecycle state.
+    #[must_use]
+    pub const fn state(&self) -> OutputState {
+        self.state
+    }
+
+    /// Returns the number of packets accepted by the writer.
+    #[must_use]
+    pub fn packet_count(&self) -> usize {
+        self.muxer.packets().len()
+    }
+
+    /// Returns the final path selected for this writer.
+    #[must_use]
+    pub fn final_path(&self) -> &std::path::Path {
+        &self.final_path
+    }
+
+    /// Returns the temporary path selected for this writer.
+    #[must_use]
+    pub fn temp_path(&self) -> &std::path::Path {
+        &self.temp_path
+    }
+
+    /// Returns the number of bytes committed by a successful finalization.
+    #[must_use]
+    pub const fn committed_bytes(&self) -> Option<usize> {
+        self.committed_bytes
+    }
+
+    fn ensure_open(&self, operation: &'static str) -> Result<(), OutputError> {
+        if self.state == OutputState::Open {
+            Ok(())
+        } else {
+            Err(OutputError::InvalidState {
+                operation,
+                state: self.state,
+            })
+        }
+    }
+}
+
 fn write_all(output: &mut Vec<u8>, bytes: &[u8]) -> Result<(), OutputError> {
     output
         .write_all(bytes)
@@ -2011,6 +2206,35 @@ mod tests {
     }
 
     #[test]
+    fn muxer_rejects_backward_timestamps_and_container_trailing_bytes() {
+        let mut muxer = MemoryMuxer::new();
+        muxer
+            .push(
+                EncodedPacket::new(PacketKind::Video, Timestamp::from_millis(10), true, vec![1])
+                    .expect("first packet"),
+            )
+            .expect("first push");
+        assert_eq!(
+            muxer.push(
+                EncodedPacket::new(PacketKind::Audio, Timestamp::from_millis(9), false, vec![2])
+                    .expect("backward packet")
+            ),
+            Err(OutputError::NonMonotonicTimestamp {
+                previous: Timestamp::from_millis(10),
+                actual: Timestamp::from_millis(9),
+            })
+        );
+
+        let bytes = muxer.finalize().expect("finalize packet");
+        let mut with_trailing = bytes.clone();
+        with_trailing.push(0);
+        assert!(matches!(
+            MemoryMuxer::decode(&with_trailing),
+            Err(OutputError::InvalidCodecPayload(reason)) if reason == "packet container has trailing bytes"
+        ));
+    }
+
+    #[test]
     fn rle_video_codec_round_trips_and_rejects_bad_runs() {
         let format = VideoFormat::new(8, 1, FrameRate::new(30, 1).expect("rate")).expect("format");
         let frame = VideoFrame::solid(format, Timestamp::from_millis(12), [9, 8, 7, 255]);
@@ -2170,6 +2394,67 @@ mod tests {
         assert_eq!(aborted.state(), OutputState::Aborted);
         assert!(aborted.recording().is_empty());
         assert!(aborted.committed_bytes().is_none());
+    }
+
+    #[test]
+    fn atomic_packet_writer_round_trips_interleaved_packets() {
+        let (final_path, temp_path) = unique_paths("packets");
+        let mut writer =
+            AtomicPacketFileWriter::new(&final_path, &temp_path).expect("valid packet paths");
+        writer
+            .push(
+                EncodedPacket::new(PacketKind::Video, Timestamp::ZERO, true, vec![1, 2, 3])
+                    .expect("video packet"),
+            )
+            .expect("push video");
+        writer
+            .push(
+                EncodedPacket::new(
+                    PacketKind::Audio,
+                    Timestamp::from_millis(1),
+                    false,
+                    vec![4, 5],
+                )
+                .expect("audio packet"),
+            )
+            .expect("push audio");
+
+        let byte_count = writer.finalize().expect("finalize packet file");
+        assert_eq!(writer.state(), OutputState::Finalized);
+        assert_eq!(writer.packet_count(), 2);
+        assert_eq!(writer.committed_bytes(), Some(byte_count));
+        assert!(!temp_path.exists());
+        let bytes = std::fs::read(&final_path).expect("read packet file");
+        let packets = MemoryMuxer::decode(&bytes).expect("decode packet file");
+        assert_eq!(packets.len(), 2);
+        assert_eq!(packets[0].kind(), PacketKind::Video);
+        assert_eq!(packets[1].kind(), PacketKind::Audio);
+        std::fs::remove_file(final_path).expect("remove packet fixture");
+    }
+
+    #[test]
+    fn atomic_packet_writer_abort_removes_temp_and_rejects_equal_paths() {
+        let (final_path, temp_path) = unique_paths("packet-abort");
+        assert!(matches!(
+            AtomicPacketFileWriter::new(&final_path, &final_path),
+            Err(OutputError::InvalidPaths { .. })
+        ));
+        let mut writer =
+            AtomicPacketFileWriter::new(&final_path, &temp_path).expect("valid packet paths");
+        writer.abort().expect("abort packet writer");
+        assert_eq!(writer.state(), OutputState::Aborted);
+        assert!(!final_path.exists());
+        assert!(!temp_path.exists());
+        assert!(matches!(
+            writer.push(
+                EncodedPacket::new(PacketKind::Video, Timestamp::ZERO, true, vec![1])
+                    .expect("packet")
+            ),
+            Err(OutputError::InvalidState {
+                operation: "push a packet",
+                state: OutputState::Aborted
+            })
+        ));
     }
 
     #[test]

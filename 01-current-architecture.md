@@ -10,15 +10,16 @@ implementation of the existing OBS application.
 
 ```text
 obs-rs-app
-    └── obs-rs-builtins
-            └── obs-rs-plugin-api
-                    ├── obs-rs-config
-                    ├── obs-rs-media
-                    └── obs-rs-util
+├── obs-rs-core ─── obs-rs-builtins ─── obs-rs-plugin-api
+├── obs-rs-clock ─── obs-rs-audio ─── obs-rs-media
+│                └── obs-rs-video ─── obs-rs-media
+├── obs-rs-output ─── obs-rs-audio / obs-rs-media
+├── obs-rs-project ─── obs-rs-config / obs-rs-media
+├── obs-rs-ui ─── obs-rs-project / obs-rs-media
+└── obs-rs-render ─── obs-rs-media
 
-obs-rs-app ─── obs-rs-core ─── obs-rs-plugin-api
-                         ├── obs-rs-media
-                         └── obs-rs-config
+obs-rs-capture ─── obs-rs-media
+obs-rs-util ────── shared validation values
 ```
 
 The dependency direction is one-way. Value types live in small crates; the runtime
@@ -55,27 +56,43 @@ Threaded execution is a later phase and must preserve the same ownership contrac
 - `VideoPipeline` combines the two for callback-driven rendering and exposes
   produced/empty/drop/deadline metrics.
 - `VideoWorker` layers injected-clock pacing, cancellation checks, post-render
-  deadline observation, and output draining over the pipeline.
+  deadline observation, wait/render timing, and output draining over the pipeline.
 - `VideoPipeline::run_sustained` provides a bounded output-draining fixture for
   repeatable scene throughput and queue-pressure measurements.
 - `FrameFilter` provides deterministic grayscale, brightness, and opacity effects;
   the runtime stores an ordered filter chain per scene item.
 - `FrameTransition` and `Runtime::render_scene_transition` provide cut and
   cross-fade behavior, including transparent fade-in/fade-out handling.
+- `CompositorMetrics` reports render calls, source requests/results, empty sources,
+  transformed frames, in-place filter applications, and layer blends. The reference
+  compositor applies filters in place and uses the first returned frame directly,
+  leaving allocation-heavy optimization measurable rather than implicit.
 
 `obs-rs-audio` provides an interleaved finite-`f32` buffer, a bounded complete-buffer
 queue, an exact sample scheduler, a deterministic mixer with per-source
 gain/mute/stereo-pan controls and output clamping, a linear resampler for
 equal-channel formats, bounded post-mix monitoring taps, and an explicit A/V drift
 observation/reconciliation policy that trims early audio or inserts silence for late
-audio. `AudioClock`, `MonotonicAudioClock`, and `AudioPacer` provide injectable
-block-level callback timing. It is still an offline reference model; it does not
-open a device or spawn a callback thread.
+audio. `AvSyncMonitor` aggregates bounded counters and absolute-drift diagnostics
+across long runs. `AudioClock`, `MonotonicAudioClock`, and `AudioPacer` provide
+injectable block-level callback timing. `AudioWorker` adds thread-safe cancellation,
+exact format/frame/timestamp validation, bounded output, underflow/drop counters,
+and post-callback deadline measurements. It is still an offline/reference device
+model; it does not open a platform device or spawn a callback thread itself.
 
-`obs-rs-capture` defines `VideoCaptureDevice`, `CaptureDeviceInfo`, and
-`CaptureCatalog`. `TestPatternDevice` is the first lifecycle-complete backend: it
-starts at a validated format, emits timestamped owned frames, and stops without
-leaking state. Platform devices will implement the same trait later.
+`obs-rs-clock` owns `MediaTimeline`, which advances the rational video and audio
+domains together and feeds the same bounded A/V drift monitor. `MonotonicMediaClock`
+implements both worker clock traits, so a session can use one wall-clock origin while
+platform device clocks remain explicit adapters. `MediaSession` drives one audio
+block and one video frame per tick, consumes bounded output, and aggregates
+cancellation, underflow, drop, deadline, wait, and render-time diagnostics.
+
+`obs-rs-capture` defines `VideoCaptureDevice`, `CaptureDeviceInfo`,
+`CaptureProvider`, and `CaptureCatalog`. Catalog snapshots replace atomically, and
+`SimulatedCaptureProvider` supplies deterministic descriptors for all four fallback
+kinds. `TestPatternDevice` is the first lifecycle-complete backend: it starts at a
+validated format, emits timestamped owned frames, and stops without leaking state.
+Platform devices will implement the same provider/device traits later.
 
 The compositor still uses CPU-owned RGBA frames. Packed/planar inputs are converted
 at the media boundary; GPU textures, device clocks, and zero-copy buffers remain
@@ -119,13 +136,14 @@ fallbacks. The app demo creates a background and a semi-transparent foreground,
 sets an item transform, renders through `VideoPipeline::render_next`, and reports
 the resulting pixel, checksum, and pipeline metrics. The companion benchmark runs
 120 equivalent scene frames while draining output and reports the measured elapsed
-time, deadline misses, lateness, and queue behavior.
+time, deadline misses, lateness, queue behavior, and compositor-work counters.
 
-## Planned boundaries
+## Current and planned boundaries
 
-Future crates will keep these concerns separate:
+Current and future crates keep these concerns separate:
 
-- `obs-rs-clock`: monotonic scheduling and A/V master-clock policy;
+- `obs-rs-clock`: monotonic scheduling and A/V master-clock policy (shared timeline
+  and dual worker-clock adapter implemented);
 - `obs-rs-video`: frame queues, pacing, conversion, and render scheduling (the queue
   and scheduler MVP is implemented);
 - `obs-rs-render`: texture ownership, composition, readback, capabilities,
@@ -138,8 +156,9 @@ Future crates will keep these concerns separate:
 - `obs-rs-output`: muxing, files, network protocols, reconnect, and back-pressure;
 - `obs-rs-project`: profiles, scene collections, source definitions, commands, and
   deterministic persistence;
-- `obs-rs-ui`: toolkit-neutral desktop application state and commands (implemented);
-  a concrete accessible presentation toolkit remains a product integration.
+- `obs-rs-ui`: toolkit-neutral desktop application state, commands, and a labeled
+  accessibility/terminal snapshot (implemented); a concrete GUI presentation
+  toolkit remains a product integration.
 
 These are implementation boundaries, not promises that every future integration is
 available in the current slice.
@@ -148,9 +167,10 @@ The current `obs-rs-output` crate contains validated packet and video-encoder tr
 a byte-bounded packet queue, a deterministic in-memory muxer fixture, explicit
 finalized/aborted recording sessions, raw and lossless RLE video plus raw audio
 reference encoders, an RLE decoder fixture, an atomic standard-library raw-file
-writer, a canonical PCM16 WAV writer, a reconnectable packet-transport session, and
-the intentionally uncompressed `OBSRRAW1` format, plus a length-framed standard-
-library TCP transport fixture. These prove packet validation,
+writer, an atomic interleaved `OBSRPKT1` packet-container writer, a canonical PCM16
+WAV writer, timestamp-order validation, a reconnectable packet-transport session,
+and the intentionally uncompressed `OBSRRAW1` format, plus a length-framed
+standard-library TCP transport fixture. These prove packet validation,
 back-pressure, lifecycle behavior, crash-safe finalization, reconnect/requeue behavior,
 fixed-format frame validation, timestamps, truncation detection, and encode/decode
 round-trips without deciding the final production codec, container, or network

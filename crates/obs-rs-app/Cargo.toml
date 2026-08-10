@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 obs-rs-audio = { path = "../obs-rs-audio" }
+obs-rs-clock = { path = "../obs-rs-clock" }
 obs-rs-builtins = { path = "../obs-rs-builtins" }
 obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-core = { path = "../obs-rs-core" }

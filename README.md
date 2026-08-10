@@ -18,29 +18,36 @@ The current vertical slice is a deterministic, headless engine:
 - `obs-rs-media` defines timestamps, video formats, packed/planar input buffers,
   RGBA conversion, owned frames, filters, and deterministic transitions.
 - `obs-rs-audio` defines owned sample buffers, bounded audio queues, a reference
-  mixer, and a deterministic linear resampler.
+  mixer, a deterministic linear resampler, sample-clock pacing, reconciliation,
+  monitoring taps, bounded long-run A/V drift telemetry, and a cancellation-aware
+  `AudioWorker` with exact block contracts.
 - `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
-  catalog contracts, and deterministic animated test backends for test-pattern,
-  screen, window, and camera source kinds.
+  catalog/provider contracts, atomic discovery refresh, and deterministic animated
+  test backends for test-pattern, screen, window, and camera source kinds.
 - `obs-rs-plugin-api` defines versioned Rust plugin and source interfaces.
 - `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
   camera CPU-fallback source factories.
-- `obs-rs-core` owns the plugin registry, sources, scenes, and compositor.
+- `obs-rs-core` owns the plugin registry, sources, scenes, CPU compositor, and
+  compositor-work counters.
 - `obs-rs-video` provides rational frame scheduling, callback-driven rendering,
-  bounded frame transport, render/drop metrics, and a sustained-run benchmark
+  bounded frame transport, render/drop/timing metrics, and a sustained-run benchmark
   fixture plus a cancellation-aware wall-clock `VideoWorker`.
+- `obs-rs-clock` coordinates rational audio/video deadlines, aggregates shared A/V
+  drift diagnostics, provides one monotonic clock implementation for both worker
+  traits, and runs bounded synchronized `MediaSession` ticks.
 - `obs-rs-render` defines portable texture/composition contracts and a deterministic
   CPU backend with readback and context-loss recovery.
 - `obs-rs-output` provides validated video/audio packet encoders, muxer contracts,
   bounded packet back-pressure, a lossless Rust RLE video reference codec, atomic
-  raw-file finalization, a canonical PCM16 WAV reference writer, a reconnectable
-  memory transport fixture, and a length-framed standard-library TCP transport.
+  raw-file and interleaved packet-container finalization, a canonical PCM16 WAV
+  reference writer, timestamp-order validation, a reconnectable memory transport
+  fixture, and a length-framed standard-library TCP transport.
 - `obs-rs-project` provides Rust-owned profiles, ordered scenes/source definitions,
   command dispatch, dirty-state tracking, deterministic escaped persistence, and
   atomic project-file save/load.
 - `obs-rs-ui` provides a toolkit-neutral desktop state machine for preview/program
-  selection, transitions, output lifecycle, shortcuts, notices, and project
-  commands.
+  selection, transitions, output lifecycle, shortcuts, notices, project commands,
+  and a deterministic labeled accessibility/terminal snapshot.
 - `obs-rs-app` runs a small end-to-end demo without a native host dependency.
 
 This is an engine foundation, not yet a production recorder or streamer. The
@@ -59,11 +66,11 @@ cargo run -p obs-rs-app --bin obs-rs-benchmark --release
 
 The demo registers the built-in plugin, creates a scene, adds two sources, applies a
 scene-item transform/filter, renders through the bounded video pipeline and render
-backend, mixes one audio buffer, muxes and streams one packet, round-trips one raw
-recording, persists project state, and prints a stable summary. The benchmark runs
-the cancellation-aware wall-clock worker for 120 frames and reports deadline
-misses, lateness, drops, and elapsed time. All behavior is exercised through safe
-Rust APIs and Rust tests.
+backend, mixes and paces audio blocks, muxes and streams one packet, round-trips one
+raw recording, persists project state, and prints a stable summary. The benchmark
+runs the cancellation-aware wall-clock video worker for 120 frames and reports
+deadline misses, lateness, drops, elapsed time, and compositor work counters. All
+behavior is exercised through safe Rust APIs and Rust tests.
 
 ## Repository documents
 
@@ -85,10 +92,13 @@ Rust APIs and Rust tests.
 Phase 0 (workspace and policy), the Phase 1/2 vertical slice, the Phase 3 reference
 render loop, injected-clock pacer, packed/planar conversion, transitions, and
 sustained benchmark fixture, the first Phase 4 audio primitives including stereo
-pan, monitoring taps, and actionable sample-clock/A/V reconciliation, the Phase 5
-capture contract/test backend,
+pan, monitoring taps, sample-clock/A/V reconciliation, and the cancellation-aware
+audio worker, plus the shared media-clock coordinator, the Phase 5 capture
+contract/test backend,
 and the first Phase 6 packet/muxer/recording lifecycle contracts including atomic
 file finalization are implemented, together with the first Phase 7 project
-state/command/persistence slice. The project is intentionally not claiming feature
-parity with OBS Studio. The next priority is platform capture, hardware rendering,
-real codecs, network output, and desktop UX.
+state/command/persistence slice. The CPU compositor now reports source, transform,
+filter, and blend work while avoiding redundant filter/frame allocations in its hot
+path. The project is intentionally not claiming feature parity with OBS Studio. The
+next priority is platform capture, hardware rendering, real codecs, network output,
+and desktop UX.

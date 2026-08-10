@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "obs-rs-audio",
  "obs-rs-builtins",
+ "obs-rs-clock",
  "obs-rs-config",
  "obs-rs-core",
  "obs-rs-media",
@@ -45,6 +46,15 @@ dependencies = [
  "obs-rs-media",
  "obs-rs-plugin-api",
  "obs-rs-util",
+]
+
+[[package]]
+name = "obs-rs-clock"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-audio",
+ "obs-rs-media",
+ "obs-rs-video",
 ]
 
 [[package]]

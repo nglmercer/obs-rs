@@ -24,6 +24,26 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Audit native-language and unsafe boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          if rg --files --hidden -g '!.git/**' -g '!target/**' \
+            | awk -F. 'NF > 1 && $NF ~ /^(c|h|cc|cpp|cxx|hh|hpp|m|mm|cmake)$/' \
+            | grep -q .; then
+            echo "native source files are not allowed"
+            exit 1
+          fi
+          if rg -n --hidden --glob '!.git/**' --glob '!target/**' --glob '!.github/**' --glob '!*.md' \
+            '(extern "|no_mangle|repr\(C\)|cbindgen|bindgen|build\.rs|cc -|foreign-function)' .; then
+            echo "native or FFI markers are not allowed"
+            exit 1
+          fi
+          if rg -n --hidden --glob '!.git/**' --glob '!target/**' --glob '!.github/**' --glob '*.rs' '\bunsafe\b' crates; then
+            echo "unsafe Rust is not allowed in the workspace"
+            exit 1
+          fi
+
       - name: Check workspace
         run: cargo check --workspace --all-targets --all-features
 
@@ -41,3 +61,6 @@ jobs:
 
       - name: Run sustained video benchmark fixture
         run: cargo run -p obs-rs-app --bin obs-rs-benchmark --release
+
+      - name: Build API documentation
+        run: cargo doc --workspace --no-deps

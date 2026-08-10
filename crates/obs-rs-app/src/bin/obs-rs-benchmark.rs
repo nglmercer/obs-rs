@@ -7,7 +7,7 @@ use std::{error::Error, time::Instant};
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_config::Config;
-use obs_rs_core::Runtime;
+use obs_rs_core::{CompositorMetrics, Runtime};
 use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, VideoFormat};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_video::{CancellationToken, DropPolicy, MonotonicClock, VideoWorker, VideoWorkerReport};
@@ -59,13 +59,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let elapsed = started.elapsed();
 
-    print_report(report, elapsed.as_millis());
+    print_report(report, runtime.compositor_metrics(), elapsed.as_millis());
     Ok(())
 }
 
-fn print_report(report: VideoWorkerReport, elapsed_millis: u128) {
+fn print_report(report: VideoWorkerReport, compositor: CompositorMetrics, elapsed_millis: u128) {
     println!(
-        "obs-rs benchmark: requested={} processed={} cancelled={} empty={} dropped_oldest={} dropped_newest={} missed={} lateness_ns={} remaining={} elapsed_ms={elapsed_millis}",
+        "obs-rs benchmark: requested={} processed={} cancelled={} empty={} dropped_oldest={} dropped_newest={} missed={} lateness_ns={} max_lateness_ns={} wait_ns={} render_ns={} remaining={} renders={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={} elapsed_ms={elapsed_millis}",
         report.requested_frames(),
         report.processed_frames(),
         report.cancelled(),
@@ -74,7 +74,17 @@ fn print_report(report: VideoWorkerReport, elapsed_millis: u128) {
         report.dropped_newest(),
         report.missed_deadlines(),
         report.total_lateness_nanos(),
+        report.max_lateness_nanos(),
+        report.total_wait_nanos(),
+        report.total_render_nanos(),
         report.remaining_queue(),
+        compositor.render_calls(),
+        compositor.source_requests(),
+        compositor.source_frames(),
+        compositor.empty_sources(),
+        compositor.transformed_frames(),
+        compositor.filtered_frames(),
+        compositor.blended_layers(),
     );
 }
 

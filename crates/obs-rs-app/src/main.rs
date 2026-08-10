@@ -5,15 +5,19 @@
 
 use std::error::Error;
 
-use obs_rs_audio::{AudioBuffer, AudioFormat, AudioMixer, AudioScheduler, AvSyncController};
+use obs_rs_audio::{
+    AudioBuffer, AudioCancellationToken, AudioDropPolicy, AudioFormat, AudioMixer, AudioScheduler,
+    AudioWorker, AudioWorkerReport, AvSyncController, MonotonicAudioClock,
+};
 use obs_rs_builtins::BuiltinPlugin;
+use obs_rs_clock::{MediaSession, MediaSessionReport, MediaTimeline, SessionCancellationToken};
 use obs_rs_config::Config;
 use obs_rs_core::Runtime;
-use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat};
+use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{
-    AudioEncoder, MemoryMuxer, MemoryPacketTransport, PacketDropPolicy, PacketMuxer, PacketQueue,
-    RawAudioEncoder, RawRecording, RawRecordingSession, ReconnectPolicy, RleVideoEncoder,
-    StreamSession, VideoEncoder, WavRecording,
+    AtomicPacketFileWriter, AudioEncoder, MemoryMuxer, MemoryPacketTransport, PacketDropPolicy,
+    PacketMuxer, PacketQueue, RawAudioEncoder, RawRecording, RawRecordingSession, ReconnectPolicy,
+    RleVideoEncoder, StreamSession, VideoEncoder, WavRecording,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Profile, Project, ProjectCommand, SceneSpec, SourceSpec};
@@ -23,6 +27,7 @@ use obs_rs_video::{DropPolicy, RenderOutcome, VideoPipeline};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let plugin = BuiltinPlugin::new()?;
+    let capture_devices = plugin.discover_capture_devices()?.len();
     let mut runtime = Runtime::new();
     runtime.register_plugin(&plugin)?;
     runtime.create_scene("main")?;
@@ -75,23 +80,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let audio_format = AudioFormat::new(48_000, 2)?;
-    let mut audio_scheduler = AudioScheduler::new(audio_format);
-    let audio_deadline = audio_scheduler.next_deadline()?;
-    let mut audio_mixer = AudioMixer::new(audio_format);
-    let audio_source = audio_mixer.add_source(0.5)?;
-    audio_mixer.set_pan(audio_source, 0.25)?;
-    let audio_input = AudioBuffer::new(audio_format, audio_deadline.timestamp(), vec![0.8, -0.8])?;
-    let audio_output = audio_mixer.mix(
-        audio_deadline.timestamp(),
-        1,
-        &[(audio_source, &audio_input)],
-    )?;
+    let timeline_in_sync = timeline_fixture(format.frame_rate(), audio_format)?;
+    let (audio_output, audio_worker, wav_bytes) = audio_fixture(audio_format)?;
+    let session_report = media_session_fixture(format, audio_format)?;
     let sync = av_sync_state(frame.timestamp(), audio_output.timestamp());
-    let wav_bytes = wav_fixture(audio_format, &audio_output)?;
     let mut audio_encoder = RawAudioEncoder::new(audio_format);
     muxer.push(audio_encoder.encode(&audio_output)?)?;
     let packet_bytes = muxer.finalize()?;
     let packet_count = MemoryMuxer::decode(&packet_bytes)?.len();
+    let packet_file_bytes = atomic_packet_file_fixture(&packet_bytes)?;
     let mut stream = StreamSession::new(
         MemoryPacketTransport::new(),
         packet_bytes_per_frame,
@@ -103,11 +100,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     stream.flush()?;
     let stream_metrics = stream.metrics();
 
-    let (project_bytes, project_profiles) = project_fixture(format)?;
+    let (project_bytes, project_profiles, ui_snapshot_bytes) = project_fixture(format)?;
 
     println!(
-        "obs-rs demo: plugins={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} rendered={} dropped_oldest={} audio={:?} sync={:?} wav_bytes={} packet_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={}",
+        "obs-rs demo: plugins={}, capture_devices={}, scenes={}, sources={}, frame={}x{} outcome={outcome:?} pixel={pixel:?} checksum={} renderer_checksum={} rendered={} dropped_oldest={} audio={:?} sync={:?} timeline_in_sync={} session_ticks={} audio_worker_blocks={} audio_worker_missed={} wav_bytes={} packet_bytes={} packet_file_bytes={} packets={} stream_sent={} recording_bytes={} recording_frames={} project_bytes={} project_profiles={} ui_snapshot_bytes={}",
         runtime.plugins().len(),
+        capture_devices,
         runtime.scene_count(),
         runtime.source_count(),
         frame.format().width(),
@@ -118,14 +116,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         metrics.dropped_oldest(),
         audio_output.samples(),
         sync,
+        timeline_in_sync,
+        session_report.completed_ticks(),
+        audio_worker.processed_blocks(),
+        audio_worker.missed_deadlines(),
         wav_bytes,
         packet_bytes.len(),
+        packet_file_bytes,
         packet_count,
         stream_metrics.sent_packets(),
         recording_bytes.len(),
         decoded_recording.len(),
         project_bytes,
-        project_profiles
+        project_profiles,
+        ui_snapshot_bytes
     );
 
     Ok(())
@@ -149,6 +153,116 @@ fn wav_fixture(format: AudioFormat, buffer: &AudioBuffer) -> Result<usize, Box<d
     Ok(recording.encode()?.len())
 }
 
+fn audio_fixture(
+    format: AudioFormat,
+) -> Result<(AudioBuffer, AudioWorkerReport, usize), Box<dyn Error>> {
+    let mut audio_scheduler = AudioScheduler::new(format);
+    let audio_deadline = audio_scheduler.next_deadline()?;
+    let mut audio_mixer = AudioMixer::new(format);
+    let audio_source = audio_mixer.add_source(0.5)?;
+    audio_mixer.set_pan(audio_source, 0.25)?;
+    let audio_input = AudioBuffer::new(format, audio_deadline.timestamp(), vec![0.8, -0.8])?;
+    let audio_output = audio_mixer.mix(
+        audio_deadline.timestamp(),
+        1,
+        &[(audio_source, &audio_input)],
+    )?;
+    let audio_worker = audio_worker_fixture(format)?;
+    let wav_bytes = wav_fixture(format, &audio_output)?;
+    Ok((audio_output, audio_worker, wav_bytes))
+}
+
+fn timeline_fixture(
+    video_rate: FrameRate,
+    audio_format: AudioFormat,
+) -> Result<u64, Box<dyn Error>> {
+    let mut timeline = MediaTimeline::new(video_rate, audio_format, 1_000);
+    let audio_frames = usize::try_from(
+        u64::from(audio_format.sample_rate()) * u64::from(video_rate.denominator())
+            / u64::from(video_rate.numerator()),
+    )?;
+    for _ in 0..2 {
+        let video = timeline.next_video_frame()?;
+        let audio = timeline.next_audio_block(audio_frames)?;
+        let _ = timeline.observe(video.timestamp(), audio.timestamp());
+    }
+    Ok(timeline.metrics().in_sync())
+}
+
+fn media_session_fixture(
+    video_format: VideoFormat,
+    audio_format: AudioFormat,
+) -> Result<MediaSessionReport, Box<dyn Error>> {
+    let mut session = MediaSession::new(
+        video_format,
+        2,
+        DropPolicy::DropOldest,
+        audio_format,
+        3_200,
+        AudioDropPolicy::DropOldest,
+    )?;
+    let cancellation = SessionCancellationToken::new();
+    let audio_frames = usize::try_from(
+        u64::from(audio_format.sample_rate()) * u64::from(video_format.frame_rate().denominator())
+            / u64::from(video_format.frame_rate().numerator()),
+    )?;
+    Ok(session.run(
+        audio_frames,
+        2,
+        &cancellation,
+        |deadline, format| {
+            Ok::<_, std::convert::Infallible>(Some(VideoFrame::solid(
+                format,
+                deadline.timestamp(),
+                [0, 0, 0, 255],
+            )))
+        },
+        |deadline, format, frames| {
+            AudioBuffer::silence(format, deadline.timestamp(), frames).map(Some)
+        },
+    )?)
+}
+
+fn atomic_packet_file_fixture(bytes: &[u8]) -> Result<usize, Box<dyn Error>> {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let root = std::env::temp_dir();
+    let final_path = root.join(format!(
+        "obs-rs-demo-{}-{token}.obsrpacket",
+        std::process::id()
+    ));
+    let temp_path = root.join(format!("obs-rs-demo-{}-{token}.part", std::process::id()));
+    let mut writer = AtomicPacketFileWriter::new(&final_path, &temp_path)?;
+    for packet in MemoryMuxer::decode(bytes)? {
+        writer.push(packet)?;
+    }
+    let committed = writer.finalize()?;
+    let persisted = std::fs::read(writer.final_path())?;
+    if persisted.len() != committed {
+        return Err("packet file size changed after atomic commit".into());
+    }
+    std::fs::remove_file(writer.final_path())?;
+    Ok(committed)
+}
+
+fn audio_worker_fixture(format: AudioFormat) -> Result<AudioWorkerReport, Box<dyn Error>> {
+    let mut worker = AudioWorker::new(format, 960, AudioDropPolicy::DropOldest)?;
+    let cancellation = AudioCancellationToken::new();
+    let mut clock = MonotonicAudioClock::start();
+    let report = worker.run(
+        &mut clock,
+        480,
+        2,
+        &cancellation,
+        |deadline, output_format, frames| {
+            AudioBuffer::silence(output_format, deadline.timestamp(), frames).map(Some)
+        },
+    )?;
+    while worker.take_next().is_some() {}
+    Ok(report)
+}
+
 fn av_sync_state(video: Timestamp, audio: Timestamp) -> obs_rs_audio::SyncState {
     AvSyncController::new(5_000_000)
         .observe(video, audio)
@@ -163,7 +277,7 @@ fn screen_source(runtime: &mut Runtime) -> Result<obs_rs_core::SourceId, Box<dyn
     )?)
 }
 
-fn project_fixture(format: VideoFormat) -> Result<(usize, usize), Box<dyn Error>> {
+fn project_fixture(format: VideoFormat) -> Result<(usize, usize, usize), Box<dyn Error>> {
     let mut project = Project::new("obs-rs demo")?;
     let mut profile = Profile::new("live", "Live profile", format)?;
     let mut scene = SceneSpec::new("main", "Main scene")?;
@@ -198,9 +312,14 @@ fn project_fixture(format: VideoFormat) -> Result<(usize, usize), Box<dyn Error>
         source: "foreground".to_owned(),
         filter: FrameFilter::Grayscale,
     }))?;
+    let ui_snapshot_bytes = desktop.accessible_snapshot().len();
     let project_document = desktop.project_document();
     let restored_project = Project::parse(&project_document)?;
-    Ok((project_document.len(), restored_project.profiles().count()))
+    Ok((
+        project_document.len(),
+        restored_project.profiles().count(),
+        ui_snapshot_bytes,
+    ))
 }
 
 fn color_settings(width: &str, height: &str, color: &str) -> Config {

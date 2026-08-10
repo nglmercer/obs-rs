@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use obs_rs_capture::{
-    CaptureKind, SimulatedCaptureFactory, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
+    CaptureDeviceInfo, CaptureError, CaptureKind, CaptureProvider, SimulatedCaptureFactory,
+    SimulatedCaptureProvider, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
     SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
 };
 use obs_rs_config::Config;
@@ -62,6 +63,20 @@ impl BuiltinPlugin {
                 Arc::new(camera_factory),
             ],
         })
+    }
+
+    /// Discovers the deterministic CPU fallback capture devices shipped with the
+    /// built-in bundle.
+    ///
+    /// Platform providers can replace this snapshot behind the same capture
+    /// provider contract without changing plugin registration.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capture descriptor validation error if a built-in ID or name is
+    /// ever changed to an invalid value.
+    pub fn discover_capture_devices(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
+        SimulatedCaptureProvider::new().discover()
     }
 }
 
@@ -291,5 +306,16 @@ mod tests {
                 .expect("frame");
             assert_eq!(frame.format(), format);
         }
+    }
+
+    #[test]
+    fn builtins_expose_a_deterministic_capture_discovery_snapshot() {
+        let plugin = BuiltinPlugin::new().expect("builtins are valid");
+        let devices = plugin
+            .discover_capture_devices()
+            .expect("discover fallbacks");
+        assert_eq!(devices.len(), 4);
+        assert_eq!(devices[0].id().as_str(), "test-pattern");
+        assert_eq!(devices[3].id().as_str(), "camera-0");
     }
 }

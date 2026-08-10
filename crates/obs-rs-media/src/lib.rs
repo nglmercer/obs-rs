@@ -768,7 +768,13 @@ impl VideoFrame {
     #[must_use]
     pub fn filtered(&self, filter: FrameFilter) -> Self {
         let mut output = self.clone();
-        for pixel in output.pixels.chunks_exact_mut(4) {
+        output.apply_filter(filter);
+        output
+    }
+
+    /// Applies one CPU filter in place without allocating another frame.
+    pub fn apply_filter(&mut self, filter: FrameFilter) {
+        for pixel in self.pixels.chunks_exact_mut(4) {
             match filter {
                 FrameFilter::Grayscale => {
                     let luma = (u32::from(pixel[0]) * 77
@@ -793,7 +799,15 @@ impl VideoFrame {
                 }
             }
         }
-        output
+    }
+
+    /// Clears RGB values on fully transparent pixels for canonical composition.
+    pub fn clear_transparent_rgb(&mut self) {
+        for pixel in self.pixels.chunks_exact_mut(4) {
+            if pixel[3] == 0 {
+                pixel[..3].fill(0);
+            }
+        }
     }
 
     /// Calculates a stable FNV-1a checksum of the frame bytes.
@@ -943,6 +957,16 @@ mod tests {
 
         assert_eq!(frame.pixel(0, 0), Some([100, 150, 200, 255]));
         assert_eq!(filtered.pixel(0, 0), Some([210, 210, 210, 128]));
+    }
+
+    #[test]
+    fn transparent_rgb_can_be_canonicalized_for_composition() {
+        let frame = VideoFrame::solid(format(), Timestamp::ZERO, [100, 150, 200, 0]);
+        let mut canonical = frame.clone();
+        canonical.clear_transparent_rgb();
+
+        assert_eq!(frame.pixel(0, 0), Some([100, 150, 200, 0]));
+        assert_eq!(canonical.pixel(0, 0), Some([0, 0, 0, 0]));
     }
 
     #[test]

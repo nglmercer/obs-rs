@@ -6,9 +6,9 @@ Deliver a complete OBS-like application from zero in Rust. The roadmap is organi
 by usable capabilities and verification evidence, not by copying source files or
 counting converted lines.
 
-The current repository implements MVP slices in Phases 0–5 and a reference recording
-fixture in Phase 6. All later phases remain active work; this document is the source
-of truth for sequencing.
+The current repository implements MVP slices in Phases 0–7 and reference recording
+and transport fixtures in Phase 6. All later work remains active; this document is the
+source of truth for sequencing.
 
 ## Status legend
 
@@ -72,7 +72,7 @@ Turn the reference compositor into a clocked video engine suitable for live work
 
 - monotonic clock abstraction and frame schedule (scheduler, monotonic clock, deadline
   observation, injected-clock pacing, and cancellation-aware `VideoWorker` MVP
-  implemented in `obs-rs-video`);
+  implemented in `obs-rs-video`, with a thread-safe cancellation token);
 - bounded frame queues with explicit drop policy (MVP implemented with both oldest
   and newest drop modes);
 - source update and render phases with cancellation;
@@ -82,7 +82,8 @@ Turn the reference compositor into a clocked video engine suitable for live work
 - scene transitions, filters, cropping, scaling, and transforms (cut/cross-fade
   transitions, transform, and basic grayscale/brightness/opacity filter MVP
   implemented in `obs-rs-media` and `obs-rs-core`);
-- resource accounting and frame diagnostics.
+- resource accounting and frame diagnostics (the runtime now exposes compositor
+  counters for source requests/results, transforms, in-place filters, and blends).
 
 ### Entry criteria
 
@@ -101,12 +102,14 @@ the reference renderer as a correctness oracle.
 pacing, deadline observation, cancellation, queue capacity, format rejection, both
 drop policies, callback-driven render outcomes, render/drop counters, and a 120-frame
 output-draining sustained-run fixture. The release benchmark exercises the worker for
-120 wall-clock-paced frames and reports observed misses/lateness. `obs-rs-media` validates packed/planar input
-buffers and deterministic conversion; scene-item scale/translation/flip/opacity
-transforms, filters, cuts, and cross-fades are covered by `obs-rs-media` and
-`obs-rs-core` tests. The remaining work is wall-clock deadline measurement in a
-long-running multi-worker design, allocation/resource profiling, more conversion
-formats, and performance tuning.
+120 wall-clock-paced frames and reports observed misses/lateness plus compositor work
+counts, wait time, render time, and worst lateness. `obs-rs-media` validates packed/planar input buffers and deterministic
+conversion; scene-item scale/translation/flip/opacity transforms, filters, cuts, and
+cross-fades are covered by `obs-rs-media` and `obs-rs-core` tests. The compositor
+applies filter chains in place and avoids creating a transparent accumulator for the
+first layer. The remaining work is wall-clock deadline measurement in a long-running
+multi-worker design, allocation/resource profiling, more conversion formats, and
+performance tuning.
 
 ## Phase 4 — Audio engine
 
@@ -138,10 +141,18 @@ drop-oldest behavior, mixes registered inputs deterministically with gain/mute/s
 pan controls, resamples equal-channel buffers with explicit unknown, duplicate, format,
 and rate errors, schedules exact sample-clock deadlines, reports signed A/V drift
 with a tolerance-based action, exposes bounded post-mix monitoring taps, and
-reconciles early/late buffers with sample-level trimming or inserted silence. Its
-injectable `AudioClock`/`AudioPacer` contract covers block-level pacing. Real device
-clocks and long-duration synchronization remain incomplete. `obs-rs-output` adds a
-canonical PCM16 WAV reference writer for offline inspection.
+reconciles early/late buffers with sample-level trimming or inserted silence.
+`AvSyncMonitor` adds bounded long-run observation counts, maximum absolute drift, and
+saturating total drift diagnostics. Its injectable `AudioClock`/`AudioPacer` contract
+covers block-level pacing, while `AudioWorker` adds thread-safe cancellation, exact
+format/frame/timestamp contracts, underflow/drop accounting, and post-callback
+deadline diagnostics. `obs-rs-clock::MediaTimeline` now advances matching rational
+video/audio boundaries, `MonotonicMediaClock` implements both worker clock traits,
+and `MediaSession` runs synchronized bounded audio/video ticks with aggregate
+diagnostics. A 10,000-tick exact-boundary soak test keeps both rational domains at
+zero measured drift. Real device clocks and long-duration synchronization under
+independent hardware clocks still remain incomplete.
+`obs-rs-output` adds a canonical PCM16 WAV reference writer for offline inspection.
 
 ## Phase 5 — Capture and render backends
 
@@ -159,12 +170,13 @@ renderer while keeping the core contracts portable.
 - backend capability reporting and automated fixtures where hardware is absent.
 
 The current repository implements the portable capture contract in `obs-rs-capture`:
-device descriptors/catalog discovery, permission and hot-plug events, start/stop state,
-format validation, timestamped frames, and deterministic animated test backends for
-test-pattern, screen, window, and camera devices. `obs-rs-builtins` exposes all four
-CPU fallbacks, and the demo exercises the `screen_capture` path through the normal
-runtime/plugin pipeline. These are deterministic stand-ins for future platform
-adapters, not claims of hardware access.
+device descriptors/provider discovery, atomic catalog refresh, permission and
+hot-plug events, start/stop state, format validation, timestamped frames, and
+deterministic animated test backends for test-pattern, screen, window, and camera
+devices. `obs-rs-builtins` exposes all four CPU fallbacks, and the demo exercises the
+provider snapshot plus the `screen_capture` path through the normal runtime/plugin
+pipeline. These are deterministic stand-ins for future platform adapters, not
+claims of hardware access.
 
 `obs-rs-render` now supplies the portable render-backend contract and a deterministic
 CPU fallback for texture allocation, upload, ordered composition, readback, resource
@@ -199,11 +211,11 @@ contracts, byte-bounded packet transport, deterministic raw and lossless RLE vid
 reference encoders with a decoder fixture, an in-memory muxer, explicit
 finalized/aborted recording sessions, an atomic standard-library raw-file writer,
 raw audio encoding, a canonical PCM16 WAV reference writer, a reconnectable
-packet-transport session with a memory fixture,
-an explicit length-framed standard-library TCP transport, and an uncompressed
-`OBSRRAW1` reference recording format in `obs-rs-output` for correctness and
-recovery fixtures. The TCP framing is a real Rust transport path, not a claim of
-RTMP/SRT/WebRTC compatibility.
+packet-transport session with a memory fixture, an atomic interleaved `OBSRPKT1`
+packet-container writer with timestamp-order validation, an explicit length-framed
+standard-library TCP transport, and an uncompressed `OBSRRAW1` reference recording
+format in `obs-rs-output` for correctness and recovery fixtures. The TCP framing is
+a real Rust transport path, not a claim of RTMP/SRT/WebRTC compatibility.
 It is not yet a production codec, protocol client, or hardware/network streaming
 implementation.
 
@@ -232,7 +244,9 @@ The first Rust application-state slices are now present in `obs-rs-project` and
 commands, dirty-state tracking, deterministic escaped persistence, preview/program
 selection, transitions, output lifecycle, bounded notices, and shortcut bindings.
 They are toolkit-neutral control-plane foundations; concrete desktop views,
-accessibility presentation, and crash diagnostics are still outstanding.
+GUI integration, and crash diagnostics are still outstanding. `DesktopState` now
+also renders a deterministic labeled text snapshot suitable for a terminal frontend
+or as the semantic source for an accessible GUI.
 
 `ProjectFileStore` adds atomic standard-library project-file save/load semantics and
 keeps the session dirty when a write fails.

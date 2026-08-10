@@ -5,7 +5,7 @@
 
 use std::{
     collections::{BTreeMap, VecDeque},
-    fmt,
+    fmt::{self, Write as _},
 };
 
 use obs_rs_media::{FrameTransition, MediaError};
@@ -371,6 +371,96 @@ impl DesktopState {
         self.shortcuts.get(shortcut).copied()
     }
 
+    /// Renders a deterministic labeled text surface for terminals and assistive
+    /// frontends.
+    ///
+    /// The view is deliberately toolkit-neutral: a desktop adapter can expose the
+    /// same labels through a GUI accessibility tree, while a terminal frontend can
+    /// print this snapshot without duplicating project or lifecycle logic.
+    #[must_use]
+    pub fn accessible_snapshot(&self) -> String {
+        let project = self.project.project();
+        let active_profile = project.active_profile();
+        let mut snapshot = String::new();
+        writeln!(&mut snapshot, "OBS-RS desktop state").expect("String formatting cannot fail");
+        writeln!(&mut snapshot, "Project: {}", project.title())
+            .expect("String formatting cannot fail");
+        writeln!(&mut snapshot, "Profile: {active_profile}")
+            .expect("String formatting cannot fail");
+        writeln!(
+            &mut snapshot,
+            "Preview scene: {}",
+            self.preview_scene().unwrap_or("none")
+        )
+        .expect("String formatting cannot fail");
+        writeln!(
+            &mut snapshot,
+            "Program scene: {}",
+            self.program_scene().unwrap_or("none")
+        )
+        .expect("String formatting cannot fail");
+        writeln!(&mut snapshot, "Transition: {:?}", self.transition)
+            .expect("String formatting cannot fail");
+        writeln!(
+            &mut snapshot,
+            "Recording: {}",
+            if self.recording { "active" } else { "stopped" }
+        )
+        .expect("String formatting cannot fail");
+        writeln!(
+            &mut snapshot,
+            "Streaming: {}",
+            if self.streaming { "active" } else { "stopped" }
+        )
+        .expect("String formatting cannot fail");
+        writeln!(
+            &mut snapshot,
+            "Project changes: {}",
+            if self.is_dirty() { "unsaved" } else { "saved" }
+        )
+        .expect("String formatting cannot fail");
+        snapshot.push_str("Scenes:\n");
+        if let Some(profile) = project
+            .profiles()
+            .find(|profile| profile.id() == active_profile)
+        {
+            for scene in profile.scenes() {
+                let preview = if self.preview_scene() == Some(scene.id().as_str()) {
+                    " [preview]"
+                } else {
+                    ""
+                };
+                let program = if self.program_scene() == Some(scene.id().as_str()) {
+                    " [program]"
+                } else {
+                    ""
+                };
+                writeln!(
+                    &mut snapshot,
+                    "- {}: {}{}{}",
+                    scene.id(),
+                    scene.name(),
+                    preview,
+                    program
+                )
+                .expect("String formatting cannot fail");
+            }
+        }
+        writeln!(&mut snapshot, "Shortcuts: {}", self.shortcuts.len())
+            .expect("String formatting cannot fail");
+        snapshot.push_str("Recent notices:\n");
+        for notice in self.notices() {
+            writeln!(
+                &mut snapshot,
+                "- #{}: {}",
+                notice.sequence(),
+                notice.message()
+            )
+            .expect("String formatting cannot fail");
+        }
+        snapshot
+    }
+
     fn ensure_scene(&self, id: &str) -> Result<(), UiError> {
         let profile = self
             .project
@@ -539,5 +629,27 @@ mod tests {
                 progress_milli: 1_001
             }))
         );
+    }
+
+    #[test]
+    fn accessible_snapshot_contains_labeled_state_and_scene_markers() {
+        let mut state = DesktopState::new(project());
+        state
+            .dispatch(UiCommand::SelectProgramScene {
+                id: "program".to_owned(),
+            })
+            .expect("program selection");
+        state
+            .dispatch(UiCommand::StartRecording)
+            .expect("recording start");
+        let snapshot = state.accessible_snapshot();
+
+        assert!(snapshot.contains("OBS-RS desktop state"));
+        assert!(snapshot.contains("Preview scene: preview"));
+        assert!(snapshot.contains("Program scene: program"));
+        assert!(snapshot.contains("Recording: active"));
+        assert!(snapshot.contains("- preview: Preview [preview]"));
+        assert!(snapshot.contains("- program: Program [program]"));
+        assert!(snapshot.contains("Recent notices:"));
     }
 }

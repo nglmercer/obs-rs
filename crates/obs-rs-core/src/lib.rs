@@ -51,12 +51,69 @@ struct Scene {
     filters: BTreeMap<SourceId, Vec<FrameFilter>>,
 }
 
+/// Counters for CPU compositor work and source behavior.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CompositorMetrics {
+    render_calls: u64,
+    source_requests: u64,
+    source_frames: u64,
+    empty_sources: u64,
+    transformed_frames: u64,
+    filtered_frames: u64,
+    blended_layers: u64,
+}
+
+impl CompositorMetrics {
+    /// Returns the number of scene render calls.
+    #[must_use]
+    pub const fn render_calls(self) -> u64 {
+        self.render_calls
+    }
+
+    /// Returns the number of source render requests.
+    #[must_use]
+    pub const fn source_requests(self) -> u64 {
+        self.source_requests
+    }
+
+    /// Returns the number of source frames returned.
+    #[must_use]
+    pub const fn source_frames(self) -> u64 {
+        self.source_frames
+    }
+
+    /// Returns the number of source requests that returned no frame.
+    #[must_use]
+    pub const fn empty_sources(self) -> u64 {
+        self.empty_sources
+    }
+
+    /// Returns the number of frames sent through a non-identity transform.
+    #[must_use]
+    pub const fn transformed_frames(self) -> u64 {
+        self.transformed_frames
+    }
+
+    /// Returns the number of in-place filter applications.
+    #[must_use]
+    pub const fn filtered_frames(self) -> u64 {
+        self.filtered_frames
+    }
+
+    /// Returns the number of layer-over-layer blend operations.
+    #[must_use]
+    pub const fn blended_layers(self) -> u64 {
+        self.blended_layers
+    }
+}
+
 /// A single-threaded runtime that owns plugins, sources, and scenes.
 pub struct Runtime {
     registry: Registry,
     sources: BTreeMap<SourceId, SourceInstance>,
     scenes: BTreeMap<Identifier, Scene>,
     next_source_id: u64,
+    metrics: CompositorMetrics,
 }
 
 impl Runtime {
@@ -68,6 +125,7 @@ impl Runtime {
             sources: BTreeMap::new(),
             scenes: BTreeMap::new(),
             next_source_id: 1,
+            metrics: CompositorMetrics::default(),
         }
     }
 
@@ -384,6 +442,7 @@ impl Runtime {
         scene: &str,
         request: &VideoRequest,
     ) -> Result<Option<VideoFrame>, RuntimeError> {
+        self.metrics.render_calls = self.metrics.render_calls.saturating_add(1);
         let scene = identifier(scene, "scene")?;
         let scene_state = self
             .scenes
@@ -407,6 +466,7 @@ impl Runtime {
         let mut result: Option<VideoFrame> = None;
 
         for (source_id, transform, filters) in source_items {
+            self.metrics.source_requests = self.metrics.source_requests.saturating_add(1);
             let instance = self
                 .sources
                 .get_mut(&source_id)
@@ -416,26 +476,31 @@ impl Runtime {
                 .render(request)
                 .map_err(RuntimeError::Source)?;
             let Some(frame) = frame else {
+                self.metrics.empty_sources = self.metrics.empty_sources.saturating_add(1);
                 continue;
             };
+            self.metrics.source_frames = self.metrics.source_frames.saturating_add(1);
             if frame.format() != request.format() {
                 return Err(RuntimeError::Media(MediaError::FormatMismatch {
                     expected: request.format(),
                     actual: frame.format(),
                 }));
             }
-            let frame = frame.transformed(transform).map_err(RuntimeError::Media)?;
-            let frame = filters
-                .iter()
-                .fold(frame, |frame, filter| frame.filtered(*filter));
+            if transform != FrameTransform::IDENTITY {
+                self.metrics.transformed_frames = self.metrics.transformed_frames.saturating_add(1);
+            }
+            let mut frame = frame.transformed(transform).map_err(RuntimeError::Media)?;
+            for filter in &filters {
+                self.metrics.filtered_frames = self.metrics.filtered_frames.saturating_add(1);
+                frame.apply_filter(*filter);
+            }
 
             if let Some(composite) = result.as_mut() {
                 composite.blend_over(&frame).map_err(RuntimeError::Media)?;
+                self.metrics.blended_layers = self.metrics.blended_layers.saturating_add(1);
             } else {
-                let mut composite =
-                    VideoFrame::solid(request.format(), request.timestamp(), [0, 0, 0, 0]);
-                composite.blend_over(&frame).map_err(RuntimeError::Media)?;
-                result = Some(composite);
+                frame.clear_transparent_rgb();
+                result = Some(frame);
             }
         }
 
@@ -492,6 +557,17 @@ impl Runtime {
     #[must_use]
     pub fn scene_count(&self) -> usize {
         self.scenes.len()
+    }
+
+    /// Returns accumulated compositor and source-work metrics.
+    #[must_use]
+    pub const fn compositor_metrics(&self) -> CompositorMetrics {
+        self.metrics
+    }
+
+    /// Clears compositor counters without changing runtime-owned sources or scenes.
+    pub fn reset_compositor_metrics(&mut self) {
+        self.metrics = CompositorMetrics::default();
     }
 
     /// Returns source metadata for diagnostics.
@@ -728,6 +804,74 @@ mod tests {
             Some(vec![FrameFilter::Grayscale])
         );
         assert_eq!(frame.pixel(0, 0), Some([76, 76, 76, 128]));
+    }
+
+    #[test]
+    fn compositor_metrics_report_work_and_reset() {
+        let plugin = BuiltinPlugin::new().expect("builtins are valid");
+        let mut runtime = Runtime::new();
+        runtime
+            .register_plugin(&plugin)
+            .expect("registration succeeds");
+        runtime.create_scene("main").expect("scene is new");
+        let source = runtime
+            .create_source("color_source", "red", &settings(2, 2, "#FF0000FF"))
+            .expect("source is valid");
+        runtime
+            .attach_source("main", source)
+            .expect("attach source");
+        runtime
+            .set_source_transform(
+                "main",
+                source,
+                FrameTransform::new(1_000, 1_000, 0, 0, false, false, 128)
+                    .expect("transform is valid"),
+            )
+            .expect("set transform");
+        runtime
+            .add_source_filter("main", source, FrameFilter::Grayscale)
+            .expect("add filter");
+
+        let request = VideoRequest::new(Timestamp::ZERO, format());
+        runtime
+            .render_scene("main", &request)
+            .expect("render succeeds")
+            .expect("scene has a frame");
+
+        let metrics = runtime.compositor_metrics();
+        assert_eq!(metrics.render_calls(), 1);
+        assert_eq!(metrics.source_requests(), 1);
+        assert_eq!(metrics.source_frames(), 1);
+        assert_eq!(metrics.empty_sources(), 0);
+        assert_eq!(metrics.transformed_frames(), 1);
+        assert_eq!(metrics.filtered_frames(), 1);
+        assert_eq!(metrics.blended_layers(), 0);
+
+        runtime.reset_compositor_metrics();
+        assert_eq!(runtime.compositor_metrics(), CompositorMetrics::default());
+    }
+
+    #[test]
+    fn first_transparent_layer_has_canonical_rgb_values() {
+        let plugin = BuiltinPlugin::new().expect("builtins are valid");
+        let mut runtime = Runtime::new();
+        runtime
+            .register_plugin(&plugin)
+            .expect("registration succeeds");
+        runtime.create_scene("main").expect("scene is new");
+        let source = runtime
+            .create_source("color_source", "transparent", &settings(2, 2, "#FF000000"))
+            .expect("source is valid");
+        runtime
+            .attach_source("main", source)
+            .expect("attach source");
+
+        let frame = runtime
+            .render_scene("main", &VideoRequest::new(Timestamp::ZERO, format()))
+            .expect("render succeeds")
+            .expect("scene has a frame");
+
+        assert_eq!(frame.pixel(0, 0), Some([0, 0, 0, 0]));
     }
 
     #[test]

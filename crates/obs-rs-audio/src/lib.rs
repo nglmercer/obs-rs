@@ -6,6 +6,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -240,6 +244,144 @@ impl AudioPacingResult {
 pub struct AudioPacer {
     scheduler: AudioScheduler,
 }
+
+/// A thread-safe cancellation flag checked between audio blocks.
+#[derive(Clone, Debug)]
+pub struct AudioCancellationToken {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Default for AudioCancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AudioCancellationToken {
+    /// Creates an uncancelled token.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Requests cancellation before the next block begins.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Clears a previous cancellation request for reuse.
+    pub fn reset(&self) {
+        self.cancelled.store(false, Ordering::Release);
+    }
+
+    /// Returns whether cancellation has been requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+/// Delta diagnostics from one paced audio worker run.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AudioWorkerReport {
+    requested_blocks: u64,
+    processed_blocks: u64,
+    cancelled: bool,
+    underflow_blocks: u64,
+    produced_frames: u64,
+    dropped_oldest_frames: u64,
+    dropped_newest_frames: u64,
+    missed_deadlines: u64,
+    total_lateness_nanos: u64,
+    remaining_queue_frames: usize,
+}
+
+impl AudioWorkerReport {
+    /// Returns the number of blocks requested from the worker.
+    #[must_use]
+    pub const fn requested_blocks(self) -> u64 {
+        self.requested_blocks
+    }
+
+    /// Returns the number of paced blocks completed.
+    #[must_use]
+    pub const fn processed_blocks(self) -> u64 {
+        self.processed_blocks
+    }
+
+    /// Returns whether cancellation stopped the run before its requested count.
+    #[must_use]
+    pub const fn cancelled(self) -> bool {
+        self.cancelled
+    }
+
+    /// Returns the number of blocks for which the producer returned no audio.
+    #[must_use]
+    pub const fn underflow_blocks(self) -> u64 {
+        self.underflow_blocks
+    }
+
+    /// Returns the number of produced sample frames, including dropped output.
+    #[must_use]
+    pub const fn produced_frames(self) -> u64 {
+        self.produced_frames
+    }
+
+    /// Returns the number of old sample frames removed under drop-oldest pressure.
+    #[must_use]
+    pub const fn dropped_oldest_frames(self) -> u64 {
+        self.dropped_oldest_frames
+    }
+
+    /// Returns the number of submitted sample frames discarded under drop-newest pressure.
+    #[must_use]
+    pub const fn dropped_newest_frames(self) -> u64 {
+        self.dropped_newest_frames
+    }
+
+    /// Returns the number of post-callback deadlines observed late.
+    #[must_use]
+    pub const fn missed_deadlines(self) -> u64 {
+        self.missed_deadlines
+    }
+
+    /// Returns total post-callback lateness in nanoseconds.
+    #[must_use]
+    pub const fn total_lateness_nanos(self) -> u64 {
+        self.total_lateness_nanos
+    }
+
+    /// Returns the number of sample frames remaining in the output queue.
+    #[must_use]
+    pub const fn remaining_queue_frames(self) -> usize {
+        self.remaining_queue_frames
+    }
+}
+
+/// Errors from a paced audio worker.
+#[derive(Debug, Eq, PartialEq)]
+pub enum AudioWorkerError<E> {
+    /// The sample-clock pacer could not advance its timeline.
+    Pacing(AudioError),
+    /// The producer callback failed.
+    Source(E),
+    /// The producer returned a buffer that violated the worker contract.
+    Submit(AudioError),
+}
+
+impl<E: fmt::Display> fmt::Display for AudioWorkerError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pacing(error) => write!(formatter, "audio worker pacing failed: {error}"),
+            Self::Source(error) => write!(formatter, "audio source failed: {error}"),
+            Self::Submit(error) => write!(formatter, "audio submission failed: {error}"),
+        }
+    }
+}
+
+impl<E: fmt::Debug + fmt::Display> std::error::Error for AudioWorkerError<E> {}
 
 /// Whether audio is aligned with, early relative to, or late relative to video.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -918,6 +1060,13 @@ pub enum AudioError {
         /// Supplied format.
         actual: AudioFormat,
     },
+    /// A worker buffer starts at a different sample-clock timestamp.
+    BufferTimestampMismatch {
+        /// Timestamp required by the worker deadline.
+        expected: Timestamp,
+        /// Timestamp supplied by the producer.
+        actual: Timestamp,
+    },
     /// Two audio formats have different channel counts.
     ChannelMismatch,
     /// A buffer has a different frame count from a mix request.
@@ -964,6 +1113,12 @@ impl fmt::Display for AudioError {
                 write!(
                     formatter,
                     "audio format {actual:?} does not match {expected:?}"
+                )
+            }
+            Self::BufferTimestampMismatch { expected, actual } => {
+                write!(
+                    formatter,
+                    "audio buffer starts at {actual:?}; expected {expected:?}"
                 )
             }
             Self::ChannelMismatch => formatter.write_str("audio channel layouts do not match"),
@@ -1116,6 +1271,163 @@ impl AudioQueue {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.buffers.is_empty()
+    }
+
+    /// Removes every queued buffer without changing the queue configuration.
+    pub fn clear(&mut self) {
+        self.buffers.clear();
+        self.queued_frames = 0;
+    }
+}
+
+/// A paced, cancellation-aware audio producer over a bounded output queue.
+pub struct AudioWorker {
+    pacer: AudioPacer,
+    queue: AudioQueue,
+}
+
+impl AudioWorker {
+    /// Creates a worker for one audio format and bounded output policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::ZeroCapacity`] when `capacity_frames` is zero.
+    pub fn new(
+        format: AudioFormat,
+        capacity_frames: usize,
+        policy: AudioDropPolicy,
+    ) -> Result<Self, AudioError> {
+        Ok(Self {
+            pacer: AudioPacer::new(format),
+            queue: AudioQueue::new(format, capacity_frames, policy)?,
+        })
+    }
+
+    /// Runs up to `block_count` paced blocks without blocking the output consumer.
+    ///
+    /// The producer is called after each block reaches its sample-clock deadline.
+    /// A produced buffer must match the worker format, block length, and exact
+    /// first-sample timestamp. The worker retains complete buffers in its bounded
+    /// queue; callers consume them with [`Self::take_next`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioWorkerError::Pacing`] for clock/timeline failures,
+    /// [`AudioWorkerError::Source`] for producer failures, or
+    /// [`AudioWorkerError::Submit`] for a buffer contract violation.
+    pub fn run<C, E, F>(
+        &mut self,
+        clock: &mut C,
+        block_frames: usize,
+        block_count: u64,
+        cancellation: &AudioCancellationToken,
+        mut produce: F,
+    ) -> Result<AudioWorkerReport, AudioWorkerError<E>>
+    where
+        C: AudioClock,
+        F: FnMut(AudioDeadline, AudioFormat, usize) -> Result<Option<AudioBuffer>, E>,
+    {
+        let format = self.pacer.format();
+        let mut report = AudioWorkerReport {
+            requested_blocks: block_count,
+            ..AudioWorkerReport::default()
+        };
+
+        for _ in 0..block_count {
+            if cancellation.is_cancelled() {
+                break;
+            }
+
+            let pacing = self
+                .pacer
+                .next(clock, block_frames)
+                .map_err(AudioWorkerError::Pacing)?;
+            let deadline = pacing.deadline();
+            let produced =
+                produce(deadline, format, block_frames).map_err(AudioWorkerError::Source)?;
+
+            match produced {
+                None => {
+                    report.underflow_blocks = report.underflow_blocks.saturating_add(1);
+                }
+                Some(buffer) => {
+                    if buffer.format() != format {
+                        return Err(AudioWorkerError::Submit(AudioError::FormatMismatch {
+                            expected: format,
+                            actual: buffer.format(),
+                        }));
+                    }
+                    if buffer.frames() != block_frames {
+                        return Err(AudioWorkerError::Submit(AudioError::FrameCountMismatch {
+                            expected: block_frames,
+                            actual: buffer.frames(),
+                        }));
+                    }
+                    if buffer.timestamp() != deadline.timestamp() {
+                        return Err(AudioWorkerError::Submit(
+                            AudioError::BufferTimestampMismatch {
+                                expected: deadline.timestamp(),
+                                actual: buffer.timestamp(),
+                            },
+                        ));
+                    }
+
+                    report.produced_frames = report
+                        .produced_frames
+                        .saturating_add(u64::try_from(buffer.frames()).unwrap_or(u64::MAX));
+                    match self.queue.push(buffer).map_err(AudioWorkerError::Submit)? {
+                        AudioPushOutcome::Enqueued => {}
+                        AudioPushOutcome::DroppedOldest { frames } => {
+                            report.dropped_oldest_frames = report
+                                .dropped_oldest_frames
+                                .saturating_add(u64::try_from(frames).unwrap_or(u64::MAX));
+                        }
+                        AudioPushOutcome::DroppedNewest { frames } => {
+                            report.dropped_newest_frames = report
+                                .dropped_newest_frames
+                                .saturating_add(u64::try_from(frames).unwrap_or(u64::MAX));
+                        }
+                    }
+                }
+            }
+
+            let observed_at = clock.now();
+            let lateness = observed_at
+                .as_nanos()
+                .saturating_sub(deadline.timestamp().as_nanos());
+            if lateness != 0 {
+                report.missed_deadlines = report.missed_deadlines.saturating_add(1);
+                report.total_lateness_nanos = report.total_lateness_nanos.saturating_add(lateness);
+            }
+            report.processed_blocks = report.processed_blocks.saturating_add(1);
+        }
+
+        report.cancelled = cancellation.is_cancelled() && report.processed_blocks < block_count;
+        report.remaining_queue_frames = self.queue.queued_frames();
+        Ok(report)
+    }
+
+    /// Removes and returns the oldest produced audio block.
+    pub fn take_next(&mut self) -> Option<AudioBuffer> {
+        self.queue.pop()
+    }
+
+    /// Returns the number of sample frames waiting for the output consumer.
+    #[must_use]
+    pub const fn queued_frames(&self) -> usize {
+        self.queue.queued_frames()
+    }
+
+    /// Returns the configured worker format.
+    #[must_use]
+    pub const fn format(&self) -> AudioFormat {
+        self.pacer.format()
+    }
+
+    /// Resets the timeline and discards queued output for a new run.
+    pub fn reset(&mut self) {
+        self.pacer.reset();
+        self.queue.clear();
     }
 }
 
@@ -1448,6 +1760,23 @@ mod tests {
         }
     }
 
+    struct LateClock {
+        now: Timestamp,
+        delay_nanos: u64,
+        requested_deadlines: Vec<Timestamp>,
+    }
+
+    impl AudioClock for LateClock {
+        fn now(&self) -> Timestamp {
+            self.now
+        }
+
+        fn sleep_until(&mut self, deadline: Timestamp) {
+            self.requested_deadlines.push(deadline);
+            self.now = Timestamp::from_nanos(deadline.as_nanos().saturating_add(self.delay_nanos));
+        }
+    }
+
     fn format() -> AudioFormat {
         AudioFormat::new(48_000, 2).expect("valid audio format")
     }
@@ -1662,6 +1991,117 @@ mod tests {
     }
 
     #[test]
+    fn audio_worker_reports_underflow_drop_pressure_and_lateness() {
+        let mut clock = LateClock {
+            now: Timestamp::ZERO,
+            delay_nanos: 100,
+            requested_deadlines: Vec::new(),
+        };
+        let token = AudioCancellationToken::new();
+        let mut worker =
+            AudioWorker::new(format(), 4, AudioDropPolicy::DropNewest).expect("worker");
+        let report = worker
+            .run(
+                &mut clock,
+                2,
+                4,
+                &token,
+                |deadline, output_format, frames| {
+                    if deadline.index() == 2 {
+                        return Ok::<_, std::convert::Infallible>(None);
+                    }
+                    Ok(Some(
+                        AudioBuffer::silence(output_format, deadline.timestamp(), frames)
+                            .expect("valid block"),
+                    ))
+                },
+            )
+            .expect("worker run");
+
+        assert_eq!(report.requested_blocks(), 4);
+        assert_eq!(report.processed_blocks(), 4);
+        assert!(!report.cancelled());
+        assert_eq!(report.underflow_blocks(), 1);
+        assert_eq!(report.produced_frames(), 6);
+        assert_eq!(report.dropped_oldest_frames(), 0);
+        assert_eq!(report.dropped_newest_frames(), 2);
+        assert_eq!(report.missed_deadlines(), 4);
+        assert_eq!(report.total_lateness_nanos(), 400);
+        assert_eq!(report.remaining_queue_frames(), 4);
+        assert_eq!(clock.requested_deadlines.len(), 4);
+
+        assert_eq!(worker.take_next().expect("first block").frames(), 2);
+        assert_eq!(worker.take_next().expect("second block").frames(), 2);
+        assert_eq!(worker.take_next(), None);
+    }
+
+    #[test]
+    fn audio_worker_cancels_between_blocks_and_shares_token_state() {
+        let mut clock = FakeClock {
+            now: Timestamp::ZERO,
+            requested_deadlines: Vec::new(),
+        };
+        let token = AudioCancellationToken::new();
+        let callback_token = token.clone();
+        let mut worker =
+            AudioWorker::new(format(), 8, AudioDropPolicy::DropOldest).expect("worker");
+        let report = worker
+            .run(
+                &mut clock,
+                2,
+                10,
+                &token,
+                |deadline, output_format, frames| {
+                    if deadline.index() == 2 {
+                        callback_token.cancel();
+                    }
+                    Ok::<_, std::convert::Infallible>(Some(
+                        AudioBuffer::silence(output_format, deadline.timestamp(), frames)
+                            .expect("valid block"),
+                    ))
+                },
+            )
+            .expect("worker run");
+
+        assert_eq!(report.processed_blocks(), 2);
+        assert!(report.cancelled());
+        assert!(token.is_cancelled());
+        assert_eq!(report.remaining_queue_frames(), 4);
+        token.reset();
+        assert!(!token.is_cancelled());
+        worker.reset();
+        assert_eq!(worker.queued_frames(), 0);
+    }
+
+    #[test]
+    fn audio_worker_rejects_wrong_timestamp_before_queueing() {
+        let mut clock = FakeClock {
+            now: Timestamp::ZERO,
+            requested_deadlines: Vec::new(),
+        };
+        let token = AudioCancellationToken::new();
+        let mut worker =
+            AudioWorker::new(format(), 8, AudioDropPolicy::DropOldest).expect("worker");
+        let result = worker.run(&mut clock, 2, 1, &token, |_, output_format, frames| {
+            Ok::<_, std::convert::Infallible>(Some(
+                AudioBuffer::silence(output_format, Timestamp::from_nanos(1), frames)
+                    .expect("valid block"),
+            ))
+        });
+
+        assert_eq!(
+            result,
+            Err(AudioWorkerError::Submit(
+                AudioError::BufferTimestampMismatch {
+                    expected: Timestamp::ZERO,
+                    actual: Timestamp::from_nanos(1),
+                }
+            ))
+        );
+        assert_eq!(worker.queued_frames(), 0);
+    }
+
+    #[test]
     fn av_sync_reports_signed_drift_and_safe_actions() {
         let controller = AvSyncController::new(5_000_000);
         let aligned = controller.observe(Timestamp::from_millis(10), Timestamp::from_millis(12));
@@ -1722,7 +2162,7 @@ mod tests {
                 1 => Timestamp::from_nanos(video.as_nanos() + 50),
                 _ => Timestamp::from_nanos(video.as_nanos() + 1_000),
             };
-            monitor.observe(video, audio);
+            let _ = monitor.observe(video, audio);
         }
 
         let metrics = monitor.metrics();

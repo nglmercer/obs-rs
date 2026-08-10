@@ -4,9 +4,12 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use std::{
-    cell::Cell,
     collections::VecDeque,
     fmt,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -576,35 +579,41 @@ impl<E: fmt::Display> fmt::Display for RenderError<E> {
 
 impl<E: fmt::Debug + fmt::Display> std::error::Error for RenderError<E> {}
 
-/// A single-threaded cancellation flag checked between video frames.
-#[derive(Debug, Default)]
+/// A thread-safe cancellation flag checked between video frames.
+#[derive(Clone, Debug)]
 pub struct CancellationToken {
-    cancelled: Cell<bool>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CancellationToken {
     /// Creates an uncancelled token.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            cancelled: Cell::new(false),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Requests cancellation before the next frame begins.
     pub fn cancel(&self) {
-        self.cancelled.set(true);
+        self.cancelled.store(true, Ordering::Release);
     }
 
     /// Clears a previous cancellation request for reuse.
     pub fn reset(&self) {
-        self.cancelled.set(false);
+        self.cancelled.store(false, Ordering::Release);
     }
 
     /// Returns whether cancellation has been requested.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.get()
+        self.cancelled.load(Ordering::Acquire)
     }
 }
 
@@ -619,6 +628,9 @@ pub struct VideoWorkerReport {
     dropped_newest: u64,
     missed_deadlines: u64,
     total_lateness_nanos: u64,
+    total_wait_nanos: u64,
+    total_render_nanos: u64,
+    max_lateness_nanos: u64,
     remaining_queue: usize,
 }
 
@@ -669,6 +681,24 @@ impl VideoWorkerReport {
     #[must_use]
     pub const fn total_lateness_nanos(self) -> u64 {
         self.total_lateness_nanos
+    }
+
+    /// Returns total time spent waiting for frame deadlines.
+    #[must_use]
+    pub const fn total_wait_nanos(self) -> u64 {
+        self.total_wait_nanos
+    }
+
+    /// Returns total time spent inside render callbacks.
+    #[must_use]
+    pub const fn total_render_nanos(self) -> u64 {
+        self.total_render_nanos
+    }
+
+    /// Returns the largest post-render lateness observed in this run.
+    #[must_use]
+    pub const fn max_lateness_nanos(self) -> u64 {
+        self.max_lateness_nanos
     }
 
     /// Returns the number of frames left in the output queue.
@@ -744,17 +774,29 @@ impl VideoWorker {
     {
         let before = self.pipeline.metrics;
         let mut processed_frames = 0_u64;
+        let mut total_wait_nanos = 0_u64;
+        let mut total_render_nanos = 0_u64;
+        let mut max_lateness_nanos = 0_u64;
         for _ in 0..frame_count {
             if cancellation.is_cancelled() {
                 break;
             }
             let pacing = self.pacer.next(clock).map_err(WorkerError::Pacing)?;
+            total_wait_nanos = total_wait_nanos.saturating_add(pacing.waited_nanos());
+            let render_started = clock.now();
             self.pipeline
                 .render_at(pacing.deadline(), &mut render)
                 .map_err(WorkerError::Render)?;
-            let _ = self
+            let observed_at = clock.now();
+            total_render_nanos = total_render_nanos.saturating_add(
+                observed_at
+                    .as_nanos()
+                    .saturating_sub(render_started.as_nanos()),
+            );
+            let observation = self
                 .pipeline
-                .observe_deadline(pacing.deadline(), clock.now());
+                .observe_deadline(pacing.deadline(), observed_at);
+            max_lateness_nanos = max_lateness_nanos.max(observation.lateness_nanos());
             let _ = self.pipeline.take_next();
             processed_frames = processed_frames.saturating_add(1);
         }
@@ -772,6 +814,9 @@ impl VideoWorker {
             total_lateness_nanos: after
                 .total_lateness_nanos
                 .saturating_sub(before.total_lateness_nanos),
+            total_wait_nanos,
+            total_render_nanos,
+            max_lateness_nanos,
             remaining_queue: self.pipeline.queued(),
         })
     }
@@ -1194,6 +1239,9 @@ mod tests {
         assert!(report.cancelled());
         assert_eq!(report.missed_deadlines(), 1);
         assert_eq!(report.total_lateness_nanos(), 5_000_000);
+        assert_eq!(report.total_wait_nanos(), 61_666_666);
+        assert_eq!(report.total_render_nanos(), 0);
+        assert_eq!(report.max_lateness_nanos(), 5_000_000);
         assert_eq!(report.empty_frames(), 0);
         assert_eq!(report.remaining_queue(), 0);
         assert_eq!(clock.requested_deadlines.len(), 3);

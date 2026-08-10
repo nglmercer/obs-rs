@@ -4,6 +4,7 @@ members = [
     "crates/obs-rs-audio",
     "crates/obs-rs-builtins",
     "crates/obs-rs-capture",
+    "crates/obs-rs-clock",
     "crates/obs-rs-config",
     "crates/obs-rs-core",
     "crates/obs-rs-media",

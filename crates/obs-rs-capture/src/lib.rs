@@ -179,6 +179,75 @@ impl CaptureCatalog {
             }
         }
     }
+
+    /// Replaces the complete catalog atomically from one discovery snapshot.
+    ///
+    /// Duplicate IDs are rejected before the current catalog is changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::DuplicateDevice`] when the snapshot repeats an ID.
+    pub fn replace_all<I>(&mut self, devices: I) -> Result<(), CaptureError>
+    where
+        I: IntoIterator<Item = CaptureDeviceInfo>,
+    {
+        let mut replacement = BTreeMap::new();
+        for info in devices {
+            let id = info.id().clone();
+            if replacement.insert(id.clone(), info).is_some() {
+                return Err(CaptureError::DuplicateDevice(id));
+            }
+        }
+        self.devices = replacement;
+        Ok(())
+    }
+}
+
+/// Safe discovery boundary implemented by platform and fallback providers.
+pub trait CaptureProvider {
+    /// Returns one complete discovery snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a provider-specific [`CaptureError`] when discovery cannot produce
+    /// a valid descriptor set.
+    fn discover(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError>;
+
+    /// Replaces a catalog with the provider's latest snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Propagates discovery or duplicate-ID validation errors.
+    fn refresh(&self, catalog: &mut CaptureCatalog) -> Result<(), CaptureError> {
+        catalog.replace_all(self.discover()?)
+    }
+}
+
+/// A deterministic discovery provider for the portable CPU fallback devices.
+///
+/// This provider is intentionally not an operating-system adapter. It gives the
+/// runtime and UI a complete discovery contract while real screen/window/camera
+/// providers are added behind [`CaptureProvider`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SimulatedCaptureProvider;
+
+impl SimulatedCaptureProvider {
+    /// Creates the deterministic fallback provider.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl CaptureProvider for SimulatedCaptureProvider {
+    fn discover(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
+        Ok(vec![
+            CaptureDeviceInfo::new("test-pattern", "Test pattern", CaptureKind::TestPattern)?,
+            CaptureDeviceInfo::new("screen-0", "Simulated screen", CaptureKind::Screen)?,
+            CaptureDeviceInfo::new("window-0", "Simulated window", CaptureKind::Window)?,
+            CaptureDeviceInfo::new("camera-0", "Simulated camera", CaptureKind::Camera)?,
+        ])
+    }
 }
 
 /// Capture lifecycle and frame-delivery errors.
@@ -708,6 +777,51 @@ mod tests {
             catalog.apply(CaptureEvent::Removed(id.clone())),
             Err(CaptureError::UnknownDevice(id))
         );
+    }
+
+    #[test]
+    fn provider_refreshes_catalog_atomically_and_deterministically() {
+        let provider = SimulatedCaptureProvider::new();
+        let mut catalog = CaptureCatalog::new();
+        catalog
+            .register(
+                CaptureDeviceInfo::new("old", "Old device", CaptureKind::Screen)
+                    .expect("old device"),
+            )
+            .expect("register old device");
+        provider.refresh(&mut catalog).expect("refresh catalog");
+
+        let devices = catalog.devices();
+        assert_eq!(devices.len(), 4);
+        assert_eq!(devices[0].id().as_str(), "camera-0");
+        assert_eq!(devices[1].id().as_str(), "screen-0");
+        assert_eq!(devices[2].id().as_str(), "test-pattern");
+        assert_eq!(devices[3].id().as_str(), "window-0");
+        assert!(catalog.get("old").is_none());
+    }
+
+    #[test]
+    fn catalog_snapshot_rejects_duplicates_without_partial_replacement() {
+        let mut catalog = CaptureCatalog::new();
+        catalog
+            .register(
+                CaptureDeviceInfo::new("stable", "Stable", CaptureKind::Screen)
+                    .expect("stable device"),
+            )
+            .expect("register stable");
+        let duplicate = CaptureDeviceInfo::new("duplicate", "One", CaptureKind::Screen)
+            .expect("first duplicate");
+        let duplicate_again = CaptureDeviceInfo::new("duplicate", "Two", CaptureKind::Window)
+            .expect("second duplicate");
+
+        assert_eq!(
+            catalog.replace_all(vec![duplicate, duplicate_again]),
+            Err(CaptureError::DuplicateDevice(
+                Identifier::new("duplicate").expect("valid ID")
+            ))
+        );
+        assert!(catalog.get("stable").is_some());
+        assert!(catalog.get("duplicate").is_none());
     }
 
     #[test]
