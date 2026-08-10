@@ -14,6 +14,7 @@ On current `master`, the Qt frontend is under `frontend/`; older references may 
 3. [02-codestyle.md](02-codestyle.md) — Rust formatting, linting, error handling, `unsafe`, panic, documentation, and C ABI/FFI conventions.
 4. [03-roadmap.md](03-roadmap.md) — phased tooling, utility, subsystem, and plugin evaluation roadmap with entry/exit criteria, risks, and regression testing.
 5. [04-risks-and-open-questions.md](04-risks-and-open-questions.md) — plugin ABI, real-time performance, cross-platform parity, mixed-toolchain, ownership, panic, and supply-chain risks.
+6. [05-permanent-native-boundaries.md](05-permanent-native-boundaries.md) — Phase 4 boundary inventory, local evidence, and the final go/no-go rule.
 
 ## Core principle
 
@@ -78,3 +79,6 @@ The same checks run in [`.github/workflows/rust.yml`](.github/workflows/rust.yml
   `OBS_LIBOBS_API_VER` for a real OBS integration build. The default probe version
   is deliberately `0` and is not production-compatible; the native OBS loader is
   unavailable in this workspace.
+- Phase 4 — permanent native boundaries: complete as documented in
+  [`05-permanent-native-boundaries.md`](05-permanent-native-boundaries.md). The
+  result is intentionally a mixed-language architecture, not a 100% Rust claim.
