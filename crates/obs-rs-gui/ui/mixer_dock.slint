@@ -1,90 +1,90 @@
 import { Button, ScrollView, HorizontalBox, VerticalBox, Slider } from "std-widgets.slint";
-import { CompactButton } from "theme.slint";
+import { CompactButton, DockHeader } from "theme.slint";
 import { MixerRow } from "models.slint";
 
 export component MixerDock inherits Rectangle {
     in property <string> locale;
     in property <[MixerRow]> mixer-rows;
+    in property <int> panel-kind;
+    callback move-panel(int, int);
     callback set-mixer-gain(string, int);
     callback toggle-mixer-mute(string);
 
-    background: rgb(31, 41, 55);
+    background: rgb(31, 34, 41);
     border-width: 1px;
-    border-color: rgb(45, 58, 78);
-    border-radius: 8px;
-    horizontal-stretch: 2;
+    border-color: rgb(55, 60, 69);
     VerticalBox {
-        padding: 10px;
-        spacing: 7px;
-        Text {
-            text: locale == "es" ? "Mezclador de audio" : "Audio Mixer";
-            color: rgb(249, 250, 251);
-            font-size: 15px;
-            font-weight: 700;
+        DockHeader {
+            title: locale == "es" ? "Mezclador de audio" : "Audio Mixer";
+            panel-kind: root.panel-kind;
+            move-panel(kind, delta) => { root.move-panel(kind, delta); }
         }
-        ScrollView {
+        Rectangle {
             vertical-stretch: 1;
-            for channel in mixer-rows : Rectangle {
-                height: 84px;
-                background: rgb(39, 52, 73);
-                border-radius: 4px;
-                VerticalBox {
-                    padding: 8px;
-                    spacing: 4px;
-                    HorizontalBox {
-                        spacing: 5px;
-                        Text {
-                            text: channel.name;
-                            color: rgb(249, 250, 251);
-                            font-size: 12px;
-                            horizontal-stretch: 1;
-                            overflow: elide;
-                        }
-                        Text {
-                            text: channel.muted
-                                ? (locale == "es" ? "SILENCIADO" : "MUTED")
-                                : (locale == "es" ? "ACTIVO" : "LIVE");
-                            color: channel.muted ? rgb(252, 165, 165) : rgb(134, 239, 172);
-                            font-size: 9px;
-                        }
-                        CompactButton {
-                            label: channel.muted ? "▶" : "×";
-                            hint: channel.muted
-                                ? (locale == "es" ? "Activar" : "Unmute")
-                                : (locale == "es" ? "Silenciar" : "Mute");
-                            clicked => toggle-mixer-mute(channel.id);
-                        }
-                    }
-                    Slider {
-                        minimum: 0;
-                        maximum: 2;
-                        step: 0.01;
-                        value: channel.gain;
-                        changed => set-mixer-gain(channel.id, round(self.value * 1000));
-                    }
-                    Rectangle {
-                        width: 100%;
-                        height: 5px;
-                        background: rgb(15, 23, 42);
-                        Rectangle {
-                            width: channel.peak * 100px;
-                            height: 100%;
-                            background: channel.muted ? rgb(127, 29, 29) : rgb(34, 197, 94);
+            VerticalBox {
+                padding: 8px;
+                spacing: 6px;
+                ScrollView {
+                    vertical-stretch: 1;
+                    for channel in mixer-rows : Rectangle {
+                        height: 78px;
+                        background: rgb(39, 43, 50);
+                        border-width: 1px;
+                        border-color: rgb(55, 60, 69);
+                        VerticalBox {
+                            padding: 7px;
+                            spacing: 3px;
+                            HorizontalBox {
+                                spacing: 5px;
+                                Text {
+                                    text: channel.name;
+                                    color: rgb(226, 232, 240);
+                                    font-size: 11px;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: channel.muted ? "MUTE" : "0.0 dB";
+                                    color: rgb(148, 163, 184);
+                                    font-size: 9px;
+                                }
+                            }
+                            Slider {
+                                minimum: 0;
+                                maximum: 2;
+                                step: 0.01;
+                                value: channel.gain;
+                                changed => set-mixer-gain(channel.id, round(self.value * 1000));
+                            }
+                            Rectangle {
+                                width: 100%;
+                                height: 7px;
+                                background: rgb(15, 23, 42);
+                                Rectangle {
+                                    width: channel.peak * 100px;
+                                    height: 100%;
+                                    background: channel.muted ? rgb(127, 29, 29) : rgb(34, 197, 94);
+                                }
+                            }
+                            HorizontalBox {
+                                alignment: end;
+                                CompactButton {
+                                    label: channel.muted ? "🔇" : "🔊";
+                                    hint: channel.muted
+                                        ? (locale == "es" ? "Activar" : "Unmute")
+                                        : (locale == "es" ? "Silenciar" : "Mute");
+                                    clicked => toggle-mixer-mute(channel.id);
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
-        HorizontalBox {
-            spacing: 5px;
-            CompactButton { label: "Ⅱ"; hint: locale == "es" ? "Pausar medidores" : "Pause meters"; }
-            CompactButton { label: "⚙"; hint: locale == "es" ? "Opciones del mezclador" : "Mixer options"; }
-            Rectangle { horizontal-stretch: 1; }
-            Text {
-                text: mixer-rows.length + (locale == "es" ? " canales" : " channels");
-                color: rgb(100, 116, 139);
-                font-size: 10px;
-                vertical-alignment: center;
+                HorizontalBox {
+                    spacing: 4px;
+                    CompactButton { label: "Ⅱ"; hint: locale == "es" ? "Pausar medidores" : "Pause meters"; }
+                    CompactButton { label: "⚙"; hint: locale == "es" ? "Opciones del mezclador" : "Mixer options"; }
+                    Rectangle { horizontal-stretch: 1; }
+                }
             }
         }
     }

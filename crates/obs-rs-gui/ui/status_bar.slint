@@ -16,14 +16,6 @@ export component StatusBar inherits Rectangle {
         padding-left: 8px;
         padding-right: 8px;
         spacing: 10px;
-        Text {
-            text: view-mode == 0
-                ? (locale == "es" ? "Studio" : "Studio")
-                : (locale == "es" ? "Solo vista previa" : "Preview only");
-            color: rgb(147, 197, 253);
-            font-size: 10px;
-            vertical-alignment: center;
-        }
         Rectangle { horizontal-stretch: 1; }
         Text {
             text: streaming

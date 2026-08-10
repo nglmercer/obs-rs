@@ -1,82 +1,65 @@
-import { Button, ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { CompactButton } from "theme.slint";
+import { ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { CompactButton, DockHeader } from "theme.slint";
 import { SceneRow } from "models.slint";
 
 export component SceneDock inherits Rectangle {
     in property <string> locale;
     in property <[SceneRow]> scene-rows;
+    in property <int> panel-kind;
+    callback move-panel(int, int);
     callback select-preview(string);
     callback select-program(string);
     callback remove-scene(string);
 
-    background: rgb(31, 41, 55);
+    background: rgb(31, 34, 41);
     border-width: 1px;
-    border-color: rgb(45, 58, 78);
-    border-radius: 8px;
-    horizontal-stretch: 2;
+    border-color: rgb(55, 60, 69);
     VerticalBox {
-        padding: 10px;
-        spacing: 7px;
-        Text {
-            text: locale == "es" ? "Escenas" : "Scenes";
-            color: rgb(249, 250, 251);
-            font-size: 15px;
-            font-weight: 700;
+        DockHeader {
+            title: locale == "es" ? "Escenas" : "Scenes";
+            panel-kind: root.panel-kind;
+            move-panel(kind, delta) => { root.move-panel(kind, delta); }
         }
-        ScrollView {
+        Rectangle {
             vertical-stretch: 1;
-            for scene in scene-rows : Rectangle {
-                height: 48px;
-                background: scene.role != "" ? rgb(42, 61, 88) : rgb(39, 52, 73);
-                border-radius: 4px;
-                HorizontalBox {
-                    padding: 6px;
-                    spacing: 5px;
-                    VerticalBox {
-                        spacing: 1px;
-                        horizontal-stretch: 1;
-                        Text {
-                            text: scene.name;
-                            color: rgb(249, 250, 251);
-                            font-size: 12px;
-                            overflow: elide;
+            VerticalBox {
+                padding: 8px;
+                spacing: 6px;
+                ScrollView {
+                    vertical-stretch: 1;
+                    for scene in scene-rows : Rectangle {
+                        height: 38px;
+                        background: scene.role != "" ? rgb(51, 73, 105) : rgb(39, 43, 50);
+                        border-width: 1px;
+                        border-color: rgb(55, 60, 69);
+                        HorizontalBox {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 5px;
+                            VerticalBox {
+                                spacing: 1px;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: scene.name;
+                                    color: rgb(226, 232, 240);
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
+                            }
                         }
-                        Text {
-                            text: scene.role == "" ? scene.id : scene.role;
-                            color: scene.role != "" ? rgb(147, 197, 253) : rgb(148, 163, 184);
-                            font-size: 10px;
-                            overflow: elide;
+                        TouchArea {
+                            clicked => select-preview(scene.id);
+                            double-clicked => select-program(scene.id);
                         }
-                    }
-                    CompactButton {
-                        label: "P";
-                        hint: locale == "es" ? "Enviar a vista previa" : "Send to preview";
-                        clicked => select-preview(scene.id);
-                    }
-                    CompactButton {
-                        label: "A";
-                        hint: locale == "es" ? "Enviar al aire" : "Send to program";
-                        clicked => select-program(scene.id);
-                    }
-                    CompactButton {
-                        label: "×";
-                        hint: locale == "es" ? "Eliminar escena" : "Remove scene";
-                        clicked => remove-scene(scene.id);
                     }
                 }
-            }
-        }
-        HorizontalBox {
-            spacing: 5px;
-            CompactButton { label: "+"; hint: locale == "es" ? "Añadir escena" : "Add scene"; }
-            CompactButton { label: "▣"; hint: locale == "es" ? "Duplicar escena" : "Duplicate scene"; }
-            CompactButton { label: "⚙"; hint: locale == "es" ? "Opciones de escena" : "Scene options"; }
-            Rectangle { horizontal-stretch: 1; }
-            Text {
-                text: scene-rows.length + (locale == "es" ? " escenas" : " scenes");
-                color: rgb(100, 116, 139);
-                font-size: 10px;
-                vertical-alignment: center;
+                HorizontalBox {
+                    spacing: 4px;
+                    CompactButton { label: "+"; hint: locale == "es" ? "Añadir escena" : "Add scene"; }
+                    CompactButton { label: "−"; hint: locale == "es" ? "Eliminar escena" : "Remove scene"; }
+                    CompactButton { label: "⚙"; hint: locale == "es" ? "Propiedades de escena" : "Scene properties"; }
+                    Rectangle { horizontal-stretch: 1; }
+                }
             }
         }
     }

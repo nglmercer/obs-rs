@@ -1,18 +1,13 @@
-import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { MenuEntry, ModeButton, NavMenuButton } from "theme.slint";
+import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { MenuEntry, NavMenuButton } from "theme.slint";
 import { ProfileRow } from "models.slint";
 
 export component AppNavbar inherits Rectangle {
     in property <string> locale;
-    in property <string> project-title;
-    in property <string> profile-name;
-    in property <bool> dirty;
-    in property <int> view-mode;
     in property <[ProfileRow]> profile-rows;
     callback menu-action(string);
     callback select-view-mode(int);
     callback select-profile(string);
-    callback set-locale(string);
 
     property <int> open-menu: 0;
     height: 36px;
@@ -82,40 +77,6 @@ export component AppNavbar inherits Rectangle {
             clicked => { root.open-menu = open-menu == 8 ? 0 : 8; }
         }
         Rectangle { horizontal-stretch: 1; }
-        Text {
-            text: project-title + "  ·  " + profile-name;
-            color: rgb(148, 163, 184);
-            font-size: 11px;
-            vertical-alignment: center;
-            overflow: elide;
-            max-width: 180px;
-        }
-        ModeButton {
-            label: locale == "es" ? "Studio" : "Studio";
-            active: view-mode == 0;
-            clicked => select-view-mode(0);
-        }
-        ModeButton {
-            label: locale == "es" ? "Solo vista previa" : "Preview only";
-            active: view-mode == 1;
-            clicked => select-view-mode(1);
-        }
-        Button {
-            text: "EN";
-            clicked => set-locale("en");
-        }
-        Button {
-            text: "ES";
-            clicked => set-locale("es");
-        }
-        Text {
-            text: dirty
-                ? (locale == "es" ? "● Sin guardar" : "● Unsaved")
-                : (locale == "es" ? "● Guardado" : "● Saved");
-            color: dirty ? rgb(251, 191, 36) : rgb(134, 239, 172);
-            font-size: 11px;
-            vertical-alignment: center;
-        }
     }
 
     if open-menu == 1 : Rectangle {
@@ -170,8 +131,7 @@ export component AppNavbar inherits Rectangle {
             padding: 6px;
             spacing: 1px;
             MenuEntry { label: locale == "es" ? "Modo Studio" : "Studio mode"; clicked => { root.select-view-mode(0); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Solo vista previa" : "Preview only"; clicked => { root.select-view-mode(1); root.open-menu = 0; } }
-            MenuEntry { label: locale == "es" ? "Pantalla completa" : "Fullscreen"; clicked => { root.menu-action("fullscreen"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Proyector de vista previa" : "Preview projector"; clicked => { root.menu-action("fullscreen"); root.open-menu = 0; } }
         }
     }
     if open-menu == 4 : Rectangle {

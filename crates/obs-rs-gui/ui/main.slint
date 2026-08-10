@@ -2,11 +2,7 @@ import { HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
 import { AppNavbar } from "navbar.slint";
 import { StagePanel } from "stage.slint";
-import { SceneDock } from "scene_dock.slint";
-import { SourceDock } from "source_dock.slint";
-import { MixerDock } from "mixer_dock.slint";
-import { TransitionDock } from "transition_dock.slint";
-import { ControlsDock } from "controls_dock.slint";
+import { DockSlot } from "dock_slot.slint";
 import { StatusBar } from "status_bar.slint";
 
 export component MainWindow inherits Window {
@@ -38,6 +34,7 @@ export component MainWindow inherits Window {
         in property <string> source-scene;
         in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
+        in-out property <[int]> panel-order: [0, 1, 2, 3, 4];
         in property <string> scene-name-version;
         in-out property <string> scene-name;
         in property <string> selected-source;
@@ -56,7 +53,7 @@ export component MainWindow inherits Window {
         in-out property <string> new-source-kind;
         in-out property <string> new-source-name;
 
-        property <int> view-mode: 1;
+        property <int> view-mode: 0;
         property <int> controls-tab: 0;
         property <bool> show-sources: true;
         property <bool> show-scenes: true;
@@ -92,6 +89,7 @@ export component MainWindow inherits Window {
         callback export-diagnostics();
         callback add-scene(string, string);
         callback add-source(string, string, string);
+        callback move-panel(int, int);
 
     FocusScope {
         key-pressed(event) => {
@@ -116,12 +114,8 @@ export component MainWindow inherits Window {
             spacing: 7px;
 
             AppNavbar {
-                project-title: root.project-title;
-                profile-name: root.profile-name;
                 locale: root.locale;
-                dirty: root.dirty;
                 profile-rows: root.profile-rows;
-                view-mode: root.view-mode;
                 menu-action(action) => {
                     if action == "save-project" {
                         root.save-project();
@@ -150,7 +144,6 @@ export component MainWindow inherits Window {
                 }
                 select-view-mode(mode) => { root.view-mode = mode; }
                 select-profile(id) => { root.select-profile(id); }
-                set-locale(code) => { root.set-locale(code); }
             }
 
             StagePanel {
@@ -166,37 +159,18 @@ export component MainWindow inherits Window {
                 spacing: 8px;
                 vertical-stretch: 2;
                 min-height: 235px;
-                if root.show-sources : SourceDock {
-                    locale: root.locale;
-                    source-scene: root.source-scene;
-                    source-rows: root.source-rows;
-                    select-source(id) => { root.select-source(id); }
-                    toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
-                    toggle-source-locked(id) => { root.toggle-source-locked(id); }
-                    move-source(id, delta) => { root.move-source(id, delta); }
-                    remove-source(id) => { root.remove-source(id); }
-                }
-                if root.show-scenes : SceneDock {
+                for panel in root.panel-order : DockSlot {
+                    panel-kind: panel;
+                    visible: (panel == 0 && root.show-scenes)
+                        || (panel == 1 && root.show-sources)
+                        || (panel == 2 && root.show-mixer)
+                        || (panel == 3 && root.show-transitions)
+                        || (panel == 4 && root.show-controls);
                     locale: root.locale;
                     scene-rows: root.scene-rows;
-                    select-preview(id) => { root.select-preview(id); }
-                    select-program(id) => { root.select-program(id); }
-                    remove-scene(id) => { root.remove-scene(id); }
-                }
-                if root.show-mixer : MixerDock {
-                    locale: root.locale;
+                    source-rows: root.source-rows;
                     mixer-rows: root.mixer-rows;
-                    set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
-                    toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
-                }
-                if root.show-transitions : TransitionDock {
-                    locale: root.locale;
-                    transition: root.transition;
-                    cut-transition() => { root.cut-transition(); }
-                    fade-transition() => { root.fade-transition(); }
-                }
-                if root.show-controls : ControlsDock {
-                    locale: root.locale;
+                    source-scene: root.source-scene;
                     preview-scene: root.preview-scene;
                     selected-source: root.selected-source;
                     capture-capabilities: root.capture-capabilities;
@@ -226,6 +200,19 @@ export component MainWindow inherits Window {
                     view-mode: root.view-mode;
                     active-tab <=> root.controls-tab;
                     settings-open <=> root.settings-open;
+                    move-panel(kind, delta) => { root.move-panel(kind, delta); }
+                    select-preview(id) => { root.select-preview(id); }
+                    select-program(id) => { root.select-program(id); }
+                    remove-scene(id) => { root.remove-scene(id); }
+                    select-source(id) => { root.select-source(id); }
+                    toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
+                    toggle-source-locked(id) => { root.toggle-source-locked(id); }
+                    move-source(id, delta) => { root.move-source(id, delta); }
+                    remove-source(id) => { root.remove-source(id); }
+                    set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
+                    toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+                    cut-transition() => { root.cut-transition(); }
+                    fade-transition() => { root.fade-transition(); }
                     save-project() => { root.save-project(); }
                     load-project() => { root.load-project(); }
                     recover-project() => { root.recover-project(); }
@@ -237,8 +224,6 @@ export component MainWindow inherits Window {
                     apply-source-transform() => { root.apply-source-transform(); }
                     apply-source-filters() => { root.apply-source-filters(); }
                     swap-scenes() => { root.swap-scenes(); }
-                    cut-transition() => { root.cut-transition(); }
-                    fade-transition() => { root.fade-transition(); }
                     toggle-recording() => { root.toggle-recording(); }
                     toggle-streaming() => { root.toggle-streaming(); }
                     set-view-mode(mode) => { root.view-mode = mode; }

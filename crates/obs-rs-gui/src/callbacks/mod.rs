@@ -6,7 +6,7 @@ mod source;
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use obs_rs_ui::DesktopState;
-use slint::{ComponentHandle, Timer, TimerMode};
+use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 
 use crate::{
     refresh_output_ui, refresh_preview_frames, MainWindow, OutputRuntime, PreviewRenderer,
@@ -72,4 +72,34 @@ pub(crate) fn install_callbacks(
     install_output_callbacks(ui, state, renderer, output);
     install_mixer_callbacks(ui, state, renderer);
     install_project_callbacks(ui, state, renderer);
+    install_panel_callbacks(ui);
+}
+
+fn install_panel_callbacks(ui: &MainWindow) {
+    let weak = ui.as_weak();
+    ui.on_move_panel(move |panel, direction| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        if !(0..=4).contains(&panel) || direction == 0 {
+            return;
+        }
+        let model = ui.get_panel_order();
+        let mut order = (0..model.row_count())
+            .filter_map(|index| model.row_data(index))
+            .collect::<Vec<_>>();
+        let Some(index) = order.iter().position(|value| *value == panel) else {
+            return;
+        };
+        let target = if direction < 0 {
+            index.checked_sub(1)
+        } else {
+            Some(index + 1)
+        };
+        let Some(target) = target.filter(|target| *target < order.len()) else {
+            return;
+        };
+        order.swap(index, target);
+        ui.set_panel_order(ModelRc::new(VecModel::from(order)));
+    });
 }

@@ -144,6 +144,56 @@ export component CompactButton inherits Rectangle {
     }
 }
 
+export component DockHeader inherits Rectangle {
+    in property <string> title;
+    in property <int> panel-kind;
+    callback move-panel(int, int);
+    property <length> drag-origin-x: 0px;
+
+    height: 28px;
+    background: rgb(43, 47, 56);
+    border-width: 1px;
+    border-color: rgb(58, 63, 73);
+
+    Text {
+        x: 9px;
+        width: parent.width - 42px;
+        text: root.title;
+        color: rgb(226, 232, 240);
+        font-size: 11px;
+        font-weight: 700;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    Text {
+        x: parent.width - 31px;
+        width: 22px;
+        text: "⋮⋮";
+        color: rgb(148, 163, 184);
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    TouchArea {
+        x: parent.width - 34px;
+        width: 34px;
+        mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.drag-origin-x = self.mouse-x;
+            } else if (event.kind == PointerEventKind.move && self.pressed) {
+                if (self.mouse-x - root.drag-origin-x > 18px) {
+                    root.drag-origin-x = self.mouse-x;
+                    root.move-panel(root.panel-kind, 1);
+                } else if (self.mouse-x - root.drag-origin-x < -18px) {
+                    root.drag-origin-x = self.mouse-x;
+                    root.move-panel(root.panel-kind, -1);
+                }
+            }
+        }
+    }
+}
+
 export component ModalShell inherits Rectangle {
     in property <bool> open;
     in property <string> title;
