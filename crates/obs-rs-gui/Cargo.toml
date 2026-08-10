@@ -25,3 +25,6 @@ slint = { version = "1.17.1", default-features = false, features = [
     "renderer-software",
     "std",
 ] }
+
+[build-dependencies]
+slint-build = "=1.17.1"

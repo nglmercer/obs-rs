@@ -1,0 +1,74 @@
+import { Button, ScrollView, HorizontalBox, VerticalBox, Slider } from "std-widgets.slint";
+import { MixerRow } from "models.slint";
+
+export component MixerDock inherits Rectangle {
+    in property <string> locale;
+    in property <[MixerRow]> mixer-rows;
+    callback set-mixer-gain(string, int);
+    callback toggle-mixer-mute(string);
+
+                    background: rgb(31, 41, 55);
+                    border-radius: 8px;
+                    horizontal-stretch: 3;
+                    VerticalBox {
+                        padding: 14px;
+                        spacing: 8px;
+                        Text {
+                            text: locale == "es" ? "Mezclador de audio" : "Audio Mixer";
+                            color: rgb(249, 250, 251);
+                            font-size: 18px;
+                            font-weight: 700;
+                        }
+                        ScrollView {
+                            vertical-stretch: 1;
+                            for channel in mixer-rows : Rectangle {
+                                height: 86px;
+                                background: rgb(39, 52, 73);
+                                border-radius: 5px;
+                                VerticalBox {
+                                    padding: 8px;
+                                    spacing: 4px;
+                                    HorizontalBox {
+                                        spacing: 6px;
+                                        Text {
+                                            text: channel.name;
+                                            color: rgb(249, 250, 251);
+                                            font-size: 13px;
+                                            horizontal-stretch: 1;
+                                        }
+                                        Text {
+                                            text: channel.muted
+                                                ? (locale == "es" ? "SILENCIADO" : "MUTED")
+                                                : (locale == "es" ? "ACTIVO" : "LIVE");
+                                            color: channel.muted ? rgb(252, 165, 165) : rgb(134, 239, 172);
+                                            font-size: 10px;
+                                        }
+                                        Button {
+                                            text: channel.muted
+                                                ? (locale == "es" ? "Activar" : "Unmute")
+                                                : (locale == "es" ? "Silenciar" : "Mute");
+                                            clicked => toggle-mixer-mute(channel.id);
+                                        }
+                                    }
+                                    Slider {
+                                        minimum: 0;
+                                        maximum: 2;
+                                        step: 0.01;
+                                        value: channel.gain;
+                                        changed => set-mixer-gain(channel.id, round(self.value * 1000));
+                                    }
+                                    Rectangle {
+                                        width: 100%;
+                                        height: 5px;
+                                        background: rgb(15, 23, 42);
+                                        Rectangle {
+                                            width: channel.peak * 100px;
+                                            height: 100%;
+                                            background: channel.muted ? rgb(127, 29, 29) : rgb(34, 197, 94);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+}

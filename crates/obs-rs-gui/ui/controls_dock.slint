@@ -1,0 +1,325 @@
+import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
+
+export component ControlsDock inherits Rectangle {
+    in property <string> locale;
+    in property <string> preview-scene;
+    in property <string> selected-source;
+    in property <string> capture-capabilities;
+    in property <string> preview-metrics;
+    in property <string> source-settings-version;
+    in-out property <string> source-settings;
+    in-out property <string> source-transform;
+    in-out property <string> source-filters;
+    in-out property <string> project-path;
+    in-out property <string> diagnostics-path;
+    in-out property <string> recording-path;
+    in-out property <string> streaming-address;
+    in-out property <string> new-scene-id;
+    in-out property <string> new-scene-name;
+    in-out property <string> scene-name;
+    in-out property <string> new-source-id;
+    in-out property <string> new-source-kind;
+    in-out property <string> new-source-name;
+    in property <string> transition;
+    in property <bool> recording;
+    in property <bool> streaming;
+    in property <string> recovery-status;
+    in property <string> output-status;
+    in property <string> output-metrics;
+    in property <string> status-message;
+    callback save-project();
+    callback load-project();
+    callback recover-project();
+    callback export-diagnostics();
+    callback add-scene(string, string);
+    callback rename-scene();
+    callback add-source(string, string, string);
+    callback apply-source-settings();
+    callback apply-source-transform();
+    callback apply-source-filters();
+    callback swap-scenes();
+    callback cut-transition();
+    callback fade-transition();
+    callback toggle-recording();
+    callback toggle-streaming();
+
+                    background: rgb(31, 41, 55);
+                    border-radius: 8px;
+                    horizontal-stretch: 2;
+                    VerticalBox {
+                        padding: 14px;
+                        spacing: 8px;
+                        Text {
+                            text: locale == "es" ? "Controles" : "Controls";
+                            color: rgb(249, 250, 251);
+                            font-size: 18px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: locale == "es" ? "Archivo del proyecto" : "Project file";
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        HorizontalBox {
+                            spacing: 6px;
+                            LineEdit {
+                                text <=> project-path;
+                                placeholder-text: "obs-rs-project.txt";
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: locale == "es" ? "Guardar" : "Save";
+                                clicked => save-project();
+                            }
+                            Button {
+                                text: locale == "es" ? "Cargar" : "Load";
+                                clicked => load-project();
+                            }
+                            Button {
+                                text: locale == "es" ? "Recuperar" : "Recover";
+                                clicked => recover-project();
+                            }
+                            Button {
+                                text: locale == "es" ? "Diagnóstico" : "Diagnostics";
+                                clicked => export-diagnostics();
+                            }
+                        }
+                        LineEdit {
+                            text <=> diagnostics-path;
+                            placeholder-text: "obs-rs-diagnostics.obsrdg";
+                        }
+                        Text {
+                            text: locale == "es" ? "Editor de escenas" : "Scene editor";
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        HorizontalBox {
+                            spacing: 6px;
+                            LineEdit {
+                                text <=> new-scene-id;
+                                placeholder-text: "scene-id";
+                                horizontal-stretch: 1;
+                            }
+                            LineEdit {
+                                text <=> new-scene-name;
+                                placeholder-text: "Scene name";
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: locale == "es" ? "Añadir" : "Add";
+                                clicked => add-scene(new-scene-id, new-scene-name);
+                            }
+                        }
+                        HorizontalBox {
+                            spacing: 6px;
+                            LineEdit {
+                                text <=> scene-name;
+                                placeholder-text: locale == "es" ? "Nombre de escena" : "Scene name";
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: locale == "es" ? "Renombrar" : "Rename";
+                                clicked => rename-scene();
+                            }
+                        }
+                        Text {
+                            text: locale == "es" ? "Editor de fuentes" : "Source editor";
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        HorizontalBox {
+                            spacing: 6px;
+                            LineEdit {
+                                text <=> new-source-id;
+                                placeholder-text: "source-id";
+                                horizontal-stretch: 1;
+                            }
+                            LineEdit {
+                                text <=> new-source-kind;
+                                placeholder-text: "test_pattern";
+                                horizontal-stretch: 1;
+                            }
+                            LineEdit {
+                                text <=> new-source-name;
+                                placeholder-text: "Source name";
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: locale == "es" ? "Añadir" : "Add";
+                                clicked => add-source(
+                                    new-source-id,
+                                    new-source-kind,
+                                    new-source-name
+                                );
+                            }
+                        }
+                        Text {
+                            text: (locale == "es" ? "Añade a la escena de vista previa: " : "Adds to preview scene: ") + preview-scene;
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                        }
+                        Text {
+                            text: capture-capabilities;
+                            color: rgb(148, 163, 184);
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: preview-metrics;
+                            color: rgb(100, 116, 139);
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: locale == "es"
+                                ? "Tipos: color_source · test_pattern · screen_capture · window_capture · camera_capture · x11_screen_capture"
+                                : "Kinds: color_source · test_pattern · screen_capture · window_capture · camera_capture · x11_screen_capture";
+                            color: rgb(100, 116, 139);
+                            font-size: 10px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: (locale == "es" ? "Fuente seleccionada: " : "Selected source: ") + selected-source;
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        TextEdit {
+                            text <=> source-settings;
+                            placeholder-text: "width=640\\nheight=360\\ncolor=#202840FF";
+                            height: 70px;
+                            vertical-stretch: 0;
+                        }
+                        Button {
+                            text: locale == "es" ? "Aplicar ajustes" : "Apply source settings";
+                            clicked => apply-source-settings();
+                        }
+                        Text {
+                            text: locale == "es"
+                                ? "Transformación  ·  escala-x,escala-y,x,y,voltear-x,voltear-y,opacidad"
+                                : "Transform  ·  scale-x,scale-y,x,y,flip-x,flip-y,opacity";
+                            color: rgb(203, 213, 225);
+                            font-size: 12px;
+                        }
+                        LineEdit {
+                            text <=> source-transform;
+                            placeholder-text: "1000,1000,0,0,0,0,255";
+                        }
+                        Button {
+                            text: locale == "es" ? "Aplicar transformación" : "Apply transform";
+                            clicked => apply-source-transform();
+                        }
+                        Text {
+                            text: (locale == "es" ? "Filtros  ·  " : "Filters  ·  ") + source-filters;
+                            color: rgb(203, 213, 225);
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        LineEdit {
+                            text <=> source-filters;
+                            placeholder-text: "gray,brightness:750,opacity:200";
+                        }
+                        Button {
+                            text: locale == "es" ? "Aplicar filtros" : "Apply filters";
+                            clicked => apply-source-filters();
+                        }
+                        Button {
+                            text: locale == "es" ? "Intercambiar vista / aire" : "Swap preview / program";
+                            clicked => swap-scenes();
+                        }
+                        HorizontalBox {
+                            spacing: 8px;
+                            Button {
+                                text: locale == "es" ? "Corte" : "Cut";
+                                clicked => cut-transition();
+                            }
+                            Button {
+                                text: locale == "es" ? "Fundido" : "Fade";
+                                clicked => fade-transition();
+                            }
+                        }
+                        Text {
+                            text: (locale == "es" ? "Transición: " : "Transition: ") + transition;
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                        }
+                        HorizontalBox {
+                            spacing: 8px;
+                            Button {
+                                text: recording
+                                    ? (locale == "es" ? "Detener grabación" : "Stop recording")
+                                    : (locale == "es" ? "Iniciar grabación" : "Start recording");
+                                clicked => toggle-recording();
+                            }
+                            Button {
+                                text: streaming
+                                    ? (locale == "es" ? "Detener transmisión" : "Stop streaming")
+                                    : (locale == "es" ? "Iniciar transmisión" : "Start streaming");
+                                clicked => toggle-streaming();
+                            }
+                        }
+                        Text {
+                            text: locale == "es"
+                                ? "Archivo de grabación (Y4M atómico)"
+                                : "Recording file (atomic Y4M)";
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                        }
+                        LineEdit {
+                            text <=> recording-path;
+                            placeholder-text: "obs-rs-recording.y4m";
+                        }
+                        Text {
+                            text: locale == "es"
+                                ? "Dirección de transmisión (TCP Rust o ws://)"
+                                : "Streaming address (Rust TCP or ws://)";
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                        }
+                        LineEdit {
+                            text <=> streaming-address;
+                            placeholder-text: "127.0.0.1:9000";
+                        }
+                        Text {
+                            text: recovery-status;
+                            color: rgb(251, 191, 36);
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: recording
+                                ? (locale == "es" ? "Grabación: activa" : "Recording: active")
+                                : (locale == "es" ? "Grabación: detenida" : "Recording: stopped");
+                            color: recording ? rgb(252, 165, 165) : rgb(148, 163, 184);
+                            font-size: 13px;
+                        }
+                        Text {
+                            text: streaming
+                                ? (locale == "es" ? "Transmisión: activa" : "Streaming: active")
+                                : (locale == "es" ? "Transmisión: detenida" : "Streaming: stopped");
+                            color: streaming ? rgb(252, 165, 165) : rgb(148, 163, 184);
+                            font-size: 13px;
+                        }
+                        Text {
+                            text: output-status;
+                            color: rgb(251, 191, 36);
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: output-metrics;
+                            color: rgb(148, 163, 184);
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        Text {
+                            text: status-message;
+                            color: rgb(147, 197, 253);
+                            wrap: word-wrap;
+                        }
+                    }
+}

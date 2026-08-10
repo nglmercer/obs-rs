@@ -1,0 +1,222 @@
+use obs_rs_media::FrameTransition;
+
+use super::{
+    error::UiError,
+    helpers::{first_scene_id, first_source_id, project_has_scene, project_has_source},
+    state::DesktopState,
+    types::{UiAction, UiCommand, UiNotice},
+    MAX_UI_NOTICES,
+};
+
+impl DesktopState {
+    pub(crate) fn ensure_scene(&self, id: &str) -> Result<(), UiError> {
+        let profile = self
+            .project
+            .project()
+            .profiles()
+            .find(|profile| profile.id() == self.project.project().active_profile())
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "profile",
+                id: self.project.project().active_profile().to_string(),
+            })?;
+        if profile.scenes().any(|scene| scene.id().as_str() == id) {
+            Ok(())
+        } else {
+            Err(UiError::UnknownSelection {
+                kind: "scene",
+                id: id.to_owned(),
+            })
+        }
+    }
+
+    pub(crate) fn sync_selections_after_project_update(&mut self) {
+        let (preview_valid, program_valid, selected_valid) = {
+            let project = self.project.project();
+            let preview_valid = self
+                .preview_scene
+                .as_ref()
+                .is_some_and(|scene| project_has_scene(project, scene));
+            let program_valid = self
+                .program_scene
+                .as_ref()
+                .is_some_and(|scene| project_has_scene(project, scene));
+            let selected_valid = match (&self.preview_scene, &self.selected_source) {
+                (Some(scene), Some(source)) => project_has_source(project, scene, source),
+                _ => false,
+            };
+            (preview_valid, program_valid, selected_valid)
+        };
+        if !preview_valid {
+            self.preview_scene = first_scene_id(self.project.project());
+        }
+        if !program_valid {
+            self.program_scene = first_scene_id(self.project.project());
+        }
+        if !selected_valid {
+            self.selected_source = self
+                .preview_scene
+                .as_ref()
+                .and_then(|scene| first_source_id(self.project.project(), scene));
+        }
+    }
+
+    pub(crate) fn ensure_source(&self, id: &str) -> Result<(), UiError> {
+        let preview_scene = self
+            .preview_scene()
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "scene",
+                id: "none".to_owned(),
+            })?;
+        let profile = self
+            .project
+            .project()
+            .profiles()
+            .find(|profile| profile.id() == self.project.project().active_profile())
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "profile",
+                id: self.project.project().active_profile().to_string(),
+            })?;
+        let scene = profile
+            .scenes()
+            .find(|scene| scene.id().as_str() == preview_scene)
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "scene",
+                id: preview_scene.to_owned(),
+            })?;
+        if scene
+            .sources()
+            .iter()
+            .any(|source| source.id().as_str() == id)
+        {
+            Ok(())
+        } else {
+            Err(UiError::UnknownSelection {
+                kind: "source",
+                id: id.to_owned(),
+            })
+        }
+    }
+
+    pub(crate) fn dispatch_action(&mut self, action: UiAction) -> Result<(), UiError> {
+        match action {
+            UiAction::SwapPreviewProgram => {
+                std::mem::swap(&mut self.preview_scene, &mut self.program_scene);
+                Ok(())
+            }
+            UiAction::StartRecording => self.dispatch(UiCommand::StartRecording),
+            UiAction::StopRecording => self.dispatch(UiCommand::StopRecording),
+            UiAction::StartStreaming => self.dispatch(UiCommand::StartStreaming),
+            UiAction::StopStreaming => self.dispatch(UiCommand::StopStreaming),
+        }
+    }
+
+    pub(crate) fn set_mixer_gain(&mut self, id: &str, gain_milli: u16) -> Result<(), UiError> {
+        if gain_milli > 2_000 {
+            return Err(UiError::InvalidMixerGain(gain_milli));
+        }
+        let source = *self
+            .mixer_sources
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        self.audio_mixer
+            .set_gain(source, f32::from(gain_milli) / 1_000.0)?;
+        let channel = self
+            .mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        channel.gain_milli = gain_milli;
+        Ok(())
+    }
+
+    pub(crate) fn set_recording(&mut self, active: bool) -> Result<&'static str, UiError> {
+        if active && self.recording {
+            return Err(UiError::RecordingAlreadyActive);
+        }
+        if !active && !self.recording {
+            return Err(UiError::RecordingNotActive);
+        }
+        self.recording = active;
+        Ok(if active {
+            "recording started"
+        } else {
+            "recording stopped"
+        })
+    }
+
+    pub(crate) fn set_streaming(&mut self, active: bool) -> Result<&'static str, UiError> {
+        if active && self.streaming {
+            return Err(UiError::StreamingAlreadyActive);
+        }
+        if !active && !self.streaming {
+            return Err(UiError::StreamingNotActive);
+        }
+        self.streaming = active;
+        Ok(if active {
+            "streaming started"
+        } else {
+            "streaming stopped"
+        })
+    }
+
+    pub(crate) fn set_transition(&mut self, transition: FrameTransition) -> Result<(), UiError> {
+        if let FrameTransition::CrossFade { progress_milli } = transition {
+            FrameTransition::cross_fade(progress_milli).map_err(UiError::Media)?;
+        }
+        self.transition = transition;
+        Ok(())
+    }
+
+    pub(crate) fn take_preview(
+        &mut self,
+        transition: FrameTransition,
+    ) -> Result<&'static str, UiError> {
+        let preview = self
+            .preview_scene
+            .clone()
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "preview scene",
+                id: "none".to_owned(),
+            })?;
+        self.set_transition(transition)?;
+        self.program_scene = Some(preview);
+        Ok("preview sent to program")
+    }
+
+    pub(crate) fn toggle_mixer_mute(&mut self, id: &str) -> Result<&'static str, UiError> {
+        let source = *self
+            .mixer_sources
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        let muted = !self
+            .mixer_channels
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
+            .muted;
+        self.audio_mixer.set_muted(source, muted)?;
+        self.mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
+            .muted = muted;
+        Ok(if muted {
+            "mixer channel muted"
+        } else {
+            "mixer channel unmuted"
+        })
+    }
+
+    pub(crate) fn notice(&mut self, message: &str) -> Result<(), UiError> {
+        let sequence = self.next_notice_sequence;
+        self.next_notice_sequence = self
+            .next_notice_sequence
+            .checked_add(1)
+            .ok_or(UiError::NoticeSequenceExhausted)?;
+        if self.notices.len() == MAX_UI_NOTICES {
+            let _ = self.notices.pop_front();
+        }
+        self.notices.push_back(UiNotice {
+            sequence,
+            message: message.to_owned(),
+        });
+        Ok(())
+    }
+}

@@ -1,0 +1,383 @@
+use super::*;
+use crate::helpers::escape_html;
+use obs_rs_audio::AudioBuffer;
+use obs_rs_audio::AudioFormat;
+use obs_rs_config::Config;
+use obs_rs_media::{FrameRate, FrameTransition, MediaError, Timestamp, VideoFormat};
+use obs_rs_project::{Profile, Project, ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
+
+fn project() -> Project {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut project = Project::new("UI fixture").expect("project");
+    let mut profile = Profile::new("live", "Live", format).expect("profile");
+    profile
+        .add_scene(SceneSpec::new("preview", "Preview").expect("scene"))
+        .expect("scene");
+    profile
+        .add_scene(SceneSpec::new("program", "Program").expect("scene"))
+        .expect("scene");
+    let mut source_scene = SceneSpec::new("source_scene", "Source").expect("scene");
+    source_scene
+        .add_source(
+            SourceSpec::new("source", "color_source", "Color", Config::new()).expect("source"),
+        )
+        .expect("source");
+    profile.add_scene(source_scene).expect("scene");
+    project.add_profile(profile).expect("profile");
+    project
+}
+
+#[test]
+fn desktop_state_selects_scenes_and_tracks_outputs() {
+    let mut state = DesktopState::new(project());
+    assert_eq!(state.preview_scene(), Some("preview"));
+    assert_eq!(state.program_scene(), Some("preview"));
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("program selection");
+    state
+        .dispatch(UiCommand::StartRecording)
+        .expect("recording start");
+    assert!(state.recording());
+    assert!(!state.is_dirty());
+    assert_eq!(state.notices().count(), 2);
+}
+
+#[test]
+fn desktop_state_selects_source_items_in_preview_scene() {
+    let mut state = DesktopState::new(project());
+    assert_eq!(state.selected_source(), None);
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("source scene selection");
+    assert_eq!(state.selected_source(), Some("source"));
+    state
+        .dispatch(UiCommand::SelectSource {
+            id: "source".to_owned(),
+        })
+        .expect("source selection");
+    assert_eq!(state.selected_source(), Some("source"));
+}
+
+#[test]
+fn shortcuts_trigger_actions_and_reject_duplicates() {
+    let mut state = DesktopState::new(project());
+    let shortcut = Shortcut::new(1, "F9").expect("shortcut");
+    state
+        .dispatch(UiCommand::BindShortcut {
+            shortcut: shortcut.clone(),
+            action: UiAction::StartStreaming,
+        })
+        .expect("bind");
+    assert_eq!(
+        state.shortcut_action(&shortcut),
+        Some(UiAction::StartStreaming)
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::BindShortcut {
+            shortcut: shortcut.clone(),
+            action: UiAction::StopStreaming,
+        }),
+        Err(UiError::DuplicateShortcut(shortcut.clone()))
+    );
+    state
+        .dispatch(UiCommand::TriggerShortcut { shortcut })
+        .expect("trigger");
+    assert!(state.streaming());
+}
+
+#[test]
+fn project_commands_keep_dirty_state_and_transitions_validate() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::Project(ProjectCommand::SetActiveProfile {
+            id: "live".to_owned(),
+        }))
+        .expect("project command");
+    assert!(state.is_dirty());
+    state
+        .dispatch(UiCommand::SetTransition {
+            transition: FrameTransition::cross_fade(500).expect("transition"),
+        })
+        .expect("transition");
+    assert_eq!(
+        state.transition(),
+        FrameTransition::CrossFade {
+            progress_milli: 500
+        }
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::SetTransition {
+            transition: FrameTransition::CrossFade {
+                progress_milli: 1_001
+            },
+        }),
+        Err(UiError::Media(MediaError::InvalidTransition {
+            progress_milli: 1_001
+        }))
+    );
+    state
+        .dispatch(UiCommand::TakePreview {
+            transition: FrameTransition::Cut,
+        })
+        .expect("take preview");
+    assert_eq!(state.program_scene(), state.preview_scene());
+}
+
+#[test]
+fn mixer_commands_update_real_audio_controls() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SetMixerGain {
+            id: "desktop".to_owned(),
+            gain_milli: 1_500,
+        })
+        .expect("mixer gain");
+    state
+        .dispatch(UiCommand::ToggleMixerMute {
+            id: "desktop".to_owned(),
+        })
+        .expect("mixer mute");
+
+    let desktop = state
+        .mixer_channels()
+        .find(|channel| channel.id() == "desktop")
+        .expect("desktop mixer channel");
+    assert_eq!(desktop.gain_milli(), 1_500);
+    assert!(desktop.muted());
+    assert_eq!(desktop.peak_milli(), 0);
+    assert_eq!(
+        state.dispatch(UiCommand::SetMixerGain {
+            id: "desktop".to_owned(),
+            gain_milli: 2_001,
+        }),
+        Err(UiError::InvalidMixerGain(2_001))
+    );
+}
+
+#[test]
+fn mixer_updates_visible_peak_meters_from_real_audio() {
+    let mut state = DesktopState::new(project());
+    let format = AudioFormat::new(48_000, 2).expect("audio format");
+    let input = AudioBuffer::new(format, Timestamp::ZERO, vec![0.75; 8]).expect("audio input");
+    let output = state
+        .mix_audio(Timestamp::ZERO, 4, &[("desktop", &input)])
+        .expect("audio mix");
+    assert_eq!(output.samples(), &[0.75; 8]);
+    assert_eq!(
+        state
+            .mixer_channels()
+            .find(|channel| channel.id() == "desktop")
+            .expect("desktop channel")
+            .peak_milli(),
+        750
+    );
+}
+
+#[test]
+fn desktop_state_persists_project_editor_changes() {
+    let final_path = std::env::temp_dir().join(format!(
+        "obs-rs-ui-persistence-{}.project",
+        std::process::id()
+    ));
+    let temp_path = final_path.with_file_name("obs-rs-ui-persistence.project.tmp");
+    let store = ProjectFileStore::new(&final_path, &temp_path).expect("project store");
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::Project(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: SceneSpec::new("studio", "Studio").expect("scene"),
+        }))
+        .expect("add scene");
+    assert!(state.is_dirty());
+    let document = state.project_document();
+
+    let bytes = state.save_project(&store).expect("save project");
+    assert_eq!(bytes, document.len());
+    assert!(!state.is_dirty());
+
+    let mut loaded = DesktopState::new(project());
+    loaded.load_project(&store).expect("load project");
+    assert_eq!(loaded.project_document(), document);
+    assert!(!loaded.is_dirty());
+    assert_eq!(loaded.preview_scene(), Some("preview"));
+    assert!(!temp_path.exists());
+
+    std::fs::remove_file(final_path).expect("remove project fixture");
+}
+
+#[test]
+fn console_parser_covers_state_and_output_commands() {
+    assert_eq!(
+        parse_console_command("preview program"),
+        Ok(ConsoleCommand::Apply(UiCommand::SelectPreviewScene {
+            id: "program".to_owned(),
+        }))
+    );
+    assert_eq!(
+        parse_console_command("record start"),
+        Ok(ConsoleCommand::Apply(UiCommand::StartRecording))
+    );
+    assert_eq!(
+        parse_console_command("transition fade 500"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::CrossFade {
+                progress_milli: 500,
+            },
+        }))
+    );
+    assert_eq!(
+        parse_console_command("take fade 500"),
+        Ok(ConsoleCommand::Apply(UiCommand::TakePreview {
+            transition: FrameTransition::CrossFade {
+                progress_milli: 500,
+            },
+        }))
+    );
+    assert_eq!(
+        parse_console_command("mixer desktop gain 1500"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetMixerGain {
+            id: "desktop".to_owned(),
+            gain_milli: 1_500,
+        }))
+    );
+    assert_eq!(
+        parse_console_command("mixer mic mute"),
+        Ok(ConsoleCommand::Apply(UiCommand::ToggleMixerMute {
+            id: "mic".to_owned(),
+        }))
+    );
+    assert_eq!(
+        parse_console_command("not-a-command"),
+        Err(ConsoleCommandError::UnknownCommand(
+            "not-a-command".to_owned()
+        ))
+    );
+    assert_eq!(
+        parse_console_command("transition fade 1001"),
+        Err(ConsoleCommandError::InvalidTransition(
+            MediaError::InvalidTransition {
+                progress_milli: 1_001,
+            },
+        ))
+    );
+}
+
+#[test]
+fn console_commands_drive_desktop_state_without_duplicate_logic() {
+    let mut state = DesktopState::new(project());
+    for line in ["program program", "swap", "record start", "stream start"] {
+        let command = parse_console_command(line).expect("console command");
+        if let ConsoleCommand::Apply(command) = command {
+            state.dispatch(command).expect("state command");
+        }
+    }
+
+    assert_eq!(state.preview_scene(), Some("program"));
+    assert_eq!(state.program_scene(), Some("preview"));
+    assert!(state.recording());
+    assert!(state.streaming());
+}
+
+#[test]
+fn web_request_parser_routes_bounded_browser_commands() {
+    assert_eq!(
+        parse_web_request(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        Ok(WebRoute::Home)
+    );
+    assert_eq!(
+        parse_web_request(b"GET /snapshot HTTP/1.1\r\n\r\n"),
+        Ok(WebRoute::Snapshot)
+    );
+    let body = "transition fade 500";
+    let request = format!(
+        "POST /command HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    assert_eq!(
+        parse_web_request(request.as_bytes()),
+        Ok(WebRoute::Command(body.to_owned()))
+    );
+    assert_eq!(
+        parse_web_request(b"POST /command HTTP/1.1\r\nContent-Length: 2\r\n\r\nswap"),
+        Err(WebRequestError::ContentLengthMismatch {
+            expected: 2,
+            actual: 4
+        })
+    );
+    assert_eq!(
+        parse_console_command("language es"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetLocale {
+            locale: UiLocale::Spanish
+        }))
+    );
+    assert_eq!(
+        parse_web_request(b"DELETE / HTTP/1.1\r\n\r\n"),
+        Err(WebRequestError::UnsupportedMethod("DELETE".to_owned()))
+    );
+}
+
+#[test]
+fn localized_snapshot_uses_the_selected_language() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SetLocale {
+            locale: UiLocale::Spanish,
+        })
+        .expect("locale selection");
+    let snapshot = state.accessible_snapshot();
+    assert!(snapshot.contains("Proyecto:"));
+    assert!(snapshot.contains("Mezclador de audio:"));
+    assert!(snapshot.contains("(es)"));
+}
+
+#[test]
+fn web_page_is_accessible_and_escapes_snapshot_text() {
+    let state = DesktopState::new(project());
+    let page = state.web_page();
+    assert!(page.contains("<main id=\"main\""));
+    assert!(page.contains("aria-live=\"polite\""));
+    assert!(page.contains("data-command=\"swap\""));
+    assert!(page.contains("data-command=\"take fade 500\""));
+    assert!(page.contains("OBS-RS desktop state"));
+    let mut spanish = DesktopState::new(project());
+    spanish
+        .dispatch(UiCommand::SetLocale {
+            locale: UiLocale::Spanish,
+        })
+        .expect("locale selection");
+    let spanish_page = spanish.web_page();
+    assert!(spanish_page.contains("<html lang=\"es\">"));
+    assert!(spanish_page.contains("Estado actual"));
+    assert_eq!(escape_html("<&\"'>"), "&lt;&amp;&quot;&#39;&gt;");
+    assert_eq!(
+        parse_web_request(&vec![b'x'; MAX_WEB_REQUEST_BYTES + 1]),
+        Err(WebRequestError::TooLarge)
+    );
+}
+
+#[test]
+fn accessible_snapshot_contains_labeled_state_and_scene_markers() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("program selection");
+    state
+        .dispatch(UiCommand::StartRecording)
+        .expect("recording start");
+    let snapshot = state.accessible_snapshot();
+
+    assert!(snapshot.contains("OBS-RS desktop state"));
+    assert!(snapshot.contains("Preview scene: preview"));
+    assert!(snapshot.contains("Program scene: program"));
+    assert!(snapshot.contains("Recording: active"));
+    assert!(snapshot.contains("- preview: Preview [preview]"));
+    assert!(snapshot.contains("- program: Program [program]"));
+    assert!(snapshot.contains("Recent notices:"));
+}

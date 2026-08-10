@@ -1,0 +1,464 @@
+use super::*;
+use obs_rs_media::Timestamp;
+
+struct FakeClock {
+    now: Timestamp,
+    requested_deadlines: Vec<Timestamp>,
+}
+
+impl AudioClock for FakeClock {
+    fn now(&self) -> Timestamp {
+        self.now
+    }
+
+    fn sleep_until(&mut self, deadline: Timestamp) {
+        self.requested_deadlines.push(deadline);
+        if deadline > self.now {
+            self.now = deadline;
+        }
+    }
+}
+
+struct LateClock {
+    now: Timestamp,
+    delay_nanos: u64,
+    requested_deadlines: Vec<Timestamp>,
+}
+
+impl AudioClock for LateClock {
+    fn now(&self) -> Timestamp {
+        self.now
+    }
+
+    fn sleep_until(&mut self, deadline: Timestamp) {
+        self.requested_deadlines.push(deadline);
+        self.now = Timestamp::from_nanos(deadline.as_nanos().saturating_add(self.delay_nanos));
+    }
+}
+
+fn format() -> AudioFormat {
+    AudioFormat::new(48_000, 2).expect("valid audio format")
+}
+
+fn buffer(values: &[f32]) -> AudioBuffer {
+    AudioBuffer::new(format(), Timestamp::ZERO, values.to_vec()).expect("valid buffer")
+}
+
+#[test]
+fn validates_interleaved_buffers() {
+    assert_eq!(AudioFormat::new(0, 2), Err(AudioError::InvalidFormat));
+    assert_eq!(
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.0]),
+        Err(AudioError::SamplesNotInterleaved {
+            samples: 1,
+            channels: 2
+        })
+    );
+    assert_eq!(
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![f32::NAN, 0.0]),
+        Err(AudioError::NonFiniteSample)
+    );
+}
+
+#[test]
+fn callback_clock_tracks_device_edges_and_bounded_correction() {
+    let mut clock = AudioCallbackClock::new(format());
+    let first = clock
+        .observe_callback(Timestamp::from_millis(10), 480)
+        .expect("first callback");
+    assert_eq!(first.drift_nanos(), 0);
+    clock
+        .set_correction_ppm(1_000)
+        .expect("correction is within bounds");
+    let second = clock
+        .observe_callback(Timestamp::from_nanos(20_010_000), 480)
+        .expect("second callback");
+    assert_eq!(
+        second.expected_timestamp(),
+        Timestamp::from_nanos(20_010_000)
+    );
+    assert_eq!(second.drift_nanos(), 0);
+    assert_eq!(clock.delivered_frames(), 960);
+    assert_eq!(clock.correction_ppm(), 1_000);
+    assert_eq!(
+        clock.set_correction_ppm(MAX_CALLBACK_CORRECTION_PPM + 1),
+        Err(AudioError::CallbackCorrectionOutOfRange {
+            ppm: MAX_CALLBACK_CORRECTION_PPM + 1
+        })
+    );
+    assert_eq!(
+        clock.observe_callback(Timestamp::from_millis(19), 480),
+        Err(AudioError::CallbackTimestampRegression {
+            previous: Timestamp::from_nanos(20_010_000),
+            actual: Timestamp::from_millis(19)
+        })
+    );
+}
+
+#[test]
+fn queue_bounds_complete_buffers() {
+    let mut queue = AudioQueue::new(format(), 3, AudioDropPolicy::DropOldest).expect("valid queue");
+    queue
+        .push(buffer(&[0.1, 0.1, 0.2, 0.2]))
+        .expect("first buffer");
+    queue.push(buffer(&[0.3, 0.3])).expect("second buffer");
+    assert_eq!(queue.queued_frames(), 3);
+    assert_eq!(
+        queue.push(buffer(&[0.4, 0.4])).expect("third buffer"),
+        AudioPushOutcome::DroppedOldest { frames: 2 }
+    );
+    assert_eq!(
+        queue.pop().expect("remaining buffer").sample(0, 0),
+        Some(0.3)
+    );
+    assert_eq!(queue.queued_frames(), 1);
+}
+
+#[test]
+fn mixer_applies_gain_mute_and_clamp() {
+    let mut mixer = AudioMixer::new(format());
+    let loud = mixer.add_source(2.0).expect("source");
+    let muted = mixer.add_source(1.0).expect("source");
+    mixer.set_muted(muted, true).expect("mute source");
+    let loud_buffer = buffer(&[0.75, -0.75]);
+    let muted_buffer = buffer(&[1.0, 1.0]);
+
+    let output = mixer
+        .mix(
+            Timestamp::from_millis(10),
+            1,
+            &[(loud, &loud_buffer), (muted, &muted_buffer)],
+        )
+        .expect("mix succeeds");
+    assert_eq!(output.timestamp(), Timestamp::from_millis(10));
+    assert_eq!(output.samples(), &[1.0, -1.0]);
+}
+
+#[test]
+fn mixer_applies_stereo_pan_and_rejects_invalid_values() {
+    let mut mixer = AudioMixer::new(format());
+    let source = mixer.add_source(1.0).expect("source");
+    assert_eq!(mixer.set_pan(source, 2.0), Err(AudioError::InvalidPan));
+    assert_eq!(mixer.set_pan(source, f32::NAN), Err(AudioError::InvalidPan));
+    mixer.set_pan(source, 1.0).expect("right pan");
+
+    let output = mixer
+        .mix(Timestamp::ZERO, 1, &[(source, &buffer(&[0.75, 0.5]))])
+        .expect("mix succeeds");
+    assert_eq!(output.samples(), &[0.0, 0.5]);
+}
+
+#[test]
+fn mixer_monitor_taps_are_bounded_and_post_mix() {
+    let mut mixer = AudioMixer::new(format());
+    let source = mixer.add_source(1.0).expect("source");
+    let tap = mixer.add_monitor_tap(1).expect("tap");
+    let first = AudioBuffer::new(format(), Timestamp::ZERO, vec![0.25, 0.5]).expect("first input");
+    let second = AudioBuffer::new(format(), Timestamp::from_millis(1), vec![0.75, 1.0])
+        .expect("second input");
+
+    mixer
+        .mix(Timestamp::ZERO, 1, &[(source, &first)])
+        .expect("first mix");
+    mixer
+        .mix(Timestamp::from_millis(1), 1, &[(source, &second)])
+        .expect("second mix");
+
+    assert_eq!(mixer.monitor_dropped_buffers(tap), Ok(1));
+    let monitored = mixer
+        .pop_monitor_buffer(tap)
+        .expect("tap exists")
+        .expect("latest buffer");
+    assert_eq!(monitored.timestamp(), Timestamp::from_millis(1));
+    assert_eq!(monitored.samples(), &[0.75, 1.0]);
+    assert_eq!(mixer.pop_monitor_buffer(tap), Ok(None));
+    assert_eq!(
+        AudioMonitorTap::new(0).map(|_| ()),
+        Err(AudioError::ZeroMonitorCapacity)
+    );
+}
+
+#[test]
+fn mixer_rejects_duplicate_and_unknown_inputs() {
+    let mut mixer = AudioMixer::new(format());
+    let source = mixer.add_source(1.0).expect("source");
+    let input = buffer(&[0.1, 0.2]);
+
+    assert_eq!(
+        mixer.mix(Timestamp::ZERO, 1, &[(source, &input), (source, &input)]),
+        Err(AudioError::DuplicateInput(source))
+    );
+    assert_eq!(
+        mixer.mix(Timestamp::ZERO, 1, &[(AudioSourceId(99), &input)]),
+        Err(AudioError::UnknownSource(AudioSourceId(99)))
+    );
+}
+
+#[test]
+fn resampler_changes_rate_and_preserves_channel_layout() {
+    let input_format = AudioFormat::new(48_000, 1).expect("input format");
+    let output_format = AudioFormat::new(24_000, 1).expect("output format");
+    let input = AudioBuffer::new(
+        input_format,
+        Timestamp::from_millis(2),
+        vec![0.0, 1.0, 0.0, -1.0],
+    )
+    .expect("input buffer");
+    let resampler = AudioResampler::new(input_format, output_format).expect("resampler");
+    let output = resampler.process(&input).expect("resample succeeds");
+
+    assert_eq!(output.format(), output_format);
+    assert_eq!(output.frames(), 2);
+    assert_eq!(output.timestamp(), Timestamp::from_millis(2));
+    assert_eq!(output.samples(), &[0.0, 0.0]);
+}
+
+#[test]
+fn resampler_rejects_different_channel_counts() {
+    let input = AudioFormat::new(48_000, 1).expect("input format");
+    let output = AudioFormat::new(48_000, 2).expect("output format");
+
+    assert_eq!(
+        AudioResampler::new(input, output),
+        Err(AudioError::ChannelMismatch)
+    );
+}
+
+#[test]
+fn scheduler_and_buffer_end_use_sample_clock_timestamps() {
+    let mono = AudioFormat::new(48_000, 1).expect("mono format");
+    let mut scheduler = AudioScheduler::new(mono);
+    assert_eq!(
+        scheduler.next_deadline().expect("first deadline"),
+        AudioDeadline {
+            index: 0,
+            timestamp: Timestamp::ZERO
+        }
+    );
+    assert_eq!(
+        scheduler
+            .next_deadline()
+            .expect("second deadline")
+            .timestamp(),
+        Timestamp::from_nanos(20_833)
+    );
+    assert_eq!(
+        scheduler
+            .next_deadline()
+            .expect("third deadline")
+            .timestamp(),
+        Timestamp::from_nanos(41_666)
+    );
+
+    let buffer = AudioBuffer::silence(mono, Timestamp::from_millis(10), 48_000)
+        .expect("one second of silence");
+    assert_eq!(buffer.duration_nanos(), Some(1_000_000_000));
+    assert_eq!(buffer.end_timestamp(), Some(Timestamp::from_millis(1_010)));
+}
+
+#[test]
+fn audio_pacer_advances_by_blocks_with_an_injected_clock() {
+    let mut clock = FakeClock {
+        now: Timestamp::from_millis(5),
+        requested_deadlines: Vec::new(),
+    };
+    let mut pacer = AudioPacer::new(format());
+    assert_eq!(pacer.next(&mut clock, 0), Err(AudioError::ZeroBlock));
+
+    let first = pacer.next(&mut clock, 480).expect("first block");
+    assert_eq!(first.deadline().index(), 0);
+    assert_eq!(first.frames(), 480);
+    assert!(first.missed());
+    assert_eq!(first.waited_nanos(), 0);
+
+    let second = pacer.next(&mut clock, 480).expect("second block");
+    assert_eq!(second.deadline().index(), 480);
+    assert_eq!(second.deadline().timestamp(), Timestamp::from_millis(10));
+    assert_eq!(second.observed_at(), Timestamp::from_millis(10));
+    assert_eq!(second.waited_nanos(), Timestamp::from_millis(5).as_nanos());
+    assert_eq!(
+        clock.requested_deadlines,
+        vec![Timestamp::ZERO, Timestamp::from_millis(10)]
+    );
+}
+
+#[test]
+fn audio_worker_reports_underflow_drop_pressure_and_lateness() {
+    let mut clock = LateClock {
+        now: Timestamp::ZERO,
+        delay_nanos: 100,
+        requested_deadlines: Vec::new(),
+    };
+    let token = AudioCancellationToken::new();
+    let mut worker = AudioWorker::new(format(), 4, AudioDropPolicy::DropNewest).expect("worker");
+    let report = worker
+        .run(
+            &mut clock,
+            2,
+            4,
+            &token,
+            |deadline, output_format, frames| {
+                if deadline.index() == 2 {
+                    return Ok::<_, std::convert::Infallible>(None);
+                }
+                Ok(Some(
+                    AudioBuffer::silence(output_format, deadline.timestamp(), frames)
+                        .expect("valid block"),
+                ))
+            },
+        )
+        .expect("worker run");
+
+    assert_eq!(report.requested_blocks(), 4);
+    assert_eq!(report.processed_blocks(), 4);
+    assert!(!report.cancelled());
+    assert_eq!(report.underflow_blocks(), 1);
+    assert_eq!(report.produced_frames(), 6);
+    assert_eq!(report.dropped_oldest_frames(), 0);
+    assert_eq!(report.dropped_newest_frames(), 2);
+    assert_eq!(report.missed_deadlines(), 4);
+    assert_eq!(report.total_lateness_nanos(), 400);
+    assert_eq!(report.remaining_queue_frames(), 4);
+    assert_eq!(clock.requested_deadlines.len(), 4);
+
+    assert_eq!(worker.take_next().expect("first block").frames(), 2);
+    assert_eq!(worker.take_next().expect("second block").frames(), 2);
+    assert_eq!(worker.take_next(), None);
+}
+
+#[test]
+fn audio_worker_cancels_between_blocks_and_shares_token_state() {
+    let mut clock = FakeClock {
+        now: Timestamp::ZERO,
+        requested_deadlines: Vec::new(),
+    };
+    let token = AudioCancellationToken::new();
+    let callback_token = token.clone();
+    let mut worker = AudioWorker::new(format(), 8, AudioDropPolicy::DropOldest).expect("worker");
+    let report = worker
+        .run(
+            &mut clock,
+            2,
+            10,
+            &token,
+            |deadline, output_format, frames| {
+                if deadline.index() == 2 {
+                    callback_token.cancel();
+                }
+                Ok::<_, std::convert::Infallible>(Some(
+                    AudioBuffer::silence(output_format, deadline.timestamp(), frames)
+                        .expect("valid block"),
+                ))
+            },
+        )
+        .expect("worker run");
+
+    assert_eq!(report.processed_blocks(), 2);
+    assert!(report.cancelled());
+    assert!(token.is_cancelled());
+    assert_eq!(report.remaining_queue_frames(), 4);
+    token.reset();
+    assert!(!token.is_cancelled());
+    worker.reset();
+    assert_eq!(worker.queued_frames(), 0);
+}
+
+#[test]
+fn audio_worker_rejects_wrong_timestamp_before_queueing() {
+    let mut clock = FakeClock {
+        now: Timestamp::ZERO,
+        requested_deadlines: Vec::new(),
+    };
+    let token = AudioCancellationToken::new();
+    let mut worker = AudioWorker::new(format(), 8, AudioDropPolicy::DropOldest).expect("worker");
+    let result = worker.run(&mut clock, 2, 1, &token, |_, output_format, frames| {
+        Ok::<_, std::convert::Infallible>(Some(
+            AudioBuffer::silence(output_format, Timestamp::from_nanos(1), frames)
+                .expect("valid block"),
+        ))
+    });
+
+    assert_eq!(
+        result,
+        Err(AudioWorkerError::Submit(
+            AudioError::BufferTimestampMismatch {
+                expected: Timestamp::ZERO,
+                actual: Timestamp::from_nanos(1),
+            }
+        ))
+    );
+    assert_eq!(worker.queued_frames(), 0);
+}
+
+#[test]
+fn av_sync_reports_signed_drift_and_safe_actions() {
+    let controller = AvSyncController::new(5_000_000);
+    let aligned = controller.observe(Timestamp::from_millis(10), Timestamp::from_millis(12));
+    assert_eq!(aligned.state(), SyncState::InSync);
+    assert_eq!(aligned.action(), SyncAction::Keep);
+    assert_eq!(aligned.delta_nanos(), 2_000_000);
+
+    let audio_behind = controller.observe(Timestamp::from_millis(20), Timestamp::from_millis(1));
+    assert_eq!(audio_behind.state(), SyncState::AudioBehind);
+    assert_eq!(audio_behind.action(), SyncAction::DropEarlyAudio);
+    assert_eq!(audio_behind.delta_nanos(), -19_000_000);
+
+    let audio_ahead = controller.observe(Timestamp::from_millis(1), Timestamp::from_millis(20));
+    assert_eq!(audio_ahead.state(), SyncState::AudioAhead);
+    assert_eq!(audio_ahead.action(), SyncAction::WaitForAudio);
+    assert_eq!(audio_ahead.delta_nanos(), 19_000_000);
+}
+
+#[test]
+fn av_sync_reconciles_early_late_and_obsolete_audio() {
+    let controller = AvSyncController::new(1_000);
+    let early = AudioBuffer::silence(format(), Timestamp::ZERO, 100).expect("early buffer");
+    let trimmed = controller
+        .reconcile(Timestamp::from_millis(1), &early)
+        .expect("trim succeeds")
+        .expect("some audio remains");
+    assert_eq!(trimmed.timestamp(), Timestamp::from_millis(1));
+    assert_eq!(trimmed.frames(), 52);
+
+    let late = AudioBuffer::silence(format(), Timestamp::from_millis(10), 2).expect("late buffer");
+    let prefixed = controller
+        .reconcile(Timestamp::ZERO, &late)
+        .expect("prefix succeeds")
+        .expect("late audio remains");
+    assert_eq!(prefixed.timestamp(), Timestamp::ZERO);
+    assert_eq!(prefixed.frames(), 482);
+    assert_eq!(prefixed.sample(0, 0), Some(0.0));
+    assert_eq!(prefixed.sample(480, 0), Some(0.0));
+
+    let obsolete = AudioBuffer::silence(format(), Timestamp::ZERO, 2).expect("buffer");
+    assert_eq!(
+        controller
+            .reconcile(Timestamp::from_millis(100), &obsolete)
+            .expect("drop succeeds"),
+        None
+    );
+}
+
+#[test]
+fn av_sync_monitor_accumulates_long_run_diagnostics() {
+    let mut monitor = AvSyncMonitor::new(100);
+    for index in 1..=10_000_u64 {
+        let video = Timestamp::from_nanos(index * 1_000_000);
+        let audio = match index % 3 {
+            0 => Timestamp::from_nanos(video.as_nanos() - 200),
+            1 => Timestamp::from_nanos(video.as_nanos() + 50),
+            _ => Timestamp::from_nanos(video.as_nanos() + 1_000),
+        };
+        let _ = monitor.observe(video, audio);
+    }
+
+    let metrics = monitor.metrics();
+    assert_eq!(metrics.observations(), 10_000);
+    assert_eq!(metrics.in_sync(), 3_334);
+    assert_eq!(metrics.audio_behind(), 3_333);
+    assert_eq!(metrics.audio_ahead(), 3_333);
+    assert_eq!(metrics.max_abs_delta_nanos(), 1_000);
+    assert!(metrics.total_abs_delta_nanos() > metrics.max_abs_delta_nanos());
+    monitor.reset();
+    assert_eq!(monitor.metrics(), AvSyncMetrics::default());
+}
