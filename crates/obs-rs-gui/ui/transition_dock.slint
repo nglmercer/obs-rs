@@ -1,0 +1,66 @@
+import { Button, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
+
+export component TransitionDock inherits Rectangle {
+    in property <string> locale;
+    in property <string> transition;
+    callback cut-transition();
+    callback fade-transition();
+    property <string> duration: "300 ms";
+
+    background: rgb(31, 41, 55);
+    border-width: 1px;
+    border-color: rgb(45, 58, 78);
+    border-radius: 8px;
+    horizontal-stretch: 2;
+    VerticalBox {
+        padding: 12px;
+        spacing: 7px;
+        Text {
+            text: locale == "es" ? "Transiciones" : "Scene Transitions";
+            color: rgb(249, 250, 251);
+            font-size: 15px;
+            font-weight: 700;
+        }
+        Button {
+            text: locale == "es" ? "Desvanecimiento" : "Fade";
+            height: 29px;
+            clicked => fade-transition();
+        }
+        HorizontalBox {
+            spacing: 5px;
+            Text {
+                text: locale == "es" ? "Duración" : "Duration";
+                color: rgb(203, 213, 225);
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+            LineEdit {
+                text <=> duration;
+                width: 64px;
+                height: 28px;
+            }
+        }
+        Text {
+            text: (locale == "es" ? "Estado: " : "State: ") + transition;
+            color: rgb(148, 163, 184);
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+        Rectangle { vertical-stretch: 1; }
+        HorizontalBox {
+            spacing: 5px;
+            Button {
+                text: locale == "es" ? "Corte" : "Cut";
+                clicked => cut-transition();
+            }
+            Button {
+                text: "+";
+                accessible-label: locale == "es" ? "Añadir transición" : "Add transition";
+            }
+            Button {
+                text: "⋮";
+                accessible-label: locale == "es" ? "Más opciones de transición" : "More transition options";
+            }
+        }
+    }
+}

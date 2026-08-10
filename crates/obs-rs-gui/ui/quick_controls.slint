@@ -1,0 +1,65 @@
+import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+export component QuickControls inherits Rectangle {
+    in property <string> locale;
+    in property <bool> recording;
+    in property <bool> streaming;
+    in property <int> view-mode;
+    callback toggle-recording();
+    callback toggle-streaming();
+    callback set-view-mode(int);
+    callback open-settings();
+    property <bool> virtual-camera: false;
+
+    height: 64px;
+    background: rgb(39, 52, 73);
+    border-radius: 5px;
+    VerticalBox {
+        padding: 4px;
+        spacing: 3px;
+        HorizontalBox {
+            spacing: 4px;
+            Button {
+                text: streaming
+                    ? (locale == "es" ? "Detener" : "Stop stream")
+                    : (locale == "es" ? "Transmitir" : "Stream");
+                width: 68px;
+                height: 26px;
+                clicked => toggle-streaming();
+            }
+            Button {
+                text: recording
+                    ? (locale == "es" ? "Detener" : "Stop rec")
+                    : (locale == "es" ? "Grabar" : "Record");
+                width: 68px;
+                height: 26px;
+                clicked => toggle-recording();
+            }
+            Button {
+                text: virtual-camera
+                    ? (locale == "es" ? "Cámara: sí" : "Camera: on")
+                    : (locale == "es" ? "Cámara" : "Camera");
+                width: 68px;
+                height: 26px;
+                clicked => { root.virtual-camera = !root.virtual-camera; }
+            }
+        }
+        HorizontalBox {
+            spacing: 4px;
+            Button {
+                text: view-mode == 0
+                    ? (locale == "es" ? "Modo Studio" : "Studio Mode")
+                    : (locale == "es" ? "Solo vista previa" : "Preview Only");
+                width: 134px;
+                height: 26px;
+                clicked => set-view-mode(view-mode == 0 ? 1 : 0);
+            }
+            Button {
+                text: locale == "es" ? "Ajustes" : "Settings";
+                width: 68px;
+                height: 26px;
+                clicked => open-settings();
+            }
+        }
+    }
+}

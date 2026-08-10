@@ -1,4 +1,5 @@
-import { Button, ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { CompactButton } from "theme.slint";
 import { SourceRow } from "models.slint";
 
 export component SourceDock inherits Rectangle {
@@ -11,91 +12,90 @@ export component SourceDock inherits Rectangle {
     callback move-source(string, int);
     callback remove-source(string);
 
-                    background: rgb(31, 41, 55);
-                    border-radius: 8px;
-                    horizontal-stretch: 3;
+    background: rgb(31, 41, 55);
+    border-width: 1px;
+    border-color: rgb(45, 58, 78);
+    border-radius: 8px;
+    horizontal-stretch: 2;
+    VerticalBox {
+        padding: 10px;
+        spacing: 7px;
+        Text {
+            text: (locale == "es" ? "Fuentes  ·  " : "Sources  ·  ") + source-scene;
+            color: rgb(249, 250, 251);
+            font-size: 15px;
+            font-weight: 700;
+            overflow: elide;
+        }
+        Text {
+            text: locale == "es" ? "Elementos de escena" : "Scene items";
+            color: rgb(148, 163, 184);
+            font-size: 10px;
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            for source in source-rows : Rectangle {
+                height: 42px;
+                background: source.selected ? rgb(42, 61, 88) : rgb(39, 52, 73);
+                border-radius: 4px;
+                HorizontalBox {
+                    padding: 5px;
+                    spacing: 5px;
+                    Text {
+                        text: source.order;
+                        color: rgb(96, 165, 250);
+                        font-size: 11px;
+                        width: 15px;
+                        vertical-alignment: center;
+                    }
                     VerticalBox {
-                        padding: 14px;
-                        spacing: 8px;
-                        Text {
-                            text: (locale == "es" ? "Fuentes  ·  " : "Sources  ·  ") + source-scene;
-                            color: rgb(249, 250, 251);
-                            font-size: 18px;
-                            font-weight: 700;
-                        }
-                        Text {
-                            text: locale == "es" ? "Orden de elementos" : "Scene item order";
-                            color: rgb(148, 163, 184);
-                            font-size: 12px;
-                        }
-                        ScrollView {
-                            vertical-stretch: 1;
-                            for source in source-rows : Rectangle {
-                                height: 52px;
-                                background: source.selected ? rgb(30, 64, 175) : rgb(39, 52, 73);
-                                border-radius: 5px;
-                                HorizontalBox {
-                                    padding: 8px;
-                                    spacing: 8px;
-                                    Text {
-                                        text: source.order;
-                                        color: rgb(96, 165, 250);
-                                        font-size: 14px;
-                                        width: 22px;
-                                        vertical-alignment: center;
-                                    }
-                                    VerticalBox {
-                                        spacing: 2px;
-                                        Button {
-                                            text: source.name;
-                                            clicked => select-source(source.id);
-                                        }
-                                        Text {
-                                            text: source.kind + "  ·  " + source.id;
-                                            color: rgb(148, 163, 184);
-                                            font-size: 11px;
-                                        }
-                                    }
-                                    Rectangle { horizontal-stretch: 1; }
-                                    Button {
-                                        text: source.visible
-                                            ? (locale == "es" ? "Ocultar" : "Hide")
-                                            : (locale == "es" ? "Mostrar" : "Show");
-                                        clicked => toggle-source-visibility(source.id);
-                                    }
-                                    Button {
-                                        text: source.locked
-                                            ? (locale == "es" ? "Desbloquear" : "Unlock")
-                                            : (locale == "es" ? "Bloquear" : "Lock");
-                                        clicked => toggle-source-locked(source.id);
-                                    }
-                                    Button {
-                                        text: "↑";
-                                        accessible-label: locale == "es" ? "Mover fuente arriba" : "Move source up";
-                                        enabled: !source.locked;
-                                        clicked => move-source(source.id, -1);
-                                    }
-                                    Button {
-                                        text: "↓";
-                                        accessible-label: locale == "es" ? "Mover fuente abajo" : "Move source down";
-                                        enabled: !source.locked;
-                                        clicked => move-source(source.id, 1);
-                                    }
-                                    Button {
-                                        text: "×";
-                                        accessible-label: locale == "es" ? "Eliminar fuente" : "Remove source";
-                                        enabled: !source.locked;
-                                        clicked => remove-source(source.id);
-                                    }
-                                }
+                        spacing: 1px;
+                        horizontal-stretch: 1;
+                        Rectangle {
+                            height: 18px;
+                            Text {
+                                text: source.name;
+                                color: rgb(249, 250, 251);
+                                font-size: 12px;
+                                overflow: elide;
+                            }
+                            TouchArea {
+                                clicked => select-source(source.id);
                             }
                         }
                         Text {
-                            text: source-rows.length == 0
-                                ? (locale == "es" ? "Sin fuentes" : "No source items")
-                                : "";
+                            text: source.kind + "  ·  " + source.id;
                             color: rgb(148, 163, 184);
-                            font-size: 12px;
+                            font-size: 9px;
+                            overflow: elide;
                         }
                     }
+                    CompactButton {
+                        label: source.visible ? "◉" : "○";
+                        hint: source.visible
+                            ? (locale == "es" ? "Ocultar fuente" : "Hide source")
+                            : (locale == "es" ? "Mostrar fuente" : "Show source");
+                        clicked => toggle-source-visibility(source.id);
+                    }
+                    CompactButton {
+                        label: source.locked ? "▣" : "□";
+                        hint: source.locked
+                            ? (locale == "es" ? "Desbloquear fuente" : "Unlock source")
+                            : (locale == "es" ? "Bloquear fuente" : "Lock source");
+                        clicked => toggle-source-locked(source.id);
+                    }
+                }
+            }
+        }
+        HorizontalBox {
+            spacing: 5px;
+            CompactButton { width: 22px; label: "+"; hint: locale == "es" ? "Añadir fuente" : "Add source"; }
+            CompactButton { width: 22px; label: "▥"; hint: locale == "es" ? "Eliminar fuente seleccionada" : "Remove selected source"; }
+            CompactButton { width: 22px; label: "⚙"; hint: locale == "es" ? "Propiedades de fuente" : "Source properties"; }
+            CompactButton { width: 22px; label: "↑"; hint: locale == "es" ? "Subir fuente" : "Move source up"; }
+            CompactButton { width: 22px; label: "↓"; hint: locale == "es" ? "Bajar fuente" : "Move source down"; }
+            Rectangle { horizontal-stretch: 1; }
+            CompactButton { width: 22px; label: "⋮"; hint: locale == "es" ? "Más opciones" : "More options"; }
+        }
+    }
 }

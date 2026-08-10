@@ -1,4 +1,51 @@
-import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+component StageCard inherits Rectangle {
+    in property <string> title;
+    in property <string> scene;
+    in property <string> subtitle;
+    in property <image> frame;
+    in property <bool> program;
+    background: program ? rgb(22, 15, 24) : rgb(11, 18, 32);
+    border-width: 1px;
+    border-color: program ? rgb(127, 29, 29) : rgb(51, 65, 85);
+    border-radius: 7px;
+    horizontal-stretch: 1;
+
+    VerticalBox {
+        padding: 14px;
+        spacing: 7px;
+        Text {
+            text: root.title;
+            color: root.program ? rgb(248, 113, 113) : rgb(96, 165, 250);
+            font-size: 12px;
+            font-weight: 700;
+        }
+        Rectangle {
+            background: rgb(0, 0, 0);
+            border-radius: 4px;
+            vertical-stretch: 1;
+            Image {
+                source: root.frame;
+                width: 100%;
+                height: 100%;
+                image-fit: contain;
+            }
+        }
+        Text {
+            text: root.scene;
+            color: rgb(249, 250, 251);
+            font-size: 17px;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.subtitle;
+            color: root.program ? rgb(252, 165, 165) : rgb(148, 163, 184);
+            font-size: 11px;
+            horizontal-alignment: center;
+        }
+    }
+}
 
 export component StagePanel inherits Rectangle {
     in property <string> locale;
@@ -6,91 +53,82 @@ export component StagePanel inherits Rectangle {
     in property <string> program-scene;
     in property <image> preview-image;
     in property <image> program-image;
+    in property <int> view-mode;
+    in-out property <string> zoom: "47%";
     horizontal-stretch: 1;
+    vertical-stretch: 4;
+    min-height: 300px;
+    background: rgb(15, 17, 22);
+    border-width: 1px;
+    border-color: rgb(34, 39, 48);
+    border-radius: 5px;
 
+    VerticalBox {
+        padding: 8px;
+        spacing: 7px;
+        if view-mode == 0 : HorizontalBox {
+            spacing: 10px;
+            vertical-stretch: 1;
+            StageCard {
+                title: locale == "es" ? "VISTA PREVIA" : "PREVIEW";
+                scene: preview-scene;
+                subtitle: locale == "es" ? "Escena en cola" : "Queued scene";
+                frame: preview-image;
+                program: false;
+            }
+            StageCard {
+                title: locale == "es" ? "AL AIRE" : "PROGRAM";
+                scene: program-scene;
+                subtitle: locale == "es" ? "Escena al aire" : "On air scene";
+                frame: program-image;
+                program: true;
+            }
+        }
+        if view-mode == 1 : StageCard {
+            title: locale == "es" ? "VISTA PREVIA" : "PREVIEW";
+            scene: preview-scene;
+            subtitle: locale == "es" ? "Vista previa" : "Preview only";
+            frame: preview-image;
+            program: false;
+            vertical-stretch: 1;
+        }
+        Rectangle {
+            height: 25px;
+            background: rgb(20, 24, 31);
             HorizontalBox {
-                spacing: 14px;
-
-                Rectangle {
-                    background: rgb(11, 18, 32);
-                    border-width: 1px;
-                    border-color: rgb(51, 65, 85);
-                    border-radius: 8px;
-                    horizontal-stretch: 1;
-                    min-height: 280px;
-                    VerticalBox {
-                        padding: 16px;
-                        spacing: 8px;
-                        Text {
-                            text: locale == "es" ? "VISTA PREVIA" : "PREVIEW";
-                            color: rgb(96, 165, 250);
-                            font-size: 13px;
-                            font-weight: 700;
-                        }
-                        Rectangle {
-                            background: rgb(3, 7, 18);
-                            border-radius: 5px;
-                            vertical-stretch: 1;
-                            Image {
-                                source: preview-image;
-                                width: 100%;
-                                height: 100%;
-                                image-fit: contain;
-                            }
-                        }
-                        Text {
-                            text: preview-scene;
-                            color: rgb(249, 250, 251);
-                            font-size: 18px;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: locale == "es" ? "Escena en cola" : "Queued scene";
-                            color: rgb(148, 163, 184);
-                            horizontal-alignment: center;
-                        }
-                    }
+                spacing: 7px;
+                Text {
+                    text: zoom;
+                    color: rgb(148, 163, 184);
+                    font-size: 10px;
+                    width: 32px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
                 }
-
-                Rectangle {
-                    background: rgb(22, 15, 24);
-                    border-width: 1px;
-                    border-color: rgb(127, 29, 29);
-                    border-radius: 8px;
-                    horizontal-stretch: 1;
-                    min-height: 280px;
-                    VerticalBox {
-                        padding: 16px;
-                        spacing: 8px;
-                        Text {
-                            text: locale == "es" ? "AL AIRE" : "PROGRAM";
-                            color: rgb(248, 113, 113);
-                            font-size: 13px;
-                            font-weight: 700;
-                        }
-                        Rectangle {
-                            background: rgb(3, 7, 18);
-                            border-radius: 5px;
-                            vertical-stretch: 1;
-                            Image {
-                                source: program-image;
-                                width: 100%;
-                                height: 100%;
-                                image-fit: contain;
-                            }
-                        }
-                        Text {
-                            text: program-scene;
-                            color: rgb(249, 250, 251);
-                            font-size: 18px;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: locale == "es" ? "Escena al aire" : "On air scene";
-                            color: rgb(252, 165, 165);
-                            horizontal-alignment: center;
-                        }
-                    }
+                Button {
+                    text: "−";
+                    height: 22px;
+                    clicked => { zoom = "40%"; }
+                }
+                Button {
+                    text: "+";
+                    height: 22px;
+                    clicked => { zoom = "60%"; }
+                }
+                Button {
+                    text: locale == "es" ? "Ajustar a la ventana" : "Fit to window";
+                    height: 22px;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: view-mode == 0
+                        ? (locale == "es" ? "Studio: vista previa / programa" : "Studio: preview / program")
+                        : (locale == "es" ? "Solo vista previa" : "Preview only");
+                    color: rgb(100, 116, 139);
+                    font-size: 10px;
+                    vertical-alignment: center;
                 }
             }
+        }
+    }
 }

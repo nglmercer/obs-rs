@@ -1,7 +1,11 @@
 use super::refresh::transition_label;
-use super::{initial_project, OutputRuntime, PreviewRenderer};
+use super::{initial_project, refresh_ui, MainWindow, OutputRuntime, PreviewRenderer};
 use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_output::encode_png;
 use obs_rs_project::{ProjectCommand, SceneSpec};
+use obs_rs_ui::DesktopState;
+use slint::ComponentHandle;
+use std::{cell::RefCell, rc::Rc};
 
 #[test]
 fn gui_project_has_control_room_scenes() {
@@ -131,4 +135,44 @@ fn output_runtime_finalizes_an_atomic_y4m_recording() {
     assert_eq!(persisted.len(), bytes);
     assert!(persisted.starts_with(b"YUV4MPEG2"));
     std::fs::remove_file(final_path).expect("remove output fixture");
+}
+
+#[test]
+fn ui_layout_can_render_a_reference_snapshot() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            ..Default::default()
+        },
+    )))
+    .expect("software testing backend should initialize");
+    let ui = MainWindow::new().expect("GUI should instantiate in the testing backend");
+    ui.set_project_path("obs-rs-project.txt".into());
+    ui.set_diagnostics_path("obs-rs-diagnostics.obsrdg".into());
+    ui.set_recording_path("obs-rs-recording.y4m".into());
+    ui.set_streaming_address("127.0.0.1:9000".into());
+    let project = initial_project().expect("initial project");
+    let renderer = Rc::new(RefCell::new(
+        PreviewRenderer::new(&project).expect("preview renderer"),
+    ));
+    let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    refresh_ui(&ui, &state, &renderer);
+    ui.show().expect("testing window should show");
+    let snapshot = ui
+        .window()
+        .take_snapshot()
+        .expect("testing backend should render a snapshot");
+    let format = VideoFormat::new(
+        snapshot.width(),
+        snapshot.height(),
+        FrameRate::new(60, 1).expect("snapshot frame rate"),
+    )
+    .expect("snapshot dimensions");
+    let frame = VideoFrame::new(format, Timestamp::ZERO, snapshot.as_bytes().to_vec())
+        .expect("snapshot RGBA data");
+    let path = std::env::temp_dir().join("obs-rs-gui-reference-snapshot.png");
+    std::fs::write(&path, encode_png(&frame).expect("encode snapshot")).expect("write snapshot");
+    assert!(path.metadata().expect("snapshot metadata").len() > 0);
+    std::fs::remove_file(path).expect("remove snapshot");
+    ui.hide().expect("testing window should hide");
 }

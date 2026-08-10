@@ -1,15 +1,17 @@
 import { HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
-import { StudioHeader } from "header.slint";
+import { AppNavbar } from "navbar.slint";
 import { StagePanel } from "stage.slint";
 import { SceneDock } from "scene_dock.slint";
 import { SourceDock } from "source_dock.slint";
 import { MixerDock } from "mixer_dock.slint";
+import { TransitionDock } from "transition_dock.slint";
 import { ControlsDock } from "controls_dock.slint";
+import { StatusBar } from "status_bar.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
-        height: 860px;
+        height: 900px;
         title: "OBS-RS Studio";
         background: rgb(17, 24, 39);
 
@@ -53,6 +55,15 @@ export component MainWindow inherits Window {
         in-out property <string> new-source-id;
         in-out property <string> new-source-kind;
         in-out property <string> new-source-name;
+
+        property <int> view-mode: 1;
+        property <int> controls-tab: 0;
+        property <bool> show-sources: true;
+        property <bool> show-scenes: true;
+        property <bool> show-mixer: true;
+        property <bool> show-transitions: true;
+        property <bool> show-controls: true;
+        property <bool> settings-open: false;
 
         callback swap-scenes();
         callback toggle-recording();
@@ -101,15 +112,43 @@ export component MainWindow inherits Window {
         }
 
         VerticalBox {
-            padding: 22px;
-            spacing: 12px;
+            padding: 7px;
+            spacing: 7px;
 
-            StudioHeader {
+            AppNavbar {
                 project-title: root.project-title;
                 profile-name: root.profile-name;
                 locale: root.locale;
                 dirty: root.dirty;
                 profile-rows: root.profile-rows;
+                view-mode: root.view-mode;
+                menu-action(action) => {
+                    if action == "save-project" {
+                        root.save-project();
+                    } else if action == "load-project" {
+                        root.load-project();
+                    } else if action == "recover-project" {
+                        root.recover-project();
+                    } else if action == "export-diagnostics" {
+                        root.export-diagnostics();
+                    } else if action == "settings" {
+                        root.settings-open = true;
+                    } else if action == "source-properties" || action == "source-filters" {
+                        root.show-controls = true;
+                        root.controls-tab = 1;
+                    } else if action == "toggle-sources" {
+                        root.show-sources = !root.show-sources;
+                    } else if action == "toggle-scenes" {
+                        root.show-scenes = !root.show-scenes;
+                    } else if action == "toggle-mixer" {
+                        root.show-mixer = !root.show-mixer;
+                    } else if action == "toggle-transitions" {
+                        root.show-transitions = !root.show-transitions;
+                    } else if action == "toggle-controls" {
+                        root.show-controls = !root.show-controls;
+                    }
+                }
+                select-view-mode(mode) => { root.view-mode = mode; }
                 select-profile(id) => { root.select-profile(id); }
                 set-locale(code) => { root.set-locale(code); }
             }
@@ -120,21 +159,14 @@ export component MainWindow inherits Window {
                 program-scene: root.program-scene;
                 preview-image: root.preview-image;
                 program-image: root.program-image;
-                vertical-stretch: 1;
+                view-mode: root.view-mode;
             }
 
             HorizontalBox {
-                spacing: 12px;
-                vertical-stretch: 1;
-                min-height: 230px;
-                SceneDock {
-                    locale: root.locale;
-                    scene-rows: root.scene-rows;
-                    select-preview(id) => { root.select-preview(id); }
-                    select-program(id) => { root.select-program(id); }
-                    remove-scene(id) => { root.remove-scene(id); }
-                }
-                SourceDock {
+                spacing: 8px;
+                vertical-stretch: 2;
+                min-height: 235px;
+                if root.show-sources : SourceDock {
                     locale: root.locale;
                     source-scene: root.source-scene;
                     source-rows: root.source-rows;
@@ -144,13 +176,26 @@ export component MainWindow inherits Window {
                     move-source(id, delta) => { root.move-source(id, delta); }
                     remove-source(id) => { root.remove-source(id); }
                 }
-                MixerDock {
+                if root.show-scenes : SceneDock {
+                    locale: root.locale;
+                    scene-rows: root.scene-rows;
+                    select-preview(id) => { root.select-preview(id); }
+                    select-program(id) => { root.select-program(id); }
+                    remove-scene(id) => { root.remove-scene(id); }
+                }
+                if root.show-mixer : MixerDock {
                     locale: root.locale;
                     mixer-rows: root.mixer-rows;
                     set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
                     toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
                 }
-                ControlsDock {
+                if root.show-transitions : TransitionDock {
+                    locale: root.locale;
+                    transition: root.transition;
+                    cut-transition() => { root.cut-transition(); }
+                    fade-transition() => { root.fade-transition(); }
+                }
+                if root.show-controls : ControlsDock {
                     locale: root.locale;
                     preview-scene: root.preview-scene;
                     selected-source: root.selected-source;
@@ -178,6 +223,9 @@ export component MainWindow inherits Window {
                     output-metrics: root.output-metrics;
                     status-message: root.status-message;
                     snapshot: root.snapshot;
+                    view-mode: root.view-mode;
+                    active-tab <=> root.controls-tab;
+                    settings-open <=> root.settings-open;
                     save-project() => { root.save-project(); }
                     load-project() => { root.load-project(); }
                     recover-project() => { root.recover-project(); }
@@ -193,7 +241,16 @@ export component MainWindow inherits Window {
                     fade-transition() => { root.fade-transition(); }
                     toggle-recording() => { root.toggle-recording(); }
                     toggle-streaming() => { root.toggle-streaming(); }
+                    set-view-mode(mode) => { root.view-mode = mode; }
                 }
+            }
+            StatusBar {
+                locale: root.locale;
+                recording: root.recording;
+                streaming: root.streaming;
+                output-status: root.output-status;
+                output-metrics: root.output-metrics;
+                view-mode: root.view-mode;
             }
         }
     }

@@ -1,0 +1,65 @@
+import { HorizontalBox } from "std-widgets.slint";
+
+export component StatusBar inherits Rectangle {
+    in property <string> locale;
+    in property <bool> recording;
+    in property <bool> streaming;
+    in property <string> output-status;
+    in property <string> output-metrics;
+    in property <int> view-mode;
+    height: 24px;
+    background: rgb(30, 34, 41);
+    border-width: 1px;
+    border-color: rgb(55, 60, 69);
+
+    HorizontalBox {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 10px;
+        Text {
+            text: view-mode == 0
+                ? (locale == "es" ? "Studio" : "Studio")
+                : (locale == "es" ? "Solo vista previa" : "Preview only");
+            color: rgb(147, 197, 253);
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: streaming
+                ? (locale == "es" ? "● TRANSMITIENDO" : "● STREAMING")
+                : (locale == "es" ? "○ transmisión detenida" : "○ stream stopped");
+            color: streaming ? rgb(248, 113, 113) : rgb(100, 116, 139);
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: recording
+                ? (locale == "es" ? "● GRABANDO" : "● RECORDING")
+                : (locale == "es" ? "○ grabación detenida" : "○ recording stopped");
+            color: recording ? rgb(248, 113, 113) : rgb(100, 116, 139);
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "00:00:00";
+            color: rgb(148, 163, 184);
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "CPU: --   60.00 / 60.00 FPS";
+            color: rgb(148, 163, 184);
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: output-status;
+            color: rgb(251, 191, 36);
+            font-size: 10px;
+            vertical-alignment: center;
+            max-width: 260px;
+            overflow: elide;
+        }
+    }
+}

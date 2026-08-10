@@ -1,0 +1,266 @@
+import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { MenuEntry, ModeButton, NavMenuButton } from "theme.slint";
+import { ProfileRow } from "models.slint";
+
+export component AppNavbar inherits Rectangle {
+    in property <string> locale;
+    in property <string> project-title;
+    in property <string> profile-name;
+    in property <bool> dirty;
+    in property <int> view-mode;
+    in property <[ProfileRow]> profile-rows;
+    callback menu-action(string);
+    callback select-view-mode(int);
+    callback select-profile(string);
+    callback set-locale(string);
+
+    property <int> open-menu: 0;
+    height: 36px;
+    background: rgb(39, 43, 50);
+    border-width: 1px;
+    border-color: rgb(55, 60, 69);
+    z: 10;
+
+    HorizontalBox {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 3px;
+        Text {
+            text: "◉";
+            color: rgb(249, 250, 251);
+            font-size: 17px;
+            width: 22px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "OBS-RS";
+            color: rgb(249, 250, 251);
+            font-size: 12px;
+            font-weight: 700;
+            vertical-alignment: center;
+            width: 58px;
+        }
+        NavMenuButton {
+            label: locale == "es" ? "Archivo" : "File";
+            active: open-menu == 1;
+            clicked => { root.open-menu = open-menu == 1 ? 0 : 1; }
+        }
+        NavMenuButton {
+            label: locale == "es" ? "Editar" : "Edit";
+            active: open-menu == 2;
+            clicked => { root.open-menu = open-menu == 2 ? 0 : 2; }
+        }
+        NavMenuButton {
+            label: locale == "es" ? "Vista" : "View";
+            active: open-menu == 3;
+            clicked => { root.open-menu = open-menu == 3 ? 0 : 3; }
+        }
+        NavMenuButton {
+            label: locale == "es" ? "Paneles" : "Docks";
+            active: open-menu == 4;
+            clicked => { root.open-menu = open-menu == 4 ? 0 : 4; }
+        }
+        NavMenuButton {
+            label: locale == "es" ? "Perfil" : "Profile";
+            active: open-menu == 5;
+            clicked => { root.open-menu = open-menu == 5 ? 0 : 5; }
+        }
+        NavMenuButton {
+            label: locale == "es" ? "Colección de escenas" : "Scene Collection";
+            active: open-menu == 6;
+            min-width: 132px;
+            clicked => { root.open-menu = open-menu == 6 ? 0 : 6; }
+        }
+        NavMenuButton {
+            label: locale == "es" ? "Herramientas" : "Tools";
+            active: open-menu == 7;
+            clicked => { root.open-menu = open-menu == 7 ? 0 : 7; }
+        }
+        NavMenuButton {
+            label: locale == "es" ? "Ayuda" : "Help";
+            active: open-menu == 8;
+            clicked => { root.open-menu = open-menu == 8 ? 0 : 8; }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: project-title + "  ·  " + profile-name;
+            color: rgb(148, 163, 184);
+            font-size: 11px;
+            vertical-alignment: center;
+            overflow: elide;
+            max-width: 180px;
+        }
+        ModeButton {
+            label: locale == "es" ? "Studio" : "Studio";
+            active: view-mode == 0;
+            clicked => select-view-mode(0);
+        }
+        ModeButton {
+            label: locale == "es" ? "Solo vista previa" : "Preview only";
+            active: view-mode == 1;
+            clicked => select-view-mode(1);
+        }
+        Button {
+            text: "EN";
+            clicked => set-locale("en");
+        }
+        Button {
+            text: "ES";
+            clicked => set-locale("es");
+        }
+        Text {
+            text: dirty
+                ? (locale == "es" ? "● Sin guardar" : "● Unsaved")
+                : (locale == "es" ? "● Guardado" : "● Saved");
+            color: dirty ? rgb(251, 191, 36) : rgb(134, 239, 172);
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+
+    if open-menu == 1 : Rectangle {
+        x: 88px;
+        y: 34px;
+        width: 220px;
+        height: 194px;
+        background: rgb(39, 43, 50);
+        border-width: 1px;
+        border-color: rgb(75, 85, 99);
+        z: 30;
+        VerticalBox {
+            padding: 6px;
+            spacing: 1px;
+            MenuEntry { label: locale == "es" ? "Nuevo proyecto" : "New project"; clicked => { root.menu-action("new-project"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Abrir proyecto..." : "Open project..."; clicked => { root.menu-action("load-project"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Guardar" : "Save"; clicked => { root.menu-action("save-project"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Recuperar proyecto" : "Recover project"; clicked => { root.menu-action("recover-project"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Exportar diagnóstico" : "Export diagnostics"; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
+            Rectangle { height: 1px; background: rgb(75, 85, 99); }
+            MenuEntry { label: locale == "es" ? "Configuración" : "Settings"; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Salir" : "Exit"; destructive: true; clicked => { root.menu-action("exit"); root.open-menu = 0; } }
+        }
+    }
+    if open-menu == 2 : Rectangle {
+        x: 148px;
+        y: 34px;
+        width: 220px;
+        height: 120px;
+        background: rgb(39, 43, 50);
+        border-width: 1px;
+        border-color: rgb(75, 85, 99);
+        z: 30;
+        VerticalBox {
+            padding: 6px;
+            spacing: 1px;
+            MenuEntry { label: locale == "es" ? "Deshacer" : "Undo"; clicked => { root.menu-action("undo"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Rehacer" : "Redo"; clicked => { root.menu-action("redo"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Preferencias" : "Preferences"; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
+        }
+    }
+    if open-menu == 3 : Rectangle {
+        x: 208px;
+        y: 34px;
+        width: 220px;
+        height: 120px;
+        background: rgb(39, 43, 50);
+        border-width: 1px;
+        border-color: rgb(75, 85, 99);
+        z: 30;
+        VerticalBox {
+            padding: 6px;
+            spacing: 1px;
+            MenuEntry { label: locale == "es" ? "Modo Studio" : "Studio mode"; clicked => { root.select-view-mode(0); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Solo vista previa" : "Preview only"; clicked => { root.select-view-mode(1); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Pantalla completa" : "Fullscreen"; clicked => { root.menu-action("fullscreen"); root.open-menu = 0; } }
+        }
+    }
+    if open-menu == 4 : Rectangle {
+        x: 270px;
+        y: 34px;
+        width: 220px;
+        height: 170px;
+        background: rgb(39, 43, 50);
+        border-width: 1px;
+        border-color: rgb(75, 85, 99);
+        z: 30;
+        VerticalBox {
+            padding: 6px;
+            spacing: 1px;
+            MenuEntry { label: locale == "es" ? "Fuentes" : "Sources"; clicked => { root.menu-action("toggle-sources"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Escenas" : "Scenes"; clicked => { root.menu-action("toggle-scenes"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Mezclador de audio" : "Audio Mixer"; clicked => { root.menu-action("toggle-mixer"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Transiciones" : "Transitions"; clicked => { root.menu-action("toggle-transitions"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Controles" : "Controls"; clicked => { root.menu-action("toggle-controls"); root.open-menu = 0; } }
+        }
+    }
+    if open-menu == 5 : Rectangle {
+        x: 330px;
+        y: 34px;
+        width: 220px;
+        height: 140px;
+        background: rgb(39, 43, 50);
+        border-width: 1px;
+        border-color: rgb(75, 85, 99);
+        z: 30;
+        VerticalBox {
+            padding: 6px;
+            spacing: 1px;
+            for profile in profile-rows : MenuEntry {
+                label: profile.name;
+                clicked => { root.select-profile(profile.id); root.open-menu = 0; }
+            }
+            Rectangle { height: 1px; background: rgb(75, 85, 99); }
+            MenuEntry { label: locale == "es" ? "Administrar perfiles" : "Manage profiles"; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
+        }
+    }
+    if open-menu == 6 : Rectangle {
+        x: 428px;
+        y: 34px;
+        width: 220px;
+        height: 120px;
+        background: rgb(39, 43, 50);
+        border-width: 1px;
+        border-color: rgb(75, 85, 99);
+        z: 30;
+        VerticalBox {
+            padding: 6px;
+            spacing: 1px;
+            MenuEntry { label: locale == "es" ? "Nueva colección" : "New collection"; clicked => { root.menu-action("new-collection"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Cargar colección" : "Load collection"; clicked => { root.menu-action("load-collection"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Guardar colección" : "Save collection"; clicked => { root.menu-action("save-collection"); root.open-menu = 0; } }
+        }
+    }
+    if open-menu == 7 : Rectangle {
+        x: 566px;
+        y: 34px;
+        width: 220px;
+        height: 120px;
+        background: rgb(39, 43, 50);
+        border-width: 1px;
+        border-color: rgb(75, 85, 99);
+        z: 30;
+        VerticalBox {
+            padding: 6px;
+            spacing: 1px;
+            MenuEntry { label: locale == "es" ? "Propiedades de fuente" : "Source properties"; clicked => { root.menu-action("source-properties"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Filtros de fuente" : "Source filters"; clicked => { root.menu-action("source-filters"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Registro de diagnóstico" : "Diagnostic log"; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
+        }
+    }
+    if open-menu == 8 : Rectangle {
+        x: 628px;
+        y: 34px;
+        width: 220px;
+        height: 92px;
+        background: rgb(39, 43, 50);
+        border-width: 1px;
+        border-color: rgb(75, 85, 99);
+        z: 30;
+        VerticalBox {
+            padding: 6px;
+            spacing: 1px;
+            MenuEntry { label: locale == "es" ? "Documentación" : "Documentation"; clicked => { root.menu-action("documentation"); root.open-menu = 0; } }
+            MenuEntry { label: locale == "es" ? "Acerca de OBS-RS" : "About OBS-RS"; clicked => { root.menu-action("about"); root.open-menu = 0; } }
+        }
+    }
+}

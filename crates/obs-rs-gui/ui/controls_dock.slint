@@ -5,6 +5,7 @@ import { EditorPanel } from "editor_panel.slint";
 import { OutputPanel } from "output_panel.slint";
 import { DiagnosticsPanel } from "diagnostics_panel.slint";
 import { ProjectDialog, SceneDialog, SourceDialog, OutputDialog } from "dialogs.slint";
+import { QuickControls } from "quick_controls.slint";
 
 export component ControlsDock inherits Rectangle {
     in property <string> locale;
@@ -34,6 +35,8 @@ export component ControlsDock inherits Rectangle {
     in property <string> output-metrics;
     in property <string> status-message;
     in property <string> snapshot;
+    in property <int> view-mode;
+    in-out property <bool> settings-open;
     callback save-project();
     callback load-project();
     callback recover-project();
@@ -49,8 +52,9 @@ export component ControlsDock inherits Rectangle {
     callback fade-transition();
     callback toggle-recording();
     callback toggle-streaming();
+    callback set-view-mode(int);
 
-    property <int> active-tab: 0;
+    in-out property <int> active-tab: 0;
     property <int> active-modal: 0;
 
     background: rgb(31, 41, 55);
@@ -79,6 +83,16 @@ export component ControlsDock inherits Rectangle {
                 font-size: 11px;
                 vertical-alignment: center;
             }
+        }
+        QuickControls {
+            locale: root.locale;
+            recording: root.recording;
+            streaming: root.streaming;
+            view-mode: root.view-mode;
+            toggle-recording => { root.toggle-recording(); }
+            toggle-streaming => { root.toggle-streaming(); }
+            set-view-mode(mode) => { root.set-view-mode(mode); }
+            open-settings => { root.settings-open = true; }
         }
         ControlTabs {
             locale: root.locale;
@@ -164,14 +178,18 @@ export component ControlsDock inherits Rectangle {
     }
 
     ProjectDialog {
-        open: root.active-modal == 1;
+        open: root.active-modal == 1 || root.settings-open;
         locale: root.locale;
         project-path <=> root.project-path;
         diagnostics-path <=> root.diagnostics-path;
-        close => { root.active-modal = 0; }
+        close => {
+            root.active-modal = 0;
+            root.settings-open = false;
+        }
         accepted => {
             root.save-project();
             root.active-modal = 0;
+            root.settings-open = false;
         }
     }
     SceneDialog {
