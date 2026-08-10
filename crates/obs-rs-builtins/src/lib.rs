@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use obs_rs_capture::{
-    CaptureDeviceInfo, CaptureError, CaptureKind, CaptureProvider, SimulatedCaptureFactory,
-    SimulatedCaptureProvider, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
-    SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
+    CaptureDeviceInfo, CaptureError, CaptureKind, CaptureProvider, PlatformCaptureProvider,
+    SimulatedCaptureFactory, SimulatedCaptureProvider, TestPatternFactory,
+    CAMERA_CAPTURE_SOURCE_KIND, SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
 };
 #[cfg(target_os = "linux")]
 use obs_rs_capture::{VideoCaptureDevice, X11CaptureDevice, X11_SCREEN_CAPTURE_SOURCE_KIND};
@@ -86,6 +86,22 @@ impl BuiltinPlugin {
     /// ever changed to an invalid value.
     pub fn discover_capture_devices(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
         SimulatedCaptureProvider::new().discover()
+    }
+
+    /// Discovers host-platform devices through the platform provider seam.
+    ///
+    /// The method returns a typed platform-unavailable error when the host does
+    /// not expose an enabled adapter; callers can retain the deterministic CPU
+    /// catalog from [`Self::discover_capture_devices`] as a fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::PlatformUnavailable`] when the host adapter is
+    /// absent or its required display service cannot be reached.
+    pub fn discover_platform_capture_devices(
+        &self,
+    ) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
+        PlatformCaptureProvider::new().discover()
     }
 }
 

@@ -14,11 +14,11 @@ use obs_rs_media::{
 };
 use obs_rs_output::{
     AtomicY4mFileWriter, PacketDropPolicy, ReconnectPolicy, RleVideoEncoder, StreamSession,
-    TcpPacketTransport, VideoEncoder,
+    StreamState, TcpPacketTransport, VideoEncoder,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Profile, Project, ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
-use obs_rs_ui::{DesktopState, UiCommand};
+use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{
     ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode, VecModel,
     Weak,
@@ -39,6 +39,8 @@ slint::slint! {
         kind: string,
         order: string,
         selected: bool,
+        visible: bool,
+        locked: bool,
     }
 
     export struct ProfileRow {
@@ -62,6 +64,7 @@ slint::slint! {
 
         in property <string> project-title;
         in property <string> profile-name;
+        in property <string> locale;
         in property <string> preview-scene;
         in property <string> program-scene;
         in property <string> transition;
@@ -69,6 +72,8 @@ slint::slint! {
         in property <bool> streaming;
         in property <bool> dirty;
         in property <string> status-message;
+        in property <string> output-status;
+        in property <string> output-metrics;
         in property <string> snapshot;
         in property <image> preview-image;
         in property <image> program-image;
@@ -76,6 +81,7 @@ slint::slint! {
         in property <[SourceRow]> source-rows;
         in property <[ProfileRow]> profile-rows;
         in property <string> source-scene;
+        in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
         in property <string> selected-source;
         in property <string> source-settings-version;
@@ -101,7 +107,12 @@ slint::slint! {
         callback select-preview(string);
         callback select-program(string);
         callback select-profile(string);
+        callback set-locale(string);
         callback select-source(string);
+        callback toggle-source-visibility(string);
+        callback toggle-source-locked(string);
+        callback move-source(string, int);
+        callback remove-source(string);
         callback apply-source-settings();
         callback apply-source-transform();
         callback apply-source-filters();
@@ -145,6 +156,20 @@ slint::slint! {
                         for profile in profile-rows : Button {
                             text: profile.name;
                             clicked => select-profile(profile.id);
+                        }
+                        Text {
+                            text: "Language:";
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                        Button {
+                            text: "EN";
+                            clicked => set-locale("en");
+                        }
+                        Button {
+                            text: "ES";
+                            clicked => set-locale("es");
                         }
                     }
                 }
@@ -341,6 +366,30 @@ slint::slint! {
                                             font-size: 11px;
                                         }
                                     }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Button {
+                                        text: source.visible ? "Hide" : "Show";
+                                        clicked => toggle-source-visibility(source.id);
+                                    }
+                                    Button {
+                                        text: source.locked ? "Unlock" : "Lock";
+                                        clicked => toggle-source-locked(source.id);
+                                    }
+                                    Button {
+                                        text: "↑";
+                                        enabled: !source.locked;
+                                        clicked => move-source(source.id, -1);
+                                    }
+                                    Button {
+                                        text: "↓";
+                                        enabled: !source.locked;
+                                        clicked => move-source(source.id, 1);
+                                    }
+                                    Button {
+                                        text: "×";
+                                        enabled: !source.locked;
+                                        clicked => remove-source(source.id);
+                                    }
                                 }
                             }
                         }
@@ -523,6 +572,12 @@ slint::slint! {
                             font-size: 12px;
                         }
                         Text {
+                            text: capture-capabilities;
+                            color: rgb(148, 163, 184);
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                        Text {
                             text: "Selected source: " + selected-source;
                             color: rgb(203, 213, 225);
                             font-size: 13px;
@@ -624,6 +679,18 @@ slint::slint! {
                             color: streaming ? rgb(252, 165, 165) : rgb(148, 163, 184);
                             font-size: 13px;
                         }
+                        Text {
+                            text: output-status;
+                            color: rgb(251, 191, 36);
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: output-metrics;
+                            color: rgb(148, 163, 184);
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
                         Rectangle { vertical-stretch: 1; }
                         Text {
                             text: status-message;
@@ -667,6 +734,7 @@ struct OutputRuntime {
     recording: Option<AtomicY4mFileWriter>,
     streaming: Option<StreamSession<TcpPacketTransport>>,
     encoder: RleVideoEncoder,
+    frames_pushed: u64,
 }
 
 impl OutputRuntime {
@@ -676,6 +744,7 @@ impl OutputRuntime {
             recording: None,
             streaming: None,
             encoder: RleVideoEncoder::new(format),
+            frames_pushed: 0,
         }
     }
 
@@ -751,11 +820,55 @@ impl OutputRuntime {
             recording.push(frame.clone())?;
         }
         if let Some(stream) = self.streaming.as_mut() {
+            if stream.state() == StreamState::Disconnected {
+                stream.reconnect()?;
+            }
             let packet = self.encoder.encode(frame)?;
             stream.submit(packet)?;
-            stream.flush()?;
+            if let Err(error) = stream.flush() {
+                stream.reconnect().map_err(|reconnect| {
+                    std::io::Error::other(format!("{error}; reconnect failed: {reconnect}"))
+                })?;
+                stream.flush()?;
+            }
         }
+        self.frames_pushed = self.frames_pushed.saturating_add(1);
         Ok(())
+    }
+
+    fn output_status(&self) -> String {
+        let recording = if self.recording.is_some() {
+            "recording open"
+        } else {
+            "recording stopped"
+        };
+        let streaming =
+            self.streaming
+                .as_ref()
+                .map_or("stream stopped", |stream| match stream.state() {
+                    StreamState::Connected => "stream connected",
+                    StreamState::Disconnected => "stream reconnecting",
+                    StreamState::Failed => "stream failed",
+                    StreamState::Closed => "stream closed",
+                });
+        format!("Output: {recording} · {streaming}")
+    }
+
+    fn output_metrics(&self) -> String {
+        let stream = self.streaming.as_ref();
+        let (sent, dropped, queued, reconnects) = stream.map_or((0, 0, 0, 0), |stream| {
+            let metrics = stream.metrics();
+            (
+                metrics.sent_packets(),
+                metrics.dropped_packets(),
+                stream.queued_bytes(),
+                metrics.reconnects(),
+            )
+        });
+        format!(
+            "frames={} · sent={} · dropped={} · queued={} B · reconnects={reconnects}",
+            self.frames_pushed, sent, dropped, queued
+        )
     }
 }
 
@@ -770,12 +883,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.set_recording_path("obs-rs-recording.y4m".into());
     ui.set_streaming_address("127.0.0.1:9000".into());
     ui.set_new_source_kind("test_pattern".into());
+    ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
     let renderer = Rc::new(RefCell::new(PreviewRenderer::new(&project)?));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
     let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
 
     refresh_ui(&ui, &state, &renderer);
+    refresh_output_ui(&ui, &output);
     install_callbacks(&ui, &state, &renderer, &output);
 
     if smoke {
@@ -804,6 +919,7 @@ fn start_preview_timer(
         };
         refresh_ui(&ui, &state, &renderer);
         push_program_frame(&ui, &state, &renderer, &output);
+        refresh_output_ui(&ui, &output);
     });
     timer
 }
@@ -821,6 +937,16 @@ fn install_callbacks(
 }
 
 fn install_scene_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    install_scene_selection_callbacks(ui, state, renderer);
+    install_source_list_callbacks(ui, state, renderer);
+    install_source_property_callbacks(ui, state, renderer);
+}
+
+fn install_scene_selection_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
@@ -874,6 +1000,30 @@ fn install_scene_callbacks(
     });
 
     let weak = ui.as_weak();
+    let locale_state = Rc::clone(state);
+    let locale_renderer = Rc::clone(renderer);
+    ui.on_set_locale(move |code| {
+        let Some(locale) = UiLocale::from_code(code.as_str()) else {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(format!("Unsupported language: {code}").into());
+            }
+            return;
+        };
+        dispatch_and_refresh(
+            &weak,
+            &locale_state,
+            &locale_renderer,
+            UiCommand::SetLocale { locale },
+        );
+    });
+}
+
+fn install_source_list_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let weak = ui.as_weak();
     let source_state = Rc::clone(state);
     let source_renderer = Rc::clone(renderer);
     ui.on_select_source(move |id| {
@@ -885,6 +1035,45 @@ fn install_scene_callbacks(
         );
     });
 
+    let weak = ui.as_weak();
+    let visibility_state = Rc::clone(state);
+    let visibility_renderer = Rc::clone(renderer);
+    ui.on_toggle_source_visibility(move |id| {
+        toggle_source_visibility_and_refresh(
+            &weak,
+            &visibility_state,
+            &visibility_renderer,
+            id.as_str(),
+        );
+    });
+
+    let weak = ui.as_weak();
+    let locked_state = Rc::clone(state);
+    let locked_renderer = Rc::clone(renderer);
+    ui.on_toggle_source_locked(move |id| {
+        toggle_source_locked_and_refresh(&weak, &locked_state, &locked_renderer, id.as_str());
+    });
+
+    let weak = ui.as_weak();
+    let move_state = Rc::clone(state);
+    let move_renderer = Rc::clone(renderer);
+    ui.on_move_source(move |id, delta| {
+        move_source_and_refresh(&weak, &move_state, &move_renderer, id.as_str(), delta);
+    });
+
+    let weak = ui.as_weak();
+    let remove_state = Rc::clone(state);
+    let remove_renderer = Rc::clone(renderer);
+    ui.on_remove_source(move |id| {
+        remove_source_and_refresh(&weak, &remove_state, &remove_renderer, id.as_str());
+    });
+}
+
+fn install_source_property_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
     let weak = ui.as_weak();
     let settings_state = Rc::clone(state);
     let settings_renderer = Rc::clone(renderer);
@@ -925,6 +1114,17 @@ fn install_output_callbacks(
     renderer: &Rc<RefCell<PreviewRenderer>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
+    install_recording_callback(ui, state, renderer, output);
+    install_streaming_callback(ui, state, renderer, output);
+    install_transition_callbacks(ui, state, renderer);
+}
+
+fn install_recording_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
     let weak = ui.as_weak();
     let recording_state = Rc::clone(state);
     let recording_renderer = Rc::clone(renderer);
@@ -960,8 +1160,16 @@ fn install_output_callbacks(
             }
             Err(error) => ui.set_status_message(format!("Recording failed: {error}").into()),
         }
+        refresh_output_ui(&ui, &recording_output);
     });
+}
 
+fn install_streaming_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
     let weak = ui.as_weak();
     let streaming_state = Rc::clone(state);
     let streaming_renderer = Rc::clone(renderer);
@@ -997,8 +1205,15 @@ fn install_output_callbacks(
             }
             Err(error) => ui.set_status_message(format!("Streaming failed: {error}").into()),
         }
+        refresh_output_ui(&ui, &streaming_output);
     });
+}
 
+fn install_transition_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
     let weak = ui.as_weak();
     let cut_state = Rc::clone(state);
     let cut_renderer = Rc::clone(renderer);
@@ -1057,6 +1272,7 @@ fn push_program_frame(
     if let Err(error) = result {
         ui.set_status_message(format!("Output failed: {error}").into());
     }
+    refresh_output_ui(ui, output);
 }
 
 fn install_mixer_callbacks(
@@ -1357,6 +1573,179 @@ fn add_source_and_refresh(
     }
 }
 
+fn move_source_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+    delta: i32,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene) = {
+            let state = state.borrow();
+            (
+                state
+                    .project_session()
+                    .project()
+                    .active_profile()
+                    .to_string(),
+                state
+                    .preview_scene()
+                    .map(str::to_owned)
+                    .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?,
+            )
+        };
+        let target_index = {
+            let state = state.borrow();
+            let project = state.project_session().project();
+            let active_profile = project.active_profile();
+            let scene = project
+                .profiles()
+                .find(|profile| profile.id() == active_profile)
+                .and_then(|profile| profile.scenes().find(|item| item.id().as_str() == scene));
+            let source_index = scene
+                .and_then(|scene| {
+                    scene
+                        .sources()
+                        .iter()
+                        .position(|source| source.id().as_str() == source_id)
+                })
+                .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
+            let target = i32::try_from(source_index)
+                .unwrap_or(i32::MAX)
+                .saturating_add(delta);
+            usize::try_from(target)
+                .map_err(|_| std::io::Error::other("source cannot move above the scene"))?
+        };
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::MoveSource {
+                profile,
+                scene,
+                source: source_id.to_owned(),
+                target_index,
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Move source failed: {error}").into()),
+    }
+}
+
+fn remove_source_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, _) = selected_source_context(&state.borrow())?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::RemoveSource {
+                profile,
+                scene,
+                source: source_id.to_owned(),
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Remove source failed: {error}").into()),
+    }
+}
+
+fn toggle_source_visibility_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, visible, _) = source_display_state(&state.borrow(), source_id)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceVisibility {
+                profile,
+                scene,
+                source: source_id.to_owned(),
+                visible: !visible,
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Source visibility failed: {error}").into()),
+    }
+}
+
+fn toggle_source_locked_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceLocked {
+                profile,
+                scene,
+                source: source_id.to_owned(),
+                locked: !locked,
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Source lock failed: {error}").into()),
+    }
+}
+
+fn source_display_state(
+    state: &DesktopState,
+    source_id: &str,
+) -> Result<(String, String, bool, bool), Box<dyn Error>> {
+    let project = state.project_session().project();
+    let profile_id = project.active_profile().to_string();
+    let scene_id = state
+        .preview_scene()
+        .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+    let profile = project
+        .profiles()
+        .find(|profile| profile.id().as_str() == profile_id)
+        .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+    let scene = profile
+        .scenes()
+        .find(|scene| scene.id().as_str() == scene_id)
+        .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
+    let source = scene
+        .sources()
+        .iter()
+        .find(|source| source.id().as_str() == source_id)
+        .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
+    Ok((
+        profile_id,
+        scene_id.to_owned(),
+        source.visible(),
+        source.locked(),
+    ))
+}
+
 fn apply_source_settings_and_refresh(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -1588,6 +1977,7 @@ fn refresh_ui(
 
     ui.set_project_title(project.title().into());
     ui.set_profile_name(profile_name.into());
+    ui.set_locale(state.locale().code().into());
     ui.set_preview_scene(state.preview_scene().unwrap_or("none").into());
     ui.set_program_scene(state.program_scene().unwrap_or("none").into());
     ui.set_transition(transition_label(state.transition()).into());
@@ -1626,6 +2016,12 @@ fn refresh_ui(
     refresh_docks(ui, &state, profile);
 }
 
+fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {
+    let output = output.borrow();
+    ui.set_output_status(output.output_status().into());
+    ui.set_output_metrics(output.output_metrics().into());
+}
+
 fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile>) {
     let scene_rows = profile.map_or_else(Vec::new, |profile| {
         profile
@@ -1662,6 +2058,8 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
                     kind: source.kind().as_str().into(),
                     order: (index + 1).to_string().into(),
                     selected: source.id().as_str() == selected_source,
+                    visible: source.visible(),
+                    locked: source.locked(),
                 })
                 .collect::<Vec<_>>()
         });
@@ -1763,6 +2161,9 @@ impl PreviewRenderer {
             let scene_id = scene.id().as_str();
             runtime.create_scene(scene_id)?;
             for source in scene.sources() {
+                if !source.visible() {
+                    continue;
+                }
                 let source_id = runtime.create_source(
                     source.kind().as_str(),
                     source.name(),
@@ -1854,6 +2255,29 @@ fn initial_project() -> Result<Project, Box<dyn Error>> {
     profile.add_scene(intermission)?;
     project.add_profile(profile)?;
     Ok(project)
+}
+
+fn platform_capture_summary() -> String {
+    let plugin = match BuiltinPlugin::new() {
+        Ok(plugin) => plugin,
+        Err(error) => return format!("Platform capture discovery failed: {error}"),
+    };
+    match plugin.discover_platform_capture_devices() {
+        Ok(devices) if devices.is_empty() => {
+            "Platform capture: no devices; CPU fallback sources available".to_owned()
+        }
+        Ok(devices) => {
+            let names = devices
+                .iter()
+                .map(|device| device.name().to_owned())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("Platform capture: {names}")
+        }
+        Err(error) => {
+            format!("Platform capture unavailable: {error}; CPU fallback sources available")
+        }
+    }
 }
 
 fn video_settings() -> Config {

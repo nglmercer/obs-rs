@@ -12,6 +12,9 @@ use std::{
     io::{self, Read},
 };
 
+#[cfg(target_os = "linux")]
+use std::env;
+
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, MediaError, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
@@ -236,6 +239,66 @@ pub trait CaptureProvider {
     /// Propagates discovery or duplicate-ID validation errors.
     fn refresh(&self, catalog: &mut CaptureCatalog) -> Result<(), CaptureError> {
         catalog.replace_all(self.discover()?)
+    }
+}
+
+/// A host-platform discovery provider with an explicit unavailable fallback.
+///
+/// Linux exposes a real local X11 screen descriptor when `DISPLAY` is present;
+/// macOS and Windows keep a typed unavailable result until their safe Rust
+/// capture adapters are supplied. Callers can therefore show capability state
+/// instead of confusing a missing platform backend with an empty device list.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PlatformCaptureProvider;
+
+impl PlatformCaptureProvider {
+    /// Creates the host-platform provider.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl CaptureProvider for PlatformCaptureProvider {
+    fn discover(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
+        #[cfg(target_os = "linux")]
+        {
+            let display =
+                env::var("DISPLAY").map_err(|error| CaptureError::PlatformUnavailable {
+                    message: format!("DISPLAY is unavailable: {error}"),
+                })?;
+            if display.trim().is_empty() {
+                return Err(CaptureError::PlatformUnavailable {
+                    message: "DISPLAY is empty".to_owned(),
+                });
+            }
+            Ok(vec![CaptureDeviceInfo::new(
+                "x11-screen-0",
+                "X11 screen",
+                CaptureKind::Screen,
+            )?])
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            Err(CaptureError::PlatformUnavailable {
+                message: "macOS ScreenCaptureKit adapter is not enabled".to_owned(),
+            })
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            Err(CaptureError::PlatformUnavailable {
+                message: "Windows Graphics Capture adapter is not enabled".to_owned(),
+            })
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        {
+            Err(CaptureError::PlatformUnavailable {
+                message: "no platform capture adapter is enabled for this target".to_owned(),
+            })
+        }
     }
 }
 

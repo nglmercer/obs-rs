@@ -28,6 +28,8 @@ pub struct SourceSpec {
     settings: Config,
     transform: FrameTransform,
     filters: Vec<FrameFilter>,
+    visible: bool,
+    locked: bool,
 }
 
 impl SourceSpec {
@@ -47,6 +49,8 @@ impl SourceSpec {
             settings,
             transform: FrameTransform::IDENTITY,
             filters: Vec::new(),
+            visible: true,
+            locked: false,
         })
     }
 
@@ -99,6 +103,28 @@ impl SourceSpec {
     /// Appends a filter to the source's ordered filter chain.
     pub fn add_filter(&mut self, filter: FrameFilter) {
         self.filters.push(filter);
+    }
+
+    /// Returns whether this source participates in scene composition.
+    #[must_use]
+    pub const fn visible(&self) -> bool {
+        self.visible
+    }
+
+    /// Sets whether this source participates in scene composition.
+    pub const fn set_visible(&mut self, visible: bool) {
+        self.visible = visible;
+    }
+
+    /// Returns whether the source is protected from editing in a desktop UI.
+    #[must_use]
+    pub const fn locked(&self) -> bool {
+        self.locked
+    }
+
+    /// Sets whether the source is protected from editing in a desktop UI.
+    pub const fn set_locked(&mut self, locked: bool) {
+        self.locked = locked;
     }
 }
 
@@ -161,6 +187,38 @@ impl SceneSpec {
     /// Finds a mutable source by project-local ID.
     pub fn source_mut(&mut self, id: &Identifier) -> Option<&mut SourceSpec> {
         self.sources.iter_mut().find(|source| source.id() == id)
+    }
+
+    /// Removes one source item and returns its definition.
+    pub fn remove_source(&mut self, id: &Identifier) -> Option<SourceSpec> {
+        let index = self.sources.iter().position(|source| source.id() == id)?;
+        Some(self.sources.remove(index))
+    }
+
+    /// Moves one source item to an existing scene order position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::UnknownSource`] when the source is absent or
+    /// [`ProjectError::InvalidSourceOrder`] when the destination is out of range.
+    pub fn move_source(
+        &mut self,
+        id: &Identifier,
+        target_index: usize,
+    ) -> Result<(), ProjectError> {
+        let current_index = self
+            .sources
+            .iter()
+            .position(|source| source.id() == id)
+            .ok_or_else(|| ProjectError::UnknownSource(id.clone()))?;
+        if target_index >= self.sources.len() {
+            return Err(ProjectError::InvalidSourceOrder {
+                index: target_index,
+            });
+        }
+        let source = self.sources.remove(current_index);
+        self.sources.insert(target_index, source);
+        Ok(())
     }
 }
 
@@ -367,6 +425,10 @@ impl Project {
                     append_transform(&mut document, source.transform);
                     document.push('|');
                     document.push_str(&serialize_filters(&source.filters));
+                    document.push('|');
+                    document.push_str(if source.visible { "1" } else { "0" });
+                    document.push('|');
+                    document.push_str(if source.locked { "1" } else { "0" });
                     document.push('\n');
                 }
             }
@@ -465,12 +527,39 @@ pub enum ProjectCommand {
         source: String,
         filter: FrameFilter,
     },
+    /// Reorders one source item within a scene.
+    MoveSource {
+        profile: String,
+        scene: String,
+        source: String,
+        target_index: usize,
+    },
+    /// Removes one source item from a scene.
+    RemoveSource {
+        profile: String,
+        scene: String,
+        source: String,
+    },
     /// Replaces the ordered filter chain for one source.
     SetSourceFilters {
         profile: String,
         scene: String,
         source: String,
         filters: Vec<FrameFilter>,
+    },
+    /// Changes whether one source participates in scene composition.
+    SetSourceVisibility {
+        profile: String,
+        scene: String,
+        source: String,
+        visible: bool,
+    },
+    /// Changes whether one source is protected from desktop editing.
+    SetSourceLocked {
+        profile: String,
+        scene: String,
+        source: String,
+        locked: bool,
     },
 }
 
@@ -512,60 +601,48 @@ impl Project {
                 scene,
                 source,
                 settings,
-            } => {
-                let source = source_id(&source)?;
-                let scene = scene_mut(self, &profile, &scene)?;
-                let source = scene
-                    .source_mut(&source)
-                    .ok_or_else(|| ProjectError::UnknownSource(source.clone()))?;
-                source.set_settings(settings);
-                Ok(())
-            }
+            } => set_source_settings(self, &profile, &scene, &source, settings),
             ProjectCommand::SetSourceTransform {
                 profile,
                 scene,
                 source,
                 transform,
-            } => {
-                let source = source_id(&source)?;
-                let scene = scene_mut(self, &profile, &scene)?;
-                let source = scene
-                    .source_mut(&source)
-                    .ok_or_else(|| ProjectError::UnknownSource(source.clone()))?;
-                source.set_transform(transform);
-                Ok(())
-            }
+            } => set_source_transform(self, &profile, &scene, &source, transform),
             ProjectCommand::AddSourceFilter {
                 profile,
                 scene,
                 source,
                 filter,
-            } => {
-                let source = source_id(&source)?;
-                let scene = scene_mut(self, &profile, &scene)?;
-                let source = scene
-                    .source_mut(&source)
-                    .ok_or_else(|| ProjectError::UnknownSource(source.clone()))?;
-                source.add_filter(filter);
-                Ok(())
-            }
+            } => add_source_filter(self, &profile, &scene, &source, filter),
             ProjectCommand::SetSourceFilters {
                 profile,
                 scene,
                 source,
                 filters,
-            } => {
-                let source = source_id(&source)?;
-                let scene = scene_mut(self, &profile, &scene)?;
-                let source = scene
-                    .source_mut(&source)
-                    .ok_or_else(|| ProjectError::UnknownSource(source.clone()))?;
-                source.filters.clear();
-                for filter in filters {
-                    source.add_filter(filter);
-                }
-                Ok(())
-            }
+            } => set_source_filters(self, &profile, &scene, &source, filters),
+            ProjectCommand::SetSourceVisibility {
+                profile,
+                scene,
+                source,
+                visible,
+            } => set_source_visibility(self, &profile, &scene, &source, visible),
+            ProjectCommand::SetSourceLocked {
+                profile,
+                scene,
+                source,
+                locked,
+            } => set_source_locked(self, &profile, &scene, &source, locked),
+            ProjectCommand::MoveSource {
+                profile,
+                scene,
+                source,
+                target_index,
+            } => move_source(self, &profile, &scene, &source, target_index),
+            ProjectCommand::RemoveSource {
+                profile,
+                scene,
+                source,
+            } => remove_source(self, &profile, &scene, &source),
         }
     }
 }
@@ -772,6 +849,113 @@ fn scene_mut<'a>(
         .ok_or(ProjectError::UnknownScene(scene_id))
 }
 
+fn source_mut<'a>(
+    project: &'a mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+) -> Result<&'a mut SourceSpec, ProjectError> {
+    let source_id = source_id(source)?;
+    let scene = scene_mut(project, profile, scene)?;
+    scene
+        .source_mut(&source_id)
+        .ok_or(ProjectError::UnknownSource(source_id))
+}
+
+fn set_source_settings(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    settings: Config,
+) -> Result<(), ProjectError> {
+    source_mut(project, profile, scene, source)?.set_settings(settings);
+    Ok(())
+}
+
+fn set_source_transform(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    transform: FrameTransform,
+) -> Result<(), ProjectError> {
+    source_mut(project, profile, scene, source)?.set_transform(transform);
+    Ok(())
+}
+
+fn add_source_filter(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    filter: FrameFilter,
+) -> Result<(), ProjectError> {
+    source_mut(project, profile, scene, source)?.add_filter(filter);
+    Ok(())
+}
+
+fn set_source_filters(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    filters: Vec<FrameFilter>,
+) -> Result<(), ProjectError> {
+    let source = source_mut(project, profile, scene, source)?;
+    source.filters.clear();
+    for filter in filters {
+        source.add_filter(filter);
+    }
+    Ok(())
+}
+
+fn set_source_visibility(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    visible: bool,
+) -> Result<(), ProjectError> {
+    source_mut(project, profile, scene, source)?.set_visible(visible);
+    Ok(())
+}
+
+fn set_source_locked(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    locked: bool,
+) -> Result<(), ProjectError> {
+    source_mut(project, profile, scene, source)?.set_locked(locked);
+    Ok(())
+}
+
+fn move_source(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    target_index: usize,
+) -> Result<(), ProjectError> {
+    let source = source_id(source)?;
+    scene_mut(project, profile, scene)?.move_source(&source, target_index)
+}
+
+fn remove_source(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+) -> Result<(), ProjectError> {
+    let source = source_id(source)?;
+    scene_mut(project, profile, scene)?
+        .remove_source(&source)
+        .map(|_| ())
+        .ok_or(ProjectError::UnknownSource(source))
+}
+
 fn source_id(input: &str) -> Result<Identifier, ProjectError> {
     identifier(input, "source id")
 }
@@ -824,7 +1008,13 @@ fn parse_scene(project: &mut Project, line: &str, line_number: usize) -> Result<
 }
 
 fn parse_source(project: &mut Project, line: &str, line_number: usize) -> Result<(), ProjectError> {
-    let values = fields(line, line_number, "source", 9)?;
+    let values = line.split('|').collect::<Vec<_>>();
+    if (values.len() != 9 && values.len() != 11) || values.first() != Some(&"source") {
+        return Err(ProjectError::InvalidDocument {
+            line: line_number,
+            reason: "expected source record with 9 or 11 fields".to_owned(),
+        });
+    }
     let profile_id = identifier(values[1], "profile id")?;
     let scene_id = identifier(values[2], "scene id")?;
     let name = decode(values[5], line_number)?;
@@ -837,6 +1027,10 @@ fn parse_source(project: &mut Project, line: &str, line_number: usize) -> Result
     for filter in filters {
         source.add_filter(filter);
     }
+    if values.len() == 11 {
+        source.set_visible(parse_flag(values[9], line_number, "source visibility")?);
+        source.set_locked(parse_flag(values[10], line_number, "source lock")?);
+    }
     let profile = project
         .profile_mut(&profile_id)
         .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
@@ -844,6 +1038,17 @@ fn parse_source(project: &mut Project, line: &str, line_number: usize) -> Result
         .scene_mut(&scene_id)
         .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
     scene.add_source(source)
+}
+
+fn parse_flag(value: &str, line: usize, field: &'static str) -> Result<bool, ProjectError> {
+    match value {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        _ => Err(ProjectError::InvalidDocument {
+            line,
+            reason: format!("invalid {field}; expected 0 or 1"),
+        }),
+    }
 }
 
 fn number<T>(value: &str, line: usize, field: &'static str) -> Result<T, ProjectError>
@@ -1034,6 +1239,8 @@ pub enum ProjectError {
     UnknownScene(Identifier),
     /// A source ID is not present.
     UnknownSource(Identifier),
+    /// A source move destination is outside the scene order.
+    InvalidSourceOrder { index: usize },
 }
 
 impl fmt::Display for ProjectError {
@@ -1057,6 +1264,9 @@ impl fmt::Display for ProjectError {
             Self::UnknownProfile(id) => write!(formatter, "profile {id} does not exist"),
             Self::UnknownScene(id) => write!(formatter, "scene {id} does not exist"),
             Self::UnknownSource(id) => write!(formatter, "source {id} does not exist"),
+            Self::InvalidSourceOrder { index } => {
+                write!(formatter, "source order index {index} is out of range")
+            }
         }
     }
 }
@@ -1153,6 +1363,37 @@ mod tests {
                 filters: vec![FrameFilter::Grayscale],
             })
             .expect("set source filters command");
+        session
+            .dispatch(ProjectCommand::SetSourceVisibility {
+                profile: "live".to_owned(),
+                scene: "main".to_owned(),
+                source: "background".to_owned(),
+                visible: false,
+            })
+            .expect("set source visibility command");
+        session
+            .dispatch(ProjectCommand::SetSourceLocked {
+                profile: "live".to_owned(),
+                scene: "main".to_owned(),
+                source: "background".to_owned(),
+                locked: true,
+            })
+            .expect("set source locked command");
+        session
+            .dispatch(ProjectCommand::MoveSource {
+                profile: "live".to_owned(),
+                scene: "main".to_owned(),
+                source: "background".to_owned(),
+                target_index: 1,
+            })
+            .expect("move source command");
+        session
+            .dispatch(ProjectCommand::RemoveSource {
+                profile: "live".to_owned(),
+                scene: "main".to_owned(),
+                source: "foreground".to_owned(),
+            })
+            .expect("remove source command");
         assert!(session.is_dirty());
         let saved = session.save();
         assert!(!session.is_dirty());
@@ -1160,6 +1401,20 @@ mod tests {
             Project::parse(&saved).expect("saved project"),
             *session.project()
         );
+        let source = session
+            .project()
+            .profiles()
+            .next()
+            .and_then(|profile| profile.scenes().next())
+            .and_then(|scene| {
+                scene
+                    .sources()
+                    .iter()
+                    .find(|source| source.id().as_str() == "background")
+            })
+            .expect("background source");
+        assert!(!source.visible());
+        assert!(source.locked());
 
         assert_eq!(
             session.dispatch(ProjectCommand::SetSourceTransform {

@@ -24,6 +24,123 @@ impl SourceId {
     }
 }
 
+/// Bounded runtime resources used to contain faulty or untrusted extensions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RuntimeLimits {
+    plugins: usize,
+    source_kinds: usize,
+    scenes: usize,
+    sources: usize,
+    sources_per_scene: usize,
+    filters_per_item: usize,
+}
+
+impl RuntimeLimits {
+    /// Creates explicit limits for runtime-owned resources.
+    #[must_use]
+    pub const fn new(
+        max_plugins: usize,
+        max_source_kinds: usize,
+        max_scenes: usize,
+        max_sources: usize,
+        max_sources_per_scene: usize,
+        max_filters_per_item: usize,
+    ) -> Self {
+        Self {
+            plugins: max_plugins,
+            source_kinds: max_source_kinds,
+            scenes: max_scenes,
+            sources: max_sources,
+            sources_per_scene: max_sources_per_scene,
+            filters_per_item: max_filters_per_item,
+        }
+    }
+
+    /// Returns the maximum registered plugin count.
+    #[must_use]
+    pub const fn max_plugins(self) -> usize {
+        self.plugins
+    }
+
+    /// Returns the maximum registered source-kind count.
+    #[must_use]
+    pub const fn max_source_kinds(self) -> usize {
+        self.source_kinds
+    }
+
+    /// Returns the maximum scene count.
+    #[must_use]
+    pub const fn max_scenes(self) -> usize {
+        self.scenes
+    }
+
+    /// Returns the maximum source-instance count.
+    #[must_use]
+    pub const fn max_sources(self) -> usize {
+        self.sources
+    }
+
+    /// Returns the maximum source items in one scene.
+    #[must_use]
+    pub const fn max_sources_per_scene(self) -> usize {
+        self.sources_per_scene
+    }
+
+    /// Returns the maximum filters on one scene item.
+    #[must_use]
+    pub const fn max_filters_per_item(self) -> usize {
+        self.filters_per_item
+    }
+}
+
+impl Default for RuntimeLimits {
+    fn default() -> Self {
+        Self::new(64, 256, 1_024, 4_096, 1_024, 64)
+    }
+}
+
+/// Current runtime-owned resource usage for diagnostics and quota dashboards.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RuntimeUsage {
+    plugins: usize,
+    source_kinds: usize,
+    scenes: usize,
+    sources: usize,
+    filters: usize,
+}
+
+impl RuntimeUsage {
+    /// Returns the number of registered plugins.
+    #[must_use]
+    pub const fn plugins(self) -> usize {
+        self.plugins
+    }
+
+    /// Returns the number of registered source kinds.
+    #[must_use]
+    pub const fn source_kinds(self) -> usize {
+        self.source_kinds
+    }
+
+    /// Returns the number of named scenes.
+    #[must_use]
+    pub const fn scenes(self) -> usize {
+        self.scenes
+    }
+
+    /// Returns the number of runtime-owned source instances.
+    #[must_use]
+    pub const fn sources(self) -> usize {
+        self.sources
+    }
+
+    /// Returns the total number of attached scene-item filters.
+    #[must_use]
+    pub const fn filters(self) -> usize {
+        self.filters
+    }
+}
+
 struct Registry {
     plugins: BTreeMap<Identifier, PluginManifest>,
     sources: BTreeMap<Identifier, Arc<dyn SourceFactory>>,
@@ -114,6 +231,7 @@ pub struct Runtime {
     scenes: BTreeMap<Identifier, Scene>,
     next_source_id: u64,
     metrics: CompositorMetrics,
+    limits: RuntimeLimits,
 }
 
 impl Runtime {
@@ -126,6 +244,43 @@ impl Runtime {
             scenes: BTreeMap::new(),
             next_source_id: 1,
             metrics: CompositorMetrics::default(),
+            limits: RuntimeLimits::default(),
+        }
+    }
+
+    /// Creates an empty runtime with explicit resource limits.
+    #[must_use]
+    pub fn with_limits(limits: RuntimeLimits) -> Self {
+        Self {
+            registry: Registry::new(),
+            sources: BTreeMap::new(),
+            scenes: BTreeMap::new(),
+            next_source_id: 1,
+            metrics: CompositorMetrics::default(),
+            limits,
+        }
+    }
+
+    /// Returns the active resource limits.
+    #[must_use]
+    pub const fn limits(&self) -> RuntimeLimits {
+        self.limits
+    }
+
+    /// Returns a bounded resource-usage snapshot for diagnostics and UI status.
+    #[must_use]
+    pub fn usage(&self) -> RuntimeUsage {
+        let filters = self
+            .scenes
+            .values()
+            .flat_map(|scene| scene.filters.values())
+            .fold(0_usize, |total, filters| total.saturating_add(filters.len()));
+        RuntimeUsage {
+            plugins: self.registry.plugins.len(),
+            source_kinds: self.registry.sources.len(),
+            scenes: self.scenes.len(),
+            sources: self.sources.len(),
+            filters,
         }
     }
 
@@ -138,6 +293,12 @@ impl Runtime {
     /// existing runtime state.
     pub fn register_plugin(&mut self, plugin: &dyn Plugin) -> Result<(), RuntimeError> {
         let manifest = plugin.manifest().clone();
+        if self.registry.plugins.len() >= self.limits.max_plugins() {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "plugins",
+                limit: self.limits.max_plugins(),
+            });
+        }
         let expected_api = PluginApiVersion::current();
         if manifest.api_version().major() != expected_api.major()
             || manifest.api_version().minor() > expected_api.minor()
@@ -152,6 +313,21 @@ impl Runtime {
         }
 
         let factories = plugin.source_factories();
+        let source_kind_count = self
+            .registry
+            .sources
+            .len()
+            .checked_add(factories.len())
+            .ok_or(RuntimeError::ResourceLimitExceeded {
+                resource: "source kinds",
+                limit: self.limits.max_source_kinds(),
+            })?;
+        if source_kind_count > self.limits.max_source_kinds() {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "source kinds",
+                limit: self.limits.max_source_kinds(),
+            });
+        }
         for factory in &factories {
             if self.registry.sources.contains_key(factory.kind()) {
                 return Err(RuntimeError::DuplicateSourceKind(factory.kind().clone()));
@@ -182,6 +358,12 @@ impl Runtime {
     /// Returns [`RuntimeError::InvalidIdentifier`] for an invalid name or
     /// [`RuntimeError::DuplicateScene`] when the name is already in use.
     pub fn create_scene(&mut self, name: &str) -> Result<(), RuntimeError> {
+        if self.scenes.len() >= self.limits.max_scenes() {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "scenes",
+                limit: self.limits.max_scenes(),
+            });
+        }
         let name = identifier(name, "scene")?;
         if self.scenes.contains_key(&name) {
             return Err(RuntimeError::DuplicateScene(name));
@@ -210,6 +392,12 @@ impl Runtime {
         name: &str,
         settings: &Config,
     ) -> Result<SourceId, RuntimeError> {
+        if self.sources.len() >= self.limits.max_sources() {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "sources",
+                limit: self.limits.max_sources(),
+            });
+        }
         if name.trim().is_empty() {
             return Err(RuntimeError::InvalidName { kind: "source" });
         }
@@ -255,6 +443,12 @@ impl Runtime {
             .scenes
             .get_mut(&scene)
             .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
+        if scene.sources.len() >= self.limits.max_sources_per_scene() {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "sources per scene",
+                limit: self.limits.max_sources_per_scene(),
+            });
+        }
         if scene.sources.contains(&source) {
             return Err(RuntimeError::SourceAlreadyAttached(source));
         }
@@ -341,6 +535,12 @@ impl Runtime {
             .filters
             .get_mut(&source)
             .ok_or(RuntimeError::SourceNotAttached(source))?;
+        if filters.len() >= self.limits.max_filters_per_item() {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "filters per scene item",
+                limit: self.limits.max_filters_per_item(),
+            });
+        }
         filters.push(filter);
         Ok(())
     }
@@ -637,6 +837,13 @@ pub enum RuntimeError {
         /// Plugin API version.
         actual: PluginApiVersion,
     },
+    /// A runtime-owned resource reached its configured safety limit.
+    ResourceLimitExceeded {
+        /// Human-readable resource class.
+        resource: &'static str,
+        /// Configured maximum.
+        limit: usize,
+    },
     /// A source rejected creation, update, or rendering.
     Source(SourceError),
     /// A media invariant failed during composition.
@@ -680,6 +887,9 @@ impl fmt::Display for RuntimeError {
                 formatter,
                 "plugin API {actual:?} is incompatible with runtime API {expected:?}"
             ),
+            Self::ResourceLimitExceeded { resource, limit } => {
+                write!(formatter, "runtime {resource} limit of {limit} was reached")
+            }
             Self::Source(error) => error.fmt(formatter),
             Self::Media(error) => error.fmt(formatter),
         }
@@ -764,6 +974,56 @@ mod tests {
             Some(("color_source", "background"))
         );
         assert_eq!(frame.pixel(0, 0), Some([128, 0, 127, 255]));
+    }
+
+    #[test]
+    fn runtime_limits_contain_plugin_scene_source_and_filter_resources() {
+        let plugin = BuiltinPlugin::new().expect("builtins are valid");
+        let mut runtime = Runtime::with_limits(RuntimeLimits::new(1, 8, 1, 1, 1, 1));
+        runtime
+            .register_plugin(&plugin)
+            .expect("plugin fits the limits");
+        runtime.create_scene("main").expect("scene fits the limits");
+        assert_eq!(
+            runtime.create_scene("second"),
+            Err(RuntimeError::ResourceLimitExceeded {
+                resource: "scenes",
+                limit: 1
+            })
+        );
+        let source = runtime
+            .create_source("color_source", "background", &settings(2, 2, "#102030FF"))
+            .expect("source fits the limit");
+        runtime
+            .attach_source("main", source)
+            .expect("source item fits the limit");
+        assert_eq!(
+            runtime.create_source("color_source", "extra", &settings(2, 2, "#102030FF")),
+            Err(RuntimeError::ResourceLimitExceeded {
+                resource: "sources",
+                limit: 1
+            })
+        );
+        runtime
+            .add_source_filter("main", source, FrameFilter::Grayscale)
+            .expect("first filter fits");
+        assert_eq!(
+            runtime.usage(),
+            RuntimeUsage {
+                plugins: 1,
+                source_kinds: 5,
+                scenes: 1,
+                sources: 1,
+                filters: 1,
+            }
+        );
+        assert_eq!(
+            runtime.add_source_filter("main", source, FrameFilter::Grayscale),
+            Err(RuntimeError::ResourceLimitExceeded {
+                resource: "filters per scene item",
+                limit: 1
+            })
+        );
     }
 
     #[test]

@@ -31,6 +31,36 @@ pub enum SceneView {
     Program,
 }
 
+/// Supported labels for toolkit-neutral state surfaces.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UiLocale {
+    /// English labels.
+    English,
+    /// Spanish labels.
+    Spanish,
+}
+
+impl UiLocale {
+    /// Returns the stable language code used by frontends and project settings.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Spanish => "es",
+        }
+    }
+
+    /// Parses a supported language code.
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "en" | "english" => Some(Self::English),
+            "es" | "spanish" => Some(Self::Spanish),
+            _ => None,
+        }
+    }
+}
+
 /// One stateful channel shown in the desktop audio mixer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MixerChannel {
@@ -161,6 +191,8 @@ pub enum UiCommand {
     SelectProgramScene { id: String },
     /// Select a source item from the current preview scene.
     SelectSource { id: String },
+    /// Select the labels used by accessible frontends.
+    SetLocale { locale: UiLocale },
     /// Replace the current scene transition policy.
     SetTransition { transition: FrameTransition },
     /// Set one mixer channel's linear gain in thousandths.
@@ -335,6 +367,16 @@ pub fn parse_console_command(line: &str) -> Result<ConsoleCommand, ConsoleComman
                 id: id.to_owned(),
             }))
         }
+        "language" => {
+            let code = required_word(&mut words, "language")?;
+            ensure_no_extra("language", words)?;
+            let locale =
+                UiLocale::from_code(code).ok_or_else(|| ConsoleCommandError::InvalidArgument {
+                    command: "language",
+                    value: code.to_owned(),
+                })?;
+            Ok(ConsoleCommand::Apply(UiCommand::SetLocale { locale }))
+        }
         "record" => parse_output_command("record", words, true),
         "stream" => parse_output_command("stream", words, false),
         "mixer" => parse_mixer_command("mixer", words),
@@ -504,6 +546,7 @@ pub struct DesktopState {
     preview_scene: Option<Identifier>,
     program_scene: Option<Identifier>,
     selected_source: Option<Identifier>,
+    locale: UiLocale,
     transition: FrameTransition,
     recording: bool,
     streaming: bool,
@@ -530,6 +573,7 @@ impl DesktopState {
             preview_scene: first_scene.clone(),
             program_scene: first_scene,
             selected_source,
+            locale: UiLocale::English,
             transition: FrameTransition::Cut,
             recording: false,
             streaming: false,
@@ -588,6 +632,10 @@ impl DesktopState {
                 self.ensure_source(&id)?;
                 self.selected_source = Some(identifier(&id, "source")?);
                 "source selected"
+            }
+            UiCommand::SetLocale { locale } => {
+                self.locale = locale;
+                "language selected"
             }
             UiCommand::SetTransition { transition } => {
                 self.set_transition(transition)?;
@@ -725,6 +773,12 @@ impl DesktopState {
         self.selected_source.as_ref().map(Identifier::as_str)
     }
 
+    /// Returns the active presentation locale.
+    #[must_use]
+    pub const fn locale(&self) -> UiLocale {
+        self.locale
+    }
+
     /// Returns the current transition policy.
     #[must_use]
     pub const fn transition(&self) -> FrameTransition {
@@ -769,54 +823,99 @@ impl DesktopState {
     pub fn accessible_snapshot(&self) -> String {
         let project = self.project.project();
         let active_profile = project.active_profile();
+        let locale = self.locale;
         let mut snapshot = String::new();
-        writeln!(&mut snapshot, "OBS-RS desktop state").expect("String formatting cannot fail");
-        writeln!(&mut snapshot, "Project: {}", project.title())
-            .expect("String formatting cannot fail");
-        writeln!(&mut snapshot, "Profile: {active_profile}")
-            .expect("String formatting cannot fail");
+        self.append_accessible_overview(&mut snapshot, project, active_profile, locale);
+        self.append_accessible_mixer(&mut snapshot);
+        self.append_accessible_scenes(&mut snapshot, project, active_profile, locale);
+        self.append_accessible_footer(&mut snapshot, locale);
+        snapshot
+    }
+
+    fn append_accessible_overview(
+        &self,
+        snapshot: &mut String,
+        project: &Project,
+        active_profile: &Identifier,
+        locale: UiLocale,
+    ) {
         writeln!(
-            &mut snapshot,
-            "Preview scene: {}",
+            snapshot,
+            "OBS-RS {} ({})",
+            localized_label(locale, "desktop_state"),
+            locale.code()
+        )
+        .expect("String formatting cannot fail");
+        writeln!(
+            snapshot,
+            "{}: {}",
+            localized_label(locale, "project"),
+            project.title()
+        )
+        .expect("String formatting cannot fail");
+        writeln!(
+            snapshot,
+            "{}: {active_profile}",
+            localized_label(locale, "profile")
+        )
+        .expect("String formatting cannot fail");
+        writeln!(
+            snapshot,
+            "{}: {}",
+            localized_label(locale, "preview_scene"),
             self.preview_scene().unwrap_or("none")
         )
         .expect("String formatting cannot fail");
         writeln!(
-            &mut snapshot,
-            "Program scene: {}",
+            snapshot,
+            "{}: {}",
+            localized_label(locale, "program_scene"),
             self.program_scene().unwrap_or("none")
         )
         .expect("String formatting cannot fail");
         writeln!(
-            &mut snapshot,
-            "Selected source: {}",
+            snapshot,
+            "{}: {}",
+            localized_label(locale, "selected_source"),
             self.selected_source().unwrap_or("none")
         )
         .expect("String formatting cannot fail");
-        writeln!(&mut snapshot, "Transition: {:?}", self.transition)
-            .expect("String formatting cannot fail");
         writeln!(
-            &mut snapshot,
-            "Recording: {}",
-            if self.recording { "active" } else { "stopped" }
+            snapshot,
+            "{}: {:?}",
+            localized_label(locale, "transition"),
+            self.transition
         )
         .expect("String formatting cannot fail");
         writeln!(
-            &mut snapshot,
-            "Streaming: {}",
-            if self.streaming { "active" } else { "stopped" }
+            snapshot,
+            "{}: {}",
+            localized_label(locale, "recording"),
+            localized_state(self.recording, locale)
         )
         .expect("String formatting cannot fail");
         writeln!(
-            &mut snapshot,
-            "Project changes: {}",
-            if self.is_dirty() { "unsaved" } else { "saved" }
+            snapshot,
+            "{}: {}",
+            localized_label(locale, "streaming"),
+            localized_state(self.streaming, locale)
         )
         .expect("String formatting cannot fail");
-        snapshot.push_str("Audio mixer:\n");
+        writeln!(
+            snapshot,
+            "{}: {}",
+            localized_label(locale, "project_changes"),
+            localized_saved_state(self.is_dirty(), locale)
+        )
+        .expect("String formatting cannot fail");
+    }
+
+    fn append_accessible_mixer(&self, snapshot: &mut String) {
+        snapshot.push_str(localized_label(self.locale, "audio_mixer"));
+        snapshot.push_str(":\n");
         for channel in self.mixer_channels() {
             writeln!(
-                &mut snapshot,
+                snapshot,
                 "- {}: {} gain={} muted={} peak={}",
                 channel.id(),
                 channel.name(),
@@ -826,7 +925,17 @@ impl DesktopState {
             )
             .expect("String formatting cannot fail");
         }
-        snapshot.push_str("Scenes:\n");
+    }
+
+    fn append_accessible_scenes(
+        &self,
+        snapshot: &mut String,
+        project: &Project,
+        active_profile: &Identifier,
+        locale: UiLocale,
+    ) {
+        snapshot.push_str(localized_label(locale, "scenes"));
+        snapshot.push_str(":\n");
         if let Some(profile) = project
             .profiles()
             .find(|profile| profile.id() == active_profile)
@@ -843,7 +952,7 @@ impl DesktopState {
                     ""
                 };
                 writeln!(
-                    &mut snapshot,
+                    snapshot,
                     "- {}: {}{}{}",
                     scene.id(),
                     scene.name(),
@@ -853,19 +962,22 @@ impl DesktopState {
                 .expect("String formatting cannot fail");
             }
         }
-        writeln!(&mut snapshot, "Shortcuts: {}", self.shortcuts.len())
-            .expect("String formatting cannot fail");
-        snapshot.push_str("Recent notices:\n");
+    }
+
+    fn append_accessible_footer(&self, snapshot: &mut String, locale: UiLocale) {
+        writeln!(
+            snapshot,
+            "{}: {}",
+            localized_label(locale, "shortcuts"),
+            self.shortcuts.len()
+        )
+        .expect("String formatting cannot fail");
+        snapshot.push_str(localized_label(locale, "recent_notices"));
+        snapshot.push_str(":\n");
         for notice in self.notices() {
-            writeln!(
-                &mut snapshot,
-                "- #{}: {}",
-                notice.sequence(),
-                notice.message()
-            )
-            .expect("String formatting cannot fail");
+            writeln!(snapshot, "- #{}: {}", notice.sequence(), notice.message())
+                .expect("String formatting cannot fail");
         }
-        snapshot
     }
 
     /// Renders the accessible local browser control page for the current state.
@@ -1091,6 +1203,58 @@ fn escape_html(text: &str) -> String {
         }
     }
     escaped
+}
+
+fn localized_label(locale: UiLocale, key: &str) -> &'static str {
+    match (locale, key) {
+        (UiLocale::Spanish, "desktop_state") => "estado de escritorio",
+        (UiLocale::Spanish, "project") => "Proyecto",
+        (UiLocale::Spanish, "profile") => "Perfil",
+        (UiLocale::Spanish, "preview_scene") => "Escena de vista previa",
+        (UiLocale::Spanish, "program_scene") => "Escena al aire",
+        (UiLocale::Spanish, "selected_source") => "Fuente seleccionada",
+        (UiLocale::Spanish, "transition") => "Transición",
+        (UiLocale::Spanish, "recording") => "Grabación",
+        (UiLocale::Spanish, "streaming") => "Transmisión",
+        (UiLocale::Spanish, "project_changes") => "Cambios del proyecto",
+        (UiLocale::Spanish, "audio_mixer") => "Mezclador de audio",
+        (UiLocale::Spanish, "scenes") => "Escenas",
+        (UiLocale::Spanish, "shortcuts") => "Atajos",
+        (UiLocale::Spanish, "recent_notices") => "Avisos recientes",
+        (UiLocale::English, "desktop_state") => "desktop state",
+        (UiLocale::English, "project") => "Project",
+        (UiLocale::English, "profile") => "Profile",
+        (UiLocale::English, "preview_scene") => "Preview scene",
+        (UiLocale::English, "program_scene") => "Program scene",
+        (UiLocale::English, "selected_source") => "Selected source",
+        (UiLocale::English, "transition") => "Transition",
+        (UiLocale::English, "recording") => "Recording",
+        (UiLocale::English, "streaming") => "Streaming",
+        (UiLocale::English, "project_changes") => "Project changes",
+        (UiLocale::English, "audio_mixer") => "Audio mixer",
+        (UiLocale::English, "scenes") => "Scenes",
+        (UiLocale::English, "shortcuts") => "Shortcuts",
+        (UiLocale::English, "recent_notices") => "Recent notices",
+        (_, _) => "State",
+    }
+}
+
+fn localized_state(active: bool, locale: UiLocale) -> &'static str {
+    match (active, locale) {
+        (true, UiLocale::English) => "active",
+        (false, UiLocale::English) => "stopped",
+        (true, UiLocale::Spanish) => "activa",
+        (false, UiLocale::Spanish) => "detenida",
+    }
+}
+
+fn localized_saved_state(dirty: bool, locale: UiLocale) -> &'static str {
+    match (dirty, locale) {
+        (true, UiLocale::English) => "unsaved",
+        (false, UiLocale::English) => "saved",
+        (true, UiLocale::Spanish) => "sin guardar",
+        (false, UiLocale::Spanish) => "guardado",
+    }
 }
 
 fn first_scene_id(project: &Project) -> Option<Identifier> {
@@ -1572,9 +1736,29 @@ mod tests {
             })
         );
         assert_eq!(
+            parse_console_command("language es"),
+            Ok(ConsoleCommand::Apply(UiCommand::SetLocale {
+                locale: UiLocale::Spanish
+            }))
+        );
+        assert_eq!(
             parse_web_request(b"DELETE / HTTP/1.1\r\n\r\n"),
             Err(WebRequestError::UnsupportedMethod("DELETE".to_owned()))
         );
+    }
+
+    #[test]
+    fn localized_snapshot_uses_the_selected_language() {
+        let mut state = DesktopState::new(project());
+        state
+            .dispatch(UiCommand::SetLocale {
+                locale: UiLocale::Spanish,
+            })
+            .expect("locale selection");
+        let snapshot = state.accessible_snapshot();
+        assert!(snapshot.contains("Proyecto:"));
+        assert!(snapshot.contains("Mezclador de audio:"));
+        assert!(snapshot.contains("(es)"));
     }
 
     #[test]

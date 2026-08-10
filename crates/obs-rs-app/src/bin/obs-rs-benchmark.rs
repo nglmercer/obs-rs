@@ -10,7 +10,10 @@ use obs_rs_config::Config;
 use obs_rs_core::{CompositorMetrics, Runtime};
 use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, VideoFormat};
 use obs_rs_plugin_api::VideoRequest;
-use obs_rs_video::{CancellationToken, DropPolicy, MonotonicClock, VideoWorker, VideoWorkerReport};
+use obs_rs_video::{
+    run_multi_worker_soak, CancellationToken, DropPolicy, MonotonicClock, VideoWorker,
+    VideoWorkerReport,
+};
 
 const BENCHMARK_FRAMES: u64 = 120;
 
@@ -58,14 +61,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     )?;
     let elapsed = started.elapsed();
+    let multi_worker = run_multi_worker_soak(format, 2, 30, 3, DropPolicy::DropOldest)?;
 
-    print_report(report, runtime.compositor_metrics(), elapsed.as_millis());
+    print_report(
+        report,
+        runtime.compositor_metrics(),
+        elapsed.as_millis(),
+        multi_worker,
+    );
     Ok(())
 }
 
-fn print_report(report: VideoWorkerReport, compositor: CompositorMetrics, elapsed_millis: u128) {
+fn print_report(
+    report: VideoWorkerReport,
+    compositor: CompositorMetrics,
+    elapsed_millis: u128,
+    multi_worker: obs_rs_video::MultiWorkerSoakReport,
+) {
     println!(
-        "obs-rs benchmark: requested={} processed={} cancelled={} empty={} dropped_oldest={} dropped_newest={} missed={} lateness_ns={} max_lateness_ns={} wait_ns={} render_ns={} remaining={} renders={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={} elapsed_ms={elapsed_millis}",
+        "obs-rs benchmark: requested={} processed={} cancelled={} empty={} dropped_oldest={} dropped_newest={} missed={} lateness_ns={} max_lateness_ns={} wait_ns={} render_ns={} produced_bytes={} peak_queued_bytes={} remaining={} renders={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={} elapsed_ms={elapsed_millis} multi_workers={} multi_requested={} multi_processed={} multi_missed={} multi_lateness_ns={} multi_produced_bytes={} multi_peak_queued_bytes={} multi_elapsed_ns={}",
         report.requested_frames(),
         report.processed_frames(),
         report.cancelled(),
@@ -77,6 +91,8 @@ fn print_report(report: VideoWorkerReport, compositor: CompositorMetrics, elapse
         report.max_lateness_nanos(),
         report.total_wait_nanos(),
         report.total_render_nanos(),
+        report.produced_bytes(),
+        report.peak_queued_bytes(),
         report.remaining_queue(),
         compositor.render_calls(),
         compositor.source_requests(),
@@ -85,6 +101,14 @@ fn print_report(report: VideoWorkerReport, compositor: CompositorMetrics, elapse
         compositor.transformed_frames(),
         compositor.filtered_frames(),
         compositor.blended_layers(),
+        multi_worker.workers(),
+        multi_worker.requested_frames(),
+        multi_worker.processed_frames(),
+        multi_worker.missed_deadlines(),
+        multi_worker.total_lateness_nanos(),
+        multi_worker.produced_bytes(),
+        multi_worker.peak_queued_bytes(),
+        multi_worker.elapsed_nanos(),
     );
 }
 
