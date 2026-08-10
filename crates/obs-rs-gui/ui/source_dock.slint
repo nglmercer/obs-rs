@@ -7,8 +7,10 @@ export component SourceDock inherits Rectangle {
     in property <string> locale;
     in property <string> source-scene;
     in property <[SourceRow]> source-rows;
+    in property <string> selected-source;
     in property <int> panel-kind;
     callback move-panel(int, int);
+    callback open-modal(int);
     callback select-source(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
@@ -19,6 +21,8 @@ export component SourceDock inherits Rectangle {
     border-width: 1px;
     border-color: rgb(55, 60, 69);
     VerticalBox {
+        padding: 0px;
+        spacing: 0px;
         DockHeader {
             title: I18n.text.sources_title + source-scene;
             panel-kind: root.panel-kind;
@@ -31,6 +35,11 @@ export component SourceDock inherits Rectangle {
                 spacing: 6px;
                 ScrollView {
                     vertical-stretch: 1;
+                    // Rows stack from the top of the dock the way a
+                    // list widget does, instead of centring in the view.
+                    VerticalLayout {
+                        alignment: start;
+                        spacing: 1px;
                     for source in source-rows : Rectangle {
                         height: 36px;
                         background: source.selected ? rgb(51, 73, 105) : rgb(39, 43, 50);
@@ -69,14 +78,44 @@ export component SourceDock inherits Rectangle {
                             }
                         }
                     }
+                    }
                 }
                 HorizontalBox {
                     spacing: 4px;
-                    CompactButton { width: 22px; icon-name: "add"; hint: I18n.text.add_source; }
-                    CompactButton { width: 22px; icon-name: "remove"; hint: I18n.text.remove_source; }
-                    CompactButton { width: 22px; icon-name: "settings"; hint: I18n.text.source_properties; }
-                    CompactButton { width: 22px; icon-name: "up"; hint: I18n.text.source_move_up; }
-                    CompactButton { width: 22px; icon-name: "down"; hint: I18n.text.source_move_down; }
+                    CompactButton {
+                        width: 22px;
+                        icon-name: "add";
+                        hint: I18n.text.add_source;
+                        clicked => { root.open-modal(3); }
+                    }
+                    CompactButton {
+                        width: 22px;
+                        icon-name: "remove";
+                        hint: I18n.text.remove_source;
+                        enabled: root.selected-source != "";
+                        clicked => { root.remove-source(root.selected-source); }
+                    }
+                    CompactButton {
+                        width: 22px;
+                        icon-name: "settings";
+                        hint: I18n.text.source_properties;
+                        enabled: root.selected-source != "";
+                        clicked => { root.open-modal(6); }
+                    }
+                    CompactButton {
+                        width: 22px;
+                        icon-name: "up";
+                        hint: I18n.text.source_move_up;
+                        enabled: root.selected-source != "";
+                        clicked => { root.move-source(root.selected-source, -1); }
+                    }
+                    CompactButton {
+                        width: 22px;
+                        icon-name: "down";
+                        hint: I18n.text.source_move_down;
+                        enabled: root.selected-source != "";
+                        clicked => { root.move-source(root.selected-source, 1); }
+                    }
                     Rectangle { horizontal-stretch: 1; }
                     CompactButton { width: 22px; icon-name: "more"; hint: I18n.text.more_options; }
                 }

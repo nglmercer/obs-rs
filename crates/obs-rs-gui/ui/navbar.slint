@@ -1,9 +1,12 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { Icon, MenuEntry, NavMenuButton } from "theme.slint";
+import { MenuBarButton, MenuEntry } from "theme.slint";
 import { ProfileRow } from "models.slint";
 import { LocaleOption } from "models.slint";
 import { I18n } from "i18n.slint";
 
+// Mirrors the OBS menu bar: a plain text strip flush with the window edge, no
+// branding or iconography. Each dropdown anchors to the x of its own button so
+// the layout stays correct when a translation changes the label widths.
 export component AppNavbar inherits Rectangle {
     in property <string> locale;
     in property <[ProfileRow]> profile-rows;
@@ -14,95 +17,69 @@ export component AppNavbar inherits Rectangle {
     callback set-locale(string);
 
     property <int> open-menu: 0;
-    height: 36px;
+    height: 26px;
     background: rgb(39, 43, 50);
-    border-width: 1px;
-    border-color: rgb(55, 60, 69);
     z: 10;
 
     HorizontalBox {
-        padding-left: 8px;
-        padding-right: 8px;
-        spacing: 3px;
-        Icon {
-            name: "brand";
-            icon-size: 18px;
-        }
-        Text {
-            text: "OBS-RS";
-            color: rgb(249, 250, 251);
-            font-size: 12px;
-            font-weight: 700;
-            vertical-alignment: center;
-            width: 58px;
-        }
-        NavMenuButton {
+        padding: 0px;
+        padding-left: 4px;
+        padding-right: 6px;
+        spacing: 0px;
+        alignment: start;
+        file-button := MenuBarButton {
             label: I18n.text.nav_file;
-            icon-name: "file";
             active: open-menu == 1;
             clicked => { root.open-menu = open-menu == 1 ? 0 : 1; }
         }
-        NavMenuButton {
+        edit-button := MenuBarButton {
             label: I18n.text.nav_edit;
-            icon-name: "edit";
             active: open-menu == 2;
             clicked => { root.open-menu = open-menu == 2 ? 0 : 2; }
         }
-        NavMenuButton {
+        view-button := MenuBarButton {
             label: I18n.text.nav_view;
-            icon-name: "view";
             active: open-menu == 3;
             clicked => { root.open-menu = open-menu == 3 ? 0 : 3; }
         }
-        NavMenuButton {
+        docks-button := MenuBarButton {
             label: I18n.text.nav_docks;
-            icon-name: "panels";
             active: open-menu == 4;
             clicked => { root.open-menu = open-menu == 4 ? 0 : 4; }
         }
-        NavMenuButton {
+        profile-button := MenuBarButton {
             label: I18n.text.nav_profile;
-            icon-name: "profile";
             active: open-menu == 5;
             clicked => { root.open-menu = open-menu == 5 ? 0 : 5; }
         }
-        NavMenuButton {
+        collection-button := MenuBarButton {
             label: I18n.text.nav_scene_collection;
-            icon-name: "collection";
             active: open-menu == 6;
-            min-width: 132px;
             clicked => { root.open-menu = open-menu == 6 ? 0 : 6; }
         }
-        NavMenuButton {
+        tools-button := MenuBarButton {
             label: I18n.text.nav_tools;
-            icon-name: "tools";
             active: open-menu == 7;
             clicked => { root.open-menu = open-menu == 7 ? 0 : 7; }
         }
-        NavMenuButton {
+        help-button := MenuBarButton {
             label: I18n.text.nav_help;
-            icon-name: "help";
             active: open-menu == 8;
             clicked => { root.open-menu = open-menu == 8 ? 0 : 8; }
         }
         Rectangle { horizontal-stretch: 1; }
-        Text {
-            text: I18n.text.language;
-            color: rgb(148, 163, 184);
-            font-size: 11px;
-            vertical-alignment: center;
-        }
-        for option in locale-options : Button {
-            text: option.label;
+        for option in locale-options : MenuBarButton {
+            label: option.label;
+            active: root.locale == option.code;
             clicked => root.set-locale(option.code);
         }
     }
 
     if open-menu == 1 : Rectangle {
-        x: 88px;
-        y: 34px;
-        width: 220px;
-        height: 194px;
+        x: file-button.x;
+        y: root.height;
+        width: 224px;
+        height: 200px;
         background: rgb(39, 43, 50);
         border-width: 1px;
         border-color: rgb(75, 85, 99);
@@ -121,10 +98,10 @@ export component AppNavbar inherits Rectangle {
         }
     }
     if open-menu == 2 : Rectangle {
-        x: 148px;
-        y: 34px;
-        width: 220px;
-        height: 120px;
+        x: edit-button.x;
+        y: root.height;
+        width: 224px;
+        height: 108px;
         background: rgb(39, 43, 50);
         border-width: 1px;
         border-color: rgb(75, 85, 99);
@@ -138,10 +115,10 @@ export component AppNavbar inherits Rectangle {
         }
     }
     if open-menu == 3 : Rectangle {
-        x: 208px;
-        y: 34px;
-        width: 220px;
-        height: 120px;
+        x: view-button.x;
+        y: root.height;
+        width: 224px;
+        height: 80px;
         background: rgb(39, 43, 50);
         border-width: 1px;
         border-color: rgb(75, 85, 99);
@@ -149,15 +126,15 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: I18n.text.menu_studio_mode; clicked => { root.select-view-mode(0); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_studio_mode; clicked => { root.select-view-mode(-1); root.open-menu = 0; } }
             MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("fullscreen"); root.open-menu = 0; } }
         }
     }
     if open-menu == 4 : Rectangle {
-        x: 270px;
-        y: 34px;
-        width: 220px;
-        height: 170px;
+        x: docks-button.x;
+        y: root.height;
+        width: 224px;
+        height: 164px;
         background: rgb(39, 43, 50);
         border-width: 1px;
         border-color: rgb(75, 85, 99);
@@ -173,9 +150,9 @@ export component AppNavbar inherits Rectangle {
         }
     }
     if open-menu == 5 : Rectangle {
-        x: 330px;
-        y: 34px;
-        width: 220px;
+        x: profile-button.x;
+        y: root.height;
+        width: 224px;
         height: 140px;
         background: rgb(39, 43, 50);
         border-width: 1px;
@@ -193,10 +170,10 @@ export component AppNavbar inherits Rectangle {
         }
     }
     if open-menu == 6 : Rectangle {
-        x: 428px;
-        y: 34px;
-        width: 220px;
-        height: 120px;
+        x: collection-button.x;
+        y: root.height;
+        width: 224px;
+        height: 108px;
         background: rgb(39, 43, 50);
         border-width: 1px;
         border-color: rgb(75, 85, 99);
@@ -210,10 +187,10 @@ export component AppNavbar inherits Rectangle {
         }
     }
     if open-menu == 7 : Rectangle {
-        x: 566px;
-        y: 34px;
-        width: 220px;
-        height: 120px;
+        x: tools-button.x;
+        y: root.height;
+        width: 224px;
+        height: 108px;
         background: rgb(39, 43, 50);
         border-width: 1px;
         border-color: rgb(75, 85, 99);
@@ -227,10 +204,10 @@ export component AppNavbar inherits Rectangle {
         }
     }
     if open-menu == 8 : Rectangle {
-        x: 628px;
-        y: 34px;
-        width: 220px;
-        height: 92px;
+        x: help-button.x;
+        y: root.height;
+        width: 224px;
+        height: 80px;
         background: rgb(39, 43, 50);
         border-width: 1px;
         border-color: rgb(75, 85, 99);

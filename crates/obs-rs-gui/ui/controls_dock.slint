@@ -1,56 +1,16 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { ProjectDialog, SceneDialog, SourceDialog, OutputDialog } from "dialogs.slint";
-import { DockHeader } from "theme.slint";
+import { CompactButton, DockHeader } from "theme.slint";
 import { I18n } from "i18n.slint";
 
+// The OBS controls dock: one full-width button per output action, with the
+// virtual camera gear docked beside its button.
 export component ControlsDock inherits Rectangle {
-    in property <string> locale;
-    in property <string> preview-scene;
-    in property <string> selected-source;
-    in property <string> capture-capabilities;
-    in property <string> preview-metrics;
-    in property <string> source-settings-version;
-    in-out property <string> source-settings;
-    in-out property <string> source-transform;
-    in-out property <string> source-filters;
-    in-out property <string> project-path;
-    in-out property <string> diagnostics-path;
-    in-out property <string> recording-path;
-    in-out property <string> streaming-address;
-    in-out property <string> new-scene-id;
-    in-out property <string> new-scene-name;
-    in-out property <string> scene-name;
-    in-out property <string> new-source-id;
-    in-out property <string> new-source-kind;
-    in-out property <string> new-source-name;
-    in property <string> transition;
     in property <bool> recording;
     in property <bool> streaming;
-    in property <string> recovery-status;
-    in property <string> output-status;
-    in property <string> output-metrics;
-    in property <string> status-message;
-    in property <string> snapshot;
-    in property <int> view-mode;
     in property <int> panel-kind;
-    in-out property <int> active-tab: 0;
     in-out property <bool> settings-open;
-    property <int> active-modal: 0;
 
     callback move-panel(int, int);
-    callback save-project();
-    callback load-project();
-    callback recover-project();
-    callback export-diagnostics();
-    callback add-scene(string, string);
-    callback rename-scene();
-    callback add-source(string, string, string);
-    callback apply-source-settings();
-    callback apply-source-transform();
-    callback apply-source-filters();
-    callback swap-scenes();
-    callback cut-transition();
-    callback fade-transition();
     callback toggle-recording();
     callback toggle-streaming();
     callback set-view-mode(int);
@@ -60,86 +20,59 @@ export component ControlsDock inherits Rectangle {
     border-color: rgb(55, 60, 69);
 
     VerticalBox {
+        padding: 0px;
+        spacing: 0px;
         DockHeader {
             title: I18n.text.controls_title;
             panel-kind: root.panel-kind;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
         }
-        Rectangle {
-            vertical-stretch: 1;
-            VerticalBox {
-                padding: 8px;
-                spacing: 6px;
-                Button {
-                    text: streaming
-                        ? I18n.text.stop_streaming
-                        : I18n.text.start_streaming;
-                    height: 32px;
-                    clicked => toggle-streaming();
-                }
-                Button {
-                    text: recording
-                        ? I18n.text.stop_recording
-                        : I18n.text.start_recording;
-                    height: 32px;
-                    clicked => toggle-recording();
-                }
-                Button {
-                    text: I18n.text.studio_mode;
-                    height: 32px;
-                    clicked => set-view-mode(0);
-                }
-                Button {
-                    text: I18n.text.settings;
-                    height: 32px;
-                    clicked => { root.settings-open = true; }
-                }
-                Rectangle { vertical-stretch: 1; }
+        VerticalBox {
+            padding: 8px;
+            spacing: 6px;
+            Button {
+                text: streaming
+                    ? I18n.text.stop_streaming
+                    : I18n.text.start_streaming;
+                height: 30px;
+                clicked => toggle-streaming();
             }
+            Button {
+                text: recording
+                    ? I18n.text.stop_recording
+                    : I18n.text.start_recording;
+                height: 30px;
+                clicked => toggle-recording();
+            }
+            HorizontalBox {
+                padding: 0px;
+                spacing: 4px;
+                Button {
+                    // OBS-RS has no virtual camera backend yet; the control
+                    // keeps its place in the dock but stays disabled.
+                    text: I18n.text.start_virtual_camera;
+                    height: 30px;
+                    enabled: false;
+                    horizontal-stretch: 1;
+                }
+                CompactButton {
+                    icon-name: "settings";
+                    hint: I18n.text.virtual_camera_options;
+                    enabled: false;
+                    height: 30px;
+                }
+            }
+            Button {
+                text: I18n.text.studio_mode;
+                height: 30px;
+                clicked => set-view-mode(-1);
+            }
+            Button {
+                text: I18n.text.settings;
+                height: 30px;
+                clicked => { root.settings-open = true; }
+            }
+            Rectangle { vertical-stretch: 1; }
         }
-    }
-
-    ProjectDialog {
-        open: root.active-modal == 1 || root.settings-open;
-        locale: root.locale;
-        project-path <=> root.project-path;
-        diagnostics-path <=> root.diagnostics-path;
-        close => {
-            root.active-modal = 0;
-            root.settings-open = false;
-        }
-        accepted => {
-            root.save-project();
-            root.active-modal = 0;
-            root.settings-open = false;
-        }
-    }
-    SceneDialog {
-        open: root.active-modal == 2;
-        locale: root.locale;
-        new-scene-id <=> root.new-scene-id;
-        new-scene-name <=> root.new-scene-name;
-        add-scene(id, name) => { root.add-scene(id, name); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    SourceDialog {
-        open: root.active-modal == 3;
-        locale: root.locale;
-        preview-scene: root.preview-scene;
-        new-source-id <=> root.new-source-id;
-        new-source-kind <=> root.new-source-kind;
-        new-source-name <=> root.new-source-name;
-        add-source(id, kind, name) => { root.add-source(id, kind, name); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    OutputDialog {
-        open: root.active-modal == 4;
-        locale: root.locale;
-        recording-path <=> root.recording-path;
-        streaming-address <=> root.streaming-address;
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
     }
 }

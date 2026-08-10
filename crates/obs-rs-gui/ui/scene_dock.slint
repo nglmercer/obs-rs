@@ -6,8 +6,10 @@ import { I18n } from "i18n.slint";
 export component SceneDock inherits Rectangle {
     in property <string> locale;
     in property <[SceneRow]> scene-rows;
+    in property <string> preview-scene;
     in property <int> panel-kind;
     callback move-panel(int, int);
+    callback open-modal(int);
     callback select-preview(string);
     callback select-program(string);
     callback remove-scene(string);
@@ -16,6 +18,8 @@ export component SceneDock inherits Rectangle {
     border-width: 1px;
     border-color: rgb(55, 60, 69);
     VerticalBox {
+        padding: 0px;
+        spacing: 0px;
         DockHeader {
             title: I18n.text.scenes_title;
             panel-kind: root.panel-kind;
@@ -28,6 +32,11 @@ export component SceneDock inherits Rectangle {
                 spacing: 6px;
                 ScrollView {
                     vertical-stretch: 1;
+                    // Rows stack from the top of the dock the way a
+                    // list widget does, instead of centring in the view.
+                    VerticalLayout {
+                        alignment: start;
+                        spacing: 1px;
                     for scene in scene-rows : Rectangle {
                         height: 38px;
                         background: scene.role != "" ? rgb(51, 73, 105) : rgb(39, 43, 50);
@@ -53,12 +62,27 @@ export component SceneDock inherits Rectangle {
                             double-clicked => select-program(scene.id);
                         }
                     }
+                    }
                 }
                 HorizontalBox {
                     spacing: 4px;
-                    CompactButton { icon-name: "add"; hint: I18n.text.add_scene; }
-                    CompactButton { icon-name: "remove"; hint: I18n.text.remove_scene; }
-                    CompactButton { icon-name: "settings"; hint: I18n.text.scene_properties; }
+                    CompactButton {
+                        icon-name: "add";
+                        hint: I18n.text.add_scene;
+                        clicked => { root.open-modal(2); }
+                    }
+                    CompactButton {
+                        icon-name: "remove";
+                        hint: I18n.text.remove_scene;
+                        enabled: root.preview-scene != "";
+                        clicked => { root.remove-scene(root.preview-scene); }
+                    }
+                    CompactButton {
+                        icon-name: "settings";
+                        hint: I18n.text.scene_properties;
+                        enabled: root.preview-scene != "";
+                        clicked => { root.open-modal(5); }
+                    }
                     Rectangle { horizontal-stretch: 1; }
                 }
             }

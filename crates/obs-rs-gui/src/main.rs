@@ -51,6 +51,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
     let renderer = Rc::new(RefCell::new(PreviewRenderer::new(&project)?));
+    {
+        // The canvas size drives the zoom readout under the preview.
+        let format = renderer.borrow().format;
+        ui.set_canvas_width(i32::try_from(format.width()).unwrap_or(1920));
+        ui.set_canvas_height(i32::try_from(format.height()).unwrap_or(1080));
+    }
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
     let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
 

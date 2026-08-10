@@ -1,4 +1,4 @@
-import { Button, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
+import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 import { FieldHeading, ModalShell, MutedText } from "theme.slint";
 import { I18n } from "i18n.slint";
 
@@ -55,6 +55,90 @@ export component SceneDialog inherits ModalShell {
         LineEdit {
             text <=> new-scene-name;
             placeholder-text: I18n.text.scene_name_placeholder;
+        }
+    }
+}
+
+export component RenameSceneDialog inherits ModalShell {
+    in property <string> locale;
+    in-out property <string> scene-name;
+    callback rename-scene();
+
+    title: I18n.text.scene_properties;
+    subtitle: I18n.text.scene_dialog_description;
+    accept-label: I18n.text.rename;
+    cancel-label: I18n.text.cancel;
+    panel-height: 240px;
+    accepted => rename-scene();
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: I18n.text.scene_name; }
+        LineEdit {
+            text <=> scene-name;
+            placeholder-text: I18n.text.scene_name_placeholder;
+        }
+    }
+}
+
+// The OBS "Properties" dialog for the selected source: settings document and
+// transform, each applied through its own Rust callback.
+export component SourcePropertiesDialog inherits ModalShell {
+    in property <string> locale;
+    in property <string> selected-source;
+    in property <string> capture-capabilities;
+    in-out property <string> source-settings;
+    in-out property <string> source-transform;
+    callback apply-source-settings();
+    callback apply-source-transform();
+
+    title: I18n.text.source_properties;
+    subtitle: I18n.text.selected_source_prefix + selected-source;
+    accept-label: I18n.text.apply;
+    cancel-label: I18n.text.cancel;
+    panel-height: 440px;
+    accepted => {
+        apply-source-settings();
+        apply-source-transform();
+    }
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: I18n.text.source_settings; }
+        TextEdit {
+            text <=> source-settings;
+            placeholder-text: "width=640\nheight=360\ncolor=#202840FF";
+            vertical-stretch: 1;
+            min-height: 96px;
+        }
+        FieldHeading { text: I18n.text.transform; }
+        LineEdit {
+            text <=> source-transform;
+            placeholder-text: "1000,1000,0,0,0,0,255";
+        }
+        MutedText { text: capture-capabilities; }
+    }
+}
+
+export component SourceFiltersDialog inherits ModalShell {
+    in property <string> locale;
+    in property <string> selected-source;
+    in-out property <string> source-filters;
+    callback apply-source-filters();
+
+    title: I18n.text.menu_source_filters;
+    subtitle: I18n.text.selected_source_prefix + selected-source;
+    accept-label: I18n.text.apply;
+    cancel-label: I18n.text.cancel;
+    panel-height: 260px;
+    accepted => apply-source-filters();
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: I18n.text.filters_prefix + source-filters; }
+        LineEdit {
+            text <=> source-filters;
+            placeholder-text: "gray,brightness:750,opacity:200";
         }
     }
 }

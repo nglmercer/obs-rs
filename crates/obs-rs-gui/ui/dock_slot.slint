@@ -14,37 +14,15 @@ export component DockSlot inherits Rectangle {
     in property <[SourceRow]> source-rows;
     in property <[MixerRow]> mixer-rows;
     in property <string> source-scene;
-    in property <string> capture-capabilities;
     in property <string> preview-scene;
     in property <string> selected-source;
-    in property <string> preview-metrics;
-    in property <string> source-settings-version;
-    in-out property <string> source-settings;
-    in-out property <string> source-transform;
-    in-out property <string> source-filters;
-    in-out property <string> project-path;
-    in-out property <string> diagnostics-path;
-    in-out property <string> recording-path;
-    in-out property <string> streaming-address;
-    in-out property <string> new-scene-id;
-    in-out property <string> new-scene-name;
-    in-out property <string> scene-name;
-    in-out property <string> new-source-id;
-    in-out property <string> new-source-kind;
-    in-out property <string> new-source-name;
     in property <string> transition;
     in property <bool> recording;
     in property <bool> streaming;
-    in property <string> recovery-status;
-    in property <string> output-status;
-    in property <string> output-metrics;
-    in property <string> status-message;
-    in property <string> snapshot;
-    in property <int> view-mode;
-    in-out property <int> active-tab;
     in-out property <bool> settings-open;
 
     callback move-panel(int, int);
+    callback open-modal(int);
     callback select-preview(string);
     callback select-program(string);
     callback remove-scene(string);
@@ -57,30 +35,23 @@ export component DockSlot inherits Rectangle {
     callback toggle-mixer-mute(string);
     callback cut-transition();
     callback fade-transition();
-    callback save-project();
-    callback load-project();
-    callback recover-project();
-    callback export-diagnostics();
-    callback add-scene(string, string);
-    callback rename-scene();
-    callback add-source(string, string, string);
-    callback apply-source-settings();
-    callback apply-source-transform();
-    callback apply-source-filters();
-    callback swap-scenes();
+    callback set-view-mode(int);
     callback toggle-recording();
     callback toggle-streaming();
-    callback set-view-mode(int);
 
-    horizontal-stretch: panel-kind == 4 ? 1.15 : panel-kind == 2 ? 1.45 : 1;
-    min-width: panel-kind == 4 ? 190px : 150px;
+    // Matches the relative dock widths OBS ships with: the mixer is the widest
+    // strip and the controls column is the narrowest fixed one.
+    horizontal-stretch: panel-kind == 2 ? 1.85 : panel-kind == 4 ? 1.4 : 1;
+    min-width: panel-kind == 4 ? 172px : 148px;
     background: transparent;
 
     if panel-kind == 0 : SceneDock {
         locale: root.locale;
         panel-kind: root.panel-kind;
         scene-rows: root.scene-rows;
+        preview-scene: root.preview-scene;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
+        open-modal(modal) => { root.open-modal(modal); }
         select-preview(id) => { root.select-preview(id); }
         select-program(id) => { root.select-program(id); }
         remove-scene(id) => { root.remove-scene(id); }
@@ -90,7 +61,9 @@ export component DockSlot inherits Rectangle {
         panel-kind: root.panel-kind;
         source-scene: root.source-scene;
         source-rows: root.source-rows;
+        selected-source: root.selected-source;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
+        open-modal(modal) => { root.open-modal(modal); }
         select-source(id) => { root.select-source(id); }
         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
         toggle-source-locked(id) => { root.toggle-source-locked(id); }
@@ -114,51 +87,11 @@ export component DockSlot inherits Rectangle {
         fade-transition() => { root.fade-transition(); }
     }
     if panel-kind == 4 : ControlsDock {
-        locale: root.locale;
         panel-kind: root.panel-kind;
-        preview-scene: root.preview-scene;
-        selected-source: root.selected-source;
-        capture-capabilities: root.capture-capabilities;
-        preview-metrics: root.preview-metrics;
-        source-settings-version: root.source-settings-version;
-        source-settings <=> root.source-settings;
-        source-transform <=> root.source-transform;
-        source-filters <=> root.source-filters;
-        project-path <=> root.project-path;
-        diagnostics-path <=> root.diagnostics-path;
-        recording-path <=> root.recording-path;
-        streaming-address <=> root.streaming-address;
-        new-scene-id <=> root.new-scene-id;
-        new-scene-name <=> root.new-scene-name;
-        scene-name <=> root.scene-name;
-        new-source-id <=> root.new-source-id;
-        new-source-kind <=> root.new-source-kind;
-        new-source-name <=> root.new-source-name;
-        transition: root.transition;
         recording: root.recording;
         streaming: root.streaming;
-        recovery-status: root.recovery-status;
-        output-status: root.output-status;
-        output-metrics: root.output-metrics;
-        status-message: root.status-message;
-        snapshot: root.snapshot;
-        view-mode: root.view-mode;
-        active-tab <=> root.active-tab;
         settings-open <=> root.settings-open;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
-        save-project() => { root.save-project(); }
-        load-project() => { root.load-project(); }
-        recover-project() => { root.recover-project(); }
-        export-diagnostics() => { root.export-diagnostics(); }
-        add-scene(id, name) => { root.add-scene(id, name); }
-        rename-scene() => { root.rename-scene(); }
-        add-source(id, kind, name) => { root.add-source(id, kind, name); }
-        apply-source-settings() => { root.apply-source-settings(); }
-        apply-source-transform() => { root.apply-source-transform(); }
-        apply-source-filters() => { root.apply-source-filters(); }
-        swap-scenes() => { root.swap-scenes(); }
-        cut-transition() => { root.cut-transition(); }
-        fade-transition() => { root.fade-transition(); }
         toggle-recording() => { root.toggle-recording(); }
         toggle-streaming() => { root.toggle-streaming(); }
         set-view-mode(mode) => { root.set-view-mode(mode); }

@@ -1,48 +1,47 @@
-import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Button, ComboBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { Icon } from "theme.slint";
 import { I18n } from "i18n.slint";
 
-component StageCard inherits Rectangle {
-    in property <string> title;
-    in property <string> scene;
+// The canvas widget OBS draws into: a flat dark surface with the rendered
+// frame letterboxed inside it, so the black bars belong to the canvas rather
+// than to the frame.
+component StageCanvas inherits Rectangle {
     in property <image> frame;
+    in property <string> label;
     in property <bool> program;
+    in property <bool> labelled;
 
-    background: rgb(15, 17, 21);
-    border-width: 1px;
-    border-color: program ? rgb(104, 45, 45) : rgb(55, 60, 69);
+    background: rgb(0, 0, 0);
     horizontal-stretch: 1;
+    vertical-stretch: 1;
 
-    VerticalBox {
-        spacing: 0px;
+    Image {
+        width: 100%;
+        height: 100%;
+        source: root.frame;
+        image-fit: contain;
+        image-rendering: smooth;
+    }
+    if labelled : Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 18px;
+        background: rgb(0, 0, 0, 150);
         Text {
-            height: 24px;
-            text: root.title;
+            x: 6px;
+            text: root.label;
             color: root.program ? rgb(248, 113, 113) : rgb(96, 165, 250);
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 700;
             vertical-alignment: center;
-        }
-        Rectangle {
-            vertical-stretch: 1;
-            background: black;
-            Image {
-                source: root.frame;
-                width: 100%;
-                height: 100%;
-                image-fit: contain;
-            }
-        }
-        Text {
-            height: 22px;
-            text: root.scene;
-            color: rgb(148, 163, 184);
-            font-size: 10px;
-            vertical-alignment: center;
-            overflow: elide;
+            height: 100%;
         }
     }
 }
 
+// Canvas area, zoom strip, and source toolbar, stacked the way OBS stacks them
+// between the menu bar and the dock row.
 export component StagePanel inherits Rectangle {
     in property <string> locale;
     in property <string> preview-scene;
@@ -50,39 +49,134 @@ export component StagePanel inherits Rectangle {
     in property <image> preview-image;
     in property <image> program-image;
     in property <int> view-mode;
+    in property <int> canvas-width: 1920;
+    in property <int> canvas-height: 1080;
+    in property <string> selected-source;
+    callback open-source-properties();
+    callback open-source-filters();
+
+    property <length> canvas-area-width: canvas-area.width - 24px;
+    property <length> canvas-area-height: canvas-area.height - 24px;
+    // `image-fit: contain` picks the smaller of the two ratios, so the same
+    // formula reproduces the zoom percentage OBS reports.
+    property <float> fit-scale: Math.min(
+        canvas-area-width / (canvas-width * 1px),
+        canvas-area-height / (canvas-height * 1px));
 
     horizontal-stretch: 1;
-    vertical-stretch: 4;
-    min-height: 300px;
-    background: rgb(18, 20, 25);
-    border-width: 1px;
-    border-color: rgb(55, 60, 69);
+    vertical-stretch: 1;
+    background: rgb(24, 26, 31);
 
     VerticalBox {
-        padding: 6px;
-        spacing: 6px;
-        if view-mode == 0 : HorizontalBox {
-            spacing: 6px;
+        padding: 0px;
+        spacing: 0px;
+
+        canvas-area := Rectangle {
             vertical-stretch: 1;
-            StageCard {
-                title: I18n.text.preview;
-                scene: preview-scene;
-                frame: preview-image;
-                program: false;
-            }
-            StageCard {
-                title: I18n.text.program;
-                scene: program-scene;
-                frame: program-image;
-                program: true;
+            background: rgb(24, 26, 31);
+            HorizontalBox {
+                padding: 12px;
+                spacing: 8px;
+                if view-mode == 0 : StageCanvas {
+                    frame: preview-image;
+                    label: I18n.text.preview;
+                    program: false;
+                    labelled: true;
+                }
+                if view-mode == 0 : StageCanvas {
+                    frame: program-image;
+                    label: I18n.text.program;
+                    program: true;
+                    labelled: true;
+                }
+                if view-mode != 0 : StageCanvas {
+                    frame: preview-image;
+                    label: I18n.text.preview;
+                    program: false;
+                    labelled: false;
+                }
             }
         }
-        if view-mode == 1 : StageCard {
-            title: I18n.text.preview;
-            scene: preview-scene;
-            frame: preview-image;
-            program: false;
-            vertical-stretch: 1;
+
+        Rectangle {
+            height: 24px;
+            background: rgb(31, 34, 41);
+            border-width: 1px;
+            border-color: rgb(45, 49, 58);
+            // Laid out by hand: the zoom readout depends on the canvas height,
+            // so letting its text feed a layout would close a binding loop.
+            Icon { x: 8px; y: 6px; name: "remove"; icon-size: 12px; }
+            Text {
+                x: 26px;
+                y: 0;
+                width: 40px;
+                height: 100%;
+                text: Math.round(root.fit-scale * 100) + "%";
+                color: rgb(203, 213, 225);
+                font-size: 10px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            Icon { x: 70px; y: 6px; name: "add"; icon-size: 12px; }
+            Rectangle {
+                x: 92px;
+                y: 2px;
+                width: 148px;
+                height: parent.height - 4px;
+                background: rgb(39, 43, 50);
+                border-width: 1px;
+                border-color: rgb(58, 63, 73);
+                Text {
+                    x: 6px;
+                    width: parent.width - 20px;
+                    height: 100%;
+                    text: I18n.text.fit_to_window;
+                    color: rgb(203, 213, 225);
+                    font-size: 10px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Icon {
+                    x: parent.width - 15px;
+                    y: (parent.height - 11px) / 2;
+                    name: "down";
+                    icon-size: 11px;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 38px;
+            background: rgb(31, 34, 41);
+            border-width: 1px;
+            border-color: rgb(45, 49, 58);
+            HorizontalBox {
+                padding-left: 8px;
+                padding-right: 8px;
+                padding-top: 5px;
+                padding-bottom: 5px;
+                spacing: 8px;
+                Text {
+                    text: root.selected-source == ""
+                        ? I18n.text.no_source_selected
+                        : root.selected-source;
+                    color: rgb(148, 163, 184);
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: I18n.text.properties;
+                    enabled: root.selected-source != "";
+                    clicked => root.open-source-properties();
+                }
+                Button {
+                    text: I18n.text.filters;
+                    enabled: root.selected-source != "";
+                    clicked => root.open-source-filters();
+                }
+            }
         }
     }
 }

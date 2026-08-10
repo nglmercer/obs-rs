@@ -4,7 +4,17 @@ import { I18n } from "i18n.slint";
 import { AppNavbar } from "navbar.slint";
 import { StagePanel } from "stage.slint";
 import { DockSlot } from "dock_slot.slint";
+import { HorizontalSplitter } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
+import {
+    OutputDialog,
+    ProjectDialog,
+    RenameSceneDialog,
+    SceneDialog,
+    SourceDialog,
+    SourceFiltersDialog,
+    SourcePropertiesDialog,
+} from "dialogs.slint";
 
 export { I18n, UiText } from "i18n.slint";
 
@@ -12,7 +22,7 @@ export component MainWindow inherits Window {
         width: 1180px;
         height: 900px;
         title: I18n.text.app_name;
-        background: rgb(17, 24, 39);
+        background: rgb(24, 26, 31);
 
         in property <string> project-title;
         in property <string> profile-name;
@@ -31,6 +41,8 @@ export component MainWindow inherits Window {
         in property <string> snapshot;
         in property <image> preview-image;
         in property <image> program-image;
+        in property <int> canvas-width: 1920;
+        in property <int> canvas-height: 1080;
         in property <[SceneRow]> scene-rows;
         in property <[SourceRow]> source-rows;
         in property <[ProfileRow]> profile-rows;
@@ -38,7 +50,9 @@ export component MainWindow inherits Window {
         in property <string> source-scene;
         in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
-        in-out property <[int]> panel-order: [0, 1, 2, 3, 4];
+        // OBS ships sources left of scenes; the ids stay stable so a reorder
+        // never touches the data model.
+        in-out property <[int]> panel-order: [1, 0, 2, 3, 4];
         in property <string> scene-name-version;
         in-out property <string> scene-name;
         in property <string> selected-source;
@@ -57,14 +71,18 @@ export component MainWindow inherits Window {
         in-out property <string> new-source-kind;
         in-out property <string> new-source-name;
 
-        property <int> view-mode: 0;
-        property <int> controls-tab: 0;
+        // 0 = studio mode (preview + program), 1 = the single-canvas default.
+        property <int> view-mode: 1;
         property <bool> show-sources: true;
         property <bool> show-scenes: true;
         property <bool> show-mixer: true;
         property <bool> show-transitions: true;
         property <bool> show-controls: true;
         property <bool> settings-open: false;
+        // 1 project · 2 add scene · 3 add source · 4 output · 5 rename scene
+        // · 6 source properties · 7 source filters
+        property <int> active-modal: 0;
+        property <length> dock-height: 248px;
 
         callback swap-scenes();
         callback toggle-recording();
@@ -95,6 +113,12 @@ export component MainWindow inherits Window {
         callback add-source(string, string, string);
         callback move-panel(int, int);
 
+        // A mode of -1 means "toggle studio mode", which is how both the View
+        // menu and the controls dock drive the canvas.
+        function apply-view-mode(mode: int) {
+            root.view-mode = mode == -1 ? (root.view-mode == 0 ? 1 : 0) : mode;
+        }
+
     FocusScope {
         key-pressed(event) => {
             if (event.text == Key.Space) {
@@ -114,8 +138,8 @@ export component MainWindow inherits Window {
         }
 
         VerticalBox {
-            padding: 7px;
-            spacing: 7px;
+            padding: 0px;
+            spacing: 0px;
 
             AppNavbar {
                 locale: root.locale;
@@ -133,9 +157,10 @@ export component MainWindow inherits Window {
                         root.export-diagnostics();
                     } else if action == "settings" {
                         root.settings-open = true;
-                    } else if action == "source-properties" || action == "source-filters" {
-                        root.show-controls = true;
-                        root.controls-tab = 1;
+                    } else if action == "source-properties" {
+                        root.active-modal = 6;
+                    } else if action == "source-filters" {
+                        root.active-modal = 7;
                     } else if action == "toggle-sources" {
                         root.show-sources = !root.show-sources;
                     } else if action == "toggle-scenes" {
@@ -148,93 +173,79 @@ export component MainWindow inherits Window {
                         root.show-controls = !root.show-controls;
                     }
                 }
-                select-view-mode(mode) => { root.view-mode = mode; }
+                select-view-mode(mode) => { root.apply-view-mode(mode); }
                 select-profile(id) => { root.select-profile(id); }
             }
 
             StagePanel {
+                vertical-stretch: 1;
                 locale: root.locale;
                 preview-scene: root.preview-scene;
                 program-scene: root.program-scene;
                 preview-image: root.preview-image;
                 program-image: root.program-image;
+                canvas-width: root.canvas-width;
+                canvas-height: root.canvas-height;
+                selected-source: root.selected-source;
                 view-mode: root.view-mode;
+                open-source-properties() => { root.active-modal = 6; }
+                open-source-filters() => { root.active-modal = 7; }
             }
 
-            HorizontalBox {
-                spacing: 8px;
-                vertical-stretch: 2;
-                min-height: 235px;
-                for panel in root.panel-order : DockSlot {
-                    panel-kind: panel;
-                    visible: (panel == 0 && root.show-scenes)
-                        || (panel == 1 && root.show-sources)
-                        || (panel == 2 && root.show-mixer)
-                        || (panel == 3 && root.show-transitions)
-                        || (panel == 4 && root.show-controls);
-                    locale: root.locale;
-                    scene-rows: root.scene-rows;
-                    source-rows: root.source-rows;
-                    mixer-rows: root.mixer-rows;
-                    source-scene: root.source-scene;
-                    preview-scene: root.preview-scene;
-                    selected-source: root.selected-source;
-                    capture-capabilities: root.capture-capabilities;
-                    preview-metrics: root.preview-metrics;
-                    source-settings-version: root.source-settings-version;
-                    source-settings <=> root.source-settings;
-                    source-transform <=> root.source-transform;
-                    source-filters <=> root.source-filters;
-                    project-path <=> root.project-path;
-                    diagnostics-path <=> root.diagnostics-path;
-                    recording-path <=> root.recording-path;
-                    streaming-address <=> root.streaming-address;
-                    new-scene-id <=> root.new-scene-id;
-                    new-scene-name <=> root.new-scene-name;
-                    scene-name <=> root.scene-name;
-                    new-source-id <=> root.new-source-id;
-                    new-source-kind <=> root.new-source-kind;
-                    new-source-name <=> root.new-source-name;
-                    transition: root.transition;
-                    recording: root.recording;
-                    streaming: root.streaming;
-                    recovery-status: root.recovery-status;
-                    output-status: root.output-status;
-                    output-metrics: root.output-metrics;
-                    status-message: root.status-message;
-                    snapshot: root.snapshot;
-                    view-mode: root.view-mode;
-                    active-tab <=> root.controls-tab;
-                    settings-open <=> root.settings-open;
-                    move-panel(kind, delta) => { root.move-panel(kind, delta); }
-                    select-preview(id) => { root.select-preview(id); }
-                    select-program(id) => { root.select-program(id); }
-                    remove-scene(id) => { root.remove-scene(id); }
-                    select-source(id) => { root.select-source(id); }
-                    toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
-                    toggle-source-locked(id) => { root.toggle-source-locked(id); }
-                    move-source(id, delta) => { root.move-source(id, delta); }
-                    remove-source(id) => { root.remove-source(id); }
-                    set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
-                    toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
-                    cut-transition() => { root.cut-transition(); }
-                    fade-transition() => { root.fade-transition(); }
-                    save-project() => { root.save-project(); }
-                    load-project() => { root.load-project(); }
-                    recover-project() => { root.recover-project(); }
-                    export-diagnostics() => { root.export-diagnostics(); }
-                    add-scene(id, name) => { root.add-scene(id, name); }
-                    rename-scene() => { root.rename-scene(); }
-                    add-source(id, kind, name) => { root.add-source(id, kind, name); }
-                    apply-source-settings() => { root.apply-source-settings(); }
-                    apply-source-transform() => { root.apply-source-transform(); }
-                    apply-source-filters() => { root.apply-source-filters(); }
-                    swap-scenes() => { root.swap-scenes(); }
-                    toggle-recording() => { root.toggle-recording(); }
-                    toggle-streaming() => { root.toggle-streaming(); }
-                    set-view-mode(mode) => { root.view-mode = mode; }
+            HorizontalSplitter {
+                resized(delta) => {
+                    root.dock-height = Math.clamp(
+                        root.dock-height - delta,
+                        150px,
+                        Math.max(150px, root.height - 320px));
                 }
             }
+
+            Rectangle {
+                height: root.dock-height;
+                background: rgb(24, 26, 31);
+                HorizontalBox {
+                    padding: 0px;
+                    spacing: 1px;
+                    for panel in root.panel-order : DockSlot {
+                        panel-kind: panel;
+                        visible: (panel == 0 && root.show-scenes)
+                            || (panel == 1 && root.show-sources)
+                            || (panel == 2 && root.show-mixer)
+                            || (panel == 3 && root.show-transitions)
+                            || (panel == 4 && root.show-controls);
+                        locale: root.locale;
+                        scene-rows: root.scene-rows;
+                        source-rows: root.source-rows;
+                        mixer-rows: root.mixer-rows;
+                        source-scene: root.source-scene;
+                        preview-scene: root.preview-scene;
+                        selected-source: root.selected-source;
+                        transition: root.transition;
+                        recording: root.recording;
+                        streaming: root.streaming;
+                        settings-open <=> root.settings-open;
+                        move-panel(kind, delta) => { root.move-panel(kind, delta); }
+                        open-modal(modal) => { root.active-modal = modal; }
+                        select-preview(id) => { root.select-preview(id); }
+                        select-program(id) => { root.select-program(id); }
+                        remove-scene(id) => { root.remove-scene(id); }
+                        select-source(id) => { root.select-source(id); }
+                        toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
+                        toggle-source-locked(id) => { root.toggle-source-locked(id); }
+                        move-source(id, delta) => { root.move-source(id, delta); }
+                        remove-source(id) => { root.remove-source(id); }
+                        set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
+                        toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+                        cut-transition() => { root.cut-transition(); }
+                        fade-transition() => { root.fade-transition(); }
+                        toggle-recording() => { root.toggle-recording(); }
+                        toggle-streaming() => { root.toggle-streaming(); }
+                        set-view-mode(mode) => { root.apply-view-mode(mode); }
+                    }
+                }
+            }
+
             StatusBar {
                 locale: root.locale;
                 recording: root.recording;
@@ -244,5 +255,80 @@ export component MainWindow inherits Window {
                 view-mode: root.view-mode;
             }
         }
+    }
+
+    // Modals live at the window root so their scrim covers the whole window
+    // instead of being clipped to the dock that opened them.
+    ProjectDialog {
+        open: root.active-modal == 1 || root.settings-open;
+        locale: root.locale;
+        project-path <=> root.project-path;
+        diagnostics-path <=> root.diagnostics-path;
+        save-project() => { root.save-project(); }
+        close => {
+            root.active-modal = 0;
+            root.settings-open = false;
+        }
+        accepted => {
+            root.active-modal = 0;
+            root.settings-open = false;
+        }
+    }
+    SceneDialog {
+        open: root.active-modal == 2;
+        locale: root.locale;
+        new-scene-id <=> root.new-scene-id;
+        new-scene-name <=> root.new-scene-name;
+        add-scene(id, name) => { root.add-scene(id, name); }
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    SourceDialog {
+        open: root.active-modal == 3;
+        locale: root.locale;
+        preview-scene: root.preview-scene;
+        new-source-id <=> root.new-source-id;
+        new-source-kind <=> root.new-source-kind;
+        new-source-name <=> root.new-source-name;
+        add-source(id, kind, name) => { root.add-source(id, kind, name); }
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    OutputDialog {
+        open: root.active-modal == 4;
+        locale: root.locale;
+        recording-path <=> root.recording-path;
+        streaming-address <=> root.streaming-address;
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    RenameSceneDialog {
+        open: root.active-modal == 5;
+        locale: root.locale;
+        scene-name <=> root.scene-name;
+        rename-scene() => { root.rename-scene(); }
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    SourcePropertiesDialog {
+        open: root.active-modal == 6;
+        locale: root.locale;
+        selected-source: root.selected-source;
+        capture-capabilities: root.capture-capabilities;
+        source-settings <=> root.source-settings;
+        source-transform <=> root.source-transform;
+        apply-source-settings() => { root.apply-source-settings(); }
+        apply-source-transform() => { root.apply-source-transform(); }
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    SourceFiltersDialog {
+        open: root.active-modal == 7;
+        locale: root.locale;
+        selected-source: root.selected-source;
+        source-filters <=> root.source-filters;
+        apply-source-filters() => { root.apply-source-filters(); }
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
     }
 }
