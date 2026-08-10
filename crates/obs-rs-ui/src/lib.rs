@@ -8,6 +8,7 @@ use std::{
     fmt::{self, Write as _},
 };
 
+use obs_rs_audio::{AudioError, AudioFormat, AudioMixer, AudioSourceId};
 use obs_rs_media::{FrameTransition, MediaError};
 use obs_rs_project::{Project, ProjectCommand, ProjectError, ProjectFileStore, ProjectSession};
 use obs_rs_util::Identifier;
@@ -28,6 +29,48 @@ pub enum SceneView {
     Preview,
     /// The scene currently sent to program output.
     Program,
+}
+
+/// One stateful channel shown in the desktop audio mixer.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MixerChannel {
+    id: String,
+    name: String,
+    gain_milli: u16,
+    muted: bool,
+    peak_milli: u16,
+}
+
+impl MixerChannel {
+    /// Returns the stable UI channel ID.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns the channel display name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns linear gain in thousandths, where 1000 is unity.
+    #[must_use]
+    pub const fn gain_milli(&self) -> u16 {
+        self.gain_milli
+    }
+
+    /// Returns whether the channel is muted.
+    #[must_use]
+    pub const fn muted(&self) -> bool {
+        self.muted
+    }
+
+    /// Returns the latest bounded peak meter value in thousandths.
+    #[must_use]
+    pub const fn peak_milli(&self) -> u16 {
+        self.peak_milli
+    }
 }
 
 /// A user action that can be bound to a keyboard shortcut.
@@ -116,8 +159,14 @@ pub enum UiCommand {
     SelectPreviewScene { id: String },
     /// Select the scene sent to program output.
     SelectProgramScene { id: String },
+    /// Select a source item from the current preview scene.
+    SelectSource { id: String },
     /// Replace the current scene transition policy.
     SetTransition { transition: FrameTransition },
+    /// Set one mixer channel's linear gain in thousandths.
+    SetMixerGain { id: String, gain_milli: u16 },
+    /// Toggle one mixer channel's mute state.
+    ToggleMixerMute { id: String },
     /// Begin recording.
     StartRecording,
     /// Stop recording.
@@ -288,6 +337,7 @@ pub fn parse_console_command(line: &str) -> Result<ConsoleCommand, ConsoleComman
         }
         "record" => parse_output_command("record", words, true),
         "stream" => parse_output_command("stream", words, false),
+        "mixer" => parse_mixer_command("mixer", words),
         "transition" => parse_transition_command("transition", words),
         _ => Err(ConsoleCommandError::UnknownCommand(command.to_owned())),
     }
@@ -395,6 +445,12 @@ pub enum UiError {
     StreamingNotActive,
     /// The scene transition is invalid.
     Media(MediaError),
+    /// An audio mixer operation failed.
+    Audio(AudioError),
+    /// A mixer channel ID is not present.
+    UnknownMixerChannel(String),
+    /// A mixer gain is outside the supported 0..=2000 range.
+    InvalidMixerGain(u16),
     /// The notice sequence counter overflowed.
     NoticeSequenceExhausted,
 }
@@ -418,6 +474,11 @@ impl fmt::Display for UiError {
             Self::StreamingAlreadyActive => formatter.write_str("streaming is already active"),
             Self::StreamingNotActive => formatter.write_str("streaming is not active"),
             Self::Media(error) => error.fmt(formatter),
+            Self::Audio(error) => error.fmt(formatter),
+            Self::UnknownMixerChannel(id) => write!(formatter, "mixer channel {id} does not exist"),
+            Self::InvalidMixerGain(gain_milli) => {
+                write!(formatter, "mixer gain {gain_milli} is outside 0..=2000")
+            }
             Self::NoticeSequenceExhausted => formatter.write_str("UI notice sequence is exhausted"),
         }
     }
@@ -431,14 +492,24 @@ impl From<ProjectError> for UiError {
     }
 }
 
+impl From<AudioError> for UiError {
+    fn from(error: AudioError) -> Self {
+        Self::Audio(error)
+    }
+}
+
 /// Rust-owned state shared by preview, program, and desktop control surfaces.
 pub struct DesktopState {
     project: ProjectSession,
     preview_scene: Option<Identifier>,
     program_scene: Option<Identifier>,
+    selected_source: Option<Identifier>,
     transition: FrameTransition,
     recording: bool,
     streaming: bool,
+    audio_mixer: AudioMixer,
+    mixer_sources: BTreeMap<String, AudioSourceId>,
+    mixer_channels: BTreeMap<String, MixerChannel>,
     shortcuts: BTreeMap<Shortcut, UiAction>,
     notices: VecDeque<UiNotice>,
     next_notice_sequence: u64,
@@ -450,13 +521,21 @@ impl DesktopState {
     pub fn new(project: Project) -> Self {
         let session = ProjectSession::new(project);
         let first_scene = first_scene_id(session.project());
+        let selected_source = first_scene
+            .as_ref()
+            .and_then(|scene| first_source_id(session.project(), scene));
+        let (audio_mixer, mixer_sources, mixer_channels) = default_mixer();
         Self {
             project: session,
             preview_scene: first_scene.clone(),
             program_scene: first_scene,
+            selected_source,
             transition: FrameTransition::Cut,
             recording: false,
             streaming: false,
+            audio_mixer,
+            mixer_sources,
+            mixer_channels,
             shortcuts: BTreeMap::new(),
             notices: VecDeque::new(),
             next_notice_sequence: 1,
@@ -477,6 +556,7 @@ impl DesktopState {
             }
             UiCommand::Project(command) => {
                 self.project.dispatch(command)?;
+                self.sync_selections_after_project_update();
                 "project updated"
             }
             UiCommand::SelectProfile { id } => {
@@ -484,11 +564,19 @@ impl DesktopState {
                     .dispatch(ProjectCommand::SetActiveProfile { id })?;
                 self.preview_scene = first_scene_id(self.project.project());
                 self.program_scene = self.preview_scene.clone();
+                self.selected_source = self
+                    .preview_scene
+                    .as_ref()
+                    .and_then(|scene| first_source_id(self.project.project(), scene));
                 "profile selected"
             }
             UiCommand::SelectPreviewScene { id } => {
                 self.ensure_scene(&id)?;
                 self.preview_scene = Some(identifier(&id, "scene")?);
+                self.selected_source = self
+                    .preview_scene
+                    .as_ref()
+                    .and_then(|scene| first_source_id(self.project.project(), scene));
                 "preview scene selected"
             }
             UiCommand::SelectProgramScene { id } => {
@@ -496,41 +584,24 @@ impl DesktopState {
                 self.program_scene = Some(identifier(&id, "scene")?);
                 "program scene selected"
             }
+            UiCommand::SelectSource { id } => {
+                self.ensure_source(&id)?;
+                self.selected_source = Some(identifier(&id, "source")?);
+                "source selected"
+            }
             UiCommand::SetTransition { transition } => {
-                if let FrameTransition::CrossFade { progress_milli } = transition {
-                    FrameTransition::cross_fade(progress_milli).map_err(UiError::Media)?;
-                }
-                self.transition = transition;
+                self.set_transition(transition)?;
                 "transition updated"
             }
-            UiCommand::StartRecording => {
-                if self.recording {
-                    return Err(UiError::RecordingAlreadyActive);
-                }
-                self.recording = true;
-                "recording started"
+            UiCommand::SetMixerGain { id, gain_milli } => {
+                self.set_mixer_gain(&id, gain_milli)?;
+                "mixer gain updated"
             }
-            UiCommand::StopRecording => {
-                if !self.recording {
-                    return Err(UiError::RecordingNotActive);
-                }
-                self.recording = false;
-                "recording stopped"
-            }
-            UiCommand::StartStreaming => {
-                if self.streaming {
-                    return Err(UiError::StreamingAlreadyActive);
-                }
-                self.streaming = true;
-                "streaming started"
-            }
-            UiCommand::StopStreaming => {
-                if !self.streaming {
-                    return Err(UiError::StreamingNotActive);
-                }
-                self.streaming = false;
-                "streaming stopped"
-            }
+            UiCommand::ToggleMixerMute { id } => self.toggle_mixer_mute(&id)?,
+            UiCommand::StartRecording => self.set_recording(true)?,
+            UiCommand::StopRecording => self.set_recording(false)?,
+            UiCommand::StartStreaming => self.set_streaming(true)?,
+            UiCommand::StopStreaming => self.set_streaming(false)?,
             UiCommand::BindShortcut { shortcut, action } => {
                 if self.shortcuts.contains_key(&shortcut) {
                     return Err(UiError::DuplicateShortcut(shortcut));
@@ -583,12 +654,39 @@ impl DesktopState {
     /// Returns [`UiError::Project`] when the file cannot be read or parsed.
     pub fn load_project(&mut self, store: &ProjectFileStore) -> Result<(), UiError> {
         let project = store.load()?;
-        self.project = ProjectSession::new(project);
-        let first_scene = first_scene_id(self.project.project());
-        self.preview_scene = first_scene.clone();
-        self.program_scene = first_scene;
+        self.replace_project(project);
         self.notice("project loaded")?;
         Ok(())
+    }
+
+    /// Recovers a complete temporary project left by an interrupted save.
+    ///
+    /// Returns `Ok(false)` when no recovery file exists. A recovered project is
+    /// intentionally still dirty so the user must explicitly save it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when the recovery artifact cannot be read or
+    /// parsed.
+    pub fn recover_project(&mut self, store: &ProjectFileStore) -> Result<bool, UiError> {
+        let Some(project) = store.recover()? else {
+            return Ok(false);
+        };
+        self.replace_project(project);
+        self.project.mark_dirty();
+        self.notice("project recovered from interrupted save")?;
+        Ok(true)
+    }
+
+    fn replace_project(&mut self, project: Project) {
+        self.project = ProjectSession::new(project);
+        let first_scene = first_scene_id(self.project.project());
+        self.preview_scene.clone_from(&first_scene);
+        self.program_scene.clone_from(&first_scene);
+        self.selected_source = self
+            .preview_scene
+            .as_ref()
+            .and_then(|scene| first_source_id(self.project.project(), scene));
     }
 
     /// Returns the project session used by persistence and rendering adapters.
@@ -621,6 +719,12 @@ impl DesktopState {
         self.program_scene.as_ref().map(Identifier::as_str)
     }
 
+    /// Returns the source selected in the current preview scene.
+    #[must_use]
+    pub fn selected_source(&self) -> Option<&str> {
+        self.selected_source.as_ref().map(Identifier::as_str)
+    }
+
     /// Returns the current transition policy.
     #[must_use]
     pub const fn transition(&self) -> FrameTransition {
@@ -637,6 +741,11 @@ impl DesktopState {
     #[must_use]
     pub const fn streaming(&self) -> bool {
         self.streaming
+    }
+
+    /// Returns mixer channels in deterministic display order.
+    pub fn mixer_channels(&self) -> impl Iterator<Item = &MixerChannel> {
+        self.mixer_channels.values()
     }
 
     /// Returns a bounded snapshot of notices from oldest to newest.
@@ -678,6 +787,12 @@ impl DesktopState {
             self.program_scene().unwrap_or("none")
         )
         .expect("String formatting cannot fail");
+        writeln!(
+            &mut snapshot,
+            "Selected source: {}",
+            self.selected_source().unwrap_or("none")
+        )
+        .expect("String formatting cannot fail");
         writeln!(&mut snapshot, "Transition: {:?}", self.transition)
             .expect("String formatting cannot fail");
         writeln!(
@@ -698,6 +813,19 @@ impl DesktopState {
             if self.is_dirty() { "unsaved" } else { "saved" }
         )
         .expect("String formatting cannot fail");
+        snapshot.push_str("Audio mixer:\n");
+        for channel in self.mixer_channels() {
+            writeln!(
+                &mut snapshot,
+                "- {}: {} gain={} muted={} peak={}",
+                channel.id(),
+                channel.name(),
+                channel.gain_milli(),
+                channel.muted(),
+                channel.peak_milli()
+            )
+            .expect("String formatting cannot fail");
+        }
         snapshot.push_str("Scenes:\n");
         if let Some(profile) = project
             .profiles()
@@ -774,6 +902,74 @@ impl DesktopState {
         }
     }
 
+    fn sync_selections_after_project_update(&mut self) {
+        let (preview_valid, program_valid, selected_valid) = {
+            let project = self.project.project();
+            let preview_valid = self
+                .preview_scene
+                .as_ref()
+                .is_some_and(|scene| project_has_scene(project, scene));
+            let program_valid = self
+                .program_scene
+                .as_ref()
+                .is_some_and(|scene| project_has_scene(project, scene));
+            let selected_valid = match (&self.preview_scene, &self.selected_source) {
+                (Some(scene), Some(source)) => project_has_source(project, scene, source),
+                _ => false,
+            };
+            (preview_valid, program_valid, selected_valid)
+        };
+        if !preview_valid {
+            self.preview_scene = first_scene_id(self.project.project());
+        }
+        if !program_valid {
+            self.program_scene = first_scene_id(self.project.project());
+        }
+        if !selected_valid {
+            self.selected_source = self
+                .preview_scene
+                .as_ref()
+                .and_then(|scene| first_source_id(self.project.project(), scene));
+        }
+    }
+
+    fn ensure_source(&self, id: &str) -> Result<(), UiError> {
+        let preview_scene = self
+            .preview_scene()
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "scene",
+                id: "none".to_owned(),
+            })?;
+        let profile = self
+            .project
+            .project()
+            .profiles()
+            .find(|profile| profile.id() == self.project.project().active_profile())
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "profile",
+                id: self.project.project().active_profile().to_string(),
+            })?;
+        let scene = profile
+            .scenes()
+            .find(|scene| scene.id().as_str() == preview_scene)
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "scene",
+                id: preview_scene.to_owned(),
+            })?;
+        if scene
+            .sources()
+            .iter()
+            .any(|source| source.id().as_str() == id)
+        {
+            Ok(())
+        } else {
+            Err(UiError::UnknownSelection {
+                kind: "source",
+                id: id.to_owned(),
+            })
+        }
+    }
+
     fn dispatch_action(&mut self, action: UiAction) -> Result<(), UiError> {
         match action {
             UiAction::SwapPreviewProgram => {
@@ -785,6 +981,84 @@ impl DesktopState {
             UiAction::StartStreaming => self.dispatch(UiCommand::StartStreaming),
             UiAction::StopStreaming => self.dispatch(UiCommand::StopStreaming),
         }
+    }
+
+    fn set_mixer_gain(&mut self, id: &str, gain_milli: u16) -> Result<(), UiError> {
+        if gain_milli > 2_000 {
+            return Err(UiError::InvalidMixerGain(gain_milli));
+        }
+        let source = *self
+            .mixer_sources
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        self.audio_mixer
+            .set_gain(source, f32::from(gain_milli) / 1_000.0)?;
+        let channel = self
+            .mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        channel.gain_milli = gain_milli;
+        Ok(())
+    }
+
+    fn set_recording(&mut self, active: bool) -> Result<&'static str, UiError> {
+        if active && self.recording {
+            return Err(UiError::RecordingAlreadyActive);
+        }
+        if !active && !self.recording {
+            return Err(UiError::RecordingNotActive);
+        }
+        self.recording = active;
+        Ok(if active {
+            "recording started"
+        } else {
+            "recording stopped"
+        })
+    }
+
+    fn set_streaming(&mut self, active: bool) -> Result<&'static str, UiError> {
+        if active && self.streaming {
+            return Err(UiError::StreamingAlreadyActive);
+        }
+        if !active && !self.streaming {
+            return Err(UiError::StreamingNotActive);
+        }
+        self.streaming = active;
+        Ok(if active {
+            "streaming started"
+        } else {
+            "streaming stopped"
+        })
+    }
+
+    fn set_transition(&mut self, transition: FrameTransition) -> Result<(), UiError> {
+        if let FrameTransition::CrossFade { progress_milli } = transition {
+            FrameTransition::cross_fade(progress_milli).map_err(UiError::Media)?;
+        }
+        self.transition = transition;
+        Ok(())
+    }
+
+    fn toggle_mixer_mute(&mut self, id: &str) -> Result<&'static str, UiError> {
+        let source = *self
+            .mixer_sources
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        let muted = !self
+            .mixer_channels
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
+            .muted;
+        self.audio_mixer.set_muted(source, muted)?;
+        self.mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
+            .muted = muted;
+        Ok(if muted {
+            "mixer channel muted"
+        } else {
+            "mixer channel unmuted"
+        })
     }
 
     fn notice(&mut self, message: &str) -> Result<(), UiError> {
@@ -825,6 +1099,63 @@ fn first_scene_id(project: &Project) -> Option<Identifier> {
         .find(|profile| profile.id() == project.active_profile())
         .and_then(|profile| profile.scenes().next())
         .map(|scene| scene.id().clone())
+}
+
+fn project_has_scene(project: &Project, scene_id: &Identifier) -> bool {
+    project
+        .profiles()
+        .find(|profile| profile.id() == project.active_profile())
+        .is_some_and(|profile| profile.scenes().any(|scene| scene.id() == scene_id))
+}
+
+fn project_has_source(project: &Project, scene_id: &Identifier, source_id: &Identifier) -> bool {
+    project
+        .profiles()
+        .find(|profile| profile.id() == project.active_profile())
+        .and_then(|profile| profile.scenes().find(|scene| scene.id() == scene_id))
+        .is_some_and(|scene| {
+            scene
+                .sources()
+                .iter()
+                .any(|source| source.id() == source_id)
+        })
+}
+
+fn first_source_id(project: &Project, scene_id: &Identifier) -> Option<Identifier> {
+    project
+        .profiles()
+        .find(|profile| profile.id() == project.active_profile())
+        .and_then(|profile| profile.scenes().find(|scene| scene.id() == scene_id))
+        .and_then(|scene| scene.sources().first())
+        .map(|source| source.id().clone())
+}
+
+fn default_mixer() -> (
+    AudioMixer,
+    BTreeMap<String, AudioSourceId>,
+    BTreeMap<String, MixerChannel>,
+) {
+    let format = AudioFormat::new(48_000, 2).expect("default mixer format is valid");
+    let mut mixer = AudioMixer::new(format);
+    let mut sources = BTreeMap::new();
+    let mut channels = BTreeMap::new();
+    for (id, name) in [("desktop", "Desktop Audio"), ("mic", "Mic/Aux")] {
+        let source = mixer
+            .add_source(1.0)
+            .expect("default mixer source ID is available");
+        sources.insert(id.to_owned(), source);
+        channels.insert(
+            id.to_owned(),
+            MixerChannel {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                gain_milli: 1_000,
+                muted: false,
+                peak_milli: 0,
+            },
+        );
+    }
+    (mixer, sources, channels)
 }
 
 fn required_word<'a>(
@@ -914,6 +1245,48 @@ fn parse_transition_command<'a>(
     }))
 }
 
+fn parse_mixer_command<'a>(
+    command: &'static str,
+    mut words: impl Iterator<Item = &'a str>,
+) -> Result<ConsoleCommand, ConsoleCommandError> {
+    let id = required_word(&mut words, "mixer channel")?;
+    let action = required_word(&mut words, "gain or mute")?;
+    let command = match action {
+        "mute" => {
+            ensure_no_extra(command, words)?;
+            UiCommand::ToggleMixerMute { id: id.to_owned() }
+        }
+        "gain" => {
+            let value = required_word(&mut words, "mixer gain 0..2000")?;
+            ensure_no_extra(command, words)?;
+            let gain_milli =
+                value
+                    .parse::<u16>()
+                    .map_err(|_| ConsoleCommandError::InvalidArgument {
+                        command,
+                        value: value.to_owned(),
+                    })?;
+            if gain_milli > 2_000 {
+                return Err(ConsoleCommandError::InvalidArgument {
+                    command,
+                    value: value.to_owned(),
+                });
+            }
+            UiCommand::SetMixerGain {
+                id: id.to_owned(),
+                gain_milli,
+            }
+        }
+        value => {
+            return Err(ConsoleCommandError::InvalidArgument {
+                command,
+                value: value.to_owned(),
+            });
+        }
+    };
+    Ok(ConsoleCommand::Apply(command))
+}
+
 fn identifier(input: &str, kind: &'static str) -> Result<Identifier, UiError> {
     Identifier::new(input).map_err(|_| UiError::UnknownSelection {
         kind,
@@ -965,6 +1338,24 @@ mod tests {
         assert!(state.recording());
         assert!(!state.is_dirty());
         assert_eq!(state.notices().count(), 2);
+    }
+
+    #[test]
+    fn desktop_state_selects_source_items_in_preview_scene() {
+        let mut state = DesktopState::new(project());
+        assert_eq!(state.selected_source(), None);
+        state
+            .dispatch(UiCommand::SelectPreviewScene {
+                id: "source_scene".to_owned(),
+            })
+            .expect("source scene selection");
+        assert_eq!(state.selected_source(), Some("source"));
+        state
+            .dispatch(UiCommand::SelectSource {
+                id: "source".to_owned(),
+            })
+            .expect("source selection");
+        assert_eq!(state.selected_source(), Some("source"));
     }
 
     #[test]
@@ -1027,6 +1418,37 @@ mod tests {
     }
 
     #[test]
+    fn mixer_commands_update_real_audio_controls() {
+        let mut state = DesktopState::new(project());
+        state
+            .dispatch(UiCommand::SetMixerGain {
+                id: "desktop".to_owned(),
+                gain_milli: 1_500,
+            })
+            .expect("mixer gain");
+        state
+            .dispatch(UiCommand::ToggleMixerMute {
+                id: "desktop".to_owned(),
+            })
+            .expect("mixer mute");
+
+        let desktop = state
+            .mixer_channels()
+            .find(|channel| channel.id() == "desktop")
+            .expect("desktop mixer channel");
+        assert_eq!(desktop.gain_milli(), 1_500);
+        assert!(desktop.muted());
+        assert_eq!(desktop.peak_milli(), 0);
+        assert_eq!(
+            state.dispatch(UiCommand::SetMixerGain {
+                id: "desktop".to_owned(),
+                gain_milli: 2_001,
+            }),
+            Err(UiError::InvalidMixerGain(2_001))
+        );
+    }
+
+    #[test]
     fn desktop_state_persists_project_editor_changes() {
         let final_path = std::env::temp_dir().join(format!(
             "obs-rs-ui-persistence-{}.project",
@@ -1076,6 +1498,19 @@ mod tests {
                 transition: FrameTransition::CrossFade {
                     progress_milli: 500,
                 },
+            }))
+        );
+        assert_eq!(
+            parse_console_command("mixer desktop gain 1500"),
+            Ok(ConsoleCommand::Apply(UiCommand::SetMixerGain {
+                id: "desktop".to_owned(),
+                gain_milli: 1_500,
+            }))
+        );
+        assert_eq!(
+            parse_console_command("mixer mic mute"),
+            Ok(ConsoleCommand::Apply(UiCommand::ToggleMixerMute {
+                id: "mic".to_owned(),
             }))
         );
         assert_eq!(

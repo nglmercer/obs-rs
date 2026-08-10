@@ -8,7 +8,14 @@ use std::{cell::RefCell, error::Error, path::PathBuf, rc::Rc, time::Duration};
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_config::Config;
 use obs_rs_core::Runtime;
-use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_diagnostics::{AtomicDiagnosticFileWriter, DiagnosticBundle};
+use obs_rs_media::{
+    FrameFilter, FrameRate, FrameTransform, FrameTransition, Timestamp, VideoFormat, VideoFrame,
+};
+use obs_rs_output::{
+    AtomicY4mFileWriter, PacketDropPolicy, ReconnectPolicy, RleVideoEncoder, StreamSession,
+    TcpPacketTransport, VideoEncoder,
+};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Profile, Project, ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
@@ -18,12 +25,33 @@ use slint::{
 };
 
 slint::slint! {
-    import { Button, HorizontalBox, LineEdit, ScrollView, VerticalBox } from "std-widgets.slint";
+    import { Button, HorizontalBox, LineEdit, ScrollView, Slider, TextEdit, VerticalBox } from "std-widgets.slint";
 
     export struct SceneRow {
         id: string,
         name: string,
         role: string,
+    }
+
+    export struct SourceRow {
+        id: string,
+        name: string,
+        kind: string,
+        order: string,
+        selected: bool,
+    }
+
+    export struct ProfileRow {
+        id: string,
+        name: string,
+    }
+
+    export struct MixerRow {
+        id: string,
+        name: string,
+        gain: float,
+        peak: float,
+        muted: bool,
     }
 
     export component MainWindow inherits Window {
@@ -45,7 +73,20 @@ slint::slint! {
         in property <image> preview-image;
         in property <image> program-image;
         in property <[SceneRow]> scene-rows;
+        in property <[SourceRow]> source-rows;
+        in property <[ProfileRow]> profile-rows;
+        in property <string> source-scene;
+        in property <[MixerRow]> mixer-rows;
+        in property <string> selected-source;
+        in property <string> source-settings-version;
+        in property <string> source-properties-version;
+        in-out property <string> source-settings;
+        in-out property <string> source-transform;
+        in-out property <string> source-filters;
         in-out property <string> project-path;
+        in-out property <string> diagnostics-path;
+        in-out property <string> recording-path;
+        in-out property <string> streaming-address;
         in-out property <string> new-scene-id;
         in-out property <string> new-scene-name;
         in-out property <string> new-source-id;
@@ -59,8 +100,17 @@ slint::slint! {
         callback fade-transition();
         callback select-preview(string);
         callback select-program(string);
+        callback select-profile(string);
+        callback select-source(string);
+        callback apply-source-settings();
+        callback apply-source-transform();
+        callback apply-source-filters();
+        callback set-mixer-gain(string, int);
+        callback toggle-mixer-mute(string);
         callback save-project();
         callback load-project();
+        callback recover-project();
+        callback export-diagnostics();
         callback add-scene(string, string);
         callback add-source(string, string, string);
 
@@ -83,6 +133,19 @@ slint::slint! {
                         text: project-title + "  /  " + profile-name;
                         color: rgb(156, 163, 175);
                         font-size: 14px;
+                    }
+                    HorizontalBox {
+                        spacing: 6px;
+                        Text {
+                            text: "Profile:";
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                        for profile in profile-rows : Button {
+                            text: profile.name;
+                            clicked => select-profile(profile.id);
+                        }
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
@@ -185,7 +248,7 @@ slint::slint! {
                 Rectangle {
                     background: rgb(31, 41, 55);
                     border-radius: 8px;
-                    horizontal-stretch: 2;
+                    horizontal-stretch: 3;
                     VerticalBox {
                         padding: 14px;
                         spacing: 8px;
@@ -235,7 +298,127 @@ slint::slint! {
                 Rectangle {
                     background: rgb(31, 41, 55);
                     border-radius: 8px;
-                    horizontal-stretch: 1;
+                    horizontal-stretch: 3;
+                    VerticalBox {
+                        padding: 14px;
+                        spacing: 8px;
+                        Text {
+                            text: "Sources  ·  " + source-scene;
+                            color: rgb(249, 250, 251);
+                            font-size: 18px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: "Scene item order";
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                        }
+                        ScrollView {
+                            vertical-stretch: 1;
+                            for source in source-rows : Rectangle {
+                                height: 52px;
+                                background: source.selected ? rgb(30, 64, 175) : rgb(39, 52, 73);
+                                border-radius: 5px;
+                                HorizontalBox {
+                                    padding: 8px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: source.order;
+                                        color: rgb(96, 165, 250);
+                                        font-size: 14px;
+                                        width: 22px;
+                                        vertical-alignment: center;
+                                    }
+                                    VerticalBox {
+                                        spacing: 2px;
+                                        Button {
+                                            text: source.name;
+                                            clicked => select-source(source.id);
+                                        }
+                                        Text {
+                                            text: source.kind + "  ·  " + source.id;
+                                            color: rgb(148, 163, 184);
+                                            font-size: 11px;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            text: source-rows.length == 0 ? "No source items" : "";
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: rgb(31, 41, 55);
+                    border-radius: 8px;
+                    horizontal-stretch: 3;
+                    VerticalBox {
+                        padding: 14px;
+                        spacing: 8px;
+                        Text {
+                            text: "Audio Mixer";
+                            color: rgb(249, 250, 251);
+                            font-size: 18px;
+                            font-weight: 700;
+                        }
+                        ScrollView {
+                            vertical-stretch: 1;
+                            for channel in mixer-rows : Rectangle {
+                                height: 86px;
+                                background: rgb(39, 52, 73);
+                                border-radius: 5px;
+                                VerticalBox {
+                                    padding: 8px;
+                                    spacing: 4px;
+                                    HorizontalBox {
+                                        spacing: 6px;
+                                        Text {
+                                            text: channel.name;
+                                            color: rgb(249, 250, 251);
+                                            font-size: 13px;
+                                            horizontal-stretch: 1;
+                                        }
+                                        Text {
+                                            text: channel.muted ? "MUTED" : "LIVE";
+                                            color: channel.muted ? rgb(252, 165, 165) : rgb(134, 239, 172);
+                                            font-size: 10px;
+                                        }
+                                        Button {
+                                            text: channel.muted ? "Unmute" : "Mute";
+                                            clicked => toggle-mixer-mute(channel.id);
+                                        }
+                                    }
+                                    Slider {
+                                        minimum: 0;
+                                        maximum: 2;
+                                        step: 0.01;
+                                        value: channel.gain;
+                                        changed => set-mixer-gain(channel.id, round(self.value * 1000));
+                                    }
+                                    Rectangle {
+                                        width: 100%;
+                                        height: 5px;
+                                        background: rgb(15, 23, 42);
+                                        Rectangle {
+                                            width: channel.peak * 100px;
+                                            height: 100%;
+                                            background: channel.muted ? rgb(127, 29, 29) : rgb(34, 197, 94);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: rgb(31, 41, 55);
+                    border-radius: 8px;
+                    horizontal-stretch: 2;
                     VerticalBox {
                         padding: 14px;
                         spacing: 8px;
@@ -266,6 +449,18 @@ slint::slint! {
                                 text: "Load";
                                 clicked => load-project();
                             }
+                            Button {
+                                text: "Recover";
+                                clicked => recover-project();
+                            }
+                            Button {
+                                text: "Diagnostics";
+                                clicked => export-diagnostics();
+                            }
+                        }
+                        LineEdit {
+                            text <=> diagnostics-path;
+                            placeholder-text: "obs-rs-diagnostics.obsrdg";
                         }
                         Text {
                             text: "Scene editor";
@@ -327,6 +522,49 @@ slint::slint! {
                             color: rgb(148, 163, 184);
                             font-size: 12px;
                         }
+                        Text {
+                            text: "Selected source: " + selected-source;
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        TextEdit {
+                            text <=> source-settings;
+                            placeholder-text: "width=640\\nheight=360\\ncolor=#202840FF";
+                            height: 70px;
+                            vertical-stretch: 0;
+                        }
+                        Button {
+                            text: "Apply source settings";
+                            clicked => apply-source-settings();
+                        }
+                        Text {
+                            text: "Transform  ·  scale-x,scale-y,x,y,flip-x,flip-y,opacity";
+                            color: rgb(203, 213, 225);
+                            font-size: 12px;
+                        }
+                        LineEdit {
+                            text <=> source-transform;
+                            placeholder-text: "1000,1000,0,0,0,0,255";
+                        }
+                        Button {
+                            text: "Apply transform";
+                            clicked => apply-source-transform();
+                        }
+                        Text {
+                            text: "Filters  ·  " + source-filters;
+                            color: rgb(203, 213, 225);
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        LineEdit {
+                            text <=> source-filters;
+                            placeholder-text: "gray,brightness:750,opacity:200";
+                        }
+                        Button {
+                            text: "Apply filters";
+                            clicked => apply-source-filters();
+                        }
                         Button {
                             text: "Swap preview / program";
                             clicked => swap-scenes();
@@ -359,6 +597,24 @@ slint::slint! {
                             }
                         }
                         Text {
+                            text: "Recording file (atomic Y4M)";
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                        }
+                        LineEdit {
+                            text <=> recording-path;
+                            placeholder-text: "obs-rs-recording.y4m";
+                        }
+                        Text {
+                            text: "Streaming address (Rust TCP packets)";
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                        }
+                        LineEdit {
+                            text <=> streaming-address;
+                            placeholder-text: "127.0.0.1:9000";
+                        }
+                        Text {
                             text: recording ? "Recording: active" : "Recording: stopped";
                             color: recording ? rgb(252, 165, 165) : rgb(148, 163, 184);
                             font-size: 13px;
@@ -375,10 +631,10 @@ slint::slint! {
                             wrap: word-wrap;
                         }
                     }
+                    }
                 }
-            }
 
-            Rectangle {
+                Rectangle {
                 background: rgb(15, 23, 42);
                 border-width: 1px;
                 border-color: rgb(51, 65, 85);
@@ -406,6 +662,103 @@ slint::slint! {
     }
 }
 
+struct OutputRuntime {
+    format: VideoFormat,
+    recording: Option<AtomicY4mFileWriter>,
+    streaming: Option<StreamSession<TcpPacketTransport>>,
+    encoder: RleVideoEncoder,
+}
+
+impl OutputRuntime {
+    fn new(format: VideoFormat) -> Self {
+        Self {
+            format,
+            recording: None,
+            streaming: None,
+            encoder: RleVideoEncoder::new(format),
+        }
+    }
+
+    fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
+        if self.recording.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "recording output is already open",
+            )
+            .into());
+        }
+        let final_path = PathBuf::from(path.trim());
+        let file_name = final_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| std::io::Error::other("recording path must name a file"))?;
+        let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
+        self.recording = Some(AtomicY4mFileWriter::new(
+            final_path,
+            temp_path,
+            self.format,
+        )?);
+        Ok(())
+    }
+
+    fn finish_recording(&mut self) -> Result<usize, Box<dyn Error>> {
+        let Some(mut recording) = self.recording.take() else {
+            return Err(std::io::Error::other("recording output is not open").into());
+        };
+        match recording.finalize() {
+            Ok(bytes) => Ok(bytes),
+            Err(error) => {
+                self.recording = Some(recording);
+                Err(error.into())
+            }
+        }
+    }
+
+    fn abort_recording(&mut self) {
+        if let Some(mut recording) = self.recording.take() {
+            let _ = recording.abort();
+        }
+    }
+
+    fn start_streaming(&mut self, address: &str) -> Result<(), Box<dyn Error>> {
+        if self.streaming.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "stream output is already open",
+            )
+            .into());
+        }
+        let mut stream = StreamSession::new(
+            TcpPacketTransport::new(address.trim()),
+            8 * 1024 * 1024,
+            PacketDropPolicy::DropNewest,
+            ReconnectPolicy::new(3),
+        )?;
+        stream.connect()?;
+        self.streaming = Some(stream);
+        Ok(())
+    }
+
+    fn finish_streaming(&mut self) {
+        if let Some(mut stream) = self.streaming.take() {
+            let _ = stream.flush();
+            stream.close();
+        }
+    }
+
+    fn push_frame(&mut self, frame: &VideoFrame) -> Result<(), Box<dyn Error>> {
+        if let Some(recording) = self.recording.as_mut() {
+            recording.push(frame.clone())?;
+        }
+        if let Some(stream) = self.streaming.as_mut() {
+            let packet = self.encoder.encode(frame)?;
+            stream.submit(packet)?;
+            stream.flush()?;
+        }
+        Ok(())
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let smoke = std::env::args().any(|argument| argument == "--smoke");
     if smoke {
@@ -413,19 +766,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let ui = MainWindow::new()?;
     ui.set_project_path("obs-rs-project.txt".into());
+    ui.set_diagnostics_path("obs-rs-diagnostics.obsrdg".into());
+    ui.set_recording_path("obs-rs-recording.y4m".into());
+    ui.set_streaming_address("127.0.0.1:9000".into());
     ui.set_new_source_kind("test_pattern".into());
     let project = initial_project()?;
     let renderer = Rc::new(RefCell::new(PreviewRenderer::new(&project)?));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
 
     refresh_ui(&ui, &state, &renderer);
-    install_callbacks(&ui, &state, &renderer);
+    install_callbacks(&ui, &state, &renderer, &output);
 
     if smoke {
         return Ok(());
     }
 
-    let _preview_timer = start_preview_timer(&ui, &state, &renderer);
+    let _preview_timer = start_preview_timer(&ui, &state, &renderer, &output);
     ui.run()?;
     Ok(())
 }
@@ -434,21 +791,36 @@ fn start_preview_timer(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
 ) -> Timer {
     let timer = Timer::default();
     let weak = ui.as_weak();
     let state = Rc::clone(state);
     let renderer = Rc::clone(renderer);
-    timer.start(TimerMode::Repeated, Duration::from_millis(100), move || {
+    let output = Rc::clone(output);
+    timer.start(TimerMode::Repeated, Duration::from_millis(33), move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         refresh_ui(&ui, &state, &renderer);
+        push_program_frame(&ui, &state, &renderer, &output);
     });
     timer
 }
 
 fn install_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
+    install_scene_callbacks(ui, state, renderer);
+    install_output_callbacks(ui, state, renderer, output);
+    install_mixer_callbacks(ui, state, renderer);
+    install_project_callbacks(ui, state, renderer);
+}
+
+fn install_scene_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
@@ -466,27 +838,165 @@ fn install_callbacks(
     });
 
     let weak = ui.as_weak();
+    let preview_state = Rc::clone(state);
+    let preview_renderer = Rc::clone(renderer);
+    ui.on_select_preview(move |id| {
+        dispatch_and_refresh(
+            &weak,
+            &preview_state,
+            &preview_renderer,
+            UiCommand::SelectPreviewScene { id: id.to_string() },
+        );
+    });
+
+    let weak = ui.as_weak();
+    let program_state = Rc::clone(state);
+    let program_renderer = Rc::clone(renderer);
+    ui.on_select_program(move |id| {
+        dispatch_and_refresh(
+            &weak,
+            &program_state,
+            &program_renderer,
+            UiCommand::SelectProgramScene { id: id.to_string() },
+        );
+    });
+
+    let weak = ui.as_weak();
+    let profile_state = Rc::clone(state);
+    let profile_renderer = Rc::clone(renderer);
+    ui.on_select_profile(move |id| {
+        dispatch_and_refresh(
+            &weak,
+            &profile_state,
+            &profile_renderer,
+            UiCommand::SelectProfile { id: id.to_string() },
+        );
+    });
+
+    let weak = ui.as_weak();
+    let source_state = Rc::clone(state);
+    let source_renderer = Rc::clone(renderer);
+    ui.on_select_source(move |id| {
+        dispatch_and_refresh(
+            &weak,
+            &source_state,
+            &source_renderer,
+            UiCommand::SelectSource { id: id.to_string() },
+        );
+    });
+
+    let weak = ui.as_weak();
+    let settings_state = Rc::clone(state);
+    let settings_renderer = Rc::clone(renderer);
+    ui.on_apply_source_settings(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let document = ui.get_source_settings().to_string();
+        apply_source_settings_and_refresh(&ui, &settings_state, &settings_renderer, &document);
+    });
+
+    let weak = ui.as_weak();
+    let transform_state = Rc::clone(state);
+    let transform_renderer = Rc::clone(renderer);
+    ui.on_apply_source_transform(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let document = ui.get_source_transform().to_string();
+        apply_source_transform_and_refresh(&ui, &transform_state, &transform_renderer, &document);
+    });
+
+    let weak = ui.as_weak();
+    let filters_state = Rc::clone(state);
+    let filters_renderer = Rc::clone(renderer);
+    ui.on_apply_source_filters(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let document = ui.get_source_filters().to_string();
+        apply_source_filters_and_refresh(&ui, &filters_state, &filters_renderer, &document);
+    });
+}
+
+fn install_output_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
+    let weak = ui.as_weak();
     let recording_state = Rc::clone(state);
     let recording_renderer = Rc::clone(renderer);
+    let recording_output = Rc::clone(output);
     ui.on_toggle_recording(move || {
-        let command = if recording_state.borrow().recording() {
-            UiCommand::StopRecording
-        } else {
-            UiCommand::StartRecording
+        let Some(ui) = weak.upgrade() else {
+            return;
         };
-        dispatch_and_refresh(&weak, &recording_state, &recording_renderer, command);
+        let result: Result<String, Box<dyn Error>> = (|| {
+            if recording_state.borrow().recording() {
+                let bytes = recording_output.borrow_mut().finish_recording()?;
+                recording_state
+                    .borrow_mut()
+                    .dispatch(UiCommand::StopRecording)?;
+                Ok(format!("Recording finalized: {bytes} bytes"))
+            } else {
+                let path = ui.get_recording_path().to_string();
+                recording_output.borrow_mut().start_recording(&path)?;
+                if let Err(error) = recording_state
+                    .borrow_mut()
+                    .dispatch(UiCommand::StartRecording)
+                {
+                    recording_output.borrow_mut().abort_recording();
+                    return Err(error.into());
+                }
+                Ok(format!("Recording started: {path}"))
+            }
+        })();
+        match result {
+            Ok(message) => {
+                refresh_ui(&ui, &recording_state, &recording_renderer);
+                ui.set_status_message(message.into());
+            }
+            Err(error) => ui.set_status_message(format!("Recording failed: {error}").into()),
+        }
     });
 
     let weak = ui.as_weak();
     let streaming_state = Rc::clone(state);
     let streaming_renderer = Rc::clone(renderer);
+    let streaming_output = Rc::clone(output);
     ui.on_toggle_streaming(move || {
-        let command = if streaming_state.borrow().streaming() {
-            UiCommand::StopStreaming
-        } else {
-            UiCommand::StartStreaming
+        let Some(ui) = weak.upgrade() else {
+            return;
         };
-        dispatch_and_refresh(&weak, &streaming_state, &streaming_renderer, command);
+        let result: Result<String, Box<dyn Error>> = (|| {
+            if streaming_state.borrow().streaming() {
+                streaming_output.borrow_mut().finish_streaming();
+                streaming_state
+                    .borrow_mut()
+                    .dispatch(UiCommand::StopStreaming)?;
+                Ok("Streaming stopped".to_owned())
+            } else {
+                let address = ui.get_streaming_address().to_string();
+                streaming_output.borrow_mut().start_streaming(&address)?;
+                if let Err(error) = streaming_state
+                    .borrow_mut()
+                    .dispatch(UiCommand::StartStreaming)
+                {
+                    streaming_output.borrow_mut().finish_streaming();
+                    return Err(error.into());
+                }
+                Ok(format!("Streaming connected: {address}"))
+            }
+        })();
+        match result {
+            Ok(message) => {
+                refresh_ui(&ui, &streaming_state, &streaming_renderer);
+                ui.set_status_message(message.into());
+            }
+            Err(error) => ui.set_status_message(format!("Streaming failed: {error}").into()),
+        }
     });
 
     let weak = ui.as_weak();
@@ -518,32 +1028,69 @@ fn install_callbacks(
             },
         );
     });
+}
 
+fn push_program_frame(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
+    let active = {
+        let state = state.borrow();
+        state.recording() || state.streaming()
+    };
+    if !active {
+        return;
+    }
+    let scene = state.borrow().program_scene().map(str::to_owned);
+    let Some(scene) = scene else {
+        return;
+    };
+    let result = renderer
+        .borrow_mut()
+        .render(&scene)
+        .and_then(|frame| {
+            frame.ok_or_else(|| std::io::Error::other("program scene is empty").into())
+        })
+        .and_then(|frame| output.borrow_mut().push_frame(&frame));
+    if let Err(error) = result {
+        ui.set_status_message(format!("Output failed: {error}").into());
+    }
+}
+
+fn install_mixer_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
     let weak = ui.as_weak();
-    let preview_state = Rc::clone(state);
-    let preview_renderer = Rc::clone(renderer);
-    ui.on_select_preview(move |id| {
+    let gain_state = Rc::clone(state);
+    let gain_renderer = Rc::clone(renderer);
+    ui.on_set_mixer_gain(move |id, gain_milli| {
+        let gain_milli = u16::try_from(gain_milli.max(0)).unwrap_or(0);
         dispatch_and_refresh(
             &weak,
-            &preview_state,
-            &preview_renderer,
-            UiCommand::SelectPreviewScene { id: id.to_string() },
+            &gain_state,
+            &gain_renderer,
+            UiCommand::SetMixerGain {
+                id: id.to_string(),
+                gain_milli,
+            },
         );
     });
 
     let weak = ui.as_weak();
-    let program_state = Rc::clone(state);
-    let program_renderer = Rc::clone(renderer);
-    ui.on_select_program(move |id| {
+    let mute_state = Rc::clone(state);
+    let mute_renderer = Rc::clone(renderer);
+    ui.on_toggle_mixer_mute(move |id| {
         dispatch_and_refresh(
             &weak,
-            &program_state,
-            &program_renderer,
-            UiCommand::SelectProgramScene { id: id.to_string() },
+            &mute_state,
+            &mute_renderer,
+            UiCommand::ToggleMixerMute { id: id.to_string() },
         );
     });
-
-    install_project_callbacks(ui, state, renderer);
 }
 
 fn install_project_callbacks(
@@ -563,6 +1110,20 @@ fn install_project_callbacks(
     let load_renderer = Rc::clone(renderer);
     ui.on_load_project(move || {
         load_and_refresh(&weak, &load_state, &load_renderer);
+    });
+
+    let weak = ui.as_weak();
+    let recover_state = Rc::clone(state);
+    let recover_renderer = Rc::clone(renderer);
+    ui.on_recover_project(move || {
+        recover_and_refresh(&weak, &recover_state, &recover_renderer);
+    });
+
+    let weak = ui.as_weak();
+    let diagnostics_state = Rc::clone(state);
+    let diagnostics_renderer = Rc::clone(renderer);
+    ui.on_export_diagnostics(move || {
+        export_diagnostics(&weak, &diagnostics_state, &diagnostics_renderer);
     });
 
     let weak = ui.as_weak();
@@ -643,6 +1204,74 @@ fn load_and_refresh(
             ui.set_status_message(format!("Loaded project from {path}").into());
         }
         Err(error) => ui.set_status_message(format!("Load failed: {error}").into()),
+    }
+}
+
+fn recover_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let path = ui.get_project_path().to_string();
+    let result: Result<bool, Box<dyn Error>> = (|| {
+        let store = project_store(&path)?;
+        Ok(state.borrow_mut().recover_project(&store)?)
+    })();
+    match result {
+        Ok(true) => {
+            refresh_ui(&ui, state, renderer);
+            ui.set_status_message(
+                format!("Recovered interrupted project for {path}; save to publish it").into(),
+            );
+        }
+        Ok(false) => ui.set_status_message("No recoverable project was found".into()),
+        Err(error) => ui.set_status_message(format!("Recovery failed: {error}").into()),
+    }
+}
+
+fn export_diagnostics(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let path = ui.get_diagnostics_path().to_string();
+    let result: Result<usize, Box<dyn Error>> = (|| {
+        let final_path = PathBuf::from(path.trim());
+        let file_name = final_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| std::io::Error::other("diagnostics path must name a file"))?;
+        let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
+        let state = state.borrow();
+        let metrics = renderer.borrow().runtime.compositor_metrics();
+        let mut bundle = DiagnosticBundle::new();
+        bundle.insert_text("project", &state.project_document())?;
+        bundle.insert_text("ui", &state.accessible_snapshot())?;
+        bundle.insert_text(
+            "runtime",
+            &format!(
+                "render_calls={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={}",
+                metrics.render_calls(),
+                metrics.source_requests(),
+                metrics.source_frames(),
+                metrics.empty_sources(),
+                metrics.transformed_frames(),
+                metrics.filtered_frames(),
+                metrics.blended_layers()
+            ),
+        )?;
+        let mut writer = AtomicDiagnosticFileWriter::new(final_path, temp_path)?;
+        Ok(writer.finalize(&bundle)?)
+    })();
+    match result {
+        Ok(bytes) => ui.set_status_message(format!("Diagnostics exported: {bytes} bytes").into()),
+        Err(error) => ui.set_status_message(format!("Diagnostics failed: {error}").into()),
     }
 }
 
@@ -728,6 +1357,204 @@ fn add_source_and_refresh(
     }
 }
 
+fn apply_source_settings_and_refresh(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    document: &str,
+) {
+    let (profile, scene, source) = {
+        let state = state.borrow();
+        (
+            state
+                .project_session()
+                .project()
+                .active_profile()
+                .to_string(),
+            state.preview_scene().map(str::to_owned),
+            state.selected_source().map(str::to_owned),
+        )
+    };
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let scene = scene.ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+        let source = source.ok_or_else(|| std::io::Error::other("no source is selected"))?;
+        let settings = Config::parse(document)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceSettings {
+                profile,
+                scene,
+                source,
+                settings,
+            }))?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        ui.set_status_message(format!("Source settings failed: {error}").into());
+    } else {
+        refresh_ui(ui, state, renderer);
+    }
+}
+
+fn apply_source_transform_and_refresh(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    document: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, source) = selected_source_context(&state.borrow())?;
+        let transform = parse_source_transform(document)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceTransform {
+                profile,
+                scene,
+                source,
+                transform,
+            }))?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        ui.set_status_message(format!("Source transform failed: {error}").into());
+    } else {
+        refresh_ui(ui, state, renderer);
+    }
+}
+
+fn apply_source_filters_and_refresh(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    document: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, source) = selected_source_context(&state.borrow())?;
+        let filters = parse_source_filters(document)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceFilters {
+                profile,
+                scene,
+                source,
+                filters,
+            }))?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        ui.set_status_message(format!("Source filters failed: {error}").into());
+    } else {
+        refresh_ui(ui, state, renderer);
+    }
+}
+
+fn selected_source_context(
+    state: &DesktopState,
+) -> Result<(String, String, String), Box<dyn Error>> {
+    let profile = state
+        .project_session()
+        .project()
+        .active_profile()
+        .to_string();
+    let scene = state
+        .preview_scene()
+        .map(str::to_owned)
+        .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+    let source = state
+        .selected_source()
+        .map(str::to_owned)
+        .ok_or_else(|| std::io::Error::other("no source is selected"))?;
+    Ok((profile, scene, source))
+}
+
+fn parse_source_transform(document: &str) -> Result<FrameTransform, Box<dyn Error>> {
+    let values = document.split(',').map(str::trim).collect::<Vec<_>>();
+    if values.len() != 7 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "transform needs 7 comma-separated values",
+        )
+        .into());
+    }
+    let flip_x = parse_transform_flag(values[4], "flip-x")?;
+    let flip_y = parse_transform_flag(values[5], "flip-y")?;
+    Ok(FrameTransform::new(
+        values[0].parse()?,
+        values[1].parse()?,
+        values[2].parse()?,
+        values[3].parse()?,
+        flip_x,
+        flip_y,
+        values[6].parse()?,
+    )?)
+}
+
+fn parse_transform_flag(value: &str, field: &str) -> Result<bool, Box<dyn Error>> {
+    match value {
+        "0" | "false" => Ok(false),
+        "1" | "true" => Ok(true),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{field} must be 0, 1, false, or true"),
+        )
+        .into()),
+    }
+}
+
+fn parse_source_filters(document: &str) -> Result<Vec<FrameFilter>, Box<dyn Error>> {
+    let document = document.trim();
+    if document.is_empty() {
+        return Ok(Vec::new());
+    }
+    document
+        .split(',')
+        .map(str::trim)
+        .map(|filter| {
+            if filter == "gray" || filter == "grayscale" {
+                return Ok(FrameFilter::Grayscale);
+            }
+            if let Some(value) = filter.strip_prefix("brightness:") {
+                return Ok(FrameFilter::Brightness {
+                    milli: value.trim().parse()?,
+                });
+            }
+            if let Some(value) = filter.strip_prefix("opacity:") {
+                return Ok(FrameFilter::Opacity(value.trim().parse()?));
+            }
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("unknown filter: {filter}"),
+            )
+            .into())
+        })
+        .collect()
+}
+
+fn source_transform_document(transform: FrameTransform) -> String {
+    format!(
+        "{},{},{},{},{},{},{}",
+        transform.scale_x_milli(),
+        transform.scale_y_milli(),
+        transform.translate_x(),
+        transform.translate_y(),
+        u8::from(transform.flip_x()),
+        u8::from(transform.flip_y()),
+        transform.opacity()
+    )
+}
+
+fn source_filters_document(filters: &[FrameFilter]) -> String {
+    filters
+        .iter()
+        .map(|filter| match filter {
+            FrameFilter::Grayscale => "gray".to_owned(),
+            FrameFilter::Brightness { milli } => format!("brightness:{milli}"),
+            FrameFilter::Opacity(opacity) => format!("opacity:{opacity}"),
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn dispatch_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -769,6 +1596,15 @@ fn refresh_ui(
     ui.set_dirty(state.is_dirty());
     ui.set_snapshot(state.accessible_snapshot().into());
 
+    let profile_rows = project
+        .profiles()
+        .map(|profile| ProfileRow {
+            id: profile.id().as_str().into(),
+            name: profile.name().into(),
+        })
+        .collect::<Vec<_>>();
+    ui.set_profile_rows(ModelRc::new(VecModel::from(profile_rows)));
+
     let sync_error = renderer.borrow_mut().sync_project(project).err();
     let (preview_image, preview_error) = match sync_error.as_ref() {
         Some(error) => (Image::default(), Some(format!("Preview renderer: {error}"))),
@@ -787,12 +1623,16 @@ fn refresh_ui(
             .into(),
     );
 
-    let rows = profile.map_or_else(Vec::new, |profile| {
+    refresh_docks(ui, &state, profile);
+}
+
+fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile>) {
+    let scene_rows = profile.map_or_else(Vec::new, |profile| {
         profile
             .scenes()
             .map(|scene| {
                 let id = scene.id().to_string();
-                let role = scene_role(&state, &id);
+                let role = scene_role(state, &id);
                 SceneRow {
                     id: id.into(),
                     name: scene.name().into(),
@@ -801,7 +1641,75 @@ fn refresh_ui(
             })
             .collect::<Vec<_>>()
     });
-    ui.set_scene_rows(ModelRc::new(VecModel::from(rows)));
+    ui.set_scene_rows(ModelRc::new(VecModel::from(scene_rows)));
+
+    let source_scene = state.preview_scene().unwrap_or("none");
+    let selected_source = state.selected_source().unwrap_or("none");
+    let source_rows = profile
+        .and_then(|profile| {
+            profile
+                .scenes()
+                .find(|scene| scene.id().as_str() == source_scene)
+        })
+        .map_or_else(Vec::new, |scene| {
+            scene
+                .sources()
+                .iter()
+                .enumerate()
+                .map(|(index, source)| SourceRow {
+                    id: source.id().as_str().into(),
+                    name: source.name().into(),
+                    kind: source.kind().as_str().into(),
+                    order: (index + 1).to_string().into(),
+                    selected: source.id().as_str() == selected_source,
+                })
+                .collect::<Vec<_>>()
+        });
+    ui.set_source_scene(source_scene.into());
+    ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
+    let selected_source_spec = profile
+        .and_then(|profile| {
+            profile
+                .scenes()
+                .find(|scene| scene.id().as_str() == source_scene)
+        })
+        .and_then(|scene| {
+            scene
+                .sources()
+                .iter()
+                .find(|source| source.id().as_str() == selected_source)
+        });
+    let selected_settings =
+        selected_source_spec.map_or_else(String::new, |source| source.settings().serialize());
+    if ui.get_source_settings_version().as_str() != selected_settings {
+        ui.set_source_settings(selected_settings.into());
+        ui.set_source_settings_version(ui.get_source_settings().clone());
+    }
+    let selected_transform =
+        selected_source_spec.map_or(FrameTransform::IDENTITY, SourceSpec::transform);
+    let transform_document = source_transform_document(selected_transform);
+    let filters_document = selected_source_spec.map_or_else(String::new, |source| {
+        source_filters_document(source.filters())
+    });
+    let properties_version = format!("{transform_document}\u{1f}{filters_document}");
+    if ui.get_source_properties_version().as_str() != properties_version {
+        ui.set_source_transform(transform_document.into());
+        ui.set_source_filters(filters_document.into());
+        ui.set_source_properties_version(properties_version.into());
+    }
+    ui.set_selected_source(selected_source.into());
+
+    let mixer_rows = state
+        .mixer_channels()
+        .map(|channel| MixerRow {
+            id: channel.id().into(),
+            name: channel.name().into(),
+            gain: f32::from(channel.gain_milli()) / 1_000.0,
+            peak: f32::from(channel.peak_milli()) / 1_000.0,
+            muted: channel.muted(),
+        })
+        .collect::<Vec<_>>();
+    ui.set_mixer_rows(ModelRc::new(VecModel::from(mixer_rows)));
 }
 
 fn latest_notice(state: &DesktopState) -> &str {
@@ -984,8 +1892,8 @@ fn scene(id: &str, name: &str, color: &str) -> Result<SceneSpec, Box<dyn Error>>
 
 #[cfg(test)]
 mod tests {
-    use super::{initial_project, transition_label, PreviewRenderer};
-    use obs_rs_media::FrameTransition;
+    use super::{initial_project, transition_label, OutputRuntime, PreviewRenderer};
+    use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
     use obs_rs_project::{ProjectCommand, SceneSpec};
 
     #[test]
@@ -1057,5 +1965,29 @@ mod tests {
             .render("new-scene")
             .expect("empty scene should be renderable")
             .is_none());
+    }
+
+    #[test]
+    fn output_runtime_finalizes_an_atomic_y4m_recording() {
+        let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let final_path = std::env::temp_dir().join(format!("obs-rs-gui-output-{token}.y4m"));
+        let mut output = OutputRuntime::new(format);
+        output
+            .start_recording(final_path.to_str().expect("UTF-8 temp path"))
+            .expect("recording should open");
+        let frame = VideoFrame::solid(format, Timestamp::ZERO, [20, 30, 40, 255]);
+        output.push_frame(&frame).expect("frame should be accepted");
+        let bytes = output
+            .finish_recording()
+            .expect("recording should finalize");
+        assert!(bytes > 0);
+        let persisted = std::fs::read(&final_path).expect("recording should be persisted");
+        assert_eq!(persisted.len(), bytes);
+        assert!(persisted.starts_with(b"YUV4MPEG2"));
+        std::fs::remove_file(final_path).expect("remove output fixture");
     }
 }

@@ -15,6 +15,9 @@ use std::{
 
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 
+/// Maximum number of threads created by the bounded multi-worker soak helper.
+pub const MAX_SOAK_WORKERS: usize = 64;
+
 /// Policy used when a bounded queue has no free slot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DropPolicy {
@@ -49,6 +52,12 @@ pub enum VideoError {
     },
     /// The timestamp calculation or frame index would overflow.
     ScheduleOverflow,
+    /// A multi-worker soak was requested without any workers.
+    ZeroWorkers,
+    /// A multi-worker soak exceeds the bounded worker limit.
+    TooManyWorkers { workers: usize },
+    /// A multi-worker soak worker terminated unexpectedly.
+    WorkerPanic,
 }
 
 impl fmt::Display for VideoError {
@@ -62,6 +71,11 @@ impl fmt::Display for VideoError {
                 )
             }
             Self::ScheduleOverflow => formatter.write_str("video schedule timestamp overflowed"),
+            Self::ZeroWorkers => formatter.write_str("video worker count must be non-zero"),
+            Self::TooManyWorkers { workers } => {
+                write!(formatter, "video worker count is too large: {workers}")
+            }
+            Self::WorkerPanic => formatter.write_str("video soak worker terminated unexpectedly"),
         }
     }
 }
@@ -437,6 +451,8 @@ pub struct VideoPipeline {
 pub struct VideoMetrics {
     render_calls: u64,
     produced_frames: u64,
+    produced_bytes: u64,
+    peak_queued_bytes: u64,
     empty_frames: u64,
     dropped_oldest: u64,
     dropped_newest: u64,
@@ -504,6 +520,18 @@ impl VideoMetrics {
     #[must_use]
     pub const fn produced_frames(self) -> u64 {
         self.produced_frames
+    }
+
+    /// Number of owned pixel bytes submitted by render callbacks.
+    #[must_use]
+    pub const fn produced_bytes(self) -> u64 {
+        self.produced_bytes
+    }
+
+    /// Largest estimated queued pixel footprint observed by this pipeline.
+    #[must_use]
+    pub const fn peak_queued_bytes(self) -> u64 {
+        self.peak_queued_bytes
     }
 
     /// Number of callbacks that returned no frame.
@@ -622,6 +650,8 @@ impl CancellationToken {
 pub struct VideoWorkerReport {
     requested_frames: u64,
     processed_frames: u64,
+    produced_bytes: u64,
+    peak_queued_bytes: u64,
     cancelled: bool,
     empty_frames: u64,
     dropped_oldest: u64,
@@ -645,6 +675,18 @@ impl VideoWorkerReport {
     #[must_use]
     pub const fn processed_frames(self) -> u64 {
         self.processed_frames
+    }
+
+    /// Number of owned pixel bytes produced by this run.
+    #[must_use]
+    pub const fn produced_bytes(self) -> u64 {
+        self.produced_bytes
+    }
+
+    /// Largest estimated queued pixel footprint observed by this run.
+    #[must_use]
+    pub const fn peak_queued_bytes(self) -> u64 {
+        self.peak_queued_bytes
     }
 
     /// Returns whether cancellation stopped the run before its requested count.
@@ -734,6 +776,154 @@ pub struct VideoWorker {
     pipeline: VideoPipeline,
 }
 
+/// Aggregate evidence from a wall-clock multi-worker video soak.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MultiWorkerSoakReport {
+    workers: usize,
+    requested_frames: u64,
+    processed_frames: u64,
+    missed_deadlines: u64,
+    total_lateness_nanos: u64,
+    produced_bytes: u64,
+    peak_queued_bytes: u64,
+    elapsed_nanos: u64,
+}
+
+impl MultiWorkerSoakReport {
+    /// Returns the number of worker threads used by the soak.
+    #[must_use]
+    pub const fn workers(self) -> usize {
+        self.workers
+    }
+
+    /// Returns total requested frames across all workers.
+    #[must_use]
+    pub const fn requested_frames(self) -> u64 {
+        self.requested_frames
+    }
+
+    /// Returns total processed frames across all workers.
+    #[must_use]
+    pub const fn processed_frames(self) -> u64 {
+        self.processed_frames
+    }
+
+    /// Returns total missed deadlines across all workers.
+    #[must_use]
+    pub const fn missed_deadlines(self) -> u64 {
+        self.missed_deadlines
+    }
+
+    /// Returns total observed post-deadline lateness.
+    #[must_use]
+    pub const fn total_lateness_nanos(self) -> u64 {
+        self.total_lateness_nanos
+    }
+
+    /// Returns total owned pixel bytes produced by all workers.
+    #[must_use]
+    pub const fn produced_bytes(self) -> u64 {
+        self.produced_bytes
+    }
+
+    /// Returns the largest per-worker queued pixel footprint.
+    #[must_use]
+    pub const fn peak_queued_bytes(self) -> u64 {
+        self.peak_queued_bytes
+    }
+
+    /// Returns elapsed wall-clock time for the complete soak.
+    #[must_use]
+    pub const fn elapsed_nanos(self) -> u64 {
+        self.elapsed_nanos
+    }
+}
+
+/// Runs bounded independent video workers against deterministic solid frames.
+///
+/// This is a wall-clock stress fixture for scheduler, queue, cancellation, and
+/// owned-frame accounting. Each worker owns its scheduler and queue; no runtime
+/// state is shared, which makes it safe to replace the solid-frame callback with
+/// a thread-safe source adapter in integration tests.
+///
+/// # Errors
+///
+/// Returns [`VideoError::ZeroWorkers`] or [`VideoError::TooManyWorkers`] for an
+/// invalid worker count, [`VideoError::WorkerPanic`] if a worker thread exits
+/// unexpectedly, or a worker scheduling/submission error.
+pub fn run_multi_worker_soak(
+    format: VideoFormat,
+    worker_count: usize,
+    frames_per_worker: u64,
+    queue_capacity: usize,
+    policy: DropPolicy,
+) -> Result<MultiWorkerSoakReport, VideoError> {
+    if worker_count == 0 {
+        return Err(VideoError::ZeroWorkers);
+    }
+    if worker_count > MAX_SOAK_WORKERS {
+        return Err(VideoError::TooManyWorkers {
+            workers: worker_count,
+        });
+    }
+    let started = Instant::now();
+    let mut handles = Vec::with_capacity(worker_count);
+    for worker_index in 0..worker_count {
+        handles.push(std::thread::spawn(move || {
+            let mut worker = VideoWorker::new(format, queue_capacity, policy)?;
+            let cancellation = CancellationToken::new();
+            let mut clock = MonotonicClock::start();
+            worker
+                .run(
+                    &mut clock,
+                    frames_per_worker,
+                    &cancellation,
+                    move |deadline, output_format| {
+                        let shade = u8::try_from(worker_index % 255).unwrap_or(0);
+                        Ok::<_, std::convert::Infallible>(Some(VideoFrame::solid(
+                            output_format,
+                            deadline.timestamp(),
+                            [shade, 64, 128, 255],
+                        )))
+                    },
+                )
+                .map_err(|error| match error {
+                    WorkerError::Pacing(error)
+                    | WorkerError::Render(
+                        RenderError::Schedule(error) | RenderError::Submit(error),
+                    ) => error,
+                    WorkerError::Render(RenderError::Source(error)) => match error {},
+                })
+        }));
+    }
+
+    let mut aggregate = MultiWorkerSoakReport {
+        workers: worker_count,
+        ..MultiWorkerSoakReport::default()
+    };
+    for handle in handles {
+        let report = handle.join().map_err(|_| VideoError::WorkerPanic)??;
+        aggregate.requested_frames = aggregate
+            .requested_frames
+            .saturating_add(report.requested_frames());
+        aggregate.processed_frames = aggregate
+            .processed_frames
+            .saturating_add(report.processed_frames());
+        aggregate.missed_deadlines = aggregate
+            .missed_deadlines
+            .saturating_add(report.missed_deadlines());
+        aggregate.total_lateness_nanos = aggregate
+            .total_lateness_nanos
+            .saturating_add(report.total_lateness_nanos());
+        aggregate.produced_bytes = aggregate
+            .produced_bytes
+            .saturating_add(report.produced_bytes());
+        aggregate.peak_queued_bytes = aggregate.peak_queued_bytes.max(report.peak_queued_bytes());
+    }
+    aggregate.elapsed_nanos = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    Ok(aggregate)
+}
+
 impl VideoWorker {
     /// Creates a worker with an injected-clock-compatible video pipeline.
     ///
@@ -804,6 +994,8 @@ impl VideoWorker {
         Ok(VideoWorkerReport {
             requested_frames: frame_count,
             processed_frames,
+            produced_bytes: after.produced_bytes.saturating_sub(before.produced_bytes),
+            peak_queued_bytes: after.peak_queued_bytes,
             cancelled: cancellation.is_cancelled() && processed_frames < frame_count,
             empty_frames: after.empty_frames.saturating_sub(before.empty_frames),
             dropped_oldest: after.dropped_oldest.saturating_sub(before.dropped_oldest),
@@ -888,7 +1080,20 @@ impl VideoPipeline {
         };
 
         self.metrics.produced_frames = self.metrics.produced_frames.saturating_add(1);
-        match self.queue.push(frame).map_err(RenderError::Submit)? {
+        self.metrics.produced_bytes = self
+            .metrics
+            .produced_bytes
+            .saturating_add(u64::try_from(frame.pixels().len()).unwrap_or(u64::MAX));
+        let outcome = self.queue.push(frame).map_err(RenderError::Submit)?;
+        let queued_bytes = u64::try_from(self.queue.len())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(
+                u64::from(self.queue.format().width())
+                    .saturating_mul(u64::from(self.queue.format().height()))
+                    .saturating_mul(4),
+            );
+        self.metrics.peak_queued_bytes = self.metrics.peak_queued_bytes.max(queued_bytes);
+        match outcome {
             PushOutcome::Enqueued => Ok(RenderOutcome::Enqueued { deadline }),
             PushOutcome::DroppedOldest(dropped) => {
                 self.metrics.dropped_oldest = self.metrics.dropped_oldest.saturating_add(1);
@@ -1176,6 +1381,8 @@ mod tests {
         assert!(matches!(empty, RenderOutcome::Empty { .. }));
         assert_eq!(pipeline.metrics().render_calls(), 3);
         assert_eq!(pipeline.metrics().produced_frames(), 2);
+        assert_eq!(pipeline.metrics().produced_bytes(), 16);
+        assert_eq!(pipeline.metrics().peak_queued_bytes(), 8);
         assert_eq!(pipeline.metrics().empty_frames(), 1);
         assert_eq!(pipeline.metrics().dropped_oldest(), 1);
         let observation = pipeline.observe_deadline(
@@ -1254,6 +1461,22 @@ mod tests {
         let second = clock.now();
 
         assert!(second >= first);
+    }
+
+    #[test]
+    fn multi_worker_soak_reports_wall_clock_and_owned_frame_footprint() {
+        let report = run_multi_worker_soak(format(), 2, 2, 1, DropPolicy::DropOldest)
+            .expect("multi-worker soak");
+        assert_eq!(report.workers(), 2);
+        assert_eq!(report.requested_frames(), 4);
+        assert_eq!(report.processed_frames(), 4);
+        assert_eq!(report.produced_bytes(), 32);
+        assert_eq!(report.peak_queued_bytes(), 8);
+        assert!(report.elapsed_nanos() > 0);
+        assert_eq!(
+            run_multi_worker_soak(format(), 0, 1, 1, DropPolicy::DropOldest),
+            Err(VideoError::ZeroWorkers)
+        );
     }
 
     #[test]

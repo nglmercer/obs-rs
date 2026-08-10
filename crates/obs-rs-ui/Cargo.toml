@@ -9,6 +9,7 @@ version.workspace = true
 crate-type = ["lib"]
 
 [dependencies]
+obs-rs-audio = { path = "../obs-rs-audio" }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-project = { path = "../obs-rs-project" }
 obs-rs-util = { path = "../obs-rs-util" }

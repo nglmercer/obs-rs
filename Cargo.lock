@@ -3003,7 +3003,9 @@ dependencies = [
  "obs-rs-builtins",
  "obs-rs-config",
  "obs-rs-core",
+ "obs-rs-diagnostics",
  "obs-rs-media",
+ "obs-rs-output",
  "obs-rs-plugin-api",
  "obs-rs-project",
  "obs-rs-ui",
@@ -3051,6 +3053,7 @@ dependencies = [
 name = "obs-rs-ui"
 version = "0.1.0"
 dependencies = [
+ "obs-rs-audio",
  "obs-rs-config",
  "obs-rs-media",
  "obs-rs-project",

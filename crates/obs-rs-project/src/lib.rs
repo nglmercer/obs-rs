@@ -444,6 +444,13 @@ pub enum ProjectCommand {
         scene: String,
         source: SourceSpec,
     },
+    /// Replaces one source's validated settings document.
+    SetSourceSettings {
+        profile: String,
+        scene: String,
+        source: String,
+        settings: Config,
+    },
     /// Replaces one source transform.
     SetSourceTransform {
         profile: String,
@@ -457,6 +464,13 @@ pub enum ProjectCommand {
         scene: String,
         source: String,
         filter: FrameFilter,
+    },
+    /// Replaces the ordered filter chain for one source.
+    SetSourceFilters {
+        profile: String,
+        scene: String,
+        source: String,
+        filters: Vec<FrameFilter>,
     },
 }
 
@@ -493,6 +507,20 @@ impl Project {
                     .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
                 scene.add_source(source)
             }
+            ProjectCommand::SetSourceSettings {
+                profile,
+                scene,
+                source,
+                settings,
+            } => {
+                let source = source_id(&source)?;
+                let scene = scene_mut(self, &profile, &scene)?;
+                let source = scene
+                    .source_mut(&source)
+                    .ok_or_else(|| ProjectError::UnknownSource(source.clone()))?;
+                source.set_settings(settings);
+                Ok(())
+            }
             ProjectCommand::SetSourceTransform {
                 profile,
                 scene,
@@ -519,6 +547,23 @@ impl Project {
                     .source_mut(&source)
                     .ok_or_else(|| ProjectError::UnknownSource(source.clone()))?;
                 source.add_filter(filter);
+                Ok(())
+            }
+            ProjectCommand::SetSourceFilters {
+                profile,
+                scene,
+                source,
+                filters,
+            } => {
+                let source = source_id(&source)?;
+                let scene = scene_mut(self, &profile, &scene)?;
+                let source = scene
+                    .source_mut(&source)
+                    .ok_or_else(|| ProjectError::UnknownSource(source.clone()))?;
+                source.filters.clear();
+                for filter in filters {
+                    source.add_filter(filter);
+                }
                 Ok(())
             }
         }
@@ -581,6 +626,11 @@ impl ProjectSession {
     /// Marks the session clean after an external persistence operation succeeds.
     pub const fn mark_saved(&mut self) {
         self.dirty = false;
+    }
+
+    /// Marks the session dirty after recovering an unswitched temporary file.
+    pub const fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 }
 
@@ -672,6 +722,26 @@ impl ProjectFileStore {
             message: error.to_string(),
         })?;
         Project::parse(&document)
+    }
+
+    /// Reads a valid, unswitched temporary project after an interrupted save.
+    ///
+    /// The temporary file is never removed by this read. The caller can decide
+    /// whether to recover it into memory and publish it through a later save.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Io`] when the temporary file exists but cannot be
+    /// read, or a parser error when its contents are incomplete or invalid.
+    pub fn recover(&self) -> Result<Option<Project>, ProjectError> {
+        if !self.temp_path.exists() {
+            return Ok(None);
+        }
+        let document = fs::read_to_string(&self.temp_path).map_err(|error| ProjectError::Io {
+            operation: "read project recovery file",
+            message: error.to_string(),
+        })?;
+        Project::parse(&document).map(Some)
     }
 
     /// Returns the final project path.
@@ -1063,6 +1133,26 @@ mod tests {
                 source,
             })
             .expect("add source command");
+        let mut replacement_settings = Config::new();
+        replacement_settings
+            .set("color", "#203040FF")
+            .expect("replacement settings");
+        session
+            .dispatch(ProjectCommand::SetSourceSettings {
+                profile: "live".to_owned(),
+                scene: "main".to_owned(),
+                source: "background".to_owned(),
+                settings: replacement_settings,
+            })
+            .expect("set source settings command");
+        session
+            .dispatch(ProjectCommand::SetSourceFilters {
+                profile: "live".to_owned(),
+                scene: "main".to_owned(),
+                source: "background".to_owned(),
+                filters: vec![FrameFilter::Grayscale],
+            })
+            .expect("set source filters command");
         assert!(session.is_dirty());
         let saved = session.save();
         assert!(!session.is_dirty());
@@ -1120,5 +1210,17 @@ mod tests {
         assert!(!temp_path.exists());
         assert_eq!(store.load().expect("load project"), *session.project());
         std::fs::remove_file(final_path).expect("remove project fixture");
+    }
+
+    #[test]
+    fn project_file_store_recovers_a_valid_unswitched_temporary_file() {
+        let (final_path, temp_path) = unique_paths("recovery");
+        let store = ProjectFileStore::new(&final_path, &temp_path).expect("store");
+        let project = project();
+        std::fs::write(&temp_path, project.serialize()).expect("write recovery fixture");
+
+        assert_eq!(store.recover().expect("recover project"), Some(project));
+        assert!(!final_path.exists());
+        std::fs::remove_file(temp_path).expect("remove recovery fixture");
     }
 }

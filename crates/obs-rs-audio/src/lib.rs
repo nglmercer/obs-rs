@@ -184,6 +184,165 @@ pub struct MonotonicAudioClock {
     origin: Instant,
 }
 
+/// Maximum rate correction accepted by a callback-driven device clock.
+pub const MAX_CALLBACK_CORRECTION_PPM: i32 = 10_000;
+
+/// An observed hardware-audio callback interval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AudioCallbackObservation {
+    timestamp: Timestamp,
+    expected_timestamp: Timestamp,
+    frames: usize,
+    drift_nanos: i64,
+}
+
+impl AudioCallbackObservation {
+    /// Returns the device timestamp supplied by the callback.
+    #[must_use]
+    pub const fn timestamp(self) -> Timestamp {
+        self.timestamp
+    }
+
+    /// Returns the corrected sample-clock timestamp expected for this callback.
+    #[must_use]
+    pub const fn expected_timestamp(self) -> Timestamp {
+        self.expected_timestamp
+    }
+
+    /// Returns the number of sample frames delivered by the callback.
+    #[must_use]
+    pub const fn frames(self) -> usize {
+        self.frames
+    }
+
+    /// Returns `device - expected` in nanoseconds, saturated to `i64`.
+    #[must_use]
+    pub const fn drift_nanos(self) -> i64 {
+        self.drift_nanos
+    }
+}
+
+/// A safe adapter for clocks reported by OS audio callbacks.
+///
+/// Platform crates can feed callback timestamps and frame counts into this
+/// value without exposing callback-thread details to the audio worker. It never
+/// sleeps: callback delivery is the clock edge, while [`AudioClock::sleep_until`]
+/// is intentionally a no-op for this callback-driven source.
+pub struct AudioCallbackClock {
+    format: AudioFormat,
+    origin: Option<Timestamp>,
+    last_timestamp: Timestamp,
+    delivered_frames: u64,
+    correction_ppm: i32,
+}
+
+impl AudioCallbackClock {
+    /// Creates an uninitialized callback clock for one device format.
+    #[must_use]
+    pub const fn new(format: AudioFormat) -> Self {
+        Self {
+            format,
+            origin: None,
+            last_timestamp: Timestamp::ZERO,
+            delivered_frames: 0,
+            correction_ppm: 0,
+        }
+    }
+
+    /// Records one callback edge and returns its measured drift.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::ZeroBlock`] for an empty callback or
+    /// [`AudioError::CallbackTimestampRegression`] when the device clock moves
+    /// backward.
+    pub fn observe_callback(
+        &mut self,
+        timestamp: Timestamp,
+        frames: usize,
+    ) -> Result<AudioCallbackObservation, AudioError> {
+        if frames == 0 {
+            return Err(AudioError::ZeroBlock);
+        }
+        if timestamp < self.last_timestamp && self.origin.is_some() {
+            return Err(AudioError::CallbackTimestampRegression {
+                previous: self.last_timestamp,
+                actual: timestamp,
+            });
+        }
+        let origin = *self.origin.get_or_insert(timestamp);
+        let elapsed = corrected_audio_duration_nanos(
+            self.delivered_frames,
+            self.format.sample_rate(),
+            self.correction_ppm,
+        )?;
+        let expected_timestamp = origin
+            .checked_add(elapsed)
+            .ok_or(AudioError::ScheduleOverflow)?;
+        let drift = i128::from(timestamp.as_nanos())
+            .saturating_sub(i128::from(expected_timestamp.as_nanos()));
+        self.delivered_frames = self
+            .delivered_frames
+            .checked_add(u64::try_from(frames).map_err(|_| AudioError::ScheduleOverflow)?)
+            .ok_or(AudioError::ScheduleOverflow)?;
+        self.last_timestamp = timestamp;
+        Ok(AudioCallbackObservation {
+            timestamp,
+            expected_timestamp,
+            frames,
+            drift_nanos: i64::try_from(drift).unwrap_or_else(|_| {
+                if drift.is_negative() {
+                    i64::MIN
+                } else {
+                    i64::MAX
+                }
+            }),
+        })
+    }
+
+    /// Sets a bounded sample-clock correction in parts per million.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::CallbackCorrectionOutOfRange`] when the requested
+    /// adjustment exceeds the safe bound.
+    pub const fn set_correction_ppm(&mut self, correction_ppm: i32) -> Result<(), AudioError> {
+        if correction_ppm < -MAX_CALLBACK_CORRECTION_PPM
+            || correction_ppm > MAX_CALLBACK_CORRECTION_PPM
+        {
+            return Err(AudioError::CallbackCorrectionOutOfRange {
+                ppm: correction_ppm,
+            });
+        }
+        self.correction_ppm = correction_ppm;
+        Ok(())
+    }
+
+    /// Returns the callback format.
+    #[must_use]
+    pub const fn format(&self) -> AudioFormat {
+        self.format
+    }
+
+    /// Returns the most recent callback timestamp.
+    #[must_use]
+    pub const fn callback_timestamp(&self) -> Timestamp {
+        self.last_timestamp
+    }
+
+    /// Returns the total callback sample frames observed.
+    #[must_use]
+    pub const fn delivered_frames(&self) -> u64 {
+        self.delivered_frames
+    }
+
+    /// Returns the active rate correction in parts per million.
+    #[must_use]
+    pub const fn correction_ppm(&self) -> i32 {
+        self.correction_ppm
+    }
+}
+
 /// The result of waiting for one audio block deadline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AudioPacingResult {
@@ -899,6 +1058,17 @@ impl AudioClock for MonotonicAudioClock {
     }
 }
 
+impl AudioClock for AudioCallbackClock {
+    fn now(&self) -> Timestamp {
+        self.callback_timestamp()
+    }
+
+    fn sleep_until(&mut self, _deadline: Timestamp) {
+        // The next callback is the device-owned clock edge. A callback thread
+        // must never be blocked by the portable worker's pacing contract.
+    }
+}
+
 impl AudioPacer {
     /// Creates a block pacer beginning at sample-frame index zero.
     #[must_use]
@@ -1095,6 +1265,15 @@ pub enum AudioError {
     ZeroBlock,
     /// The sample-clock timestamp or frame index overflowed.
     ScheduleOverflow,
+    /// A callback device clock moved backward.
+    CallbackTimestampRegression {
+        /// Previous callback timestamp.
+        previous: Timestamp,
+        /// Regressed callback timestamp.
+        actual: Timestamp,
+    },
+    /// A callback clock correction exceeds the safe bound.
+    CallbackCorrectionOutOfRange { ppm: i32 },
 }
 
 impl fmt::Display for AudioError {
@@ -1160,6 +1339,14 @@ impl fmt::Display for AudioError {
             }
             Self::ZeroBlock => formatter.write_str("audio pacing blocks must be non-empty"),
             Self::ScheduleOverflow => formatter.write_str("audio schedule timestamp overflowed"),
+            Self::CallbackTimestampRegression { previous, actual } => write!(
+                formatter,
+                "audio callback timestamp {actual:?} moved before {previous:?}"
+            ),
+            Self::CallbackCorrectionOutOfRange { ppm } => write!(
+                formatter,
+                "audio callback correction {ppm} ppm is outside +/-{MAX_CALLBACK_CORRECTION_PPM} ppm"
+            ),
         }
     }
 }
@@ -1738,6 +1925,24 @@ fn audio_duration_nanos(frames: usize, sample_rate: u32) -> Result<u64, AudioErr
     u64::try_from(duration).map_err(|_| AudioError::ScheduleOverflow)
 }
 
+fn corrected_audio_duration_nanos(
+    frames: u64,
+    sample_rate: u32,
+    correction_ppm: i32,
+) -> Result<u64, AudioError> {
+    let duration = u128::from(frames)
+        .checked_mul(1_000_000_000)
+        .ok_or(AudioError::ScheduleOverflow)?;
+    let duration = i128::try_from(duration).map_err(|_| AudioError::ScheduleOverflow)?;
+    let scale = i128::from(1_000_000_i32) + i128::from(correction_ppm);
+    let corrected = duration
+        .checked_mul(scale)
+        .ok_or(AudioError::ScheduleOverflow)?
+        / i128::from(1_000_000_i32)
+        / i128::from(sample_rate);
+    u64::try_from(corrected).map_err(|_| AudioError::ScheduleOverflow)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1798,6 +2003,41 @@ mod tests {
         assert_eq!(
             AudioBuffer::new(format(), Timestamp::ZERO, vec![f32::NAN, 0.0]),
             Err(AudioError::NonFiniteSample)
+        );
+    }
+
+    #[test]
+    fn callback_clock_tracks_device_edges_and_bounded_correction() {
+        let mut clock = AudioCallbackClock::new(format());
+        let first = clock
+            .observe_callback(Timestamp::from_millis(10), 480)
+            .expect("first callback");
+        assert_eq!(first.drift_nanos(), 0);
+        clock
+            .set_correction_ppm(1_000)
+            .expect("correction is within bounds");
+        let second = clock
+            .observe_callback(Timestamp::from_nanos(20_010_000), 480)
+            .expect("second callback");
+        assert_eq!(
+            second.expected_timestamp(),
+            Timestamp::from_nanos(20_010_000)
+        );
+        assert_eq!(second.drift_nanos(), 0);
+        assert_eq!(clock.delivered_frames(), 960);
+        assert_eq!(clock.correction_ppm(), 1_000);
+        assert_eq!(
+            clock.set_correction_ppm(MAX_CALLBACK_CORRECTION_PPM + 1),
+            Err(AudioError::CallbackCorrectionOutOfRange {
+                ppm: MAX_CALLBACK_CORRECTION_PPM + 1
+            })
+        );
+        assert_eq!(
+            clock.observe_callback(Timestamp::from_millis(19), 480),
+            Err(AudioError::CallbackTimestampRegression {
+                previous: Timestamp::from_nanos(20_010_000),
+                actual: Timestamp::from_millis(19)
+            })
         );
     }
 
