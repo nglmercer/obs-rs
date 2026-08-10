@@ -269,8 +269,12 @@ and `obs-rs-web` provides an accessible loopback browser presentation with valid
 scene, transition, recording, and streaming commands. `obs-rs-gui` adds the first
 Slint desktop control room with preview/program status cards, scene actions,
 transition controls, output lifecycle buttons, and a visible snapshot backed by
-those same commands. Its cards are not live rendered frame surfaces yet, and full
-editors, localization, and crash-report collection are still outstanding.
+those same commands. The preview/program surfaces now render project scene sources
+through `obs-rs-core::Runtime` into Slint images on a bounded UI timer. They are CPU
+reference previews rather than platform capture/device-backed feeds. The desktop
+also has a small scene/source editor plus project save/load controls backed by the
+crash-safe `ProjectFileStore`; richer property editing, crash recovery dialogs,
+localization, and crash-report collection are still outstanding.
 
 `ProjectFileStore` adds atomic standard-library project-file save/load semantics and
 keeps the session dirty when a write fails.
@@ -316,7 +320,7 @@ can be reproduced and verified.
 2. Device-clock audio behavior and long-duration synchronization tests.
 3. Platform capture discovery/permissions behind the existing Rust capture traits.
 4. Production codec/container/protocol decisions beyond the raw and RLE references.
-5. Live desktop preview/editor/recovery workflows and plugin/release hardening.
+5. Capture-backed desktop preview/editor/recovery workflows and plugin/release hardening.
 
 ## Go/no-go rule
 

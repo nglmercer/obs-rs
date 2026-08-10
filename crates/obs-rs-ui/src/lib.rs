@@ -9,7 +9,7 @@ use std::{
 };
 
 use obs_rs_media::{FrameTransition, MediaError};
-use obs_rs_project::{Project, ProjectCommand, ProjectError, ProjectSession};
+use obs_rs_project::{Project, ProjectCommand, ProjectError, ProjectFileStore, ProjectSession};
 use obs_rs_util::Identifier;
 
 /// Maximum number of notices retained for the UI and diagnostics panel.
@@ -557,6 +557,40 @@ impl DesktopState {
         Ok(())
     }
 
+    /// Saves the current project through the crash-safe project-file store.
+    ///
+    /// The session is marked clean only after the store has completed its
+    /// temporary-file write, synchronization, and rename sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when persistence fails. The dirty flag remains
+    /// set when the write does not complete successfully.
+    pub fn save_project(&mut self, store: &ProjectFileStore) -> Result<usize, UiError> {
+        let bytes = store.save(&mut self.project)?;
+        self.notice("project saved")?;
+        Ok(bytes)
+    }
+
+    /// Loads a project through the crash-safe project-file store.
+    ///
+    /// The current project is replaced only after the file has been read and
+    /// parsed successfully. Preview and program selections reset to the first
+    /// scene in the loaded active profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when the file cannot be read or parsed.
+    pub fn load_project(&mut self, store: &ProjectFileStore) -> Result<(), UiError> {
+        let project = store.load()?;
+        self.project = ProjectSession::new(project);
+        let first_scene = first_scene_id(self.project.project());
+        self.preview_scene = first_scene.clone();
+        self.program_scene = first_scene;
+        self.notice("project loaded")?;
+        Ok(())
+    }
+
     /// Returns the project session used by persistence and rendering adapters.
     #[must_use]
     pub const fn project_session(&self) -> &ProjectSession {
@@ -990,6 +1024,38 @@ mod tests {
                 progress_milli: 1_001
             }))
         );
+    }
+
+    #[test]
+    fn desktop_state_persists_project_editor_changes() {
+        let final_path = std::env::temp_dir().join(format!(
+            "obs-rs-ui-persistence-{}.project",
+            std::process::id()
+        ));
+        let temp_path = final_path.with_file_name("obs-rs-ui-persistence.project.tmp");
+        let store = ProjectFileStore::new(&final_path, &temp_path).expect("project store");
+        let mut state = DesktopState::new(project());
+        state
+            .dispatch(UiCommand::Project(ProjectCommand::AddScene {
+                profile: "live".to_owned(),
+                scene: SceneSpec::new("studio", "Studio").expect("scene"),
+            }))
+            .expect("add scene");
+        assert!(state.is_dirty());
+        let document = state.project_document();
+
+        let bytes = state.save_project(&store).expect("save project");
+        assert_eq!(bytes, document.len());
+        assert!(!state.is_dirty());
+
+        let mut loaded = DesktopState::new(project());
+        loaded.load_project(&store).expect("load project");
+        assert_eq!(loaded.project_document(), document);
+        assert!(!loaded.is_dirty());
+        assert_eq!(loaded.preview_scene(), Some("preview"));
+        assert!(!temp_path.exists());
+
+        std::fs::remove_file(final_path).expect("remove project fixture");
     }
 
     #[test]

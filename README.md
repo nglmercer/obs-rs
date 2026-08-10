@@ -58,8 +58,10 @@ control surfaces:
   deterministic labeled accessibility snapshots, strict terminal/HTTP command
   parsers, and an accessible browser page.
 - `obs-rs-gui` provides the first Slint desktop control room: preview/program
-  status cards, scene selection, transitions, recording/streaming controls, and a
-  visible accessible state snapshot backed by the same `DesktopState` commands.
+  status cards with CPU-rendered RGBA scene frames, scene selection, transitions,
+  recording/streaming controls, a small scene/source editor, crash-safe project
+  save/load, and a visible accessible state snapshot backed by the same
+  `DesktopState` commands.
 - `obs-rs-app` runs a small end-to-end demo, a scriptable accessible terminal
   frontend, and a loopback-only accessible browser control surface without a native
   host dependency.
@@ -97,8 +99,8 @@ runs the cancellation-aware wall-clock video worker for 120 frames and reports
 deadline misses, lateness, drops, elapsed time, and compositor work counters. All
 behavior is exercised through safe Rust APIs and Rust tests.
 `obs-rs-gui` opens the native Slint control room; its `--smoke` mode constructs the
-window and binds the state without entering the event loop, which keeps GUI wiring
-checkable in headless validation.
+window, renders the project preview path, and binds the state without entering the
+event loop, which keeps GUI wiring checkable in headless validation.
 
 ## Repository documents
 
@@ -131,6 +133,6 @@ redundant identity transforms in its hot path. The project is intentionally not
 claiming feature parity with OBS Studio. The
 current reference also includes independent device-clock drift modeling, a bounded
 `OBSFRM01` Rust frame-stream adapter, accessible terminal/browser/Slint control
-surfaces, and deterministic recovery diagnostics. The next priority is live preview
-rendering and editor/recovery UX, followed by direct platform capture, hardware
-rendering, real codecs, and network output.
+surfaces, and deterministic recovery diagnostics. The next priority is richer
+editor/recovery UX and capture-backed preview sources, followed by direct platform
+capture, hardware rendering, real codecs, and network output.

@@ -150,9 +150,9 @@ sets an item transform, renders through `VideoPipeline::render_next`, and report
 the resulting pixel, checksum, and pipeline metrics. `obs-rs-console` provides a
 scriptable terminal presentation, and `obs-rs-web` provides an accessible loopback
 browser presentation over the same state machine. `obs-rs-gui` provides a Slint
-desktop control room over that same state machine; its preview/program cards are
-currently labeled state views, ready for live frame-surface integration. The
-companion benchmark runs
+desktop control room over that same state machine and renders the selected project
+scenes through the CPU runtime into Slint image surfaces. The companion benchmark
+runs
 120 equivalent scene frames while draining output and reports the measured elapsed
 time, deadline misses, lateness, queue behavior, and compositor-work counters.
 
@@ -182,8 +182,10 @@ Current and future crates keep these concerns separate:
   accessibility snapshot, strict terminal/HTTP command parsers, and an accessible
   browser page;
 - `obs-rs-gui`: Slint desktop control-room adapter. It owns view properties and
-  callbacks only, translating scene/output actions into `obs-rs-ui::UiCommand`;
-  live preview surfaces, editors, persistence dialogs, and recovery UX remain
+  callbacks, the CPU preview-render bridge, and image conversion, translating
+  scene/output actions into `obs-rs-ui::UiCommand`. It also exposes a small
+  scene/source editor and crash-safe project save/load controls; capture-backed
+  source configuration, richer property editors, and recovery dialogs remain
   product work.
 
 These are implementation boundaries, not promises that every future integration is

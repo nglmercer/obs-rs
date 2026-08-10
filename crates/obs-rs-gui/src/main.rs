@@ -3,14 +3,14 @@
 #![deny(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::{cell::RefCell, error::Error, rc::Rc, time::Duration};
+use std::{cell::RefCell, error::Error, path::PathBuf, rc::Rc, time::Duration};
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_config::Config;
 use obs_rs_core::Runtime;
 use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::VideoRequest;
-use obs_rs_project::{Profile, Project, SceneSpec, SourceSpec};
+use obs_rs_project::{Profile, Project, ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{
     ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode, VecModel,
@@ -18,7 +18,7 @@ use slint::{
 };
 
 slint::slint! {
-    import { Button, HorizontalBox, ScrollView, VerticalBox } from "std-widgets.slint";
+    import { Button, HorizontalBox, LineEdit, ScrollView, VerticalBox } from "std-widgets.slint";
 
     export struct SceneRow {
         id: string,
@@ -28,7 +28,7 @@ slint::slint! {
 
     export component MainWindow inherits Window {
         width: 1180px;
-        height: 780px;
+        height: 860px;
         title: "OBS-RS Studio";
         background: rgb(17, 24, 39);
 
@@ -45,6 +45,12 @@ slint::slint! {
         in property <image> preview-image;
         in property <image> program-image;
         in property <[SceneRow]> scene-rows;
+        in-out property <string> project-path;
+        in-out property <string> new-scene-id;
+        in-out property <string> new-scene-name;
+        in-out property <string> new-source-id;
+        in-out property <string> new-source-kind;
+        in-out property <string> new-source-name;
 
         callback swap-scenes();
         callback toggle-recording();
@@ -53,6 +59,10 @@ slint::slint! {
         callback fade-transition();
         callback select-preview(string);
         callback select-program(string);
+        callback save-project();
+        callback load-project();
+        callback add-scene(string, string);
+        callback add-source(string, string, string);
 
         VerticalBox {
             padding: 22px;
@@ -235,6 +245,88 @@ slint::slint! {
                             font-size: 18px;
                             font-weight: 700;
                         }
+                        Text {
+                            text: "Project file";
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        HorizontalBox {
+                            spacing: 6px;
+                            LineEdit {
+                                text <=> project-path;
+                                placeholder-text: "obs-rs-project.txt";
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: "Save";
+                                clicked => save-project();
+                            }
+                            Button {
+                                text: "Load";
+                                clicked => load-project();
+                            }
+                        }
+                        Text {
+                            text: "Scene editor";
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        HorizontalBox {
+                            spacing: 6px;
+                            LineEdit {
+                                text <=> new-scene-id;
+                                placeholder-text: "scene-id";
+                                horizontal-stretch: 1;
+                            }
+                            LineEdit {
+                                text <=> new-scene-name;
+                                placeholder-text: "Scene name";
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: "Add";
+                                clicked => add-scene(new-scene-id, new-scene-name);
+                            }
+                        }
+                        Text {
+                            text: "Source editor";
+                            color: rgb(203, 213, 225);
+                            font-size: 13px;
+                            font-weight: 700;
+                        }
+                        HorizontalBox {
+                            spacing: 6px;
+                            LineEdit {
+                                text <=> new-source-id;
+                                placeholder-text: "source-id";
+                                horizontal-stretch: 1;
+                            }
+                            LineEdit {
+                                text <=> new-source-kind;
+                                placeholder-text: "test_pattern";
+                                horizontal-stretch: 1;
+                            }
+                            LineEdit {
+                                text <=> new-source-name;
+                                placeholder-text: "Source name";
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: "Add";
+                                clicked => add-source(
+                                    new-source-id,
+                                    new-source-kind,
+                                    new-source-name
+                                );
+                            }
+                        }
+                        Text {
+                            text: "Adds to preview scene: " + preview-scene;
+                            color: rgb(148, 163, 184);
+                            font-size: 12px;
+                        }
                         Button {
                             text: "Swap preview / program";
                             clicked => swap-scenes();
@@ -320,6 +412,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         i_slint_backend_testing::init_no_event_loop();
     }
     let ui = MainWindow::new()?;
+    ui.set_project_path("obs-rs-project.txt".into());
+    ui.set_new_source_kind("test_pattern".into());
     let project = initial_project()?;
     let renderer = Rc::new(RefCell::new(PreviewRenderer::new(&project)?));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
@@ -448,6 +542,190 @@ fn install_callbacks(
             UiCommand::SelectProgramScene { id: id.to_string() },
         );
     });
+
+    install_project_callbacks(ui, state, renderer);
+}
+
+fn install_project_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let weak = ui.as_weak();
+    let save_state = Rc::clone(state);
+    let save_renderer = Rc::clone(renderer);
+    ui.on_save_project(move || {
+        save_and_refresh(&weak, &save_state, &save_renderer);
+    });
+
+    let weak = ui.as_weak();
+    let load_state = Rc::clone(state);
+    let load_renderer = Rc::clone(renderer);
+    ui.on_load_project(move || {
+        load_and_refresh(&weak, &load_state, &load_renderer);
+    });
+
+    let weak = ui.as_weak();
+    let add_state = Rc::clone(state);
+    let add_renderer = Rc::clone(renderer);
+    ui.on_add_scene(move |id, name| {
+        add_scene_and_refresh(&weak, &add_state, &add_renderer, id.as_str(), name.as_str());
+    });
+
+    let weak = ui.as_weak();
+    let source_state = Rc::clone(state);
+    let source_renderer = Rc::clone(renderer);
+    ui.on_add_source(move |id, kind, name| {
+        add_source_and_refresh(
+            &weak,
+            &source_state,
+            &source_renderer,
+            id.as_str(),
+            kind.as_str(),
+            name.as_str(),
+        );
+    });
+}
+
+fn project_store(path: &str) -> Result<ProjectFileStore, Box<dyn Error>> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(std::io::Error::other("project path is empty").into());
+    }
+    let final_path = PathBuf::from(path);
+    let file_name = final_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| std::io::Error::other("project path must name a file"))?;
+    let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
+    Ok(ProjectFileStore::new(final_path, temp_path)?)
+}
+
+fn save_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let path = ui.get_project_path().to_string();
+    let result: Result<usize, Box<dyn Error>> = (|| {
+        let store = project_store(&path)?;
+        Ok(state.borrow_mut().save_project(&store)?)
+    })();
+    match result {
+        Ok(bytes) => {
+            refresh_ui(&ui, state, renderer);
+            ui.set_status_message(format!("Saved {bytes} bytes to {path}").into());
+        }
+        Err(error) => ui.set_status_message(format!("Save failed: {error}").into()),
+    }
+}
+
+fn load_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let path = ui.get_project_path().to_string();
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let store = project_store(&path)?;
+        state.borrow_mut().load_project(&store)?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => {
+            refresh_ui(&ui, state, renderer);
+            ui.set_status_message(format!("Loaded project from {path}").into());
+        }
+        Err(error) => ui.set_status_message(format!("Load failed: {error}").into()),
+    }
+}
+
+fn add_scene_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    id: &str,
+    name: &str,
+) {
+    let profile = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile()
+        .to_string();
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let scene = SceneSpec::new(id, name)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddScene {
+                profile,
+                scene,
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => {
+            refresh_ui(&ui, state, renderer);
+            ui.set_new_scene_id("".into());
+            ui.set_new_scene_name("".into());
+        }
+        Err(error) => ui.set_status_message(format!("Add scene failed: {error}").into()),
+    }
+}
+
+fn add_source_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    id: &str,
+    kind: &str,
+    name: &str,
+) {
+    let (profile, scene) = {
+        let state = state.borrow();
+        let profile = state
+            .project_session()
+            .project()
+            .active_profile()
+            .to_string();
+        let scene = state
+            .preview_scene()
+            .map(str::to_owned)
+            .ok_or_else(|| std::io::Error::other("no preview scene is selected"));
+        (profile, scene)
+    };
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let scene = scene?;
+        let source = SourceSpec::new(id, kind, name, source_settings(kind)?)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+                profile,
+                scene,
+                source,
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => {
+            refresh_ui(&ui, state, renderer);
+            ui.set_new_source_id("".into());
+            ui.set_new_source_name("".into());
+        }
+        Err(error) => ui.set_status_message(format!("Add source failed: {error}").into()),
+    }
 }
 
 fn dispatch_and_refresh(
@@ -491,8 +769,15 @@ fn refresh_ui(
     ui.set_dirty(state.is_dirty());
     ui.set_snapshot(state.accessible_snapshot().into());
 
-    let (preview_image, preview_error) = scene_image(renderer, state.preview_scene());
-    let (program_image, program_error) = scene_image(renderer, state.program_scene());
+    let sync_error = renderer.borrow_mut().sync_project(project).err();
+    let (preview_image, preview_error) = match sync_error.as_ref() {
+        Some(error) => (Image::default(), Some(format!("Preview renderer: {error}"))),
+        None => scene_image(renderer, state.preview_scene()),
+    };
+    let (program_image, program_error) = match sync_error.as_ref() {
+        Some(error) => (Image::default(), Some(format!("Preview renderer: {error}"))),
+        None => scene_image(renderer, state.program_scene()),
+    };
     ui.set_preview_image(preview_image);
     ui.set_program_image(program_image);
     let render_error = preview_error.or(program_error);
@@ -550,6 +835,8 @@ fn transition_label(transition: FrameTransition) -> String {
 struct PreviewRenderer {
     format: VideoFormat,
     runtime: Runtime,
+    timestamp: Timestamp,
+    project_document: String,
 }
 
 impl PreviewRenderer {
@@ -581,12 +868,35 @@ impl PreviewRenderer {
             }
         }
 
-        Ok(Self { format, runtime })
+        Ok(Self {
+            format,
+            runtime,
+            timestamp: Timestamp::ZERO,
+            project_document: project.serialize(),
+        })
+    }
+
+    fn sync_project(&mut self, project: &Project) -> Result<(), Box<dyn Error>> {
+        let document = project.serialize();
+        if document != self.project_document {
+            *self = Self::new(project)?;
+        }
+        Ok(())
     }
 
     fn render(&mut self, scene: &str) -> Result<Option<VideoFrame>, Box<dyn Error>> {
-        let request = VideoRequest::new(Timestamp::ZERO, self.format);
-        Ok(self.runtime.render_scene(scene, &request)?)
+        let request = VideoRequest::new(self.timestamp, self.format);
+        let frame = self.runtime.render_scene(scene, &request)?;
+        let period = self
+            .format
+            .frame_rate()
+            .period_nanos()
+            .unwrap_or(33_333_333);
+        self.timestamp = self
+            .timestamp
+            .checked_add(period)
+            .unwrap_or(Timestamp::ZERO);
+        Ok(frame)
     }
 }
 
@@ -626,9 +936,35 @@ fn initial_project() -> Result<Project, Box<dyn Error>> {
     let mut profile = Profile::new("live", "Live profile", format)?;
     profile.add_scene(scene("preview", "Preview", "#102030FF")?)?;
     profile.add_scene(scene("program", "Program", "#203040FF")?)?;
-    profile.add_scene(scene("intermission", "Intermission", "#302040FF")?)?;
+    let mut intermission = scene("intermission", "Intermission", "#302040FF")?;
+    intermission.add_source(SourceSpec::new(
+        "pattern",
+        "test_pattern",
+        "Animated pattern",
+        video_settings(),
+    )?)?;
+    profile.add_scene(intermission)?;
     project.add_profile(profile)?;
     Ok(project)
+}
+
+fn video_settings() -> Config {
+    let mut settings = Config::new();
+    settings
+        .set("width", "640")
+        .expect("static width setting is valid");
+    settings
+        .set("height", "360")
+        .expect("static height setting is valid");
+    settings
+}
+
+fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
+    let mut settings = video_settings();
+    if kind.trim() == "color_source" {
+        settings.set("color", "#405070FF")?;
+    }
+    Ok(settings)
 }
 
 fn scene(id: &str, name: &str, color: &str) -> Result<SceneSpec, Box<dyn Error>> {
@@ -650,6 +986,7 @@ fn scene(id: &str, name: &str, color: &str) -> Result<SceneSpec, Box<dyn Error>>
 mod tests {
     use super::{initial_project, transition_label, PreviewRenderer};
     use obs_rs_media::FrameTransition;
+    use obs_rs_project::{ProjectCommand, SceneSpec};
 
     #[test]
     fn gui_project_has_control_room_scenes() {
@@ -685,5 +1022,40 @@ mod tests {
             .expect("preview scene should render")
             .expect("preview scene should produce a frame");
         assert_eq!(frame.pixel(0, 0), Some([0x10, 0x20, 0x30, 0xff]));
+    }
+
+    #[test]
+    fn preview_renderer_advances_animated_capture_sources() {
+        let project = initial_project().expect("initial GUI project should validate");
+        let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+        let first = renderer
+            .render("intermission")
+            .expect("first pattern frame should render")
+            .expect("pattern scene should produce a frame");
+        let second = renderer
+            .render("intermission")
+            .expect("second pattern frame should render")
+            .expect("pattern scene should produce a frame");
+        assert_ne!(first.pixels(), second.pixels());
+    }
+
+    #[test]
+    fn preview_renderer_rebuilds_after_project_edit() {
+        let mut project = initial_project().expect("initial GUI project should validate");
+        let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+        project
+            .apply(ProjectCommand::AddScene {
+                profile: "live".to_owned(),
+                scene: SceneSpec::new("new-scene", "New scene").expect("scene"),
+            })
+            .expect("add scene");
+
+        renderer
+            .sync_project(&project)
+            .expect("renderer should rebuild from the edited project");
+        assert!(renderer
+            .render("new-scene")
+            .expect("empty scene should be renderable")
+            .is_none());
     }
 }
