@@ -1,0 +1,37 @@
+import { HorizontalBox } from "std-widgets.slint";
+import { TabButton } from "theme.slint";
+
+export component ControlTabs inherits Rectangle {
+    in property <string> locale;
+    in property <int> active-tab;
+    callback tab-selected(int);
+    height: 38px;
+    background: rgb(15, 23, 42);
+    border-radius: 6px;
+
+    HorizontalBox {
+        padding: 2px;
+        spacing: 3px;
+        TabButton {
+            label: locale == "es" ? "Proyecto" : "Project";
+            active: active-tab == 0;
+            clicked => tab-selected(0);
+        }
+        TabButton {
+            label: locale == "es" ? "Editor" : "Editor";
+            active: active-tab == 1;
+            clicked => tab-selected(1);
+        }
+        TabButton {
+            label: locale == "es" ? "Salida" : "Output";
+            active: active-tab == 2;
+            clicked => tab-selected(2);
+        }
+        TabButton {
+            label: locale == "es" ? "Diagnóstico" : "Diagnostics";
+            active: active-tab == 3;
+            clicked => tab-selected(3);
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+}

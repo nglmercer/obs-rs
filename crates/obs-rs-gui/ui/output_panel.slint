@@ -1,0 +1,112 @@
+import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { MutedText, PanelHeading, StudioPanel } from "theme.slint";
+
+export component OutputPanel inherits Rectangle {
+    in property <string> locale;
+    in property <string> transition;
+    in property <bool> recording;
+    in property <bool> streaming;
+    in property <string> recording-path;
+    in property <string> streaming-address;
+    in property <string> output-status;
+    in property <string> output-metrics;
+    callback swap-scenes();
+    callback cut-transition();
+    callback fade-transition();
+    callback toggle-recording();
+    callback toggle-streaming();
+    callback open-output-dialog();
+
+    background: transparent;
+    VerticalBox {
+        spacing: 10px;
+        PanelHeading {
+            text: locale == "es" ? "Salida" : "Output";
+        }
+        MutedText {
+            text: locale == "es"
+                ? "Control de transición, grabación y transmisión en directo."
+                : "Transition, recording, and live streaming controls.";
+        }
+        StudioPanel {
+            height: 94px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 8px;
+                Text {
+                    text: (locale == "es" ? "Transición actual: " : "Current transition: ") + transition;
+                    color: rgb(226, 232, 240);
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                HorizontalBox {
+                    spacing: 6px;
+                    Button {
+                        text: locale == "es" ? "Intercambiar" : "Swap preview / program";
+                        clicked => swap-scenes();
+                    }
+                    Button {
+                        text: locale == "es" ? "Corte" : "Cut";
+                        clicked => cut-transition();
+                    }
+                    Button {
+                        text: locale == "es" ? "Fundido" : "Fade";
+                        clicked => fade-transition();
+                    }
+                }
+            }
+        }
+        StudioPanel {
+            height: 108px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 7px;
+                Text {
+                    text: locale == "es" ? "Destinos" : "Destinations";
+                    color: rgb(226, 232, 240);
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: (locale == "es" ? "Grabar: " : "Record: ") + recording-path;
+                    color: rgb(148, 163, 184);
+                    font-size: 11px;
+                    overflow: elide;
+                }
+                Text {
+                    text: (locale == "es" ? "Transmitir: " : "Stream: ") + streaming-address;
+                    color: rgb(148, 163, 184);
+                    font-size: 11px;
+                    overflow: elide;
+                }
+                HorizontalBox {
+                    spacing: 6px;
+                    Button {
+                        text: locale == "es" ? "Configurar" : "Configure";
+                        clicked => open-output-dialog();
+                    }
+                    Button {
+                        text: recording
+                            ? (locale == "es" ? "Detener grabación" : "Stop recording")
+                            : (locale == "es" ? "Iniciar grabación" : "Start recording");
+                        clicked => toggle-recording();
+                    }
+                    Button {
+                        text: streaming
+                            ? (locale == "es" ? "Detener transmisión" : "Stop streaming")
+                            : (locale == "es" ? "Iniciar transmisión" : "Start streaming");
+                        clicked => toggle-streaming();
+                    }
+                }
+            }
+        }
+        Text {
+            text: output-status;
+            color: rgb(251, 191, 36);
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+        MutedText { text: output-metrics; }
+        Rectangle { vertical-stretch: 1; }
+    }
+}

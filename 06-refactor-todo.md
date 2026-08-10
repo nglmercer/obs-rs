@@ -152,13 +152,15 @@ their neighboring crate is split:
 
 ## Verification checklist
 
-- [ ] `git diff --check`
-- [ ] `cargo fmt --all -- --check`
-- [ ] `cargo check --workspace --all-targets --all-features`
-- [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- [ ] `cargo test --workspace --all-targets`
-- [ ] `cargo doc --workspace --all-features --no-deps`
-- [ ] `cargo build --workspace --release`
-- [ ] `scripts/release-artifacts.sh <output-directory>` and checksum validation
-- [ ] Re-run the inventory and confirm no production Rust file remains above
+- [x] `git diff --check`
+- [x] `cargo fmt --all -- --check`
+- [x] `cargo check --workspace --all-targets --all-features`
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `cargo test --workspace --all-targets`
+- [x] `cargo doc --workspace --all-features --no-deps`
+- [x] `cargo build --workspace --release`
+- [x] `scripts/release-artifacts.sh <output-directory>` and checksum validation
+- [x] Re-run the inventory and confirm no production Rust file remains above
   the agreed threshold without an explicit exception in this document.
+
+The post-refactor inventory peaks at 485 lines in `crates/obs-rs-output/src/writers.rs`; no production Rust source file exceeds the 500-line threshold. The largest extracted Slint view is 325 lines.

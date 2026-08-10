@@ -1,0 +1,87 @@
+import { Button, VerticalBox } from "std-widgets.slint";
+import { MutedText, PanelHeading, StudioPanel } from "theme.slint";
+
+export component DiagnosticsPanel inherits Rectangle {
+    in property <string> locale;
+    in property <string> capture-capabilities;
+    in property <string> preview-metrics;
+    in property <string> output-status;
+    in property <string> output-metrics;
+    in property <string> snapshot;
+    in property <string> status-message;
+    callback export-diagnostics();
+
+    background: transparent;
+    VerticalBox {
+        spacing: 10px;
+        PanelHeading {
+            text: locale == "es" ? "Diagnóstico" : "Diagnostics";
+        }
+        MutedText {
+            text: locale == "es"
+                ? "Observa el estado de captura, render y salida sin salir del control room."
+                : "Inspect capture, render, and output state without leaving the control room.";
+        }
+        StudioPanel {
+            height: 80px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 6px;
+                Text {
+                    text: locale == "es" ? "Runtime" : "Runtime";
+                    color: rgb(226, 232, 240);
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                MutedText { text: capture-capabilities; }
+                MutedText { text: preview-metrics; }
+            }
+        }
+        StudioPanel {
+            height: 86px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 5px;
+                Text {
+                    text: locale == "es" ? "Salida" : "Output";
+                    color: rgb(226, 232, 240);
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                Text { text: output-status; color: rgb(251, 191, 36); font-size: 11px; }
+                MutedText { text: output-metrics; }
+            }
+        }
+        StudioPanel {
+            vertical-stretch: 1;
+            min-height: 100px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 6px;
+                Text {
+                    text: locale == "es" ? "Resumen accesible" : "Accessible snapshot";
+                    color: rgb(226, 232, 240);
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: snapshot;
+                    color: rgb(148, 163, 184);
+                    font-size: 10px;
+                    wrap: word-wrap;
+                    vertical-stretch: 1;
+                }
+            }
+        }
+        Text {
+            text: status-message;
+            color: rgb(147, 197, 253);
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+        Button {
+            text: locale == "es" ? "Exportar diagnóstico" : "Export diagnostics";
+            clicked => export-diagnostics();
+        }
+    }
+}

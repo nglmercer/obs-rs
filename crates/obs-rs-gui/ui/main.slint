@@ -6,7 +6,6 @@ import { SceneDock } from "scene_dock.slint";
 import { SourceDock } from "source_dock.slint";
 import { MixerDock } from "mixer_dock.slint";
 import { ControlsDock } from "controls_dock.slint";
-import { SnapshotPanel } from "snapshot.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
@@ -103,7 +102,7 @@ export component MainWindow inherits Window {
 
         VerticalBox {
             padding: 22px;
-            spacing: 14px;
+            spacing: 12px;
 
             StudioHeader {
                 project-title: root.project-title;
@@ -121,10 +120,13 @@ export component MainWindow inherits Window {
                 program-scene: root.program-scene;
                 preview-image: root.preview-image;
                 program-image: root.program-image;
+                vertical-stretch: 1;
             }
 
             HorizontalBox {
-                spacing: 14px;
+                spacing: 12px;
+                vertical-stretch: 1;
+                min-height: 230px;
                 SceneDock {
                     locale: root.locale;
                     scene-rows: root.scene-rows;
@@ -175,6 +177,7 @@ export component MainWindow inherits Window {
                     output-status: root.output-status;
                     output-metrics: root.output-metrics;
                     status-message: root.status-message;
+                    snapshot: root.snapshot;
                     save-project() => { root.save-project(); }
                     load-project() => { root.load-project(); }
                     recover-project() => { root.recover-project(); }
@@ -191,11 +194,6 @@ export component MainWindow inherits Window {
                     toggle-recording() => { root.toggle-recording(); }
                     toggle-streaming() => { root.toggle-streaming(); }
                 }
-            }
-
-            SnapshotPanel {
-                locale: root.locale;
-                snapshot: root.snapshot;
             }
         }
     }

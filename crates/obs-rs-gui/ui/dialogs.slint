@@ -1,0 +1,135 @@
+import { Button, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
+import { FieldHeading, ModalShell, MutedText } from "theme.slint";
+
+export component ProjectDialog inherits ModalShell {
+    in property <string> locale;
+    in-out property <string> project-path;
+    in-out property <string> diagnostics-path;
+    callback save-project();
+
+    title: locale == "es" ? "Configuración del proyecto" : "Project configuration";
+    subtitle: locale == "es"
+        ? "Define los archivos que usa OBS-RS para guardar y diagnosticar la sesión."
+        : "Choose the files OBS-RS uses to save and diagnose this session.";
+    accept-label: locale == "es" ? "Guardar" : "Save";
+    cancel-label: locale == "es" ? "Cancelar" : "Cancel";
+    accepted => save-project();
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: locale == "es" ? "Archivo del proyecto" : "Project file"; }
+        LineEdit {
+            text <=> project-path;
+            placeholder-text: "obs-rs-project.txt";
+        }
+        FieldHeading { text: locale == "es" ? "Archivo de diagnóstico" : "Diagnostics file"; }
+        LineEdit {
+            text <=> diagnostics-path;
+            placeholder-text: "obs-rs-diagnostics.obsrdg";
+        }
+        MutedText {
+            text: locale == "es"
+                ? "Los guardados usan escritura atómica para conservar una recuperación temporal."
+                : "Saves use atomic writes so an interrupted session can be recovered.";
+        }
+    }
+}
+
+export component SceneDialog inherits ModalShell {
+    in property <string> locale;
+    in-out property <string> new-scene-id;
+    in-out property <string> new-scene-name;
+    callback add-scene(string, string);
+
+    title: locale == "es" ? "Añadir escena" : "Add scene";
+    subtitle: locale == "es"
+        ? "Crea una escena nueva para el perfil activo."
+        : "Create a new scene in the active profile.";
+    accept-label: locale == "es" ? "Añadir escena" : "Add scene";
+    cancel-label: locale == "es" ? "Cancelar" : "Cancel";
+    accepted => add-scene(new-scene-id, new-scene-name);
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: locale == "es" ? "Identificador" : "Scene id"; }
+        LineEdit {
+            text <=> new-scene-id;
+            placeholder-text: "scene-id";
+        }
+        FieldHeading { text: locale == "es" ? "Nombre visible" : "Display name"; }
+        LineEdit {
+            text <=> new-scene-name;
+            placeholder-text: locale == "es" ? "Nombre de escena" : "Scene name";
+        }
+    }
+}
+
+export component SourceDialog inherits ModalShell {
+    in property <string> locale;
+    in property <string> preview-scene;
+    in-out property <string> new-source-id;
+    in-out property <string> new-source-kind;
+    in-out property <string> new-source-name;
+    callback add-source(string, string, string);
+
+    title: locale == "es" ? "Añadir fuente" : "Add source";
+    subtitle: (locale == "es" ? "Añade una fuente a " : "Add a source to ") + preview-scene + ".";
+    accept-label: locale == "es" ? "Añadir fuente" : "Add source";
+    cancel-label: locale == "es" ? "Cancelar" : "Cancel";
+    accepted => add-source(new-source-id, new-source-kind, new-source-name);
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: locale == "es" ? "Identificador" : "Source id"; }
+        LineEdit {
+            text <=> new-source-id;
+            placeholder-text: "source-id";
+        }
+        FieldHeading { text: locale == "es" ? "Tipo" : "Kind"; }
+        LineEdit {
+            text <=> new-source-kind;
+            placeholder-text: "test_pattern";
+        }
+        FieldHeading { text: locale == "es" ? "Nombre visible" : "Display name"; }
+        LineEdit {
+            text <=> new-source-name;
+            placeholder-text: locale == "es" ? "Nombre de fuente" : "Source name";
+        }
+    }
+}
+
+export component OutputDialog inherits ModalShell {
+    in property <string> locale;
+    in-out property <string> recording-path;
+    in-out property <string> streaming-address;
+
+    title: locale == "es" ? "Configuración de salida" : "Output configuration";
+    subtitle: locale == "es"
+        ? "Configura la ruta de grabación y el destino de transmisión."
+        : "Configure the recording path and streaming destination.";
+    accept-label: locale == "es" ? "Aplicar" : "Apply";
+    cancel-label: locale == "es" ? "Cancelar" : "Cancel";
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading {
+            text: locale == "es" ? "Archivo de grabación" : "Recording file";
+        }
+        LineEdit {
+            text <=> recording-path;
+            placeholder-text: "obs-rs-recording.y4m";
+        }
+        FieldHeading {
+            text: locale == "es" ? "Dirección de transmisión" : "Streaming address";
+        }
+        LineEdit {
+            text <=> streaming-address;
+            placeholder-text: "127.0.0.1:9000";
+        }
+        MutedText {
+            text: locale == "es"
+                ? "Admite TCP Rust y destinos ws://."
+                : "Supports Rust TCP and ws:// destinations.";
+        }
+    }
+}

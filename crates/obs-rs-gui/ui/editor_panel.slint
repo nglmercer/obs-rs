@@ -1,0 +1,133 @@
+import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
+import { FieldHeading, MutedText, PanelHeading, StudioPanel } from "theme.slint";
+
+export component EditorPanel inherits Rectangle {
+    in property <string> locale;
+    in property <string> preview-scene;
+    in property <string> selected-source;
+    in property <string> capture-capabilities;
+    in property <string> source-settings-version;
+    in-out property <string> source-settings;
+    in-out property <string> source-transform;
+    in-out property <string> source-filters;
+    in-out property <string> scene-name;
+    in-out property <string> new-scene-id;
+    in-out property <string> new-scene-name;
+    callback open-scene-dialog();
+    callback rename-scene();
+    callback open-source-dialog();
+    callback apply-source-settings();
+    callback apply-source-transform();
+    callback apply-source-filters();
+
+    background: transparent;
+    VerticalBox {
+        spacing: 10px;
+        PanelHeading {
+            text: locale == "es" ? "Editor" : "Editor";
+        }
+        MutedText {
+            text: (locale == "es" ? "Escena de vista previa: " : "Preview scene: ") + preview-scene;
+        }
+        HorizontalBox {
+            spacing: 8px;
+            Button {
+                text: locale == "es" ? "Nueva escena" : "New scene";
+                clicked => open-scene-dialog();
+            }
+            Button {
+                text: locale == "es" ? "Nueva fuente" : "New source";
+                clicked => open-source-dialog();
+            }
+        }
+        StudioPanel {
+            height: 70px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 7px;
+                FieldHeading {
+                    text: locale == "es" ? "Nombre de la escena" : "Scene name";
+                }
+                HorizontalBox {
+                    spacing: 6px;
+                    LineEdit {
+                        text <=> scene-name;
+                        placeholder-text: locale == "es" ? "Nombre de escena" : "Scene name";
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: locale == "es" ? "Renombrar" : "Rename";
+                        clicked => rename-scene();
+                    }
+                }
+            }
+        }
+        StudioPanel {
+            vertical-stretch: 1;
+            min-height: 180px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 7px;
+                Text {
+                    text: (locale == "es" ? "Fuente seleccionada: " : "Selected source: ") + selected-source;
+                    color: rgb(226, 232, 240);
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: source-settings-version == ""
+                        ? (locale == "es" ? "Selecciona una fuente para editar sus propiedades." : "Select a source to edit its properties.")
+                        : (locale == "es" ? "Propiedades sincronizadas" : "Properties synchronized");
+                    color: rgb(134, 239, 172);
+                    font-size: 11px;
+                }
+                FieldHeading {
+                    text: locale == "es" ? "Ajustes" : "Settings";
+                }
+                TextEdit {
+                    text <=> source-settings;
+                    placeholder-text: "width=640\nheight=360\ncolor=#202840FF";
+                    height: 54px;
+                }
+                Button {
+                    text: locale == "es" ? "Aplicar ajustes" : "Apply settings";
+                    clicked => apply-source-settings();
+                }
+                FieldHeading {
+                    text: locale == "es"
+                        ? "Transformación · escala-x,escala-y,x,y,voltear-x,voltear-y,opacidad"
+                        : "Transform · scale-x,scale-y,x,y,flip-x,flip-y,opacity";
+                }
+                HorizontalBox {
+                    spacing: 6px;
+                    LineEdit {
+                        text <=> source-transform;
+                        placeholder-text: "1000,1000,0,0,0,0,255";
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: locale == "es" ? "Aplicar" : "Apply";
+                        clicked => apply-source-transform();
+                    }
+                }
+                FieldHeading {
+                    text: (locale == "es" ? "Filtros: " : "Filters: ") + source-filters;
+                    overflow: elide;
+                }
+                HorizontalBox {
+                    spacing: 6px;
+                    LineEdit {
+                        text <=> source-filters;
+                        placeholder-text: "gray,brightness:750,opacity:200";
+                        horizontal-stretch: 1;
+                    }
+                    Button {
+                        text: locale == "es" ? "Aplicar" : "Apply";
+                        clicked => apply-source-filters();
+                    }
+                }
+            }
+        }
+        MutedText { text: capture-capabilities; }
+    }
+}

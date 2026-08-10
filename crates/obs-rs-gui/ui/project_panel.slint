@@ -1,0 +1,90 @@
+import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { MutedText, PanelHeading, StudioPanel } from "theme.slint";
+
+export component ProjectPanel inherits Rectangle {
+    in property <string> locale;
+    in property <string> project-path;
+    in property <string> diagnostics-path;
+    in property <string> recovery-status;
+    callback open-project-dialog();
+    callback save-project();
+    callback load-project();
+    callback recover-project();
+    callback export-diagnostics();
+
+    background: transparent;
+    VerticalBox {
+        spacing: 10px;
+        PanelHeading {
+            text: locale == "es" ? "Proyecto" : "Project";
+        }
+        MutedText {
+            text: locale == "es"
+                ? "Administra el archivo activo y las operaciones de recuperación."
+                : "Manage the active project file and recovery operations.";
+        }
+        StudioPanel {
+            height: 86px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 7px;
+                Text {
+                    text: (locale == "es" ? "Archivo: " : "File: ") + project-path;
+                    color: rgb(226, 232, 240);
+                    font-size: 12px;
+                    overflow: elide;
+                }
+                HorizontalBox {
+                    spacing: 6px;
+                    Button {
+                        text: locale == "es" ? "Configurar" : "Configure";
+                        clicked => open-project-dialog();
+                    }
+                    Button {
+                        text: locale == "es" ? "Guardar" : "Save";
+                        clicked => save-project();
+                    }
+                    Button {
+                        text: locale == "es" ? "Cargar" : "Load";
+                        clicked => load-project();
+                    }
+                }
+            }
+        }
+        StudioPanel {
+            height: 88px;
+            VerticalBox {
+                padding: 12px;
+                spacing: 7px;
+                Text {
+                    text: locale == "es" ? "Recuperación y diagnóstico" : "Recovery and diagnostics";
+                    color: rgb(226, 232, 240);
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: recovery-status;
+                    color: rgb(251, 191, 36);
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+                HorizontalBox {
+                    spacing: 6px;
+                    Button {
+                        text: locale == "es" ? "Recuperar" : "Recover";
+                        clicked => recover-project();
+                    }
+                    Button {
+                        text: locale == "es" ? "Diagnóstico" : "Diagnostics";
+                        clicked => export-diagnostics();
+                    }
+                }
+            }
+        }
+        MutedText {
+            text: (locale == "es" ? "Diagnóstico: " : "Diagnostics: ") + diagnostics-path;
+            overflow: elide;
+        }
+        Rectangle { vertical-stretch: 1; }
+    }
+}
