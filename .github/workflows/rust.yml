@@ -45,3 +45,13 @@ jobs:
 
       - name: Run the C ABI smoke test
         run: ./target/release/ffi_smoke
+
+      - name: Compile the configuration C ABI smoke test
+        run: >-
+          cc -std=c11 -Wall -Wextra -Werror
+          -I include tests/config_ffi_smoke.c
+          -L target/release -Wl,-rpath,'$ORIGIN'
+          -lobs_rs_config -o target/release/config_ffi_smoke
+
+      - name: Run the configuration C ABI smoke test
+        run: ./target/release/config_ffi_smoke

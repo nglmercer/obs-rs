@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "obs-rs-config"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-util",
+]
+
+[[package]]
 name = "obs-rs-util"
 version = "0.1.0"

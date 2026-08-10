@@ -66,3 +66,8 @@ The same checks run in [`.github/workflows/rust.yml`](.github/workflows/rust.yml
   contract is additionally exercised by [`tests/ffi_smoke.c`](tests/ffi_smoke.c).
   No OBS call sites were changed because this workspace does not contain the native
   OBS source tree; integration remains a later, repository-level step.
+- Phase 2 — self-contained subsystem evaluation: complete for the isolated
+  [`obs-rs-config`](crates/obs-rs-config/) component. It provides deterministic
+  parsing, validation, round-tripping, explicit buffer ownership, and an opaque
+  non-thread-safe C handle. No global OBS state or platform hotkey backend is
+  present in this workspace, so those native boundaries remain untouched.
