@@ -28,8 +28,10 @@ pub(crate) use callbacks::{
 pub(crate) use callbacks::{install_callbacks, start_preview_timer};
 pub(crate) use fixtures::{initial_project, platform_capture_summary, source_settings};
 pub(crate) use output::OutputRuntime;
-pub(crate) use preview::{frame_to_image, scene_image, PreviewRenderer};
-pub(crate) use refresh::{dispatch_and_refresh, refresh_output_ui, refresh_ui};
+pub(crate) use preview::{frame_to_image, PreviewRenderer};
+pub(crate) use refresh::{
+    dispatch_and_refresh, refresh_output_ui, refresh_preview_frames, refresh_ui,
+};
 pub(crate) use view::{MainWindow, MixerRow, ProfileRow, SceneRow, SourceRow};
 
 fn main() -> Result<(), Box<dyn Error>> {

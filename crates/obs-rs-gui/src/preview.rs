@@ -1,4 +1,4 @@
-use std::{cell::RefCell, error::Error, rc::Rc};
+use std::error::Error;
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::Runtime;
@@ -113,32 +113,9 @@ impl PreviewRenderer {
     }
 }
 
-pub(crate) fn scene_image(
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    scene: Option<&str>,
-) -> (Image, Option<String>) {
-    let Some(scene) = scene else {
-        return (Image::default(), None);
-    };
-    match renderer.borrow_mut().render(scene) {
-        Ok(Some(frame)) => (frame_to_image(&frame), None),
-        Ok(None) => (
-            Image::default(),
-            Some(format!("Scene {scene} has no frame")),
-        ),
-        Err(error) => (Image::default(), Some(format!("Preview renderer: {error}"))),
-    }
-}
-
 pub(crate) fn frame_to_image(frame: &VideoFrame) -> Image {
     let format = frame.format();
     let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(format.width(), format.height());
-    for (pixel, channels) in buffer
-        .make_mut_slice()
-        .iter_mut()
-        .zip(frame.pixels().chunks_exact(4))
-    {
-        *pixel = Rgba8Pixel::new(channels[0], channels[1], channels[2], channels[3]);
-    }
+    buffer.make_mut_bytes().copy_from_slice(frame.pixels());
     Image::from_rgba8(buffer)
 }

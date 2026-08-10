@@ -1,12 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
-use obs_rs_media::{FrameTransform, FrameTransition};
+use obs_rs_media::{FrameTransform, FrameTransition, VideoFrame};
 use obs_rs_project::{Profile, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{Image, ModelRc, VecModel, Weak};
 
 use crate::{
-    project_store, scene_image, source_filters_document, source_transform_document, MainWindow,
+    frame_to_image, project_store, source_filters_document, source_transform_document, MainWindow,
     MixerRow, OutputRuntime, PreviewRenderer, ProfileRow, SceneRow, SourceRow,
 };
 
@@ -63,18 +63,16 @@ pub(crate) fn refresh_ui(
     ui.set_profile_rows(ModelRc::new(VecModel::from(profile_rows)));
 
     let sync_error = renderer.borrow_mut().sync_project(project).err();
-    let (preview_image, preview_error) = match sync_error.as_ref() {
-        Some(error) => (Image::default(), Some(format!("Preview renderer: {error}"))),
-        None => scene_image(renderer, state.preview_scene()),
+    let render_error = if let Some(error) = sync_error {
+        ui.set_preview_image(Image::default());
+        ui.set_program_image(Image::default());
+        ui.set_preview_metrics(renderer.borrow().metrics_summary().into());
+        Some(format!("Preview renderer: {error}"))
+    } else {
+        let (_, render_error) =
+            refresh_preview_frames(ui, renderer, state.preview_scene(), state.program_scene());
+        render_error
     };
-    let (program_image, program_error) = match sync_error.as_ref() {
-        Some(error) => (Image::default(), Some(format!("Preview renderer: {error}"))),
-        None => scene_image(renderer, state.program_scene()),
-    };
-    ui.set_preview_image(preview_image);
-    ui.set_program_image(program_image);
-    ui.set_preview_metrics(renderer.borrow().metrics_summary().into());
-    let render_error = preview_error.or(program_error);
     ui.set_status_message(
         render_error
             .unwrap_or_else(|| latest_notice(&state).to_owned())
@@ -82,6 +80,62 @@ pub(crate) fn refresh_ui(
     );
 
     refresh_docks(ui, &state, profile);
+}
+
+/// Renders the two stage images for one animation tick and returns the program
+/// frame so an active output can consume the exact frame shown to the user.
+pub(crate) fn refresh_preview_frames(
+    ui: &MainWindow,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    preview_scene: Option<&str>,
+    program_scene: Option<&str>,
+) -> (Option<VideoFrame>, Option<String>) {
+    let (preview_image, preview_error, program_image, program_frame, program_error, metrics) = {
+        let mut renderer = renderer.borrow_mut();
+        let (preview_image, preview_frame, preview_error) =
+            render_scene_image(&mut renderer, preview_scene);
+        let (program_image, program_frame, program_error) = if preview_scene == program_scene {
+            (preview_image.clone(), preview_frame, preview_error.clone())
+        } else {
+            render_scene_image(&mut renderer, program_scene)
+        };
+        let metrics = renderer.metrics_summary();
+        (
+            preview_image,
+            preview_error,
+            program_image,
+            program_frame,
+            program_error,
+            metrics,
+        )
+    };
+
+    ui.set_preview_image(preview_image);
+    ui.set_program_image(program_image);
+    ui.set_preview_metrics(metrics.into());
+    (program_frame, preview_error.or(program_error))
+}
+
+fn render_scene_image(
+    renderer: &mut PreviewRenderer,
+    scene: Option<&str>,
+) -> (Image, Option<VideoFrame>, Option<String>) {
+    let Some(scene) = scene else {
+        return (Image::default(), None, None);
+    };
+    match renderer.render(scene) {
+        Ok(Some(frame)) => (frame_to_image(&frame), Some(frame), None),
+        Ok(None) => (
+            Image::default(),
+            None,
+            Some(format!("Scene {scene} has no frame")),
+        ),
+        Err(error) => (
+            Image::default(),
+            None,
+            Some(format!("Preview renderer: {error}")),
+        ),
+    }
 }
 
 pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {

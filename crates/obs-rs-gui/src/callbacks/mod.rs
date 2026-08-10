@@ -8,7 +8,9 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Timer, TimerMode};
 
-use crate::{refresh_output_ui, refresh_ui, MainWindow, OutputRuntime, PreviewRenderer};
+use crate::{
+    refresh_output_ui, refresh_preview_frames, MainWindow, OutputRuntime, PreviewRenderer,
+};
 
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
 pub(crate) use project::{install_project_callbacks, project_store, rename_scene_and_refresh};
@@ -35,9 +37,27 @@ pub(crate) fn start_preview_timer(
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        refresh_ui(&ui, &state, &renderer);
-        push_program_frame(&ui, &state, &renderer, &output);
-        refresh_output_ui(&ui, &output);
+        let (preview_scene, program_scene, output_active) = {
+            let state = state.borrow();
+            (
+                state.preview_scene().map(str::to_owned),
+                state.program_scene().map(str::to_owned),
+                state.recording() || state.streaming(),
+            )
+        };
+        let (program_frame, render_error) = refresh_preview_frames(
+            &ui,
+            &renderer,
+            preview_scene.as_deref(),
+            program_scene.as_deref(),
+        );
+        if let Some(error) = render_error {
+            ui.set_status_message(error.into());
+        }
+        if output_active {
+            push_program_frame(&ui, program_frame, &output);
+            refresh_output_ui(&ui, &output);
+        }
     });
     timer
 }

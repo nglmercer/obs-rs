@@ -1,6 +1,6 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
-use obs_rs_media::FrameTransition;
+use obs_rs_media::{FrameTransition, VideoFrame};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
@@ -182,32 +182,15 @@ pub(crate) fn take_transition_and_refresh(
 
 pub(crate) fn push_program_frame(
     ui: &MainWindow,
-    state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    frame: Option<VideoFrame>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
-    let active = {
-        let state = state.borrow();
-        state.recording() || state.streaming()
-    };
-    if !active {
-        return;
-    }
-    let scene = state.borrow().program_scene().map(str::to_owned);
-    let Some(scene) = scene else {
-        return;
-    };
-    let result = renderer
-        .borrow_mut()
-        .render(&scene)
-        .and_then(|frame| {
-            frame.ok_or_else(|| std::io::Error::other("program scene is empty").into())
-        })
+    let result = frame
+        .ok_or_else(|| std::io::Error::other("program scene is empty").into())
         .and_then(|frame| output.borrow_mut().push_frame(&frame));
     if let Err(error) = result {
         ui.set_status_message(format!("Output failed: {error}").into());
     }
-    refresh_output_ui(ui, output);
 }
 
 pub(crate) fn install_mixer_callbacks(
