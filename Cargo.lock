@@ -2999,8 +2999,12 @@ version = "0.1.0"
 name = "obs-rs-gui"
 version = "0.1.0"
 dependencies = [
+ "i-slint-backend-testing",
+ "obs-rs-builtins",
  "obs-rs-config",
+ "obs-rs-core",
  "obs-rs-media",
+ "obs-rs-plugin-api",
  "obs-rs-project",
  "obs-rs-ui",
  "slint",

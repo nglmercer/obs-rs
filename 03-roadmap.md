@@ -262,20 +262,24 @@ The first Rust application-state slices are now present in `obs-rs-project` and
 `obs-rs-ui`: profiles, ordered scenes and sources, transform/filter state, validated
 commands, dirty-state tracking, deterministic escaped persistence, preview/program
 selection, transitions, output lifecycle, bounded notices, and shortcut bindings.
-They are toolkit-neutral control-plane foundations; native desktop views and GUI
-toolkit integration remain outstanding. `DesktopState` now renders a deterministic
+They remain toolkit-neutral control-plane foundations; `obs-rs-gui` is the first
+desktop adapter over them. `DesktopState` now renders a deterministic
 labeled text snapshot, `obs-rs-console` provides a scriptable terminal presentation,
 and `obs-rs-web` provides an accessible loopback browser presentation with validated
-scene, transition, recording, and streaming commands. Crash-report collection is
-still outstanding.
+scene, transition, recording, and streaming commands. `obs-rs-gui` adds the first
+Slint desktop control room with preview/program status cards, scene actions,
+transition controls, output lifecycle buttons, and a visible snapshot backed by
+those same commands. Its cards are not live rendered frame surfaces yet, and full
+editors, localization, and crash-report collection are still outstanding.
 
 `ProjectFileStore` adds atomic standard-library project-file save/load semantics and
 keeps the session dirty when a write fails.
 
 `obs-rs-diagnostics` adds a bounded deterministic `OBSRDG01` bundle containing
 project, UI, and runtime sections, with strict decoding and atomic recovery-file
-finalization. The headless demo creates and reopens this artifact. A concrete desktop
-presentation and crash-report collection policy are still outstanding.
+finalization. The headless demo creates and reopens this artifact. A complete desktop
+workflow and crash-report collection policy are still outstanding; the initial Slint
+presentation is covered by the GUI crate's smoke mode and unit tests.
 
 The plugin contract also carries an explicit API major/minor version, and
 `obs-rs-core` rejects newer incompatible manifests before registering any factories.
@@ -312,7 +316,7 @@ can be reproduced and verified.
 2. Device-clock audio behavior and long-duration synchronization tests.
 3. Platform capture discovery/permissions behind the existing Rust capture traits.
 4. Production codec/container/protocol decisions beyond the raw and RLE references.
-5. Concrete accessible desktop presentation and plugin/release hardening.
+5. Live desktop preview/editor/recovery workflows and plugin/release hardening.
 
 ## Go/no-go rule
 

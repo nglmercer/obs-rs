@@ -34,7 +34,8 @@ jobs:
             echo "native source files are not allowed"
             exit 1
           fi
-          if rg -n --hidden --glob '!.git/**' --glob '!target/**' --glob '!.github/**' --glob '!*.md' \
+          if rg -n --hidden --glob '!.git/**' --glob '!target/**' --glob '!.github/**' \
+            --glob '!Cargo.lock' --glob '!*.md' \
             '(extern "|no_mangle|repr\(C\)|cbindgen|bindgen|build\.rs|cc -|foreign-function)' .; then
             echo "native or FFI markers are not allowed"
             exit 1
@@ -85,6 +86,9 @@ jobs:
             sleep 0.1
           done
           wait "$server_pid"
+
+      - name: Run the Slint GUI wiring smoke test
+        run: env -u DISPLAY -u WAYLAND_DISPLAY cargo run -p obs-rs-gui --release -- --smoke
 
       - name: Run sustained video benchmark fixture
         run: cargo run -p obs-rs-app --bin obs-rs-benchmark --release

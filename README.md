@@ -11,7 +11,8 @@ with a separate review when an external dependency is unavoidable.
 
 ## What exists today
 
-The current vertical slice is a deterministic, headless engine:
+The current vertical slice is a deterministic engine with headless and desktop
+control surfaces:
 
 - `obs-rs-util` provides validated identifiers and small shared value types.
 - `obs-rs-config` provides bounded, deterministic settings documents.
@@ -56,6 +57,9 @@ The current vertical slice is a deterministic, headless engine:
   selection, transitions, output lifecycle, shortcuts, notices, project commands,
   deterministic labeled accessibility snapshots, strict terminal/HTTP command
   parsers, and an accessible browser page.
+- `obs-rs-gui` provides the first Slint desktop control room: preview/program
+  status cards, scene selection, transitions, recording/streaming controls, and a
+  visible accessible state snapshot backed by the same `DesktopState` commands.
 - `obs-rs-app` runs a small end-to-end demo, a scriptable accessible terminal
   frontend, and a loopback-only accessible browser control surface without a native
   host dependency.
@@ -71,6 +75,8 @@ cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo run -p obs-rs-app
+cargo run -p obs-rs-gui
+cargo run -p obs-rs-gui -- --smoke
 cargo run -p obs-rs-app --bin obs-rs-console
 cargo run -p obs-rs-app --bin obs-rs-web
 cargo run -p obs-rs-app --bin obs-rs-benchmark --release
@@ -90,6 +96,9 @@ accessible local browser page and bounded `POST /command` requests. The benchmar
 runs the cancellation-aware wall-clock video worker for 120 frames and reports
 deadline misses, lateness, drops, elapsed time, and compositor work counters. All
 behavior is exercised through safe Rust APIs and Rust tests.
+`obs-rs-gui` opens the native Slint control room; its `--smoke` mode constructs the
+window and binds the state without entering the event loop, which keeps GUI wiring
+checkable in headless validation.
 
 ## Repository documents
 
@@ -121,6 +130,7 @@ filter, and blend work while avoiding per-frame scene-item/filter snapshots and
 redundant identity transforms in its hot path. The project is intentionally not
 claiming feature parity with OBS Studio. The
 current reference also includes independent device-clock drift modeling, a bounded
-`OBSFRM01` Rust frame-stream adapter, an accessible terminal/browser control surface,
-and deterministic recovery diagnostics. The next priority is direct platform capture,
-hardware rendering, real codecs, network output, and native desktop UX.
+`OBSFRM01` Rust frame-stream adapter, accessible terminal/browser/Slint control
+surfaces, and deterministic recovery diagnostics. The next priority is live preview
+rendering and editor/recovery UX, followed by direct platform capture, hardware
+rendering, real codecs, and network output.

@@ -19,6 +19,7 @@ obs-rs-app
 ├── obs-rs-ui ─── obs-rs-project / obs-rs-media
 └── obs-rs-render ─── obs-rs-media
 
+obs-rs-gui ────── obs-rs-ui / obs-rs-project / obs-rs-media
 obs-rs-capture ─── obs-rs-media
 obs-rs-util ────── shared validation values
 ```
@@ -148,7 +149,10 @@ fallbacks. The app demo creates a background and a semi-transparent foreground,
 sets an item transform, renders through `VideoPipeline::render_next`, and reports
 the resulting pixel, checksum, and pipeline metrics. `obs-rs-console` provides a
 scriptable terminal presentation, and `obs-rs-web` provides an accessible loopback
-browser presentation over the same state machine. The companion benchmark runs
+browser presentation over the same state machine. `obs-rs-gui` provides a Slint
+desktop control room over that same state machine; its preview/program cards are
+currently labeled state views, ready for live frame-surface integration. The
+companion benchmark runs
 120 equivalent scene frames while draining output and reports the measured elapsed
 time, deadline misses, lateness, queue behavior, and compositor-work counters.
 
@@ -176,7 +180,11 @@ Current and future crates keep these concerns separate:
   finalization;
 - `obs-rs-ui`: toolkit-neutral desktop application state, commands, a labeled
   accessibility snapshot, strict terminal/HTTP command parsers, and an accessible
-  browser page; a native desktop GUI toolkit remains a product integration.
+  browser page;
+- `obs-rs-gui`: Slint desktop control-room adapter. It owns view properties and
+  callbacks only, translating scene/output actions into `obs-rs-ui::UiCommand`;
+  live preview surfaces, editors, persistence dialogs, and recovery UX remain
+  product work.
 
 These are implementation boundaries, not promises that every future integration is
 available in the current slice. `obs-rs-diagnostics` defines the bounded `OBSRDG01`

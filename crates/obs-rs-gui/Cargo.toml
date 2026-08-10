@@ -1,0 +1,25 @@
+[package]
+name = "obs-rs-gui"
+description = "Slint desktop control room for OBS-RS"
+edition.workspace = true
+publish.workspace = true
+version.workspace = true
+
+[dependencies]
+i-slint-backend-testing = { version = "=1.17.1", default-features = false, features = [
+    "renderer-software",
+] }
+obs-rs-builtins = { path = "../obs-rs-builtins" }
+obs-rs-config = { path = "../obs-rs-config" }
+obs-rs-core = { path = "../obs-rs-core" }
+obs-rs-media = { path = "../obs-rs-media" }
+obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
+obs-rs-project = { path = "../obs-rs-project" }
+obs-rs-ui = { path = "../obs-rs-ui" }
+slint = { version = "1.17.1", default-features = false, features = [
+    "accessibility",
+    "backend-winit",
+    "compat-1-2",
+    "renderer-software",
+    "std",
+] }
