@@ -3,6 +3,51 @@
 version = 4
 
 [[package]]
+name = "obs-rs-app"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-audio",
+ "obs-rs-builtins",
+ "obs-rs-config",
+ "obs-rs-core",
+ "obs-rs-media",
+ "obs-rs-output",
+ "obs-rs-plugin-api",
+ "obs-rs-project",
+ "obs-rs-render",
+ "obs-rs-ui",
+ "obs-rs-video",
+]
+
+[[package]]
+name = "obs-rs-audio"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-media",
+]
+
+[[package]]
+name = "obs-rs-builtins"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-capture",
+ "obs-rs-config",
+ "obs-rs-media",
+ "obs-rs-plugin-api",
+ "obs-rs-util",
+]
+
+[[package]]
+name = "obs-rs-capture"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-config",
+ "obs-rs-media",
+ "obs-rs-plugin-api",
+ "obs-rs-util",
+]
+
+[[package]]
 name = "obs-rs-config"
 version = "0.1.0"
 dependencies = [
@@ -10,9 +55,70 @@ dependencies = [
 ]
 
 [[package]]
-name = "obs-rs-plugin-probe"
+name = "obs-rs-core"
 version = "0.1.0"
+dependencies = [
+ "obs-rs-builtins",
+ "obs-rs-config",
+ "obs-rs-media",
+ "obs-rs-plugin-api",
+ "obs-rs-util",
+]
+
+[[package]]
+name = "obs-rs-media"
+version = "0.1.0"
+
+[[package]]
+name = "obs-rs-output"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-audio",
+ "obs-rs-media",
+]
+
+[[package]]
+name = "obs-rs-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-config",
+ "obs-rs-media",
+ "obs-rs-util",
+]
+
+[[package]]
+name = "obs-rs-project"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-config",
+ "obs-rs-media",
+ "obs-rs-util",
+]
+
+[[package]]
+name = "obs-rs-render"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-media",
+]
+
+[[package]]
+name = "obs-rs-ui"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-config",
+ "obs-rs-media",
+ "obs-rs-project",
+ "obs-rs-util",
+]
 
 [[package]]
 name = "obs-rs-util"
 version = "0.1.0"
+
+[[package]]
+name = "obs-rs-video"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-media",
+]

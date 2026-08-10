@@ -1,6 +1,6 @@
 [package]
-name = "obs-rs-util"
-description = "Safe identifiers and shared values for OBS-RS"
+name = "obs-rs-media"
+description = "Portable media values and the reference RGBA frame model for OBS-RS"
 edition.workspace = true
 publish.workspace = true
 version.workspace = true

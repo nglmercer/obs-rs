@@ -1,84 +1,94 @@
-# OBS Studio Rust Migration Planning
+# OBS-RS
 
-This directory contains planning documentation and the initial Cargo workspace for
-**incremental, ABI-compatible Rust adoption** in OBS Studio.
+OBS-RS is a new, Rust-first broadcasting and recording engine inspired by OBS
+Studio. It is being built from zero as a standalone project; it is not a line-by-
+line translation of the existing OBS implementation.
 
-It does **not** define a goal of rewriting OBS Studio 100% in Rust. OBS is built around a native `libobs` core, a C plugin ABI, a Qt/C++ desktop frontend, and many native platform/media/vendor dependencies. A realistic migration keeps stable C ABI boundaries and uses Rust only where isolated components can be migrated without breaking third-party plugins or real-time media behavior.
+The repository deliberately has no C or C++ source, headers, ABI shims, generated
+bindings, build scripts, or C-based smoke tests. The core crates forbid `unsafe`
+code. Platform and media integrations will be added only behind Rust interfaces,
+with a separate review when an external dependency is unavoidable.
 
-On current `master`, the Qt frontend is under `frontend/`; older references may call this area `UI/`.
+## What exists today
 
-## Documents
+The current vertical slice is a deterministic, headless engine:
 
-1. [00-executive-summary.md](00-executive-summary.md) — feasibility, scope, native dependency constraints, realistic target, and explicit non-goals.
-2. [01-current-architecture.md](01-current-architecture.md) — `libobs` core, source/output/encoder/module subsystems, plugin structure, frontend boundary, and architecture diagram.
-3. [02-codestyle.md](02-codestyle.md) — Rust formatting, linting, error handling, `unsafe`, panic, documentation, and C ABI/FFI conventions.
-4. [03-roadmap.md](03-roadmap.md) — phased tooling, utility, subsystem, and plugin evaluation roadmap with entry/exit criteria, risks, and regression testing.
-5. [04-risks-and-open-questions.md](04-risks-and-open-questions.md) — plugin ABI, real-time performance, cross-platform parity, mixed-toolchain, ownership, panic, and supply-chain risks.
-6. [05-permanent-native-boundaries.md](05-permanent-native-boundaries.md) — Phase 4 boundary inventory, local evidence, and the final go/no-go rule.
+- `obs-rs-util` provides validated identifiers and small shared value types.
+- `obs-rs-config` provides bounded, deterministic settings documents.
+- `obs-rs-media` defines timestamps, video formats, packed/planar input buffers,
+  RGBA conversion, owned frames, filters, and deterministic transitions.
+- `obs-rs-audio` defines owned sample buffers, bounded audio queues, a reference
+  mixer, and a deterministic linear resampler.
+- `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
+  catalog contracts, and deterministic animated test backends for test-pattern,
+  screen, window, and camera source kinds.
+- `obs-rs-plugin-api` defines versioned Rust plugin and source interfaces.
+- `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
+  camera CPU-fallback source factories.
+- `obs-rs-core` owns the plugin registry, sources, scenes, and compositor.
+- `obs-rs-video` provides rational frame scheduling, callback-driven rendering,
+  bounded frame transport, render/drop metrics, and a sustained-run benchmark
+  fixture plus a cancellation-aware wall-clock `VideoWorker`.
+- `obs-rs-render` defines portable texture/composition contracts and a deterministic
+  CPU backend with readback and context-loss recovery.
+- `obs-rs-output` provides validated video/audio packet encoders, muxer contracts,
+  bounded packet back-pressure, a lossless Rust RLE video reference codec, atomic
+  raw-file finalization, a canonical PCM16 WAV reference writer, a reconnectable
+  memory transport fixture, and a length-framed standard-library TCP transport.
+- `obs-rs-project` provides Rust-owned profiles, ordered scenes/source definitions,
+  command dispatch, dirty-state tracking, deterministic escaped persistence, and
+  atomic project-file save/load.
+- `obs-rs-ui` provides a toolkit-neutral desktop state machine for preview/program
+  selection, transitions, output lifecycle, shortcuts, notices, and project
+  commands.
+- `obs-rs-app` runs a small end-to-end demo without a native host dependency.
 
-## Core principle
+This is an engine foundation, not yet a production recorder or streamer. The
+complete target and its acceptance gates are described in the roadmap.
 
-**Full 100% Rust migration is not an achievable goal under the stated compatibility constraints.** The roadmap targets incremental adoption while preserving public/native compatibility and retaining FFI for Qt, native platform APIs, FFmpeg/x264, hardware encoder SDKs, and other dependencies where a pure-Rust replacement is not viable.
-
-## Referenced code areas
-
-The planning package is grounded in current repository areas including:
-
-- `libobs/obs.c`
-- `libobs/obs-internal.h`
-- `libobs/obs-source.c`
-- `libobs/obs-output.c`
-- `libobs/obs-encoder.c`
-- `libobs/obs-module.c`
-- `libobs/obs-video.c`
-- `libobs/obs-audio.c`
-- `plugins/CMakeLists.txt`
-- `plugins/`
-- `frontend/`
-
-The Rust workspace is intentionally limited to Phase 0 scaffolding. It does not yet
-change `libobs/`, plugins, the frontend, or the native OBS build. The first crate is
-`obs-rs-util`, a placeholder for a future leaf-utility evaluation; it currently has no
-OBS production logic.
-
-## Rust workspace
-
-The project uses the Rust toolchain declared in [rust-toolchain.toml](rust-toolchain.toml)
-and keeps Rust crates under `crates/`.
-
-Run the Phase 0 checks from this directory:
+## Build and run
 
 ```text
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
+cargo run -p obs-rs-app
+cargo run -p obs-rs-app --bin obs-rs-benchmark --release
 ```
 
-The same checks run in [`.github/workflows/rust.yml`](.github/workflows/rust.yml).
+The demo registers the built-in plugin, creates a scene, adds two sources, applies a
+scene-item transform/filter, renders through the bounded video pipeline and render
+backend, mixes one audio buffer, muxes and streams one packet, round-trips one raw
+recording, persists project state, and prints a stable summary. The benchmark runs
+the cancellation-aware wall-clock worker for 120 frames and reports deadline
+misses, lateness, drops, and elapsed time. All behavior is exercised through safe
+Rust APIs and Rust tests.
 
-## Phase status
+## Repository documents
 
-- Phase 0 — tooling and workspace: complete.
-- Phase 1 — leaf utility evaluation: complete for the isolated
-  `obs-rs-util` identifier candidate. Its C ABI contract is declared in
-  [`include/obs_rs_util.h`](include/obs_rs_util.h), with Rust-side tests covering
-  invalid input, error translation, and paired allocation/free behavior. The C
-  contract is additionally exercised by [`tests/ffi_smoke.c`](tests/ffi_smoke.c).
-  No OBS call sites were changed because this workspace does not contain the native
-  OBS source tree; integration remains a later, repository-level step.
-- Phase 2 — self-contained subsystem evaluation: complete for the isolated
-  [`obs-rs-config`](crates/obs-rs-config/) component. It provides deterministic
-  parsing, validation, round-tripping, explicit buffer ownership, and an opaque
-  non-thread-safe C handle. No global OBS state or platform hotkey backend is
-  present in this workspace, so those native boundaries remain untouched.
-- Phase 3 — plugin-by-plugin evaluation: complete as an ABI evaluation harness with
-  [`obs-rs-plugin-probe`](crates/obs-rs-plugin-probe/). It exports the required
-  `obs_module_load`, `obs_module_set_pointer`, and `obs_module_ver` symbol shapes,
-  checks them through a dynamic-loader smoke test, and requires
-  `OBS_LIBOBS_API_VER` for a real OBS integration build. The default probe version
-  is deliberately `0` and is not production-compatible; the native OBS loader is
-  unavailable in this workspace.
-- Phase 4 — permanent native boundaries: complete as documented in
-  [`05-permanent-native-boundaries.md`](05-permanent-native-boundaries.md). The
-  result is intentionally a mixed-language architecture, not a 100% Rust claim.
+1. [00-executive-summary.md](00-executive-summary.md) — mission, scope, principles,
+   and the definition of a successful Rust-native OBS engine.
+2. [01-current-architecture.md](01-current-architecture.md) — the architecture we
+   are implementing now, ownership rules, and the vertical slice.
+3. [02-codestyle.md](02-codestyle.md) — Rust-only coding, safety, API, testing, and
+   dependency rules.
+4. [03-roadmap.md](03-roadmap.md) — the full implementation roadmap from foundation
+   through capture, audio, output, UI, and release hardening.
+5. [04-risks-and-open-questions.md](04-risks-and-open-questions.md) — active risks,
+   decisions, and questions that must be answered before each phase advances.
+6. [05-permanent-native-boundaries.md](05-permanent-native-boundaries.md) — the
+   boundary policy and evidence checklist for keeping the project Rust-native.
+
+## Current status
+
+Phase 0 (workspace and policy), the Phase 1/2 vertical slice, the Phase 3 reference
+render loop, injected-clock pacer, packed/planar conversion, transitions, and
+sustained benchmark fixture, the first Phase 4 audio primitives including stereo
+pan, monitoring taps, and actionable sample-clock/A/V reconciliation, the Phase 5
+capture contract/test backend,
+and the first Phase 6 packet/muxer/recording lifecycle contracts including atomic
+file finalization are implemented, together with the first Phase 7 project
+state/command/persistence slice. The project is intentionally not claiming feature
+parity with OBS Studio. The next priority is platform capture, hardware rendering,
+real codecs, network output, and desktop UX.

@@ -1,151 +1,157 @@
-# Current OBS Studio Architecture
+# OBS-RS Architecture
 
-## Scope
+## Status and scope
 
-This document summarizes the areas most relevant to an incremental Rust adoption plan. It is intentionally focused on `libobs/`, the plugin model under `plugins/`, and the Qt desktop frontend.
+This document describes the architecture being implemented in this repository. It
+is a clean-room Rust design for an OBS-like engine; it does not describe the current
+implementation of the existing OBS application.
 
-## `libobs` core
+## Layered workspace
 
-### Global runtime state
+```text
+obs-rs-app
+    └── obs-rs-builtins
+            └── obs-rs-plugin-api
+                    ├── obs-rs-config
+                    ├── obs-rs-media
+                    └── obs-rs-util
 
-`libobs/obs.c` defines the process-wide `struct obs_core *obs`. The full `struct obs_core` definition is in `libobs/obs-internal.h`.
-
-`struct obs_core` aggregates major runtime registries and services, including:
-
-- Loaded and disabled modules.
-- Module search paths and module allow/deny state.
-- Registered source, input, filter, transition, output, encoder, and service types.
-- Signal and procedure handlers.
-- Locale and module configuration state.
-- `obs_core_video` for graphics/video processing state.
-- `obs_core_audio` for audio graph and monitoring state.
-- `obs_core_data` for live sources, outputs, encoders, services, displays, canvases, callbacks, and synchronization primitives.
-- `obs_core_hotkeys` for hotkey registration, bindings, platform polling, and callbacks.
-
-This central ownership model means that large portions of `libobs` share native data structures, pthread synchronization, callback tables, and lifetime rules. Those boundaries should be treated as stable C interfaces during early Rust adoption.
-
-### Sources
-
-`libobs/obs-source.c` implements source lookup and source lifecycle behavior around `struct obs_source_info` registrations stored in `obs->source_types`. Sources cover several conceptual plugin classes, including inputs, filters, transitions, and other source-like media nodes.
-
-The source subsystem includes signal emission, settings and context management, audio/video processing, filter relationships, activation state, and plugin ownership lookup. It is tightly coupled to the real-time media graph and should not be an early migration target except for isolated helper logic.
-
-### Outputs
-
-`libobs/obs-output.c` implements output type lookup and output runtime behavior around `struct obs_output_info` registrations in `obs->output_types`.
-
-Outputs represent streaming, recording, muxing, and related sinks. The subsystem handles encoded versus raw output modes, audio/video capability flags, service relationships, reconnect behavior, packet flow, and synchronization with encoders and services.
-
-Because output behavior directly participates in real-time streaming and recording, any future Rust migration in this area must preserve packet timing, callback ordering, reconnect semantics, thread behavior, and ABI-visible structures.
-
-### Encoders
-
-`libobs/obs-encoder.c` implements encoder type lookup and encoder object creation around `struct obs_encoder_info` registrations in `obs->encoder_types`.
-
-Encoder objects are inserted into the core encoder list, use explicit mutexes and atomic active-state handling, and interact with video or audio pipelines, outputs, timestamps, and plugin-provided encoder callbacks.
-
-Hardware and software encoders supplied by plugins remain native dependency boundaries even if orchestration code is eventually migrated.
-
-### Module loading and plugin ABI
-
-`libobs/obs-module.c` loads native modules with the platform dynamic-loader abstraction and resolves required C symbols. At minimum, a loadable module must expose:
-
-- `obs_module_load`
-- `obs_module_set_pointer`
-- `obs_module_ver`
-
-Optional module exports include unload, post-load, locale, metadata, and string functions. `libobs/obs-internal.h` stores these exports as C function pointers in `struct obs_module` and tracks the source/output/encoder/service IDs associated with each module.
-
-This loader is a hard compatibility boundary. Rust implementations that replace or supplement native internals must preserve the expected C symbol names, calling conventions, type layouts, ownership rules, and version behavior wherever existing C/C++ code or third-party binary plugins cross the boundary.
-
-## Plugin structure
-
-`plugins/CMakeLists.txt` assembles a broad set of cross-platform and platform-specific native modules. Representative groups include:
-
-### Source and capture plugins
-
-- `plugins/image-source/`
-- `plugins/linux-capture/`
-- `plugins/linux-pipewire/`
-- `plugins/linux-v4l2/`
-- `plugins/mac-avcapture/`
-- `plugins/mac-capture/`
-- `plugins/win-capture/`
-- `plugins/win-dshow/`
-
-### Encoder and codec plugins
-
-- `plugins/coreaudio-encoder/`
-- `plugins/mac-videotoolbox/`
-- `plugins/obs-ffmpeg/`
-- `plugins/obs-libfdk/`
-- `plugins/obs-nvenc/`
-- `plugins/obs-qsv11/`
-- `plugins/obs-x264/`
-
-### Output, service, filter, and transition plugins
-
-- `plugins/obs-outputs/`
-- `plugins/rtmp-services/`
-- `plugins/obs-filters/`
-- `plugins/nv-filters/`
-- `plugins/obs-transitions/`
-- `plugins/obs-webrtc/`
-
-### Frontend-oriented plugins
-
-- `plugins/frontend-tools/`
-- `plugins/aja-output-ui/`
-- `plugins/decklink-output-ui/`
-
-The plugin tree demonstrates why migration suitability must be decided plugin by plugin: some modules are thin native SDK adapters, some contain codec or protocol logic, and others are directly tied to OS multimedia stacks.
-
-## Qt frontend
-
-On current `master`, the desktop frontend is under `frontend/`; older references may call this directory `UI/`. It contains Qt-facing C++ code and `.ui` forms such as `frontend/forms/OBSBasic.ui`.
-
-For this migration plan, the frontend is considered a native boundary rather than a Rust migration target. Rust components may be called from the frontend through C-compatible or carefully designed C++/Rust bridging layers, but replacing Qt or rewriting the application shell is an explicit non-goal.
-
-## Boundary diagram
-
-```mermaid
-flowchart TD
-    Frontend[Qt frontend\nfrontend/]
-    Core[libobs core\nobs.c + obs-internal.h]
-    Sources[Source subsystem\nobs-source.c]
-    Outputs[Output subsystem\nobs-output.c]
-    Encoders[Encoder subsystem\nobs-encoder.c]
-    Modules[Module loader / C ABI\nobs-module.c]
-    Services[Service registrations]
-    Filters[Filters / transitions\nsource-type plugins]
-
-    PluginSources[Plugin sources / capture\nplugins/*]
-    PluginOutputs[Plugin outputs\nplugins/*]
-    PluginEncoders[Plugin encoders\nplugins/*]
-    PluginServices[Plugin services\nplugins/*]
-    PluginFilters[Plugin filters / transitions\nplugins/*]
-
-    Frontend --> Core
-    Core --> Sources
-    Core --> Outputs
-    Core --> Encoders
-    Core --> Services
-    Core --> Modules
-    Sources --> Filters
-
-    Modules --> PluginSources
-    Modules --> PluginOutputs
-    Modules --> PluginEncoders
-    Modules --> PluginServices
-    Modules --> PluginFilters
-
-    PluginSources --> Sources
-    PluginOutputs --> Outputs
-    PluginEncoders --> Encoders
-    PluginServices --> Services
-    PluginFilters --> Filters
+obs-rs-app ─── obs-rs-core ─── obs-rs-plugin-api
+                         ├── obs-rs-media
+                         └── obs-rs-config
 ```
 
-## Migration implication
+The dependency direction is one-way. Value types live in small crates; the runtime
+owns orchestration; the application chooses a plugin set and a user-facing entry
+point. No crate reaches into another crate's private state.
 
-The architecture favors **inside-out, boundary-preserving migration**. Rust should first appear behind narrow internal C-callable interfaces. The public/native extension boundary remains C. Media-critical subsystems should only be considered after utility and control-plane migrations establish proven build, test, ownership, panic, and FFI conventions.
+## Runtime ownership
+
+`obs-rs-core::Runtime` owns the registry, source instances, named scenes, and scene
+item ordering. A source is created by a registered Rust `SourceFactory` and is
+stored as a boxed `Source` trait object. The caller receives a typed `SourceId`, not
+an address or a globally shared pointer.
+
+The runtime is currently single-threaded by design. This makes lifecycle and
+borrowing behavior explicit while the media clock and worker model are specified.
+Threaded execution is a later phase and must preserve the same ownership contracts.
+
+## Media model
+
+`obs-rs-media` owns the first portable media values, while `obs-rs-video` and
+`obs-rs-audio` own the first transport/mix primitives:
+
+- `Timestamp` is an integer nanosecond position;
+- `FrameRate` is a validated rational number;
+- `VideoFormat` describes dimensions and frame rate;
+- `PixelFormat` and `RawVideoFrame` validate packed RGBA/BGRA/RGB/gray and planar
+  I420 buffers before conversion;
+- `VideoFrame` owns a tightly packed RGBA8 buffer;
+- frame composition validates format and buffer invariants before blending.
+- `FrameQueue` bounds memory and makes frame drops observable;
+- `VideoScheduler` calculates rational timestamps without floating-point drift;
+- `MonotonicClock`, `VideoClock`, `VideoPacer`, and `DeadlineObservation` provide
+  injectable wall-clock pacing without changing deterministic scheduler tests;
+- `VideoPipeline` combines the two for callback-driven rendering and exposes
+  produced/empty/drop/deadline metrics.
+- `VideoWorker` layers injected-clock pacing, cancellation checks, post-render
+  deadline observation, and output draining over the pipeline.
+- `VideoPipeline::run_sustained` provides a bounded output-draining fixture for
+  repeatable scene throughput and queue-pressure measurements.
+- `FrameFilter` provides deterministic grayscale, brightness, and opacity effects;
+  the runtime stores an ordered filter chain per scene item.
+- `FrameTransition` and `Runtime::render_scene_transition` provide cut and
+  cross-fade behavior, including transparent fade-in/fade-out handling.
+
+`obs-rs-audio` provides an interleaved finite-`f32` buffer, a bounded complete-buffer
+queue, an exact sample scheduler, a deterministic mixer with per-source
+gain/mute/stereo-pan controls and output clamping, a linear resampler for
+equal-channel formats, bounded post-mix monitoring taps, and an explicit A/V drift
+observation/reconciliation policy that trims early audio or inserts silence for late
+audio. `AudioClock`, `MonotonicAudioClock`, and `AudioPacer` provide injectable
+block-level callback timing. It is still an offline reference model; it does not
+open a device or spawn a callback thread.
+
+`obs-rs-capture` defines `VideoCaptureDevice`, `CaptureDeviceInfo`, and
+`CaptureCatalog`. `TestPatternDevice` is the first lifecycle-complete backend: it
+starts at a validated format, emits timestamped owned frames, and stops without
+leaking state. Platform devices will implement the same trait later.
+
+The compositor still uses CPU-owned RGBA frames. Packed/planar inputs are converted
+at the media boundary; GPU textures, device clocks, and zero-copy buffers remain
+separate integrations rather than hidden assumptions in the first compositor.
+
+## Plugin model
+
+Plugins implement `obs-rs-plugin-api::Plugin`. A plugin exposes a manifest and source
+factories. A factory validates settings and constructs a source. The runtime only
+knows the trait contracts; it does not know the concrete source type.
+
+The first extension mechanism is compile-time registration. This provides strong
+Rust typing, simple tests, and no unstable binary layout. Dynamic discovery and
+sandboxing will be designed after the source contract is exercised by real modules.
+
+## Scene data flow
+
+```mermaid
+flowchart LR
+    App[obs-rs-app] --> Runtime[Runtime]
+    Runtime --> Registry[Plugin registry]
+    Runtime --> Scene[Named scene]
+    Scene --> Items[Ordered scene items]
+    Items --> Sources[Owned Source instances]
+    Sources --> Frames[Owned VideoFrame values]
+    Frames --> Compositor[RGBA compositor]
+    Compositor --> Output[Rendered frame]
+```
+
+`Runtime::render_scene` snapshots the source IDs and transforms in scene order,
+requests a frame from each source, applies the item transform and filter chain, and
+composites the returned frames in order. A missing frame is a valid source result; a
+malformed frame or incompatible format is an explicit error.
+
+## First vertical slice
+
+The built-in color source is intentionally small but real. It reads validated
+`width`, `height`, and `color` settings, produces owned frames, and participates in
+the same plugin registry and scene compositor as the deterministic capture
+fallbacks. The app demo creates a background and a semi-transparent foreground,
+sets an item transform, renders through `VideoPipeline::render_next`, and reports
+the resulting pixel, checksum, and pipeline metrics. The companion benchmark runs
+120 equivalent scene frames while draining output and reports the measured elapsed
+time, deadline misses, lateness, and queue behavior.
+
+## Planned boundaries
+
+Future crates will keep these concerns separate:
+
+- `obs-rs-clock`: monotonic scheduling and A/V master-clock policy;
+- `obs-rs-video`: frame queues, pacing, conversion, and render scheduling (the queue
+  and scheduler MVP is implemented);
+- `obs-rs-render`: texture ownership, composition, readback, capabilities,
+  aggregate byte quotas, packed/planar upload conversion, and context-loss recovery
+  behind a backend trait;
+- `obs-rs-audio`: sample formats, mixer, resampler, and monitoring (buffer, queue,
+  and mixer MVP implemented);
+- `obs-rs-capture-*`: platform or device adapters behind Rust traits;
+- `obs-rs-codec-*`: encoder contracts and reviewed codec integrations;
+- `obs-rs-output`: muxing, files, network protocols, reconnect, and back-pressure;
+- `obs-rs-project`: profiles, scene collections, source definitions, commands, and
+  deterministic persistence;
+- `obs-rs-ui`: toolkit-neutral desktop application state and commands (implemented);
+  a concrete accessible presentation toolkit remains a product integration.
+
+These are implementation boundaries, not promises that every future integration is
+available in the current slice.
+
+The current `obs-rs-output` crate contains validated packet and video-encoder traits,
+a byte-bounded packet queue, a deterministic in-memory muxer fixture, explicit
+finalized/aborted recording sessions, raw and lossless RLE video plus raw audio
+reference encoders, an RLE decoder fixture, an atomic standard-library raw-file
+writer, a canonical PCM16 WAV writer, a reconnectable packet-transport session, and
+the intentionally uncompressed `OBSRRAW1` format, plus a length-framed standard-
+library TCP transport fixture. These prove packet validation,
+back-pressure, lifecycle behavior, crash-safe finalization, reconnect/requeue behavior,
+fixed-format frame validation, timestamps, truncation detection, and encode/decode
+round-trips without deciding the final production codec, container, or network
+protocol.

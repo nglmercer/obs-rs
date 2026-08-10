@@ -1,73 +1,72 @@
-# Rust Migration: Executive Summary
+# OBS-RS Executive Summary
 
-## Purpose
+## Mission
 
-OBS Studio is a large native application whose core runtime and public extension model are built around C and C++. A literal, repository-wide "100% Rust" rewrite is not an achievable migration target without either breaking compatibility with the existing third-party binary plugin ecosystem or retaining substantial native code behind FFI boundaries.
+Build a complete broadcasting, recording, and live-production application in Rust
+from zero, using OBS Studio as the product reference while keeping the new engine's
+ownership model, extension model, and tests Rust-native.
 
-The realistic engineering objective is **incremental, ABI-compatible Rust adoption**: introduce Rust in well-isolated components where it provides clear safety or maintainability benefits, while preserving the existing C ABI and retaining native FFI boundaries for platform APIs, vendor SDKs, and other dependencies that do not have viable pure-Rust replacements.
+The project is not an incremental language migration. It does not promise source,
+binary, or plugin compatibility with the existing OBS implementation. That choice
+is intentional: it lets the new design use Rust ownership and traits at every
+internal boundary instead of preserving historical native interfaces.
 
-## Current native architecture constraints
+## Product target
 
-The core OBS runtime is `libobs/`. The process-wide runtime state is represented by `struct obs_core` in `libobs/obs-internal.h`, with registries for sources, outputs, encoders, and services plus video, audio, data, hotkey, signal, and module state. `libobs/obs.c` owns the global `struct obs_core *obs` and coordinates initialization and media-runtime behavior.
+The finished product should provide a headless engine and a desktop application with:
 
-OBS plugins are loaded as native shared libraries. `libobs/obs-module.c` resolves required symbols from each plugin at runtime, including:
+- scenes and ordered scene items;
+- live sources, filters, transitions, and source settings;
+- a clocked video pipeline with deterministic frame scheduling;
+- an audio graph with mixing, monitoring, and synchronization;
+- local recording and network streaming;
+- hardware-accelerated rendering and encoding where a reviewed Rust integration is
+  available;
+- a Rust extension model with versioned, testable plugin contracts;
+- portable profiles, scene collections, logs, recovery, and packaging.
 
-- `obs_module_load`
-- `obs_module_set_pointer`
-- `obs_module_ver`
+The first milestone is deliberately smaller: a usable headless engine that can
+register a source, build a scene, render a frame, and test all ownership and error
+paths without a native host.
 
-The corresponding module structure and function pointers are declared in `libobs/obs-internal.h`. This C ABI is a compatibility boundary used by in-tree plugins and third-party plugins, including third-party binaries for which OBS does not control the source code or toolchain.
+## Non-negotiable principles
 
-The desktop frontend is Qt-based. On current `master`, the frontend lives under `frontend/` (older documentation and historical references may call this area `UI/`). Qt `.ui` forms and the C++ frontend remain native application infrastructure and are not an appropriate first target for a Rust migration.
+1. **Rust owns the state.** Core state is represented by Rust types and borrowed or
+   owned through explicit APIs. Shared mutable global state is prohibited.
+2. **Safe by default.** Core crates use `#![forbid(unsafe_code)]`. An integration
+   that cannot meet this rule is isolated, reviewed, and does not leak into the
+   engine API.
+3. **Rust interfaces, not historical ABI shims.** Plugins implement Rust traits and
+   are registered at compile time in the first release. A future versioned dynamic
+   format may use a sandboxed Rust-compatible boundary; it must not dictate unsafe
+   layouts to the core.
+4. **Deterministic behavior.** Configuration serialization, identifiers, scene
+   ordering, timestamps, and test fixtures must be reproducible.
+5. **Real-time discipline.** The media path must avoid unbounded allocation, locks of
+   unknown duration, and blocking I/O. Every change to a hot path needs a benchmark.
+6. **Evidence before expansion.** A phase advances only when its acceptance tests,
+   benchmarks, and failure behavior are present in the repository.
 
-The repository also relies heavily on native platform SDKs and media libraries. Representative examples include:
+## Scope boundary
 
-- FFmpeg integration through `plugins/obs-ffmpeg/`.
-- x264 integration through `plugins/obs-x264/`.
-- Windows capture and device integrations such as `plugins/win-dshow/`, `plugins/win-capture/`, and Windows Media Foundation / platform APIs used by Windows-specific code.
-- macOS AVFoundation capture through `plugins/mac-avcapture/` and other Apple-native integrations.
-- Linux PipeWire and V4L2 through `plugins/linux-pipewire/` and `plugins/linux-v4l2/`.
-- NVIDIA encoder integration through `plugins/obs-nvenc/`.
-- Intel Quick Sync integration through `plugins/obs-qsv11/`.
-- AMD hardware encoder support where provided through FFmpeg/platform integrations and vendor-facing native interfaces.
+This repository implements a new engine. It does not copy the existing OBS source
+tree, preserve its native plugin ABI, or keep a compatibility layer as an implicit
+requirement. Existing OBS scene/config formats may be supported later through
+explicit Rust parsers and migration tools, but compatibility is a product feature,
+not an internal architectural constraint.
 
-These native dependencies are not made "Rust" simply by calling them from Rust. A Rust component that still depends on those APIs would necessarily use FFI or a binding layer.
+The initial implementation also avoids platform SDKs and codec libraries. Capture,
+rendering, encoding, and output backends will be introduced as separate Rust crates
+after the portable contracts are stable.
 
-## Why "100% Rust" is not a realistic end state
+## Definition of success
 
-A literal 100% Rust rewrite would require at least one of the following:
+The project is successful when a fresh checkout can build and test the complete
+application with the pinned Rust toolchain, run a desktop production workflow on
+the supported platforms, and demonstrate equivalent functional behavior across
+capture, scene composition, audio, recording, and streaming scenarios. The proof
+must include long-running synchronization tests, resource accounting, reproducible
+configuration recovery, plugin contract tests, and release artifacts.
 
-1. Reimplement every native dependency and platform integration in Rust, including Qt-facing frontend functionality, media codec libraries, capture stacks, and vendor encoder SDKs; or
-2. Continue calling those native libraries through FFI, in which case the resulting application is not meaningfully 100% Rust; or
-3. Replace the existing C plugin ABI with a Rust-specific ABI or API, which would break compatibility with existing third-party binary plugins unless a complete compatibility layer were retained.
-
-The third option is particularly damaging because the native plugin ABI is an established extension contract. Existing closed-source or independently built plugins cannot be mass-recompiled by the OBS project.
-
-Accordingly, **full 100% migration is not a stated achievable goal of this roadmap**.
-
-## Realistic target: incremental, ABI-compatible Rust adoption
-
-The migration target is to introduce Rust only where module boundaries are sufficiently isolated and where the resulting component can continue to expose the same externally visible C ABI.
-
-Key principles:
-
-- Preserve public C headers and calling conventions.
-- Preserve required plugin entry-point symbols and native dynamic-loading behavior.
-- Prefer leaf utilities and self-contained internal subsystems before media hot paths.
-- Keep FFI boundaries explicit and narrow.
-- Treat platform APIs, Qt, FFmpeg, x264, and vendor SDKs as native dependencies unless a production-grade replacement is proven.
-- Require regression evidence for latency, frame pacing, audio synchronization, memory ownership, and cross-platform behavior before expanding Rust into media-critical paths.
-
-## Explicit non-goals
-
-This planning effort does **not** propose:
-
-- Rewriting the Qt desktop frontend (`frontend/`, historically referenced as `UI/`) in Rust.
-- Dropping or intentionally breaking compatibility with the existing third-party C plugin ABI.
-- Replacing vendor hardware encoder SDKs such as NVIDIA NVENC, Intel Quick Sync, or AMD vendor/platform encoder interfaces with speculative pure-Rust implementations.
-- Reimplementing FFmpeg, x264, DirectShow, Media Foundation, AVFoundation, PipeWire, V4L2, or equivalent platform/media stacks in Rust.
-- Performing any immediate source migration in `libobs/`, `plugins/`, `frontend/`, or build-system files as part of this documentation package.
-
-## Success definition
-
-A successful Rust adoption program would improve safety and maintainability in selected components **without changing observable ABI behavior or degrading real-time media performance**. The end state is expected to remain a mixed C/C++/Rust application with carefully designed FFI boundaries.
+Line count converted is not a success metric. A feature is complete when its Rust
+behavior is usable, measured, documented, and maintainable.

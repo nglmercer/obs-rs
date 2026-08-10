@@ -1,0 +1,13 @@
+[package]
+name = "obs-rs-output"
+description = "Deterministic Rust reference recording format for OBS-RS"
+edition.workspace = true
+publish.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+obs-rs-audio = { path = "../obs-rs-audio" }
+obs-rs-media = { path = "../obs-rs-media" }

@@ -1,168 +1,81 @@
 # Risks and Open Questions
 
-## Guiding constraint
+## Active risks
 
-This planning effort assumes **incremental, ABI-preserving Rust adoption only**. A full 100% migration is not considered an achievable end state while OBS retains its current third-party plugin ecosystem and native platform/media dependencies.
+### Scope and schedule
 
-## Risk: breaking the third-party plugin ABI
+A complete broadcasting application is a multi-year systems project. The main
+mitigation is to keep a usable headless engine at every milestone and to make each
+phase independently testable. The current MVP is intentionally not presented as
+feature parity.
 
-### Why it matters
+### Real-time behavior
 
-`libobs/obs-module.c` dynamically resolves required C symbols from plugin shared libraries, including `obs_module_load`, `obs_module_set_pointer`, and `obs_module_ver`. `libobs/obs-internal.h` stores these callbacks in `struct obs_module` and associates modules with registered source, output, encoder, and service types.
+Video and audio workloads punish unbounded allocations, hidden locks, and accidental
+copies. The first compositor is a correctness reference, not a production scheduler.
+Every move into a hot path needs queue-pressure tests, allocation measurements, and
+long-duration synchronization evidence.
 
-Third-party plugins may be closed source, independently maintained, or built with toolchains that the OBS project does not control. A migration that requires recompiling every plugin is not ABI-preserving.
+### Platform coverage
 
-### Mitigations
+Screen capture, cameras, window enumeration, permissions, GPU contexts, and audio
+devices differ by operating system. Portable traits must be designed before adapters;
+each adapter needs a CPU/test fallback and explicit capability reporting.
 
-- Preserve existing exported C symbols and calling conventions.
-- Keep public C headers stable unless a normal OBS compatibility policy explicitly allows change.
-- Add automated symbol/ABI checks for Rust-produced libraries.
-- Test against representative external binary plugins where legally and operationally practical.
-- Prefer opaque handles and compatibility shims over exposing Rust layouts.
-- Never unwind Rust panics across C ABI boundaries.
+### Codec and protocol availability
 
-### Open questions
+Pure Rust implementations may not yet cover every codec, hardware encoder, container,
+or streaming protocol needed for a production release. The roadmap treats these as
+separate capability decisions. An integration can be delayed without contaminating
+the portable engine or pretending that a wrapper is a native Rust implementation.
 
-- What automated ABI-check tooling should become authoritative across Windows, macOS, and Linux?
-- Which historical plugin binaries should be part of compatibility testing?
-- Which public APIs are guaranteed at binary level versus source compatibility only?
+### Plugin safety and compatibility
 
-## Risk: real-time audio/video performance regressions
+Trait objects are safe inside one build, but a Rust trait is not automatically a stable
+binary ABI between independently compiled libraries. The first plugin model therefore
+uses compile-time registration. Dynamic plugins require a versioned format, a threat
+model, and a compatibility test suite before they are enabled.
 
-### Why it matters
+### Memory and resource lifetime
 
-OBS is a real-time media application. `libobs/obs-video.c` and `libobs/obs-audio.c` sit on latency-sensitive paths, while `libobs/obs-source.c`, `libobs/obs-output.c`, and `libobs/obs-encoder.c` participate directly in rendering, audio mixing, encoding, packet delivery, and synchronization.
+Scenes, sources, frame queues, GPU resources, devices, and outputs have different
+lifetime rules. Runtime-owned IDs and explicit removal are preferred to shared global
+references. Each new resource type must have create, update, stop, and destroy tests.
 
-Rust does not automatically make these paths faster. Poor boundary design can add allocations, copies, locks, bounds checks in unsuitable locations, or callback/FFI overhead.
+### Dependency supply chain
 
-### Mitigations
+Every dependency increases build, license, audit, and portability cost. The lockfile
+is committed; external crates need a reason and an owner. A native build script or
+unreviewed foreign binding is not allowed into the portable workspace.
 
-- Keep early migration work off per-frame/per-audio-block hot paths.
-- Establish performance baselines before touching media-critical code.
-- Avoid allocations and blocking synchronization in real-time callbacks.
-- Use zero-copy or ownership-transfer designs where the existing native API permits them.
-- Benchmark FFI crossing frequency and batch operations where appropriate.
-- Run long-duration A/V sync and dropped-frame tests.
+## Decisions already made
 
-### Open questions
+- The project is a clean-room Rust implementation, not an in-place translation.
+- Portable crates forbid unsafe code.
+- The initial plugin model is compile-time Rust trait registration.
+- The reference media format is owned RGBA8 on the CPU.
+- The first runtime is single-threaded to make ownership and lifecycle behavior
+  inspectable.
+- The core has no native host dependency.
 
-- Which benchmark scenes and encoder/capture combinations should define acceptance thresholds?
-- What regressions are acceptable for CPU, render time, encode time, audio callback timing, and memory?
-- Which thread classes should be formally designated "real-time sensitive" for Rust code review rules?
+## Questions to answer before each phase
 
-## Risk: cross-platform parity
+1. What is the smallest public Rust contract that proves the capability?
+2. Which state owns each buffer, clock, device, and task?
+3. What happens on missing data, back-pressure, cancellation, and shutdown?
+4. What is the deterministic reference implementation?
+5. What benchmark and soak fixture detects a regression?
+6. Can the capability be tested on a machine without the target hardware?
+7. Does a new dependency introduce a native build step or an unsafe boundary?
 
-### Why it matters
+## Current open questions
 
-OBS supports multiple operating systems and uses substantially different native stacks on each platform. The plugin tree includes Linux-specific modules such as `plugins/linux-pipewire/` and `plugins/linux-v4l2/`, macOS-specific modules such as `plugins/mac-avcapture/` and `plugins/mac-videotoolbox/`, and Windows-specific modules such as `plugins/win-dshow/` and `plugins/win-capture/`.
-
-A Rust crate that works well on one platform may have incomplete APIs, different threading semantics, or different packaging constraints elsewhere.
-
-### Mitigations
-
-- Require Windows, macOS, and Linux support for shared core crates unless a crate is explicitly platform-specific.
-- Keep platform-native adapters separate from portable Rust logic.
-- Avoid selecting Rust dependencies based on single-platform convenience.
-- Validate target triples, deployment targets, CRT choices, and linker behavior in CI.
-- Preserve existing platform-specific native code when replacing it would add risk without user benefit.
-
-### Open questions
-
-- Which Rust target triples map exactly to OBS-supported build architectures?
-- How will dependencies be vendored or mirrored for reproducible downstream packaging?
-- How should platform-specific Rust crates be organized to avoid excessive conditional-compilation complexity?
-
-## Risk: mixed C/C++/Rust build complexity
-
-### Why it matters
-
-OBS is currently built with CMake across the application, `libobs`, plugins, and platform-specific components. Adding Cargo introduces another dependency resolver, artifact graph, compiler toolchain, cache model, and set of platform target rules.
-
-A migration that improves memory safety but makes OBS substantially harder to build, package, debug, or contribute to may not be a net win.
-
-### Mitigations
-
-- Integrate Cargo through a single documented CMake strategy.
-- Pin toolchain expectations.
-- Keep the number of crates and third-party Rust dependencies small initially.
-- Ensure offline/reproducible packaging is possible.
-- Make IDE/debugger instructions work for mixed-language call stacks.
-- Track build-time and artifact-size regressions as first-class metrics.
-
-### Open questions
-
-- Corrosion, direct Cargo invocation, `cxx`, `cbindgen`, or a combination: which integration has the lowest maintenance cost for OBS?
-- Will OBS vendor Cargo dependencies, rely on lockfiles plus network fetches, or use distribution-specific packaging?
-- How will sanitizer builds interact with Rust code on each platform?
-- How will symbol files and crash-reporting pipelines represent mixed Rust/C/C++ stacks?
-
-## Risk: ownership and allocator mismatches
-
-### Why it matters
-
-OBS native code uses established allocation, reference-counting, object-context, callback, and weak-reference conventions. `libobs/obs-internal.h` contains shared context, weak-reference, mutex, list, and array state that Rust code must not reinterpret casually.
-
-### Mitigations
-
-- Make allocation ownership explicit at each FFI function.
-- Prefer opaque handles.
-- Pair every cross-boundary allocation with a defined destroy function.
-- Do not mix Rust allocator ownership with native freeing unless the contract explicitly supports it.
-- Characterize existing object lifetime and callback order before replacing implementations.
-
-### Open questions
-
-- Which OBS allocator functions, if any, should Rust wrappers use for objects returned to C?
-- Which internal structs must remain C-owned indefinitely because their layout is shared across translation units or plugins?
-
-## Risk: panic and exception boundary behavior
-
-### Why it matters
-
-A Rust panic crossing into C/C++ is not an acceptable error strategy. Conversely, C++ exceptions or platform callbacks must not violate assumptions in Rust code.
-
-### Mitigations
-
-- Define a repository panic policy before production Rust is introduced.
-- Prevent unwinding across FFI.
-- Map failures into existing OBS result/logging conventions.
-- Keep FFI functions small and auditable.
-
-### Open questions
-
-- Should release Rust crates use `panic = "abort"`, boundary `catch_unwind`, or a mixed policy by subsystem?
-- How should fatal versus recoverable Rust failures be surfaced in OBS logs and crash reports?
-
-## Risk: dependency and supply-chain growth
-
-### Why it matters
-
-Introducing Rust can unintentionally introduce large transitive dependency graphs. This affects security review, build reproducibility, licensing, and update burden.
-
-### Mitigations
-
-- Review every new crate and its transitive graph.
-- Commit and enforce `Cargo.lock` according to the chosen workspace model.
-- Run dependency/license/security auditing in CI once Rust production code exists.
-- Prefer standard-library solutions for small utilities.
-
-### Open questions
-
-- Which dependency-audit tools and policies should be mandatory?
-- What license allowlist matches OBS distribution requirements?
-- What is the process for responding to RustSec advisories in transitive dependencies?
-
-## Decision questions before any code migration
-
-Before Phase 1 begins, maintainers should resolve at least these questions:
-
-1. What concrete engineering problem is Rust solving in the first candidate module?
-2. What exact C ABI surface must remain stable?
-3. What is the ownership model across that boundary?
-4. Is the code called from a real-time or latency-sensitive thread?
-5. What before/after tests establish behavioral equivalence?
-6. What before/after benchmarks establish acceptable performance?
-7. Does the candidate depend on a native SDK that will remain FFI-backed permanently?
-8. Can the candidate be rolled back independently if the mixed-language cost is too high?
-
-If these questions do not have precise answers, the candidate is not ready for migration.
+- Which desktop UI toolkit gives the best Rust-native accessibility and platform
+  support for Phase 7?
+- Which video/audio formats should be first-class before GPU work begins?
+- Which software encoders and containers can meet distribution and licensing goals
+  without a native build dependency?
+- Should dynamic plugins be sandboxed processes, WebAssembly modules, or remain
+  compile-time only for the first release?
+- What are the minimum supported CPU, GPU, OS, and device capabilities for a useful
+  first release?

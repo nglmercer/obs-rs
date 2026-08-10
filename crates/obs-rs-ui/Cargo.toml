@@ -1,0 +1,17 @@
+[package]
+name = "obs-rs-ui"
+description = "Toolkit-neutral Rust application state and command model for OBS-RS"
+edition.workspace = true
+publish.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+obs-rs-media = { path = "../obs-rs-media" }
+obs-rs-project = { path = "../obs-rs-project" }
+obs-rs-util = { path = "../obs-rs-util" }
+
+[dev-dependencies]
+obs-rs-config = { path = "../obs-rs-config" }

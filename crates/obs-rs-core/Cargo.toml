@@ -1,0 +1,18 @@
+[package]
+name = "obs-rs-core"
+description = "Rust-native OBS-RS runtime, scene graph, and reference compositor"
+edition.workspace = true
+publish.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+obs-rs-config = { path = "../obs-rs-config" }
+obs-rs-media = { path = "../obs-rs-media" }
+obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
+obs-rs-util = { path = "../obs-rs-util" }
+
+[dev-dependencies]
+obs-rs-builtins = { path = "../obs-rs-builtins" }

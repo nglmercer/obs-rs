@@ -1,8 +1,19 @@
 [workspace]
 members = [
+    "crates/obs-rs-app",
+    "crates/obs-rs-audio",
+    "crates/obs-rs-builtins",
+    "crates/obs-rs-capture",
     "crates/obs-rs-config",
-    "crates/obs-rs-plugin-probe",
+    "crates/obs-rs-core",
+    "crates/obs-rs-media",
+    "crates/obs-rs-output",
+    "crates/obs-rs-plugin-api",
+    "crates/obs-rs-project",
+    "crates/obs-rs-render",
+    "crates/obs-rs-ui",
     "crates/obs-rs-util",
+    "crates/obs-rs-video",
 ]
 resolver = "2"
 

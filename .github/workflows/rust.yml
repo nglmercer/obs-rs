@@ -33,34 +33,11 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
-      - name: Build the C ABI library
+      - name: Build release artifacts
         run: cargo build --workspace --release
 
-      - name: Compile the C ABI smoke test
-        run: >-
-          cc -std=c11 -Wall -Wextra -Werror
-          -I include tests/ffi_smoke.c
-          -L target/release -Wl,-rpath,'$ORIGIN'
-          -lobs_rs_util -o target/release/ffi_smoke
+      - name: Run the end-to-end demo
+        run: cargo run -p obs-rs-app --release
 
-      - name: Run the C ABI smoke test
-        run: ./target/release/ffi_smoke
-
-      - name: Compile the configuration C ABI smoke test
-        run: >-
-          cc -std=c11 -Wall -Wextra -Werror
-          -I include tests/config_ffi_smoke.c
-          -L target/release -Wl,-rpath,'$ORIGIN'
-          -lobs_rs_config -o target/release/config_ffi_smoke
-
-      - name: Run the configuration C ABI smoke test
-        run: ./target/release/config_ffi_smoke
-
-      - name: Compile the plugin ABI smoke test
-        run: >-
-          cc -std=c11 -Wall -Wextra -Werror
-          -I include tests/plugin_abi_smoke.c
-          -ldl -o target/release/plugin_abi_smoke
-
-      - name: Run the plugin ABI smoke test
-        run: ./target/release/plugin_abi_smoke
+      - name: Run sustained video benchmark fixture
+        run: cargo run -p obs-rs-app --bin obs-rs-benchmark --release

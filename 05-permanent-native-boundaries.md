@@ -1,51 +1,59 @@
-# Phase 4: Permanent Native Boundaries
+# Rust-Native Boundary Policy
 
-## Status
+## Purpose
 
-Phase 4 is complete for this workspace as a boundary-stabilization record. It does
-not promise a 100% Rust rewrite. The workspace contains migration-oriented Rust
-components and ABI probes, but it does not contain the OBS native source tree, the
-native build graph, or generated platform SDK bindings.
+The old planning direction treated native boundaries as permanent and accepted a
+mixed-language application as the end state. OBS-RS has a different objective: the
+portable engine and product code are Rust, and no foreign ABI is allowed to become a
+silent dependency.
 
-The required module export signatures are based on the authoritative OBS
-[`libobs/obs-module.h`](https://github.com/obsproject/obs-studio/blob/master/libobs/obs-module.h).
-The local probe verifies symbol shape and dynamic loading; it must receive the target
-checkout's generated `LIBOBS_API_VER` before it can be evaluated as a real plugin.
+This document defines how future integrations remain aligned with that objective.
 
-## Boundary inventory
+## Required boundary shape
 
-| Boundary | Why it remains native | Rust role allowed by this project | Acceptance guard |
-| --- | --- | --- | --- |
-| Qt frontend under `frontend/` | Qt widgets, `.ui` forms, platform integration, and the C++ application shell are product infrastructure. | Narrow C ABI or C++ bridge to isolated control-plane logic. | No frontend rewrite is implied; UI behavior and startup remain native. |
-| Vendor encoders | NVENC, Intel Quick Sync, AMD/vendor interfaces, and Apple VideoToolbox are SDK contracts owned by platform or hardware vendors. | Safe orchestration around narrow, audited FFI adapters. | Driver/API matrix, encode quality, latency, and dropped-frame benchmarks. |
-| Platform capture APIs | DirectShow, Media Foundation, Windows capture APIs, AVFoundation, PipeWire, and V4L2 expose OS/device behavior. | Portable policy/state code beside native adapters. | Device enumeration, hot-plug, supported-OS, and long-duration capture tests. |
-| Media libraries | FFmpeg and x264 provide foundational codec/mux/protocol implementations. | Explicit bindings or orchestration; no speculative reimplementation. | Stream/record compatibility, A/V sync, CPU/GPU, and packaging tests. |
-| Third-party plugin ABI | Existing binary plugins depend on C symbols, layouts, calling conventions, and native loader behavior. | Rust may implement a plugin behind the unchanged C ABI. | Required symbol checks, loader smoke tests, ABI review, and representative binary-plugin tests. |
-| OBS process-wide runtime | `struct obs_core`, synchronization, callback tables, and native object lifetimes are shared by the C/C++ tree. | Migrate only isolated policy/state after characterization; keep opaque handles. | Ownership, callback order, lock behavior, and rollback evidence. |
+Every subsystem exposes a safe Rust trait or value contract to the rest of the
+workspace. A backend may have platform-specific implementation details, but it must:
 
-## Local evidence
+- live in a separately named crate;
+- return typed errors and capabilities;
+- have a CPU or simulated test implementation when practical;
+- document ownership, threading, allocation, and shutdown behavior;
+- avoid raw pointers and foreign layouts in the public API;
+- pass the workspace quality gates and its own integration tests.
 
-The current workspace protects the boundaries it can actually observe:
+## Current evidence
 
-- `obs-rs-util` exposes paired allocation/free functions and tests nullability,
-  lengths, error translation, and exported symbols.
-- `obs-rs-config` keeps state ownership in Rust, exposes an opaque C handle, and
-  tests round-tripping, buffer sizing, mutation, destruction, and invalid input.
-- `obs-rs-plugin-probe` exports `obs_module_load`,
-  `obs_module_set_pointer`, and `obs_module_ver`; `tests/plugin_abi_smoke.c` loads
-  the shared library with the platform dynamic loader and checks the required
-  symbols.
-- `.github/workflows/rust.yml` runs formatting, workspace checks, Clippy, Rust
-  tests, release builds, C header compilation, and ABI smoke tests.
+The current workspace contains only Rust source and Cargo metadata. The portable
+crates forbid unsafe code, and the CI workflow invokes Cargo checks and tests only.
+The headless demo exercises the complete current path from plugin registration to
+rendered frame.
 
-These checks prove the local Rust/C contracts only. They do not prove compatibility
-with an OBS binary or third-party plugin until this workspace is integrated into an
-actual OBS checkout and tested against its generated headers and loader.
+This is evidence of a Rust-native foundation, not evidence that capture, GPU, audio,
+codec, streaming, or desktop UI are complete. Those capabilities remain on the
+roadmap and must supply their own evidence.
 
-## Go/no-go rule
+## Integration decision matrix
 
-No later migration should remove a native boundary merely to increase a Rust line
-count. A candidate must have a concrete safety or maintenance benefit, an explicit
-ownership model, characterization tests, performance evidence when relevant, and a
-rollback path. If those conditions are absent, the native implementation is an
-intentional permanent boundary rather than unfinished migration work.
+| Integration | First implementation | Acceptance gate |
+| --- | --- | --- |
+| Video capture | simulated/test source, then a safe Rust adapter | device lifecycle, permissions, timestamps, fallback |
+| Audio input/output | offline buffers and simulated clock | sample count, drift, underflow, latency |
+| GPU rendering | CPU reference renderer first | format parity, context loss, resource cleanup |
+| Encoding | Rust packet/encoder traits | deterministic fixtures, quality, bounded back-pressure |
+| Streaming | output trait with a fake transport | reconnect, cancellation, no capture-thread blocking |
+| Plugins | compile-time Rust registration with API versioning | version checks, isolation, diagnostics |
+| Desktop UI | Rust application state over the engine | accessibility, recovery, cross-platform packaging |
+
+## Prohibited shortcuts
+
+Do not add a foreign ABI merely to make an unfinished subsystem appear complete. Do
+not expose a backend's internal layout to the core. Do not call a wrapper “pure Rust”
+when its correctness depends on an unreviewed native build. If a capability is not
+ready, keep the reference implementation and mark the feature as unavailable.
+
+## Exit condition
+
+There is no claim of completion until the roadmap phases that are in scope for a
+release have passed their acceptance gates. The project may ship a useful subset,
+but its release notes must identify unsupported capture, codec, output, or UI
+capabilities instead of hiding them behind an architectural exception.
