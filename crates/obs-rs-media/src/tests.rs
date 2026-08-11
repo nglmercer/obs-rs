@@ -59,6 +59,47 @@ fn transforms_flip_and_apply_opacity() {
 }
 
 #[test]
+fn transforms_crop_source_edges_before_scaling_and_flipping() {
+    let format =
+        VideoFormat::new(4, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let frame = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255],
+    )
+    .expect("pixels");
+    let cropped = FrameTransform::IDENTITY
+        .with_crop(1, 0, 1, 0)
+        .expect("crop");
+    let result = frame.transformed(cropped).expect("render crop");
+
+    assert_eq!(result.pixel(0, 0), Some([20, 0, 0, 255]));
+    assert_eq!(result.pixel(1, 0), Some([30, 0, 0, 255]));
+    assert_eq!(result.pixel(2, 0), Some([0, 0, 0, 0]));
+
+    let flipped = FrameTransform::new(1_000, 1_000, 0, 0, true, false, 255)
+        .expect("flip")
+        .with_crop(1, 0, 1, 0)
+        .expect("crop");
+    let result = frame.transformed(flipped).expect("render flipped crop");
+    assert_eq!(result.pixel(0, 0), Some([30, 0, 0, 255]));
+    assert_eq!(result.pixel(1, 0), Some([20, 0, 0, 255]));
+}
+
+#[test]
+fn a_crop_that_consumes_the_frame_is_rejected_at_render_time() {
+    let frame = VideoFrame::solid(format(), Timestamp::ZERO, [1, 2, 3, 255]);
+    let transform = FrameTransform::IDENTITY
+        .with_crop(1, 0, 1, 0)
+        .expect("bounded crop");
+
+    assert_eq!(
+        frame.transformed(transform),
+        Err(MediaError::InvalidTransform)
+    );
+}
+
+#[test]
 fn filters_modify_owned_pixels_without_mutating_the_input() {
     let format =
         VideoFormat::new(1, 1, FrameRate::new(30, 1).expect("valid rate")).expect("valid format");

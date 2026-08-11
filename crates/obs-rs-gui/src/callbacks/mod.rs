@@ -151,6 +151,7 @@ pub(crate) fn reconcile_output_lifecycle(
         ui.set_recording(false);
         if recording == obs_rs_engine::OutputLifecycle::Failed {
             ui.set_status_message("Recording stopped after an output failure".into());
+            ui.set_active_modal(11);
         }
     }
     if claims_streaming && streaming.is_stopped() {
@@ -160,6 +161,7 @@ pub(crate) fn reconcile_output_lifecycle(
         ui.set_streaming(false);
         if streaming == obs_rs_engine::OutputLifecycle::Failed {
             ui.set_status_message("Streaming stopped after transport failure".into());
+            ui.set_active_modal(11);
         }
     }
 }
@@ -182,10 +184,15 @@ fn refresh_input_meter(
     } else {
         output.borrow().input_peak_milli()
     };
-    let changed = state
-        .borrow_mut()
+    let desktop_peak = output.borrow().desktop_peak_milli();
+    let mut state_guard = state.borrow_mut();
+    let changed = state_guard
         .set_channel_peak_milli(crate::MIC_CHANNEL_ID, peak)
-        .is_ok();
+        .is_ok()
+        | state_guard
+            .set_channel_peak_milli("desktop", desktop_peak)
+            .is_ok();
+    drop(state_guard);
     if changed {
         crate::refresh::refresh_mixer_rows(ui, &state.borrow());
     }

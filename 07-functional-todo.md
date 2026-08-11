@@ -76,18 +76,18 @@ owner boundary, dependencies, tests, and an acceptance condition.
   Acceptance: Slint callbacks only enqueue commands/frames; a stalled TCP peer
   cannot stall preview or scene edits. Shutdown joins the worker after its
   bounded transport timeout.
-- [~] Add output lifecycle events (`Starting`, `Running`, `Failed`, `Stopping`)
+- [x] Add output lifecycle events (`Starting`, `Running`, `Failed`, `Stopping`)
   and reconcile them with `DesktopState` instead of optimistic booleans.
   Dependencies: P0.1.
   Tests: connect failure, remote close, failed recording path, stop during start.
-  Acceptance: the GUI reconciles a failed stream/worker back to stopped; explicit
-  `Starting`/`Stopping` event enums remain for the next lifecycle refinement.
+  Acceptance: the GUI reconciles a failed stream/worker back to stopped and
+  exposes every lifecycle phase explicitly.
 
 ### P0.2 — Complete PipeWire device lifecycle
 
-- [~] Enumerate stable input/sink node IDs from `pw-dump`, not only the default
+- [x] Enumerate stable input/sink node IDs from `pw-dump`, not only the default
   route. The engine accepts a selected provider ID and settings shows live
-  availability; selected-device draft persistence and hot-plug refresh remain.
+  availability, persists the selected-device draft, and refreshes hot-plug state.
   Dependencies: `obs-rs-audio-pipewire` contract.
   Files: adapter, `obs-rs-ui` audio commands, GUI settings.
   Tests: fake `pw-dump` snapshots, duplicate/removed nodes, selected-node loss.
@@ -101,15 +101,15 @@ owner boundary, dependencies, tests, and an acceptance condition.
 
 ### P0.3 — Make project/output synchronization explicit
 
-- [~] Synchronize project revisions into the engine at a safe idle boundary.
+- [x] Synchronize project revisions into the engine at a safe idle boundary.
   `ProjectSession::revision` is forwarded through `EngineWorker`, and GUI edits
   are rebuilt before the next idle output. Edits made while recording/streaming
   remain staged in the UI until the output stops.
   Dependencies: P0.1 worker.
   Files: engine session/worker, GUI refresh/project callbacks.
   Tests: worker sync while idle and GUI output integration.
-  Acceptance remaining: profile resolution changes must be rejected or staged
-  explicitly while output is running, with rollback after rebuild failure.
+  Acceptance: profile resolution changes are staged explicitly while output is
+  running and roll back if the idle-boundary rebuild fails.
 - [x] Add a V1 diagnostics section for engine/audio/output state and last typed
   failure, including backend (`PipeWire` or fallback), queue depth, drops, and
   reconnect count.
@@ -131,22 +131,22 @@ owner boundary, dependencies, tests, and an acceptance condition.
 
 ## P1 — useful capture and editing breadth
 
-- [ ] X11 window selection and geometry tracking. Dependencies: P0.4.
+- [x] X11 window selection and geometry tracking. Dependencies: P0.4.
   Tests: window ID discovery, destroyed window, resize, fallback.
-- [ ] Linux camera input behind a reviewed Rust adapter. Dependencies: the
+- [x] Linux camera input behind a reviewed Rust adapter. Dependencies: the
   platform capture contract and a chosen safe device API. Tests: permission,
   format negotiation, disconnect/reconnect.
-- [~] Source property forms for all V1 source settings, including display,
+- [x] Source property forms for all V1 source settings, including display,
   crop, scale, opacity, and test-pattern controls. Dependencies: project command
   validation. The typed property form covers per-kind source settings and the
   canvas editor covers position and scale directly.
-  Remaining: crop, opacity, and flip have no form control, so they round-trip
-  through the project file but can only be set programmatically.
+  Crop, opacity, flip, position, and scale have typed controls; the raw transform
+  remains available as an advanced escape hatch.
   Acceptance: every visible source setting round-trips through the project file
   and takes effect in preview.
-- [ ] Real mixer channel graph: map desktop and microphone channels to separate
+- [x] Real mixer channel graph: map desktop and microphone channels to separate
   engine sources and expose per-source peaks. Dependencies: P0.2.
-- [ ] Guided recovery dialog and explicit “unsupported capability” states for
+- [x] Guided recovery dialog and explicit “unsupported capability” states for
   projector, virtual camera, and platform-specific menu actions.
 
 ## P2 — post-V1 capabilities
@@ -161,7 +161,7 @@ owner boundary, dependencies, tests, and an acceptance condition.
 
 ## Definition of done for V1
 
-- [~] A clean Linux session can create a project, select X11 or test-pattern
+- [x] A clean Linux session can create a project, select X11 or test-pattern
   sources, preview while idle, change preview/program, take a transition, and
   recover from a missing display/audio service.
 - [x] Recording produces an atomically committed `OBSRPKT1` file with both video

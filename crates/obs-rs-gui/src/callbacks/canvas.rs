@@ -74,6 +74,14 @@ fn transform_for_rect(base: FrameTransform, rect: ItemRect, canvas: (u32, u32)) 
         base.flip_y(),
         base.opacity(),
     )
+    .and_then(|transform| {
+        transform.with_crop(
+            base.crop_left(),
+            base.crop_top(),
+            base.crop_right(),
+            base.crop_bottom(),
+        )
+    })
     .unwrap_or(base)
 }
 

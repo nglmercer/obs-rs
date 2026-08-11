@@ -221,14 +221,12 @@ pub(crate) fn install_mixer_callbacks(
                 gain_milli,
             },
         );
-        // The engine captures one live input, which is the microphone the
-        // settings window selects, so that channel is the one whose fader and
-        // mute reach the recording and the stream.
-        if id == crate::MIC_CHANNEL_ID {
-            if let Err(error) = gain_output.borrow_mut().set_input_gain_milli(gain_milli) {
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_status_message(format!("Audio input failed: {error}").into());
-                }
+        if let Err(error) = gain_output
+            .borrow_mut()
+            .set_channel_gain_milli(id.as_str(), gain_milli)
+        {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(format!("Audio channel failed: {error}").into());
             }
         }
     });
@@ -244,16 +242,17 @@ pub(crate) fn install_mixer_callbacks(
             &mute_renderer,
             UiCommand::ToggleMixerMute { id: id.to_string() },
         );
-        if id == crate::MIC_CHANNEL_ID {
-            let muted = mute_state
-                .borrow()
-                .mixer_channels()
-                .find(|channel| channel.id() == crate::MIC_CHANNEL_ID)
-                .is_some_and(obs_rs_ui::MixerChannel::muted);
-            if let Err(error) = mute_output.borrow_mut().set_input_muted(muted) {
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_status_message(format!("Audio input failed: {error}").into());
-                }
+        let muted = mute_state
+            .borrow()
+            .mixer_channels()
+            .find(|channel| channel.id() == id.as_str())
+            .is_some_and(obs_rs_ui::MixerChannel::muted);
+        if let Err(error) = mute_output
+            .borrow_mut()
+            .set_channel_muted(id.as_str(), muted)
+        {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(format!("Audio channel failed: {error}").into());
             }
         }
     });

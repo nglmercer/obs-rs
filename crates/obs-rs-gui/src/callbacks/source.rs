@@ -315,16 +315,16 @@ fn selected_source_context(
 
 fn parse_source_transform(document: &str) -> Result<FrameTransform, Box<dyn Error>> {
     let values = document.split(',').map(str::trim).collect::<Vec<_>>();
-    if values.len() != 7 {
+    if values.len() != 7 && values.len() != 11 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "transform needs 7 comma-separated values",
+            "transform needs 7 or 11 comma-separated values",
         )
         .into());
     }
     let flip_x = parse_transform_flag(values[4], "flip-x")?;
     let flip_y = parse_transform_flag(values[5], "flip-y")?;
-    Ok(FrameTransform::new(
+    let transform = FrameTransform::new(
         values[0].parse()?,
         values[1].parse()?,
         values[2].parse()?,
@@ -332,6 +332,15 @@ fn parse_source_transform(document: &str) -> Result<FrameTransform, Box<dyn Erro
         flip_x,
         flip_y,
         values[6].parse()?,
+    )?;
+    if values.len() == 7 {
+        return Ok(transform);
+    }
+    Ok(transform.with_crop(
+        values[7].parse()?,
+        values[8].parse()?,
+        values[9].parse()?,
+        values[10].parse()?,
     )?)
 }
 
@@ -378,14 +387,18 @@ fn parse_source_filters(document: &str) -> Result<Vec<FrameFilter>, Box<dyn Erro
 
 pub(crate) fn source_transform_document(transform: FrameTransform) -> String {
     format!(
-        "{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{}",
         transform.scale_x_milli(),
         transform.scale_y_milli(),
         transform.translate_x(),
         transform.translate_y(),
         u8::from(transform.flip_x()),
         u8::from(transform.flip_y()),
-        transform.opacity()
+        transform.opacity(),
+        transform.crop_left(),
+        transform.crop_top(),
+        transform.crop_right(),
+        transform.crop_bottom()
     )
 }
 

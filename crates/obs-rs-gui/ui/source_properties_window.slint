@@ -81,12 +81,24 @@ export component SourcePropertiesWindow inherits Window {
     in-out property <string> source-settings;
     in-out property <string> source-transform;
     in-out property <string> source-filters;
+    in-out property <int> item-scale-x: 1000;
+    in-out property <int> item-scale-y: 1000;
+    in-out property <int> item-x: 0;
+    in-out property <int> item-y: 0;
+    in-out property <bool> item-flip-x: false;
+    in-out property <bool> item-flip-y: false;
+    in-out property <int> item-opacity: 255;
+    in-out property <int> crop-left: 0;
+    in-out property <int> crop-top: 0;
+    in-out property <int> crop-right: 0;
+    in-out property <int> crop-bottom: 0;
     in-out property <bool> show-advanced: false;
 
     callback accept-properties();
     callback cancel-properties();
     callback restore-defaults();
     callback edit-property(string, string);
+    callback edit-transform(string, string);
     callback open-monitor-window();
 
     VerticalLayout {
@@ -127,10 +139,43 @@ export component SourcePropertiesWindow inherits Window {
                 SettingsGroup {
                     title: I18n.text.transform;
                     SettingRow {
+                        label: "Scale X / Y (‰)";
+                        SpinBox { value: root.item-scale-x; minimum: 1; maximum: 100000; edited(value) => root.edit-transform("scale-x", value); horizontal-stretch: 1; }
+                        SpinBox { value: root.item-scale-y; minimum: 1; maximum: 100000; edited(value) => root.edit-transform("scale-y", value); horizontal-stretch: 1; }
+                    }
+                    SettingRow {
+                        label: "Position X / Y";
+                        SpinBox { value: root.item-x; minimum: -32768; maximum: 32768; edited(value) => root.edit-transform("x", value); horizontal-stretch: 1; }
+                        SpinBox { value: root.item-y; minimum: -32768; maximum: 32768; edited(value) => root.edit-transform("y", value); horizontal-stretch: 1; }
+                    }
+                    SettingRow {
+                        label: "Opacity (0–255)";
+                        SpinBox { value: root.item-opacity; minimum: 0; maximum: 255; edited(value) => root.edit-transform("opacity", value); horizontal-stretch: 1; }
+                    }
+                    SettingRow {
+                        label: "Flip";
+                        CheckBox { text: "Horizontal"; checked: root.item-flip-x; toggled => root.edit-transform("flip-x", self.checked ? "1" : "0"); }
+                        CheckBox { text: "Vertical"; checked: root.item-flip-y; toggled => root.edit-transform("flip-y", self.checked ? "1" : "0"); }
+                    }
+                    SettingRow {
+                        label: "Crop L / T";
+                        SpinBox { value: root.crop-left; minimum: 0; maximum: 32768; edited(value) => root.edit-transform("crop-left", value); horizontal-stretch: 1; }
+                        SpinBox { value: root.crop-top; minimum: 0; maximum: 32768; edited(value) => root.edit-transform("crop-top", value); horizontal-stretch: 1; }
+                    }
+                    SettingRow {
+                        label: "Crop R / B";
+                        SpinBox { value: root.crop-right; minimum: 0; maximum: 32768; edited(value) => root.edit-transform("crop-right", value); horizontal-stretch: 1; }
+                        SpinBox { value: root.crop-bottom; minimum: 0; maximum: 32768; edited(value) => root.edit-transform("crop-bottom", value); horizontal-stretch: 1; }
+                    }
+                    CheckBox {
+                        text: I18n.text.property_ui.show_advanced;
+                        checked <=> root.show-advanced;
+                    }
+                    if root.show-advanced : SettingRow {
                         label: I18n.text.transform;
                         LineEdit {
                             text <=> root.source-transform;
-                            placeholder-text: "1000,1000,0,0,0,0,255";
+                            placeholder-text: "1000,1000,0,0,0,0,255,0,0,0,0";
                             horizontal-stretch: 1;
                         }
                     }

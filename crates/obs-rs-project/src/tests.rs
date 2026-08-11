@@ -448,3 +448,37 @@ fn loading_a_project_clears_the_history() {
         "undoing across a load would resurrect an unrelated project"
     );
 }
+
+#[test]
+fn project_codec_round_trips_crop_and_accepts_legacy_transforms() {
+    let mut cropped = project();
+    let transform = FrameTransform::new(1_250, 900, 12, -8, true, false, 180)
+        .expect("transform")
+        .with_crop(4, 5, 6, 7)
+        .expect("crop");
+    let profile_id = Identifier::new("live").expect("profile id");
+    let scene_id = Identifier::new("main").expect("scene id");
+    let source_id = Identifier::new("background").expect("source id");
+    cropped
+        .profile_mut(&profile_id)
+        .expect("profile")
+        .scene_mut(&scene_id)
+        .expect("scene")
+        .source_mut(&source_id)
+        .expect("source")
+        .set_transform(transform);
+
+    let decoded = Project::parse(&cropped.serialize()).expect("parse cropped project");
+    let decoded_transform = decoded
+        .profile("live")
+        .expect("profile")
+        .scene("main")
+        .expect("scene")
+        .source("background")
+        .expect("source")
+        .transform();
+    assert_eq!(decoded_transform, transform);
+
+    let legacy = project().serialize().replace(",0,0,0,0|", "|");
+    Project::parse(&legacy).expect("seven-field legacy transforms remain readable");
+}

@@ -146,6 +146,14 @@ pub struct EngineStats {
     pub last_video_timestamp: Option<Timestamp>,
     pub last_audio_timestamp: Option<Timestamp>,
     pub audio_peak_milli: u16,
+    pub desktop_peak_milli: u16,
+    pub microphone_peak_milli: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EngineAudioChannel {
+    Desktop,
+    Microphone,
 }
 
 /// Lifecycle of one output, recording or streaming.
@@ -402,7 +410,8 @@ pub struct EngineSession {
     runtime: Runtime,
     timeline: MediaTimeline,
     mixer: AudioMixer,
-    audio_source: AudioSourceId,
+    desktop_audio_source: AudioSourceId,
+    microphone_audio_source: AudioSourceId,
     audio_input: Box<dyn AudioInput>,
     audio_backend: String,
     audio_fallback: bool,
@@ -450,7 +459,8 @@ impl EngineSession {
             config.timeline_tolerance_nanos,
         );
         let mut mixer = AudioMixer::new(config.audio_format);
-        let audio_source = mixer.add_source(1.0)?;
+        let desktop_audio_source = mixer.add_source(1.0)?;
+        let microphone_audio_source = mixer.add_source(1.0)?;
         let (audio_input, audio_backend, audio_fallback) = open_audio_input(
             &config.audio_provider,
             config.audio_format,
@@ -467,7 +477,8 @@ impl EngineSession {
             runtime,
             timeline,
             mixer,
-            audio_source,
+            desktop_audio_source,
+            microphone_audio_source,
             audio_input,
             audio_backend,
             audio_fallback,
@@ -539,9 +550,17 @@ impl EngineSession {
     /// # Errors
     ///
     /// Returns [`EngineError`] when the gain is outside the mixer contract.
-    pub fn set_input_gain_milli(&mut self, gain_milli: u16) -> Result<(), EngineError> {
+    pub fn set_channel_gain_milli(
+        &mut self,
+        channel: EngineAudioChannel,
+        gain_milli: u16,
+    ) -> Result<(), EngineError> {
+        let source = match channel {
+            EngineAudioChannel::Desktop => self.desktop_audio_source,
+            EngineAudioChannel::Microphone => self.microphone_audio_source,
+        };
         self.mixer
-            .set_gain(self.audio_source, f32::from(gain_milli) / 1_000.0)?;
+            .set_gain(source, f32::from(gain_milli) / 1_000.0)?;
         Ok(())
     }
 
@@ -550,8 +569,16 @@ impl EngineSession {
     /// # Errors
     ///
     /// Returns [`EngineError`] if the engine source has been removed.
-    pub fn set_input_muted(&mut self, muted: bool) -> Result<(), EngineError> {
-        self.mixer.set_muted(self.audio_source, muted)?;
+    pub fn set_channel_muted(
+        &mut self,
+        channel: EngineAudioChannel,
+        muted: bool,
+    ) -> Result<(), EngineError> {
+        let source = match channel {
+            EngineAudioChannel::Desktop => self.desktop_audio_source,
+            EngineAudioChannel::Microphone => self.microphone_audio_source,
+        };
+        self.mixer.set_muted(source, muted)?;
         Ok(())
     }
 
@@ -950,10 +977,20 @@ impl EngineSession {
                 Ok,
             )?;
             let input = self.read_audio_block(deadline.timestamp())?;
+            let desktop = AudioBuffer::silence(
+                self.config.audio_format,
+                deadline.timestamp(),
+                self.config.audio_block_frames,
+            )?;
+            self.stats.desktop_peak_milli = audio_peak_milli(&desktop);
+            self.stats.microphone_peak_milli = audio_peak_milli(&input);
             let mixed = self.mixer.mix(
                 deadline.timestamp(),
                 self.config.audio_block_frames,
-                &[(self.audio_source, &input)],
+                &[
+                    (self.desktop_audio_source, &desktop),
+                    (self.microphone_audio_source, &input),
+                ],
             )?;
             self.stats.audio_blocks = self.stats.audio_blocks.saturating_add(1);
             if self.audio_fallback {
@@ -1108,6 +1145,28 @@ mod tests {
         let snapshot = engine.snapshot();
         assert!(!snapshot.audio_fallback);
         assert_eq!(snapshot.audio_backend, "Deterministic test signal");
+    }
+
+    #[test]
+    fn desktop_and_microphone_are_distinct_metered_mixer_sources() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine
+            .set_channel_gain_milli(EngineAudioChannel::Desktop, 500)
+            .expect("desktop gain");
+        engine
+            .set_channel_muted(EngineAudioChannel::Microphone, false)
+            .expect("microphone mute");
+
+        engine.tick(None, Some("program")).expect("tick");
+        let stats = engine.stats();
+        assert_eq!(
+            stats.desktop_peak_milli, 0,
+            "unavailable desktop capture is silence"
+        );
+        assert!(
+            stats.microphone_peak_milli > 0,
+            "the deterministic input drives only the microphone node"
+        );
     }
 
     #[test]

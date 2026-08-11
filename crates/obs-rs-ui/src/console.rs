@@ -9,6 +9,10 @@ use super::{
 
 /// A command understood by the safe terminal frontend.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "console commands are parsed interactively and boxing every UI command would complicate the shared dispatch boundary for no measurable memory benefit"
+)]
 pub enum ConsoleCommand {
     /// Print the current accessible snapshot.
     Show,

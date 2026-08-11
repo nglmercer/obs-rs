@@ -238,29 +238,27 @@ fn append_transform(document: &mut String, transform: FrameTransform) {
     document.push_str(if transform.flip_y() { "1" } else { "0" });
     document.push(',');
     push_display(document, &transform.opacity());
+    document.push(',');
+    push_display(document, &transform.crop_left());
+    document.push(',');
+    push_display(document, &transform.crop_top());
+    document.push(',');
+    push_display(document, &transform.crop_right());
+    document.push(',');
+    push_display(document, &transform.crop_bottom());
 }
 
 fn parse_transform(value: &str, line: usize) -> Result<FrameTransform, ProjectError> {
-    // Fixed arity, so the seven fields are read straight out of the split
-    // iterator rather than collected into a temporary Vec.
-    let mut parts = value.split(',');
-    let mut values = [""; 7];
-    for slot in &mut values {
-        let Some(field) = parts.next() else {
-            return Err(ProjectError::InvalidDocument {
-                line,
-                reason: "invalid transform field count".to_owned(),
-            });
-        };
-        *slot = field;
-    }
-    if parts.next().is_some() {
+    // Seven fields is the V1 legacy shape; four crop fields were appended so
+    // old documents remain readable without a migration step.
+    let values = value.split(',').collect::<Vec<_>>();
+    if values.len() != 7 && values.len() != 11 {
         return Err(ProjectError::InvalidDocument {
             line,
             reason: "invalid transform field count".to_owned(),
         });
     }
-    FrameTransform::new(
+    let transform = FrameTransform::new(
         number(values[0], line, "horizontal scale")?,
         number(values[1], line, "vertical scale")?,
         number(values[2], line, "horizontal translation")?,
@@ -269,7 +267,18 @@ fn parse_transform(value: &str, line: usize) -> Result<FrameTransform, ProjectEr
         number::<u8>(values[5], line, "vertical flip")? != 0,
         number(values[6], line, "opacity")?,
     )
-    .map_err(ProjectError::Media)
+    .map_err(ProjectError::Media)?;
+    if values.len() == 7 {
+        return Ok(transform);
+    }
+    transform
+        .with_crop(
+            number(values[7], line, "left crop")?,
+            number(values[8], line, "top crop")?,
+            number(values[9], line, "right crop")?,
+            number(values[10], line, "bottom crop")?,
+        )
+        .map_err(ProjectError::Media)
 }
 
 /// Appends a comma-separated filter chain directly to `document`.

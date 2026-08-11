@@ -328,6 +328,15 @@ impl VideoFrame {
         let mut output = Self::solid(self.format, self.timestamp, [0, 0, 0, 0]);
         let width = i64::from(self.format.width);
         let height = i64::from(self.format.height);
+        let crop_left = i64::from(transform.crop_left);
+        let crop_top = i64::from(transform.crop_top);
+        let crop_right = i64::from(transform.crop_right);
+        let crop_bottom = i64::from(transform.crop_bottom);
+        let visible_right = width - crop_right;
+        let visible_bottom = height - crop_bottom;
+        if crop_left >= visible_right || crop_top >= visible_bottom {
+            return Err(MediaError::InvalidTransform);
+        }
         let scale_x = i64::from(transform.scale_x_milli);
         let scale_y = i64::from(transform.scale_y_milli);
         let output_width = self.format.width_index();
@@ -345,12 +354,12 @@ impl VideoFrame {
                 if local_x < 0 {
                     return None;
                 }
-                let mut source_x = local_x * 1_000 / scale_x;
-                if source_x >= width {
+                let mut source_x = crop_left + local_x * 1_000 / scale_x;
+                if source_x >= visible_right {
                     return None;
                 }
                 if transform.flip_x {
-                    source_x = width - 1 - source_x;
+                    source_x = crop_left + visible_right - 1 - source_x;
                 }
                 usize::try_from(source_x).ok().map(|source_x| source_x * 4)
             })
@@ -383,12 +392,12 @@ impl VideoFrame {
             if local_y < 0 {
                 continue;
             }
-            let mut source_y = local_y * 1_000 / scale_y;
-            if source_y >= height {
+            let mut source_y = crop_top + local_y * 1_000 / scale_y;
+            if source_y >= visible_bottom {
                 continue;
             }
             if transform.flip_y {
-                source_y = height - 1 - source_y;
+                source_y = crop_top + visible_bottom - 1 - source_y;
             }
             // Both row bases are constant across the scanline. `source_y` and
             // `y` are within the validated frame height here, so the index

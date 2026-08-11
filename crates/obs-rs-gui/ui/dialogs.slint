@@ -188,3 +188,15 @@ export component AboutDialog inherits ModalShell {
         MutedText { text: root.platform; }
     }
 }
+
+export component RecoveryDialog inherits ModalShell {
+    in property <string> detail;
+
+    title: "Output needs attention";
+    subtitle: detail + "\n\nCheck the output path or stream address in Settings, then try again. Export diagnostics from Tools if the failure continues.";
+    accept-label: "Open Settings";
+    cancel-label: "Dismiss";
+    panel-height: 240px;
+
+    Rectangle { }
+}

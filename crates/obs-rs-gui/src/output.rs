@@ -6,7 +6,9 @@ use std::{
 
 use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
-use obs_rs_engine::{EngineConfig, EngineSession, EngineWorker, OutputLifecycle};
+use obs_rs_engine::{
+    EngineAudioChannel, EngineConfig, EngineSession, EngineWorker, OutputLifecycle,
+};
 use obs_rs_media::{VideoFormat, VideoFrame};
 use obs_rs_output::StreamState;
 use obs_rs_project::Project;
@@ -171,13 +173,22 @@ impl OutputRuntime {
         let _ = self.worker.try_push_frame(frame.clone());
     }
 
-    pub(crate) fn set_input_gain_milli(&mut self, gain_milli: u16) -> Result<(), Box<dyn Error>> {
-        self.worker.set_input_gain_milli(gain_milli)?;
+    pub(crate) fn set_channel_gain_milli(
+        &mut self,
+        id: &str,
+        gain_milli: u16,
+    ) -> Result<(), Box<dyn Error>> {
+        self.worker
+            .set_channel_gain_milli(engine_channel(id), gain_milli)?;
         Ok(())
     }
 
-    pub(crate) fn set_input_muted(&mut self, muted: bool) -> Result<(), Box<dyn Error>> {
-        self.worker.set_input_muted(muted)?;
+    pub(crate) fn set_channel_muted(
+        &mut self,
+        id: &str,
+        muted: bool,
+    ) -> Result<(), Box<dyn Error>> {
+        self.worker.set_channel_muted(engine_channel(id), muted)?;
         Ok(())
     }
 
@@ -205,7 +216,11 @@ impl OutputRuntime {
     /// This is what the mixer meter shows: the engine measures it on the block
     /// it actually captured, so the meter moves with the real microphone.
     pub(crate) fn input_peak_milli(&self) -> u16 {
-        self.worker.snapshot().engine.stats.audio_peak_milli
+        self.worker.snapshot().engine.stats.microphone_peak_milli
+    }
+
+    pub(crate) fn desktop_peak_milli(&self) -> u16 {
+        self.worker.snapshot().engine.stats.desktop_peak_milli
     }
 
     /// Returns whether the engine is running on the deterministic fallback
@@ -476,5 +491,13 @@ impl OutputRuntime {
         } else {
             (OutputLifecycle::Failed, OutputLifecycle::Failed)
         }
+    }
+}
+
+fn engine_channel(id: &str) -> EngineAudioChannel {
+    if id == crate::MIC_CHANNEL_ID {
+        EngineAudioChannel::Microphone
+    } else {
+        EngineAudioChannel::Desktop
     }
 }

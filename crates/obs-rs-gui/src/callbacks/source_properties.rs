@@ -96,6 +96,7 @@ fn install_open(
         window.set_source_settings(ui.get_source_settings());
         window.set_monitor_visible(kind_selects_monitor(&kind));
         window.set_source_transform(ui.get_source_transform());
+        sync_transform_fields(window);
         window.set_source_filters(ui.get_source_filters());
         controller.refresh_rows(locale);
         if let Err(error) = window.show() {
@@ -123,6 +124,11 @@ fn install_editing(
         }
     });
 
+    let transform_controller = Rc::clone(controller);
+    controller.window.on_edit_transform(move |key, value| {
+        edit_transform_draft(&transform_controller.window, key.as_str(), value.as_str());
+    });
+
     // The picker edits the project directly, so the properties window hands the
     // request to the studio and closes its own draft to avoid two writers.
     let weak = ui.as_weak();
@@ -146,9 +152,76 @@ fn install_editing(
         }
         // The identity transform and an empty filter chain are the documented
         // defaults for a freshly created source.
-        window.set_source_transform("1000,1000,0,0,0,0,255".into());
+        window.set_source_transform("1000,1000,0,0,0,0,255,0,0,0,0".into());
+        sync_transform_fields(window);
         window.set_source_filters(String::new().into());
     });
+}
+
+/// Copies the serialized transform draft into the typed controls.
+fn sync_transform_fields(window: &SourcePropertiesWindow) {
+    let values = normalized_transform(window.get_source_transform().as_str());
+    let number = |index: usize| values[index].parse::<i32>().unwrap_or(0);
+    window.set_item_scale_x(number(0));
+    window.set_item_scale_y(number(1));
+    window.set_item_x(number(2));
+    window.set_item_y(number(3));
+    window.set_item_flip_x(values[4] == "1" || values[4] == "true");
+    window.set_item_flip_y(values[5] == "1" || values[5] == "true");
+    window.set_item_opacity(number(6));
+    window.set_crop_left(number(7));
+    window.set_crop_top(number(8));
+    window.set_crop_right(number(9));
+    window.set_crop_bottom(number(10));
+}
+
+/// Rewrites one typed transform field while preserving every other field.
+fn edit_transform_draft(window: &SourcePropertiesWindow, key: &str, value: &str) {
+    let mut values = normalized_transform(window.get_source_transform().as_str());
+    let index = match key {
+        "scale-x" => 0,
+        "scale-y" => 1,
+        "x" => 2,
+        "y" => 3,
+        "flip-x" => 4,
+        "flip-y" => 5,
+        "opacity" => 6,
+        "crop-left" => 7,
+        "crop-top" => 8,
+        "crop-right" => 9,
+        "crop-bottom" => 10,
+        _ => return,
+    };
+    values[index] = value.trim().to_owned();
+    window.set_source_transform(values.join(",").into());
+    sync_transform_fields(window);
+}
+
+/// Expands the legacy seven-field shape with zero crop values.
+fn normalized_transform(document: &str) -> Vec<String> {
+    let mut values = document
+        .split(',')
+        .map(|value| value.trim().to_owned())
+        .collect::<Vec<_>>();
+    if values.len() == 7 {
+        values.extend(["0", "0", "0", "0"].map(str::to_owned));
+    }
+    if values.len() != 11 {
+        return vec![
+            "1000".to_owned(),
+            "1000".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+            "255".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+            "0".to_owned(),
+        ];
+    }
+    values
 }
 
 fn install_commit(

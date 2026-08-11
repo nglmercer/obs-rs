@@ -37,12 +37,10 @@ export component QuickControls inherits Rectangle {
                 clicked => toggle-recording();
             }
             Button {
-                text: virtual-camera
-                    ? I18n.text.camera_on
-                    : I18n.text.camera;
+                text: I18n.text.camera + " (unsupported)";
                 width: 68px;
                 height: 26px;
-                clicked => { root.virtual-camera = !root.virtual-camera; }
+                enabled: false;
             }
         }
         HorizontalBox {

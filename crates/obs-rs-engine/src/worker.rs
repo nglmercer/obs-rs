@@ -12,7 +12,9 @@ use obs_rs_media::VideoFrame;
 
 use obs_rs_project::Project;
 
-use crate::{EngineError, EngineSession, EngineSnapshot, EngineStats, OutputLifecycle};
+use crate::{
+    EngineAudioChannel, EngineError, EngineSession, EngineSnapshot, EngineStats, OutputLifecycle,
+};
 
 const DEFAULT_FRAME_QUEUE: usize = 8;
 
@@ -36,8 +38,8 @@ enum WorkerCommand {
     StartStreaming(String, mpsc::Sender<Result<(), String>>),
     FinishStreaming,
     PushFrame(VideoFrame),
-    SetGain(u16, mpsc::Sender<Result<(), String>>),
-    SetMuted(bool, mpsc::Sender<Result<(), String>>),
+    SetGain(EngineAudioChannel, u16, mpsc::Sender<Result<(), String>>),
+    SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
     SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
     SyncProject(Project, mpsc::Sender<Result<(), String>>),
     Shutdown,
@@ -231,10 +233,14 @@ impl EngineWorker {
     /// # Errors
     ///
     /// Returns [`EngineError`] when the worker or mixer rejects the update.
-    pub fn set_input_gain_milli(&self, gain_milli: u16) -> Result<(), EngineError> {
+    pub fn set_channel_gain_milli(
+        &self,
+        channel: EngineAudioChannel,
+        gain_milli: u16,
+    ) -> Result<(), EngineError> {
         let (reply, receive) = mpsc::channel();
         self.sender
-            .send(WorkerCommand::SetGain(gain_milli, reply))
+            .send(WorkerCommand::SetGain(channel, gain_milli, reply))
             .map_err(|_| worker_closed())?;
         receive
             .recv()
@@ -247,10 +253,14 @@ impl EngineWorker {
     /// # Errors
     ///
     /// Returns [`EngineError`] when the worker or mixer rejects the update.
-    pub fn set_input_muted(&self, muted: bool) -> Result<(), EngineError> {
+    pub fn set_channel_muted(
+        &self,
+        channel: EngineAudioChannel,
+        muted: bool,
+    ) -> Result<(), EngineError> {
         let (reply, receive) = mpsc::channel();
         self.sender
-            .send(WorkerCommand::SetMuted(muted, reply))
+            .send(WorkerCommand::SetMuted(channel, muted, reply))
             .map_err(|_| worker_closed())?;
         receive
             .recv()
@@ -354,16 +364,16 @@ fn worker_loop(
                 }
                 false
             }
-            WorkerCommand::SetGain(gain, reply) => {
+            WorkerCommand::SetGain(channel, gain, reply) => {
                 let result = session
-                    .set_input_gain_milli(gain)
+                    .set_channel_gain_milli(channel, gain)
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
             }
-            WorkerCommand::SetMuted(muted, reply) => {
+            WorkerCommand::SetMuted(channel, muted, reply) => {
                 let result = session
-                    .set_input_muted(muted)
+                    .set_channel_muted(channel, muted)
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
