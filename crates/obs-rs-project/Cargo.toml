@@ -11,4 +11,5 @@ crate-type = ["lib"]
 [dependencies]
 obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-media = { path = "../obs-rs-media" }
+obs-rs-output = { path = "../obs-rs-output" }
 obs-rs-util = { path = "../obs-rs-util" }

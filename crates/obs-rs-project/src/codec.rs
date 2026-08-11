@@ -6,6 +6,9 @@ use super::{
 };
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, VideoFormat};
+use obs_rs_output::OutputProfileKind;
+
+use crate::RenderBackendPreference;
 
 /// Rough serialized bytes contributed by one source record.
 ///
@@ -61,6 +64,17 @@ impl Project {
             document.push('|');
             push_display(&mut document, &format.frame_rate().denominator());
             document.push('\n');
+            if profile.render_backend != RenderBackendPreference::Cpu
+                || profile.output_kind != OutputProfileKind::ReferencePacket
+            {
+                document.push_str("profile_options|");
+                document.push_str(profile.id.as_str());
+                document.push('|');
+                document.push_str(profile.render_backend.id());
+                document.push('|');
+                document.push_str(profile.output_kind.id());
+                document.push('\n');
+            }
 
             for scene in profile.scenes.values() {
                 document.push_str("scene|");
@@ -136,6 +150,7 @@ impl Project {
             let kind = line.split('|').next().unwrap_or_default();
             match kind {
                 "profile" => parse_profile(&mut project, line, line_number)?,
+                "profile_options" => parse_profile_options(&mut project, line, line_number)?,
                 "scene" => parse_scene(&mut project, line, line_number)?,
                 "source" => parse_source(&mut project, line, line_number)?,
                 _ => {
@@ -151,6 +166,32 @@ impl Project {
         }
         Ok(project)
     }
+}
+
+fn parse_profile_options(
+    project: &mut Project,
+    line: &str,
+    line_number: usize,
+) -> Result<(), ProjectError> {
+    let values = fields(line, line_number, "profile_options", 4)?;
+    let profile_id = identifier(values[1], "profile id")?;
+    let render_backend = RenderBackendPreference::from_id(values[2]).ok_or_else(|| {
+        ProjectError::InvalidDocument {
+            line: line_number,
+            reason: "unknown render backend".to_owned(),
+        }
+    })?;
+    let output_profile =
+        OutputProfileKind::from_id(values[3]).ok_or_else(|| ProjectError::InvalidDocument {
+            line: line_number,
+            reason: "unknown output profile".to_owned(),
+        })?;
+    let profile = project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    profile.set_render_backend(render_backend);
+    profile.set_output_profile(output_profile);
+    Ok(())
 }
 
 fn parse_profile(

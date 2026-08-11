@@ -19,6 +19,6 @@ mod tests;
 
 pub use commands::ProjectCommand;
 pub use error::ProjectError;
-pub use model::{Profile, Project, SceneSpec, SourceSpec};
+pub use model::{Profile, Project, RenderBackendPreference, SceneSpec, SourceSpec};
 pub use persistence::ProjectFileStore;
 pub use session::{ProjectSession, MAX_HISTORY_DEPTH};

@@ -14,3 +14,9 @@ obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
 obs-rs-util = { path = "../obs-rs-util" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+obs-rs-capture-macos = { path = "../obs-rs-capture-macos" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+obs-rs-capture-windows = { path = "../obs-rs-capture-windows" }

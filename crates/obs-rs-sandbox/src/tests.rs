@@ -1,4 +1,8 @@
-use std::{fmt::Write, path::Path};
+use std::{
+    fmt::Write,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use super::*;
 use ed25519_dalek::SigningKey;
@@ -95,6 +99,21 @@ fn signed_bundle_round_trips_and_verifies_every_launch_gate() {
         verified.bundle().manifest().plugin().id().as_str(),
         "signed_plugin"
     );
+    let root = std::env::temp_dir().join(format!(
+        "obs-rs-plugin-install-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    let installed = install_verified_plugin(&verified, &root).expect("atomic installation");
+    assert_eq!(
+        std::fs::read(installed.command()).expect("installed payload"),
+        b"executable payload"
+    );
+    assert!(install_verified_plugin(&verified, &root).is_err());
+    std::fs::remove_dir_all(root).expect("remove installation fixture");
 }
 
 #[test]

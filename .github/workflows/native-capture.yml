@@ -1,0 +1,29 @@
+name: Native capture adapters
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  adapters:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            package: obs-rs-capture-macos
+          - os: windows-latest
+            package: obs-rs-capture-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy
+      - run: cargo check -p ${{ matrix.package }} --all-targets
+      - run: cargo clippy -p ${{ matrix.package }} --all-targets -- -D warnings
+      - run: cargo test -p ${{ matrix.package }}

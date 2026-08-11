@@ -6,6 +6,7 @@
 mod bundle;
 mod cursor;
 mod error;
+mod redaction;
 mod types;
 mod writer;
 
@@ -14,6 +15,7 @@ mod tests;
 
 pub use bundle::DiagnosticBundle;
 pub use error::DiagnosticError;
+pub use redaction::{redact_diagnostics_text, Redacted, REDACTED};
 pub use types::{
     DiagnosticFileState, DIAGNOSTIC_MAGIC, MAX_BUNDLE_BYTES, MAX_SECTIONS, MAX_SECTION_BYTES,
     MAX_SECTION_NAME_BYTES,

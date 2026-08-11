@@ -192,7 +192,7 @@ fn edit_transform_draft(window: &SourcePropertiesWindow, key: &str, value: &str)
         "crop-bottom" => 10,
         _ => return,
     };
-    values[index] = value.trim().to_owned();
+    value.trim().clone_into(&mut values[index]);
     window.set_source_transform(values.join(",").into());
     sync_transform_fields(window);
 }

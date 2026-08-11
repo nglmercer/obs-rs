@@ -1,6 +1,7 @@
 use super::*;
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, VideoFormat};
+use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
 use std::path::PathBuf;
 
@@ -79,6 +80,26 @@ fn parser_keeps_legacy_sources_visible_and_unlocked() {
         .expect("legacy source");
     assert!(source.visible());
     assert!(!source.locked());
+}
+
+#[test]
+fn optional_backend_and_output_settings_round_trip_without_changing_legacy_defaults() {
+    let legacy = project().serialize();
+    assert!(!legacy.contains("profile_options|"));
+    let decoded = Project::parse(&legacy).expect("legacy defaults parse");
+    let profile = decoded.profile("live").expect("live profile");
+    assert_eq!(profile.render_backend(), RenderBackendPreference::Cpu);
+    assert_eq!(profile.output_profile(), OutputProfileKind::ReferencePacket);
+
+    let mut configured = project();
+    let profile = configured
+        .profile_mut(&Identifier::new("live").expect("profile id"))
+        .expect("live profile");
+    profile.set_render_backend(RenderBackendPreference::Wgpu);
+    profile.set_output_profile(OutputProfileKind::SrtMpegTsH264Aac);
+    let encoded = configured.serialize();
+    assert!(encoded.contains("profile_options|live|wgpu|srt-mpegts-h264-aac"));
+    assert_eq!(Project::parse(&encoded), Ok(configured));
 }
 
 #[test]

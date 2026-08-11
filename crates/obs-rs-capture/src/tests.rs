@@ -60,6 +60,23 @@ fn catalog_applies_hotplug_and_permission_events() {
 }
 
 #[test]
+fn device_capabilities_are_sorted_deduplicated_and_handle_unknown_formats() {
+    let format = format();
+    let other = VideoFormat::new(16, 16, format.frame_rate()).expect("other format");
+    let capabilities = CaptureCapabilities::new(vec![format, other, format], true, true);
+    assert_eq!(capabilities.formats(), &[other, format]);
+    assert!(capabilities.supports(format));
+    assert!(capabilities.native_surfaces());
+    assert!(capabilities.reconnectable());
+    assert!(CaptureCapabilities::default().supports(format));
+
+    let info = CaptureDeviceInfo::new("native", "Native", CaptureKind::Screen)
+        .expect("info")
+        .with_capabilities(capabilities.clone());
+    assert_eq!(info.capabilities(), &capabilities);
+}
+
+#[test]
 fn provider_refreshes_catalog_atomically_and_deterministically() {
     let provider = SimulatedCaptureProvider::new();
     let mut catalog = CaptureCatalog::new();

@@ -52,8 +52,8 @@ pub use profile::{
 pub use queue::PacketQueue;
 pub use recording::{RawRecording, RawRecordingSession};
 pub use stream::{
-    MemoryPacketTransport, PacketMuxer, PacketTransport, StreamSession, TcpPacketTransport,
-    WebSocketPacketTransport,
+    validate_websocket_handshake, MemoryPacketTransport, PacketMuxer, PacketTransport,
+    StreamSession, TcpPacketTransport, WebSocketPacketTransport,
 };
 pub use types::{
     EncodedPacket, OutputState, PacketDropPolicy, PacketKind, PacketPushOutcome, ReconnectPolicy,
@@ -69,6 +69,5 @@ pub(crate) use stream::{
     base64_encode, parse_websocket_endpoint, read_websocket_headers, sha1_digest,
     websocket_packet_body,
 };
-#[cfg(test)]
 #[cfg(test)]
 pub(crate) use video::crc32;

@@ -1,0 +1,2 @@
+OBSRPLUGIN1
+fuzz_plugin|Fuzz|0.1.0|1|0|fuzz_source

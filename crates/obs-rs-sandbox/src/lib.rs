@@ -14,16 +14,20 @@ mod manifest;
 mod plugin;
 mod process_source;
 mod protocol;
+mod resource_limits;
 mod settings;
 mod validation;
 
 #[cfg(test)]
 mod tests;
 
+#[cfg(debug_assertions)]
+pub use bundle::verify_unsigned_development;
 pub use bundle::{
-    PluginBundleManifest, PluginCapability, PluginPayload, PluginTrustStore,
-    PluginVerificationPolicy, SignedPluginBundle, VerifiedPluginBundle, MAX_PLUGIN_BUNDLE_BYTES,
-    MAX_PLUGIN_PAYLOADS, MAX_PLUGIN_PAYLOAD_PATH_BYTES, PLUGIN_BUNDLE_MAGIC,
+    install_verified_plugin, InstalledPlugin, PluginBundleManifest, PluginCapability,
+    PluginPayload, PluginTrustStore, PluginVerificationPolicy, SignedPluginBundle,
+    VerifiedPluginBundle, MAX_PLUGIN_BUNDLE_BYTES, MAX_PLUGIN_PAYLOADS,
+    MAX_PLUGIN_PAYLOAD_PATH_BYTES, PLUGIN_BUNDLE_MAGIC,
 };
 pub use discovery::discover_sandbox_manifest;
 pub use error::SandboxError;
@@ -34,3 +38,4 @@ pub use protocol::{
     MAX_SANDBOX_QUEUED_FRAMES, MAX_SANDBOX_SOURCE_KINDS, SANDBOX_FRAME_DELIVERY_TIMEOUT,
     SANDBOX_MANIFEST_ARGUMENT, SANDBOX_MANIFEST_MAGIC,
 };
+pub use resource_limits::SandboxResourceLimits;

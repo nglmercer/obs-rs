@@ -1,10 +1,4 @@
-use std::{
-    io::Read,
-    path::Path,
-    process::{Command, Stdio},
-    sync::mpsc::sync_channel,
-    thread,
-};
+use std::{io::Read, path::Path, process::Stdio, sync::mpsc::sync_channel, thread};
 
 use super::{
     error::SandboxError,
@@ -12,6 +6,7 @@ use super::{
     protocol::{
         MAX_SANDBOX_MANIFEST_BYTES, SANDBOX_FRAME_DELIVERY_TIMEOUT, SANDBOX_MANIFEST_ARGUMENT,
     },
+    resource_limits::limited_command,
     validation::{invalid_manifest, validate_command},
 };
 
@@ -35,8 +30,7 @@ pub fn discover_sandbox_manifest(
     probe_arguments.push(SANDBOX_MANIFEST_ARGUMENT.to_owned());
     validate_command(&command, &probe_arguments)?;
 
-    let mut child = Command::new(&command)
-        .args(&probe_arguments)
+    let mut child = limited_command(&command, &probe_arguments)?
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

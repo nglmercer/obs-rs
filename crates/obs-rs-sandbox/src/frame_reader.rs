@@ -1,7 +1,7 @@
 use std::{
     io::BufReader,
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
     sync::mpsc::{sync_channel, Receiver, SyncSender},
     thread::{self, JoinHandle},
 };
@@ -20,6 +20,7 @@ use super::{
         FrameReader, FrameReceiver, FrameResult, MAX_SANDBOX_QUEUED_FRAMES,
         SANDBOX_FRAME_DELIVERY_TIMEOUT,
     },
+    resource_limits::limited_command,
 };
 
 pub(crate) struct ProcessFrameDevice {
@@ -60,9 +61,8 @@ impl ProcessFrameDevice {
         &self,
         format: VideoFormat,
     ) -> Result<(Child, FrameReceiver, FrameReader), SandboxError> {
-        let mut command = Command::new(&self.command);
+        let mut command = limited_command(&self.command, &self.arguments)?;
         command
-            .args(&self.arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

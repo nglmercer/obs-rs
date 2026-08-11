@@ -83,9 +83,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         rss_after_kib,
     };
     if json {
-        print_json(output);
+        print_json(&output);
     } else {
-        print_report(output);
+        print_report(&output);
     }
     Ok(())
 }
@@ -120,7 +120,7 @@ fn measure_unpaced_render_latency(
     }
 
     reset_frame_memory_metrics();
-    let mut samples = Vec::with_capacity(BENCHMARK_FRAMES as usize);
+    let mut samples = Vec::with_capacity(usize::try_from(BENCHMARK_FRAMES)?);
     for index in 0..BENCHMARK_FRAMES {
         let request = VideoRequest::new(Timestamp::from_millis(index + 10), format);
         let started = Instant::now();
@@ -152,7 +152,7 @@ fn resident_memory_kib() -> Option<u64> {
     })
 }
 
-fn print_report(output: BenchmarkOutput) {
+fn print_report(output: &BenchmarkOutput) {
     let report = output.report;
     let compositor = output.compositor;
     let multi_worker = output.multi_worker;
@@ -210,7 +210,7 @@ fn display_optional(value: Option<u64>) -> String {
     clippy::too_many_lines,
     reason = "keeps the dependency-free JSON schema explicit"
 )]
-fn print_json(output: BenchmarkOutput) {
+fn print_json(output: &BenchmarkOutput) {
     let report = output.report;
     let compositor = output.compositor;
     let multi = output.multi_worker;

@@ -2,6 +2,8 @@
 use std::{env, fs, process::Command};
 
 use super::{
+    adapter::PlatformCaptureAdapter,
+    device::VideoCaptureDevice,
     error::CaptureError,
     types::{CaptureCatalog, CaptureDeviceInfo, CaptureKind},
 };
@@ -48,27 +50,7 @@ impl CaptureProvider for PlatformCaptureProvider {
     fn discover(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
         #[cfg(target_os = "linux")]
         {
-            let mut devices = Vec::new();
-            if let Ok(display) = env::var("DISPLAY") {
-                if !display.trim().is_empty() {
-                    // The whole desktop stays first so a single-monitor host
-                    // keeps the descriptor projects already reference.
-                    devices.push(CaptureDeviceInfo::new(
-                        "x11-screen-0",
-                        "X11 screen (all monitors)",
-                        CaptureKind::Screen,
-                    )?);
-                    devices.extend(discover_x11_monitors(&display));
-                    devices.extend(discover_x11_windows(&display));
-                }
-            }
-            devices.extend(discover_v4l2_devices());
-            if devices.is_empty() {
-                return Err(CaptureError::PlatformUnavailable {
-                    message: "DISPLAY and /dev/video* are unavailable".to_owned(),
-                });
-            }
-            Ok(devices)
+            LinuxCaptureAdapter.discover()
         }
 
         #[cfg(target_os = "macos")]
@@ -91,6 +73,100 @@ impl CaptureProvider for PlatformCaptureProvider {
                 message: "no platform capture adapter is enabled for this target".to_owned(),
             })
         }
+    }
+}
+
+/// Linux platform boundary for portal/PipeWire, X11, and V4L2 capture.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LinuxCaptureAdapter;
+
+#[cfg(target_os = "linux")]
+impl PlatformCaptureAdapter for LinuxCaptureAdapter {
+    fn backend_name(&self) -> &'static str {
+        "linux-portal-x11-v4l2"
+    }
+
+    fn discover(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
+        let mut devices = Vec::new();
+        if crate::wayland::wayland_session_available() {
+            let mut portal = CaptureDeviceInfo::new(
+                "wayland-screen-picker",
+                "Wayland display picker",
+                CaptureKind::Screen,
+            )?;
+            portal.set_permission(super::types::CapturePermission::PromptRequired);
+            devices.push(portal);
+        }
+        if let Ok(display) = env::var("DISPLAY") {
+            if !display.trim().is_empty() {
+                devices.push(CaptureDeviceInfo::new(
+                    "x11-screen-0",
+                    "X11 screen (all monitors)",
+                    CaptureKind::Screen,
+                )?);
+                devices.extend(discover_x11_monitors(&display));
+                devices.extend(discover_x11_windows(&display));
+            }
+        }
+        devices.extend(discover_v4l2_devices());
+        if devices.is_empty() {
+            return Err(CaptureError::PlatformUnavailable {
+                message: "Wayland portal, DISPLAY, and /dev/video* are unavailable".to_owned(),
+            });
+        }
+        Ok(devices)
+    }
+
+    fn open(&self, stable_id: &str) -> Result<Box<dyn VideoCaptureDevice>, CaptureError> {
+        if stable_id == "wayland-screen-picker" {
+            return crate::WaylandCaptureDevice::open(stable_id, "Wayland display", None)
+                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>);
+        }
+        if let Some(node) = stable_id.strip_prefix("v4l2-") {
+            if !node.starts_with("video") || !node[5..].bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(CaptureError::InvalidDevice {
+                    reason: "V4L2 stable ID is invalid".to_owned(),
+                });
+            }
+            let path = std::path::PathBuf::from("/dev").join(node);
+            return crate::V4l2CaptureDevice::new(stable_id, stable_id, path)
+                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>);
+        }
+        let display = env::var("DISPLAY").map_err(|error| CaptureError::PlatformUnavailable {
+            message: format!("DISPLAY is unavailable: {error}"),
+        })?;
+        if stable_id == "x11-screen-0" {
+            return crate::X11CaptureDevice::connect(&display, stable_id, "X11 screen")
+                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>);
+        }
+        if stable_id.starts_with("x11-monitor-") {
+            let monitor = crate::x11_monitors(&display)?
+                .into_iter()
+                .find(|monitor| monitor.device_id() == stable_id)
+                .ok_or_else(|| CaptureError::InvalidDevice {
+                    reason: format!("monitor {stable_id} is unavailable"),
+                })?;
+            let mut device =
+                crate::X11CaptureDevice::connect(&display, stable_id, &monitor.label())?;
+            device.select_monitor(Some(monitor.name()))?;
+            return Ok(Box::new(device));
+        }
+        if stable_id.starts_with("x11-window-") {
+            let window = crate::x11_windows(&display)?
+                .into_iter()
+                .find(|window| window.device_id() == stable_id)
+                .ok_or_else(|| CaptureError::InvalidDevice {
+                    reason: format!("window {stable_id} is unavailable"),
+                })?;
+            let mut device =
+                crate::X11CaptureDevice::connect(&display, stable_id, &window.label())?;
+            device.select_window(Some(stable_id))?;
+            return Ok(Box::new(device));
+        }
+        Err(CaptureError::InvalidDevice {
+            reason: format!("stable capture ID {stable_id} is unknown"),
+        })
     }
 }
 

@@ -5,10 +5,9 @@
 
 use std::sync::Arc;
 
-use obs_rs_capture::{
-    CaptureDeviceInfo, CaptureError, CaptureProvider, PlatformCaptureProvider,
-    SimulatedCaptureProvider,
-};
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+use obs_rs_capture::PlatformCaptureProvider;
+use obs_rs_capture::{CaptureDeviceInfo, CaptureError, CaptureProvider, SimulatedCaptureProvider};
 use obs_rs_plugin_api::{Plugin, PluginError, PluginManifest, SourceFactory};
 
 mod factories;
@@ -69,6 +68,11 @@ impl BuiltinPlugin {
     pub fn discover_platform_capture_devices(
         &self,
     ) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
+        #[cfg(target_os = "macos")]
+        return obs_rs_capture_macos::MacOsCaptureAdapter::default().discover();
+        #[cfg(target_os = "windows")]
+        return obs_rs_capture_windows::WindowsCaptureAdapter::default().discover();
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         PlatformCaptureProvider::new().discover()
     }
 }

@@ -4,7 +4,7 @@ mod websocket;
 
 pub use session::{PacketMuxer, PacketTransport, StreamSession};
 pub use transport::{MemoryPacketTransport, TcpPacketTransport};
-pub use websocket::WebSocketPacketTransport;
+pub use websocket::{validate_websocket_handshake, WebSocketPacketTransport};
 
 #[cfg(test)]
 pub(crate) use websocket::{

@@ -30,6 +30,7 @@ pub use x11::{
     parse_window_id, x11_monitors, x11_windows, X11CaptureDevice, X11Monitor, X11Window,
 };
 
+mod adapter;
 mod device;
 mod error;
 mod factories;
@@ -44,6 +45,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+pub use adapter::PlatformCaptureAdapter;
 pub use device::VideoCaptureDevice;
 pub use error::CaptureError;
 pub use factories::{
@@ -59,7 +61,12 @@ pub use lifecycle::{AsyncCaptureDevice, CaptureLifecycleState};
 pub use protocol::{
     encode_frame_packet, write_frame_packet, FRAME_STREAM_MAGIC, MAX_FRAME_STREAM_PACKET_BYTES,
 };
+#[cfg(target_os = "linux")]
+pub use provider::LinuxCaptureAdapter;
 pub use provider::{CaptureProvider, PlatformCaptureProvider, SimulatedCaptureProvider};
 pub use simulated::{SimulatedCaptureDevice, TestPatternDevice};
 pub use stream_device::StreamCaptureDevice;
-pub use types::{CaptureCatalog, CaptureDeviceInfo, CaptureEvent, CaptureKind, CapturePermission};
+pub use types::{
+    CaptureCapabilities, CaptureCatalog, CaptureDeviceInfo, CaptureEvent, CaptureKind,
+    CapturePermission,
+};

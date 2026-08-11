@@ -3,7 +3,12 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::{env, error::Error, process::ExitCode, time::SystemTime};
+use std::{
+    env,
+    error::Error,
+    process::ExitCode,
+    time::{Duration, Instant, SystemTime},
+};
 
 use obs_rs_audio::{AudioDeviceKind, AudioFormat, AudioInputProvider};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
@@ -253,61 +258,124 @@ fn check_pipewire() -> CheckResult {
     }
 }
 
+#[allow(clippy::too_many_lines)] // The lifecycle is kept linear so cleanup/invariants stay visible.
 fn check_av_soak() -> CheckResult {
     let format = match VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("valid rate")) {
         Ok(format) => format,
-        Err(error) => return CheckResult::fail(error.to_string()),
-    };
-    let mut engine = match EngineSession::for_format(format, EngineConfig::default()) {
-        Ok(engine) => engine,
         Err(error) => return CheckResult::fail(error.to_string()),
     };
     let token = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(duration) => duration.as_nanos(),
         Err(error) => return CheckResult::fail(error.to_string()),
     };
-    let path = env::temp_dir().join(format!("obs-rs-linux-check-{token}.obsr"));
+    let requested_seconds = env::var("OBS_RS_SOAK_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    let target_ticks = if requested_seconds == 0 {
+        300
+    } else {
+        requested_seconds.saturating_mul(30)
+    };
+    let started = Instant::now();
     let result: Result<String, Box<dyn Error>> = (|| {
-        engine.start_recording(&path)?;
         let period = format
             .frame_rate()
             .period_nanos()
             .ok_or_else(|| std::io::Error::other("frame rate period does not fit in u64"))?;
-        for index in 0_u64..300 {
-            let timestamp = Timestamp::from_nanos(index.saturating_mul(period));
-            let frame = VideoFrame::solid(format, timestamp, [24, 96, 180, 255]);
-            engine.push_program_frame(&frame)?;
+        let initial_rss = resident_kib().unwrap_or(0);
+        let mut warm_rss = initial_rss;
+        let mut peak_rss = initial_rss;
+        let mut ticks = 0_u64;
+        let mut packets_total = 0_usize;
+        let mut bytes_total = 0_usize;
+        let mut audio_blocks = 0_u64;
+        let mut fallback_blocks = 0_u64;
+        let mut chunks = 0_u64;
+        while ticks < target_ticks {
+            let chunk_ticks = (target_ticks - ticks).min(300);
+            let path = env::temp_dir().join(format!("obs-rs-linux-check-{token}-{chunks}.obsr"));
+            let mut engine = EngineSession::for_format(format, EngineConfig::default())?;
+            engine.start_recording(&path)?;
+            for local in 0..chunk_ticks {
+                let index = ticks.saturating_add(local);
+                let timestamp = Timestamp::from_nanos(local.saturating_mul(period));
+                let phase = u8::try_from(index % 240).unwrap_or_default();
+                let frame = VideoFrame::solid(
+                    format,
+                    timestamp,
+                    [phase, 255_u8.saturating_sub(phase), 180, 255],
+                );
+                engine.push_program_frame(&frame)?;
+                if requested_seconds != 0 {
+                    let expected = started
+                        + Duration::from_nanos(index.saturating_add(1).saturating_mul(period));
+                    if let Some(remaining) = expected.checked_duration_since(Instant::now()) {
+                        std::thread::sleep(remaining);
+                    }
+                }
+            }
+            let bytes = engine.finish_recording()?;
+            let persisted = std::fs::read(&path)?;
+            let _ = std::fs::remove_file(&path);
+            let packets = MemoryMuxer::decode(&persisted)
+                .map_err(|error| std::io::Error::other(format!("decode OBSRPKT1: {error}")))?;
+            let stats = engine.stats();
+            if persisted.len() != bytes
+                || persisted.len() > 32 * 1024 * 1024
+                || !packets
+                    .iter()
+                    .any(|packet| packet.kind() == PacketKind::Video)
+                || !packets
+                    .iter()
+                    .any(|packet| packet.kind() == PacketKind::Audio)
+                || !packets
+                    .windows(2)
+                    .all(|window| window[0].timestamp() <= window[1].timestamp())
+            {
+                return Err(std::io::Error::other("OBSRPKT1 A/V soak invariants failed").into());
+            }
+            ticks = ticks.saturating_add(chunk_ticks);
+            chunks = chunks.saturating_add(1);
+            packets_total = packets_total.saturating_add(packets.len());
+            bytes_total = bytes_total.saturating_add(persisted.len());
+            audio_blocks = audio_blocks.saturating_add(stats.audio_blocks);
+            fallback_blocks = fallback_blocks.saturating_add(stats.audio_fallback_blocks);
+            let rss = resident_kib().unwrap_or(peak_rss);
+            if chunks == 1 {
+                warm_rss = rss;
+            }
+            peak_rss = peak_rss.max(rss);
         }
-        let bytes = engine.finish_recording()?;
-        let persisted = std::fs::read(&path)?;
-        let packets = MemoryMuxer::decode(&persisted)
-            .map_err(|error| std::io::Error::other(format!("decode OBSRPKT1: {error}")))?;
-        let stats = engine.stats();
-        if persisted.len() != bytes
-            || persisted.len() > 32 * 1024 * 1024
-            || !packets
-                .iter()
-                .any(|packet| packet.kind() == PacketKind::Video)
-            || !packets
-                .iter()
-                .any(|packet| packet.kind() == PacketKind::Audio)
-            || !packets
-                .windows(2)
-                .all(|window| window[0].timestamp() <= window[1].timestamp())
-        {
-            return Err(std::io::Error::other("OBSRPKT1 A/V soak invariants failed").into());
+        let final_rss = resident_kib().unwrap_or(peak_rss);
+        let allowed_rss = warm_rss.saturating_add(warm_rss / 10).saturating_add(1_024);
+        if chunks > 1 && final_rss > allowed_rss {
+            return Err(std::io::Error::other(format!(
+                "post-warmup RSS growth exceeded 10%: warm={warm_rss}KiB final={final_rss}KiB"
+            ))
+            .into());
         }
         Ok(format!(
-            "ticks=300 packets={} bytes={} audio_blocks={} audio_fallback_blocks={}",
-            packets.len(),
-            persisted.len(),
-            stats.audio_blocks,
-            stats.audio_fallback_blocks
+            "ticks={ticks} chunks={chunks} packets={packets_total} bytes={bytes_total} \
+             audio_blocks={audio_blocks} audio_fallback_blocks={fallback_blocks} \
+             rss_initial_kib={initial_rss} rss_warm_kib={warm_rss} \
+             rss_peak_kib={peak_rss} rss_final_kib={final_rss} elapsed_ms={}",
+            started.elapsed().as_millis()
         ))
     })();
-    let _ = std::fs::remove_file(&path);
     match result {
         Ok(detail) => CheckResult::pass(detail),
         Err(error) => CheckResult::fail(error.to_string()),
     }
+}
+
+fn resident_kib() -> Option<u64> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))?
+        .split_ascii_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }

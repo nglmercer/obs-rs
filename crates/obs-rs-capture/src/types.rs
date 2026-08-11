@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use obs_rs_media::VideoFormat;
 use obs_rs_util::Identifier;
 
 use super::error::CaptureError;
@@ -32,6 +33,52 @@ pub enum CapturePermission {
     Unavailable,
 }
 
+/// Safe capability snapshot reported by a capture adapter.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CaptureCapabilities {
+    formats: Vec<VideoFormat>,
+    native_surfaces: bool,
+    reconnectable: bool,
+}
+
+impl CaptureCapabilities {
+    /// Creates a deterministic, de-duplicated format snapshot.
+    #[must_use]
+    pub fn new(mut formats: Vec<VideoFormat>, native_surfaces: bool, reconnectable: bool) -> Self {
+        formats.sort_unstable();
+        formats.dedup();
+        Self {
+            formats,
+            native_surfaces,
+            reconnectable,
+        }
+    }
+
+    /// Returns negotiated CPU frame formats in deterministic order.
+    #[must_use]
+    pub fn formats(&self) -> &[VideoFormat] {
+        &self.formats
+    }
+
+    /// Returns whether the adapter can submit opaque native surfaces.
+    #[must_use]
+    pub const fn native_surfaces(&self) -> bool {
+        self.native_surfaces
+    }
+
+    /// Returns whether a lost stream can be reopened with the stable ID.
+    #[must_use]
+    pub const fn reconnectable(&self) -> bool {
+        self.reconnectable
+    }
+
+    /// Returns whether a requested CPU format is explicitly supported.
+    #[must_use]
+    pub fn supports(&self, format: VideoFormat) -> bool {
+        self.formats.is_empty() || self.formats.binary_search(&format).is_ok()
+    }
+}
+
 /// Immutable metadata used for discovery and diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CaptureDeviceInfo {
@@ -39,6 +86,7 @@ pub struct CaptureDeviceInfo {
     name: String,
     kind: CaptureKind,
     permission: CapturePermission,
+    capabilities: CaptureCapabilities,
 }
 
 impl CaptureDeviceInfo {
@@ -60,6 +108,7 @@ impl CaptureDeviceInfo {
             name: name.to_owned(),
             kind,
             permission: CapturePermission::Granted,
+            capabilities: CaptureCapabilities::default(),
         })
     }
 
@@ -90,6 +139,19 @@ impl CaptureDeviceInfo {
     /// Updates the permission state after a platform prompt or policy change.
     pub const fn set_permission(&mut self, permission: CapturePermission) {
         self.permission = permission;
+    }
+
+    /// Replaces the device capability snapshot.
+    #[must_use]
+    pub fn with_capabilities(mut self, capabilities: CaptureCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// Returns safe format/surface/reconnect capabilities.
+    #[must_use]
+    pub const fn capabilities(&self) -> &CaptureCapabilities {
+        &self.capabilities
     }
 }
 

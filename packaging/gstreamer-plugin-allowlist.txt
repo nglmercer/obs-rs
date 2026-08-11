@@ -1,0 +1,13 @@
+# element|license-policy|purpose
+appsrc|LGPL-2.1-or-later|bounded application media input
+matroskamux|LGPL-2.1-or-later|Matroska recording
+flvmux|LGPL-2.1-or-later|RTMP container
+rtmpsink|LGPL-2.1-or-later|RTMP transport
+mpegtsmux|LGPL-2.1-or-later|SRT MPEG-TS container
+srtsink|MPL-2.0|SRT transport
+webrtcbin|LGPL-2.1-or-later|WebRTC transport
+vp8enc|BSD-3-Clause|WebRTC video
+opusenc|BSD-3-Clause|WebRTC audio
+x264enc|GPL-2.0-or-later|optional H.264 software encoder; distribution approval required
+openh264enc|BSD-2-Clause|approved H.264 software fallback when runtime is available
+avenc_aac|LGPL-2.1-or-later|AAC software encoder when runtime is approved

@@ -1,5 +1,6 @@
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
+use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
 use std::{
     borrow::Borrow,
@@ -293,12 +294,43 @@ impl SceneSpec {
         Ok(())
     }
 }
+/// Preferred renderer for one project profile.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RenderBackendPreference {
+    /// Deterministic portable renderer and compatibility default.
+    #[default]
+    Cpu,
+    /// Optional accelerated renderer, with explicit CPU fallback if unavailable.
+    Wgpu,
+}
+
+impl RenderBackendPreference {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Wgpu => "wgpu",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "cpu" => Some(Self::Cpu),
+            "wgpu" => Some(Self::Wgpu),
+            _ => None,
+        }
+    }
+}
+
 /// One named profile containing video settings and ordered scenes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Profile {
     pub(crate) id: Identifier,
     pub(crate) name: String,
     pub(crate) video_format: VideoFormat,
+    pub(crate) render_backend: RenderBackendPreference,
+    pub(crate) output_kind: OutputProfileKind,
     pub(crate) scenes: BTreeMap<Identifier, SceneSpec>,
 }
 
@@ -316,6 +348,8 @@ impl Profile {
             id: identifier(id, "profile id")?,
             name: name.to_owned(),
             video_format,
+            render_backend: RenderBackendPreference::Cpu,
+            output_kind: OutputProfileKind::ReferencePacket,
             scenes: BTreeMap::new(),
         })
     }
@@ -341,6 +375,28 @@ impl Profile {
     /// Replaces the canvas resolution and frame rate used to render this profile.
     pub const fn set_video_format(&mut self, video_format: VideoFormat) {
         self.video_format = video_format;
+    }
+
+    /// Returns the requested renderer. Availability is negotiated at runtime.
+    #[must_use]
+    pub const fn render_backend(&self) -> RenderBackendPreference {
+        self.render_backend
+    }
+
+    /// Selects a renderer without changing the deterministic fallback policy.
+    pub const fn set_render_backend(&mut self, preference: RenderBackendPreference) {
+        self.render_backend = preference;
+    }
+
+    /// Returns the exact requested output profile.
+    #[must_use]
+    pub const fn output_profile(&self) -> OutputProfileKind {
+        self.output_kind
+    }
+
+    /// Selects an exact output profile. Runtime negotiation may report it unavailable.
+    pub const fn set_output_profile(&mut self, profile: OutputProfileKind) {
+        self.output_kind = profile;
     }
 
     /// Adds a scene while rejecting duplicate IDs.

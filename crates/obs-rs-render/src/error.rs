@@ -33,6 +33,8 @@ pub enum RenderError {
     LayerSubmissionUnsupported,
     /// A native surface provider cannot be imported by this backend.
     SurfaceUnsupported { provider: String },
+    /// An optional native/accelerated backend operation failed.
+    Backend { message: String },
     /// A media invariant failed during CPU composition.
     Media(MediaError),
 }
@@ -74,6 +76,7 @@ impl fmt::Display for RenderError {
                     "render backend cannot import {provider} surfaces"
                 )
             }
+            Self::Backend { message } => write!(formatter, "render backend failed: {message}"),
             Self::Media(error) => error.fmt(formatter),
         }
     }

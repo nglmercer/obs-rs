@@ -252,6 +252,27 @@ fn validate_websocket_response(response: &str, key: &str) -> Result<(), OutputEr
     }
 }
 
+/// Validates a bounded RFC 6455 server handshake without performing network I/O.
+///
+/// This entry point is useful to protocol adapters, tests, and fuzzers. The
+/// caller supplies the request key whose accept digest must appear in the
+/// response.
+///
+/// # Errors
+///
+/// Rejects oversized/non-UTF-8 input and malformed or unsuccessful upgrades.
+pub fn validate_websocket_handshake(response: &[u8], request_key: &str) -> Result<(), OutputError> {
+    if response.len() > MAX_WEBSOCKET_HEADER_BYTES {
+        return Err(OutputError::Transport(
+            "WebSocket handshake headers exceed the configured limit".to_owned(),
+        ));
+    }
+    let response = std::str::from_utf8(response).map_err(|_| {
+        OutputError::Transport("WebSocket handshake headers are not UTF-8".to_owned())
+    })?;
+    validate_websocket_response(response, request_key)
+}
+
 #[cfg(test)]
 pub(crate) fn websocket_packet_body(packet: &EncodedPacket) -> Result<Vec<u8>, OutputError> {
     let mut body = Vec::with_capacity(26 + packet.byte_len());

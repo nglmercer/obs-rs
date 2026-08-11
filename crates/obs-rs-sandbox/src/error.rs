@@ -39,6 +39,10 @@ pub enum SandboxError {
     },
     /// Requested capabilities exceed the user's/host's grant.
     BundlePermissionDenied,
+    /// A verified bundle could not be staged or atomically installed.
+    BundleIo { operation: String, message: String },
+    /// Linux resource limits cannot be applied, so launch is refused.
+    ResourceLimitsUnavailable,
     /// The plugin API version is incompatible.
     Plugin(PluginError),
     /// A child process or frame stream failed.
@@ -91,6 +95,12 @@ impl fmt::Display for SandboxError {
             ),
             Self::BundlePermissionDenied => {
                 formatter.write_str("plugin bundle requests capabilities that were not granted")
+            }
+            Self::BundleIo { operation, message } => {
+                write!(formatter, "plugin bundle {operation}: {message}")
+            }
+            Self::ResourceLimitsUnavailable => {
+                formatter.write_str("sandbox resource-limit helper is unavailable")
             }
             Self::Plugin(error) => error.fmt(formatter),
             Self::Capture(error) => error.fmt(formatter),

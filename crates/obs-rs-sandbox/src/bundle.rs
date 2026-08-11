@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Component, Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
 };
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -15,6 +18,7 @@ pub const MAX_PLUGIN_BUNDLE_BYTES: usize = 64 * 1_024 * 1_024;
 pub const MAX_PLUGIN_PAYLOADS: usize = 32;
 pub const MAX_PLUGIN_PAYLOAD_PATH_BYTES: usize = 240;
 const MAX_CANONICAL_MANIFEST_BYTES: usize = 64 * 1_024;
+static NEXT_INSTALL_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Capability that an external plugin asks the host to grant.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -98,6 +102,7 @@ impl PluginBundleManifest {
                 return Err(bundle_error("manifest text contains an unsafe delimiter"));
             }
         }
+        validate_version(plugin.version())?;
         validate_version(minimum_app_version)?;
         if target.len() > 128
             || !target
@@ -247,36 +252,7 @@ impl SignedPluginBundle {
         policy: &PluginVerificationPolicy,
     ) -> Result<VerifiedPluginBundle, SandboxError> {
         validate_payloads(&self.payloads)?;
-        if self.manifest.target != policy.target {
-            return Err(SandboxError::BundleTargetMismatch {
-                expected: policy.target.clone(),
-                actual: self.manifest.target.clone(),
-            });
-        }
-        if compare_versions(
-            &policy.application_version,
-            &self.manifest.minimum_app_version,
-        )? == std::cmp::Ordering::Less
-        {
-            return Err(SandboxError::BundleVersionIncompatible {
-                required: self.manifest.minimum_app_version.clone(),
-                actual: policy.application_version.clone(),
-            });
-        }
-        let api = self.manifest.plugin.api_version();
-        if api.major() != policy.plugin_api.major() || api.minor() > policy.plugin_api.minor() {
-            return Err(SandboxError::BundleApiIncompatible {
-                required_major: api.major(),
-                required_minor: api.minor(),
-            });
-        }
-        if !self
-            .manifest
-            .capabilities
-            .is_subset(&policy.allowed_capabilities)
-        {
-            return Err(SandboxError::BundlePermissionDenied);
-        }
+        verify_compatibility(&self.manifest, policy)?;
         let key = trust
             .keys
             .get(&self.manifest.signing_key_id)
@@ -391,6 +367,146 @@ impl VerifiedPluginBundle {
     }
 }
 
+/// Creates an installable unsigned bundle only in development builds.
+///
+/// Target, version, API, path, size, hash metadata, and permission checks still
+/// apply. This symbol is absent from release builds, so production code cannot
+/// accidentally enable unsigned plugins through a runtime flag.
+///
+/// # Errors
+///
+/// Rejects invalid payloads, missing executables, incompatible targets or
+/// versions, and capabilities denied by `policy`.
+#[cfg(debug_assertions)]
+pub fn verify_unsigned_development(
+    manifest: PluginBundleManifest,
+    payloads: impl IntoIterator<Item = PluginPayload>,
+    policy: &PluginVerificationPolicy,
+) -> Result<VerifiedPluginBundle, SandboxError> {
+    let payloads = payloads.into_iter().collect::<Vec<_>>();
+    validate_payloads(&payloads)?;
+    if !payloads
+        .iter()
+        .any(|payload| payload.path == manifest.executable_path)
+    {
+        return Err(bundle_error("unsigned executable is missing from payloads"));
+    }
+    verify_compatibility(&manifest, policy)?;
+    Ok(VerifiedPluginBundle(SignedPluginBundle {
+        manifest,
+        payloads,
+        signature: [0; 64],
+    }))
+}
+
+/// Paths produced by an atomic verified installation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstalledPlugin {
+    directory: PathBuf,
+    command: PathBuf,
+}
+
+impl InstalledPlugin {
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    #[must_use]
+    pub fn command(&self) -> &Path {
+        &self.command
+    }
+}
+
+/// Installs only a previously verified bundle using temp-directory plus rename.
+///
+/// Existing versions are never overwritten. Payload paths are checked again
+/// before any write, and a failed staging attempt is removed.
+///
+/// # Errors
+///
+/// Returns a structural or I/O error without publishing a partial installation.
+pub fn install_verified_plugin(
+    bundle: &VerifiedPluginBundle,
+    root: impl AsRef<Path>,
+) -> Result<InstalledPlugin, SandboxError> {
+    let root = root.as_ref();
+    if root.as_os_str().is_empty() {
+        return Err(bundle_error("plugin installation root is empty"));
+    }
+    fs::create_dir_all(root).map_err(|error| bundle_io("create installation root", &error))?;
+    let manifest = bundle.0.manifest();
+    let directory = root
+        .join(manifest.plugin().id().as_str())
+        .join(manifest.plugin().version());
+    if directory.exists() {
+        return Err(bundle_error("plugin version is already installed"));
+    }
+    let parent = directory
+        .parent()
+        .ok_or_else(|| bundle_error("plugin installation path has no parent"))?;
+    fs::create_dir_all(parent).map_err(|error| bundle_io("create plugin directory", &error))?;
+    let install_id = NEXT_INSTALL_ID.fetch_add(1, AtomicOrdering::Relaxed);
+    let temp = parent.join(format!(
+        ".{}-{}-{install_id}.part",
+        manifest.plugin().version(),
+        std::process::id()
+    ));
+    if temp.exists() {
+        return Err(bundle_error("temporary plugin installation already exists"));
+    }
+    let result = (|| {
+        fs::create_dir(&temp).map_err(|error| bundle_io("create temporary plugin", &error))?;
+        for payload in bundle.0.payloads() {
+            validate_payload_path(payload.path())?;
+            let path = temp.join(payload.path());
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| bundle_io("create payload directory", &error))?;
+            }
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&path)
+                .map_err(|error| bundle_io("create plugin payload", &error))?;
+            file.write_all(payload.bytes())
+                .map_err(|error| bundle_io("write plugin payload", &error))?;
+            file.sync_all()
+                .map_err(|error| bundle_io("sync plugin payload", &error))?;
+            if payload.path() == manifest.executable_path() {
+                make_executable(&path)?;
+            }
+        }
+        fs::rename(&temp, &directory)
+            .map_err(|error| bundle_io("publish plugin installation", &error))?;
+        Ok::<(), SandboxError>(())
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_dir_all(&temp);
+        return Err(error);
+    }
+    Ok(InstalledPlugin {
+        command: directory.join(manifest.executable_path()),
+        directory,
+    })
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> Result<(), SandboxError> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut permissions = fs::metadata(path)
+        .map_err(|error| bundle_io("read executable permissions", &error))?
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)
+        .map_err(|error| bundle_io("set executable permissions", &error))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<(), SandboxError> {
+    Ok(())
+}
+
 /// Rotatable set of trusted official/development verification keys.
 #[derive(Clone, Debug, Default)]
 pub struct PluginTrustStore {
@@ -451,6 +567,40 @@ impl PluginVerificationPolicy {
             allowed_capabilities: allowed_capabilities.into_iter().collect(),
         })
     }
+}
+
+fn verify_compatibility(
+    manifest: &PluginBundleManifest,
+    policy: &PluginVerificationPolicy,
+) -> Result<(), SandboxError> {
+    if manifest.target != policy.target {
+        return Err(SandboxError::BundleTargetMismatch {
+            expected: policy.target.clone(),
+            actual: manifest.target.clone(),
+        });
+    }
+    if compare_versions(&policy.application_version, &manifest.minimum_app_version)?
+        == std::cmp::Ordering::Less
+    {
+        return Err(SandboxError::BundleVersionIncompatible {
+            required: manifest.minimum_app_version.clone(),
+            actual: policy.application_version.clone(),
+        });
+    }
+    let api = manifest.plugin.api_version();
+    if api.major() != policy.plugin_api.major() || api.minor() > policy.plugin_api.minor() {
+        return Err(SandboxError::BundleApiIncompatible {
+            required_major: api.major(),
+            required_minor: api.minor(),
+        });
+    }
+    if !manifest
+        .capabilities
+        .is_subset(&policy.allowed_capabilities)
+    {
+        return Err(SandboxError::BundlePermissionDenied);
+    }
+    Ok(())
 }
 
 fn validate_payloads(payloads: &[PluginPayload]) -> Result<(), SandboxError> {
@@ -685,6 +835,13 @@ fn u64_len(value: usize) -> Result<u64, SandboxError> {
 fn bundle_error(reason: impl Into<String>) -> SandboxError {
     SandboxError::InvalidBundle {
         reason: reason.into(),
+    }
+}
+
+fn bundle_io(operation: &str, error: &std::io::Error) -> SandboxError {
+    SandboxError::BundleIo {
+        operation: operation.to_owned(),
+        message: error.to_string(),
     }
 }
 

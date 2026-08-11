@@ -1,0 +1,64 @@
+[package]
+name = "obs-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+obs-rs-capture = { path = "../crates/obs-rs-capture" }
+obs-rs-config = { path = "../crates/obs-rs-config" }
+obs-rs-diagnostics = { path = "../crates/obs-rs-diagnostics" }
+obs-rs-media = { path = "../crates/obs-rs-media" }
+obs-rs-output = { path = "../crates/obs-rs-output" }
+obs-rs-output-gstreamer = { path = "../crates/obs-rs-output-gstreamer" }
+obs-rs-project = { path = "../crates/obs-rs-project" }
+obs-rs-sandbox = { path = "../crates/obs-rs-sandbox" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "project_config"
+path = "fuzz_targets/project_config.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "diagnostics"
+path = "fuzz_targets/diagnostics.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "obsrpacket"
+path = "fuzz_targets/obsrpacket.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "frame_packet"
+path = "fuzz_targets/frame_packet.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sandbox_manifests"
+path = "fuzz_targets/sandbox_manifests.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "websocket_handshake"
+path = "fuzz_targets/websocket_handshake.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "production_metadata"
+path = "fuzz_targets/production_metadata.rs"
+test = false
+doc = false

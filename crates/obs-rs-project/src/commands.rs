@@ -1,10 +1,11 @@
 use super::{
     error::ProjectError,
-    model::{Profile, Project, SceneSpec, SourceSpec},
+    model::{Profile, Project, RenderBackendPreference, SceneSpec, SourceSpec},
     validation::{identifier, source_id},
 };
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
+use obs_rs_output::OutputProfileKind;
 /// Commands that mutate project state through one validated path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectCommand {
@@ -16,6 +17,16 @@ pub enum ProjectCommand {
     SetProfileVideoFormat {
         profile: String,
         format: VideoFormat,
+    },
+    /// Selects the preferred renderer while retaining runtime fallback.
+    SetProfileRenderBackend {
+        profile: String,
+        backend: RenderBackendPreference,
+    },
+    /// Selects an exact output profile for runtime capability negotiation.
+    SetProfileOutput {
+        profile: String,
+        output: OutputProfileKind,
     },
     /// Adds a scene to a profile.
     AddScene { profile: String, scene: SceneSpec },
@@ -104,13 +115,13 @@ impl Project {
             ProjectCommand::SetProfileVideoFormat { profile, format } => {
                 set_profile_video_format(self, &profile, format)
             }
-            ProjectCommand::AddScene { profile, scene } => {
-                let profile_id = identifier(&profile, "profile id")?;
-                let profile = self
-                    .profile_mut(&profile_id)
-                    .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-                profile.add_scene(scene)
+            ProjectCommand::SetProfileRenderBackend { profile, backend } => {
+                set_profile_render_backend(self, &profile, backend)
             }
+            ProjectCommand::SetProfileOutput { profile, output } => {
+                set_profile_output(self, &profile, output)
+            }
+            ProjectCommand::AddScene { profile, scene } => add_scene(self, &profile, scene),
             ProjectCommand::AddSource {
                 profile,
                 scene,
@@ -211,6 +222,40 @@ fn set_profile_video_format(
         .ok_or(ProjectError::UnknownProfile(profile_id))?
         .set_video_format(format);
     Ok(())
+}
+
+fn set_profile_render_backend(
+    project: &mut Project,
+    profile: &str,
+    backend: RenderBackendPreference,
+) -> Result<(), ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    project
+        .profile_mut(&profile_id)
+        .ok_or(ProjectError::UnknownProfile(profile_id))?
+        .set_render_backend(backend);
+    Ok(())
+}
+
+fn set_profile_output(
+    project: &mut Project,
+    profile: &str,
+    output: OutputProfileKind,
+) -> Result<(), ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    project
+        .profile_mut(&profile_id)
+        .ok_or(ProjectError::UnknownProfile(profile_id))?
+        .set_output_profile(output);
+    Ok(())
+}
+
+fn add_scene(project: &mut Project, profile: &str, scene: SceneSpec) -> Result<(), ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    project
+        .profile_mut(&profile_id)
+        .ok_or(ProjectError::UnknownProfile(profile_id))?
+        .add_scene(scene)
 }
 
 fn scene_mut<'a>(

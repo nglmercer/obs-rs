@@ -96,6 +96,44 @@ pub struct RenderMetrics {
 }
 
 impl RenderMetrics {
+    /// Records allocation of one backend texture.
+    pub fn record_texture_created(&mut self, bytes: usize) {
+        self.textures_created = self.textures_created.saturating_add(1);
+        self.allocated_bytes = self.allocated_bytes.saturating_add(bytes);
+        self.peak_allocated_bytes = self.peak_allocated_bytes.max(self.allocated_bytes);
+    }
+
+    /// Records destruction of one backend texture.
+    pub fn record_texture_destroyed(&mut self, bytes: usize) {
+        self.textures_destroyed = self.textures_destroyed.saturating_add(1);
+        self.allocated_bytes = self.allocated_bytes.saturating_sub(bytes);
+    }
+
+    /// Records one host-to-backend upload.
+    pub fn record_upload(&mut self) {
+        self.uploads = self.uploads.saturating_add(1);
+    }
+
+    /// Records one completed backend composition.
+    pub fn record_composition(&mut self) {
+        self.compositions = self.compositions.saturating_add(1);
+    }
+
+    /// Records one explicit backend-to-host readback.
+    pub fn record_readback(&mut self) {
+        self.readbacks = self.readbacks.saturating_add(1);
+    }
+
+    /// Records a context/device loss notification.
+    pub fn record_context_loss(&mut self) {
+        self.context_losses = self.context_losses.saturating_add(1);
+    }
+
+    /// Records successful context/device recovery.
+    pub fn record_recovery(&mut self) {
+        self.recoveries = self.recoveries.saturating_add(1);
+    }
+
     /// Returns the number of successfully created textures.
     #[must_use]
     pub const fn textures_created(self) -> u64 {

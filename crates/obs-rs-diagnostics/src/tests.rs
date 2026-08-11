@@ -106,3 +106,29 @@ fn atomic_writer_commits_and_abort_removes_temporary_state() {
     assert!(!temp_path.exists());
     assert!(!final_path.exists());
 }
+
+#[test]
+fn diagnostics_redact_plugin_update_streaming_and_portal_secrets() {
+    let input = concat!(
+        "renderer=cpu\n",
+        "plugin_path=/home/user/private/plugin\n",
+        "update_credentials=bearer-token\n",
+        "srt_passphrase=hunter2\n",
+        "webrtc_signaling=wss://user:secret@example.invalid\n",
+        "restore_token=portal-secret\n",
+        "custom_password:secret\n",
+    );
+    let redacted = redact_diagnostics_text(input);
+    assert!(redacted.contains("renderer=cpu"));
+    for secret in [
+        "/home/user/private/plugin",
+        "bearer-token",
+        "hunter2",
+        "user:secret",
+        "portal-secret",
+        "custom_password:secret",
+    ] {
+        assert!(!redacted.contains(secret));
+    }
+    assert_eq!(format!("{:?}", Redacted::new("secret")), REDACTED);
+}

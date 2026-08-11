@@ -1,0 +1,6 @@
+OBSRGST1
+profile=MatroskaH264Aac
+video=openh264enc
+audio=avenc_aac
+queue_bytes=4096
+atomic=true

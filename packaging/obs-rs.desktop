@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OBS-RS
+Comment=Rust-native broadcasting and recording reference application
+Exec=obs-rs
+Icon=obs-rs
+Terminal=false
+Categories=AudioVideo;Recorder;

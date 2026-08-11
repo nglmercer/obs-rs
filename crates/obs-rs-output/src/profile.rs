@@ -20,6 +20,33 @@ pub enum OutputProfileKind {
     WebRtcVp8Opus,
 }
 
+impl OutputProfileKind {
+    /// Returns the stable project/config identifier for this exact profile.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::ReferencePacket => "reference",
+            Self::MatroskaH264Aac => "matroska-h264-aac",
+            Self::RtmpH264Aac => "rtmp-h264-aac",
+            Self::SrtMpegTsH264Aac => "srt-mpegts-h264-aac",
+            Self::WebRtcVp8Opus => "webrtc-vp8-opus",
+        }
+    }
+
+    /// Parses one stable project/config profile identifier.
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "reference" => Some(Self::ReferencePacket),
+            "matroska-h264-aac" => Some(Self::MatroskaH264Aac),
+            "rtmp-h264-aac" => Some(Self::RtmpH264Aac),
+            "srt-mpegts-h264-aac" => Some(Self::SrtMpegTsH264Aac),
+            "webrtc-vp8-opus" => Some(Self::WebRtcVp8Opus),
+            _ => None,
+        }
+    }
+}
+
 /// Video codec selected by a profile.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum OutputVideoCodec {
