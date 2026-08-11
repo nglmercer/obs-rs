@@ -7,7 +7,10 @@ export component TransitionDock inherits Rectangle {
     in property <string> locale;
     in property <string> transition;
     in property <int> panel-kind;
+    in property <bool> floating;
     callback move-panel(int, int);
+    callback float-panel(int);
+    callback close-panel(int);
     callback cut-transition();
     callback fade-transition();
     property <string> duration: "300";
@@ -22,7 +25,10 @@ export component TransitionDock inherits Rectangle {
         DockHeader {
             title: I18n.text.transition_title;
             panel-kind: root.panel-kind;
+            floating: root.floating;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
+            float-panel(kind) => { root.float-panel(kind); }
+            close-panel(kind) => { root.close-panel(kind); }
         }
         Rectangle {
             vertical-stretch: 1;

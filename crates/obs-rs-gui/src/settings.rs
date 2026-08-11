@@ -178,7 +178,7 @@ pub(crate) const THEMES: [ThemePreset; 4] = [
 /// The independent booleans mirror the independent checkboxes on the General
 /// page; grouping them into a flags type would only add a translation layer.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AppSettings {
     pub(crate) locale: String,
     pub(crate) theme: usize,
@@ -213,9 +213,10 @@ pub(crate) struct AppSettings {
 /// Window layout state, restored so a session reopens where it was left.
 ///
 /// This is the desktop's own state rather than project data, which is why it
-/// belongs to the settings document instead of the project file.
+/// belongs to the settings document instead of the project file. Width shares
+/// are floats, so the type compares by value rather than deriving `Eq`.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutSettings {
     /// Dock IDs in display order: 0 scenes, 1 sources, 2 mixer, 3 transitions,
     /// 4 controls.
@@ -229,10 +230,21 @@ pub(crate) struct LayoutSettings {
     pub(crate) view_mode: i32,
     /// Height of the dock row in logical pixels.
     pub(crate) dock_height: u32,
+    /// Width share per dock kind, as adjusted by the splitters.
+    pub(crate) panel_weights: Vec<f32>,
+    /// Dock kinds that were left detached in their own windows.
+    pub(crate) floating_panels: Vec<i32>,
 }
 
 /// The dock IDs a layout must contain, in the order OBS ships them.
 const DEFAULT_PANEL_ORDER: [i32; 5] = [1, 0, 2, 3, 4];
+
+/// Relative dock widths OBS ships with: the mixer is the widest strip and the
+/// controls column the narrowest.
+const DEFAULT_PANEL_WEIGHTS: [f32; 5] = [1.0, 1.0, 1.85, 1.0, 1.4];
+
+/// Bounds a stored width share must lie inside to be used.
+const WEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.2..=8.0;
 
 impl Default for LayoutSettings {
     fn default() -> Self {
@@ -245,6 +257,8 @@ impl Default for LayoutSettings {
             show_controls: true,
             view_mode: 1,
             dock_height: 248,
+            panel_weights: DEFAULT_PANEL_WEIGHTS.to_vec(),
+            floating_panels: Vec::new(),
         }
     }
 }
@@ -263,6 +277,50 @@ impl LayoutSettings {
         let mut sorted = order.clone();
         sorted.sort_unstable();
         (sorted == [0, 1, 2, 3, 4]).then_some(order)
+    }
+
+    /// Parses `1.0,1.0,1.85,1.0,1.4` into one share per dock.
+    ///
+    /// A document with the wrong count, or a share outside the range a splitter
+    /// can produce, falls back wholesale rather than leaving a dock unusable.
+    fn parse_panel_weights(value: &str) -> Option<Vec<f32>> {
+        let weights = value
+            .split(',')
+            .map(|entry| entry.trim().parse::<f32>().ok())
+            .collect::<Option<Vec<_>>>()?;
+        (weights.len() == DEFAULT_PANEL_WEIGHTS.len()
+            && weights
+                .iter()
+                .all(|weight| weight.is_finite() && WEIGHT_RANGE.contains(weight)))
+        .then_some(weights)
+    }
+
+    /// Parses the comma-separated list of detached dock IDs.
+    fn parse_floating(value: &str) -> Vec<i32> {
+        let mut panels = value
+            .split(',')
+            .filter_map(|entry| entry.trim().parse::<i32>().ok())
+            .filter(|panel| DEFAULT_PANEL_ORDER.contains(panel))
+            .collect::<Vec<_>>();
+        panels.sort_unstable();
+        panels.dedup();
+        panels
+    }
+
+    fn panel_weights_text(&self) -> String {
+        self.panel_weights
+            .iter()
+            .map(|weight| format!("{weight:.3}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn floating_text(&self) -> String {
+        self.floating_panels
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     fn panel_order_text(&self) -> String {
@@ -330,6 +388,14 @@ impl LayoutSettings {
                 .and_then(|value| value.parse::<u32>().ok())
                 .filter(|height| (120..=1_200).contains(height))
                 .unwrap_or(defaults.dock_height),
+            panel_weights: config
+                .get("layout_panel_weights")
+                .and_then(Self::parse_panel_weights)
+                .unwrap_or(defaults.panel_weights),
+            floating_panels: config
+                .get("layout_floating_panels")
+                .map(Self::parse_floating)
+                .unwrap_or(defaults.floating_panels),
         }
     }
 }
@@ -441,7 +507,7 @@ impl AppSettings {
 
     fn to_config(&self) -> Config {
         let mut config = Config::new();
-        let entries: [(&str, String); 30] = [
+        let entries: [(&str, String); 32] = [
             ("locale", self.locale.clone()),
             (
                 "theme",
@@ -499,6 +565,8 @@ impl AppSettings {
             ),
             ("layout_view_mode", self.layout.view_mode.to_string()),
             ("layout_dock_height", self.layout.dock_height.to_string()),
+            ("layout_panel_weights", self.layout.panel_weights_text()),
+            ("layout_floating_panels", self.layout.floating_text()),
         ];
         for (key, value) in entries {
             // Every key here is a literal identifier and every value is bounded
@@ -518,6 +586,15 @@ impl AppSettings {
         ui.set_show_mixer(layout.show_mixer);
         ui.set_show_transitions(layout.show_transitions);
         ui.set_show_controls(layout.show_controls);
+        ui.set_panel_weights(ModelRc::new(VecModel::from(layout.panel_weights.clone())));
+        // Docks are restored to the row; reopening their windows is left to the
+        // user, so a session never starts with windows they cannot see.
+        let floating = (0..DEFAULT_PANEL_ORDER.len())
+            .map(|kind| {
+                i32::try_from(kind).is_ok_and(|kind| layout.floating_panels.contains(&kind))
+            })
+            .collect::<Vec<_>>();
+        ui.set_panel_floating(ModelRc::new(VecModel::from(floating)));
         ui.set_view_mode(layout.view_mode);
         #[allow(
             clippy::cast_precision_loss,
@@ -528,10 +605,7 @@ impl AppSettings {
 
     /// Reads the window's current dock layout back into this document.
     pub(crate) fn capture_layout(&mut self, ui: &crate::MainWindow) {
-        let order = ui.get_panel_order();
-        let order = (0..order.row_count())
-            .filter_map(|index| order.row_data(index))
-            .collect::<Vec<_>>();
+        let order = read_model(&ui.get_panel_order());
         // A window that somehow lost a dock keeps the stored order rather than
         // persisting a layout that could never be restored.
         if LayoutSettings::parse_panel_order(
@@ -550,6 +624,16 @@ impl AppSettings {
         self.layout.show_mixer = ui.get_show_mixer();
         self.layout.show_transitions = ui.get_show_transitions();
         self.layout.show_controls = ui.get_show_controls();
+        let weights = read_model(&ui.get_panel_weights());
+        if weights.len() == DEFAULT_PANEL_WEIGHTS.len() {
+            self.layout.panel_weights = weights;
+        }
+        self.layout.floating_panels = read_model(&ui.get_panel_floating())
+            .into_iter()
+            .enumerate()
+            .filter(|(_, floating)| *floating)
+            .filter_map(|(kind, _)| i32::try_from(kind).ok())
+            .collect();
         self.layout.view_mode = ui.get_view_mode().clamp(0, 1);
         #[allow(
             clippy::cast_possible_truncation,
@@ -610,6 +694,13 @@ impl AppSettings {
             warning: brush([0xFB, 0xBF, 0x24]),
         }
     }
+}
+
+/// Reads a Slint model into a plain vector.
+fn read_model<T: Clone + 'static>(model: &ModelRc<T>) -> Vec<T> {
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
 }
 
 fn flag(config: &Config, key: &str, fallback: bool) -> bool {

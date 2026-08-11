@@ -4,7 +4,7 @@ import { I18n } from "i18n.slint";
 import { AppNavbar } from "navbar.slint";
 import { StagePanel } from "stage.slint";
 import { DockSlot } from "dock_slot.slint";
-import { HorizontalSplitter } from "theme.slint";
+import { HorizontalSplitter, VerticalSplitter } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { Palette } from "palette.slint";
 import {
@@ -21,6 +21,7 @@ export { SettingsWindow } from "settings_window.slint";
 export { AddSourceWindow } from "add_source_window.slint";
 export { SourcePropertiesWindow } from "source_properties_window.slint";
 export { MonitorWindow } from "monitor_window.slint";
+export { FloatingDockWindow } from "floating_dock.slint";
 export { MonitorRow, PropertyRow, SourceCandidate, SourceKindRow } from "models.slint";
 
 export component MainWindow inherits Window {
@@ -59,6 +60,10 @@ export component MainWindow inherits Window {
         // OBS ships sources left of scenes; the ids stay stable so a reorder
         // never touches the data model.
         in-out property <[int]> panel-order: [1, 0, 2, 3, 4];
+        // Width share per dock kind, adjusted by the splitters between docks.
+        in-out property <[float]> panel-weights: [1.0, 1.0, 1.85, 1.0, 1.4];
+        // Dock kinds currently detached into their own windows.
+        in-out property <[bool]> panel-floating: [false, false, false, false, false];
         in property <string> scene-name-version;
         in-out property <string> scene-name;
         in property <string> selected-source;
@@ -132,12 +137,27 @@ export component MainWindow inherits Window {
         callback add-scene(string, string);
         callback add-source(string, string, string);
         callback move-panel(int, int);
+        callback float-panel(int);
+        callback resize-panel(int, int);
         callback open-settings-window();
         callback open-add-source-window();
         callback open-source-properties-window();
         callback open-monitor-window();
         // Reports the desktop portal's answer back onto the UI thread.
         callback apply-portal-token(string);
+        // Interactive canvas editing: `handle` is 0 for a move and 1-8 for the
+        // resize handles, with the deltas already in canvas pixels.
+        callback transform-dragged(int, int, int);
+        callback transform-committed();
+        callback canvas-clicked(int, int);
+
+        // The selected scene item's rectangle in canvas pixels.
+        in property <int> item-x;
+        in property <int> item-y;
+        in property <int> item-width;
+        in property <int> item-height;
+        in property <bool> item-active;
+        in property <bool> item-locked;
 
         // Only a screen capture source has a display to choose, so the
         // affordance is derived from the selected row rather than duplicated in
@@ -296,10 +316,19 @@ export component MainWindow inherits Window {
                 canvas-height: root.canvas-height;
                 selected-source: root.selected-source;
                 selected-source-is-screen: root.selected-source-is-screen;
+                item-x: root.item-x;
+                item-y: root.item-y;
+                item-width: root.item-width;
+                item-height: root.item-height;
+                item-active: root.item-active;
+                item-locked: root.item-locked;
                 view-mode: root.view-mode;
                 open-source-properties() => { root.open-source-properties-window(); }
                 open-source-filters() => { root.open-source-properties-window(); }
                 open-monitor-window() => { root.open-monitor-window(); }
+                transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+                transform-committed() => { root.transform-committed(); }
+                canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
             }
 
             HorizontalSplitter {
@@ -317,13 +346,23 @@ export component MainWindow inherits Window {
                 HorizontalBox {
                     padding: 0px;
                     spacing: 1px;
-                    for panel in root.panel-order : DockSlot {
-                        panel-kind: panel;
-                        visible: (panel == 0 && root.show-scenes)
+                    for panel[index] in root.panel-order : HorizontalLayout {
+                        spacing: 0px;
+                        // A detached dock leaves the row entirely, and a hidden
+                        // one keeps its place free rather than collapsing.
+                        visible: !root.panel-floating[panel]
+                            && ((panel == 0 && root.show-scenes)
                             || (panel == 1 && root.show-sources)
                             || (panel == 2 && root.show-mixer)
                             || (panel == 3 && root.show-transitions)
-                            || (panel == 4 && root.show-controls);
+                            || (panel == 4 && root.show-controls));
+                        horizontal-stretch: root.panel-weights[panel];
+                        if index > 0 : VerticalSplitter {
+                            resized(delta) => { root.resize-panel(index, delta / 1px); }
+                        }
+                        DockSlot {
+                        panel-kind: panel;
+                        weight: 1.0;
                         locale: root.locale;
                         scene-rows: root.scene-rows;
                         source-rows: root.source-rows;
@@ -365,6 +404,15 @@ export component MainWindow inherits Window {
                         toggle-streaming() => { root.request-streaming(); }
                         open-settings-window() => { root.open-settings-window(); }
                         set-view-mode(mode) => { root.apply-view-mode(mode); }
+                        float-panel(kind) => { root.float-panel(kind); }
+                        close-panel(kind) => {
+                            if kind == 0 { root.show-scenes = false; }
+                            if kind == 1 { root.show-sources = false; }
+                            if kind == 2 { root.show-mixer = false; }
+                            if kind == 3 { root.show-transitions = false; }
+                            if kind == 4 { root.show-controls = false; }
+                        }
+                        }
                     }
                 }
             }

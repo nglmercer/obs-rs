@@ -159,6 +159,8 @@ fn app_settings_round_trip_the_window_layout() {
     settings.layout.show_mixer = false;
     settings.layout.view_mode = 0;
     settings.layout.dock_height = 320;
+    settings.layout.panel_weights = vec![1.5, 0.8, 2.0, 1.0, 1.2];
+    settings.layout.floating_panels = vec![2, 3];
     settings.restore_project = false;
     settings.save_project_on_exit = false;
 
@@ -325,6 +327,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     // it is exercised here rather than in its own test: only one test may own
     // the platform backend.
     exercise_layout_restore(&ui);
+    exercise_dock_layout(&ui, &state, &renderer);
     render_every_settings_category();
     render_source_properties_window();
     render_monitor_window();
@@ -362,6 +365,67 @@ fn exercise_layout_restore(ui: &MainWindow) {
 
     // Leave the window in its default layout for the snapshot tests that follow.
     AppSettings::default().apply_layout(ui);
+}
+
+/// Drives dock reordering, splitter resizing, and detaching a dock into its
+/// own window through the real callbacks.
+fn exercise_dock_layout(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
+    let controller = crate::install_dock_callbacks(ui, state, renderer, &output);
+
+    // Reordering moves the dragged dock one place and leaves the rest alone.
+    let before = read_order(ui);
+    ui.invoke_move_panel(before[0], 1);
+    let after = read_order(ui);
+    assert_eq!(after[0], before[1]);
+    assert_eq!(after[1], before[0]);
+    assert_eq!(after[2..], before[2..]);
+
+    // A splitter drag trades width between its two neighbours only.
+    let before = read_weights(ui);
+    ui.invoke_resize_panel(2, 160);
+    let after = read_weights(ui);
+    assert!(after[0] > before[0] || after[1] > before[1], "a dock grew");
+    assert!(
+        (after.iter().sum::<f32>() - before.iter().sum::<f32>()).abs() < 1e-4,
+        "the row's total width must be preserved"
+    );
+
+    // Detaching opens a window for the dock and takes it out of the row.
+    assert!(!controller.is_floating(2));
+    ui.invoke_float_panel(2);
+    assert!(controller.is_floating(2), "the mixer detached");
+    assert!(read_floating(ui)[2], "the row must know the dock left it");
+
+    // Detaching again returns it to the row.
+    ui.invoke_float_panel(2);
+    assert!(!controller.is_floating(2), "the mixer re-docked");
+    assert!(!read_floating(ui)[2]);
+}
+
+fn read_order(ui: &MainWindow) -> Vec<i32> {
+    let model = ui.get_panel_order();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+fn read_weights(ui: &MainWindow) -> Vec<f32> {
+    let model = ui.get_panel_weights();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+fn read_floating(ui: &MainWindow) -> Vec<bool> {
+    let model = ui.get_panel_floating();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
 }
 
 /// Renders the display picker in both locales with a two-monitor layout, so a

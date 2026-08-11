@@ -30,8 +30,9 @@ pub(crate) use callbacks::{
     toggle_source_visibility_and_refresh,
 };
 pub(crate) use callbacks::{
-    install_add_source_window, install_callbacks, install_monitor_window, install_settings_window,
-    install_source_properties_window, start_preview_timer, PeerWindows,
+    install_add_source_window, install_callbacks, install_canvas_callbacks, install_dock_callbacks,
+    install_monitor_window, install_settings_window, install_source_properties_window, item_rect,
+    start_preview_timer, PeerWindows,
 };
 pub(crate) use fixtures::{
     capture_devices, initial_project, kind_runs_in_this_session, kind_selects_monitor,
@@ -44,9 +45,9 @@ pub(crate) use refresh::{
 };
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
-    AddSourceText, AddSourceWindow, I18n, LocaleOption, MainWindow, MixerRow, MonitorRow,
-    MonitorText, MonitorWindow, Palette, ProfileRow, PropertyRow, PropertyText, SceneRow,
-    SettingsText, SettingsWindow, SourceCandidate, SourceKindRow, SourcePropertiesWindow,
+    AddSourceText, AddSourceWindow, FloatingDockWindow, I18n, LocaleOption, MainWindow, MixerRow,
+    MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow, PropertyRow, PropertyText,
+    SceneRow, SettingsText, SettingsWindow, SourceCandidate, SourceKindRow, SourcePropertiesWindow,
     SourceRow, ThemeTokens, UiText,
 };
 
@@ -121,6 +122,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     install_callbacks(&ui, &state, &renderer, &output);
     // Keeps the settings window alive for the whole session; dropping the
     // controller would close it.
+    // Keeps the canvas drag state and the detached docks alive for the session.
+    let _canvas = install_canvas_callbacks(&ui, &state, &renderer);
+    let docks = install_dock_callbacks(&ui, &state, &renderer, &output);
     let add_source_window = install_add_source_window(&ui, &state, &renderer)?;
     let monitor_window = install_monitor_window(&ui, &state, &renderer)?;
     let properties_window = install_source_properties_window(&ui, &state, &renderer)?;
@@ -134,6 +138,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             add_source: add_source_window,
             properties: properties_window,
             monitor: monitor_window,
+            docks: Rc::clone(&docks),
         },
     )?;
 

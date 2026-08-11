@@ -1,4 +1,6 @@
 pub(crate) mod add_source;
+pub(crate) mod canvas;
+pub(crate) mod docks;
 pub(crate) mod monitor;
 mod output;
 mod project;
@@ -14,7 +16,7 @@ use std::{
 };
 
 use obs_rs_ui::DesktopState;
-use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, Timer, TimerMode};
 
 use crate::{
     refresh_output_ui, refresh_preview_frames_for_view, MainWindow, OutputRuntime, PreviewRenderer,
@@ -23,6 +25,8 @@ use crate::{
 pub(crate) use add_source::install_add_source_window;
 #[cfg(test)]
 pub(crate) use add_source::{add_source_window, populate_add_source_window};
+pub(crate) use canvas::{install_canvas_callbacks, item_rect};
+pub(crate) use docks::install_dock_callbacks;
 pub(crate) use monitor::install_monitor_window;
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
 pub(crate) use project::{install_project_callbacks, project_store, rename_scene_and_refresh};
@@ -139,34 +143,4 @@ pub(crate) fn install_callbacks(
     install_output_callbacks(ui, state, renderer, output);
     install_mixer_callbacks(ui, state, renderer, output);
     install_project_callbacks(ui, state, renderer, output);
-    install_panel_callbacks(ui);
-}
-
-fn install_panel_callbacks(ui: &MainWindow) {
-    let weak = ui.as_weak();
-    ui.on_move_panel(move |panel, direction| {
-        let Some(ui) = weak.upgrade() else {
-            return;
-        };
-        if !(0..=4).contains(&panel) || direction == 0 {
-            return;
-        }
-        let model = ui.get_panel_order();
-        let mut order = (0..model.row_count())
-            .filter_map(|index| model.row_data(index))
-            .collect::<Vec<_>>();
-        let Some(index) = order.iter().position(|value| *value == panel) else {
-            return;
-        };
-        let target = if direction < 0 {
-            index.checked_sub(1)
-        } else {
-            Some(index + 1)
-        };
-        let Some(target) = target.filter(|target| *target < order.len()) else {
-            return;
-        };
-        order.swap(index, target);
-        ui.set_panel_order(ModelRc::new(VecModel::from(order)));
-    });
 }

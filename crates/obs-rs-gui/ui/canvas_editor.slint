@@ -1,0 +1,140 @@
+import { Palette } from "palette.slint";
+
+// The interactive transform overlay OBS draws on its preview: a bounding box
+// around the selected scene item with eight handles. Everything here works in
+// *canvas* pixels — the project's own coordinate space — and the enclosing
+// component supplies the scale and offset that map them onto the widget, so the
+// geometry stays correct whatever size the preview is letterboxed to.
+export component CanvasEditor inherits Rectangle {
+    // Selection rectangle in canvas pixels.
+    in property <int> item-x;
+    in property <int> item-y;
+    in property <int> item-width;
+    in property <int> item-height;
+    in property <bool> active;
+    in property <bool> locked;
+    // Canvas-to-widget mapping.
+    in property <length> view-x;
+    in property <length> view-y;
+    in property <float> view-scale;
+    in property <int> canvas-width;
+    in property <int> canvas-height;
+
+    // Both report canvas-pixel deltas. `handle` is 0 for a move and 1-8 for the
+    // corner and edge handles, numbered clockwise from the top-left.
+    callback transform-dragged(int, int, int);
+    callback transform-committed();
+    callback canvas-clicked(int, int);
+
+    property <length> handle-size: 9px;
+    // A drag reports the delta since the previous move, so the Rust side only
+    // ever applies increments and never needs the press origin.
+    property <length> last-x;
+    property <length> last-y;
+    property <int> active-handle: -1;
+
+    pure function to-canvas-x(value: length) -> int {
+        Math.round((value - root.view-x) / root.view-scale / 1px);
+    }
+    pure function to-canvas-y(value: length) -> int {
+        Math.round((value - root.view-y) / root.view-scale / 1px);
+    }
+    pure function delta-canvas(value: length) -> int {
+        Math.round(value / root.view-scale / 1px);
+    }
+
+    // Selection box, placed by mapping canvas pixels through the view.
+    property <length> box-x: root.view-x + root.item-x * root.view-scale * 1px;
+    property <length> box-y: root.view-y + root.item-y * root.view-scale * 1px;
+    property <length> box-width: root.item-width * root.view-scale * 1px;
+    property <length> box-height: root.item-height * root.view-scale * 1px;
+
+    // The whole-canvas area handles selection clicks and dragging the item.
+    surface := TouchArea {
+        mouse-cursor: root.active && !root.locked
+            ? (self.pressed ? MouseCursor.grabbing : MouseCursor.grab)
+            : MouseCursor.default;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.last-x = self.mouse-x;
+                root.last-y = self.mouse-y;
+                root.active-handle = 0;
+                root.canvas-clicked(root.to-canvas-x(self.mouse-x), root.to-canvas-y(self.mouse-y));
+            }
+            if (event.kind == PointerEventKind.up && root.active-handle >= 0) {
+                root.active-handle = -1;
+                root.transform-committed();
+            }
+        }
+        moved => {
+            if (root.active-handle == 0 && root.active && !root.locked) {
+                root.transform-dragged(
+                    0,
+                    root.delta-canvas(self.mouse-x - root.last-x),
+                    root.delta-canvas(self.mouse-y - root.last-y));
+                root.last-x = self.mouse-x;
+                root.last-y = self.mouse-y;
+            }
+        }
+    }
+
+    if root.active : Rectangle {
+        x: root.box-x;
+        y: root.box-y;
+        width: root.box-width;
+        height: root.box-height;
+        background: transparent;
+        border-width: 1px;
+        border-color: root.locked ? Palette.tokens.warning : Palette.tokens.accent;
+    }
+
+    // Handles are laid out by hand because their positions come from the
+    // selection rectangle rather than from a layout.
+    for handle in [
+        { id: 1, fx: 0.0, fy: 0.0, cursor: MouseCursor.nwse-resize },
+        { id: 2, fx: 0.5, fy: 0.0, cursor: MouseCursor.ns-resize },
+        { id: 3, fx: 1.0, fy: 0.0, cursor: MouseCursor.nesw-resize },
+        { id: 4, fx: 1.0, fy: 0.5, cursor: MouseCursor.ew-resize },
+        { id: 5, fx: 1.0, fy: 1.0, cursor: MouseCursor.nwse-resize },
+        { id: 6, fx: 0.5, fy: 1.0, cursor: MouseCursor.ns-resize },
+        { id: 7, fx: 0.0, fy: 1.0, cursor: MouseCursor.nesw-resize },
+        { id: 8, fx: 0.0, fy: 0.5, cursor: MouseCursor.ew-resize },
+    ] : Rectangle {
+        visible: root.active && !root.locked;
+        x: root.box-x + root.box-width * handle.fx - root.handle-size / 2;
+        y: root.box-y + root.box-height * handle.fy - root.handle-size / 2;
+        width: root.handle-size;
+        height: root.handle-size;
+        background: Palette.tokens.accent;
+        border-width: 1px;
+        border-color: white;
+        border-radius: 1px;
+
+        grip := TouchArea {
+            mouse-cursor: handle.cursor;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    root.last-x = self.absolute-position.x;
+                    root.last-y = self.absolute-position.y;
+                    root.active-handle = handle.id;
+                }
+                if (event.kind == PointerEventKind.up && root.active-handle > 0) {
+                    root.active-handle = -1;
+                    root.transform-committed();
+                }
+            }
+            moved => {
+                if (root.active-handle == handle.id) {
+                    // A grip's own coordinates move with the box it resizes, so
+                    // the delta is taken from the absolute pointer position.
+                    root.transform-dragged(
+                        handle.id,
+                        root.delta-canvas(self.absolute-position.x + self.mouse-x - root.last-x),
+                        root.delta-canvas(self.absolute-position.y + self.mouse-y - root.last-y));
+                    root.last-x = self.absolute-position.x + self.mouse-x;
+                    root.last-y = self.absolute-position.y + self.mouse-y;
+                }
+            }
+        }
+    }
+}

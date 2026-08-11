@@ -1,5 +1,6 @@
 import { Button, ComboBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { Icon } from "theme.slint";
+import { CanvasEditor } from "canvas_editor.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
 
@@ -11,6 +12,28 @@ component StageCanvas inherits Rectangle {
     in property <string> label;
     in property <bool> program;
     in property <bool> labelled;
+    // Set only on the editable canvas; the program view is not interactive.
+    in property <bool> editable;
+    in property <int> canvas-width: 1920;
+    in property <int> canvas-height: 1080;
+    in property <int> item-x;
+    in property <int> item-y;
+    in property <int> item-width;
+    in property <int> item-height;
+    in property <bool> item-active;
+    in property <bool> item-locked;
+    callback transform-dragged(int, int, int);
+    callback transform-committed();
+    callback canvas-clicked(int, int);
+
+    // `image-fit: contain` centres the frame and scales it by the smaller of the
+    // two ratios. Reproducing that here is what lets pointer positions be
+    // converted into canvas pixels exactly.
+    property <float> view-scale: Math.min(
+        self.width / (root.canvas-width * 1px),
+        self.height / (root.canvas-height * 1px));
+    property <length> view-x: (self.width - root.canvas-width * view-scale * 1px) / 2;
+    property <length> view-y: (self.height - root.canvas-height * view-scale * 1px) / 2;
 
     background: Palette.tokens.canvas-bg;
     horizontal-stretch: 1;
@@ -22,6 +45,24 @@ component StageCanvas inherits Rectangle {
         source: root.frame;
         image-fit: contain;
         image-rendering: smooth;
+    }
+    if root.editable : CanvasEditor {
+        width: 100%;
+        height: 100%;
+        item-x: root.item-x;
+        item-y: root.item-y;
+        item-width: root.item-width;
+        item-height: root.item-height;
+        active: root.item-active;
+        locked: root.item-locked;
+        view-x: root.view-x;
+        view-y: root.view-y;
+        view-scale: root.view-scale;
+        canvas-width: root.canvas-width;
+        canvas-height: root.canvas-height;
+        transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+        transform-committed() => { root.transform-committed(); }
+        canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
     }
     if labelled : Rectangle {
         x: 0;
@@ -54,9 +95,18 @@ export component StagePanel inherits Rectangle {
     in property <int> canvas-height: 1080;
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
+    in property <int> item-x;
+    in property <int> item-y;
+    in property <int> item-width;
+    in property <int> item-height;
+    in property <bool> item-active;
+    in property <bool> item-locked;
     callback open-source-properties();
     callback open-source-filters();
     callback open-monitor-window();
+    callback transform-dragged(int, int, int);
+    callback transform-committed();
+    callback canvas-clicked(int, int);
 
     property <length> canvas-area-width: canvas-area.width - 24px;
     property <length> canvas-area-height: canvas-area.height - 24px;
@@ -85,6 +135,18 @@ export component StagePanel inherits Rectangle {
                     label: I18n.text.preview;
                     program: false;
                     labelled: true;
+                    canvas-width: root.canvas-width;
+                    canvas-height: root.canvas-height;
+                    editable: true;
+                    item-x: root.item-x;
+                    item-y: root.item-y;
+                    item-width: root.item-width;
+                    item-height: root.item-height;
+                    item-active: root.item-active;
+                    item-locked: root.item-locked;
+                    transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+                    transform-committed() => { root.transform-committed(); }
+                    canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
                 }
                 if view-mode == 0 : StageCanvas {
                     frame: program-image;
@@ -97,6 +159,18 @@ export component StagePanel inherits Rectangle {
                     label: I18n.text.preview;
                     program: false;
                     labelled: false;
+                    canvas-width: root.canvas-width;
+                    canvas-height: root.canvas-height;
+                    editable: true;
+                    item-x: root.item-x;
+                    item-y: root.item-y;
+                    item-width: root.item-width;
+                    item-height: root.item-height;
+                    item-active: root.item-active;
+                    item-locked: root.item-locked;
+                    transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+                    transform-committed() => { root.transform-committed(); }
+                    canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
                 }
             }
         }

@@ -29,6 +29,7 @@ pub(crate) struct SettingsController {
     add_source: Rc<AddSourceController>,
     properties: Rc<SourcePropertiesController>,
     monitor: Rc<MonitorController>,
+    docks: Rc<crate::callbacks::docks::DockController>,
     /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_device_ids: RefCell<Vec<String>>,
 }
@@ -85,6 +86,7 @@ pub(crate) struct PeerWindows {
     pub(crate) add_source: Rc<AddSourceController>,
     pub(crate) properties: Rc<SourcePropertiesController>,
     pub(crate) monitor: Rc<MonitorController>,
+    pub(crate) docks: Rc<crate::callbacks::docks::DockController>,
 }
 
 /// Creates the settings window and wires it to the studio window.
@@ -108,6 +110,7 @@ pub(crate) fn install_settings_window(
         add_source: Rc::clone(&peers.add_source),
         properties: Rc::clone(&peers.properties),
         monitor: Rc::clone(&peers.monitor),
+        docks: Rc::clone(&peers.docks),
         audio_device_ids: RefCell::new(Vec::new()),
     });
 
@@ -291,7 +294,7 @@ fn install_previews(
         };
         let theme = usize::try_from(index).unwrap_or(0).min(THEMES.len() - 1);
         let tokens = theme_controller.settings.borrow().tokens_for_theme(theme);
-        push_palette_tokens(&ui, &theme_controller, tokens);
+        push_palette_tokens(&ui, &theme_controller, &tokens);
     });
 
     let weak = ui.as_weak();
@@ -536,13 +539,13 @@ fn apply_to_studio(ui: &MainWindow, settings: &AppSettings) {
 
 /// Globals are per component tree, so every window is painted explicitly.
 fn push_palette(ui: &MainWindow, controller: &SettingsController, settings: &AppSettings) {
-    push_palette_tokens(ui, controller, settings.tokens());
+    push_palette_tokens(ui, controller, &settings.tokens());
 }
 
 fn push_palette_tokens(
     ui: &MainWindow,
     controller: &SettingsController,
-    tokens: crate::ThemeTokens,
+    tokens: &crate::ThemeTokens,
 ) {
     ui.global::<Palette>().set_tokens(tokens.clone());
     controller
@@ -551,7 +554,8 @@ fn push_palette_tokens(
         .set_tokens(tokens.clone());
     controller.add_source.set_tokens(tokens.clone());
     controller.properties.set_tokens(tokens.clone());
-    controller.monitor.set_tokens(tokens);
+    controller.monitor.set_tokens(tokens.clone());
+    controller.docks.set_tokens(tokens);
 }
 
 fn string_model(values: impl Iterator<Item = SharedString>) -> ModelRc<SharedString> {

@@ -1,0 +1,88 @@
+import { MixerRow, SceneRow, SourceRow } from "models.slint";
+import { DockSlot } from "dock_slot.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// A dock detached from the studio window, so it can be moved to another screen
+// or sized independently. It hosts the same `DockSlot` the docked row uses and
+// forwards the same callbacks, which is what keeps a floating dock behaving
+// exactly like a docked one instead of becoming a second implementation.
+export component FloatingDockWindow inherits Window {
+    title: root.dock-title;
+    width: 420px;
+    height: 320px;
+    background: Palette.tokens.window-bg;
+
+    in property <string> dock-title;
+    in property <int> panel-kind;
+    in property <string> locale;
+    in property <[SceneRow]> scene-rows;
+    in property <[SourceRow]> source-rows;
+    in property <[MixerRow]> mixer-rows;
+    in property <string> source-scene;
+    in property <string> preview-scene;
+    in property <string> selected-source;
+    in property <bool> selected-source-is-screen;
+    in property <string> transition;
+    in property <bool> recording;
+    in property <bool> streaming;
+
+    callback open-modal(int);
+    callback select-preview(string);
+    callback select-program(string);
+    callback remove-scene(string);
+    callback select-source(string);
+    callback toggle-source-visibility(string);
+    callback toggle-source-locked(string);
+    callback move-source(string, int);
+    callback remove-source(string);
+    callback set-mixer-gain(string, int);
+    callback toggle-mixer-mute(string);
+    callback cut-transition();
+    callback fade-transition();
+    callback set-view-mode(int);
+    callback toggle-recording();
+    callback toggle-streaming();
+    callback open-settings-window();
+    callback redock-panel(int);
+
+    DockSlot {
+        width: 100%;
+        height: 100%;
+        panel-kind: root.panel-kind;
+        floating: true;
+        locale: root.locale;
+        scene-rows: root.scene-rows;
+        source-rows: root.source-rows;
+        mixer-rows: root.mixer-rows;
+        source-scene: root.source-scene;
+        preview-scene: root.preview-scene;
+        selected-source: root.selected-source;
+        selected-source-is-screen: root.selected-source-is-screen;
+        transition: root.transition;
+        recording: root.recording;
+        streaming: root.streaming;
+        // A floating dock cannot be reordered, and its header button returns it
+        // to the row instead of detaching it again.
+        move-panel(kind, delta) => { }
+        float-panel(kind) => { root.redock-panel(kind); }
+        close-panel(kind) => { root.redock-panel(kind); }
+        open-modal(modal) => { root.open-modal(modal); }
+        select-preview(id) => { root.select-preview(id); }
+        select-program(id) => { root.select-program(id); }
+        remove-scene(id) => { root.remove-scene(id); }
+        select-source(id) => { root.select-source(id); }
+        toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
+        toggle-source-locked(id) => { root.toggle-source-locked(id); }
+        move-source(id, delta) => { root.move-source(id, delta); }
+        remove-source(id) => { root.remove-source(id); }
+        set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
+        toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+        cut-transition() => { root.cut-transition(); }
+        fade-transition() => { root.fade-transition(); }
+        toggle-recording() => { root.toggle-recording(); }
+        toggle-streaming() => { root.toggle-streaming(); }
+        open-settings-window() => { root.open-settings-window(); }
+        set-view-mode(mode) => { root.set-view-mode(mode); }
+    }
+}

@@ -316,6 +316,23 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_source_properties_version(properties_version.into());
     }
     ui.set_selected_source(selected_source.into());
+    // The canvas overlay needs the item's rectangle in canvas pixels, which is
+    // derived from the same transform the compositor uses.
+    let canvas = (
+        u32::try_from(ui.get_canvas_width()).unwrap_or(1_920).max(1),
+        u32::try_from(ui.get_canvas_height())
+            .unwrap_or(1_080)
+            .max(1),
+    );
+    let rect = selected_source_spec.map(|source| crate::item_rect(source.transform(), canvas));
+    ui.set_item_active(rect.is_some());
+    ui.set_item_locked(selected_source_spec.is_some_and(SourceSpec::locked));
+    if let Some(rect) = rect {
+        ui.set_item_x(i32::try_from(rect.x).unwrap_or(0));
+        ui.set_item_y(i32::try_from(rect.y).unwrap_or(0));
+        ui.set_item_width(i32::try_from(rect.width).unwrap_or(0));
+        ui.set_item_height(i32::try_from(rect.height).unwrap_or(0));
+    }
     // Only a display-backed source offers the picker, so the docks derive the
     // affordance from the selected row instead of guessing from the name.
     ui.set_selected_source_is_screen(

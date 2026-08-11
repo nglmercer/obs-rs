@@ -10,7 +10,10 @@ export component ControlsDock inherits Rectangle {
     in property <bool> streaming;
     in property <int> panel-kind;
 
+    in property <bool> floating;
     callback move-panel(int, int);
+    callback float-panel(int);
+    callback close-panel(int);
     callback toggle-recording();
     callback toggle-streaming();
     callback set-view-mode(int);
@@ -26,7 +29,10 @@ export component ControlsDock inherits Rectangle {
         DockHeader {
             title: I18n.text.controls_title;
             panel-kind: root.panel-kind;
+            floating: root.floating;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
+            float-panel(kind) => { root.float-panel(kind); }
+            close-panel(kind) => { root.close-panel(kind); }
         }
         VerticalBox {
             padding: 8px;
