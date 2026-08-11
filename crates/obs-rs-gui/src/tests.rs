@@ -148,6 +148,53 @@ fn app_settings_round_trip_the_selected_audio_input() {
 }
 
 #[test]
+fn app_settings_round_trip_the_window_layout() {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-layout-{token}.txt"));
+    let mut settings = AppSettings::default();
+    settings.layout.panel_order = vec![4, 3, 2, 1, 0];
+    settings.layout.show_mixer = false;
+    settings.layout.view_mode = 0;
+    settings.layout.dock_height = 320;
+    settings.restore_project = false;
+    settings.save_project_on_exit = false;
+
+    settings.save(&path).expect("settings should save");
+    let reloaded = AppSettings::load(&path);
+
+    assert_eq!(reloaded, settings);
+    std::fs::remove_file(path).expect("remove settings fixture");
+}
+
+#[test]
+fn a_layout_that_lost_a_dock_falls_back_to_the_default_order() {
+    let mut config = obs_rs_config::Config::new();
+    config
+        .set("layout_panel_order", "1,0,2,3")
+        .expect("panel order key");
+    config
+        .set("layout_dock_height", "9999")
+        .expect("dock height key");
+    let document = config.serialize();
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-layout-invalid-{token}.txt"));
+    std::fs::write(&path, document).expect("write settings fixture");
+
+    let settings = AppSettings::load(&path);
+
+    let defaults = AppSettings::default();
+    assert_eq!(settings.layout.panel_order, defaults.layout.panel_order);
+    assert_eq!(settings.layout.dock_height, defaults.layout.dock_height);
+    std::fs::remove_file(path).expect("remove settings fixture");
+}
+
+#[test]
 fn output_runtime_switches_the_selected_audio_input_without_rebuilding_video() {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
     let mut output = OutputRuntime::new(format);
@@ -277,11 +324,147 @@ fn ui_layout_can_render_a_reference_snapshot() {
     // The settings window is a second top-level window with its own globals, so
     // it is exercised here rather than in its own test: only one test may own
     // the platform backend.
+    exercise_layout_restore(&ui);
     render_every_settings_category();
     render_source_properties_window();
+    render_monitor_window();
     exercise_add_source_window(&ui, &state, &renderer);
     exercise_capture_device_properties_window(&ui, &state, &renderer);
+    exercise_monitor_selection(&ui, &state, &renderer);
     exercise_recording_controls(&ui, &state, &renderer);
+}
+
+/// Pushes a stored layout into the real window and reads it back, which is the
+/// round trip a restart performs.
+fn exercise_layout_restore(ui: &MainWindow) {
+    let mut stored = AppSettings::default();
+    stored.layout.panel_order = vec![2, 4, 0, 1, 3];
+    stored.layout.show_transitions = false;
+    stored.layout.view_mode = 0;
+    stored.layout.dock_height = 300;
+
+    stored.apply_layout(ui);
+
+    assert_eq!(ui.get_view_mode(), 0);
+    assert!(!ui.get_show_transitions());
+    assert!(ui.get_show_mixer());
+    let order = ui.get_panel_order();
+    assert_eq!(
+        (0..order.row_count())
+            .filter_map(|index| order.row_data(index))
+            .collect::<Vec<_>>(),
+        stored.layout.panel_order
+    );
+
+    let mut captured = AppSettings::default();
+    captured.capture_layout(ui);
+    assert_eq!(captured.layout, stored.layout);
+
+    // Leave the window in its default layout for the snapshot tests that follow.
+    AppSettings::default().apply_layout(ui);
+}
+
+/// Renders the display picker in both locales with a two-monitor layout, so a
+/// broken map binding or a missing catalog field fails the suite.
+fn render_monitor_window() {
+    let window = crate::MonitorWindow::new().expect("monitor window should instantiate");
+    window.set_source_name("x11_screen_capture".into());
+    window.set_monitor_rows(ModelRc::new(VecModel::from(vec![
+        crate::MonitorRow {
+            id: "DP-1".into(),
+            name: "DP-1".into(),
+            geometry: "1920x1080 at 0,0".into(),
+            primary: true,
+            selected: true,
+            normalized_x: 0.0,
+            normalized_y: 0.0,
+            normalized_width: 0.6,
+            normalized_height: 1.0,
+        },
+        crate::MonitorRow {
+            id: "HDMI-1".into(),
+            name: "HDMI-1".into(),
+            geometry: "1280x1024 at 1920,0".into(),
+            primary: false,
+            selected: false,
+            normalized_x: 0.6,
+            normalized_y: 0.0,
+            normalized_width: 0.4,
+            normalized_height: 0.94,
+        },
+    ])));
+    window.set_selected_id("DP-1".into());
+    window.show().expect("monitor window should show");
+    for locale in UiLocale::supported() {
+        window
+            .global::<I18n>()
+            .set_text(crate::i18n::catalog(*locale));
+        let snapshot = window
+            .window()
+            .take_snapshot()
+            .expect("monitor window should render");
+        assert!(snapshot.width() > 0 && snapshot.height() > 0);
+    }
+    window.hide().expect("monitor window should hide");
+}
+
+/// Drives the display picker end to end: opening it for an X11 screen source,
+/// accepting the whole-desktop choice, and confirming the project records it.
+fn exercise_monitor_selection(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let scene = state
+        .borrow()
+        .preview_scene()
+        .expect("preview scene")
+        .to_owned();
+    let settings = source_settings("x11_screen_capture").expect("x11 defaults");
+    let source = SourceSpec::new("gui-screen", "x11_screen_capture", "GUI screen", settings)
+        .expect("screen source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: scene.clone(),
+            source,
+        }))
+        .expect("add screen source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: "gui-screen".to_owned(),
+        })
+        .expect("select screen source");
+    refresh_ui(ui, state, renderer);
+    assert!(
+        ui.get_selected_source_is_screen(),
+        "an X11 screen source must offer the display picker"
+    );
+
+    let controller =
+        crate::install_monitor_window(ui, state, renderer).expect("monitor controller");
+    ui.invoke_open_monitor_window();
+    let window = crate::callbacks::monitor::MonitorController::window(&controller);
+    // The whole-desktop choice is the one available on every host, including a
+    // CI machine with no display server.
+    window.set_capture_whole_desktop(true);
+    window.invoke_accept_monitor();
+
+    let state = state.borrow();
+    let source = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene.as_str()))
+        .and_then(|scene| scene.source("gui-screen"))
+        .expect("screen source persisted");
+    assert_eq!(
+        source.settings().get("monitor"),
+        Some(""),
+        "the display choice must reach the project command"
+    );
 }
 
 /// Renders each settings category so a page that fails to lay out — an empty

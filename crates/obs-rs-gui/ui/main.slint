@@ -15,12 +15,13 @@ import {
     SceneDialog,
 } from "dialogs.slint";
 
-export { AddSourceText, I18n, SettingsText, UiText } from "i18n.slint";
+export { AddSourceText, I18n, MonitorText, SettingsText, UiText } from "i18n.slint";
 export { Palette, ThemeTokens } from "palette.slint";
 export { SettingsWindow } from "settings_window.slint";
 export { AddSourceWindow } from "add_source_window.slint";
 export { SourcePropertiesWindow } from "source_properties_window.slint";
-export { SourceCandidate, SourceKindRow } from "models.slint";
+export { MonitorWindow } from "monitor_window.slint";
+export { MonitorRow, SourceCandidate, SourceKindRow } from "models.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
@@ -89,17 +90,19 @@ export component MainWindow inherits Window {
 
         // 0 = studio mode (preview + program), 1 = the single-canvas default.
         in-out property <int> view-mode: 1;
-        property <bool> show-sources: true;
-        property <bool> show-scenes: true;
-        property <bool> show-mixer: true;
-        property <bool> show-transitions: true;
-        property <bool> show-controls: true;
+        // Dock visibility is restored from the settings document, so these are
+        // readable and writable from Rust rather than window-private.
+        in-out property <bool> show-sources: true;
+        in-out property <bool> show-scenes: true;
+        in-out property <bool> show-mixer: true;
+        in-out property <bool> show-transitions: true;
+        in-out property <bool> show-controls: true;
         // 1 project · 2 add scene · 3 add source · 4 output · 5 rename scene
         // · 6 source properties · 7 source filters
         property <int> active-modal: 0;
         // 0 none · 1 start stream · 2 stop stream · 3 stop recording
         property <int> pending-confirm: 0;
-        property <length> dock-height: 248px;
+        in-out property <length> dock-height: 248px;
 
         callback swap-scenes();
         callback toggle-recording();
@@ -132,6 +135,12 @@ export component MainWindow inherits Window {
         callback open-settings-window();
         callback open-add-source-window();
         callback open-source-properties-window();
+        callback open-monitor-window();
+
+        // Only a screen capture source has a display to choose, so the
+        // affordance is derived from the selected row rather than duplicated in
+        // every dock that offers it.
+        in property <bool> selected-source-is-screen: false;
 
         // A mode of -1 means "toggle studio mode", which is how both the View
         // menu and the controls dock drive the canvas.
@@ -284,9 +293,11 @@ export component MainWindow inherits Window {
                 canvas-width: root.canvas-width;
                 canvas-height: root.canvas-height;
                 selected-source: root.selected-source;
+                selected-source-is-screen: root.selected-source-is-screen;
                 view-mode: root.view-mode;
                 open-source-properties() => { root.open-source-properties-window(); }
                 open-source-filters() => { root.open-source-properties-window(); }
+                open-monitor-window() => { root.open-monitor-window(); }
             }
 
             HorizontalSplitter {
@@ -318,6 +329,7 @@ export component MainWindow inherits Window {
                         source-scene: root.source-scene;
                         preview-scene: root.preview-scene;
                         selected-source: root.selected-source;
+                        selected-source-is-screen: root.selected-source-is-screen;
                         transition: root.transition;
                         recording: root.recording;
                         streaming: root.streaming;
@@ -329,6 +341,8 @@ export component MainWindow inherits Window {
                                 root.open-add-source-window();
                             } else if modal == 6 {
                                 root.open-source-properties-window();
+                            } else if modal == 8 {
+                                root.open-monitor-window();
                             } else {
                                 root.active-modal = modal;
                             }

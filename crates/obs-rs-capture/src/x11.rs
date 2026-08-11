@@ -5,9 +5,11 @@ mod connection;
 mod error;
 mod image;
 mod protocol;
+mod randr;
 mod screen;
 
 #[cfg(test)]
 mod tests;
 
-pub use screen::X11CaptureDevice;
+pub use randr::X11Monitor;
+pub use screen::{x11_monitors, X11CaptureDevice};

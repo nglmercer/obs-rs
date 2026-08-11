@@ -131,6 +131,44 @@ fn root_capture_resize_preserves_aspect_and_fills_canvas() {
 
 #[test]
 #[ignore = "requires a live local X11 server"]
+fn live_x11_monitor_enumeration_reports_usable_rectangles() {
+    let display = std::env::var("DISPLAY").expect("DISPLAY");
+    let monitors = super::screen::x11_monitors(&display).expect("enumerate monitors");
+
+    assert!(!monitors.is_empty(), "at least the root window is reported");
+    for monitor in &monitors {
+        assert!(!monitor.name().is_empty());
+        assert!(monitor.width() > 0 && monitor.height() > 0);
+        assert!(monitor.device_id().starts_with("x11-monitor-"));
+    }
+}
+
+#[test]
+#[ignore = "requires a live local X11 server"]
+fn live_x11_capture_crops_to_the_selected_monitor() {
+    let display = std::env::var("DISPLAY").expect("DISPLAY");
+    let monitors = super::screen::x11_monitors(&display).expect("enumerate monitors");
+    let monitor = monitors.first().expect("one monitor").clone();
+    let mut device =
+        X11CaptureDevice::connect(&display, "x11-root", "X11 root").expect("connect to local X11");
+
+    device
+        .select_monitor(Some(monitor.name()))
+        .expect("select the first monitor");
+
+    assert_eq!(device.capture_size(), (monitor.width(), monitor.height()));
+    let format =
+        VideoFormat::new(2, 2, obs_rs_media::FrameRate::new(30, 1).expect("rate")).expect("format");
+    device.start(format).expect("start X11 device");
+    let frame = device
+        .next_frame(Timestamp::ZERO)
+        .expect("capture frame")
+        .expect("monitor frame");
+    assert_eq!(frame.format(), format);
+}
+
+#[test]
+#[ignore = "requires a live local X11 server"]
 fn live_x11_capture_decodes_a_root_screen_frame() {
     let mut device = X11CaptureDevice::connect_from_environment("x11-root", "X11 root")
         .expect("connect to local X11");

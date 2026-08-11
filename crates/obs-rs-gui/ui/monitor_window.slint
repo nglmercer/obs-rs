@@ -1,0 +1,187 @@
+import { Button, CheckBox, ScrollView } from "std-widgets.slint";
+import { Icon, MutedText } from "theme.slint";
+import { MonitorRow } from "models.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// One row of the display list, showing the connector name beside the geometry
+// so two identical panels can still be told apart.
+component MonitorListRow inherits Rectangle {
+    in property <string> name;
+    in property <string> geometry;
+    in property <bool> primary;
+    in property <bool> active;
+    callback clicked();
+
+    height: 46px;
+    background: active
+        ? Palette.tokens.row-selected-bg
+        : (touch.has-hover ? Palette.tokens.row-bg : transparent);
+    border-width: 1px;
+    border-color: active ? Palette.tokens.accent : Palette.tokens.border;
+    border-radius: 3px;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        Icon {
+            name: "source-screen";
+            icon-size: 20px;
+            y: (parent.height - 20px) / 2;
+        }
+        VerticalLayout {
+            padding-top: 6px;
+            padding-bottom: 6px;
+            spacing: 2px;
+            horizontal-stretch: 1;
+            Text {
+                text: root.primary
+                    ? root.name + " · " + I18n.text.monitor_ui.primary
+                    : root.name;
+                color: Palette.tokens.text-strong;
+                font-size: 12px;
+                overflow: elide;
+            }
+            Text {
+                text: root.geometry;
+                color: Palette.tokens.text-muted;
+                font-size: 10px;
+                overflow: elide;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The display picker OBS shows when a screen capture source is configured: a
+// scaled map of the desktop above the selectable display list.
+export component MonitorWindow inherits Window {
+    title: I18n.text.monitor_ui.window_title;
+    width: 560px;
+    height: 560px;
+    background: Palette.tokens.window-bg;
+
+    in property <[MonitorRow]> monitor-rows;
+    in property <string> source-name;
+    in property <string> selected-id;
+    in property <string> status;
+    in-out property <bool> capture-whole-desktop;
+
+    callback select-monitor(string);
+    callback accept-monitor();
+    callback cancel-monitor();
+    callback refresh-monitors();
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 10px;
+
+        Text {
+            text: I18n.text.monitor_ui.heading + root.source-name;
+            color: Palette.tokens.text-strong;
+            font-size: 14px;
+            font-weight: 700;
+            overflow: elide;
+        }
+        MutedText { text: I18n.text.monitor_ui.subtitle; }
+
+        // The map is laid out by hand because each monitor's placement comes
+        // from its normalized rectangle rather than from a layout algorithm.
+        map := Rectangle {
+            height: 168px;
+            background: Palette.tokens.canvas-bg;
+            border-width: 1px;
+            border-color: Palette.tokens.border;
+            for monitor in root.monitor-rows : Rectangle {
+                x: 8px + monitor.normalized_x * (map.width - 16px);
+                y: 8px + monitor.normalized_y * (map.height - 16px);
+                width: monitor.normalized_width * (map.width - 16px);
+                height: monitor.normalized_height * (map.height - 16px);
+                background: monitor.selected
+                    ? Palette.tokens.row-selected-bg
+                    : Palette.tokens.row-bg;
+                border-width: monitor.selected ? 2px : 1px;
+                border-color: monitor.selected
+                    ? Palette.tokens.accent
+                    : Palette.tokens.border-strong;
+                Text {
+                    text: monitor.name;
+                    color: Palette.tokens.text;
+                    font-size: 11px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: 100%;
+                    height: 100%;
+                    overflow: elide;
+                }
+                TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { root.select-monitor(monitor.id); }
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Palette.tokens.panel-bg;
+            border-width: 1px;
+            border-color: Palette.tokens.border;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        alignment: start;
+                        spacing: 3px;
+                        if root.monitor-rows.length == 0 : Text {
+                            text: I18n.text.monitor_ui.empty;
+                            color: Palette.tokens.warning;
+                            font-size: 11px;
+                            height: 28px;
+                            vertical-alignment: center;
+                        }
+                        for monitor in root.monitor-rows : MonitorListRow {
+                            name: monitor.name;
+                            geometry: monitor.geometry;
+                            primary: monitor.primary;
+                            active: monitor.selected;
+                            clicked => { root.select-monitor(monitor.id); }
+                        }
+                    }
+                }
+                CheckBox {
+                    text: I18n.text.monitor_ui.whole_desktop;
+                    checked <=> root.capture-whole-desktop;
+                }
+                MutedText { text: root.status; }
+            }
+        }
+
+        HorizontalLayout {
+            height: 32px;
+            spacing: 8px;
+            Button {
+                text: I18n.text.monitor_ui.refresh;
+                width: 130px;
+                clicked => { root.refresh-monitors(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Button {
+                text: I18n.text.add_source_ui.ok;
+                width: 110px;
+                enabled: root.capture-whole-desktop || root.selected-id != "";
+                clicked => { root.accept-monitor(); }
+            }
+            Button {
+                text: I18n.text.cancel;
+                width: 110px;
+                clicked => { root.cancel-monitor(); }
+            }
+        }
+    }
+}

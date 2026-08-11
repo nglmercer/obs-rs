@@ -316,6 +316,12 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_source_properties_version(properties_version.into());
     }
     ui.set_selected_source(selected_source.into());
+    // Only a display-backed source offers the picker, so the docks derive the
+    // affordance from the selected row instead of guessing from the name.
+    ui.set_selected_source_is_screen(
+        selected_source_spec
+            .is_some_and(|source| crate::kind_selects_monitor(source.kind().as_str())),
+    );
 
     let mixer_rows = state
         .mixer_channels()

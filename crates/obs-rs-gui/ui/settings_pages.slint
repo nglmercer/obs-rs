@@ -329,6 +329,8 @@ export component AccessibilityPage inherits VerticalLayout {
 export component AdvancedPage inherits VerticalLayout {
     in-out property <string> project-path;
     in-out property <string> diagnostics-path;
+    in-out property <bool> restore-project;
+    in-out property <bool> save-project-on-exit;
     callback changed();
     spacing: 14px;
 
@@ -353,6 +355,20 @@ export component AdvancedPage inherits VerticalLayout {
             }
         }
         SettingHint { text: I18n.text.settings_ui.advanced_hint; }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_session;
+        CheckRow {
+            label: I18n.text.settings_ui.restore_project;
+            checked <=> root.restore-project;
+            toggled(value) => { root.changed(); }
+        }
+        CheckRow {
+            label: I18n.text.settings_ui.save_project_on_exit;
+            checked <=> root.save-project-on-exit;
+            toggled(value) => { root.changed(); }
+        }
+        SettingHint { text: I18n.text.settings_ui.session_hint; }
     }
     Rectangle { vertical-stretch: 1; }
 }

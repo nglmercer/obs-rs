@@ -71,6 +71,8 @@ export component SettingsWindow inherits Window {
     // Advanced
     in-out property <string> project-path;
     in-out property <string> diagnostics-path;
+    in-out property <bool> restore-project;
+    in-out property <bool> save-project-on-exit;
 
     callback apply-settings();
     callback accept-settings();
@@ -245,6 +247,8 @@ export component SettingsWindow inherits Window {
                     if root.category == 8 : AdvancedPage {
                         project-path <=> root.project-path;
                         diagnostics-path <=> root.diagnostics-path;
+                        restore-project <=> root.restore-project;
+                        save-project-on-exit <=> root.save-project-on-exit;
                         changed => { root.dirty = true; }
                     }
                 }

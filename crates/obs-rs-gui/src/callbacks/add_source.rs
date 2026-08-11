@@ -139,8 +139,14 @@ fn install_actions(
         let kind = create_controller.kind.borrow().clone();
         let visible = create_controller.window.get_make_visible();
         let result = create_source(&create_state, &kind, visible);
+        let created = result.is_ok();
         report(&ui, &create_state, &create_renderer, result);
         refresh_window(&create_state, &create_renderer, &create_controller);
+        // A new screen source captures every monitor until it is told which one
+        // to read, so the picker is offered as part of creating it.
+        if created && crate::kind_selects_monitor(&kind) {
+            ui.invoke_open_monitor_window();
+        }
     });
 
     let weak = ui.as_weak();

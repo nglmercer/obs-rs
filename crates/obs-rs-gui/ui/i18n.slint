@@ -68,6 +68,10 @@ export struct SettingsText {
     project_file: string,
     diagnostics_file: string,
     advanced_hint: string,
+    group_session: string,
+    restore_project: string,
+    save_project_on_exit: string,
+    session_hint: string,
 }
 
 // All user-facing copy lives in this catalog. The Rust side selects one
@@ -96,9 +100,24 @@ export struct AddSourceText {
     ok: string,
 }
 
+// Copy for the display picker, kept beside the other window catalogs.
+export struct MonitorText {
+    window_title: string,
+    heading: string,
+    subtitle: string,
+    primary: string,
+    whole_desktop: string,
+    refresh: string,
+    empty: string,
+    select_monitor: string,
+    not_a_screen_source: string,
+    applied: string,
+}
+
 export struct UiText {
     settings_ui: SettingsText,
     add_source_ui: AddSourceText,
+    monitor_ui: MonitorText,
     app_name: string,
     shortcuts: string,
     profile: string,

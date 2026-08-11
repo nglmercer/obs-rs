@@ -51,11 +51,14 @@ impl CaptureProvider for PlatformCaptureProvider {
             let mut devices = Vec::new();
             if let Ok(display) = env::var("DISPLAY") {
                 if !display.trim().is_empty() {
+                    // The whole desktop stays first so a single-monitor host
+                    // keeps the descriptor projects already reference.
                     devices.push(CaptureDeviceInfo::new(
                         "x11-screen-0",
-                        "X11 screen",
+                        "X11 screen (all monitors)",
                         CaptureKind::Screen,
                     )?);
+                    devices.extend(discover_x11_monitors(&display));
                 }
             }
             devices.extend(discover_v4l2_devices());
@@ -88,6 +91,28 @@ impl CaptureProvider for PlatformCaptureProvider {
             })
         }
     }
+}
+
+/// Lists one screen descriptor per active `RandR` monitor.
+///
+/// A multi-head desktop is one X11 screen, so without this the UI could only
+/// ever offer "the whole desktop". Discovery failures degrade to no extra
+/// entries: the full-desktop descriptor already covers the fallback.
+#[cfg(target_os = "linux")]
+fn discover_x11_monitors(display: &str) -> Vec<CaptureDeviceInfo> {
+    let Ok(monitors) = crate::x11::x11_monitors(display) else {
+        return Vec::new();
+    };
+    // A single monitor is the whole root window, which is already listed.
+    if monitors.len() < 2 {
+        return Vec::new();
+    }
+    monitors
+        .iter()
+        .filter_map(|monitor| {
+            CaptureDeviceInfo::new(&monitor.device_id(), &monitor.label(), CaptureKind::Screen).ok()
+        })
+        .collect()
 }
 
 #[cfg(target_os = "linux")]

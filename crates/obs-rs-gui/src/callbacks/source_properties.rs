@@ -11,8 +11,8 @@ use slint::ComponentHandle;
 
 use crate::{
     apply_source_filters_and_refresh, apply_source_settings_and_refresh,
-    apply_source_transform_and_refresh, capture_devices, source_settings, I18n, MainWindow,
-    Palette, PreviewRenderer, SourcePropertiesWindow,
+    apply_source_transform_and_refresh, capture_devices, kind_selects_monitor, source_settings,
+    I18n, MainWindow, Palette, PreviewRenderer, SourcePropertiesWindow,
 };
 
 /// Owns the properties window.
@@ -89,6 +89,15 @@ pub(crate) fn install_source_properties_window(
             settings.as_str(),
             &open_controller.capture_device_ids.borrow(),
         ));
+        // A display-backed source is configured through the picker rather than
+        // by typing a monitor name into the settings document.
+        let selects_monitor = kind_selects_monitor(window.get_source_kind().as_str());
+        window.set_monitor_visible(selects_monitor);
+        window.set_monitor_summary(if selects_monitor {
+            monitor_summary(settings.as_str(), open_state.borrow().locale())
+        } else {
+            slint::SharedString::new()
+        });
         window.set_source_transform(ui.get_source_transform());
         window.set_source_filters(ui.get_source_filters());
         if let Err(error) = window.show() {
@@ -164,6 +173,18 @@ pub(crate) fn install_source_properties_window(
         }
     });
 
+    // The picker edits the project directly, so the properties window hands the
+    // request to the studio and closes its own draft to avoid two writers.
+    let weak = ui.as_weak();
+    let monitor_controller = Rc::clone(&controller);
+    controller.window.on_open_monitor_window(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let _ = monitor_controller.window.hide();
+        ui.invoke_open_monitor_window();
+    });
+
     let defaults_controller = Rc::clone(&controller);
     controller.window.on_restore_defaults(move || {
         let window = &defaults_controller.window;
@@ -183,6 +204,19 @@ pub(crate) fn install_source_properties_window(
     });
 
     Ok(controller)
+}
+
+/// Describes the display a screen source is pointed at, for the properties row.
+fn monitor_summary(document: &str, locale: obs_rs_ui::UiLocale) -> slint::SharedString {
+    let monitor = Config::parse(document)
+        .ok()
+        .and_then(|settings| settings.get("monitor").map(str::to_owned))
+        .unwrap_or_default();
+    if monitor.trim().is_empty() {
+        crate::i18n::with_catalog(locale, |text| text.monitor_ui.whole_desktop.clone())
+    } else {
+        monitor.as_str().into()
+    }
 }
 
 fn selected_capture_device_index(document: &str, ids: &[String]) -> i32 {

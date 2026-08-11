@@ -18,6 +18,8 @@ export component SourcePropertiesWindow inherits Window {
     in property <[string]> capture-device-names;
     in-out property <int> capture-device-index;
     in property <bool> capture-device-visible;
+    in property <bool> monitor-visible;
+    in property <string> monitor-summary;
     in-out property <string> source-settings;
     in-out property <string> source-transform;
     in-out property <string> source-filters;
@@ -26,6 +28,7 @@ export component SourcePropertiesWindow inherits Window {
     callback cancel-properties();
     callback restore-defaults();
     callback select-capture-device(int);
+    callback open-monitor-window();
 
     VerticalLayout {
         padding: 12px;
@@ -59,6 +62,22 @@ export component SourcePropertiesWindow inherits Window {
                 }
                 if root.capture-device-visible : MutedText {
                     text: I18n.text.capture_device_hint;
+                }
+                // A screen source is configured by display rather than by
+                // device string, so the picker sits next to the device list.
+                if root.monitor-visible : HorizontalLayout {
+                    height: 30px;
+                    spacing: 8px;
+                    Button {
+                        text: I18n.text.monitor_ui.select_monitor;
+                        width: 180px;
+                        clicked => { root.open-monitor-window(); }
+                    }
+                    MutedText {
+                        text: root.monitor-summary;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
                 }
                 TextEdit {
                     text <=> root.source-settings;

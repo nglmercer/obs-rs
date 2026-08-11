@@ -9,6 +9,7 @@ export component SourceDock inherits Rectangle {
     in property <string> source-scene;
     in property <[SourceRow]> source-rows;
     in property <string> selected-source;
+    in property <bool> selected-source-is-screen;
     in property <int> panel-kind;
     callback move-panel(int, int);
     callback open-modal(int);
@@ -102,6 +103,15 @@ export component SourceDock inherits Rectangle {
                         hint: I18n.text.source_properties;
                         enabled: root.selected-source != "";
                         clicked => { root.open-modal(6); }
+                    }
+                    // Choosing a display only means something for a screen
+                    // capture source, so the button is hidden for every other
+                    // kind instead of opening an empty picker.
+                    if root.selected-source-is-screen : CompactButton {
+                        width: 22px;
+                        icon-name: "source-screen";
+                        hint: I18n.text.monitor_ui.select_monitor;
+                        clicked => { root.open-modal(8); }
                     }
                     CompactButton {
                         width: 22px;

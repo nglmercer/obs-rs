@@ -13,11 +13,10 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
     callbacks::add_source::AddSourceController,
+    callbacks::monitor::MonitorController,
     callbacks::source_properties::SourcePropertiesController,
     refresh_ui,
-    settings::{
-        AppSettings, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES, SETTINGS_FILE, THEMES,
-    },
+    settings::{AppSettings, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES, THEMES},
     I18n, MainWindow, OutputRuntime, Palette, PreviewRenderer, SettingsWindow,
 };
 
@@ -29,11 +28,47 @@ pub(crate) struct SettingsController {
     /// Repainted alongside this window so a theme change reaches every surface.
     add_source: Rc<AddSourceController>,
     properties: Rc<SourcePropertiesController>,
+    monitor: Rc<MonitorController>,
     /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_device_ids: RefCell<Vec<String>>,
 }
 
 impl SettingsController {
+    /// Writes the dock layout and, when enabled, the project back to disk.
+    ///
+    /// This runs when the studio window closes. Both writes are attempted even
+    /// if the first fails, so one unwritable path cannot silently discard the
+    /// other half of the session.
+    ///
+    /// # Errors
+    ///
+    /// Returns the combined description of whatever could not be written.
+    pub(crate) fn persist_session(
+        &self,
+        ui: &MainWindow,
+        state: &Rc<RefCell<DesktopState>>,
+    ) -> Result<(), String> {
+        let mut settings = self.settings.borrow().clone();
+        settings.capture_layout(ui);
+        let mut failures = Vec::new();
+        if let Err(error) = settings.save(&self.path) {
+            failures.push(format!("settings file: {error}"));
+        }
+        *self.settings.borrow_mut() = settings.clone();
+        if settings.save_project_on_exit {
+            let result = crate::project_store(&settings.project_path)
+                .and_then(|store| Ok(state.borrow_mut().save_project(&store)?));
+            if let Err(error) = result {
+                failures.push(format!("project file: {error}"));
+            }
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(failures.join("; "))
+        }
+    }
+
     /// Keeps the settings window's catalog and palette in step with the studio.
     pub(crate) fn sync_theme(&self, locale: UiLocale) {
         self.window
@@ -43,6 +78,13 @@ impl SettingsController {
             .global::<Palette>()
             .set_tokens(self.settings.borrow().tokens());
     }
+}
+
+/// The other top-level windows the settings window repaints on a theme change.
+pub(crate) struct PeerWindows {
+    pub(crate) add_source: Rc<AddSourceController>,
+    pub(crate) properties: Rc<SourcePropertiesController>,
+    pub(crate) monitor: Rc<MonitorController>,
 }
 
 /// Creates the settings window and wires it to the studio window.
@@ -55,17 +97,17 @@ pub(crate) fn install_settings_window(
     renderer: &Rc<RefCell<PreviewRenderer>>,
     output: &Rc<RefCell<OutputRuntime>>,
     settings: AppSettings,
-    add_source: &Rc<AddSourceController>,
-    properties: &Rc<SourcePropertiesController>,
+    peers: &PeerWindows,
 ) -> Result<Rc<SettingsController>, slint::PlatformError> {
     let window = SettingsWindow::new()?;
-    let path = PathBuf::from(SETTINGS_FILE);
+    let path = crate::settings::settings_path();
     let controller = Rc::new(SettingsController {
         window,
         settings: Rc::new(RefCell::new(settings)),
         path,
-        add_source: Rc::clone(add_source),
-        properties: Rc::clone(properties),
+        add_source: Rc::clone(&peers.add_source),
+        properties: Rc::clone(&peers.properties),
+        monitor: Rc::clone(&peers.monitor),
         audio_device_ids: RefCell::new(Vec::new()),
     });
 
@@ -167,6 +209,8 @@ fn load_draft(
     window.set_recording_path(settings.recording_path.as_str().into());
     window.set_project_path(settings.project_path.as_str().into());
     window.set_diagnostics_path(settings.diagnostics_path.as_str().into());
+    window.set_restore_project(settings.restore_project);
+    window.set_save_project_on_exit(settings.save_project_on_exit);
     window.set_hotkey_swap(settings.hotkey_swap.as_str().into());
     window.set_hotkey_start_recording(settings.hotkey_start_recording.as_str().into());
     window.set_hotkey_stop_recording(settings.hotkey_stop_recording.as_str().into());
@@ -379,6 +423,8 @@ fn commit(
     settings.diagnostics_path = window.get_diagnostics_path().to_string();
     settings.recording_path = window.get_recording_path().to_string();
     settings.streaming_address = window.get_streaming_address().to_string();
+    settings.restore_project = window.get_restore_project();
+    settings.save_project_on_exit = window.get_save_project_on_exit();
     if let Some(device_id) = controller
         .audio_device_ids
         .borrow()
@@ -495,7 +541,8 @@ fn push_palette_tokens(
         .global::<Palette>()
         .set_tokens(tokens.clone());
     controller.add_source.set_tokens(tokens.clone());
-    controller.properties.set_tokens(tokens);
+    controller.properties.set_tokens(tokens.clone());
+    controller.monitor.set_tokens(tokens);
 }
 
 fn string_model(values: impl Iterator<Item = SharedString>) -> ModelRc<SharedString> {

@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use obs_rs_ui::UiLocale;
 use slint::{ComponentHandle, SharedString};
 
-use crate::{AddSourceText, I18n, MainWindow, SettingsText, UiText};
+use crate::{AddSourceText, I18n, MainWindow, MonitorText, SettingsText, UiText};
 
 thread_local! {
     /// Catalogs are built once per thread and then reused.
@@ -88,6 +88,20 @@ fn english() -> UiText {
             defaults: s("Defaults"),
             ok: s("OK"),
         },
+        monitor_ui: MonitorText {
+            window_title: s("Select display"),
+            heading: s("Display for "),
+            subtitle: s(
+                "Pick the display this screen capture source reads. The map shows how the displays are arranged.",
+            ),
+            primary: s("primary"),
+            whole_desktop: s("Capture the whole desktop instead of one display"),
+            refresh: s("Refresh"),
+            empty: s("No display was detected. Check that DISPLAY points at a running X11 server."),
+            select_monitor: s("Select display"),
+            not_a_screen_source: s("Select a screen capture source first."),
+            applied: s("Display applied: "),
+        },
         settings_ui: SettingsText {
             window_title: s("Settings"),
             ok: s("OK"),
@@ -155,6 +169,12 @@ fn english() -> UiText {
             group_project_files: s("Project files"),
             project_file: s("Project file"),
             diagnostics_file: s("Diagnostics file"),
+            group_session: s("Session"),
+            restore_project: s("Reopen the last project when OBS-RS starts"),
+            save_project_on_exit: s("Save the project and window layout when OBS-RS closes"),
+            session_hint: s(
+                "The window layout is stored in the settings file; the scenes and sources are stored in the project file.",
+            ),
             advanced_hint: s("Saves use atomic writes so an interrupted session can be recovered."),
         },
         app_name: s("OBS-RS Studio"),
@@ -349,6 +369,22 @@ fn spanish() -> UiText {
             defaults: s("Por defecto"),
             ok: s("Aceptar"),
         },
+        monitor_ui: MonitorText {
+            window_title: s("Seleccionar pantalla"),
+            heading: s("Pantalla para "),
+            subtitle: s(
+                "Elige la pantalla que lee esta fuente de captura. El mapa muestra cómo están dispuestas.",
+            ),
+            primary: s("principal"),
+            whole_desktop: s("Capturar todo el escritorio en lugar de una pantalla"),
+            refresh: s("Actualizar"),
+            empty: s(
+                "No se detectó ninguna pantalla. Comprueba que DISPLAY apunte a un servidor X11 activo.",
+            ),
+            select_monitor: s("Seleccionar pantalla"),
+            not_a_screen_source: s("Selecciona primero una fuente de captura de pantalla."),
+            applied: s("Pantalla aplicada: "),
+        },
         settings_ui: SettingsText {
             window_title: s("Ajustes"),
             ok: s("Aceptar"),
@@ -416,6 +452,12 @@ fn spanish() -> UiText {
             group_project_files: s("Archivos del proyecto"),
             project_file: s("Archivo del proyecto"),
             diagnostics_file: s("Archivo de diagnóstico"),
+            group_session: s("Sesión"),
+            restore_project: s("Reabrir el último proyecto al iniciar OBS-RS"),
+            save_project_on_exit: s("Guardar el proyecto y la disposición al cerrar OBS-RS"),
+            session_hint: s(
+                "La disposición de la ventana se guarda en el archivo de ajustes; las escenas y fuentes en el archivo de proyecto.",
+            ),
             advanced_hint: s("Los guardados usan escrituras atómicas para poder recuperar una sesión interrumpida."),
         },
         app_name: s("OBS-RS Studio"),

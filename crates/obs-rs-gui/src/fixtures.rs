@@ -92,6 +92,65 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
     Ok(settings)
 }
 
+/// Source kinds whose frames come from one selectable display.
+pub(crate) const MONITOR_SOURCE_KINDS: [&str; 1] = ["x11_screen_capture"];
+
+/// Returns whether `kind` reads a display the user can choose.
+pub(crate) fn kind_selects_monitor(kind: &str) -> bool {
+    MONITOR_SOURCE_KINDS.contains(&kind.trim())
+}
+
+/// One selectable display, independent of the platform that reported it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MonitorChoice {
+    /// The value written to the source's `monitor` setting.
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) primary: bool,
+}
+
+impl MonitorChoice {
+    /// Returns the `1920x1080 at 0,0` line shown under the display name.
+    pub(crate) fn geometry(&self) -> String {
+        format!("{}x{} at {},{}", self.width, self.height, self.x, self.y)
+    }
+}
+
+/// Lists the displays a screen capture source can be pointed at.
+///
+/// Returns an empty list when no display server is reachable, which the picker
+/// reports rather than silently offering a choice that cannot be honoured.
+#[cfg(target_os = "linux")]
+pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
+    let Ok(display) = std::env::var("DISPLAY") else {
+        return Vec::new();
+    };
+    obs_rs_capture::x11_monitors(&display)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|monitor| MonitorChoice {
+            // The `RandR` name is what the capture backend resolves, so it is
+            // the value stored in the project rather than the catalog ID.
+            id: monitor.name().to_owned(),
+            name: monitor.name().to_owned(),
+            x: monitor.x(),
+            y: monitor.y(),
+            width: monitor.width(),
+            height: monitor.height(),
+            primary: monitor.primary(),
+        })
+        .collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
+    Vec::new()
+}
+
 /// Returns the devices that a source-properties editor can select.
 ///
 /// The returned list matches the backend behind the source kind. The generic

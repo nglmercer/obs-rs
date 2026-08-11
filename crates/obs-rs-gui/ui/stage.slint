@@ -53,8 +53,10 @@ export component StagePanel inherits Rectangle {
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
     in property <string> selected-source;
+    in property <bool> selected-source-is-screen;
     callback open-source-properties();
     callback open-source-filters();
+    callback open-monitor-window();
 
     property <length> canvas-area-width: canvas-area.width - 24px;
     property <length> canvas-area-height: canvas-area.height - 24px;
@@ -166,6 +168,10 @@ export component StagePanel inherits Rectangle {
                     vertical-alignment: center;
                     overflow: elide;
                     horizontal-stretch: 1;
+                }
+                if root.selected-source-is-screen : Button {
+                    text: I18n.text.monitor_ui.select_monitor;
+                    clicked => root.open-monitor-window();
                 }
                 Button {
                     text: I18n.text.properties;

@@ -1,4 +1,5 @@
 pub(crate) mod add_source;
+pub(crate) mod monitor;
 mod output;
 mod project;
 mod scene;
@@ -22,12 +23,13 @@ use crate::{
 pub(crate) use add_source::install_add_source_window;
 #[cfg(test)]
 pub(crate) use add_source::{add_source_window, populate_add_source_window};
+pub(crate) use monitor::install_monitor_window;
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
 pub(crate) use project::{install_project_callbacks, project_store, rename_scene_and_refresh};
 pub(crate) use scene::install_scene_callbacks;
-pub(crate) use settings::install_settings_window;
 #[cfg(test)]
 pub(crate) use settings::populate_settings_models;
+pub(crate) use settings::{install_settings_window, PeerWindows};
 pub(crate) use source::{
     apply_source_filters_and_refresh, apply_source_settings_and_refresh,
     apply_source_transform_and_refresh, move_source_and_refresh, remove_scene_and_refresh,

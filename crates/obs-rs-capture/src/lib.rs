@@ -14,7 +14,7 @@ mod x11;
 #[cfg(target_os = "linux")]
 pub use v4l2::V4l2CaptureDevice;
 #[cfg(target_os = "linux")]
-pub use x11::X11CaptureDevice;
+pub use x11::{x11_monitors, X11CaptureDevice, X11Monitor};
 
 mod device;
 mod error;

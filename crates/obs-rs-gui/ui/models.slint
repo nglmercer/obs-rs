@@ -41,6 +41,21 @@
         obsolete: bool,
     }
 
+    // One selectable display in the monitor picker. The normalized fields place
+    // the monitor inside the layout map without the UI knowing desktop
+    // coordinates: Rust divides each rectangle by the bounding desktop.
+    export struct MonitorRow {
+        id: string,
+        name: string,
+        geometry: string,
+        primary: bool,
+        selected: bool,
+        normalized_x: float,
+        normalized_y: float,
+        normalized_width: float,
+        normalized_height: float,
+    }
+
     // One card in the Add Source grid: either an existing source that can be
     // added to the current scene, or a preview of what a new one would be.
     export struct SourceCandidate {

@@ -5,16 +5,53 @@
 //! format the rest of OBS-RS uses and a malformed file degrades to defaults
 //! rather than failing startup.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use obs_rs_config::Config;
 use obs_rs_ui::UiLocale;
-use slint::{Brush, Color};
+use slint::{Brush, Color, Model, ModelRc, VecModel};
 
 use crate::ThemeTokens;
 
-/// File the settings document is read from and written to.
-pub(crate) const SETTINGS_FILE: &str = "obs-rs-settings.txt";
+/// File name the settings document is read from and written to.
+const SETTINGS_FILE: &str = "obs-rs-settings.txt";
+/// Default file names inside the per-user directory.
+const PROJECT_FILE: &str = "obs-rs-project.txt";
+const DIAGNOSTICS_FILE: &str = "obs-rs-diagnostics.obsrdg";
+const RECORDING_FILE: &str = "obs-rs-recording.obsr";
+
+/// Returns the per-user directory OBS-RS keeps its documents in.
+///
+/// Storing them beside the working directory meant a session launched from
+/// another directory looked like it had lost every setting, so the default is
+/// the XDG config directory. A file that already exists in the working
+/// directory still wins, which keeps existing installs working unchanged.
+pub(crate) fn user_directory() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    let directory = base.join("obs-rs");
+    std::fs::create_dir_all(&directory).ok()?;
+    Some(directory)
+}
+
+/// Returns the path the settings document lives at.
+pub(crate) fn settings_path() -> PathBuf {
+    PathBuf::from(user_file(SETTINGS_FILE))
+}
+
+/// Resolves `name` to the legacy working-directory file when one exists, and
+/// to the per-user directory otherwise.
+pub(crate) fn user_file(name: &str) -> String {
+    if Path::new(name).exists() {
+        return name.to_owned();
+    }
+    user_directory().map_or_else(
+        || name.to_owned(),
+        |directory| directory.join(name).to_string_lossy().into_owned(),
+    )
+}
 
 /// Canvas sizes offered on the Video page, in OBS's descending order.
 pub(crate) const RESOLUTIONS: [(u32, u32); 6] = [
@@ -165,6 +202,76 @@ pub(crate) struct AppSettings {
     /// Provider-stable `PipeWire` input ID; empty selects the first available
     /// input and keeps the deterministic fallback as a safe last resort.
     pub(crate) audio_input_id: String,
+    /// Reopen the project file from [`AppSettings::project_path`] at startup.
+    pub(crate) restore_project: bool,
+    /// Write the project back to the same file when the window closes.
+    pub(crate) save_project_on_exit: bool,
+    /// The dock layout the window was last left in.
+    pub(crate) layout: LayoutSettings,
+}
+
+/// Window layout state, restored so a session reopens where it was left.
+///
+/// This is the desktop's own state rather than project data, which is why it
+/// belongs to the settings document instead of the project file.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LayoutSettings {
+    /// Dock IDs in display order: 0 scenes, 1 sources, 2 mixer, 3 transitions,
+    /// 4 controls.
+    pub(crate) panel_order: Vec<i32>,
+    pub(crate) show_scenes: bool,
+    pub(crate) show_sources: bool,
+    pub(crate) show_mixer: bool,
+    pub(crate) show_transitions: bool,
+    pub(crate) show_controls: bool,
+    /// 0 is studio mode, 1 the single-canvas default.
+    pub(crate) view_mode: i32,
+    /// Height of the dock row in logical pixels.
+    pub(crate) dock_height: u32,
+}
+
+/// The dock IDs a layout must contain, in the order OBS ships them.
+const DEFAULT_PANEL_ORDER: [i32; 5] = [1, 0, 2, 3, 4];
+
+impl Default for LayoutSettings {
+    fn default() -> Self {
+        Self {
+            panel_order: DEFAULT_PANEL_ORDER.to_vec(),
+            show_scenes: true,
+            show_sources: true,
+            show_mixer: true,
+            show_transitions: true,
+            show_controls: true,
+            view_mode: 1,
+            dock_height: 248,
+        }
+    }
+}
+
+impl LayoutSettings {
+    /// Parses `1,0,2,3,4` into a complete dock order.
+    ///
+    /// A document that names a dock twice, omits one, or contains an unknown ID
+    /// is rejected wholesale: a partial layout would hide docks with no way for
+    /// the user to tell why.
+    fn parse_panel_order(value: &str) -> Option<Vec<i32>> {
+        let order = value
+            .split(',')
+            .map(|entry| entry.trim().parse::<i32>().ok())
+            .collect::<Option<Vec<_>>>()?;
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        (sorted == [0, 1, 2, 3, 4]).then_some(order)
+    }
+
+    fn panel_order_text(&self) -> String {
+        self.panel_order
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 impl Default for AppSettings {
@@ -186,11 +293,43 @@ impl Default for AppSettings {
             hotkey_stop_streaming: "Ctrl+Shift+B".to_owned(),
             preview_border_color: "#60A5FA".to_owned(),
             program_border_color: "#F87171".to_owned(),
-            project_path: "obs-rs-project.txt".to_owned(),
-            diagnostics_path: "obs-rs-diagnostics.obsrdg".to_owned(),
-            recording_path: "obs-rs-recording.obsr".to_owned(),
+            project_path: user_file(PROJECT_FILE),
+            diagnostics_path: user_file(DIAGNOSTICS_FILE),
+            recording_path: user_file(RECORDING_FILE),
             streaming_address: "127.0.0.1:9000".to_owned(),
             audio_input_id: String::new(),
+            restore_project: true,
+            save_project_on_exit: true,
+            layout: LayoutSettings::default(),
+        }
+    }
+}
+
+impl LayoutSettings {
+    /// Reads the layout keys, falling back per key so one unreadable value
+    /// cannot discard the rest of the stored layout.
+    fn from_config(config: &Config) -> Self {
+        let defaults = Self::default();
+        Self {
+            panel_order: config
+                .get("layout_panel_order")
+                .and_then(LayoutSettings::parse_panel_order)
+                .unwrap_or(defaults.panel_order),
+            show_scenes: flag(config, "layout_show_scenes", defaults.show_scenes),
+            show_sources: flag(config, "layout_show_sources", defaults.show_sources),
+            show_mixer: flag(config, "layout_show_mixer", defaults.show_mixer),
+            show_transitions: flag(config, "layout_show_transitions", defaults.show_transitions),
+            show_controls: flag(config, "layout_show_controls", defaults.show_controls),
+            view_mode: config
+                .get("layout_view_mode")
+                .and_then(|value| value.parse::<i32>().ok())
+                .filter(|mode| (0..=1).contains(mode))
+                .unwrap_or(defaults.view_mode),
+            dock_height: config
+                .get("layout_dock_height")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|height| (120..=1_200).contains(height))
+                .unwrap_or(defaults.dock_height),
         }
     }
 }
@@ -290,12 +429,19 @@ impl AppSettings {
             recording_path: text(config, "recording_path", &defaults.recording_path),
             streaming_address: text(config, "streaming_address", &defaults.streaming_address),
             audio_input_id: text(config, "audio_input_id", &defaults.audio_input_id),
+            restore_project: flag(config, "restore_project", defaults.restore_project),
+            save_project_on_exit: flag(
+                config,
+                "save_project_on_exit",
+                defaults.save_project_on_exit,
+            ),
+            layout: LayoutSettings::from_config(config),
         }
     }
 
     fn to_config(&self) -> Config {
         let mut config = Config::new();
-        let entries: [(&str, String); 20] = [
+        let entries: [(&str, String); 30] = [
             ("locale", self.locale.clone()),
             (
                 "theme",
@@ -334,6 +480,25 @@ impl AppSettings {
             ("recording_path", self.recording_path.clone()),
             ("streaming_address", self.streaming_address.clone()),
             ("audio_input_id", self.audio_input_id.clone()),
+            ("restore_project", self.restore_project.to_string()),
+            (
+                "save_project_on_exit",
+                self.save_project_on_exit.to_string(),
+            ),
+            ("layout_panel_order", self.layout.panel_order_text()),
+            ("layout_show_scenes", self.layout.show_scenes.to_string()),
+            ("layout_show_sources", self.layout.show_sources.to_string()),
+            ("layout_show_mixer", self.layout.show_mixer.to_string()),
+            (
+                "layout_show_transitions",
+                self.layout.show_transitions.to_string(),
+            ),
+            (
+                "layout_show_controls",
+                self.layout.show_controls.to_string(),
+            ),
+            ("layout_view_mode", self.layout.view_mode.to_string()),
+            ("layout_dock_height", self.layout.dock_height.to_string()),
         ];
         for (key, value) in entries {
             // Every key here is a literal identifier and every value is bounded
@@ -342,6 +507,58 @@ impl AppSettings {
             let _ = config.set(key, &value);
         }
         config
+    }
+
+    /// Restores the stored dock layout into a freshly built window.
+    pub(crate) fn apply_layout(&self, ui: &crate::MainWindow) {
+        let layout = &self.layout;
+        ui.set_panel_order(ModelRc::new(VecModel::from(layout.panel_order.clone())));
+        ui.set_show_scenes(layout.show_scenes);
+        ui.set_show_sources(layout.show_sources);
+        ui.set_show_mixer(layout.show_mixer);
+        ui.set_show_transitions(layout.show_transitions);
+        ui.set_show_controls(layout.show_controls);
+        ui.set_view_mode(layout.view_mode);
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "dock heights are bounded to 1200 logical pixels"
+        )]
+        ui.set_dock_height(layout.dock_height as f32);
+    }
+
+    /// Reads the window's current dock layout back into this document.
+    pub(crate) fn capture_layout(&mut self, ui: &crate::MainWindow) {
+        let order = ui.get_panel_order();
+        let order = (0..order.row_count())
+            .filter_map(|index| order.row_data(index))
+            .collect::<Vec<_>>();
+        // A window that somehow lost a dock keeps the stored order rather than
+        // persisting a layout that could never be restored.
+        if LayoutSettings::parse_panel_order(
+            &order
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        )
+        .is_some()
+        {
+            self.layout.panel_order = order;
+        }
+        self.layout.show_scenes = ui.get_show_scenes();
+        self.layout.show_sources = ui.get_show_sources();
+        self.layout.show_mixer = ui.get_show_mixer();
+        self.layout.show_transitions = ui.get_show_transitions();
+        self.layout.show_controls = ui.get_show_controls();
+        self.layout.view_mode = ui.get_view_mode().clamp(0, 1);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the height is clamped into the persisted range first"
+        )]
+        {
+            self.layout.dock_height = ui.get_dock_height().clamp(120.0, 1_200.0) as u32;
+        }
     }
 
     /// Returns the stored locale, falling back to English for an unknown code.

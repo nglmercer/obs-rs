@@ -29,11 +29,12 @@ pub(crate) use callbacks::{
     toggle_source_visibility_and_refresh,
 };
 pub(crate) use callbacks::{
-    install_add_source_window, install_callbacks, install_settings_window,
-    install_source_properties_window, start_preview_timer,
+    install_add_source_window, install_callbacks, install_monitor_window, install_settings_window,
+    install_source_properties_window, start_preview_timer, PeerWindows,
 };
 pub(crate) use fixtures::{
-    capture_devices, initial_project, platform_capture_summary, source_settings,
+    capture_devices, initial_project, kind_selects_monitor, platform_capture_summary,
+    source_settings,
 };
 pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewRenderer};
@@ -42,9 +43,9 @@ pub(crate) use refresh::{
 };
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
-    AddSourceText, AddSourceWindow, I18n, LocaleOption, MainWindow, MixerRow, Palette, ProfileRow,
-    SceneRow, SettingsText, SettingsWindow, SourceCandidate, SourceKindRow, SourcePropertiesWindow,
-    SourceRow, ThemeTokens, UiText,
+    AddSourceText, AddSourceWindow, I18n, LocaleOption, MainWindow, MixerRow, MonitorRow,
+    MonitorText, MonitorWindow, Palette, ProfileRow, SceneRow, SettingsText, SettingsWindow,
+    SourceCandidate, SourceKindRow, SourcePropertiesWindow, SourceRow, ThemeTokens, UiText,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -55,7 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ui = MainWindow::new()?;
     // Stored settings own the file paths and the stream destination, so they
     // are loaded before anything reads them.
-    let settings = AppSettings::load(std::path::Path::new(settings::SETTINGS_FILE));
+    let settings = AppSettings::load(&settings::settings_path());
     ui.set_new_source_kind("test_pattern".into());
     ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
@@ -69,6 +70,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         ui.set_canvas_height(i32::try_from(format.height()).unwrap_or(1080));
     }
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    // The stored project is reopened before anything renders, so a session
+    // resumes with the scenes and sources it was left with rather than with the
+    // starter fixture.
+    let restored = restore_project(&state, &settings);
     let audio_format = AudioFormat::new(settings.sample_rate_hz(), settings.channel_count())?;
     state
         .borrow_mut()
@@ -89,21 +94,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
     )?));
 
+    // Paths and the dock layout are pushed before the first refresh so the
+    // recovery check and the docks both see the restored session.
+    ui.set_project_path(settings.project_path.as_str().into());
+    settings.apply_layout(&ui);
     refresh_ui(&ui, &state, &renderer);
+    if let Some(message) = restored {
+        ui.set_status_message(message.into());
+    }
     refresh_output_ui(&ui, &output);
     install_callbacks(&ui, &state, &renderer, &output);
     // Keeps the settings window alive for the whole session; dropping the
     // controller would close it.
     let add_source_window = install_add_source_window(&ui, &state, &renderer)?;
+    let monitor_window = install_monitor_window(&ui, &state, &renderer)?;
     let properties_window = install_source_properties_window(&ui, &state, &renderer)?;
-    let _settings_window = install_settings_window(
+    let settings_window = install_settings_window(
         &ui,
         &state,
         &renderer,
         &output,
         settings,
-        &add_source_window,
-        &properties_window,
+        &PeerWindows {
+            add_source: add_source_window,
+            properties: properties_window,
+            monitor: monitor_window,
+        },
     )?;
 
     if smoke {
@@ -112,5 +128,32 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let _preview_timer = start_preview_timer(&ui, &state, &renderer, &output);
     ui.run()?;
+    // Closing the window is the ordinary way to leave OBS, so the layout and
+    // the project are written back here rather than only on an explicit Save.
+    if let Err(error) = settings_window.persist_session(&ui, &state) {
+        eprintln!("obs-rs: could not persist the session: {error}");
+    }
     Ok(())
+}
+
+/// Reopens the stored project file, returning the message to show for it.
+///
+/// A missing file is the first-run case and is silent; a corrupt one keeps the
+/// starter project and reports why, which is safer than starting empty.
+fn restore_project(state: &Rc<RefCell<DesktopState>>, settings: &AppSettings) -> Option<String> {
+    if !settings.restore_project {
+        return None;
+    }
+    let path = settings.project_path.trim();
+    if path.is_empty() || !std::path::Path::new(path).exists() {
+        return None;
+    }
+    let result = project_store(path).and_then(|store| {
+        state.borrow_mut().load_project(&store)?;
+        Ok(())
+    });
+    match result {
+        Ok(()) => Some(format!("Restored project from {path}")),
+        Err(error) => Some(format!("Could not restore {path}: {error}")),
+    }
 }

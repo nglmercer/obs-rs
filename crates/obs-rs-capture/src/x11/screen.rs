@@ -11,18 +11,68 @@ use super::super::{
 };
 use super::{
     connection::{display_socket, handshake, read_authorization},
-    error::{protocol_error, read_exact_x11, x11_io_error},
+    error::{platform_error, protocol_error, read_exact_x11, x11_io_error},
     image::{decode_pixels, packed_row_bytes, padded_row_bytes},
     protocol::{read_u32_le, ServerInfo, X11_GET_IMAGE, X11_MAX_REPLY_BYTES, X11_Z_PIXMAP},
+    randr::{query_monitors, X11Monitor},
 };
+
+/// The rectangle of the root window a device captures, in root coordinates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Region {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+}
 
 pub struct X11CaptureDevice {
     info: CaptureDeviceInfo,
     stream: UnixStream,
     server: ServerInfo,
+    /// The captured rectangle; `None` means the complete root window.
+    region: Option<Region>,
     format: Option<VideoFormat>,
     frame_index: u64,
     data: Vec<u8>,
+}
+
+/// Lists the monitors of `display` on a short-lived connection.
+///
+/// Returns one entry per active `RandR` monitor. Servers without `RandR` 1.5
+/// report a single monitor covering the whole root window, so callers always
+/// receive a selectable list.
+///
+/// # Errors
+///
+/// Returns [`CaptureError::PlatformUnavailable`] when the display cannot be
+/// reached, or [`CaptureError::Protocol`] when a reply cannot be decoded.
+pub fn x11_monitors(display: &str) -> Result<Vec<X11Monitor>, CaptureError> {
+    let (socket_path, display_number) = display_socket(display)?;
+    let authorization = read_authorization(&display_number);
+    let mut stream =
+        UnixStream::connect(&socket_path).map_err(|error| CaptureError::PlatformUnavailable {
+            message: format!("connect to {}: {error}", socket_path.display()),
+        })?;
+    let server = handshake(&mut stream, authorization.as_ref())?;
+    Ok(monitors_or_root(&mut stream, &server))
+}
+
+/// Returns the reported monitors, or the whole root window when `RandR` is
+/// unavailable or reports nothing usable.
+fn monitors_or_root(stream: &mut UnixStream, server: &ServerInfo) -> Vec<X11Monitor> {
+    let monitors = query_monitors(stream, server.root).unwrap_or_default();
+    if monitors.is_empty() {
+        return vec![X11Monitor::new(
+            "Screen".to_owned(),
+            0,
+            0,
+            server.width,
+            server.height,
+            true,
+        )];
+    }
+    monitors
 }
 
 impl X11CaptureDevice {
@@ -51,6 +101,7 @@ impl X11CaptureDevice {
             info,
             stream,
             server,
+            region: None,
             format: None,
             frame_index: 0,
             data: Vec::new(),
@@ -76,6 +127,99 @@ impl X11CaptureDevice {
         (self.server.width, self.server.height)
     }
 
+    /// Returns the dimensions of the captured rectangle.
+    ///
+    /// This is the monitor size once one is selected, and the root size
+    /// otherwise, which is what a downstream scaler has to letterbox.
+    #[must_use]
+    pub fn capture_size(&self) -> (u32, u32) {
+        self.region.map_or_else(
+            || self.screen_size(),
+            |region| (u32::from(region.width), u32::from(region.height)),
+        )
+    }
+
+    /// Returns the captured rectangle as `(x, y, width, height)`.
+    #[must_use]
+    pub fn capture_region(&self) -> (u32, u32, u32, u32) {
+        self.region.map_or_else(
+            || (0, 0, self.server.width, self.server.height),
+            |region| {
+                (
+                    u32::from(region.x),
+                    u32::from(region.y),
+                    u32::from(region.width),
+                    u32::from(region.height),
+                )
+            },
+        )
+    }
+
+    /// Lists the monitors this connection's server reports.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::Io`] when the socket fails and
+    /// [`CaptureError::Protocol`] when a reply cannot be decoded.
+    pub fn monitors(&mut self) -> Result<Vec<X11Monitor>, CaptureError> {
+        Ok(monitors_or_root(&mut self.stream, &self.server))
+    }
+
+    /// Restricts capture to the `RandR` monitor named `monitor`.
+    ///
+    /// An empty or missing name captures the whole root window, which is the
+    /// behaviour of a device that was never told which monitor to use. A name
+    /// that no monitor matches is an error rather than a silent full-desktop
+    /// capture, so a stale project setting is visible instead of confusing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::PlatformUnavailable`] when no monitor matches,
+    /// or the socket/protocol errors raised while enumerating monitors.
+    pub fn select_monitor(&mut self, monitor: Option<&str>) -> Result<(), CaptureError> {
+        let Some(wanted) = monitor.map(str::trim).filter(|name| !name.is_empty()) else {
+            self.region = None;
+            return Ok(());
+        };
+        let monitors = self.monitors()?;
+        let selected = monitors
+            .iter()
+            .find(|candidate| candidate.name() == wanted || candidate.device_id() == wanted)
+            .ok_or_else(|| platform_error(format!("X11 monitor {wanted} is not connected")))?;
+        self.region = Some(Self::region_for(selected, &self.server)?);
+        Ok(())
+    }
+
+    /// Clamps a monitor rectangle to the root window and converts it to the
+    /// unsigned coordinates `GetImage` accepts.
+    fn region_for(monitor: &X11Monitor, server: &ServerInfo) -> Result<Region, CaptureError> {
+        let left = u32::try_from(monitor.x().max(0))
+            .unwrap_or(0)
+            .min(server.width);
+        let top = u32::try_from(monitor.y().max(0))
+            .unwrap_or(0)
+            .min(server.height);
+        let width = monitor.width().min(server.width.saturating_sub(left));
+        let height = monitor.height().min(server.height.saturating_sub(top));
+        if width == 0 || height == 0 {
+            return Err(platform_error(format!(
+                "X11 monitor {} lies outside the {}x{} root window",
+                monitor.name(),
+                server.width,
+                server.height
+            )));
+        }
+        let convert = |value: u32| {
+            u16::try_from(value).map_err(|_| protocol_error("X11 region exceeds 16-bit geometry"))
+        };
+        Ok(Region {
+            x: convert(left)?,
+            y: convert(top)?,
+            width: convert(width)?,
+            height: convert(height)?,
+        })
+    }
+
     /// Returns the number of successfully decoded frames.
     #[must_use]
     pub const fn frame_index(&self) -> u64 {
@@ -92,26 +236,36 @@ impl X11CaptureDevice {
         format: VideoFormat,
         timestamp: Timestamp,
     ) -> Result<VideoFrame, CaptureError> {
-        // Capture the complete root window first. Requesting the output canvas
-        // dimensions directly only returned the top-left corner whenever the
-        // desktop was larger than the configured scene.
-        let width = u16::try_from(self.server.width)
-            .map_err(|_| CaptureError::UnsupportedFormat(format))?;
-        let height = u16::try_from(self.server.height)
-            .map_err(|_| CaptureError::UnsupportedFormat(format))?;
+        // Capture the selected monitor, or the complete root window when none
+        // was chosen. Requesting the output canvas dimensions directly only
+        // returned the top-left corner whenever the desktop was larger than the
+        // configured scene, so the full rectangle is always read and scaled.
+        let region = match self.region {
+            Some(region) => region,
+            None => Region {
+                x: 0,
+                y: 0,
+                width: u16::try_from(self.server.width)
+                    .map_err(|_| CaptureError::UnsupportedFormat(format))?,
+                height: u16::try_from(self.server.height)
+                    .map_err(|_| CaptureError::UnsupportedFormat(format))?,
+            },
+        };
+        let (width, height) = (region.width, region.height);
         let plane_mask = if self.server.depth == 32 {
             u32::MAX
         } else {
             (1_u32 << self.server.depth) - 1
         };
         // GetImage is a fixed 20-byte request, so it is built on the stack
-        // rather than in a per-frame heap buffer. The x and y fields at
-        // [8..12] stay zero.
+        // rather than in a per-frame heap buffer.
         let mut request = [0_u8; 20];
         request[0] = X11_GET_IMAGE;
         request[1] = X11_Z_PIXMAP;
         request[2..4].copy_from_slice(&5_u16.to_le_bytes());
         request[4..8].copy_from_slice(&self.server.root.to_le_bytes());
+        request[8..10].copy_from_slice(&region.x.to_le_bytes());
+        request[10..12].copy_from_slice(&region.y.to_le_bytes());
         request[12..14].copy_from_slice(&width.to_le_bytes());
         request[14..16].copy_from_slice(&height.to_le_bytes());
         request[16..20].copy_from_slice(&plane_mask.to_le_bytes());
