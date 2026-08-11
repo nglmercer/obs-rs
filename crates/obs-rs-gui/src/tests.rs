@@ -7,8 +7,8 @@ use super::{
 };
 use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
-use obs_rs_project::{ProjectCommand, SceneSpec};
-use obs_rs_ui::{DesktopState, UiLocale};
+use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
+use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
@@ -135,8 +135,10 @@ fn app_settings_round_trip_the_selected_audio_input() {
         .expect("clock")
         .as_nanos();
     let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-{token}.txt"));
-    let mut settings = AppSettings::default();
-    settings.audio_input_id = "pipewire-node-42".to_owned();
+    let settings = AppSettings {
+        audio_input_id: "pipewire-node-42".to_owned(),
+        ..AppSettings::default()
+    };
     settings.save(&path).expect("settings should save");
     assert_eq!(
         AppSettings::load(&path).audio_input_id,
@@ -278,6 +280,8 @@ fn ui_layout_can_render_a_reference_snapshot() {
     render_every_settings_category();
     render_source_properties_window();
     exercise_add_source_window(&ui, &state, &renderer);
+    exercise_capture_device_properties_window(&ui, &state, &renderer);
+    exercise_recording_controls(&ui, &state, &renderer);
 }
 
 /// Renders each settings category so a page that fails to lay out — an empty
@@ -401,6 +405,113 @@ fn exercise_add_source_window(
     assert!(window.get_candidates().row_count() >= 2);
 
     window.hide().expect("add source window should hide");
+}
+
+/// Verifies the complete screen/camera source-properties path: selecting a
+/// camera source, changing its device in the `ComboBox` callback, and accepting
+/// the draft writes the selected stable device ID back into the project.
+fn exercise_capture_device_properties_window(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let scene = state
+        .borrow()
+        .preview_scene()
+        .expect("preview scene")
+        .to_owned();
+    let mut settings = source_settings("camera_capture").expect("camera defaults");
+    settings
+        .set("device_id", "camera-0")
+        .expect("portable camera selection");
+    let source = SourceSpec::new("gui-camera", "camera_capture", "GUI camera", settings)
+        .expect("camera source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: scene.clone(),
+            source,
+        }))
+        .expect("add camera source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: "gui-camera".to_owned(),
+        })
+        .expect("select camera source");
+    refresh_ui(ui, state, renderer);
+
+    let controller = crate::install_source_properties_window(ui, state, renderer)
+        .expect("properties controller");
+    ui.invoke_open_source_properties_window();
+    let window =
+        crate::callbacks::source_properties::SourcePropertiesController::window(&controller);
+    assert!(window.get_capture_device_visible());
+    assert!(window.get_capture_device_names().row_count() >= 1);
+    window.invoke_select_capture_device(0);
+    assert!(window.get_source_settings().contains("device_id="));
+    window.invoke_accept_properties();
+
+    let state = state.borrow();
+    let source = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene.as_str()))
+        .and_then(|scene| scene.source("gui-camera"))
+        .expect("camera source persisted");
+    assert_eq!(
+        source.settings().get("device_id"),
+        Some("camera-0"),
+        "ComboBox selection must reach the project command"
+    );
+}
+
+/// Drives the actual `MainWindow` recording callback instead of calling the
+/// output wrapper directly, then verifies the resulting file contains both
+/// media kinds.
+fn exercise_recording_controls(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-callback-{token}.obsr"));
+    ui.set_recording_path(path.to_string_lossy().into_owned().into());
+    let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, renderer, &output);
+
+    ui.invoke_toggle_recording();
+    assert!(
+        state.borrow().recording(),
+        "Record button must start the state"
+    );
+    let frame = renderer
+        .borrow_mut()
+        .render("program")
+        .expect("program frame")
+        .expect("program scene frame");
+    crate::callbacks::push_program_frame(ui, Some(frame), &output);
+    ui.invoke_toggle_recording();
+    assert!(
+        !state.borrow().recording(),
+        "Record button must stop the state"
+    );
+
+    let bytes = std::fs::read(&path).expect("GUI recording file");
+    assert!(!bytes.is_empty());
+    let packets = MemoryMuxer::decode(&bytes).expect("GUI recording container");
+    assert!(packets
+        .iter()
+        .any(|packet| packet.kind() == PacketKind::Video));
+    assert!(packets
+        .iter()
+        .any(|packet| packet.kind() == PacketKind::Audio));
+    std::fs::remove_file(path).expect("remove GUI recording fixture");
 }
 
 fn scene_source_count(state: &Rc<RefCell<DesktopState>>, scene: &str) -> usize {

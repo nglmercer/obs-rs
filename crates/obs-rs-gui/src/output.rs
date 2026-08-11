@@ -20,6 +20,7 @@ pub(crate) struct OutputRuntime {
     format_drops: u64,
     audio_input_id: Option<String>,
     audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
+    recording_started_at: Option<Instant>,
 }
 
 impl OutputRuntime {
@@ -66,6 +67,7 @@ impl OutputRuntime {
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned),
             audio_devices_cache: None,
+            recording_started_at: None,
         })
     }
 
@@ -94,15 +96,19 @@ impl OutputRuntime {
 
     pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
         self.worker.start_recording(path)?;
+        self.recording_started_at = Some(Instant::now());
         Ok(())
     }
 
     pub(crate) fn finish_recording(&mut self) -> Result<usize, Box<dyn Error>> {
-        Ok(self.worker.finish_recording()?)
+        let bytes = self.worker.finish_recording()?;
+        self.recording_started_at = None;
+        Ok(bytes)
     }
 
     pub(crate) fn abort_recording(&mut self) {
         self.worker.abort_recording();
+        self.recording_started_at = None;
     }
 
     pub(crate) fn start_streaming(&mut self, address: &str) -> Result<(), Box<dyn Error>> {
@@ -208,6 +214,17 @@ impl OutputRuntime {
         )
     }
 
+    /// Returns the live recording duration in the status-bar format.
+    pub(crate) fn recording_elapsed(&self) -> String {
+        let seconds = self
+            .recording_started_at
+            .map_or(0, |started| started.elapsed().as_secs());
+        let hours = seconds / 3_600;
+        let minutes = (seconds % 3_600) / 60;
+        let seconds = seconds % 60;
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    }
+
     pub(crate) fn diagnostics_document(&mut self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;
@@ -296,7 +313,7 @@ impl OutputRuntime {
         }
     }
 
-    /// Returns discoverable PipeWire input devices as `(stable_id, label)`.
+    /// Returns discoverable `PipeWire` input devices as `(stable_id, label)`.
     ///
     /// Discovery is cached briefly because opening Settings should not invoke
     /// `pw-dump` repeatedly while the user moves between fields.

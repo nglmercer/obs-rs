@@ -255,7 +255,7 @@ impl EngineWorker {
     }
 
     /// Switches the worker-owned audio input without blocking the GUI on
-    /// PipeWire discovery or process setup.
+    /// `PipeWire` discovery or process setup.
     ///
     /// # Errors
     ///

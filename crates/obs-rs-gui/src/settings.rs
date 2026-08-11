@@ -162,7 +162,7 @@ pub(crate) struct AppSettings {
     pub(crate) diagnostics_path: String,
     pub(crate) recording_path: String,
     pub(crate) streaming_address: String,
-    /// Provider-stable PipeWire input ID; empty selects the first available
+    /// Provider-stable `PipeWire` input ID; empty selects the first available
     /// input and keeps the deterministic fallback as a safe last resort.
     pub(crate) audio_input_id: String,
 }

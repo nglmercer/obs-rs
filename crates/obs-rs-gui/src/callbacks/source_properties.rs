@@ -26,12 +26,21 @@ impl SourcePropertiesController {
     pub(crate) fn set_tokens(&self, tokens: crate::ThemeTokens) {
         self.window.global::<Palette>().set_tokens(tokens);
     }
+
+    #[cfg(test)]
+    pub(crate) fn window(&self) -> &SourcePropertiesWindow {
+        &self.window
+    }
 }
 
 /// Creates the properties window and wires it to the studio window.
 ///
 /// The returned controller must outlive the event loop; dropping it closes the
 /// window.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the properties dialog keeps all draft callbacks in one lifecycle boundary"
+)]
 pub(crate) fn install_source_properties_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,

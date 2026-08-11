@@ -47,7 +47,9 @@ pub(crate) fn start_preview_timer(
     let state = Rc::clone(state);
     let renderer = Rc::clone(renderer);
     let output = Rc::clone(output);
-    let mut last_output_ui_refresh = Instant::now() - Duration::from_secs(1);
+    let mut last_output_ui_refresh = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
     timer.start(TimerMode::Repeated, Duration::from_millis(33), move || {
         let Some(ui) = weak.upgrade() else {
             return;

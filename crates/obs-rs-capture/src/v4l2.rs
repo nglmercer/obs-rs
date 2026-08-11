@@ -70,6 +70,11 @@ impl V4l2CaptureDevice {
     ///
     /// IDs use the `v4l2-videoN` form, so the mapping remains deterministic and
     /// does not expose an arbitrary path in project files.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::InvalidDevice`] when `id` does not use the
+    /// stable V4L2 naming convention.
     pub fn from_device_id(id: &str, name: &str) -> Result<Self, CaptureError> {
         let node = id
             .strip_prefix("v4l2-")

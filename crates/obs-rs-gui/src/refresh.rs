@@ -200,6 +200,7 @@ pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRunti
     let output = output.borrow();
     ui.set_output_status(output.output_status().into());
     ui.set_output_metrics(output.output_metrics().into());
+    ui.set_recording_elapsed(output.recording_elapsed().into());
 }
 
 thread_local! {

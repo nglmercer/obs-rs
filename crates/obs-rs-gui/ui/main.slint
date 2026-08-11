@@ -41,6 +41,7 @@ export component MainWindow inherits Window {
         in property <string> recovery-status;
         in property <string> output-status;
         in property <string> output-metrics;
+        in property <string> recording-elapsed;
         in property <string> preview-metrics;
         in property <string> snapshot;
         in property <image> preview-image;
@@ -358,6 +359,7 @@ export component MainWindow inherits Window {
                 streaming: root.streaming;
                 output-status: root.output-status;
                 output-metrics: root.output-metrics;
+                recording-elapsed: root.recording-elapsed;
                 view-mode: root.view-mode;
             }
         }

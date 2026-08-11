@@ -138,7 +138,7 @@ impl Source for X11CaptureSource {
     }
 }
 
-/// Process-backed X11 capture used when a compositor rejects direct GetImage.
+/// Process-backed X11 capture used when a compositor rejects direct `GetImage`.
 /// The reader keeps only the newest complete frame, so rendering never waits
 /// for the display server or the camera-like `x11grab` cadence.
 struct X11GrabDevice {

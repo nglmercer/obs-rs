@@ -29,7 +29,7 @@ pub(crate) struct SettingsController {
     /// Repainted alongside this window so a theme change reaches every surface.
     add_source: Rc<AddSourceController>,
     properties: Rc<SourcePropertiesController>,
-    /// IDs are kept separate from the display labels shown by Slint's ComboBox.
+    /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_device_ids: RefCell<Vec<String>>,
 }
 
@@ -193,7 +193,6 @@ fn load_draft(
     );
     let selected_device_index = settings
         .audio_input_id
-        .as_str()
         .is_empty()
         .then_some(0)
         .or_else(|| {
