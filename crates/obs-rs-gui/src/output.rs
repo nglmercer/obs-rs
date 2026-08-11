@@ -6,10 +6,21 @@ use std::{
 
 use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
-use obs_rs_engine::{EngineConfig, EngineSession, EngineWorker};
+use obs_rs_engine::{EngineConfig, EngineSession, EngineWorker, OutputLifecycle};
 use obs_rs_media::{VideoFormat, VideoFrame};
 use obs_rs_output::StreamState;
 use obs_rs_project::Project;
+
+/// One entry in the settings window's audio-input picker.
+///
+/// `available` is carried separately from presence in the list because a
+/// selected device that has gone missing must still be offered, so the list
+/// alone cannot express whether the graph currently has it.
+pub(crate) struct AudioInputEntry {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) available: bool,
+}
 
 /// GUI-owned handle over the portable engine output boundary.
 pub(crate) struct OutputRuntime {
@@ -21,6 +32,12 @@ pub(crate) struct OutputRuntime {
     audio_input_id: Option<String>,
     audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
     recording_started_at: Option<Instant>,
+    /// A canvas change accepted while an output was running.
+    ///
+    /// Rebuilding the encoders mid-recording would break the container's frame
+    /// geometry, so the change is held here and applied at the next idle
+    /// boundary instead of being either silently dropped or forced through.
+    staged_video_format: Option<VideoFormat>,
 }
 
 impl OutputRuntime {
@@ -68,7 +85,30 @@ impl OutputRuntime {
                 .map(str::to_owned),
             audio_devices_cache: None,
             recording_started_at: None,
+            staged_video_format: None,
         })
+    }
+
+    /// Holds a canvas change until the running output stops.
+    pub(crate) fn stage_video_format(&mut self, format: VideoFormat) {
+        self.staged_video_format = Some(format);
+    }
+
+    /// Takes the staged canvas change, if the caller is at an idle boundary.
+    pub(crate) fn take_staged_video_format(&mut self) -> Option<VideoFormat> {
+        self.staged_video_format.take()
+    }
+
+    /// Returns whether a canvas change is waiting for the output to stop.
+    #[cfg(test)]
+    pub(crate) const fn has_staged_video_format(&self) -> bool {
+        self.staged_video_format.is_some()
+    }
+
+    /// Returns the canvas format the engine is currently encoding at.
+    #[cfg(test)]
+    pub(crate) const fn video_format(&self) -> VideoFormat {
+        self.format
     }
 
     pub(crate) fn needs_project_sync(&self, revision: u64) -> bool {
@@ -193,19 +233,18 @@ impl OutputRuntime {
     pub(crate) fn output_status(&self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;
-        let recording = if engine.recording {
-            "recording open"
-        } else {
-            "recording stopped"
-        };
-        let streaming = engine
-            .stream_state
-            .map_or("stream stopped", |state| match state {
-                StreamState::Connected => "stream connected",
-                StreamState::Disconnected => "stream reconnecting",
-                StreamState::Failed => "stream failed",
-                StreamState::Closed => "stream closed",
-            });
+        // The phase is what the operator needs: "starting" and "failed" are
+        // both invisible in the open/closed boolean the handle exposes.
+        let recording = engine.recording_lifecycle.label();
+        let streaming = engine.stream_state.map_or_else(
+            || engine.streaming_lifecycle.label(),
+            |state| match state {
+                StreamState::Connected => "connected",
+                StreamState::Disconnected => "reconnecting",
+                StreamState::Failed => "failed",
+                StreamState::Closed => "closed",
+            },
+        );
         let audio = if engine.audio_fallback {
             "audio fallback"
         } else {
@@ -216,7 +255,7 @@ impl OutputRuntime {
         } else {
             "worker stopped"
         };
-        format!("Output: {recording} · {streaming} · {audio} · {worker}")
+        format!("Output: recording {recording} · stream {streaming} · {audio} · {worker}")
     }
 
     pub(crate) fn output_metrics(&self) -> String {
@@ -287,11 +326,13 @@ impl OutputRuntime {
             )
         });
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} stream_state={:?} audio_backend={} audio_fallback={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_sent={} stream_dropped={} stream_reconnects={} frame_drops={} format_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_sent={} stream_dropped={} stream_reconnects={} frame_drops={} format_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
             engine.streaming,
+            engine.recording_lifecycle.label(),
+            engine.streaming_lifecycle.label(),
             engine.stream_state,
             engine.audio_backend,
             engine.audio_fallback,
@@ -356,6 +397,56 @@ impl OutputRuntime {
             .collect()
     }
 
+    /// Returns the input picker's entries, keeping `selected` even if it is gone.
+    ///
+    /// A device that is unplugged, or whose service has restarted, disappears
+    /// from discovery. Dropping the user's selection at that moment would
+    /// silently rewrite it to "automatic" the next time settings were applied,
+    /// so the missing device stays in the list marked unavailable and is only
+    /// forgotten when the user picks something else.
+    pub(crate) fn audio_input_entries(&mut self, selected: &str) -> Vec<AudioInputEntry> {
+        let mut entries = self
+            .audio_input_devices()
+            .into_iter()
+            .map(|(id, name)| AudioInputEntry {
+                id,
+                name,
+                available: true,
+            })
+            .collect::<Vec<_>>();
+        let selected = selected.trim();
+        if !selected.is_empty() && !entries.iter().any(|entry| entry.id == selected) {
+            entries.push(AudioInputEntry {
+                // The stored ID is all that is left of a device that is not in
+                // the graph, so it is also the only label available for it.
+                name: selected.to_owned(),
+                id: selected.to_owned(),
+                available: false,
+            });
+        }
+        entries
+    }
+
+    /// Discards the discovery cache so the next read re-runs `pw-dump`.
+    ///
+    /// This is what makes a hot-plug visible without waiting for the cache to
+    /// expire, and it is why the refresh action is explicit rather than a poll.
+    pub(crate) fn refresh_audio_devices(&mut self) {
+        self.audio_devices_cache = None;
+    }
+
+    /// Returns whether the selected input is currently present in the graph.
+    ///
+    /// `true` for the automatic route, which is by definition always resolvable.
+    pub(crate) fn audio_input_available(&mut self) -> bool {
+        let Some(selected) = self.audio_input_id.clone() else {
+            return true;
+        };
+        self.audio_input_devices()
+            .iter()
+            .any(|(id, _)| *id == selected)
+    }
+
     fn discover_audio_devices(
         &mut self,
     ) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
@@ -370,8 +461,20 @@ impl OutputRuntime {
         Ok(devices)
     }
 
-    pub(crate) fn stream_failed(&self) -> bool {
+    /// Returns the recording and streaming phases the desktop reconciles against.
+    ///
+    /// A dead worker is reported as `Failed` for both, because a session whose
+    /// worker has gone is not recording or streaming no matter what its last
+    /// published snapshot said.
+    pub(crate) fn lifecycles(&self) -> (OutputLifecycle, OutputLifecycle) {
         let snapshot = self.worker.snapshot();
-        !snapshot.alive || snapshot.engine.stream_state == Some(StreamState::Failed)
+        if snapshot.alive {
+            (
+                snapshot.engine.recording_lifecycle,
+                snapshot.engine.streaming_lifecycle,
+            )
+        } else {
+            (OutputLifecycle::Failed, OutputLifecycle::Failed)
+        }
     }
 }

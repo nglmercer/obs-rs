@@ -107,6 +107,8 @@ impl DesktopState {
             UiAction::StopRecording => self.dispatch(UiCommand::StopRecording),
             UiAction::StartStreaming => self.dispatch(UiCommand::StartStreaming),
             UiAction::StopStreaming => self.dispatch(UiCommand::StopStreaming),
+            UiAction::Undo => self.dispatch(UiCommand::Undo),
+            UiAction::Redo => self.dispatch(UiCommand::Redo),
         }
     }
 

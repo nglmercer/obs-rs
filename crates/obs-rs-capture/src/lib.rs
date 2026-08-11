@@ -26,7 +26,9 @@ pub use v4l2::V4l2CaptureDevice;
 #[cfg(target_os = "linux")]
 pub use wayland::{wayland_session_available, WaylandCaptureDevice};
 #[cfg(target_os = "linux")]
-pub use x11::{x11_monitors, X11CaptureDevice, X11Monitor};
+pub use x11::{
+    parse_window_id, x11_monitors, x11_windows, X11CaptureDevice, X11Monitor, X11Window,
+};
 
 mod device;
 mod error;
@@ -48,7 +50,10 @@ pub use factories::{
     SCREEN_CAPTURE_SOURCE_KIND, TEST_PATTERN_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
 };
 #[cfg(target_os = "linux")]
-pub use factories::{WAYLAND_SCREEN_CAPTURE_SOURCE_KIND, X11_SCREEN_CAPTURE_SOURCE_KIND};
+pub use factories::{
+    WAYLAND_SCREEN_CAPTURE_SOURCE_KIND, X11_SCREEN_CAPTURE_SOURCE_KIND,
+    X11_WINDOW_CAPTURE_SOURCE_KIND,
+};
 pub use protocol::{
     encode_frame_packet, write_frame_packet, FRAME_STREAM_MAGIC, MAX_FRAME_STREAM_PACKET_BYTES,
 };

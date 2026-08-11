@@ -533,6 +533,79 @@ mod tests {
     }
 
     #[test]
+    fn a_node_that_left_the_graph_is_gone_from_the_next_snapshot() {
+        let before = r#"
+        [
+          {"id": 42, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "node.description": "USB Mic"
+          }}},
+          {"id": 43, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "node.description": "Webcam Mic"
+          }}}
+        ]
+        "#;
+        // The USB microphone was unplugged between the two dumps.
+        let after = r#"
+        [
+          {"id": 43, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "node.description": "Webcam Mic"
+          }}}
+        ]
+        "#;
+
+        let before = discover_devices(before);
+        let after = discover_devices(after);
+
+        assert!(before
+            .iter()
+            .any(|device| device.id() == "pipewire-node-42"));
+        assert!(
+            !after.iter().any(|device| device.id() == "pipewire-node-42"),
+            "a removed node must not linger in a later snapshot"
+        );
+        assert!(after.iter().any(|device| device.id() == "pipewire-node-43"));
+    }
+
+    #[test]
+    fn a_graph_without_audio_nodes_offers_no_devices_at_all() {
+        // Video nodes and non-node objects are present but none can capture.
+        let document = r#"
+        [
+          {"id": 1, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Video/Source", "node.description": "Webcam"
+          }}},
+          {"id": 2, "type": "PipeWire:Interface:Client", "info": {"props": {}}}
+        ]
+        "#;
+
+        let devices = discover_devices(document);
+
+        assert!(
+            devices.is_empty(),
+            "no default route may be offered when nothing can be captured"
+        );
+    }
+
+    #[test]
+    fn an_unnamed_node_still_gets_a_stable_identifier_and_label() {
+        let document = r#"
+        [
+          {"id": 9, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source"
+          }}}
+        ]
+        "#;
+
+        let devices = discover_devices(document);
+
+        let node = devices
+            .iter()
+            .find(|device| device.id() == "pipewire-node-9")
+            .expect("an unnamed node is still selectable");
+        assert_eq!(node.name(), "PipeWire node 9");
+    }
+
+    #[test]
     #[ignore = "requires a live PipeWire graph with an input device"]
     fn live_input_reads_negotiated_blocks() {
         let provider = PipeWireAudioProvider::new();

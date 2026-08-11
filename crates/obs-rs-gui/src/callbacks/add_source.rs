@@ -557,6 +557,7 @@ pub(crate) fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedStrin
         "window_capture" => text.kind_window_capture.clone(),
         "camera_capture" => text.kind_camera_capture.clone(),
         "x11_screen_capture" => text.kind_x11_screen_capture.clone(),
+        "x11_window_capture" => text.kind_x11_window_capture.clone(),
         "wayland_screen_capture" => text.kind_wayland_screen_capture.clone(),
         other => other.into(),
     }
@@ -568,7 +569,7 @@ fn kind_display(kind: &str) -> &str {
         "color_source" => "Color",
         "test_pattern" => "Test pattern",
         "screen_capture" | "x11_screen_capture" | "wayland_screen_capture" => "Screen capture",
-        "window_capture" => "Window capture",
+        "window_capture" | "x11_window_capture" => "Window capture",
         "camera_capture" => "Video capture device",
         other => other,
     }
@@ -579,7 +580,7 @@ fn kind_icon(kind: &str) -> &'static str {
         "color_source" => "source-color",
         "test_pattern" => "source-pattern",
         "screen_capture" | "x11_screen_capture" | "wayland_screen_capture" => "source-screen",
-        "window_capture" => "source-window",
+        "window_capture" | "x11_window_capture" => "source-window",
         "camera_capture" => "source-camera",
         _ => "source-generic",
     }

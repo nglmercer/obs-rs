@@ -104,6 +104,10 @@ pub enum UiAction {
     StartStreaming,
     /// Stop a streaming output.
     StopStreaming,
+    /// Restore the project state that preceded the last accepted mutation.
+    Undo,
+    /// Reapply the most recently undone project state.
+    Redo,
 }
 
 /// A validated, sortable keyboard shortcut description.
@@ -171,6 +175,10 @@ pub enum UiCommand {
     SwapPreviewProgram,
     /// Apply one validated project mutation.
     Project(ProjectCommand),
+    /// Restore the project state that preceded the last accepted mutation.
+    Undo,
+    /// Reapply the most recently undone project state.
+    Redo,
     /// Select an active profile.
     SelectProfile { id: String },
     /// Select the scene shown in preview.

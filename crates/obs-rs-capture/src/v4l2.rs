@@ -8,6 +8,7 @@
 #![cfg(target_os = "linux")]
 
 use std::{
+    io::ErrorKind,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -88,6 +89,53 @@ impl V4l2CaptureDevice {
         self.info.set_permission(permission);
     }
 
+    /// Returns the discrete capture sizes this camera advertises.
+    ///
+    /// An empty list means the camera could not be interrogated, which is not
+    /// an error: `ffmpeg` will then negotiate the camera's own default and the
+    /// scaler still produces the canvas size.
+    #[must_use]
+    pub fn supported_sizes(&self) -> Vec<(u32, u32)> {
+        let Ok(output) = Command::new("v4l2-ctl")
+            .args([
+                "--device",
+                self.path.to_string_lossy().as_ref(),
+                "--list-formats-ext",
+            ])
+            .output()
+        else {
+            return Vec::new();
+        };
+        if !output.status.success() {
+            return Vec::new();
+        }
+        parse_discrete_sizes(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    /// Checks the device node is present and readable before spawning anything.
+    ///
+    /// A camera that another application holds open, or that this user has no
+    /// permission for, is a different situation from one that is missing, and
+    /// the operator needs to be told which. Mapping the OS error here also
+    /// means the failure is reported before an `ffmpeg` process is spawned only
+    /// to die immediately.
+    fn check_access(&self) -> Result<(), CaptureError> {
+        match std::fs::File::open(&self.path) {
+            Ok(_) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => {
+                Err(CaptureError::PermissionDenied)
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                Err(CaptureError::PlatformUnavailable {
+                    message: format!("camera {} is not connected", self.path.display()),
+                })
+            }
+            Err(error) => Err(CaptureError::PlatformUnavailable {
+                message: format!("camera {} cannot be opened: {error}", self.path.display()),
+            }),
+        }
+    }
+
     fn spawn_capture(&mut self, format: VideoFormat) -> Result<(), CaptureError> {
         let frame_rate = format.frame_rate();
         let mut command = Command::new("ffmpeg");
@@ -97,7 +145,15 @@ impl V4l2CaptureDevice {
             .args([
                 "-framerate",
                 &format!("{}/{}", frame_rate.numerator(), frame_rate.denominator()),
-            ])
+            ]);
+        // Asking for a mode the camera actually has avoids the driver either
+        // refusing the request or silently handing back its default, which is
+        // how a camera ends up delivering a differently shaped image than the
+        // scaler was told to expect.
+        if let Some((width, height)) = negotiate_size(&self.supported_sizes(), format) {
+            command.args(["-video_size", &format!("{width}x{height}")]);
+        }
+        command
             .args(["-i", self.path.to_string_lossy().as_ref()])
             .args([
                 "-vf",
@@ -111,6 +167,60 @@ impl V4l2CaptureDevice {
         )?);
         Ok(())
     }
+}
+
+/// Chooses the capture mode closest to the canvas without going under it.
+///
+/// Upscaling a camera loses detail that a larger available mode would have
+/// kept, so the smallest mode that still covers the canvas wins. When nothing
+/// covers it — a 640x480 webcam feeding a 1080p canvas — the largest mode is
+/// the best available, and the scaler letterboxes from there.
+#[must_use]
+fn negotiate_size(sizes: &[(u32, u32)], format: VideoFormat) -> Option<(u32, u32)> {
+    if sizes.is_empty() {
+        return None;
+    }
+    let (width, height) = (format.width(), format.height());
+    sizes
+        .iter()
+        .filter(|(candidate_width, candidate_height)| {
+            *candidate_width >= width && *candidate_height >= height
+        })
+        .min_by_key(|(candidate_width, candidate_height)| {
+            u64::from(*candidate_width) * u64::from(*candidate_height)
+        })
+        .or_else(|| {
+            sizes
+                .iter()
+                .max_by_key(|(candidate_width, candidate_height)| {
+                    u64::from(*candidate_width) * u64::from(*candidate_height)
+                })
+        })
+        .copied()
+}
+
+/// Extracts the discrete sizes from `v4l2-ctl --list-formats-ext` output.
+///
+/// Only discrete sizes are taken: a stepwise range would need the driver's step
+/// and alignment rules to pick a legal value from, and guessing one wrong is
+/// worse than letting `ffmpeg` negotiate the default.
+#[must_use]
+fn parse_discrete_sizes(listing: &str) -> Vec<(u32, u32)> {
+    let mut sizes = listing
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("Size: Discrete ")?;
+            let (width, height) = rest.split_once('x')?;
+            Some((
+                width.trim().parse::<u32>().ok()?,
+                height.trim().parse::<u32>().ok()?,
+            ))
+        })
+        .filter(|(width, height)| *width > 0 && *height > 0)
+        .collect::<Vec<_>>();
+    sizes.sort_unstable();
+    sizes.dedup();
+    sizes
 }
 
 impl VideoCaptureDevice for V4l2CaptureDevice {
@@ -128,6 +238,7 @@ impl VideoCaptureDevice for V4l2CaptureDevice {
             CapturePermission::Denied => return Err(CaptureError::PermissionDenied),
             CapturePermission::Unavailable => return Err(CaptureError::PermissionUnavailable),
         }
+        self.check_access()?;
         self.spawn_capture(format)?;
         self.format = Some(format);
         self.frame_index = 0;
@@ -198,6 +309,113 @@ mod tests {
         let result = V4l2CaptureDevice::new("v4l2-camera", "Camera", "/tmp/camera");
         let error = result.err().expect("non-video path");
         assert!(error.to_string().contains("not a /dev/video device"));
+    }
+
+    fn format(width: u32, height: u32) -> VideoFormat {
+        VideoFormat::new(
+            width,
+            height,
+            obs_rs_media::FrameRate::new(30, 1).expect("rate"),
+        )
+        .expect("format")
+    }
+
+    #[test]
+    fn discrete_camera_modes_are_parsed_and_stepwise_ranges_ignored() {
+        let listing = "\
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture
+
+	[0]: 'YUYV' (YUYV 4:2:2)
+		Size: Discrete 640x480
+			Interval: Discrete 0.033s (30.000 fps)
+		Size: Discrete 1280x720
+		Size: Discrete 640x480
+	[1]: 'MJPG' (Motion-JPEG, compressed)
+		Size: Stepwise 32x32 - 2592x1944 with step 2/2
+";
+
+        let sizes = parse_discrete_sizes(listing);
+
+        assert_eq!(
+            sizes,
+            vec![(640, 480), (1280, 720)],
+            "duplicates collapse and a stepwise range is not a discrete choice"
+        );
+    }
+
+    #[test]
+    fn an_uninterrogable_camera_reports_no_modes_rather_than_a_wrong_one() {
+        assert!(parse_discrete_sizes("").is_empty());
+        assert!(parse_discrete_sizes("v4l2-ctl: not found").is_empty());
+        assert!(
+            parse_discrete_sizes("\t\tSize: Discrete 0x0").is_empty(),
+            "a zero-sized mode is not capturable"
+        );
+    }
+
+    #[test]
+    fn negotiation_picks_the_smallest_mode_that_covers_the_canvas() {
+        let sizes = [(320, 240), (640, 480), (1280, 720), (1920, 1080)];
+
+        assert_eq!(
+            negotiate_size(&sizes, format(640, 360)),
+            Some((640, 480)),
+            "the cheapest mode that still covers the canvas is the right one"
+        );
+        assert_eq!(
+            negotiate_size(&sizes, format(1280, 720)),
+            Some((1280, 720)),
+            "an exact match costs no scaling at all"
+        );
+    }
+
+    #[test]
+    fn negotiation_never_upscales_when_a_larger_mode_exists() {
+        let sizes = [(320, 240), (1280, 720)];
+
+        // 320x240 cannot cover a 640x360 canvas, so the larger mode wins even
+        // though it costs more bandwidth: upscaling loses detail the camera has.
+        assert_eq!(negotiate_size(&sizes, format(640, 360)), Some((1280, 720)));
+    }
+
+    #[test]
+    fn negotiation_falls_back_to_the_largest_mode_a_small_camera_offers() {
+        let sizes = [(320, 240), (640, 480)];
+
+        assert_eq!(
+            negotiate_size(&sizes, format(1920, 1080)),
+            Some((640, 480)),
+            "a webcam that cannot fill the canvas still gives its best mode"
+        );
+    }
+
+    #[test]
+    fn negotiation_defers_to_ffmpeg_when_the_camera_lists_nothing() {
+        assert_eq!(
+            negotiate_size(&[], format(640, 360)),
+            None,
+            "an unknown camera must not be forced into a guessed mode"
+        );
+    }
+
+    #[test]
+    fn a_missing_camera_node_is_reported_before_any_process_is_spawned() {
+        let mut device =
+            V4l2CaptureDevice::from_device_id("v4l2-video99", "Absent camera").expect("stable ID");
+
+        let error = device
+            .start(format(64, 36))
+            .expect_err("a camera that is not connected cannot start");
+
+        assert!(
+            matches!(
+                error,
+                CaptureError::PlatformUnavailable { .. } | CaptureError::PermissionDenied
+            ),
+            "the reason has to distinguish missing from forbidden: {error:?}"
+        );
+        assert!(!device.is_running());
     }
 
     #[test]

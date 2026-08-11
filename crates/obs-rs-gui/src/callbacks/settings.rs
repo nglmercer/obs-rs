@@ -30,6 +30,7 @@ pub(crate) struct SettingsController {
     properties: Rc<SourcePropertiesController>,
     monitor: Rc<MonitorController>,
     docks: Rc<crate::callbacks::docks::DockController>,
+    projectors: Rc<crate::ProjectorController>,
     /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_device_ids: RefCell<Vec<String>>,
 }
@@ -87,6 +88,7 @@ pub(crate) struct PeerWindows {
     pub(crate) properties: Rc<SourcePropertiesController>,
     pub(crate) monitor: Rc<MonitorController>,
     pub(crate) docks: Rc<crate::callbacks::docks::DockController>,
+    pub(crate) projectors: Rc<crate::ProjectorController>,
 }
 
 /// Creates the settings window and wires it to the studio window.
@@ -111,6 +113,7 @@ pub(crate) fn install_settings_window(
         properties: Rc::clone(&peers.properties),
         monitor: Rc::clone(&peers.monitor),
         docks: Rc::clone(&peers.docks),
+        projectors: Rc::clone(&peers.projectors),
         audio_device_ids: RefCell::new(Vec::new()),
     });
 
@@ -192,6 +195,68 @@ fn install_open(
     });
 }
 
+/// Returns the input ID the picker currently shows, committed or not.
+///
+/// The list index is the only place a not-yet-applied selection lives, so a
+/// rebuild has to read it back rather than fall back to the stored document.
+fn draft_audio_input_id(controller: &SettingsController) -> String {
+    controller
+        .audio_device_ids
+        .borrow()
+        .get(usize::try_from(controller.window.get_audio_device_index()).unwrap_or(0))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Rebuilds the audio-input picker from a fresh view of the `PipeWire` graph.
+///
+/// The stored selection drives the list rather than the other way round: a
+/// device that has been unplugged is still offered, marked unavailable, so
+/// applying settings while it is missing cannot quietly reset the choice to
+/// "automatic". That is also what makes an explicit refresh useful — the same
+/// list rebuilt after a hot-plug simply promotes the entry back to available.
+fn populate_audio_devices(
+    window: &SettingsWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+    controller: &SettingsController,
+    settings: &AppSettings,
+) {
+    let locale = state.borrow().locale();
+    let entries = output
+        .borrow_mut()
+        .audio_input_entries(&settings.audio_input_id);
+    let unavailable_suffix =
+        crate::i18n::with_catalog(locale, |text| text.settings_ui.audio_input_missing.clone());
+
+    let mut device_ids = vec![String::new()];
+    let mut device_names = vec![crate::i18n::with_catalog(locale, |text| {
+        text.settings_ui.audio_input_auto.clone()
+    })];
+    for entry in &entries {
+        device_ids.push(entry.id.clone());
+        device_names.push(if entry.available {
+            SharedString::from(entry.name.as_str())
+        } else {
+            SharedString::from(format!("{} {unavailable_suffix}", entry.name))
+        });
+    }
+
+    let selected_device_index = if settings.audio_input_id.is_empty() {
+        0
+    } else {
+        device_ids
+            .iter()
+            .position(|id| id == &settings.audio_input_id)
+            .unwrap_or(0)
+    };
+    controller.audio_device_ids.replace(device_ids);
+    window.set_audio_device_names(string_model(device_names.into_iter()));
+    window.set_audio_device_index(i32::try_from(selected_device_index).unwrap_or(0));
+    window.set_devices_summary(output.borrow_mut().audio_devices_summary().into());
+    window.set_audio_input_missing(entries.iter().any(|entry| !entry.available));
+}
+
 /// Copies committed settings plus live project state into the window's draft.
 fn load_draft(
     state: &Rc<RefCell<DesktopState>>,
@@ -227,31 +292,7 @@ fn load_draft(
     let audio_format = state.borrow().audio_format();
     window.set_sample_rate_index(index_of(&SAMPLE_RATES, &audio_format.sample_rate()));
     window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.channels()));
-    let audio_devices = output.borrow_mut().audio_input_devices();
-    let mut device_ids = vec![String::new()];
-    let mut device_names = vec![crate::i18n::with_catalog(state.borrow().locale(), |text| {
-        text.settings_ui.audio_input_auto.clone()
-    })];
-    device_ids.extend(audio_devices.iter().map(|(id, _)| id.clone()));
-    device_names.extend(
-        audio_devices
-            .iter()
-            .map(|(_, name)| SharedString::from(name.as_str())),
-    );
-    let selected_device_index = settings
-        .audio_input_id
-        .is_empty()
-        .then_some(0)
-        .or_else(|| {
-            device_ids
-                .iter()
-                .position(|id| id == &settings.audio_input_id)
-        })
-        .unwrap_or(0);
-    controller.audio_device_ids.replace(device_ids);
-    window.set_audio_device_names(string_model(device_names.into_iter()));
-    window.set_audio_device_index(i32::try_from(selected_device_index).unwrap_or(0));
-    window.set_devices_summary(output.borrow_mut().audio_devices_summary().into());
+    populate_audio_devices(window, state, output, controller, &settings);
 
     let video_format = renderer.borrow().format;
     let resolution = (video_format.width(), video_format.height());
@@ -347,6 +388,30 @@ fn install_commit(
         );
     });
 
+    // Re-running discovery is the hot-plug path: a device connected after the
+    // window opened is only visible once `pw-dump` is asked again, and the
+    // draft selection is preserved across the rebuild.
+    let refresh_state = Rc::clone(state);
+    let refresh_output = Rc::clone(output);
+    let refresh_controller = Rc::clone(controller);
+    controller.window.on_refresh_audio_devices(move || {
+        refresh_output.borrow_mut().refresh_audio_devices();
+        // The picker's current choice, not the committed one, is what the user
+        // is in the middle of making, so it is what survives the rebuild.
+        let draft = draft_audio_input_id(&refresh_controller);
+        let settings = AppSettings {
+            audio_input_id: draft,
+            ..refresh_controller.settings.borrow().clone()
+        };
+        populate_audio_devices(
+            &refresh_controller.window,
+            &refresh_state,
+            &refresh_output,
+            &refresh_controller,
+            &settings,
+        );
+    });
+
     let weak = ui.as_weak();
     let accept_state = Rc::clone(state);
     let accept_renderer = Rc::clone(renderer);
@@ -393,13 +458,90 @@ fn install_commit(
     });
 }
 
-fn commit(
-    ui: &MainWindow,
+/// Applies a canvas change to the active profile and rebuilds the engine.
+///
+/// The two halves have to agree: the project is the record of what the canvas
+/// is, and the engine is what encodes at that size. If the engine cannot be
+/// rebuilt the project change is rolled back, because leaving a project that
+/// claims one resolution while the engine encodes another produces a recording
+/// whose geometry matches neither.
+///
+/// # Errors
+///
+/// Returns the reason the change could not be applied, after the rollback.
+pub(crate) fn apply_video_format(
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
     output: &Rc<RefCell<OutputRuntime>>,
-    controller: &Rc<SettingsController>,
-) {
+    format: VideoFormat,
+) -> Result<(), String> {
+    let (profile, previous) = {
+        let state = state.borrow();
+        let project = state.project_session().project();
+        (
+            project.active_profile().to_string(),
+            project
+                .active_profile_spec()
+                .map(obs_rs_project::Profile::video_format),
+        )
+    };
+    if previous == Some(format) {
+        return Ok(());
+    }
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetProfileVideoFormat {
+            profile: profile.clone(),
+            format,
+        }))
+        .map_err(|error| error.to_string())?;
+
+    let (project, revision) = {
+        let state = state.borrow();
+        (
+            state.project_session().project().clone(),
+            state.project_session().revision(),
+        )
+    };
+    let Err(error) = output.borrow_mut().sync_project(project, revision) else {
+        return Ok(());
+    };
+
+    let reason = error.to_string();
+    // The rollback is itself a project command, so it is undoable and the
+    // engine picks it up on the next idle sync exactly like any other edit.
+    if let Some(previous) = previous {
+        let rolled_back = state.borrow_mut().dispatch(UiCommand::Project(
+            ProjectCommand::SetProfileVideoFormat {
+                profile,
+                format: previous,
+            },
+        ));
+        if let Err(rollback) = rolled_back {
+            return Err(format!("{reason}; rollback also failed: {rollback}"));
+        }
+        return Err(format!("{reason}; the previous canvas was restored"));
+    }
+    Err(reason)
+}
+
+/// Applies a canvas change that was staged while an output was running.
+///
+/// Called from the idle boundary in the preview timer, which is the first
+/// moment the encoders can safely be rebuilt.
+pub(crate) fn apply_staged_video_format(
+    state: &Rc<RefCell<DesktopState>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) -> Option<Result<VideoFormat, String>> {
+    let format = output.borrow_mut().take_staged_video_format()?;
+    Some(apply_video_format(state, output, format).map(|()| format))
+}
+
+/// Reads every editable field out of the window into a settings document.
+///
+/// Committing is two distinct jobs — collecting the draft and acting on it —
+/// and separating them keeps the "what did the user type" logic away from the
+/// "what does that change in the running session" logic.
+fn read_draft(controller: &SettingsController) -> AppSettings {
     let window = &controller.window;
     let mut settings = controller.settings.borrow().clone();
     settings.theme = usize::try_from(window.get_theme_index())
@@ -443,6 +585,18 @@ fn commit(
     {
         locale.code().clone_into(&mut settings.locale);
     }
+    settings
+}
+
+fn commit(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+    controller: &Rc<SettingsController>,
+) {
+    let window = &controller.window;
+    let settings = read_draft(controller);
 
     let mut notes = Vec::new();
 
@@ -459,6 +613,15 @@ fn commit(
     ) {
         notes.push(format!("audio input: {error}"));
     }
+    // A selection the graph cannot resolve is kept rather than reset, so the
+    // user has to be told the engine is on the fallback in the meantime;
+    // silently recording from a different source would be worse.
+    if !output.borrow_mut().audio_input_available() {
+        notes.push(format!(
+            "audio input {} is not connected; the fallback is capturing until it returns",
+            settings.audio_input_id
+        ));
+    }
     // The mixer row names the device it is capturing, so the fader and meter
     // are visibly tied to the input the user just chose.
     let input_name = output.borrow_mut().audio_input_name();
@@ -472,20 +635,21 @@ fn commit(
     // Video: write the canvas back to the active profile so it persists with
     // the project and the renderer rebuilds on the next sync.
     if let Some(format) = video_format_from(window) {
-        let profile = state
-            .borrow()
-            .project_session()
-            .project()
-            .active_profile()
-            .to_string();
-        if let Err(error) =
-            state
-                .borrow_mut()
-                .dispatch(UiCommand::Project(ProjectCommand::SetProfileVideoFormat {
-                    profile,
-                    format,
-                }))
-        {
+        let output_active = {
+            let state = state.borrow();
+            state.recording() || state.streaming()
+        };
+        if output_active {
+            // Changing the canvas mid-output would rebuild the encoders under a
+            // container whose frames are already committed at the old geometry,
+            // so the change is held rather than applied or thrown away.
+            output.borrow_mut().stage_video_format(format);
+            notes.push(format!(
+                "video: {}x{} is staged and applies when the output stops",
+                format.width(),
+                format.height()
+            ));
+        } else if let Err(error) = apply_video_format(state, output, format) {
             notes.push(format!("video: {error}"));
         }
     }
@@ -556,6 +720,7 @@ fn push_palette_tokens(
     controller.properties.set_tokens(tokens.clone());
     controller.monitor.set_tokens(tokens.clone());
     controller.docks.set_tokens(tokens);
+    controller.projectors.set_tokens(tokens);
 }
 
 fn string_model(values: impl Iterator<Item = SharedString>) -> ModelRc<SharedString> {

@@ -450,3 +450,57 @@ fn set_audio_format_rejects_an_unsupported_format() {
     assert!(matches!(error, UiError::Audio(_)));
     assert_eq!(state.audio_format().sample_rate(), 48_000);
 }
+
+#[test]
+fn undo_and_redo_reverse_project_edits_and_resync_selections() {
+    let mut state = DesktopState::new(project());
+    assert!(!state.can_undo());
+
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("select the scene holding the source");
+    state
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSource {
+            profile: "live".to_owned(),
+            scene: "source_scene".to_owned(),
+            source: "source".to_owned(),
+        }))
+        .expect("remove source");
+    assert_eq!(state.selected_source(), None);
+    assert!(state.can_undo());
+
+    state.dispatch(UiCommand::Undo).expect("undo");
+
+    assert!(state
+        .project_session()
+        .project()
+        .profile("live")
+        .expect("profile")
+        .scene("source_scene")
+        .expect("scene")
+        .has_source("source"));
+    // The selection is reconciled against the restored project rather than
+    // being left pointing at whatever the removal fell back to.
+    assert_eq!(state.selected_source(), Some("source"));
+    assert!(state.can_redo());
+
+    state.dispatch(UiCommand::Redo).expect("redo");
+    assert_eq!(state.selected_source(), None);
+}
+
+#[test]
+fn undo_at_the_history_bottom_is_a_reported_no_op() {
+    let mut state = DesktopState::new(project());
+
+    state
+        .dispatch(UiCommand::Undo)
+        .expect("an empty history is not an error");
+
+    assert_eq!(
+        state.notices().last().map(UiNotice::message),
+        Some("nothing to undo")
+    );
+    assert!(!state.is_dirty());
+}

@@ -11,10 +11,22 @@ import { Palette } from "palette.slint";
 export component AppNavbar inherits Rectangle {
     in property <string> locale;
     in property <[ProfileRow]> profile-rows;
+    in property <[ProfileRow]> collection-rows;
     in property <[LocaleOption]> locale-options;
+    // Undo and Redo are greyed out at the ends of the history, so the menu
+    // never offers an entry that would silently do nothing.
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <bool> show-sources;
+    in property <bool> show-scenes;
+    in property <bool> show-mixer;
+    in property <bool> show-transitions;
+    in property <bool> show-controls;
+    in property <bool> studio-mode;
     callback menu-action(string);
     callback select-view-mode(int);
     callback select-profile(string);
+    callback select-collection(string);
     callback set-locale(string);
 
     property <int> open-menu: 0;
@@ -90,7 +102,7 @@ export component AppNavbar inherits Rectangle {
             spacing: 1px;
             MenuEntry { label: I18n.text.menu_new_project; clicked => { root.menu-action("new-project"); root.open-menu = 0; } }
             MenuEntry { label: I18n.text.menu_open_project; clicked => { root.menu-action("load-project"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_save; clicked => { root.menu-action("save-project"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_save; shortcut: "Ctrl+S"; clicked => { root.menu-action("save-project"); root.open-menu = 0; } }
             MenuEntry { label: I18n.text.menu_recover_project; clicked => { root.menu-action("recover-project"); root.open-menu = 0; } }
             MenuEntry { label: I18n.text.menu_export_diagnostics; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
@@ -110,16 +122,26 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: I18n.text.menu_undo; clicked => { root.menu-action("undo"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_redo; clicked => { root.menu-action("redo"); root.open-menu = 0; } }
+            MenuEntry {
+                label: I18n.text.menu_undo;
+                shortcut: "Ctrl+Z";
+                enabled: root.can-undo;
+                clicked => { root.menu-action("undo"); root.open-menu = 0; }
+            }
+            MenuEntry {
+                label: I18n.text.menu_redo;
+                shortcut: "Ctrl+Y";
+                enabled: root.can-redo;
+                clicked => { root.menu-action("redo"); root.open-menu = 0; }
+            }
             MenuEntry { label: I18n.text.menu_preferences; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
         }
     }
     if open-menu == 3 : Rectangle {
         x: view-button.x;
         y: root.height;
-        width: 224px;
-        height: 80px;
+        width: 260px;
+        height: 108px;
         background: Palette.tokens.row-bg;
         border-width: 1px;
         border-color: Palette.tokens.border-strong;
@@ -127,15 +149,21 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: I18n.text.menu_studio_mode; clicked => { root.select-view-mode(-1); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("fullscreen"); root.open-menu = 0; } }
+            MenuEntry {
+                label: I18n.text.menu_studio_mode;
+                checkable: true;
+                checked: root.studio-mode;
+                clicked => { root.select-view-mode(-1); root.open-menu = 0; }
+            }
+            MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("projector-preview"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_program_projector; clicked => { root.menu-action("projector-program"); root.open-menu = 0; } }
         }
     }
     if open-menu == 4 : Rectangle {
         x: docks-button.x;
         y: root.height;
         width: 224px;
-        height: 164px;
+        height: 196px;
         background: Palette.tokens.row-bg;
         border-width: 1px;
         border-color: Palette.tokens.border-strong;
@@ -143,11 +171,38 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: I18n.text.menu_sources; clicked => { root.menu-action("toggle-sources"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_scenes; clicked => { root.menu-action("toggle-scenes"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_audio_mixer; clicked => { root.menu-action("toggle-mixer"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_transitions; clicked => { root.menu-action("toggle-transitions"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_controls; clicked => { root.menu-action("toggle-controls"); root.open-menu = 0; } }
+            MenuEntry {
+                label: I18n.text.menu_sources;
+                checkable: true;
+                checked: root.show-sources;
+                clicked => { root.menu-action("toggle-sources"); root.open-menu = 0; }
+            }
+            MenuEntry {
+                label: I18n.text.menu_scenes;
+                checkable: true;
+                checked: root.show-scenes;
+                clicked => { root.menu-action("toggle-scenes"); root.open-menu = 0; }
+            }
+            MenuEntry {
+                label: I18n.text.menu_audio_mixer;
+                checkable: true;
+                checked: root.show-mixer;
+                clicked => { root.menu-action("toggle-mixer"); root.open-menu = 0; }
+            }
+            MenuEntry {
+                label: I18n.text.menu_transitions;
+                checkable: true;
+                checked: root.show-transitions;
+                clicked => { root.menu-action("toggle-transitions"); root.open-menu = 0; }
+            }
+            MenuEntry {
+                label: I18n.text.menu_controls;
+                checkable: true;
+                checked: root.show-controls;
+                clicked => { root.menu-action("toggle-controls"); root.open-menu = 0; }
+            }
+            Rectangle { height: 1px; background: Palette.tokens.border-strong; }
+            MenuEntry { label: I18n.text.menu_reset_layout; clicked => { root.menu-action("reset-layout"); root.open-menu = 0; } }
         }
     }
     if open-menu == 5 : Rectangle {
@@ -164,6 +219,8 @@ export component AppNavbar inherits Rectangle {
             spacing: 1px;
             for profile in profile-rows : MenuEntry {
                 label: profile.name;
+                checkable: true;
+                checked: profile.active;
                 clicked => { root.select-profile(profile.id); root.open-menu = 0; }
             }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
@@ -173,8 +230,10 @@ export component AppNavbar inherits Rectangle {
     if open-menu == 6 : Rectangle {
         x: collection-button.x;
         y: root.height;
-        width: 224px;
-        height: 108px;
+        // The discovered collections are listed inline the way the profile
+        // menu lists profiles, so switching is one click rather than a dialog.
+        height: 108px + (root.collection-rows.length * 29px);
+        width: 260px;
         background: Palette.tokens.row-bg;
         border-width: 1px;
         border-color: Palette.tokens.border-strong;
@@ -182,8 +241,14 @@ export component AppNavbar inherits Rectangle {
         VerticalBox {
             padding: 6px;
             spacing: 1px;
+            for collection in collection-rows : MenuEntry {
+                label: collection.name;
+                checkable: true;
+                checked: collection.active;
+                clicked => { root.select-collection(collection.id); root.open-menu = 0; }
+            }
+            Rectangle { height: 1px; background: Palette.tokens.border-strong; }
             MenuEntry { label: I18n.text.menu_new_collection; clicked => { root.menu-action("new-collection"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_load_collection; clicked => { root.menu-action("load-collection"); root.open-menu = 0; } }
             MenuEntry { label: I18n.text.menu_save_collection; clicked => { root.menu-action("save-collection"); root.open-menu = 0; } }
         }
     }

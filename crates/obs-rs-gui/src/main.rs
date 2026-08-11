@@ -31,8 +31,9 @@ pub(crate) use callbacks::{
 };
 pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks, install_dock_callbacks,
-    install_monitor_window, install_settings_window, install_source_properties_window, item_rect,
-    start_preview_timer, PeerWindows,
+    install_menu_callbacks, install_monitor_window, install_settings_window,
+    install_source_properties_window, item_rect, start_preview_timer, PeerWindows,
+    ProjectorController,
 };
 pub(crate) use fixtures::{
     capture_devices, initial_project, kind_runs_in_this_session, kind_selects_monitor,
@@ -46,9 +47,9 @@ pub(crate) use refresh::{
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
     AddSourceText, AddSourceWindow, FloatingDockWindow, I18n, LocaleOption, MainWindow, MixerRow,
-    MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow, PropertyRow, PropertyText,
-    SceneRow, SettingsText, SettingsWindow, SourceCandidate, SourceKindRow, SourcePropertiesWindow,
-    SourceRow, ThemeTokens, UiText,
+    MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow, ProjectorWindow, PropertyRow,
+    PropertyText, SceneRow, SettingsText, SettingsWindow, SourceCandidate, SourceKindRow,
+    SourcePropertiesWindow, SourceRow, ThemeTokens, UiText,
 };
 
 /// Mixer channel backed by the engine's live capture input.
@@ -123,6 +124,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Keeps the canvas drag state and the detached docks alive for the session.
     let _canvas = install_canvas_callbacks(&ui, &state, &renderer);
     let docks = install_dock_callbacks(&ui, &state);
+    // Menu-bar actions and the projector windows they open.
+    let projectors = install_menu_callbacks(&ui, &state, &renderer);
     // Keeps the settings window alive for the whole session; dropping the
     // controller would close it.
     let add_source_window = install_add_source_window(&ui, &state, &renderer)?;
@@ -139,6 +142,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             properties: properties_window,
             monitor: monitor_window,
             docks: Rc::clone(&docks),
+            projectors: Rc::clone(&projectors),
         },
     )?;
 
@@ -146,7 +150,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let _preview_timer = start_preview_timer(&ui, &state, &renderer, &output);
+    let _preview_timer = start_preview_timer(&ui, &state, &renderer, &output, &projectors);
     ui.run()?;
     // Closing the window is the ordinary way to leave OBS, so the layout and
     // the project are written back here rather than only on an explicit Save.

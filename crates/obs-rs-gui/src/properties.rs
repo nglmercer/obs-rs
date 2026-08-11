@@ -92,6 +92,12 @@ fn fields(kind: &str) -> Vec<&'static Field> {
         hint: |text| text.property_ui.display_hint.clone(),
         kind: FieldKind::Text,
     };
+    static WINDOW: Field = Field {
+        key: "window",
+        label: |text| text.property_ui.window.clone(),
+        hint: |text| text.property_ui.window_hint.clone(),
+        kind: FieldKind::Choice(window_choices),
+    };
     static CURSOR: Field = Field {
         key: "capture_cursor",
         label: |text| text.property_ui.capture_cursor.clone(),
@@ -103,6 +109,7 @@ fn fields(kind: &str) -> Vec<&'static Field> {
         "color_source" => vec![&COLOR],
         "screen_capture" | "window_capture" | "camera_capture" => vec![&DEVICE],
         "x11_screen_capture" => vec![&MONITOR, &DISPLAY],
+        "x11_window_capture" => vec![&WINDOW, &DISPLAY],
         "wayland_screen_capture" => vec![&CURSOR],
         _ => Vec::new(),
     };
@@ -213,6 +220,19 @@ fn strip_alpha(value: &str) -> &str {
 /// Capture devices for the kinds that select one.
 fn device_choices(kind: &str) -> Vec<(String, String)> {
     crate::capture_devices(kind)
+}
+
+/// Windows for the X11 window source, with the whole desktop first.
+///
+/// The desktop entry is what a freshly added source shows while the user is
+/// still choosing, so the source is never blank and never an error.
+fn window_choices(kind: &str) -> Vec<(String, String)> {
+    let mut choices = vec![(
+        WHOLE_DESKTOP.to_owned(),
+        "Whole desktop (no window selected)".to_owned(),
+    )];
+    choices.extend(crate::capture_devices(kind));
+    choices
 }
 
 /// Displays for the X11 screen source, with the whole desktop first.

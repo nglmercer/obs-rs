@@ -8,7 +8,10 @@ import { HorizontalSplitter, VerticalSplitter } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { Palette } from "palette.slint";
 import {
+    AboutDialog,
+    CollectionDialog,
     ConfirmDialog,
+    DiscardChangesDialog,
     OutputDialog,
     ProjectDialog,
     RenameSceneDialog,
@@ -21,6 +24,7 @@ export { SettingsWindow } from "settings_window.slint";
 export { AddSourceWindow } from "add_source_window.slint";
 export { SourcePropertiesWindow } from "source_properties_window.slint";
 export { MonitorWindow } from "monitor_window.slint";
+export { ProjectorWindow } from "projector_window.slint";
 export { FloatingDockWindow } from "floating_dock.slint";
 export { MonitorRow, PropertyRow, SourceCandidate, SourceKindRow } from "models.slint";
 
@@ -53,7 +57,16 @@ export component MainWindow inherits Window {
         in property <[SceneRow]> scene-rows;
         in property <[SourceRow]> source-rows;
         in property <[ProfileRow]> profile-rows;
+        in property <[ProfileRow]> collection-rows;
         in property <[LocaleOption]> locale-options;
+        // Undo/redo availability comes from the project history, so the Edit
+        // menu greys out an entry rather than offering a silent no-op.
+        in property <bool> can-undo;
+        in property <bool> can-redo;
+        in property <string> active-collection;
+        in property <string> app-version;
+        in property <string> app-platform;
+        in-out property <string> collection-name;
         in property <string> source-scene;
         in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
@@ -103,10 +116,16 @@ export component MainWindow inherits Window {
         in-out property <bool> show-transitions: true;
         in-out property <bool> show-controls: true;
         // 1 project · 2 add scene · 3 add source · 4 output · 5 rename scene
-        // · 6 source properties · 7 source filters
+        // · 6 source properties · 7 source filters · 9 new collection
+        // · 10 about
         property <int> active-modal: 0;
         // 0 none · 1 start stream · 2 stop stream · 3 stop recording
         property <int> pending-confirm: 0;
+        // Actions that would throw away unsaved project edits, held until the
+        // discard prompt is answered. 0 none · 4 new project · 5 exit
+        // · 6 switch collection.
+        property <int> pending-discard: 0;
+        property <string> pending-collection;
         in-out property <length> dock-height: 248px;
 
         callback swap-scenes();
@@ -143,6 +162,17 @@ export component MainWindow inherits Window {
         callback open-add-source-window();
         callback open-source-properties-window();
         callback open-monitor-window();
+        callback undo-edit();
+        callback redo-edit();
+        callback new-project();
+        callback quit-app();
+        callback reset-dock-layout();
+        callback open-documentation();
+        // `true` opens the program feed, `false` the preview feed.
+        callback open-projector(bool);
+        callback select-collection(string);
+        callback create-collection(string);
+        callback save-collection();
         // Reports the desktop portal's answer back onto the UI thread.
         callback apply-portal-token(string);
         // Interactive canvas editing: `handle` is 0 for a move and 1-8 for the
@@ -187,6 +217,29 @@ export component MainWindow inherits Window {
             } else {
                 root.toggle-recording();
             }
+        }
+        // Discarding actions all share one prompt, and all skip it when there
+        // is nothing to lose, so a clean session is never interrupted.
+        function request-discarding-action(action: int) {
+            if (root.dirty) {
+                root.pending-discard = action;
+            } else {
+                root.resolve-discard(action);
+            }
+        }
+        function request-collection(id: string) {
+            root.pending-collection = id;
+            root.request-discarding-action(6);
+        }
+        function resolve-discard(action: int) {
+            if (action == 4) {
+                root.new-project();
+            } else if (action == 5) {
+                root.quit-app();
+            } else if (action == 6) {
+                root.select-collection(root.pending-collection);
+            }
+            root.pending-discard = 0;
         }
         function resolve-confirm() {
             if (root.pending-confirm == 3) {
@@ -266,6 +319,14 @@ export component MainWindow inherits Window {
             keys: @keys(Control + Shift + F);
             activated => fade-transition();
         }
+        KeyBinding {
+            keys: @keys(Control + Z);
+            activated => undo-edit();
+        }
+        KeyBinding {
+            keys: @keys(Control + Y);
+            activated => redo-edit();
+        }
 
         VerticalBox {
             padding: 0px;
@@ -274,10 +335,42 @@ export component MainWindow inherits Window {
             AppNavbar {
                 locale: root.locale;
                 profile-rows: root.profile-rows;
+                collection-rows: root.collection-rows;
                 locale-options: root.locale-options;
+                can-undo: root.can-undo;
+                can-redo: root.can-redo;
+                studio-mode: root.view-mode == 0;
+                show-sources: root.show-sources;
+                show-scenes: root.show-scenes;
+                show-mixer: root.show-mixer;
+                show-transitions: root.show-transitions;
+                show-controls: root.show-controls;
                 set-locale(code) => { root.set-locale(code); }
+                select-collection(id) => { root.request-collection(id); }
                 menu-action(action) => {
-                    if action == "save-project" {
+                    if action == "new-project" {
+                        root.request-discarding-action(4);
+                    } else if action == "exit" {
+                        root.request-discarding-action(5);
+                    } else if action == "undo" {
+                        root.undo-edit();
+                    } else if action == "redo" {
+                        root.redo-edit();
+                    } else if action == "projector-program" {
+                        root.open-projector(true);
+                    } else if action == "projector-preview" {
+                        root.open-projector(false);
+                    } else if action == "reset-layout" {
+                        root.reset-dock-layout();
+                    } else if action == "new-collection" {
+                        root.active-modal = 9;
+                    } else if action == "save-collection" {
+                        root.save-collection();
+                    } else if action == "documentation" {
+                        root.open-documentation();
+                    } else if action == "about" {
+                        root.active-modal = 10;
+                    } else if action == "save-project" {
                         root.save-project();
                     } else if action == "load-project" {
                         root.load-project();
@@ -475,5 +568,28 @@ export component MainWindow inherits Window {
         rename-scene() => { root.rename-scene(); }
         close => { root.active-modal = 0; }
         accepted => { root.active-modal = 0; }
+    }
+    CollectionDialog {
+        open: root.active-modal == 9;
+        locale: root.locale;
+        active-collection: root.active-collection;
+        collection-name <=> root.collection-name;
+        create-collection(name) => { root.create-collection(name); }
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    AboutDialog {
+        open: root.active-modal == 10;
+        locale: root.locale;
+        version: root.app-version;
+        platform: root.app-platform;
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    DiscardChangesDialog {
+        open: root.pending-discard != 0;
+        locale: root.locale;
+        close => { root.pending-discard = 0; }
+        accepted => { root.resolve-discard(root.pending-discard); }
     }
 }

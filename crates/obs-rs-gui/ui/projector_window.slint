@@ -1,0 +1,70 @@
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// A borderless full-bleed view of one canvas, which is what OBS calls a
+// projector. It renders nothing of its own: the studio window pushes the same
+// composited image it already produced for preview or program, so a projector
+// can never disagree with what the operator is watching.
+export component ProjectorWindow inherits Window {
+    in property <string> locale;
+    in property <image> source-image;
+    // "preview" or "program"; shown in the title so two open projectors are
+    // still tellable apart in a window switcher.
+    in property <string> feed-label;
+    in property <int> canvas-width: 1920;
+    in property <int> canvas-height: 1080;
+    callback close-requested();
+
+    title: I18n.text.app_name + " — " + root.feed-label;
+    background: black;
+    width: 960px;
+    height: 540px;
+
+    FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.close-requested();
+                return accept;
+            }
+            reject
+        }
+
+        Rectangle {
+            background: black;
+
+            Image {
+                source: root.source-image;
+                width: 100%;
+                height: 100%;
+                // Letterboxing preserves the canvas aspect, so a projector on a
+                // differently shaped display never misrepresents the framing.
+                image-fit: contain;
+            }
+
+            // The hint fades out of the way once the pointer leaves, so it does
+            // not sit permanently on top of the picture being monitored.
+            Rectangle {
+                x: 12px;
+                y: parent.height - self.height - 12px;
+                width: hint.preferred-width + 20px;
+                height: 26px;
+                background: rgb(2, 6, 23, 180);
+                border-radius: 4px;
+                opacity: hover.has-hover ? 1.0 : 0.0;
+                animate opacity { duration: 180ms; }
+
+                hint := Text {
+                    text: I18n.text.projector_hint;
+                    color: Palette.tokens.text;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+
+            hover := TouchArea { }
+        }
+    }
+}

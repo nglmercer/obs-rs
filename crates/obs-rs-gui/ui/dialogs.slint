@@ -127,3 +127,64 @@ export component OutputDialog inherits ModalShell {
         }
     }
 }
+
+// Names a new scene collection. The current scenes are written to the named
+// document before a clean set is started, so a rename is never a data loss.
+export component CollectionDialog inherits ModalShell {
+    in property <string> locale;
+    in property <string> active-collection;
+    in-out property <string> collection-name;
+    callback create-collection(string);
+
+    title: I18n.text.collection_dialog_title;
+    subtitle: I18n.text.collection_dialog_description;
+    accept-label: I18n.text.menu_new_collection;
+    cancel-label: I18n.text.cancel;
+    panel-height: 280px;
+    accepted => create-collection(collection-name);
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: I18n.text.collection_active; }
+        MutedText { text: root.active-collection; }
+        FieldHeading { text: I18n.text.collection_name; }
+        LineEdit {
+            text <=> collection-name;
+            placeholder-text: "untitled";
+        }
+    }
+}
+
+// Guards an action that would discard unsaved project edits. The window owns
+// which action is pending, so this only has to state the consequence.
+export component DiscardChangesDialog inherits ModalShell {
+    in property <string> locale;
+
+    title: I18n.text.discard_changes_title;
+    subtitle: I18n.text.discard_changes_message;
+    accept-label: I18n.text.settings_ui.ok;
+    cancel-label: I18n.text.cancel;
+    panel-height: 190px;
+
+    Rectangle { }
+}
+
+export component AboutDialog inherits ModalShell {
+    in property <string> locale;
+    in property <string> version;
+    in property <string> platform;
+
+    title: I18n.text.about_title;
+    subtitle: I18n.text.about_description;
+    accept-label: I18n.text.about_close;
+    cancel-label: "";
+    panel-height: 300px;
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: I18n.text.about_version; }
+        MutedText { text: root.version; }
+        FieldHeading { text: I18n.text.about_platform; }
+        MutedText { text: root.platform; }
+    }
+}

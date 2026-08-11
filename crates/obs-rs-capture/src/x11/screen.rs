@@ -15,15 +15,16 @@ use super::{
     image::{decode_pixels, packed_row_bytes, padded_row_bytes},
     protocol::{read_u32_le, ServerInfo, X11_GET_IMAGE, X11_MAX_REPLY_BYTES, X11_Z_PIXMAP},
     randr::{query_monitors, X11Monitor},
+    window::{enumerate_windows, parse_window_id, window_root_rect, X11Window},
 };
 
 /// The rectangle of the root window a device captures, in root coordinates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Region {
-    x: u16,
-    y: u16,
-    width: u16,
-    height: u16,
+pub(super) struct Region {
+    pub(super) x: u16,
+    pub(super) y: u16,
+    pub(super) width: u16,
+    pub(super) height: u16,
 }
 
 pub struct X11CaptureDevice {
@@ -32,6 +33,11 @@ pub struct X11CaptureDevice {
     server: ServerInfo,
     /// The captured rectangle; `None` means the complete root window.
     region: Option<Region>,
+    /// A tracked window, whose rectangle is re-read from the server per frame.
+    ///
+    /// This takes precedence over `region`: a monitor selection is a fixed
+    /// rectangle, whereas a window moves and resizes while it is captured.
+    window: Option<u32>,
     format: Option<VideoFormat>,
     frame_index: u64,
     data: Vec<u8>,
@@ -102,6 +108,7 @@ impl X11CaptureDevice {
             stream,
             server,
             region: None,
+            window: None,
             format: None,
             frame_index: 0,
             data: Vec::new(),
@@ -190,21 +197,97 @@ impl X11CaptureDevice {
         Ok(())
     }
 
+    /// Lists the top-level windows this connection's server is showing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::Io`] when the socket fails and
+    /// [`CaptureError::Protocol`] when a reply cannot be decoded.
+    pub fn windows(&mut self) -> Result<Vec<X11Window>, CaptureError> {
+        enumerate_windows(&mut self.stream, &self.server)
+    }
+
+    /// Restricts capture to one window, tracked by resource ID.
+    ///
+    /// The window's rectangle is resolved on every frame rather than stored, so
+    /// moving or resizing the window is followed without the caller doing
+    /// anything, and a window that is closed becomes a typed error on the next
+    /// frame instead of a stale rectangle full of someone else's pixels.
+    ///
+    /// An empty or missing ID clears the selection and returns capture to
+    /// whatever monitor or root region was configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::PlatformUnavailable`] when the ID cannot be
+    /// parsed or the window is not on this server.
+    pub fn select_window(&mut self, window: Option<&str>) -> Result<(), CaptureError> {
+        let Some(wanted) = window.map(str::trim).filter(|value| !value.is_empty()) else {
+            self.window = None;
+            return Ok(());
+        };
+        let id = parse_window_id(wanted)
+            .ok_or_else(|| platform_error(format!("{wanted} is not an X11 window ID")))?;
+        // The window is resolved once here so a stale project setting fails
+        // when the source is configured rather than on the first frame.
+        window_root_rect(&mut self.stream, id, self.server.root).map_err(|error| {
+            platform_error(format!("X11 window 0x{id:08x} is not available: {error}"))
+        })?;
+        self.window = Some(id);
+        // A window selection supersedes a monitor crop; keeping both would
+        // leave two rectangles competing for the same frame.
+        self.region = None;
+        Ok(())
+    }
+
+    /// Returns the tracked window's resource ID, if capture targets a window.
+    #[must_use]
+    pub const fn selected_window(&self) -> Option<u32> {
+        self.window
+    }
+
     /// Clamps a monitor rectangle to the root window and converts it to the
     /// unsigned coordinates `GetImage` accepts.
     fn region_for(monitor: &X11Monitor, server: &ServerInfo) -> Result<Region, CaptureError> {
-        let left = u32::try_from(monitor.x().max(0))
-            .unwrap_or(0)
-            .min(server.width);
-        let top = u32::try_from(monitor.y().max(0))
-            .unwrap_or(0)
-            .min(server.height);
-        let width = monitor.width().min(server.width.saturating_sub(left));
-        let height = monitor.height().min(server.height.saturating_sub(top));
+        Self::clamp_region(
+            monitor.x(),
+            monitor.y(),
+            monitor.width(),
+            monitor.height(),
+            server,
+            || format!("X11 monitor {}", monitor.name()),
+        )
+    }
+
+    /// Clamps an arbitrary rectangle to the root window.
+    ///
+    /// A window may be partly off-screen or larger than the desktop, and
+    /// `GetImage` rejects any request that leaves the drawable, so the visible
+    /// intersection is what gets captured.
+    pub(super) fn clamp_region(
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        server: &ServerInfo,
+        describe: impl Fn() -> String,
+    ) -> Result<Region, CaptureError> {
+        // A negative origin means the rectangle starts off the left or top
+        // edge, so that many pixels are dropped from its width or height.
+        let clipped_left = u32::try_from(-x.min(0)).unwrap_or(0);
+        let clipped_top = u32::try_from(-y.min(0)).unwrap_or(0);
+        let left = u32::try_from(x.max(0)).unwrap_or(0).min(server.width);
+        let top = u32::try_from(y.max(0)).unwrap_or(0).min(server.height);
+        let width = width
+            .saturating_sub(clipped_left)
+            .min(server.width.saturating_sub(left));
+        let height = height
+            .saturating_sub(clipped_top)
+            .min(server.height.saturating_sub(top));
         if width == 0 || height == 0 {
             return Err(platform_error(format!(
-                "X11 monitor {} lies outside the {}x{} root window",
-                monitor.name(),
+                "{} lies outside the {}x{} root window",
+                describe(),
                 server.width,
                 server.height
             )));
@@ -231,6 +314,32 @@ impl X11CaptureDevice {
         self.info.set_permission(permission);
     }
 
+    /// Resolves the rectangle this frame reads, following a tracked window.
+    ///
+    /// A window is re-resolved on every frame, which is what makes moving and
+    /// resizing it work and what turns a closed window into an error rather
+    /// than a stale rectangle full of someone else's pixels.
+    fn current_region(&mut self, format: VideoFormat) -> Result<Region, CaptureError> {
+        match (self.window, self.region) {
+            (Some(window), _) => {
+                let (x, y, width, height) =
+                    window_root_rect(&mut self.stream, window, self.server.root)?;
+                Self::clamp_region(x, y, width, height, &self.server, || {
+                    format!("X11 window 0x{window:08x}")
+                })
+            }
+            (None, Some(region)) => Ok(region),
+            (None, None) => Ok(Region {
+                x: 0,
+                y: 0,
+                width: u16::try_from(self.server.width)
+                    .map_err(|_| CaptureError::UnsupportedFormat(format))?,
+                height: u16::try_from(self.server.height)
+                    .map_err(|_| CaptureError::UnsupportedFormat(format))?,
+            }),
+        }
+    }
+
     fn read_frame(
         &mut self,
         format: VideoFormat,
@@ -240,17 +349,7 @@ impl X11CaptureDevice {
         // was chosen. Requesting the output canvas dimensions directly only
         // returned the top-left corner whenever the desktop was larger than the
         // configured scene, so the full rectangle is always read and scaled.
-        let region = match self.region {
-            Some(region) => region,
-            None => Region {
-                x: 0,
-                y: 0,
-                width: u16::try_from(self.server.width)
-                    .map_err(|_| CaptureError::UnsupportedFormat(format))?,
-                height: u16::try_from(self.server.height)
-                    .map_err(|_| CaptureError::UnsupportedFormat(format))?,
-            },
-        };
+        let region = self.current_region(format)?;
         let (width, height) = (region.width, region.height);
         let plane_mask = if self.server.depth == 32 {
             u32::MAX

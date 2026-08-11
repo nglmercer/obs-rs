@@ -51,6 +51,8 @@ export component SettingsWindow inherits Window {
     in property <[string]> audio-device-names;
     in-out property <int> audio-device-index;
     in property <string> devices-summary;
+    in property <bool> audio-input-missing;
+    callback refresh-audio-devices();
     // Video
     in property <[string]> resolution-names;
     in-out property <int> base-resolution-index;
@@ -201,6 +203,8 @@ export component SettingsWindow inherits Window {
                         audio-device-names: root.audio-device-names;
                         audio-device-index: root.audio-device-index;
                         devices-summary: root.devices-summary;
+                        audio-input-missing: root.audio-input-missing;
+                        refresh-audio-devices() => { root.refresh-audio-devices(); }
                         select-sample-rate(index) => {
                             root.sample-rate-index = index;
                             root.dirty = true;

@@ -579,7 +579,22 @@ impl AppSettings {
 
     /// Restores the stored dock layout into a freshly built window.
     pub(crate) fn apply_layout(&self, ui: &crate::MainWindow) {
-        let layout = &self.layout;
+        self.layout.apply(ui);
+    }
+}
+
+/// Restores the layout OBS-RS ships with, discarding the session's arrangement.
+///
+/// This is the Docks menu's reset: it writes the defaults straight onto the
+/// window, and the ordinary shutdown capture then persists them, so a reset
+/// survives the session without a second save path.
+pub(crate) fn apply_default_layout(ui: &crate::MainWindow) {
+    LayoutSettings::default().apply(ui);
+}
+
+impl LayoutSettings {
+    fn apply(&self, ui: &crate::MainWindow) {
+        let layout = self;
         ui.set_panel_order(ModelRc::new(VecModel::from(layout.panel_order.clone())));
         ui.set_show_scenes(layout.show_scenes);
         ui.set_show_sources(layout.show_sources);
@@ -602,7 +617,9 @@ impl AppSettings {
         )]
         ui.set_dock_height(layout.dock_height as f32);
     }
+}
 
+impl AppSettings {
     /// Reads the window's current dock layout back into this document.
     pub(crate) fn capture_layout(&mut self, ui: &crate::MainWindow) {
         let order = read_model(&ui.get_panel_order());

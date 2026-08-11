@@ -184,3 +184,126 @@ fn live_x11_capture_decodes_a_root_screen_frame() {
     assert_eq!(frame.format(), format);
     assert_eq!(device.frame_index(), 1);
 }
+
+/// Returns the parsed server description the region tests clamp against.
+fn server() -> super::protocol::ServerInfo {
+    parse_setup(&setup_fixture()).expect("the fixture setup parses")
+}
+
+#[test]
+fn a_window_inside_the_desktop_is_captured_whole() {
+    let server = server();
+
+    let region = X11CaptureDevice::clamp_region(100, 50, 320, 240, &server, || "window".to_owned())
+        .expect("a fully visible window needs no clamping");
+
+    assert_eq!(
+        (region.x, region.y, region.width, region.height),
+        (100, 50, 320, 240)
+    );
+}
+
+#[test]
+fn a_window_hanging_off_the_right_edge_is_clipped_to_what_is_visible() {
+    let server = server();
+
+    // The 640x480 root leaves 140 pixels to the right of x=500.
+    let region = X11CaptureDevice::clamp_region(500, 0, 320, 240, &server, || "window".to_owned())
+        .expect("a partly visible window still captures its visible part");
+
+    assert_eq!(region.x, 500);
+    assert_eq!(
+        region.width, 140,
+        "GetImage rejects a request past the root"
+    );
+    assert_eq!(region.height, 240);
+}
+
+#[test]
+fn a_window_hanging_off_the_left_edge_loses_the_hidden_columns() {
+    let server = server();
+
+    // The window starts 40 pixels left of the desktop, so 40 columns are gone
+    // and capture starts at the root origin.
+    let region =
+        X11CaptureDevice::clamp_region(-40, -30, 320, 240, &server, || "window".to_owned())
+            .expect("a window pushed off the top-left still has a visible part");
+
+    assert_eq!((region.x, region.y), (0, 0));
+    assert_eq!(region.width, 280);
+    assert_eq!(region.height, 210);
+}
+
+#[test]
+fn a_window_entirely_off_screen_is_a_typed_error_rather_than_an_empty_frame() {
+    let server = server();
+
+    let error = X11CaptureDevice::clamp_region(700, 0, 320, 240, &server, || {
+        "X11 window 0x00000007".to_owned()
+    })
+    .expect_err("a window with no visible pixels cannot be captured");
+
+    assert!(
+        error.to_string().contains("X11 window 0x00000007"),
+        "the message has to name what could not be captured: {error}"
+    );
+}
+
+#[test]
+fn a_window_larger_than_the_desktop_is_clamped_to_the_desktop() {
+    let server = server();
+
+    let region = X11CaptureDevice::clamp_region(0, 0, 4096, 4096, &server, || "window".to_owned())
+        .expect("an oversized window captures the desktop it covers");
+
+    assert_eq!((region.width, region.height), (640, 480));
+}
+
+#[test]
+#[ignore = "requires a live local X11 server"]
+fn live_x11_window_enumeration_reports_selectable_windows() {
+    let display = std::env::var("DISPLAY").expect("DISPLAY is set");
+
+    let windows = super::window::x11_windows(&display).expect("enumerate X11 windows");
+
+    for window in &windows {
+        assert!(window.width() > 0 && window.height() > 0);
+        assert!(!window.title().is_empty());
+        assert_eq!(
+            super::window::parse_window_id(&window.device_id()),
+            Some(window.id()),
+            "a stored device ID has to resolve back to the same window"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires a live local X11 server with at least one window"]
+fn live_x11_window_capture_tracks_the_selected_window() {
+    let display = std::env::var("DISPLAY").expect("DISPLAY is set");
+    let windows = super::window::x11_windows(&display).expect("enumerate X11 windows");
+    let target = windows.first().expect("at least one window is open");
+
+    let mut device =
+        X11CaptureDevice::connect(&display, "x11-window", "X11 window").expect("connect to X11");
+    device
+        .select_window(Some(&target.device_id()))
+        .expect("select the window");
+    assert_eq!(device.selected_window(), Some(target.id()));
+
+    let format = VideoFormat::new(64, 36, obs_rs_media::FrameRate::new(30, 1).expect("rate"))
+        .expect("format");
+    device.start(format).expect("start the window device");
+    let frame = device
+        .next_frame(Timestamp::ZERO)
+        .expect("capture the window")
+        .expect("window frame");
+    assert_eq!(frame.format(), format);
+}
+
+#[test]
+fn an_unparsable_window_id_is_rejected_before_any_capture_starts() {
+    // No X11 server is needed: the ID never reaches one.
+    assert!(super::window::parse_window_id("window-please").is_none());
+    assert!(super::window::parse_window_id("x11-window-zzzz").is_none());
+}

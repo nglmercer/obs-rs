@@ -75,16 +75,24 @@ pub(crate) fn refresh_ui(
         ui.set_snapshot(state.accessible_snapshot().into());
         refresh_recovery_ui(ui, locale);
 
+        let active_profile = project.active_profile().as_str();
         let profile_rows = project
             .profiles()
             .map(|profile| ProfileRow {
                 id: profile.id().as_str().into(),
                 name: profile.name().into(),
+                active: profile.id().as_str() == active_profile,
             })
             .collect::<Vec<_>>();
         if !model_matches(&ui.get_profile_rows(), &profile_rows) {
             ui.set_profile_rows(ModelRc::new(VecModel::from(profile_rows)));
         }
+
+        // The Edit menu greys out an entry it cannot honour, so the history
+        // depth has to reach the window on every refresh, not only after an
+        // edit that happens to come through this path.
+        ui.set_can_undo(state.can_undo());
+        ui.set_can_redo(state.can_redo());
 
         refresh_docks(ui, &state, profile);
         (

@@ -1,11 +1,12 @@
 pub(crate) mod add_source;
 pub(crate) mod canvas;
 pub(crate) mod docks;
+pub(crate) mod menu;
 pub(crate) mod monitor;
 mod output;
 mod project;
 mod scene;
-mod settings;
+pub(crate) mod settings;
 mod source;
 pub(crate) mod source_properties;
 
@@ -27,6 +28,7 @@ pub(crate) use add_source::install_add_source_window;
 pub(crate) use add_source::{add_source_window, populate_add_source_window};
 pub(crate) use canvas::{install_canvas_callbacks, item_rect};
 pub(crate) use docks::install_dock_callbacks;
+pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
 pub(crate) use project::{install_project_callbacks, project_store, rename_scene_and_refresh};
@@ -47,12 +49,14 @@ pub(crate) fn start_preview_timer(
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
     output: &Rc<RefCell<OutputRuntime>>,
+    projectors: &Rc<ProjectorController>,
 ) -> Timer {
     let timer = Timer::default();
     let weak = ui.as_weak();
     let state = Rc::clone(state);
     let renderer = Rc::clone(renderer);
     let output = Rc::clone(output);
+    let projectors = Rc::clone(projectors);
     let mut last_output_ui_refresh = Instant::now()
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
@@ -69,6 +73,25 @@ pub(crate) fn start_preview_timer(
                 state.recording() || state.streaming(),
             )
         };
+        // A canvas change held back while recording is applied here, at the
+        // first tick after the output stopped, and before the ordinary project
+        // sync so both reach the engine in one rebuild.
+        if !output_active {
+            match settings::apply_staged_video_format(&state, &output) {
+                Some(Ok(format)) => ui.set_status_message(
+                    format!(
+                        "Canvas changed to {}x{} now that the output stopped",
+                        format.width(),
+                        format.height()
+                    )
+                    .into(),
+                ),
+                Some(Err(error)) => {
+                    ui.set_status_message(format!("Staged canvas change failed: {error}").into());
+                }
+                None => {}
+            }
+        }
         if !output_active && output.borrow().needs_project_sync(revision) {
             let project = state.borrow().project_session().project().clone();
             if let Err(error) = output.borrow_mut().sync_project(project, revision) {
@@ -80,21 +103,18 @@ pub(crate) fn start_preview_timer(
             &renderer,
             preview_scene.as_deref(),
             program_scene.as_deref(),
-            output_active || ui.get_view_mode() == 0,
+            // A program projector is a third consumer of the program canvas,
+            // so single-canvas editing has to render it again while one is up.
+            output_active || ui.get_view_mode() == 0 || projectors.wants_program(),
         );
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
         }
+        projectors.sync(&ui);
         if output_active {
             push_program_frame(&ui, program_frame, &output);
         }
-        if state.borrow().streaming() && output.borrow().stream_failed() {
-            let _ = state
-                .borrow_mut()
-                .dispatch(obs_rs_ui::UiCommand::StopStreaming);
-            ui.set_streaming(false);
-            ui.set_status_message("Streaming stopped after transport failure".into());
-        }
+        reconcile_output_lifecycle(&ui, &state, &output);
         // Worker counters remain live in the status bar, but formatting them
         // at 30 fps adds needless allocations and mutex traffic while editing.
         if last_output_ui_refresh.elapsed() >= Duration::from_millis(100) {
@@ -104,6 +124,44 @@ pub(crate) fn start_preview_timer(
         }
     });
     timer
+}
+
+/// Brings the desktop's output booleans back in line with the engine's phases.
+///
+/// Pressing Record or Stream sets a boolean optimistically, but the engine is
+/// what decides whether an output actually runs: a refused peer, a rejected
+/// recording path, or a dead worker all end the output without the desktop
+/// asking. Reconciling here means the controls can never keep claiming an
+/// output is live after the engine has stopped it.
+pub(crate) fn reconcile_output_lifecycle(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
+    let (recording, streaming) = output.borrow().lifecycles();
+    let (claims_recording, claims_streaming) = {
+        let state = state.borrow();
+        (state.recording(), state.streaming())
+    };
+
+    if claims_recording && recording.is_stopped() {
+        let _ = state
+            .borrow_mut()
+            .dispatch(obs_rs_ui::UiCommand::StopRecording);
+        ui.set_recording(false);
+        if recording == obs_rs_engine::OutputLifecycle::Failed {
+            ui.set_status_message("Recording stopped after an output failure".into());
+        }
+    }
+    if claims_streaming && streaming.is_stopped() {
+        let _ = state
+            .borrow_mut()
+            .dispatch(obs_rs_ui::UiCommand::StopStreaming);
+        ui.set_streaming(false);
+        if streaming == obs_rs_engine::OutputLifecycle::Failed {
+            ui.set_status_message("Streaming stopped after transport failure".into());
+        }
+    }
 }
 
 /// Pushes the engine's live input peak onto the mixer's microphone channel.

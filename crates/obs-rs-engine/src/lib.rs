@@ -148,11 +148,60 @@ pub struct EngineStats {
     pub audio_peak_milli: u16,
 }
 
+/// Lifecycle of one output, recording or streaming.
+///
+/// A frontend cannot infer this from "is the handle open?" alone: a connect
+/// that failed and a stream that was never started both leave no handle, yet a
+/// user has to be told the difference. Tracking the phase explicitly is what
+/// lets the desktop reconcile its own booleans against what the engine really
+/// did, rather than assuming a start request succeeded.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum OutputLifecycle {
+    /// No output is open and none was requested.
+    #[default]
+    Idle,
+    /// A start was requested and has not yet been accepted or rejected.
+    Starting,
+    /// The output is open and accepting packets.
+    Running,
+    /// A stop was requested and finalization is in progress.
+    Stopping,
+    /// The output stopped because of an error rather than a request.
+    Failed,
+}
+
+impl OutputLifecycle {
+    /// Returns whether this phase means the output is no longer carrying media.
+    ///
+    /// Both `Idle` and `Failed` are terminal for the frontend's purposes: in
+    /// either case a UI still showing "recording" is lying to the operator.
+    #[must_use]
+    pub const fn is_stopped(self) -> bool {
+        matches!(self, Self::Idle | Self::Failed)
+    }
+
+    /// Returns the stable label used by the status bar and diagnostics.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Starting => "starting",
+            Self::Running => "running",
+            Self::Stopping => "stopping",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 /// A small immutable status snapshot suitable for a status bar.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EngineSnapshot {
     pub recording: bool,
     pub streaming: bool,
+    /// Explicit recording phase, including a failed start the boolean hides.
+    pub recording_lifecycle: OutputLifecycle,
+    /// Explicit streaming phase, including a failed connect or a lost peer.
+    pub streaming_lifecycle: OutputLifecycle,
     pub stream_state: Option<StreamState>,
     pub audio_backend: String,
     pub audio_fallback: bool,
@@ -363,6 +412,9 @@ pub struct EngineSession {
     audio_encoder: RawAudioEncoder,
     recording: Option<RecordingOutput>,
     streaming: Option<StreamOutput>,
+    /// Phases the handles alone cannot express, notably a failed start.
+    recording_lifecycle: OutputLifecycle,
+    streaming_lifecycle: OutputLifecycle,
     stats: EngineStats,
     last_error: Option<String>,
 }
@@ -423,6 +475,8 @@ impl EngineSession {
             render_timestamp: Timestamp::ZERO,
             recording: None,
             streaming: None,
+            recording_lifecycle: OutputLifecycle::Idle,
+            streaming_lifecycle: OutputLifecycle::Idle,
             stats: EngineStats::default(),
             last_error: None,
         })
@@ -623,11 +677,30 @@ impl EngineSession {
     }
 
     /// Starts an atomic `OBSRPKT1` recording at `path`.
+    ///
+    /// The phase moves to `Starting` before any file work and settles on
+    /// `Running` or `Failed`, so a caller that only sees the error still leaves
+    /// an observable record of what happened behind.
     pub fn start_recording(&mut self, path: impl Into<PathBuf>) -> Result<(), EngineError> {
         if self.recording.is_some() {
             return Err(EngineError::Busy("start recording"));
         }
-        let final_path = path.into();
+        self.recording_lifecycle = OutputLifecycle::Starting;
+        let result = self.open_recording(path.into());
+        match result {
+            Ok(()) => {
+                self.recording_lifecycle = OutputLifecycle::Running;
+                Ok(())
+            }
+            Err(error) => {
+                self.recording_lifecycle = OutputLifecycle::Failed;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    fn open_recording(&mut self, final_path: PathBuf) -> Result<(), EngineError> {
         let file_name = final_path
             .file_name()
             .and_then(|name| name.to_str())
@@ -643,26 +716,40 @@ impl EngineSession {
     }
 
     /// Finalizes a recording and returns its committed byte count.
+    ///
+    /// A failed finalization leaves the recording open and the phase `Failed`,
+    /// so the captured packets are not silently discarded and the frontend can
+    /// see that the file was never committed.
     pub fn finish_recording(&mut self) -> Result<usize, EngineError> {
         let Some(mut recording) = self.recording.take() else {
             return Err(EngineError::InvalidConfiguration(
                 "recording is not open".to_owned(),
             ));
         };
+        self.recording_lifecycle = OutputLifecycle::Stopping;
         recording.packets.sort_by_key(EncodedPacket::timestamp);
         for packet in &recording.packets {
             if let Err(error) = recording.writer.push(packet.clone()) {
                 self.recording = Some(recording);
-                return Err(error.into());
+                return Err(self.fail_recording(error.into()));
             }
         }
         match recording.writer.finalize() {
-            Ok(bytes) => Ok(bytes),
+            Ok(bytes) => {
+                self.recording_lifecycle = OutputLifecycle::Idle;
+                Ok(bytes)
+            }
             Err(error) => {
                 self.recording = Some(recording);
-                Err(error.into())
+                Err(self.fail_recording(error.into()))
             }
         }
+    }
+
+    fn fail_recording(&mut self, error: EngineError) -> EngineError {
+        self.recording_lifecycle = OutputLifecycle::Failed;
+        self.last_error = Some(error.to_string());
+        error
     }
 
     /// Aborts an open recording and removes its temporary path.
@@ -670,19 +757,37 @@ impl EngineSession {
         if let Some(mut recording) = self.recording.take() {
             let _ = recording.writer.abort();
         }
+        // An abort is a deliberate stop, so it clears a previous failure rather
+        // than leaving the session permanently marked as broken.
+        self.recording_lifecycle = OutputLifecycle::Idle;
     }
 
     /// Opens a TCP or WebSocket OBS-RS packet stream.
+    ///
+    /// A refused or unreachable peer leaves the phase `Failed`, which is what
+    /// distinguishes "the user never started a stream" from "the stream could
+    /// not be established".
     pub fn start_streaming(&mut self, address: &str) -> Result<(), EngineError> {
         if self.streaming.is_some() {
             return Err(EngineError::Busy("start streaming"));
         }
-        self.streaming = Some(StreamOutput::connect(
+        self.streaming_lifecycle = OutputLifecycle::Starting;
+        match StreamOutput::connect(
             address,
             self.config.output_queue_bytes,
             self.config.reconnect_attempts,
-        )?);
-        Ok(())
+        ) {
+            Ok(stream) => {
+                self.streaming = Some(stream);
+                self.streaming_lifecycle = OutputLifecycle::Running;
+                Ok(())
+            }
+            Err(error) => {
+                self.streaming_lifecycle = OutputLifecycle::Failed;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
     }
 
     /// Flushes queued packets without making the media producer wait during
@@ -694,6 +799,7 @@ impl EngineSession {
         if stream.state() == StreamState::Disconnected {
             if let Err(error) = stream.reconnect() {
                 self.last_error = Some(error.to_string());
+                self.streaming_lifecycle = OutputLifecycle::Failed;
                 return Err(error);
             }
         }
@@ -703,6 +809,10 @@ impl EngineSession {
                 self.last_error = Some(error.to_string());
                 if let Err(reconnect) = stream.reconnect() {
                     self.last_error = Some(format!("{error}; reconnect failed: {reconnect}"));
+                    // A pump error the transport could not recover from is the
+                    // point the stream stops carrying media, whether or not the
+                    // handle is still open.
+                    self.streaming_lifecycle = OutputLifecycle::Failed;
                     return Err(error);
                 }
                 Ok(0)
@@ -713,11 +823,28 @@ impl EngineSession {
     /// Stops streaming and closes its transport.
     pub fn finish_streaming(&mut self) -> Result<(), EngineError> {
         let Some(mut stream) = self.streaming.take() else {
+            // Stopping a stream that never started still clears a failed start,
+            // so a retry is not blocked by the previous attempt's phase.
+            self.streaming_lifecycle = OutputLifecycle::Idle;
             return Ok(());
         };
+        self.streaming_lifecycle = OutputLifecycle::Stopping;
         let _ = stream.pump();
         stream.close();
+        self.streaming_lifecycle = OutputLifecycle::Idle;
         Ok(())
+    }
+
+    /// Returns the explicit recording phase, including a failed start or commit.
+    #[must_use]
+    pub const fn recording_lifecycle(&self) -> OutputLifecycle {
+        self.recording_lifecycle
+    }
+
+    /// Returns the explicit streaming phase, including a failed connect.
+    #[must_use]
+    pub const fn streaming_lifecycle(&self) -> OutputLifecycle {
+        self.streaming_lifecycle
     }
 
     /// Returns whether a packet recording is open.
@@ -758,6 +885,15 @@ impl EngineSession {
         EngineSnapshot {
             recording: self.is_recording(),
             streaming: self.is_streaming(),
+            recording_lifecycle: self.recording_lifecycle,
+            // A transport that reports `Failed` has stopped carrying media even
+            // if the handle is still open, so the reported phase follows the
+            // transport rather than the handle.
+            streaming_lifecycle: if self.stream_state() == Some(StreamState::Failed) {
+                OutputLifecycle::Failed
+            } else {
+                self.streaming_lifecycle
+            },
             stream_state: self.stream_state(),
             audio_backend: self.audio_backend.clone(),
             audio_fallback: self.audio_fallback,
@@ -1033,5 +1169,117 @@ mod tests {
             .any(|packet| packet.kind() == obs_rs_output::PacketKind::Audio));
         assert!(bytes > 0);
         std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[test]
+    fn a_recording_reports_every_phase_it_passes_through() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-engine-phase-{token}.obsr"));
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Idle);
+
+        engine.start_recording(&path).expect("recording");
+        assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Running);
+        engine.tick(None, Some("program")).expect("media tick");
+
+        engine.finish_recording().expect("finalize");
+        assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Idle);
+        assert!(engine.recording_lifecycle().is_stopped());
+        std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[test]
+    fn a_recording_that_cannot_be_opened_reports_failed_rather_than_idle() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+
+        // An empty path names no file, so the writer cannot be built at all.
+        engine
+            .start_recording("")
+            .expect_err("a path that names no file is rejected");
+
+        assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Failed);
+        assert!(
+            engine.recording_lifecycle().is_stopped(),
+            "a frontend must treat a failed start as not recording"
+        );
+        assert!(
+            engine.snapshot().last_error.is_some(),
+            "the failure has to leave an explanation behind"
+        );
+        assert!(!engine.is_recording());
+    }
+
+    #[test]
+    fn a_recording_that_cannot_be_committed_stays_failed_and_keeps_its_packets() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        // The directory does not exist, so the atomic commit fails at the end
+        // rather than when the recording opened.
+        engine
+            .start_recording("/nonexistent-obs-rs-directory/recording.obsr")
+            .expect("an unwritable directory is only discovered at commit time");
+        engine.tick(None, Some("program")).expect("media tick");
+
+        engine
+            .finish_recording()
+            .expect_err("committing into a missing directory fails");
+
+        assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Failed);
+        assert!(
+            engine.is_recording(),
+            "a failed commit must not discard the captured packets"
+        );
+        engine.abort_recording();
+    }
+
+    #[test]
+    fn a_stream_that_cannot_connect_reports_failed_and_can_be_retried() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+
+        // Port 0 is never a listening peer, so the connect is refused.
+        engine
+            .start_streaming("127.0.0.1:0")
+            .expect_err("an unreachable peer is rejected");
+
+        assert_eq!(engine.streaming_lifecycle(), OutputLifecycle::Failed);
+        assert!(!engine.is_streaming());
+
+        // Stopping clears the failure so the next attempt starts from idle
+        // rather than inheriting the previous one's phase.
+        engine
+            .finish_streaming()
+            .expect("stop a stream that failed");
+        assert_eq!(engine.streaming_lifecycle(), OutputLifecycle::Idle);
+    }
+
+    #[test]
+    fn aborting_a_recording_clears_a_previous_failure() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine
+            .start_recording("")
+            .expect_err("a path that names no file is rejected");
+        assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Failed);
+
+        engine.abort_recording();
+
+        assert_eq!(
+            engine.recording_lifecycle(),
+            OutputLifecycle::Idle,
+            "an explicit stop must not leave the session permanently broken"
+        );
+    }
+
+    #[test]
+    fn a_dead_worker_reports_both_outputs_as_failed() {
+        let session = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let worker = EngineWorker::spawn_with_capacity(session, 1).expect("worker");
+
+        let snapshot = worker.snapshot();
+
+        assert!(snapshot.alive);
+        assert_eq!(snapshot.engine.recording_lifecycle, OutputLifecycle::Idle);
+        assert_eq!(snapshot.engine.streaming_lifecycle, OutputLifecycle::Idle);
     }
 }

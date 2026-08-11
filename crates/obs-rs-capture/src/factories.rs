@@ -24,6 +24,9 @@ pub const X11_SCREEN_CAPTURE_SOURCE_KIND: &str = "x11_screen_capture";
 pub const WAYLAND_SCREEN_CAPTURE_SOURCE_KIND: &str = "wayland_screen_capture";
 /// Stable source kind for a window capture source with a portable fallback.
 pub const WINDOW_CAPTURE_SOURCE_KIND: &str = "window_capture";
+/// Stable source kind for the direct Linux X11 window adapter.
+#[cfg(target_os = "linux")]
+pub const X11_WINDOW_CAPTURE_SOURCE_KIND: &str = "x11_window_capture";
 /// Stable source kind for a camera capture source with a V4L2/portable backend.
 pub const CAMERA_CAPTURE_SOURCE_KIND: &str = "camera_capture";
 

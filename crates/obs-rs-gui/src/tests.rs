@@ -129,6 +129,126 @@ fn capture_source_defaults_have_a_real_selectable_device_id() {
 }
 
 #[test]
+fn a_selected_audio_input_survives_disappearing_from_the_graph() {
+    let format = VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+    // An ID no graph will ever contain stands in for a device that has been
+    // unplugged since it was chosen.
+    let missing = "pipewire-node-999999";
+
+    let entries = output.audio_input_entries(missing);
+
+    let selected = entries
+        .iter()
+        .find(|entry| entry.id == missing)
+        .expect("a missing selection must still be offered, not silently dropped");
+    assert!(
+        !selected.available,
+        "the entry has to say the device is not connected"
+    );
+    assert!(
+        entries.iter().filter(|entry| entry.id == missing).count() == 1,
+        "the placeholder must not duplicate a device discovery already found"
+    );
+
+    // The automatic route is always resolvable, so it is never reported missing.
+    assert!(output.audio_input_entries("").is_empty() || output.audio_input_available());
+}
+
+#[test]
+fn a_canvas_change_applies_immediately_while_the_output_is_idle() {
+    let (state, output) = canvas_fixture();
+    let wider = VideoFormat::new(128, 72, FrameRate::new(30, 1).expect("rate")).expect("format");
+
+    crate::callbacks::settings::apply_video_format(&state, &output, wider)
+        .expect("an idle session applies the change at once");
+
+    assert_eq!(profile_video_format(&state), wider);
+    assert_eq!(output.borrow().video_format(), wider);
+}
+
+#[test]
+fn a_canvas_change_staged_during_output_applies_at_the_next_idle_tick() {
+    let (state, output) = canvas_fixture();
+    let original = profile_video_format(&state);
+    let wider = VideoFormat::new(128, 72, FrameRate::new(30, 1).expect("rate")).expect("format");
+
+    output.borrow_mut().stage_video_format(wider);
+    assert!(output.borrow().has_staged_video_format());
+    assert_eq!(
+        profile_video_format(&state),
+        original,
+        "staging must not touch the project while the output is running"
+    );
+
+    let applied = crate::callbacks::settings::apply_staged_video_format(&state, &output)
+        .expect("a staged change is pending")
+        .expect("the idle boundary applies it");
+
+    assert_eq!(applied, wider);
+    assert_eq!(profile_video_format(&state), wider);
+    assert!(
+        !output.borrow().has_staged_video_format(),
+        "a staged change is applied exactly once"
+    );
+    assert!(
+        crate::callbacks::settings::apply_staged_video_format(&state, &output).is_none(),
+        "an idle tick with nothing staged must do no work"
+    );
+}
+
+#[test]
+fn a_canvas_change_the_engine_rejects_is_rolled_back() {
+    let (state, output) = canvas_fixture();
+    let original = profile_video_format(&state);
+    let wider = VideoFormat::new(128, 72, FrameRate::new(30, 1).expect("rate")).expect("format");
+    // An open recording makes the engine refuse a rebuild, which is the
+    // failure the rollback exists for.
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-rollback-{token}.obsr"));
+    output
+        .borrow_mut()
+        .start_recording(&path.to_string_lossy())
+        .expect("open a recording");
+
+    let error = crate::callbacks::settings::apply_video_format(&state, &output, wider)
+        .expect_err("the engine refuses to rebuild under an open output");
+
+    assert!(error.contains("restored"), "the message says what happened");
+    assert_eq!(
+        profile_video_format(&state),
+        original,
+        "the project must not keep a canvas the engine never adopted"
+    );
+    assert_eq!(output.borrow().video_format(), original);
+    output.borrow_mut().abort_recording();
+}
+
+/// Builds a desktop state and an output runtime that agree on the canvas.
+fn canvas_fixture() -> (Rc<RefCell<DesktopState>>, Rc<RefCell<OutputRuntime>>) {
+    let project = initial_project().expect("initial project");
+    let format = project
+        .active_profile_spec()
+        .expect("profile")
+        .video_format();
+    let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    (state, Rc::new(RefCell::new(OutputRuntime::new(format))))
+}
+
+fn profile_video_format(state: &Rc<RefCell<DesktopState>>) -> VideoFormat {
+    state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .expect("profile")
+        .video_format()
+}
+
+#[test]
 fn app_settings_round_trip_the_selected_audio_input() {
     let token = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -335,6 +455,85 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_capture_device_properties_window(&ui, &state, &renderer);
     exercise_monitor_selection(&ui, &state, &renderer);
     exercise_recording_controls(&ui, &state, &renderer);
+    exercise_menu_actions(&ui, &state, &renderer);
+}
+
+/// Drives the menu-bar actions through the real callbacks.
+///
+/// The bar's previous failure mode was an entry that dispatched a string
+/// nothing handled, so this asserts each action changes observable state rather
+/// than only that it can be invoked.
+fn exercise_menu_actions(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let projectors = crate::install_menu_callbacks(ui, state, renderer);
+
+    // The exercises before this one have already edited the project, so the
+    // history starts from a known-empty state rather than from their leftovers.
+    ui.invoke_new_project();
+    assert!(!ui.get_can_undo(), "a fresh document has nothing to undo");
+    let profile = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile()
+        .to_string();
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneName {
+            profile,
+            scene: "preview".to_owned(),
+            name: "Renamed in test".to_owned(),
+        }))
+        .expect("rename the preview scene");
+    refresh_ui(ui, state, renderer);
+    assert!(ui.get_can_undo(), "an edit becomes an undoable step");
+
+    ui.invoke_undo_edit();
+    assert!(
+        !ui.get_can_undo() && ui.get_can_redo(),
+        "undo consumes the step and offers it back as a redo"
+    );
+    ui.invoke_redo_edit();
+    assert!(ui.get_can_undo());
+
+    // Starting another new project clears the history along with the document.
+    ui.invoke_new_project();
+    assert!(
+        !ui.get_can_undo() && !ui.get_can_redo(),
+        "undo must not reach across a new document"
+    );
+
+    // A projector is a toggle, not a way to stack duplicate windows.
+    assert!(!projectors.is_open(true));
+    ui.invoke_open_projector(true);
+    assert!(projectors.is_open(true), "the program projector opened");
+    assert!(!projectors.is_open(false), "only one feed was requested");
+    ui.invoke_open_projector(true);
+    assert!(!projectors.is_open(true), "selecting it again closed it");
+
+    // Resetting the layout restores the shipped arrangement whatever the row
+    // was dragged into.
+    let reversed = vec![4, 3, 2, 1, 0];
+    ui.set_panel_order(ModelRc::new(VecModel::from(reversed.clone())));
+    ui.set_show_mixer(false);
+    ui.invoke_reset_dock_layout();
+    assert_ne!(read_order(ui), reversed, "the reset changed the row");
+    assert_eq!(read_order(ui), AppSettings::default().layout.panel_order);
+    assert!(
+        ui.get_show_mixer(),
+        "a hidden dock comes back with the reset"
+    );
+
+    // The menu models the About and Scene Collection entries read are populated.
+    assert!(!ui.get_app_version().is_empty());
+    assert!(!ui.get_app_platform().is_empty());
+    assert!(
+        ui.get_collection_rows().row_count() >= 1,
+        "the open document is always listed as a collection"
+    );
 }
 
 /// Pushes a stored layout into the real window and reads it back, which is the
@@ -803,6 +1002,42 @@ fn exercise_recording_controls(
         .iter()
         .any(|packet| packet.kind() == PacketKind::Audio));
     std::fs::remove_file(path).expect("remove GUI recording fixture");
+
+    exercise_output_reconciliation(ui, state, &output);
+}
+
+/// Checks the desktop stops claiming an output the engine is not running.
+///
+/// The controls set their booleans optimistically, so a start the engine
+/// refused would otherwise leave the window showing "recording" forever.
+fn exercise_output_reconciliation(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
+    // The engine is idle here, so both claims are stale by construction.
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::StartRecording)
+        .expect("claim recording");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::StartStreaming)
+        .expect("claim streaming");
+    ui.set_recording(true);
+    ui.set_streaming(true);
+
+    crate::callbacks::reconcile_output_lifecycle(ui, state, output);
+
+    assert!(
+        !state.borrow().recording(),
+        "a recording the engine never opened must not stay claimed"
+    );
+    assert!(
+        !state.borrow().streaming(),
+        "a stream the engine never opened must not stay claimed"
+    );
+    assert!(!ui.get_recording() && !ui.get_streaming());
 }
 
 fn scene_source_count(state: &Rc<RefCell<DesktopState>>, scene: &str) -> usize {

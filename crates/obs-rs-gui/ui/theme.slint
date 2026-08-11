@@ -143,22 +143,59 @@ export component NavMenuButton inherits Rectangle {
 export component MenuEntry inherits Rectangle {
     in property <string> label;
     in property <bool> destructive;
+    // A disabled entry stays visible so the menu keeps a stable shape, but it
+    // is dimmed and swallows the click rather than firing a no-op action.
+    in property <bool> enabled: true;
+    // Set for the toggle entries — dock visibility and view mode — so the menu
+    // reports the current state instead of only offering to change it.
+    in property <bool> checkable;
+    in property <bool> checked;
+    // Right-aligned accelerator text, e.g. "Ctrl+Z". Empty hides the column.
+    in property <string> shortcut;
     callback clicked();
     width: 208px;
     height: 28px;
-    background: transparent;
+    background: root.enabled && touch.has-hover
+        ? Palette.tokens.row-selected-bg
+        : transparent;
+    border-radius: 3px;
 
-    Text {
-        text: root.label;
-        x: 12px;
-        width: parent.width - 24px;
-        color: root.destructive ? rgb(252, 165, 165) : Palette.tokens.text;
-        font-size: 12px;
-        vertical-alignment: center;
-        overflow: elide;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 6px;
+        Text {
+            width: 14px;
+            text: root.checkable && root.checked ? "✓" : "";
+            color: Palette.tokens.accent;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            horizontal-stretch: 1;
+            color: !root.enabled
+                ? Palette.tokens.text-muted
+                : (root.destructive ? rgb(252, 165, 165) : Palette.tokens.text);
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.shortcut;
+            color: Palette.tokens.text-muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
     }
-    TouchArea {
-        clicked => root.clicked();
+    touch := TouchArea {
+        // The area stays enabled so a disabled entry still absorbs the click
+        // instead of letting it fall through to whatever is behind the menu.
+        clicked => {
+            if (root.enabled) {
+                root.clicked();
+            }
+        }
     }
 }
 
@@ -433,7 +470,9 @@ export component ModalShell inherits Rectangle {
             HorizontalBox {
                 alignment: end;
                 spacing: 8px;
-                Button {
+                // An informational dialog has nothing to cancel, so an empty
+                // label drops the button instead of showing a blank one.
+                if root.cancel-label != "" : Button {
                     text: root.cancel-label;
                     clicked => root.close();
                 }

@@ -76,6 +76,8 @@ impl DesktopState {
                 self.sync_selections_after_project_update();
                 "project updated"
             }
+            UiCommand::Undo => self.step_history(true),
+            UiCommand::Redo => self.step_history(false),
             UiCommand::SelectProfile { id } => {
                 self.project
                     .dispatch(ProjectCommand::SetActiveProfile { id })?;
@@ -207,6 +209,35 @@ impl DesktopState {
         Ok(true)
     }
 
+    /// Moves one step through the project history and reconciles selections.
+    ///
+    /// Reaching either end is reported as a notice rather than as an error: the
+    /// user asked for something that is simply unavailable, not for something
+    /// invalid.
+    fn step_history(&mut self, backwards: bool) -> &'static str {
+        let moved = if backwards {
+            self.project.undo()
+        } else {
+            self.project.redo()
+        };
+        if !moved {
+            return if backwards {
+                "nothing to undo"
+            } else {
+                "nothing to redo"
+            };
+        }
+        // A restored project may not contain the scene or item that was
+        // selected, so the selections are reconciled the same way an ordinary
+        // project command reconciles them.
+        self.sync_selections_after_project_update();
+        if backwards {
+            "edit undone"
+        } else {
+            "edit redone"
+        }
+    }
+
     fn replace_project(&mut self, project: Project) {
         self.project.replace(project);
         let first_scene = first_scene_id(self.project.project());
@@ -234,6 +265,21 @@ impl DesktopState {
     #[must_use]
     pub const fn is_dirty(&self) -> bool {
         self.project.is_dirty()
+    }
+
+    /// Returns whether an earlier project state is available to restore.
+    ///
+    /// Frontends use this to enable or grey out an Undo affordance rather than
+    /// offering one that silently does nothing.
+    #[must_use]
+    pub fn can_undo(&self) -> bool {
+        self.project.can_undo()
+    }
+
+    /// Returns whether an undone project state is available to reapply.
+    #[must_use]
+    pub fn can_redo(&self) -> bool {
+        self.project.can_redo()
     }
 
     /// Returns the scene selected for preview.

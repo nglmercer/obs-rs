@@ -90,6 +90,25 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
         settings.set("device_id", "x11-screen-0")?;
         settings.set("monitor", "")?;
     }
+    if kind == "x11_window_capture" {
+        if let Ok(display) = std::env::var("DISPLAY") {
+            settings.set("display", &display)?;
+        }
+        // An empty selection captures the whole desktop, so a freshly added
+        // window source renders something while the user picks a window.
+        let window = capture_devices(kind)
+            .first()
+            .map_or_else(String::new, |(id, _)| id.clone());
+        settings.set(
+            "device_id",
+            if window.is_empty() {
+                "x11-window-0"
+            } else {
+                &window
+            },
+        )?;
+        settings.set("window", &window)?;
+    }
     if kind == "wayland_screen_capture" {
         // The portal issues the token on the first share, so it starts empty.
         settings.set("restore_token", "")?;
@@ -123,7 +142,10 @@ pub(crate) fn kind_uses_portal(kind: &str) -> bool {
 pub(crate) fn kind_runs_in_this_session(kind: &str) -> bool {
     match kind.trim() {
         "wayland_screen_capture" => wayland_session(),
-        "x11_screen_capture" => !wayland_session(),
+        // The X11 adapters share one limitation: under Wayland they only ever
+        // see Xwayland's own surfaces, so both are hidden rather than offered
+        // as sources that would render a black frame.
+        "x11_screen_capture" | "x11_window_capture" => !wayland_session(),
         _ => true,
     }
 }
@@ -202,14 +224,14 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let kind = kind.trim();
     let wanted = match kind {
         "screen_capture" | "x11_screen_capture" => CaptureKind::Screen,
-        "window_capture" => CaptureKind::Window,
+        "window_capture" | "x11_window_capture" => CaptureKind::Window,
         "camera_capture" => CaptureKind::Camera,
         _ => return Vec::new(),
     };
     let Ok(plugin) = BuiltinPlugin::new() else {
         return Vec::new();
     };
-    let mut devices = if kind == "x11_screen_capture" {
+    let mut devices = if matches!(kind, "x11_screen_capture" | "x11_window_capture") {
         plugin
             .discover_platform_capture_devices()
             .unwrap_or_default()

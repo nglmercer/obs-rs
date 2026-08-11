@@ -59,6 +59,7 @@ impl CaptureProvider for PlatformCaptureProvider {
                         CaptureKind::Screen,
                     )?);
                     devices.extend(discover_x11_monitors(&display));
+                    devices.extend(discover_x11_windows(&display));
                 }
             }
             devices.extend(discover_v4l2_devices());
@@ -111,6 +112,24 @@ fn discover_x11_monitors(display: &str) -> Vec<CaptureDeviceInfo> {
         .iter()
         .filter_map(|monitor| {
             CaptureDeviceInfo::new(&monitor.device_id(), &monitor.label(), CaptureKind::Screen).ok()
+        })
+        .collect()
+}
+
+/// Lists one window descriptor per capturable top-level X11 window.
+///
+/// Discovery failures degrade to no entries rather than to an error: a session
+/// with no window manager running still has a usable desktop capture, and a
+/// picker that is merely empty is better than one that refuses to open.
+#[cfg(target_os = "linux")]
+fn discover_x11_windows(display: &str) -> Vec<CaptureDeviceInfo> {
+    let Ok(windows) = crate::x11::x11_windows(display) else {
+        return Vec::new();
+    };
+    windows
+        .iter()
+        .filter_map(|window| {
+            CaptureDeviceInfo::new(&window.device_id(), &window.label(), CaptureKind::Window).ok()
         })
         .collect()
 }

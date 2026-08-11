@@ -17,6 +17,9 @@
     export struct ProfileRow {
         id: string,
         name: string,
+        // Marks the selected profile or scene collection so its menu entry can
+        // carry a check mark instead of looking like every other row.
+        active: bool,
     }
 
     export struct LocaleOption {

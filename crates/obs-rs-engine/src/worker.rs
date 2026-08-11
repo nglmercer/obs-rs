@@ -12,7 +12,7 @@ use obs_rs_media::VideoFrame;
 
 use obs_rs_project::Project;
 
-use crate::{EngineError, EngineSession, EngineSnapshot, EngineStats};
+use crate::{EngineError, EngineSession, EngineSnapshot, EngineStats, OutputLifecycle};
 
 const DEFAULT_FRAME_QUEUE: usize = 8;
 
@@ -118,6 +118,10 @@ impl EngineWorker {
                 engine: EngineSnapshot {
                     recording: false,
                     streaming: false,
+                    // A poisoned status lock means the worker died mid-update,
+                    // so both outputs are reported as failed rather than idle.
+                    recording_lifecycle: OutputLifecycle::Failed,
+                    streaming_lifecycle: OutputLifecycle::Failed,
                     stream_state: None,
                     audio_backend: "worker unavailable".to_owned(),
                     audio_fallback: true,

@@ -1,4 +1,4 @@
-import { CheckBox, ComboBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { CheckRow, ColorSwatch, SettingHint, SettingRow, SettingsGroup } from "settings_widgets.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
@@ -139,9 +139,12 @@ export component AudioPage inherits VerticalLayout {
     in property <[string]> audio-device-names;
     in-out property <int> audio-device-index;
     in property <string> devices-summary;
+    // True when the selected input is not currently in the audio graph.
+    in property <bool> audio-input-missing;
     callback select-sample-rate(int);
     callback select-channels(int);
     callback select-audio-device(int);
+    callback refresh-audio-devices();
     spacing: 14px;
 
     SettingsGroup {
@@ -172,6 +175,15 @@ export component AudioPage inherits VerticalLayout {
                 selected(value) => { root.select-audio-device(self.current-index); }
                 horizontal-stretch: 1;
             }
+            Button {
+                text: I18n.text.settings_ui.refresh_devices;
+                clicked => { root.refresh-audio-devices(); }
+            }
+        }
+        // Shown only while the choice cannot be honoured, so a working setup
+        // is not permanently carrying a warning it does not need.
+        if root.audio-input-missing : SettingHint {
+            text: I18n.text.settings_ui.audio_input_missing_hint;
         }
     }
     SettingsGroup {
