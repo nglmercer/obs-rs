@@ -533,6 +533,40 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a live PipeWire graph with an input device"]
+    fn live_input_reads_negotiated_blocks() {
+        let provider = PipeWireAudioProvider::new();
+        let devices = provider.discover().expect("discover PipeWire devices");
+        let input = devices
+            .iter()
+            .find(|device| device.kind() == AudioDeviceKind::Input)
+            .expect("an input device is available");
+        let format = AudioFormat::new(48_000, 2).expect("format");
+
+        let mut capture = provider
+            .open_input(input.id(), format)
+            .expect("open the input");
+        // Two blocks, so a partially buffered first read cannot pass.
+        for index in 0..2 {
+            let block = capture
+                .read_block(Timestamp::ZERO, 480)
+                .expect("read an audio block");
+            assert_eq!(block.format(), format);
+            assert_eq!(
+                block.samples().len(),
+                480 * usize::from(format.channels()),
+                "block {index} was short"
+            );
+            assert!(
+                block.samples().iter().all(|sample| sample.is_finite()),
+                "block {index} contained non-finite samples"
+            );
+        }
+        assert_eq!(capture.state(), AudioInputState::Running);
+        capture.stop();
+    }
+
+    #[test]
     fn node_target_rejects_unstable_ids() {
         assert_eq!(node_target("pipewire-node-42"), Some("42"));
         assert_eq!(node_target("pipewire-node-name"), None);

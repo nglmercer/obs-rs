@@ -95,10 +95,38 @@ pub(crate) fn start_preview_timer(
         // at 30 fps adds needless allocations and mutex traffic while editing.
         if last_output_ui_refresh.elapsed() >= Duration::from_millis(100) {
             refresh_output_ui(&ui, &output);
+            refresh_input_meter(&ui, &state, &output);
             last_output_ui_refresh = Instant::now();
         }
     });
     timer
+}
+
+/// Pushes the engine's live input peak onto the mixer's microphone channel.
+///
+/// The meter is refreshed from the capture backend rather than from a mix the
+/// desktop performs itself, because the engine worker is what actually reads
+/// the microphone. Only the mixer rows are rebuilt, so this stays off the
+/// scene-graph refresh path.
+fn refresh_input_meter(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
+    // A fallback generator is not the user's microphone, so its level must not
+    // be shown as if the input were live.
+    let peak = if output.borrow().audio_is_fallback() {
+        0
+    } else {
+        output.borrow().input_peak_milli()
+    };
+    let changed = state
+        .borrow_mut()
+        .set_channel_peak_milli(crate::MIC_CHANNEL_ID, peak)
+        .is_ok();
+    if changed {
+        crate::refresh::refresh_mixer_rows(ui, &state.borrow());
+    }
 }
 
 pub(crate) fn install_callbacks(

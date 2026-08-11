@@ -8,14 +8,8 @@
 #![cfg(target_os = "linux")]
 
 use std::{
-    io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    thread::{self, JoinHandle},
+    process::Command,
 };
 
 use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
@@ -23,6 +17,7 @@ use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 use super::{
     device::VideoCaptureDevice,
     error::CaptureError,
+    raw_reader::RawFrameReader,
     types::{CaptureDeviceInfo, CaptureKind, CapturePermission},
 };
 
@@ -31,11 +26,7 @@ pub struct V4l2CaptureDevice {
     info: CaptureDeviceInfo,
     path: PathBuf,
     format: Option<VideoFormat>,
-    child: Option<Child>,
-    running: Arc<AtomicBool>,
-    latest_frame: Arc<Mutex<Option<Vec<u8>>>>,
-    read_error: Arc<Mutex<Option<String>>>,
-    reader: Option<JoinHandle<()>>,
+    reader: Option<RawFrameReader>,
     frame_index: u64,
 }
 
@@ -57,10 +48,6 @@ impl V4l2CaptureDevice {
             info: CaptureDeviceInfo::new(id, name, CaptureKind::Camera)?,
             path,
             format: None,
-            child: None,
-            running: Arc::new(AtomicBool::new(false)),
-            latest_frame: Arc::new(Mutex::new(None)),
-            read_error: Arc::new(Mutex::new(None)),
             reader: None,
             frame_index: 0,
         })
@@ -116,66 +103,12 @@ impl V4l2CaptureDevice {
                 "-vf",
                 &format!("scale={}:{}", format.width(), format.height()),
             ])
-            .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = command.spawn().map_err(|error| CaptureError::Io {
-            message: format!("start ffmpeg for {}: {error}", self.path.display()),
-        })?;
-        let Some(mut stdout) = child.stdout.take() else {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CaptureError::Io {
-                message: "ffmpeg camera process did not expose stdout".to_owned(),
-            });
-        };
-        let running = Arc::clone(&self.running);
-        let latest_frame = Arc::clone(&self.latest_frame);
-        let read_error = Arc::clone(&self.read_error);
-        let frame_bytes = format.rgba_bytes();
-        running.store(true, Ordering::Release);
-        if let Ok(mut frame) = self.latest_frame.lock() {
-            *frame = None;
-        }
-        if let Ok(mut error) = self.read_error.lock() {
-            *error = None;
-        }
-        let reader_running = Arc::clone(&running);
-        let reader = thread::Builder::new()
-            .name("obs-rs-v4l2-camera".to_owned())
-            .spawn(move || {
-                let mut pixels = vec![0_u8; frame_bytes];
-                while reader_running.load(Ordering::Acquire) {
-                    if let Err(error) = stdout.read_exact(&mut pixels) {
-                        if reader_running.load(Ordering::Acquire) {
-                            if let Ok(mut target) = read_error.lock() {
-                                *target = Some(error.to_string());
-                            }
-                        }
-                        break;
-                    }
-                    if let Ok(mut target) = latest_frame.lock() {
-                        *target = Some(pixels.clone());
-                    } else {
-                        break;
-                    }
-                }
-            })
-            .map_err(|error| CaptureError::Io {
-                message: format!("start V4L2 frame reader: {error}"),
-            });
-        let reader = match reader {
-            Ok(reader) => reader,
-            Err(error) => {
-                running.store(false, Ordering::Release);
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
-        self.child = Some(child);
-        self.reader = Some(reader);
+            .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"]);
+        self.reader = Some(RawFrameReader::spawn(
+            command,
+            format.rgba_bytes(),
+            &format!("ffmpeg for {}", self.path.display()),
+        )?);
         Ok(())
     }
 }
@@ -202,17 +135,7 @@ impl VideoCaptureDevice for V4l2CaptureDevice {
     }
 
     fn stop(&mut self) {
-        self.running.store(false, Ordering::Release);
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
-        }
-        if let Ok(mut frame) = self.latest_frame.lock() {
-            *frame = None;
-        }
+        self.reader = None;
         self.format = None;
     }
 
@@ -224,18 +147,9 @@ impl VideoCaptureDevice for V4l2CaptureDevice {
         let Some(format) = self.format else {
             return Err(CaptureError::NotRunning);
         };
-        if let Ok(error) = self.read_error.lock() {
-            if let Some(error) = error.as_ref() {
-                return Err(CaptureError::Io {
-                    message: format!("read camera frame from {}: {error}", self.path.display()),
-                });
-            }
-        }
-        let pixels = self
-            .latest_frame
-            .lock()
-            .ok()
-            .and_then(|frame| frame.as_ref().cloned());
+        let reader = self.reader.as_ref().ok_or(CaptureError::NotRunning)?;
+        let what = self.path.display().to_string();
+        let pixels = reader.latest_frame(&what)?;
         let Some(pixels) = pixels else {
             // The reader has not received the first camera frame yet. A
             // non-blocking empty result keeps the GUI timer responsive; the

@@ -9,6 +9,8 @@
 #[cfg(target_os = "linux")]
 mod dbus;
 #[cfg(target_os = "linux")]
+mod raw_reader;
+#[cfg(target_os = "linux")]
 mod v4l2;
 #[cfg(target_os = "linux")]
 mod wayland;
@@ -17,6 +19,8 @@ mod x11;
 
 #[cfg(target_os = "linux")]
 pub use dbus::{open_screencast, CursorMode, ScreenCastSession};
+#[cfg(target_os = "linux")]
+pub use raw_reader::RawFrameReader;
 #[cfg(target_os = "linux")]
 pub use v4l2::V4l2CaptureDevice;
 #[cfg(target_os = "linux")]

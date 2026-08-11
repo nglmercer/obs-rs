@@ -221,10 +221,13 @@ pub(crate) fn install_mixer_callbacks(
                 gain_milli,
             },
         );
-        if id == "desktop" {
+        // The engine captures one live input, which is the microphone the
+        // settings window selects, so that channel is the one whose fader and
+        // mute reach the recording and the stream.
+        if id == crate::MIC_CHANNEL_ID {
             if let Err(error) = gain_output.borrow_mut().set_input_gain_milli(gain_milli) {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_status_message(format!("Audio output failed: {error}").into());
+                    ui.set_status_message(format!("Audio input failed: {error}").into());
                 }
             }
         }
@@ -241,15 +244,15 @@ pub(crate) fn install_mixer_callbacks(
             &mute_renderer,
             UiCommand::ToggleMixerMute { id: id.to_string() },
         );
-        if id == "desktop" {
+        if id == crate::MIC_CHANNEL_ID {
             let muted = mute_state
                 .borrow()
                 .mixer_channels()
-                .find(|channel| channel.id() == "desktop")
+                .find(|channel| channel.id() == crate::MIC_CHANNEL_ID)
                 .is_some_and(obs_rs_ui::MixerChannel::muted);
             if let Err(error) = mute_output.borrow_mut().set_input_muted(muted) {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_status_message(format!("Audio output failed: {error}").into());
+                    ui.set_status_message(format!("Audio input failed: {error}").into());
                 }
             }
         }

@@ -283,6 +283,43 @@ impl DesktopState {
         self.mixer_channels.values()
     }
 
+    /// Publishes the peak a live capture backend measured for one channel.
+    ///
+    /// The desktop mixes audio inside its output worker rather than through
+    /// [`DesktopState::mix_audio`], so the meter a user watches is fed from the
+    /// backend's own measurement instead of being left at zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::UnknownMixerChannel`] for an unknown channel ID.
+    pub fn set_channel_peak_milli(&mut self, id: &str, peak_milli: u16) -> Result<(), UiError> {
+        self.mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
+            .peak_milli = peak_milli.min(1_000);
+        Ok(())
+    }
+
+    /// Renames a mixer channel so it can show the device it is capturing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::UnknownMixerChannel`] for an unknown channel ID.
+    pub fn set_channel_name(&mut self, id: &str, name: &str) -> Result<(), UiError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(());
+        }
+        let channel = self
+            .mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        if channel.name != name {
+            name.clone_into(&mut channel.name);
+        }
+        Ok(())
+    }
+
     /// Returns the mixer's current sample rate and channel count.
     #[must_use]
     pub const fn audio_format(&self) -> AudioFormat {

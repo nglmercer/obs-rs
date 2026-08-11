@@ -50,6 +50,13 @@ pub(crate) use view::{
     SourceRow, ThemeTokens, UiText,
 };
 
+/// Mixer channel backed by the engine's live capture input.
+///
+/// The engine opens one input device — the microphone or line input chosen on
+/// the settings window's Audio page — so this is the channel whose fader, mute,
+/// and meter correspond to real audio rather than to a placeholder.
+pub(crate) const MIC_CHANNEL_ID: &str = "mic";
+
 fn main() -> Result<(), Box<dyn Error>> {
     let smoke = std::env::args().any(|argument| argument == "--smoke");
     if smoke {
@@ -96,6 +103,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
     )?));
 
+    // The mixer's live channel shows the input it captures from the first
+    // frame, rather than a generic label that never matches the device list.
+    let input_name = output.borrow_mut().audio_input_name();
+    let _ = state
+        .borrow_mut()
+        .set_channel_name(MIC_CHANNEL_ID, &input_name);
     // Paths and the dock layout are pushed before the first refresh so the
     // recovery check and the docks both see the restored session.
     ui.set_project_path(settings.project_path.as_str().into());

@@ -141,17 +141,20 @@ impl SourceFactory for SimulatedCaptureFactory {
             .unwrap_or(self.kind.as_str());
         #[cfg(target_os = "linux")]
         if self.capture_kind == CaptureKind::Camera && device_id.starts_with("v4l2-") {
-            let mut device = V4l2CaptureDevice::from_device_id(device_id, name)
-                .map_err(|error| SourceError::Unavailable(error.to_string()))?;
-            device
-                .start(format)
-                .map_err(|error| SourceError::Unavailable(error.to_string()))?;
-            return Ok(Box::new(V4l2CaptureSource {
+            let mut source = V4l2CaptureSource {
                 kind: self.kind.clone(),
                 name: name.to_owned(),
                 format,
-                device,
-            }));
+                device_id: device_id.to_owned(),
+                device: None,
+                failure: None,
+                retry_countdown: CAMERA_RETRY_FRAMES,
+            };
+            // A camera that is unplugged, busy, or missing must not stop the
+            // scene from being created: the source stays, reports why, and
+            // recovers on its own once the camera is available again.
+            source.reopen();
+            return Ok(Box::new(source));
         }
         let mut device = SimulatedCaptureDevice::new(device_id, name, self.capture_kind)
             .map_err(|error| SourceError::Unavailable(error.to_string()))?;
@@ -219,7 +222,42 @@ struct V4l2CaptureSource {
     kind: Identifier,
     name: String,
     format: VideoFormat,
-    device: V4l2CaptureDevice,
+    device_id: String,
+    /// `None` while the camera cannot be opened; see `failure` for the reason.
+    device: Option<V4l2CaptureDevice>,
+    failure: Option<String>,
+    /// Renders since the last attempt to reopen a camera that was unavailable.
+    retry_countdown: u32,
+}
+
+/// Renders between attempts to reopen an unavailable camera.
+///
+/// Spawning a process on every frame would cost more than the capture itself,
+/// so a camera that is busy or unplugged is retried about twice a second.
+#[cfg(target_os = "linux")]
+const CAMERA_RETRY_FRAMES: u32 = 15;
+
+#[cfg(target_os = "linux")]
+impl V4l2CaptureSource {
+    /// Opens the camera, recording why if it cannot be opened.
+    fn reopen(&mut self) {
+        self.device = None;
+        self.retry_countdown = CAMERA_RETRY_FRAMES;
+        let device = match V4l2CaptureDevice::from_device_id(&self.device_id, &self.name) {
+            Ok(device) => device,
+            Err(error) => {
+                self.failure = Some(error.to_string());
+                return;
+            }
+        };
+        let mut device = device;
+        if let Err(error) = device.start(self.format) {
+            self.failure = Some(error.to_string());
+            return;
+        }
+        self.failure = None;
+        self.device = Some(device);
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -240,13 +278,15 @@ impl Source for V4l2CaptureSource {
             .ok_or_else(|| {
                 SourceError::invalid_setting("device_id", "expected a V4L2 camera ID")
             })?;
-        let mut device = V4l2CaptureDevice::from_device_id(device_id, &self.name)
-            .map_err(|error| SourceError::Unavailable(error.to_string()))?;
-        device
-            .start(format)
-            .map_err(|error| SourceError::Unavailable(error.to_string()))?;
-        self.device = device;
+        // Restarting the capture process drops frames and re-negotiates the
+        // camera, so it only happens when the camera or the format changed —
+        // not because an unrelated property was edited.
+        if format == self.format && device_id == self.device_id && self.device.is_some() {
+            return Ok(());
+        }
         self.format = format;
+        device_id.clone_into(&mut self.device_id);
+        self.reopen();
         Ok(())
     }
 
@@ -257,8 +297,27 @@ impl Source for V4l2CaptureSource {
                 requested: request.format(),
             });
         }
-        self.device
-            .next_frame(request.timestamp())
-            .map_err(|error| SourceError::Unavailable(error.to_string()))
+        let Some(device) = self.device.as_mut() else {
+            self.retry_countdown = self.retry_countdown.saturating_sub(1);
+            if self.retry_countdown == 0 {
+                self.reopen();
+            }
+            return Err(SourceError::Unavailable(
+                self.failure
+                    .clone()
+                    .unwrap_or_else(|| format!("camera {} is unavailable", self.device_id)),
+            ));
+        };
+        match device.next_frame(request.timestamp()) {
+            Ok(frame) => Ok(frame),
+            Err(error) => {
+                // A camera that disappears mid-session becomes unavailable
+                // rather than poisoning the scene: the retry path takes over.
+                self.failure = Some(error.to_string());
+                self.device = None;
+                self.retry_countdown = CAMERA_RETRY_FRAMES;
+                Err(SourceError::Unavailable(error.to_string()))
+            }
+        }
     }
 }

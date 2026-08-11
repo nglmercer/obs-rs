@@ -1,0 +1,14 @@
+OBSRPROJECT1
+project|OBS-RS%20Studio|live
+profile|live|Live%20profile|640|360|30|1
+scene|live|intermission|Intermission
+source|live|intermission|background|color_source|Background|color%3D%23302040FF%0Aheight%3D360%0Awidth%3D640%0A|1000,1000,0,0,0,0,255||0|0
+source|live|intermission|pattern|test_pattern|Animated%20pattern|height%3D360%0Awidth%3D640%0A|1000,1000,0,0,0,0,255||0|0
+source|live|intermission|screen_capture|screen_capture|Screen%20capture%201|device_id%3Dscreen-0%0Aheight%3D360%0Awidth%3D640%0A|1000,1000,0,0,0,0,255||0|0
+source|live|intermission|screen_capture_2|screen_capture|Screen%20capture%202|device_id%3Dscreen-0%0Aheight%3D360%0Awidth%3D640%0A|1000,1000,0,0,0,0,255||0|0
+source|live|intermission|wayland_screen_capture|wayland_screen_capture|Screen%20capture%201|capture_cursor%3Dtrue%0Aheight%3D360%0Arestore_token%3DDWI8ujOXJvId3nbptXmnsg%0Awidth%3D639%0A|1000,1000,0,0,0,0,255||0|0
+source|live|intermission|camera_capture|camera_capture|Video%20capture%20device%201|device_id%3Dv4l2-video0%0Aheight%3D360%0Awidth%3D640%0A|1000,1000,0,0,0,0,255||1|0
+scene|live|preview|Preview
+source|live|preview|background|color_source|Background|color%3D%23102030FF%0Aheight%3D360%0Awidth%3D640%0A|1000,1000,0,0,0,0,255||1|0
+scene|live|program|Program
+source|live|program|background|color_source|Background|color%3D%23203040FF%0Aheight%3D360%0Awidth%3D640%0A|1000,1000,0,0,0,0,255||1|0

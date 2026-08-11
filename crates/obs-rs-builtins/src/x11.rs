@@ -1,19 +1,11 @@
 #![cfg(target_os = "linux")]
 
-use std::{
-    io::Read,
-    process::{Child, Command, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    thread::{self, JoinHandle},
-};
+use std::process::Command;
 
 use crate::portable::parse_format;
 use obs_rs_capture::{
-    x11_monitors, CaptureError, CaptureKind, SimulatedCaptureDevice, VideoCaptureDevice,
-    X11CaptureDevice, X11_SCREEN_CAPTURE_SOURCE_KIND,
+    x11_monitors, CaptureError, CaptureKind, RawFrameReader, SimulatedCaptureDevice,
+    VideoCaptureDevice, X11CaptureDevice, X11_SCREEN_CAPTURE_SOURCE_KIND,
 };
 use obs_rs_config::Config;
 use obs_rs_media::{VideoFormat, VideoFrame};
@@ -169,15 +161,12 @@ impl Source for X11CaptureSource {
 }
 
 /// Process-backed X11 capture used when a compositor rejects direct `GetImage`.
+///
 /// The reader keeps only the newest complete frame, so rendering never waits
 /// for the display server or the camera-like `x11grab` cadence.
 struct X11GrabDevice {
     format: VideoFormat,
-    child: Option<Child>,
-    running: Arc<AtomicBool>,
-    latest_frame: Arc<Mutex<Option<Vec<u8>>>>,
-    read_error: Arc<Mutex<Option<String>>>,
-    reader: Option<JoinHandle<()>>,
+    reader: RawFrameReader,
 }
 
 impl X11GrabDevice {
@@ -211,104 +200,24 @@ impl X11GrabDevice {
             "rgba",
             "-",
         ]);
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = command.spawn().map_err(|error| CaptureError::Io {
-            message: format!("start ffmpeg x11grab for {display}: {error}"),
-        })?;
-        let Some(mut stdout) = child.stdout.take() else {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CaptureError::Io {
-                message: "ffmpeg x11grab did not expose stdout".to_owned(),
-            });
-        };
-        let running = Arc::new(AtomicBool::new(true));
-        let latest_frame = Arc::new(Mutex::new(None));
-        let read_error = Arc::new(Mutex::new(None));
-        let reader_running = Arc::clone(&running);
-        let reader_frames = Arc::clone(&latest_frame);
-        let reader_error = Arc::clone(&read_error);
-        let frame_bytes = format.rgba_bytes();
-        let reader = thread::Builder::new()
-            .name("obs-rs-x11grab".to_owned())
-            .spawn(move || {
-                let mut pixels = vec![0_u8; frame_bytes];
-                while reader_running.load(Ordering::Acquire) {
-                    if let Err(error) = stdout.read_exact(&mut pixels) {
-                        if reader_running.load(Ordering::Acquire) {
-                            if let Ok(mut target) = reader_error.lock() {
-                                *target = Some(error.to_string());
-                            }
-                        }
-                        break;
-                    }
-                    if let Ok(mut target) = reader_frames.lock() {
-                        *target = Some(pixels.clone());
-                    } else {
-                        break;
-                    }
-                }
-            })
-            .map_err(|error| CaptureError::Io {
-                message: format!("start x11grab frame reader: {error}"),
-            });
-        let reader = match reader {
-            Ok(reader) => reader,
-            Err(error) => {
-                running.store(false, Ordering::Release);
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
-        Ok(Self {
-            format,
-            child: Some(child),
-            running,
-            latest_frame,
-            read_error,
-            reader: Some(reader),
-        })
+        let reader = RawFrameReader::spawn(
+            command,
+            format.rgba_bytes(),
+            &format!("ffmpeg x11grab for {display}"),
+        )?;
+        Ok(Self { format, reader })
     }
 
     fn next_frame(
         &mut self,
         timestamp: obs_rs_media::Timestamp,
     ) -> Result<Option<VideoFrame>, CaptureError> {
-        if let Ok(error) = self.read_error.lock() {
-            if let Some(error) = error.as_ref() {
-                return Err(CaptureError::Io {
-                    message: format!("read x11grab frame: {error}"),
-                });
-            }
-        }
-        let pixels = self
-            .latest_frame
-            .lock()
-            .ok()
-            .and_then(|frame| frame.as_ref().cloned());
-        let Some(pixels) = pixels else {
+        let Some(pixels) = self.reader.latest_frame("x11grab")? else {
             return Ok(None);
         };
         VideoFrame::new(self.format, timestamp, pixels)
             .map(Some)
             .map_err(CaptureError::Media)
-    }
-}
-
-impl Drop for X11GrabDevice {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::Release);
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
-        }
     }
 }
 

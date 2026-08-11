@@ -6,16 +6,7 @@
 //! it is the standard userspace tool for the job, it is driven with a fixed
 //! argument list and no shell, and it keeps this crate free of C bindings.
 
-use std::{
-    env,
-    io::Read,
-    process::{Child, Command, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    thread::{self, JoinHandle},
-};
+use std::{env, process::Command};
 
 use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 
@@ -23,6 +14,7 @@ use crate::{
     dbus::{open_screencast, CursorMode, ScreenCastSession},
     device::VideoCaptureDevice,
     error::CaptureError,
+    raw_reader::RawFrameReader,
     types::{CaptureDeviceInfo, CaptureKind, CapturePermission},
 };
 
@@ -41,7 +33,7 @@ pub struct WaylandCaptureDevice {
     info: CaptureDeviceInfo,
     /// Held for the lifetime of the capture: dropping it stops the stream.
     session: ScreenCastSession,
-    reader: Option<PipeWireReader>,
+    reader: Option<RawFrameReader>,
     format: Option<VideoFormat>,
     frame_index: u64,
 }
@@ -108,7 +100,7 @@ impl VideoCaptureDevice for WaylandCaptureDevice {
             CapturePermission::Denied => return Err(CaptureError::PermissionDenied),
             CapturePermission::Unavailable => return Err(CaptureError::PermissionUnavailable),
         }
-        self.reader = Some(PipeWireReader::start(self.session.node_id(), format)?);
+        self.reader = Some(start_pipewire_reader(self.session.node_id(), format)?);
         self.format = Some(format);
         self.frame_index = 0;
         Ok(())
@@ -127,8 +119,8 @@ impl VideoCaptureDevice for WaylandCaptureDevice {
         let Some(format) = self.format else {
             return Err(CaptureError::NotRunning);
         };
-        let reader = self.reader.as_mut().ok_or(CaptureError::NotRunning)?;
-        let Some(pixels) = reader.take_frame()? else {
+        let reader = self.reader.as_ref().ok_or(CaptureError::NotRunning)?;
+        let Some(pixels) = reader.latest_frame("the PipeWire screen cast")? else {
             return Ok(None);
         };
         let frame = VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)?;
@@ -140,136 +132,44 @@ impl VideoCaptureDevice for WaylandCaptureDevice {
     }
 }
 
-/// Reads RGBA frames from one `PipeWire` node into a single-frame slot.
-struct PipeWireReader {
-    child: Option<Child>,
-    running: Arc<AtomicBool>,
-    latest_frame: Arc<Mutex<Option<Vec<u8>>>>,
-    read_error: Arc<Mutex<Option<String>>>,
-    reader: Option<JoinHandle<()>>,
-}
-
-impl PipeWireReader {
-    fn start(node_id: u32, format: VideoFormat) -> Result<Self, CaptureError> {
-        let frame_rate = format.frame_rate();
-        let mut command = Command::new("gst-launch-1.0");
-        command.args([
-            "-q",
-            "pipewiresrc",
-            &format!("path={node_id}"),
-            // Dropping late frames keeps the reader at the scene's cadence
-            // instead of queueing the compositor's backlog.
-            "do-timestamp=true",
-            "!",
-            "videoconvert",
-            "!",
-            "videoscale",
-            "!",
-            "videorate",
-            "!",
-            &format!(
-                "video/x-raw,format=RGBA,width={},height={},framerate={}/{}",
-                format.width(),
-                format.height(),
-                frame_rate.numerator(),
-                frame_rate.denominator()
-            ),
-            "!",
-            "fdsink",
-            "fd=1",
-            "sync=false",
-        ]);
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let mut child = command.spawn().map_err(|error| CaptureError::Io {
-            message: format!("start the PipeWire reader for node {node_id}: {error}"),
-        })?;
-        let Some(mut stdout) = child.stdout.take() else {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(CaptureError::Io {
-                message: "the PipeWire reader did not expose stdout".to_owned(),
-            });
-        };
-
-        let running = Arc::new(AtomicBool::new(true));
-        let latest_frame = Arc::new(Mutex::new(None));
-        let read_error = Arc::new(Mutex::new(None));
-        let reader_running = Arc::clone(&running);
-        let reader_frames = Arc::clone(&latest_frame);
-        let reader_error = Arc::clone(&read_error);
-        let frame_bytes = format.rgba_bytes();
-        let reader = thread::Builder::new()
-            .name("obs-rs-pipewire".to_owned())
-            .spawn(move || {
-                let mut pixels = vec![0_u8; frame_bytes];
-                while reader_running.load(Ordering::Acquire) {
-                    if let Err(error) = stdout.read_exact(&mut pixels) {
-                        if reader_running.load(Ordering::Acquire) {
-                            if let Ok(mut target) = reader_error.lock() {
-                                *target = Some(error.to_string());
-                            }
-                        }
-                        break;
-                    }
-                    if let Ok(mut target) = reader_frames.lock() {
-                        *target = Some(pixels.clone());
-                    } else {
-                        break;
-                    }
-                }
-            })
-            .map_err(|error| CaptureError::Io {
-                message: format!("start the PipeWire frame reader: {error}"),
-            });
-        let reader = match reader {
-            Ok(reader) => reader,
-            Err(error) => {
-                running.store(false, Ordering::Release);
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
-        Ok(Self {
-            child: Some(child),
-            running,
-            latest_frame,
-            read_error,
-            reader: Some(reader),
-        })
-    }
-
-    /// Returns the newest complete frame, or `None` while none has arrived.
-    fn take_frame(&mut self) -> Result<Option<Vec<u8>>, CaptureError> {
-        if let Ok(error) = self.read_error.lock() {
-            if let Some(error) = error.as_ref() {
-                return Err(CaptureError::Io {
-                    message: format!("read a PipeWire frame: {error}"),
-                });
-            }
-        }
-        Ok(self
-            .latest_frame
-            .lock()
-            .ok()
-            .and_then(|frame| frame.as_ref().cloned()))
-    }
-}
-
-impl Drop for PipeWireReader {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::Release);
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
-        }
-    }
+/// Starts `gst-launch-1.0` reading the portal's node as RGBA frames.
+fn start_pipewire_reader(
+    node_id: u32,
+    format: VideoFormat,
+) -> Result<RawFrameReader, CaptureError> {
+    let frame_rate = format.frame_rate();
+    let mut command = Command::new("gst-launch-1.0");
+    command.args([
+        "-q",
+        "pipewiresrc",
+        &format!("path={node_id}"),
+        // Dropping late frames keeps the reader at the scene's cadence
+        // instead of queueing the compositor's backlog.
+        "do-timestamp=true",
+        "!",
+        "videoconvert",
+        "!",
+        "videoscale",
+        "!",
+        "videorate",
+        "!",
+        &format!(
+            "video/x-raw,format=RGBA,width={},height={},framerate={}/{}",
+            format.width(),
+            format.height(),
+            frame_rate.numerator(),
+            frame_rate.denominator()
+        ),
+        "!",
+        "fdsink",
+        "fd=1",
+        "sync=false",
+    ]);
+    RawFrameReader::spawn(
+        command,
+        format.rgba_bytes(),
+        &format!("the PipeWire reader for node {node_id}"),
+    )
 }
 
 #[cfg(test)]

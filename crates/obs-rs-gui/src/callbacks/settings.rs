@@ -456,6 +456,15 @@ fn commit(
     ) {
         notes.push(format!("audio input: {error}"));
     }
+    // The mixer row names the device it is capturing, so the fader and meter
+    // are visibly tied to the input the user just chose.
+    let input_name = output.borrow_mut().audio_input_name();
+    if let Err(error) = state
+        .borrow_mut()
+        .set_channel_name(crate::MIC_CHANNEL_ID, &input_name)
+    {
+        notes.push(format!("mixer label: {error}"));
+    }
 
     // Video: write the canvas back to the active profile so it persists with
     // the project and the renderer rebuilds on the next sync.

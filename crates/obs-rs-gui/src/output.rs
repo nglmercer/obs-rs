@@ -160,6 +160,36 @@ impl OutputRuntime {
         self.audio_input_id.as_deref()
     }
 
+    /// Returns the live input peak in thousandths of full scale.
+    ///
+    /// This is what the mixer meter shows: the engine measures it on the block
+    /// it actually captured, so the meter moves with the real microphone.
+    pub(crate) fn input_peak_milli(&self) -> u16 {
+        self.worker.snapshot().engine.stats.audio_peak_milli
+    }
+
+    /// Returns whether the engine is running on the deterministic fallback
+    /// generator instead of a real capture device.
+    pub(crate) fn audio_is_fallback(&self) -> bool {
+        self.worker.snapshot().engine.audio_fallback
+    }
+
+    /// Returns the display name of the selected input, for the mixer row.
+    pub(crate) fn audio_input_name(&mut self) -> String {
+        let Some(id) = self.audio_input_id.clone() else {
+            return "Default input".to_owned();
+        };
+        self.discover_audio_devices()
+            .ok()
+            .and_then(|devices| {
+                devices
+                    .iter()
+                    .find(|device| device.id() == id)
+                    .map(|device| device.name().to_owned())
+            })
+            .unwrap_or(id)
+    }
+
     pub(crate) fn output_status(&self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;

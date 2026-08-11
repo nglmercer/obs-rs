@@ -17,7 +17,11 @@ control surfaces:
 - `obs-rs-util` provides validated identifiers and small shared value types.
 - `obs-rs-config` provides bounded, deterministic settings documents.
 - `obs-rs-media` defines timestamps, video formats, packed/planar input buffers,
-  RGBA conversion, owned frames, filters, and deterministic transitions.
+  RGBA conversion, owned frames, filters, and deterministic transitions. The
+  composition primitives carry measured fast paths — an identity transform is a
+  copy, unscaled rows move as one memmove, opaque blends skip the alpha
+  arithmetic, and division by 255 is an exact multiply-shift — with an ignored
+  timing report to re-measure them.
 - `obs-rs-audio` defines owned sample buffers, bounded audio queues, a reference
   mixer, a deterministic linear resampler, sample-clock pacing, reconciliation,
   monitoring taps, bounded long-run A/V drift telemetry, and a cancellation-aware
@@ -41,7 +45,9 @@ control surfaces:
   timeouts.
 - `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
   camera CPU-fallback factories plus the Linux `x11_screen_capture` and
-  portal-backed `wayland_screen_capture` sources.
+  portal-backed `wayland_screen_capture` sources. A camera that is unplugged,
+  busy, or missing leaves its source in the scene, reports why, and reconnects
+  on its own instead of failing the project load.
 - `obs-rs-core` owns the plugin registry, sources, scenes, CPU compositor, and
   compositor-work counters. It also enforces explicit plugin/source/scene/filter
   quotas and exposes resource usage for diagnostics.
@@ -81,8 +87,9 @@ control surfaces:
   status cards with CPU-rendered RGBA scene frames, scene selection, transitions,
   recording/streaming controls, scene/source ordering and visibility/lock controls,
   a mixer with gain/mute/peak state, a typed OBS-style source properties form with
-  a display picker, crash-safe project save/load/recover, session restore for the
-  project and the dock layout, platform-capture capability reporting, output
+  a display picker, a live microphone channel whose fader, mute, and meter drive
+  the engine's capture input, crash-safe project save/load/recover, session
+  restore for the project and the dock layout, platform-capture capability reporting, output
   telemetry, and PipeWire/fallback status, and a visible bilingual accessible state
   snapshot backed by the same `DesktopState` commands.
 - `obs-rs-app` runs a small end-to-end demo, a scriptable accessible terminal
@@ -147,6 +154,16 @@ current session, because the wrong one silently yields a black canvas:
   sessions reopen the same screen without prompting. Frames are read from the
   `PipeWire` node the portal returns through `gst-launch-1.0 pipewiresrc`, which
   must be installed (`gst-plugin-pipewire`).
+
+### Camera and microphone
+
+The camera list in the source properties offers the real V4L2 nodes discovered
+on the host, and selecting one starts a bounded `ffmpeg` reader for it. The
+microphone is chosen on the settings window's Audio page; the engine captures
+that device, and the mixer's input channel is named after it, so its fader,
+mute, and meter act on the audio that reaches the recording and the stream.
+`obs-rs-linux-check` reports whether the live `PipeWire` capture is running or
+the deterministic fallback took over.
 
 Settings, the reopened project, and the dock layout are stored under
 `$XDG_CONFIG_HOME/obs-rs` (a file already present in the working directory keeps

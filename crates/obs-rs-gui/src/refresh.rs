@@ -323,6 +323,14 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .is_some_and(|source| crate::kind_selects_monitor(source.kind().as_str())),
     );
 
+    refresh_mixer_rows(ui, state);
+}
+
+/// Rebuilds the mixer dock rows from the desktop state.
+///
+/// The live input meter refreshes far more often than the scene graph, so it
+/// updates these rows on their own rather than running a whole dock refresh.
+pub(crate) fn refresh_mixer_rows(ui: &MainWindow, state: &DesktopState) {
     let mixer_rows = state
         .mixer_channels()
         .map(|channel| MixerRow {
