@@ -116,7 +116,9 @@ fn filters_modify_owned_pixels_without_mutating_the_input() {
 
 #[test]
 fn shared_capture_storage_clones_without_copy_and_detaches_on_mutation() {
-    reset_frame_memory_metrics();
+    // Thread-scoped counters: the process-wide ones are perturbed by any other
+    // test rendering concurrently in this binary.
+    reset_thread_frame_memory_metrics();
     let pixels = Arc::new(vec![
         100, 150, 200, 255, 100, 150, 200, 255, 100, 150, 200, 255, 100, 150, 200, 255,
     ]);
@@ -124,13 +126,13 @@ fn shared_capture_storage_clones_without_copy_and_detaches_on_mutation() {
         .expect("valid shared frame");
     let mut filtered = frame.clone();
 
-    assert_eq!(frame_memory_metrics().shared_clones(), 1);
-    assert_eq!(frame_memory_metrics().copy_on_write_buffers(), 0);
+    assert_eq!(thread_frame_memory_metrics().shared_clones(), 1);
+    assert_eq!(thread_frame_memory_metrics().copy_on_write_buffers(), 0);
     filtered.apply_filter(FrameFilter::Grayscale);
 
     assert_eq!(frame.pixel(0, 0), Some([100, 150, 200, 255]));
     assert_eq!(filtered.pixel(0, 0), Some([140, 140, 140, 255]));
-    let metrics = frame_memory_metrics();
+    let metrics = thread_frame_memory_metrics();
     assert_eq!(metrics.copy_on_write_buffers(), 1);
     assert_eq!(metrics.copy_on_write_bytes(), format().rgba_bytes());
     assert_eq!(Arc::strong_count(&pixels), 2);

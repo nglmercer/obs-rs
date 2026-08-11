@@ -1,7 +1,7 @@
 //! Persistent application settings behind the OBS-style settings window.
 //!
 //! Everything the settings window edits is stored in one validated
-//! [`obs_rs_config::Config`] document, so persistence is the same key/value
+//! [`obs_rs_config::Config`] document, so persistence is the same flat TOML
 //! format the rest of OBS-RS uses and a malformed file degrades to defaults
 //! rather than failing startup.
 
@@ -14,7 +14,7 @@ use slint::{Brush, Color, Model, ModelRc, VecModel};
 use crate::ThemeTokens;
 
 /// File name the settings document is read from and written to.
-const SETTINGS_FILE: &str = "obs-rs-settings.txt";
+const SETTINGS_FILE: &str = "obs-rs-settings.toml";
 /// Default file names inside the per-user directory.
 const PROJECT_FILE: &str = "obs-rs-project.txt";
 const DIAGNOSTICS_FILE: &str = "obs-rs-diagnostics.obsrdg";
@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn unreadable_and_invalid_documents_fall_back_to_defaults() {
-        let missing = std::env::temp_dir().join("obs-rs-settings-does-not-exist.txt");
+        let missing = std::env::temp_dir().join("obs-rs-settings-does-not-exist.toml");
         assert_eq!(AppSettings::load(&missing), AppSettings::default());
 
         let mut config = Config::new();
@@ -845,7 +845,7 @@ mod tests {
 
     #[test]
     fn settings_document_persists_to_disk_and_reloads() {
-        let path = std::env::temp_dir().join("obs-rs-settings-persist-test.txt");
+        let path = std::env::temp_dir().join("obs-rs-settings-persist-test.toml");
         let settings = AppSettings {
             theme: 3,
             locale: "es".to_owned(),

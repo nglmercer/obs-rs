@@ -344,7 +344,7 @@ fn app_settings_round_trip_the_selected_audio_input() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-{token}.txt"));
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-{token}.toml"));
     let settings = AppSettings {
         audio_input_id: "pipewire-node-42".to_owned(),
         ..AppSettings::default()
@@ -363,7 +363,7 @@ fn app_settings_round_trip_the_window_layout() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("obs-rs-gui-layout-{token}.txt"));
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-layout-{token}.toml"));
     let mut settings = AppSettings::default();
     settings.layout.panel_order = vec![4, 3, 2, 1, 0];
     settings.layout.show_mixer = false;
@@ -395,7 +395,7 @@ fn a_layout_that_lost_a_dock_falls_back_to_the_default_order() {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("obs-rs-gui-layout-invalid-{token}.txt"));
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-layout-invalid-{token}.toml"));
     std::fs::write(&path, document).expect("write settings fixture");
 
     let settings = AppSettings::load(&path);
@@ -872,10 +872,10 @@ fn render_source_properties_window() {
     let window = SourcePropertiesWindow::new().expect("properties window should instantiate");
     window.set_source_name("Background".into());
     window.set_source_kind("color_source".into());
-    window.set_source_settings("color=#405070FF\nheight=360\nwidth=640\n".into());
+    window.set_source_settings("color = \"#405070FF\"\nheight = 360\nwidth = 640\n".into());
     window.set_property_rows(ModelRc::new(VecModel::from(crate::properties::rows(
         "color_source",
-        "color=#405070FF\nheight=360\nwidth=640\n",
+        "color = \"#405070FF\"\nheight = 360\nwidth = 640\n",
         UiLocale::English,
     ))));
     window.set_source_transform("1000,1000,0,0,0,0,255".into());
@@ -1056,7 +1056,7 @@ fn exercise_capture_device_properties_window(
     assert_eq!(device_row.key, "device_id");
     assert!(device_row.choices.row_count() >= 1);
     window.invoke_edit_property(device_row.key.clone(), "0".into());
-    assert!(window.get_source_settings().contains("device_id="));
+    assert!(window.get_source_settings().contains("device_id = "));
     window.invoke_accept_properties();
 
     let state = state.borrow();

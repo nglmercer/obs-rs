@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn colour_sources_expose_a_colour_and_a_size() {
-        let document = "color=#405070FF\nheight=360\nwidth=640\n";
+        let document = "color = \"#405070FF\"\nheight = 360\nwidth = 640\n";
 
         let rows = rows("color_source", document, UiLocale::English);
 
@@ -274,14 +274,14 @@ mod tests {
 
     #[test]
     fn an_unknown_kind_has_only_the_shared_size_fields() {
-        let rows = rows("plugin_thing", "width=2\nheight=2\n", UiLocale::English);
+        let rows = rows("plugin_thing", "width = 2\nheight = 2\n", UiLocale::English);
 
         assert_eq!(rows.len(), 2);
     }
 
     #[test]
     fn editing_a_field_rewrites_only_that_key() {
-        let document = "color=#405070FF\nheight=360\nwidth=640\n";
+        let document = "color = \"#405070FF\"\nheight = 360\nwidth = 640\n";
 
         let updated = apply("color_source", document, "width", "1280").expect("apply");
 
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn a_choice_row_stores_the_value_behind_its_index() {
-        let document = "height=360\nmonitor=\nwidth=640\n";
+        let document = "height = 360\nmonitor = \"\"\nwidth = 640\n";
 
         // Index 0 is always the whole desktop, whatever the host reports.
         let updated = apply("x11_screen_capture", document, "monitor", "0").expect("apply");
