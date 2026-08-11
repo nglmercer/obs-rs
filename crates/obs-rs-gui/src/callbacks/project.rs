@@ -236,7 +236,7 @@ fn export_diagnostics(
                 limits.max_filters_per_item()
             ),
         )?;
-        bundle.insert_text("output", &output.borrow().diagnostics_document())?;
+        bundle.insert_text("output", &output.borrow_mut().diagnostics_document())?;
         let mut writer = AtomicDiagnosticFileWriter::new(final_path, temp_path)?;
         Ok(writer.finalize(&bundle)?)
     })();
@@ -346,6 +346,9 @@ pub(crate) fn add_source_and_refresh(
                 scene,
                 source,
             }))?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectSource { id: id.to_owned() })?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {

@@ -3378,6 +3378,7 @@ dependencies = [
  "obs-rs-audio",
  "obs-rs-audio-pipewire",
  "obs-rs-builtins",
+ "obs-rs-capture",
  "obs-rs-config",
  "obs-rs-core",
  "obs-rs-diagnostics",

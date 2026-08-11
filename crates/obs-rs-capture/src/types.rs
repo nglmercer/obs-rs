@@ -9,11 +9,11 @@ use super::error::CaptureError;
 pub enum CaptureKind {
     /// A deterministic in-process source used for tests and fallback behavior.
     TestPattern,
-    /// A future desktop/screen adapter.
+    /// A desktop/screen adapter or its portable fallback.
     Screen,
-    /// A future window adapter.
+    /// A window adapter or its portable fallback.
     Window,
-    /// A future camera adapter.
+    /// A camera adapter or its portable fallback.
     Camera,
     /// A source delivered by a separately sandboxed Rust process.
     External,

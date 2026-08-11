@@ -136,9 +136,12 @@ export component AudioPage inherits VerticalLayout {
     in property <int> sample-rate-index;
     in property <[string]> channel-names;
     in property <int> channel-index;
+    in property <[string]> audio-device-names;
+    in-out property <int> audio-device-index;
     in property <string> devices-summary;
     callback select-sample-rate(int);
     callback select-channels(int);
+    callback select-audio-device(int);
     spacing: 14px;
 
     SettingsGroup {
@@ -158,6 +161,15 @@ export component AudioPage inherits VerticalLayout {
                 model: root.channel-names;
                 current-index: root.channel-index;
                 selected(value) => { root.select-channels(self.current-index); }
+                horizontal-stretch: 1;
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.audio_input_device;
+            ComboBox {
+                model: root.audio-device-names;
+                current-index: root.audio-device-index;
+                selected(value) => { root.select-audio-device(self.current-index); }
                 horizontal-stretch: 1;
             }
         }

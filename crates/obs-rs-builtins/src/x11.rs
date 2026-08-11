@@ -1,8 +1,18 @@
 #![cfg(target_os = "linux")]
 
+use std::{
+    io::Read,
+    process::{Child, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread::{self, JoinHandle},
+};
+
 use crate::portable::parse_format;
 use obs_rs_capture::{
-    CaptureKind, SimulatedCaptureDevice, VideoCaptureDevice, X11CaptureDevice,
+    CaptureError, CaptureKind, SimulatedCaptureDevice, VideoCaptureDevice, X11CaptureDevice,
     X11_SCREEN_CAPTURE_SOURCE_KIND,
 };
 use obs_rs_config::Config;
@@ -33,9 +43,10 @@ impl SourceFactory for X11CaptureFactory {
     fn create(&self, name: &str, settings: &Config) -> Result<Box<dyn Source>, SourceError> {
         let format = parse_format(settings)?;
         let display = settings.get("display").unwrap_or(":0").to_owned();
-        let device = x11_device(name, &display, format)
-            .map(X11CaptureBackend::Native)
-            .or_else(|_| fallback_device(name, format).map(X11CaptureBackend::Fallback))?;
+        let device = match x11_device(name, &display, format) {
+            Ok(device) => X11CaptureBackend::Native(device),
+            Err(_) => fallback_backend(name, &display, format, None)?,
+        };
         Ok(Box::new(X11CaptureSource {
             kind: self.kind.clone(),
             name: name.to_owned(),
@@ -59,6 +70,7 @@ struct X11CaptureSource {
 
 enum X11CaptureBackend {
     Native(X11CaptureDevice),
+    Ffmpeg(X11GrabDevice),
     Fallback(SimulatedCaptureDevice),
 }
 
@@ -75,9 +87,10 @@ impl Source for X11CaptureSource {
     fn update(&mut self, settings: &Config) -> Result<(), SourceError> {
         let format = parse_format(settings)?;
         let display = settings.get("display").unwrap_or(":0").to_owned();
-        let device = x11_device(&self.name, &display, format)
-            .map(X11CaptureBackend::Native)
-            .or_else(|_| fallback_device(&self.name, format).map(X11CaptureBackend::Fallback))?;
+        let device = match x11_device(&self.name, &display, format) {
+            Ok(device) => X11CaptureBackend::Native(device),
+            Err(_) => fallback_backend(&self.name, &display, format, None)?,
+        };
         self.display = display;
         self.format = format;
         self.device = device;
@@ -104,13 +117,17 @@ impl Source for X11CaptureSource {
         for attempt in 0..2 {
             let result = match &mut self.device {
                 X11CaptureBackend::Native(device) => device.next_frame(request.timestamp()),
+                X11CaptureBackend::Ffmpeg(device) => device.next_frame(request.timestamp()),
                 X11CaptureBackend::Fallback(device) => device.next_frame(request.timestamp()),
             };
             match result {
                 Ok(frame) => return Ok(frame),
                 Err(_error) if attempt == 0 => {
-                    self.device =
-                        X11CaptureBackend::Fallback(fallback_device(&self.name, self.format)?);
+                    let size = match &self.device {
+                        X11CaptureBackend::Native(device) => Some(device.screen_size()),
+                        X11CaptureBackend::Ffmpeg(_) | X11CaptureBackend::Fallback(_) => None,
+                    };
+                    self.device = fallback_backend(&self.name, &self.display, self.format, size)?;
                 }
                 Err(error) => return Err(SourceError::Unavailable(error.to_string())),
             }
@@ -118,6 +135,144 @@ impl Source for X11CaptureSource {
         Err(SourceError::Unavailable(
             "X11 capture did not produce a frame".to_owned(),
         ))
+    }
+}
+
+/// Process-backed X11 capture used when a compositor rejects direct GetImage.
+/// The reader keeps only the newest complete frame, so rendering never waits
+/// for the display server or the camera-like `x11grab` cadence.
+struct X11GrabDevice {
+    format: VideoFormat,
+    child: Option<Child>,
+    running: Arc<AtomicBool>,
+    latest_frame: Arc<Mutex<Option<Vec<u8>>>>,
+    read_error: Arc<Mutex<Option<String>>>,
+    reader: Option<JoinHandle<()>>,
+}
+
+impl X11GrabDevice {
+    fn new(
+        display: &str,
+        format: VideoFormat,
+        size: Option<(u32, u32)>,
+    ) -> Result<Self, CaptureError> {
+        let frame_rate = format.frame_rate();
+        let mut command = Command::new("ffmpeg");
+        command.args(["-hide_banner", "-loglevel", "error", "-f", "x11grab"]);
+        if let Some((width, height)) = size {
+            command.args(["-video_size", &format!("{width}x{height}")]);
+        }
+        command.args([
+            "-framerate",
+            &format!("{}/{}", frame_rate.numerator(), frame_rate.denominator()),
+            "-i",
+            display,
+            "-vf",
+            &format!("scale={}:{}", format.width(), format.height()),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-",
+        ]);
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = command.spawn().map_err(|error| CaptureError::Io {
+            message: format!("start ffmpeg x11grab for {display}: {error}"),
+        })?;
+        let Some(mut stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CaptureError::Io {
+                message: "ffmpeg x11grab did not expose stdout".to_owned(),
+            });
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let latest_frame = Arc::new(Mutex::new(None));
+        let read_error = Arc::new(Mutex::new(None));
+        let reader_running = Arc::clone(&running);
+        let reader_frames = Arc::clone(&latest_frame);
+        let reader_error = Arc::clone(&read_error);
+        let frame_bytes = format.rgba_bytes();
+        let reader = thread::Builder::new()
+            .name("obs-rs-x11grab".to_owned())
+            .spawn(move || {
+                let mut pixels = vec![0_u8; frame_bytes];
+                while reader_running.load(Ordering::Acquire) {
+                    if let Err(error) = stdout.read_exact(&mut pixels) {
+                        if reader_running.load(Ordering::Acquire) {
+                            if let Ok(mut target) = reader_error.lock() {
+                                *target = Some(error.to_string());
+                            }
+                        }
+                        break;
+                    }
+                    if let Ok(mut target) = reader_frames.lock() {
+                        *target = Some(pixels.clone());
+                    } else {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| CaptureError::Io {
+                message: format!("start x11grab frame reader: {error}"),
+            });
+        let reader = match reader {
+            Ok(reader) => reader,
+            Err(error) => {
+                running.store(false, Ordering::Release);
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            format,
+            child: Some(child),
+            running,
+            latest_frame,
+            read_error,
+            reader: Some(reader),
+        })
+    }
+
+    fn next_frame(
+        &mut self,
+        timestamp: obs_rs_media::Timestamp,
+    ) -> Result<Option<VideoFrame>, CaptureError> {
+        if let Ok(error) = self.read_error.lock() {
+            if let Some(error) = error.as_ref() {
+                return Err(CaptureError::Io {
+                    message: format!("read x11grab frame: {error}"),
+                });
+            }
+        }
+        let pixels = self
+            .latest_frame
+            .lock()
+            .ok()
+            .and_then(|frame| frame.as_ref().cloned());
+        let Some(pixels) = pixels else {
+            return Ok(None);
+        };
+        VideoFrame::new(self.format, timestamp, pixels)
+            .map(Some)
+            .map_err(CaptureError::Media)
+    }
+}
+
+impl Drop for X11GrabDevice {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Release);
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
     }
 }
 
@@ -129,6 +284,18 @@ fn fallback_device(name: &str, format: VideoFormat) -> Result<SimulatedCaptureDe
         .start(format)
         .map_err(|error| SourceError::Unavailable(error.to_string()))?;
     Ok(device)
+}
+
+fn fallback_backend(
+    name: &str,
+    display: &str,
+    format: VideoFormat,
+    size: Option<(u32, u32)>,
+) -> Result<X11CaptureBackend, SourceError> {
+    match X11GrabDevice::new(display, format, size) {
+        Ok(device) => Ok(X11CaptureBackend::Ffmpeg(device)),
+        Err(_) => fallback_device(name, format).map(X11CaptureBackend::Fallback),
+    }
 }
 
 #[cfg(target_os = "linux")]

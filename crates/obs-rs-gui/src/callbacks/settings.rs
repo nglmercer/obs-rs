@@ -29,6 +29,8 @@ pub(crate) struct SettingsController {
     /// Repainted alongside this window so a theme change reaches every surface.
     add_source: Rc<AddSourceController>,
     properties: Rc<SourcePropertiesController>,
+    /// IDs are kept separate from the display labels shown by Slint's ComboBox.
+    audio_device_ids: RefCell<Vec<String>>,
 }
 
 impl SettingsController {
@@ -64,6 +66,7 @@ pub(crate) fn install_settings_window(
         path,
         add_source: Rc::clone(add_source),
         properties: Rc::clone(properties),
+        audio_device_ids: RefCell::new(Vec::new()),
     });
 
     populate_static_models(&controller.window);
@@ -73,7 +76,7 @@ pub(crate) fn install_settings_window(
 
     install_open(ui, state, renderer, output, &controller);
     install_previews(ui, state, renderer, &controller);
-    install_commit(ui, state, renderer, &controller);
+    install_commit(ui, state, renderer, output, &controller);
     Ok(controller)
 }
 
@@ -177,7 +180,32 @@ fn load_draft(
     let audio_format = state.borrow().audio_format();
     window.set_sample_rate_index(index_of(&SAMPLE_RATES, &audio_format.sample_rate()));
     window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.channels()));
-    window.set_devices_summary(output.borrow().audio_devices_summary().into());
+    let audio_devices = output.borrow_mut().audio_input_devices();
+    let mut device_ids = vec![String::new()];
+    let mut device_names = vec![crate::i18n::with_catalog(state.borrow().locale(), |text| {
+        text.settings_ui.audio_input_auto.clone()
+    })];
+    device_ids.extend(audio_devices.iter().map(|(id, _)| id.clone()));
+    device_names.extend(
+        audio_devices
+            .iter()
+            .map(|(_, name)| SharedString::from(name.as_str())),
+    );
+    let selected_device_index = settings
+        .audio_input_id
+        .as_str()
+        .is_empty()
+        .then_some(0)
+        .or_else(|| {
+            device_ids
+                .iter()
+                .position(|id| id == &settings.audio_input_id)
+        })
+        .unwrap_or(0);
+    controller.audio_device_ids.replace(device_ids);
+    window.set_audio_device_names(string_model(device_names.into_iter()));
+    window.set_audio_device_index(i32::try_from(selected_device_index).unwrap_or(0));
+    window.set_devices_summary(output.borrow_mut().audio_devices_summary().into());
 
     let video_format = renderer.borrow().format;
     let resolution = (video_format.width(), video_format.height());
@@ -252,28 +280,43 @@ fn install_commit(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
     let weak = ui.as_weak();
     let apply_state = Rc::clone(state);
     let apply_renderer = Rc::clone(renderer);
+    let apply_output = Rc::clone(output);
     let apply_controller = Rc::clone(controller);
     controller.window.on_apply_settings(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        commit(&ui, &apply_state, &apply_renderer, &apply_controller);
+        commit(
+            &ui,
+            &apply_state,
+            &apply_renderer,
+            &apply_output,
+            &apply_controller,
+        );
     });
 
     let weak = ui.as_weak();
     let accept_state = Rc::clone(state);
     let accept_renderer = Rc::clone(renderer);
+    let accept_output = Rc::clone(output);
     let accept_controller = Rc::clone(controller);
     controller.window.on_accept_settings(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        commit(&ui, &accept_state, &accept_renderer, &accept_controller);
+        commit(
+            &ui,
+            &accept_state,
+            &accept_renderer,
+            &accept_output,
+            &accept_controller,
+        );
         let _ = accept_controller.window.hide();
     });
 
@@ -308,6 +351,7 @@ fn commit(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
     let window = &controller.window;
@@ -336,6 +380,15 @@ fn commit(
     settings.diagnostics_path = window.get_diagnostics_path().to_string();
     settings.recording_path = window.get_recording_path().to_string();
     settings.streaming_address = window.get_streaming_address().to_string();
+    if let Some(device_id) = controller
+        .audio_device_ids
+        .borrow()
+        .get(usize::try_from(window.get_audio_device_index()).unwrap_or(0))
+    {
+        device_id.clone_into(&mut settings.audio_input_id);
+    } else {
+        settings.audio_input_id.clear();
+    }
     if let Some(locale) = UiLocale::supported()
         .get(usize::try_from(window.get_language_index()).unwrap_or(0))
         .copied()
@@ -351,6 +404,12 @@ fn commit(
         channels: settings.channel_count(),
     }) {
         notes.push(format!("audio: {error}"));
+    }
+
+    if let Err(error) = output.borrow_mut().set_audio_input_id(
+        (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
+    ) {
+        notes.push(format!("audio input: {error}"));
     }
 
     // Video: write the canvas back to the active profile so it persists with

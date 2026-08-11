@@ -162,6 +162,9 @@ pub(crate) struct AppSettings {
     pub(crate) diagnostics_path: String,
     pub(crate) recording_path: String,
     pub(crate) streaming_address: String,
+    /// Provider-stable PipeWire input ID; empty selects the first available
+    /// input and keeps the deterministic fallback as a safe last resort.
+    pub(crate) audio_input_id: String,
 }
 
 impl Default for AppSettings {
@@ -187,6 +190,7 @@ impl Default for AppSettings {
             diagnostics_path: "obs-rs-diagnostics.obsrdg".to_owned(),
             recording_path: "obs-rs-recording.obsr".to_owned(),
             streaming_address: "127.0.0.1:9000".to_owned(),
+            audio_input_id: String::new(),
         }
     }
 }
@@ -285,12 +289,13 @@ impl AppSettings {
             diagnostics_path: text(config, "diagnostics_path", &defaults.diagnostics_path),
             recording_path: text(config, "recording_path", &defaults.recording_path),
             streaming_address: text(config, "streaming_address", &defaults.streaming_address),
+            audio_input_id: text(config, "audio_input_id", &defaults.audio_input_id),
         }
     }
 
     fn to_config(&self) -> Config {
         let mut config = Config::new();
-        let entries: [(&str, String); 19] = [
+        let entries: [(&str, String); 20] = [
             ("locale", self.locale.clone()),
             (
                 "theme",
@@ -328,6 +333,7 @@ impl AppSettings {
             ("diagnostics_path", self.diagnostics_path.clone()),
             ("recording_path", self.recording_path.clone()),
             ("streaming_address", self.streaming_address.clone()),
+            ("audio_input_id", self.audio_input_id.clone()),
         ];
         for (key, value) in entries {
             // Every key here is a literal identifier and every value is bounded

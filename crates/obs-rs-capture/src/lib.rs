@@ -1,14 +1,18 @@
 //! Rust-native capture contracts and a deterministic CPU test backend.
 //!
-//! Platform capture implementations can depend on this contract later. The
-//! portable engine only sees owned frames, capabilities, and typed lifecycle errors.
+//! Platform capture implementations use this contract while the portable
+//! engine only sees owned frames, capabilities, and typed lifecycle errors.
 
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
 #[cfg(target_os = "linux")]
+mod v4l2;
+#[cfg(target_os = "linux")]
 mod x11;
 
+#[cfg(target_os = "linux")]
+pub use v4l2::V4l2CaptureDevice;
 #[cfg(target_os = "linux")]
 pub use x11::X11CaptureDevice;
 

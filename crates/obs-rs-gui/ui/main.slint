@@ -87,7 +87,7 @@ export component MainWindow inherits Window {
         in property <bool> auto-record-when-streaming;
 
         // 0 = studio mode (preview + program), 1 = the single-canvas default.
-        property <int> view-mode: 1;
+        in-out property <int> view-mode: 1;
         property <bool> show-sources: true;
         property <bool> show-scenes: true;
         property <bool> show-mixer: true;

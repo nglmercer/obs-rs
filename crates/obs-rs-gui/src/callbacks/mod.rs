@@ -6,13 +6,17 @@ mod settings;
 mod source;
 pub(crate) mod source_properties;
 
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel};
 
 use crate::{
-    refresh_output_ui, refresh_preview_frames, MainWindow, OutputRuntime, PreviewRenderer,
+    refresh_output_ui, refresh_preview_frames_for_view, MainWindow, OutputRuntime, PreviewRenderer,
 };
 
 pub(crate) use add_source::install_add_source_window;
@@ -43,6 +47,7 @@ pub(crate) fn start_preview_timer(
     let state = Rc::clone(state);
     let renderer = Rc::clone(renderer);
     let output = Rc::clone(output);
+    let mut last_output_ui_refresh = Instant::now() - Duration::from_secs(1);
     timer.start(TimerMode::Repeated, Duration::from_millis(33), move || {
         let Some(ui) = weak.upgrade() else {
             return;
@@ -62,11 +67,12 @@ pub(crate) fn start_preview_timer(
                 ui.set_status_message(format!("Output project sync failed: {error}").into());
             }
         }
-        let (program_frame, render_error) = refresh_preview_frames(
+        let (program_frame, render_error) = refresh_preview_frames_for_view(
             &ui,
             &renderer,
             preview_scene.as_deref(),
             program_scene.as_deref(),
+            output_active || ui.get_view_mode() == 0,
         );
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
@@ -81,7 +87,12 @@ pub(crate) fn start_preview_timer(
             ui.set_streaming(false);
             ui.set_status_message("Streaming stopped after transport failure".into());
         }
-        refresh_output_ui(&ui, &output);
+        // Worker counters remain live in the status bar, but formatting them
+        // at 30 fps adds needless allocations and mutex traffic while editing.
+        if last_output_ui_refresh.elapsed() >= Duration::from_millis(100) {
+            refresh_output_ui(&ui, &output);
+            last_output_ui_refresh = Instant::now();
+        }
     });
     timer
 }

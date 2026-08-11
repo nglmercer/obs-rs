@@ -38,6 +38,7 @@ enum WorkerCommand {
     PushFrame(VideoFrame),
     SetGain(u16, mpsc::Sender<Result<(), String>>),
     SetMuted(bool, mpsc::Sender<Result<(), String>>),
+    SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
     SyncProject(Project, mpsc::Sender<Result<(), String>>),
     Shutdown,
 }
@@ -253,6 +254,26 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Switches the worker-owned audio input without blocking the GUI on
+    /// PipeWire discovery or process setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker has already closed.
+    pub fn set_audio_input_id(&self, device_id: Option<&str>) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetAudioInput(
+                device_id.map(str::to_owned),
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Synchronizes a project revision on the engine thread.
     ///
     /// # Errors
@@ -341,6 +362,11 @@ fn worker_loop(
                     .set_input_muted(muted)
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::SetAudioInput(device_id, reply) => {
+                session.set_audio_input_id(device_id.as_deref());
+                let _ = reply.send(Ok(()));
                 false
             }
             WorkerCommand::SyncProject(project, reply) => {

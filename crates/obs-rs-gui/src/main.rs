@@ -32,11 +32,13 @@ pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_settings_window,
     install_source_properties_window, start_preview_timer,
 };
-pub(crate) use fixtures::{initial_project, platform_capture_summary, source_settings};
+pub(crate) use fixtures::{
+    capture_devices, initial_project, platform_capture_summary, source_settings,
+};
 pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewRenderer};
 pub(crate) use refresh::{
-    dispatch_and_refresh, refresh_output_ui, refresh_preview_frames, refresh_ui,
+    dispatch_and_refresh, refresh_output_ui, refresh_preview_frames_for_view, refresh_ui,
 };
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
@@ -81,9 +83,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             channels: settings.channel_count(),
         })
         .map_err(|error| format!("stored audio format: {error}"))?;
-    let output = Rc::new(RefCell::new(OutputRuntime::with_audio(
+    let output = Rc::new(RefCell::new(OutputRuntime::with_audio_input(
         renderer.borrow().format,
         audio_format,
+        (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
     )?));
 
     refresh_ui(&ui, &state, &renderer);

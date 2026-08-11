@@ -48,6 +48,8 @@ export component SettingsWindow inherits Window {
     in-out property <int> sample-rate-index;
     in property <[string]> channel-names;
     in-out property <int> channel-index;
+    in property <[string]> audio-device-names;
+    in-out property <int> audio-device-index;
     in property <string> devices-summary;
     // Video
     in property <[string]> resolution-names;
@@ -194,6 +196,8 @@ export component SettingsWindow inherits Window {
                         sample-rate-index: root.sample-rate-index;
                         channel-names: root.channel-names;
                         channel-index: root.channel-index;
+                        audio-device-names: root.audio-device-names;
+                        audio-device-index: root.audio-device-index;
                         devices-summary: root.devices-summary;
                         select-sample-rate(index) => {
                             root.sample-rate-index = index;
@@ -201,6 +205,10 @@ export component SettingsWindow inherits Window {
                         }
                         select-channels(index) => {
                             root.channel-index = index;
+                            root.dirty = true;
+                        }
+                        select-audio-device(index) => {
+                            root.audio-device-index = index;
                             root.dirty = true;
                         }
                     }

@@ -1,5 +1,5 @@
 #[cfg(target_os = "linux")]
-use std::env;
+use std::{env, fs, process::Command};
 
 use super::{
     error::CaptureError,
@@ -28,10 +28,11 @@ pub trait CaptureProvider {
 
 /// A host-platform discovery provider with an explicit unavailable fallback.
 ///
-/// Linux exposes a real local X11 screen descriptor when `DISPLAY` is present;
-/// macOS and Windows keep a typed unavailable result until their safe Rust
-/// capture adapters are supplied. Callers can therefore show capability state
-/// instead of confusing a missing platform backend with an empty device list.
+/// Linux exposes a real local X11 screen descriptor when `DISPLAY` is present
+/// and discovers capture-capable V4L2 camera nodes. macOS and Windows keep a
+/// typed unavailable result until their safe Rust capture adapters are
+/// supplied. Callers can therefore show capability state instead of confusing
+/// a missing platform backend with an empty device list.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlatformCaptureProvider;
 
@@ -47,20 +48,23 @@ impl CaptureProvider for PlatformCaptureProvider {
     fn discover(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
         #[cfg(target_os = "linux")]
         {
-            let display =
-                env::var("DISPLAY").map_err(|error| CaptureError::PlatformUnavailable {
-                    message: format!("DISPLAY is unavailable: {error}"),
-                })?;
-            if display.trim().is_empty() {
+            let mut devices = Vec::new();
+            if let Ok(display) = env::var("DISPLAY") {
+                if !display.trim().is_empty() {
+                    devices.push(CaptureDeviceInfo::new(
+                        "x11-screen-0",
+                        "X11 screen",
+                        CaptureKind::Screen,
+                    )?);
+                }
+            }
+            devices.extend(discover_v4l2_devices());
+            if devices.is_empty() {
                 return Err(CaptureError::PlatformUnavailable {
-                    message: "DISPLAY is empty".to_owned(),
+                    message: "DISPLAY and /dev/video* are unavailable".to_owned(),
                 });
             }
-            Ok(vec![CaptureDeviceInfo::new(
-                "x11-screen-0",
-                "X11 screen",
-                CaptureKind::Screen,
-            )?])
+            Ok(devices)
         }
 
         #[cfg(target_os = "macos")]
@@ -86,11 +90,59 @@ impl CaptureProvider for PlatformCaptureProvider {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn discover_v4l2_devices() -> Vec<CaptureDeviceInfo> {
+    let Ok(entries) = fs::read_dir("/dev") else {
+        return Vec::new();
+    };
+    let mut devices = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            let suffix = name.strip_prefix("video")?;
+            if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            let label = v4l2_capture_label(&path)?;
+            let id = format!("v4l2-{name}");
+            let label = format!("{label} ({})", path.display());
+            CaptureDeviceInfo::new(&id, &label, CaptureKind::Camera).ok()
+        })
+        .collect::<Vec<_>>();
+    devices.sort_by(|left, right| left.id().cmp(right.id()));
+    devices
+}
+
+#[cfg(target_os = "linux")]
+fn v4l2_capture_label(path: &std::path::Path) -> Option<String> {
+    // `video4linux` also exposes metadata-only nodes. Ask the userspace
+    // utility for capabilities so those nodes never become misleading camera
+    // choices in the GUI. If the utility is absent, the deterministic camera
+    // fallback remains available through SimulatedCaptureProvider.
+    let output = Command::new("v4l2-ctl")
+        .args(["--device", path.to_string_lossy().as_ref(), "--all"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let document = String::from_utf8_lossy(&output.stdout);
+    if !document.contains("Format Video Capture") {
+        return None;
+    }
+    document
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Card type")?.split_once(':'))
+        .map(|(_, value)| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 /// A deterministic discovery provider for the portable CPU fallback devices.
 ///
 /// This provider is intentionally not an operating-system adapter. It gives the
-/// runtime and UI a complete discovery contract while real screen/window/camera
-/// providers are added behind [`CaptureProvider`].
+/// runtime and UI a complete discovery contract while portable screen/window
+/// and camera fallback sources remain available behind [`CaptureProvider`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SimulatedCaptureProvider;
 

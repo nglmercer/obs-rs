@@ -1,4 +1,8 @@
-use std::{error::Error, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    rc::Rc,
+};
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::Runtime;
@@ -17,6 +21,12 @@ pub(crate) struct PreviewRenderer {
     /// revision. It used to serialize the whole project on every frame and
     /// compare the resulting strings.
     revision: u64,
+    /// Scenes made exclusively from solid color sources do not change between
+    /// frames. Their first composed pixel buffer is reused while fresh frame
+    /// timestamps are issued to the output encoder.
+    static_scenes: HashSet<String>,
+    static_frames: HashMap<String, Vec<u8>>,
+    static_images: HashMap<String, Image>,
 }
 
 thread_local! {
@@ -61,11 +71,30 @@ impl PreviewRenderer {
             }
         }
 
+        let static_scenes = profile
+            .scenes()
+            .filter(|scene| {
+                scene
+                    .sources()
+                    .iter()
+                    .any(obs_rs_project::SourceSpec::visible)
+                    && scene
+                        .sources()
+                        .iter()
+                        .filter(|source| source.visible())
+                        .all(|source| source.kind().as_str() == "color_source")
+            })
+            .map(|scene| scene.id().as_str().to_owned())
+            .collect();
+
         Ok(Self {
             format,
             runtime,
             timestamp: Timestamp::ZERO,
             revision,
+            static_scenes,
+            static_frames: HashMap::new(),
+            static_images: HashMap::new(),
         })
     }
 
@@ -90,10 +119,40 @@ impl PreviewRenderer {
     }
 
     pub(crate) fn render(&mut self, scene: &str) -> Result<Option<VideoFrame>, Box<dyn Error>> {
-        let request = VideoRequest::new(self.timestamp, self.format);
-        let frame = self.runtime.render_scene(scene, &request)?;
+        let frame = if let Some(pixels) = self.static_frames.get(scene) {
+            Some(VideoFrame::new(
+                self.format,
+                self.timestamp,
+                pixels.clone(),
+            )?)
+        } else {
+            let request = VideoRequest::new(self.timestamp, self.format);
+            let frame = self.runtime.render_scene(scene, &request)?;
+            if self.static_scenes.contains(scene) {
+                if let Some(frame) = frame.as_ref() {
+                    self.static_frames
+                        .insert(scene.to_owned(), frame.pixels().to_vec());
+                }
+            }
+            frame
+        };
         self.advance_timestamp();
         Ok(frame)
+    }
+
+    /// Converts one frame for Slint, reusing the immutable image for static
+    /// scenes so the UI does not allocate another full RGBA buffer every tick.
+    pub(crate) fn image_for_scene(&mut self, scene: &str, frame: &VideoFrame) -> Image {
+        if self.static_scenes.contains(scene) {
+            if let Some(image) = self.static_images.get(scene) {
+                return image.clone();
+            }
+            let image = frame_to_image(frame);
+            self.static_images.insert(scene.to_owned(), image.clone());
+            image
+        } else {
+            frame_to_image(frame)
+        }
     }
 
     pub(crate) fn render_transition(

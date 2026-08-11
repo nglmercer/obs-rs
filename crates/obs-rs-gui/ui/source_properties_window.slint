@@ -1,4 +1,4 @@
-import { Button, LineEdit, TextEdit } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, TextEdit } from "std-widgets.slint";
 import { FieldHeading, MutedText } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
@@ -15,6 +15,9 @@ export component SourcePropertiesWindow inherits Window {
     in property <string> source-name;
     in property <string> source-kind;
     in property <string> capture-capabilities;
+    in property <[string]> capture-device-names;
+    in-out property <int> capture-device-index;
+    in property <bool> capture-device-visible;
     in-out property <string> source-settings;
     in-out property <string> source-transform;
     in-out property <string> source-filters;
@@ -22,6 +25,7 @@ export component SourcePropertiesWindow inherits Window {
     callback accept-properties();
     callback cancel-properties();
     callback restore-defaults();
+    callback select-capture-device(int);
 
     VerticalLayout {
         padding: 12px;
@@ -44,6 +48,18 @@ export component SourcePropertiesWindow inherits Window {
                 spacing: 8px;
 
                 FieldHeading { text: I18n.text.source_settings; }
+                if root.capture-device-visible : FieldHeading {
+                    text: I18n.text.capture_device;
+                }
+                if root.capture-device-visible : ComboBox {
+                    model: root.capture-device-names;
+                    current-index: root.capture-device-index;
+                    selected(value) => { root.select-capture-device(self.current-index); }
+                    height: 30px;
+                }
+                if root.capture-device-visible : MutedText {
+                    text: I18n.text.capture_device_hint;
+                }
                 TextEdit {
                     text <=> root.source-settings;
                     placeholder-text: "width=640\nheight=360\ncolor=#202840FF";

@@ -5,18 +5,20 @@
 
 use std::{cell::RefCell, rc::Rc};
 
+use obs_rs_config::Config;
 use obs_rs_ui::DesktopState;
 use slint::ComponentHandle;
 
 use crate::{
     apply_source_filters_and_refresh, apply_source_settings_and_refresh,
-    apply_source_transform_and_refresh, source_settings, I18n, MainWindow, Palette,
-    PreviewRenderer, SourcePropertiesWindow,
+    apply_source_transform_and_refresh, capture_devices, source_settings, I18n, MainWindow,
+    Palette, PreviewRenderer, SourcePropertiesWindow,
 };
 
 /// Owns the properties window.
 pub(crate) struct SourcePropertiesController {
     window: SourcePropertiesWindow,
+    capture_device_ids: RefCell<Vec<String>>,
 }
 
 impl SourcePropertiesController {
@@ -37,6 +39,7 @@ pub(crate) fn install_source_properties_window(
 ) -> Result<Rc<SourcePropertiesController>, slint::PlatformError> {
     let controller = Rc::new(SourcePropertiesController {
         window: SourcePropertiesWindow::new()?,
+        capture_device_ids: RefCell::new(Vec::new()),
     });
 
     let weak = ui.as_weak();
@@ -58,8 +61,25 @@ pub(crate) fn install_source_properties_window(
         window.set_source_name(selected.as_str().into());
         window.set_source_kind(source_kind(&open_state, &selected).into());
         window.set_capture_capabilities(ui.get_capture_capabilities());
-        // Start from what the studio last synced from the project.
-        window.set_source_settings(ui.get_source_settings());
+        // Start from what the studio last synced from the project, then expose
+        // the device selector for screen/window/camera sources.
+        let settings = ui.get_source_settings();
+        window.set_source_settings(settings.clone());
+        let devices = capture_devices(window.get_source_kind().as_str());
+        open_controller
+            .capture_device_ids
+            .replace(devices.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
+        window.set_capture_device_names(slint::ModelRc::new(slint::VecModel::from(
+            devices
+                .iter()
+                .map(|(_, name)| slint::SharedString::from(name.as_str()))
+                .collect::<Vec<_>>(),
+        )));
+        window.set_capture_device_visible(!devices.is_empty());
+        window.set_capture_device_index(selected_capture_device_index(
+            settings.as_str(),
+            &open_controller.capture_device_ids.borrow(),
+        ));
         window.set_source_transform(ui.get_source_transform());
         window.set_source_filters(ui.get_source_filters());
         if let Err(error) = window.show() {
@@ -107,12 +127,45 @@ pub(crate) fn install_source_properties_window(
         let _ = cancel_controller.window.hide();
     });
 
+    let selection_controller = Rc::clone(&controller);
+    controller.window.on_select_capture_device(move |index| {
+        let window = &selection_controller.window;
+        let Some(device_id) = selection_controller
+            .capture_device_ids
+            .borrow()
+            .get(usize::try_from(index).unwrap_or(0))
+            .cloned()
+        else {
+            return;
+        };
+        let Ok(mut settings) = Config::parse(window.get_source_settings().as_str()) else {
+            return;
+        };
+        let kind = window.get_source_kind();
+        if kind.as_str() == "x11_screen_capture" {
+            // The X11 adapter consumes a display string, while the catalog
+            // gives the stable descriptor ID. Keep both in the document so it
+            // remains inspectable and can be upgraded by a future provider.
+            if let Ok(display) = std::env::var("DISPLAY") {
+                let _ = settings.set("display", &display);
+            }
+        }
+        if settings.set("device_id", &device_id).is_ok() {
+            window.set_source_settings(settings.serialize().into());
+        }
+    });
+
     let defaults_controller = Rc::clone(&controller);
     controller.window.on_restore_defaults(move || {
         let window = &defaults_controller.window;
         let kind = window.get_source_kind().to_string();
         if let Ok(defaults) = source_settings(&kind) {
-            window.set_source_settings(defaults.serialize().into());
+            let document = defaults.serialize();
+            window.set_source_settings(document.clone().into());
+            window.set_capture_device_index(selected_capture_device_index(
+                &document,
+                &defaults_controller.capture_device_ids.borrow(),
+            ));
         }
         // The identity transform and an empty filter chain are the documented
         // defaults for a freshly created source.
@@ -121,6 +174,17 @@ pub(crate) fn install_source_properties_window(
     });
 
     Ok(controller)
+}
+
+fn selected_capture_device_index(document: &str, ids: &[String]) -> i32 {
+    let selected = Config::parse(document)
+        .ok()
+        .and_then(|settings| settings.get("device_id").map(str::to_owned));
+    selected
+        .as_deref()
+        .and_then(|id| ids.iter().position(|candidate| candidate == id))
+        .and_then(|index| i32::try_from(index).ok())
+        .unwrap_or(0)
 }
 
 /// Looks up the kind of the selected source in the preview scene.

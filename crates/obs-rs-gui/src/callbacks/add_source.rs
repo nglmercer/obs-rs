@@ -312,6 +312,12 @@ fn create_source(
             source,
         }))?;
     set_visibility(state, &profile, &scene, &id, visible)?;
+    // Select the new item immediately so Properties opens on the source the
+    // user just created, which is especially important for choosing a camera
+    // or screen device after creation.
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource { id: id.clone() })?;
     Ok(format!("Source added: {name}"))
 }
 
@@ -344,6 +350,9 @@ fn add_existing(
                 source: spec,
             }))?;
         set_visibility(state, &profile, &scene, &id, visible)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectSource { id })?;
         added += 1;
     }
     Ok(format!("Sources added: {added}"))

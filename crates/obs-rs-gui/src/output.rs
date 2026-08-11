@@ -1,6 +1,10 @@
-use std::{error::Error, sync::Arc};
+use std::{
+    error::Error,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use obs_rs_audio::{AudioDeviceKind, AudioFormat, AudioInputProvider};
+use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
 use obs_rs_engine::{EngineConfig, EngineSession, EngineWorker};
 use obs_rs_media::{VideoFormat, VideoFrame};
@@ -14,6 +18,8 @@ pub(crate) struct OutputRuntime {
     format: VideoFormat,
     last_revision: u64,
     format_drops: u64,
+    audio_input_id: Option<String>,
+    audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
 }
 
 impl OutputRuntime {
@@ -27,13 +33,27 @@ impl OutputRuntime {
     }
 
     /// Creates an output using the audio format selected in settings.
+    #[cfg(test)]
     pub(crate) fn with_audio(
         format: VideoFormat,
         audio_format: AudioFormat,
     ) -> Result<Self, Box<dyn Error>> {
+        Self::with_audio_input(format, audio_format, None)
+    }
+
+    /// Creates an output with a persisted input selection. Device discovery and
+    /// process startup remain inside the engine worker's construction path.
+    pub(crate) fn with_audio_input(
+        format: VideoFormat,
+        audio_format: AudioFormat,
+        audio_input_id: Option<&str>,
+    ) -> Result<Self, Box<dyn Error>> {
         let audio_provider = Arc::new(PipeWireAudioProvider::new());
         let provider_for_engine: Arc<dyn AudioInputProvider> = audio_provider.clone();
-        let config = EngineConfig::new(audio_format).with_audio_provider(provider_for_engine);
+        let mut config = EngineConfig::new(audio_format).with_audio_provider(provider_for_engine);
+        if let Some(audio_input_id) = audio_input_id {
+            config = config.with_audio_input_id(audio_input_id);
+        }
         let engine = EngineSession::for_format(format, config)?;
         Ok(Self {
             worker: EngineWorker::spawn(engine)?,
@@ -41,6 +61,11 @@ impl OutputRuntime {
             format,
             last_revision: 0,
             format_drops: 0,
+            audio_input_id: audio_input_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            audio_devices_cache: None,
         })
     }
 
@@ -110,6 +135,25 @@ impl OutputRuntime {
         Ok(())
     }
 
+    /// Requests a live microphone/input switch on the output worker.
+    pub(crate) fn set_audio_input_id(
+        &mut self,
+        device_id: Option<&str>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.worker.set_audio_input_id(device_id)?;
+        self.audio_input_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        Ok(())
+    }
+
+    /// Returns the persisted/selected input ID, or an empty string for auto.
+    #[cfg(test)]
+    pub(crate) fn audio_input_id(&self) -> Option<&str> {
+        self.audio_input_id.as_deref()
+    }
+
     pub(crate) fn output_status(&self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;
@@ -164,10 +208,10 @@ impl OutputRuntime {
         )
     }
 
-    pub(crate) fn diagnostics_document(&self) -> String {
+    pub(crate) fn diagnostics_document(&mut self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;
-        let devices = self.audio_provider.discover().map_or_else(
+        let devices = self.discover_audio_devices().map_or_else(
             |error| format!("unavailable:{error}"),
             |devices| {
                 devices
@@ -221,8 +265,8 @@ impl OutputRuntime {
         )
     }
 
-    pub(crate) fn audio_devices_summary(&self) -> String {
-        match self.audio_provider.discover() {
+    pub(crate) fn audio_devices_summary(&mut self) -> String {
+        match self.discover_audio_devices() {
             Ok(devices) if devices.is_empty() => {
                 "PipeWire: no audio devices; deterministic fallback available".to_owned()
             }
@@ -250,6 +294,33 @@ impl OutputRuntime {
                 format!("PipeWire unavailable: {error}; deterministic fallback available")
             }
         }
+    }
+
+    /// Returns discoverable PipeWire input devices as `(stable_id, label)`.
+    ///
+    /// Discovery is cached briefly because opening Settings should not invoke
+    /// `pw-dump` repeatedly while the user moves between fields.
+    pub(crate) fn audio_input_devices(&mut self) -> Vec<(String, String)> {
+        self.discover_audio_devices()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|device| device.kind() == AudioDeviceKind::Input && device.available())
+            .map(|device| (device.id().to_owned(), device.name().to_owned()))
+            .collect()
+    }
+
+    fn discover_audio_devices(
+        &mut self,
+    ) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+        let now = Instant::now();
+        if let Some((discovered_at, devices)) = self.audio_devices_cache.as_ref() {
+            if now.saturating_duration_since(*discovered_at) < Duration::from_secs(2) {
+                return Ok(devices.clone());
+            }
+        }
+        let devices = self.audio_provider.discover()?;
+        self.audio_devices_cache = Some((now, devices.clone()));
+        Ok(devices)
     }
 
     pub(crate) fn stream_failed(&self) -> bool {

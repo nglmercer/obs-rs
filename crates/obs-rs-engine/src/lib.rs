@@ -501,6 +501,29 @@ impl EngineSession {
         Ok(())
     }
 
+    /// Switches the live audio input without rebuilding the video runtime.
+    ///
+    /// The provider is queried on the engine worker thread. If the requested
+    /// device is unavailable, the same deterministic fallback used during
+    /// startup is selected and the snapshot exposes that fallback state.
+    pub fn set_audio_input_id(&mut self, device_id: Option<&str>) {
+        self.audio_input.stop();
+        let (audio_input, audio_backend, audio_fallback) = open_audio_input(
+            &self.config.audio_provider,
+            self.config.audio_format,
+            device_id,
+        );
+        self.audio_input = audio_input;
+        self.audio_backend = audio_backend;
+        self.audio_fallback = audio_fallback;
+        self.config.audio_input_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        self.next_audio_deadline = None;
+        self.last_error = None;
+    }
+
     /// Renders one scene using the session's independent preview clock.
     pub fn render_scene(&mut self, scene: &str) -> Result<Option<VideoFrame>, EngineError> {
         let timestamp = self.render_timestamp;

@@ -1,14 +1,15 @@
 use super::i18n::catalog;
 use super::refresh::transition_label_for_locale;
+use super::settings::AppSettings;
 use super::{
-    initial_project, refresh_ui, I18n, MainWindow, OutputRuntime, PreviewRenderer, SettingsWindow,
-    SourcePropertiesWindow,
+    capture_devices, initial_project, refresh_ui, source_settings, I18n, MainWindow, OutputRuntime,
+    PreviewRenderer, SettingsWindow, SourcePropertiesWindow,
 };
 use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_project::{ProjectCommand, SceneSpec};
 use obs_rs_ui::{DesktopState, UiLocale};
-use slint::{ComponentHandle, Model};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
 #[test]
@@ -94,6 +95,69 @@ fn preview_renderer_advances_animated_capture_sources() {
         .expect("second pattern frame should render")
         .expect("pattern scene should produce a frame");
     assert_ne!(first.pixels(), second.pixels());
+}
+
+#[test]
+fn preview_renderer_reuses_static_scene_composition() {
+    let project = initial_project().expect("initial GUI project should validate");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    renderer
+        .render("preview")
+        .expect("static scene should render")
+        .expect("static scene should produce a frame");
+    let first = renderer.runtime.compositor_metrics();
+    renderer
+        .render("preview")
+        .expect("cached static scene should render")
+        .expect("cached static scene should produce a frame");
+    let second = renderer.runtime.compositor_metrics();
+    assert_eq!(second.render_calls(), first.render_calls());
+    assert_eq!(second.source_requests(), first.source_requests());
+}
+
+#[test]
+fn capture_source_defaults_have_a_real_selectable_device_id() {
+    for kind in ["screen_capture", "window_capture", "camera_capture"] {
+        let settings = source_settings(kind).expect("capture defaults");
+        let device_id = settings.get("device_id").expect("device id");
+        assert!(!device_id.is_empty(), "{kind} must have a device id");
+        assert!(
+            capture_devices(kind).iter().any(|(id, _)| id == device_id),
+            "{kind} default must be in its device catalog"
+        );
+    }
+}
+
+#[test]
+fn app_settings_round_trip_the_selected_audio_input() {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-{token}.txt"));
+    let mut settings = AppSettings::default();
+    settings.audio_input_id = "pipewire-node-42".to_owned();
+    settings.save(&path).expect("settings should save");
+    assert_eq!(
+        AppSettings::load(&path).audio_input_id,
+        settings.audio_input_id
+    );
+    std::fs::remove_file(path).expect("remove settings fixture");
+}
+
+#[test]
+fn output_runtime_switches_the_selected_audio_input_without_rebuilding_video() {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+    assert_eq!(output.audio_input_id(), None);
+    output
+        .set_audio_input_id(Some("missing-pipewire-input"))
+        .expect("switch should fall back safely");
+    assert_eq!(output.audio_input_id(), Some("missing-pipewire-input"));
+    output
+        .set_audio_input_id(None)
+        .expect("automatic input should be accepted");
+    assert_eq!(output.audio_input_id(), None);
 }
 
 #[test]
@@ -248,6 +312,12 @@ fn render_source_properties_window() {
     window.set_source_name("Background".into());
     window.set_source_kind("color_source".into());
     window.set_source_settings("color=#405070FF\nheight=360\nwidth=640\n".into());
+    window.set_capture_device_names(ModelRc::new(VecModel::from(vec![
+        SharedString::from("Camera 0"),
+        SharedString::from("Camera 1"),
+    ])));
+    window.set_capture_device_index(0);
+    window.set_capture_device_visible(true);
     window.set_source_transform("1000,1000,0,0,0,0,255".into());
     window.show().expect("properties window should show");
     for locale in UiLocale::supported() {

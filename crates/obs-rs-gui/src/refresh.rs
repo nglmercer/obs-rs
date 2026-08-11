@@ -6,9 +6,8 @@ use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::{
-    frame_to_image, project_store, source_filters_document, source_transform_document,
-    LocaleOption, MainWindow, MixerRow, OutputRuntime, PreviewRenderer, ProfileRow, SceneRow,
-    SourceRow,
+    project_store, source_filters_document, source_transform_document, LocaleOption, MainWindow,
+    MixerRow, OutputRuntime, PreviewRenderer, ProfileRow, SceneRow, SourceRow,
 };
 
 thread_local! {
@@ -134,11 +133,26 @@ pub(crate) fn refresh_preview_frames(
     preview_scene: Option<&str>,
     program_scene: Option<&str>,
 ) -> (Option<VideoFrame>, Option<String>) {
+    refresh_preview_frames_for_view(ui, renderer, preview_scene, program_scene, true)
+}
+
+/// Renders the preview plus the program only when the current view or an active
+/// output needs it. Single-canvas editing otherwise avoids a second full-size
+/// composition and a second Slint image update on every timer tick.
+pub(crate) fn refresh_preview_frames_for_view(
+    ui: &MainWindow,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    preview_scene: Option<&str>,
+    program_scene: Option<&str>,
+    render_program: bool,
+) -> (Option<VideoFrame>, Option<String>) {
     let (preview_image, preview_error, program_image, program_frame, program_error, metrics) = {
         let mut renderer = renderer.borrow_mut();
         let (preview_image, preview_frame, preview_error) =
             render_scene_image(&mut renderer, preview_scene);
-        let (program_image, program_frame, program_error) = if preview_scene == program_scene {
+        let (program_image, program_frame, program_error) = if !render_program {
+            (ui.get_program_image(), None, None)
+        } else if preview_scene == program_scene {
             (preview_image.clone(), preview_frame, preview_error.clone())
         } else {
             render_scene_image(&mut renderer, program_scene)
@@ -168,7 +182,7 @@ fn render_scene_image(
         return (Image::default(), None, None);
     };
     match renderer.render(scene) {
-        Ok(Some(frame)) => (frame_to_image(&frame), Some(frame), None),
+        Ok(Some(frame)) => (renderer.image_for_scene(scene, &frame), Some(frame), None),
         Ok(None) => (
             Image::default(),
             None,
