@@ -1,0 +1,33 @@
+name: Reproducible release
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Build twice and compare every signed artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          signing_key="$(mktemp)"
+          trap 'rm -f -- "$signing_key"' EXIT
+          openssl genpkey -algorithm ED25519 -out "$signing_key"
+          export OBS_RS_RELEASE_SIGNING_KEY="$signing_key"
+          export SOURCE_DATE_EPOCH=0
+          scripts/release-artifacts.sh dist-first
+          scripts/release-artifacts.sh dist-second
+          for artifact in \
+            obs-rs-x86_64-unknown-linux-gnu.tar.gz \
+            obs-rs-x86_64-unknown-linux-gnu.tar.gz.sha256 \
+            obs-rs-x86_64-unknown-linux-gnu.tar.gz.sha256.sig \
+            SHA256SUMS; do
+            cmp "dist-first/$artifact" "dist-second/$artifact"
+          done

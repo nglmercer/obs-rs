@@ -13,6 +13,7 @@ use super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
 pub enum NativeOutputState {
     Opening,
     Ready,
+    Lost,
     Retrying,
     Failed,
     Closed,
@@ -78,6 +79,7 @@ pub struct GStreamerOutputSession {
     telemetry: OutputSessionTelemetry,
     final_path: Option<PathBuf>,
     temp_path: Option<PathBuf>,
+    transport: OutputTransport,
 }
 
 impl GStreamerOutputSession {
@@ -115,6 +117,7 @@ impl GStreamerOutputSession {
             telemetry: OutputSessionTelemetry::default(),
             final_path,
             temp_path,
+            transport: plan.profile().transport(),
         })
     }
 
@@ -134,6 +137,7 @@ impl GStreamerOutputSession {
     ///
     /// Rejects closed sessions, timestamp regression, or downstream failure.
     pub fn push_video(&mut self, frame: VideoFrame) -> Result<(), GStreamerError> {
+        self.poll_health()?;
         self.ensure_ready()?;
         let timestamp = frame.timestamp();
         if self
@@ -170,6 +174,7 @@ impl GStreamerOutputSession {
     ///
     /// Rejects closed sessions, timestamp regression, or downstream failure.
     pub fn push_audio(&mut self, buffer: AudioBuffer) -> Result<(), GStreamerError> {
+        self.poll_health()?;
         self.ensure_ready()?;
         let timestamp = buffer.timestamp();
         if self
@@ -241,6 +246,55 @@ impl GStreamerOutputSession {
             })?;
         }
         self.state = NativeOutputState::Closed;
+        Ok(())
+    }
+
+    /// Polls asynchronous bus failures and reconnects live transports without
+    /// growing application queues. Recordings fail instead of hiding damage.
+    ///
+    /// # Errors
+    ///
+    /// Returns the pipeline error when a recording fails or live recovery fails.
+    pub fn poll_health(&mut self) -> Result<(), GStreamerError> {
+        let error = self.pipeline.bus().and_then(|bus| {
+            bus.pop_filtered(&[gst::MessageType::Error])
+                .and_then(|message| match message.view() {
+                    gst::MessageView::Error(error) => Some(error.error().to_string()),
+                    _ => None,
+                })
+        });
+        let Some(error) = error else {
+            return Ok(());
+        };
+        self.state = NativeOutputState::Lost;
+        if self.transport == OutputTransport::Matroska {
+            self.state = NativeOutputState::Failed;
+            return Err(GStreamerError::Native(error));
+        }
+        self.reconnect_live()
+    }
+
+    /// Rebuilds a live transport after an application/network loss signal.
+    ///
+    /// # Errors
+    ///
+    /// Rejects recording sessions and reports a failed `GStreamer` state change.
+    pub fn reconnect_live(&mut self) -> Result<(), GStreamerError> {
+        if self.transport == OutputTransport::Matroska {
+            return Err(GStreamerError::Native(
+                "recording sessions cannot reconnect".to_owned(),
+            ));
+        }
+        self.state = NativeOutputState::Retrying;
+        self.pipeline
+            .set_state(gst::State::Null)
+            .map_err(native_error)?;
+        if let Err(error) = self.pipeline.set_state(gst::State::Playing) {
+            self.state = NativeOutputState::Failed;
+            return Err(native_error(error));
+        }
+        self.telemetry.reconnects = self.telemetry.reconnects.saturating_add(1);
+        self.state = NativeOutputState::Ready;
         Ok(())
     }
 

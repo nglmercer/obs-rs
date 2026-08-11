@@ -151,13 +151,24 @@ owner boundary, dependencies, tests, and an acceptance condition.
 
 ## P2 — post-V1 capabilities
 
-- [ ] Wayland/PipeWire screen capture and macOS/Windows capture adapters.
-- [ ] GPU backend and zero-copy paths while preserving the CPU renderer as the
-  correctness oracle.
-- [ ] Production codec/container and RTMP/SRT/WebRTC decisions after license,
-  distribution, and native-boundary review.
-- [ ] Signed dynamic plugins, packaging, updates, fuzzing, and long-duration
-  hardware soak automation.
+- [x] Hardened asynchronous Wayland/PipeWire capture behind a platform adapter,
+  with X11/V4L2 discovery and safe macOS ScreenCaptureKit/AVFoundation and
+  Windows Graphics Capture/Media Foundation helper boundaries. Native adapter
+  crates compile and test on their respective CI runners.
+- [x] Optional `wgpu` backend with shader transforms, ordered filters, scaling,
+  straight-alpha composition, bounded texture reuse, explicit readback,
+  device-loss recovery, and opaque native-surface capability negotiation. The
+  CPU renderer remains the pixel oracle and unsupported external-memory imports
+  report an explicit CPU-upload fallback rather than exposing OS handles.
+- [x] Versioned exact output profiles plus an optional approved-plugin
+  `GStreamer` adapter for atomic Matroska/H.264/AAC recording and bounded
+  RTMP, SRT/MPEG-TS, and application-signaled WebRTC pipelines. Missing native
+  capabilities retain OBSRPKT1 and never silently substitute a production
+  profile.
+- [x] Ed25519-signed subprocess plugin bundles, trust rotation, release signing,
+  signed atomic updates with health-check rollback, diagnostics redaction,
+  parser fuzz targets, native capture CI, and 30-minute/8-hour hardware soak
+  automation.
 
 ## Definition of done for V1
 
@@ -181,6 +192,8 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
+cargo test --workspace --all-targets --all-features
+cargo check --manifest-path fuzz/Cargo.toml --bins
 cargo run -p obs-rs-gui -- --smoke
 cargo run -p obs-rs-app
 cargo run -p obs-rs-app --bin obs-rs-linux-check

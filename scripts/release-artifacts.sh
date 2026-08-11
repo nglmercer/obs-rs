@@ -4,6 +4,11 @@ set -euo pipefail
 artifact_dir="${1:-dist}"
 target="x86_64-unknown-linux-gnu"
 : "${OBS_RS_RELEASE_SIGNING_KEY:?set OBS_RS_RELEASE_SIGNING_KEY to an Ed25519 private-key PEM}"
+signing_key="$(realpath -- "$OBS_RS_RELEASE_SIGNING_KEY")"
+if [[ ! -r "$signing_key" ]]; then
+    echo "release signing key is not readable: $signing_key" >&2
+    exit 1
+fi
 mkdir -p "$artifact_dir"
 
 # The pinned toolchain and release profile are the reproducibility inputs. A caller
@@ -73,16 +78,21 @@ cargo tree --workspace --edges normal --prefix none | LC_ALL=C sort -u \
         | xargs -0 sha256sum > SHA256SUMS
 )
 
-archive="$artifact_dir/obs-rs-${target}.tar.gz"
+archive_name="obs-rs-${target}.tar.gz"
+archive="$artifact_dir/$archive_name"
 tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
     -C "$stage" -cf - obs-rs | gzip -n -9 > "$archive"
-sha256sum "$archive" > "$archive.sha256"
-openssl pkeyutl -sign -rawin -inkey "$OBS_RS_RELEASE_SIGNING_KEY" \
-    -in "$archive.sha256" -out "$archive.sha256.sig"
-
 (
     cd "$artifact_dir"
-    sha256sum ./* 2>/dev/null | LC_ALL=C sort > SHA256SUMS
+    sha256sum "$archive_name" > "$archive_name.sha256"
+    openssl pkeyutl -sign -rawin -inkey "$signing_key" \
+        -in "$archive_name.sha256" -out "$archive_name.sha256.sig"
+    sha256sum \
+        "$archive_name" \
+        "$archive_name.sha256" \
+        "$archive_name.sha256.sig" \
+        | LC_ALL=C sort > SHA256SUMS.part
+    mv SHA256SUMS.part SHA256SUMS
 )
 
 echo "Signed reproducible release archive written to $archive"

@@ -7,6 +7,7 @@ use super::{
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, VideoFormat};
 use obs_rs_output::OutputProfileKind;
+use std::collections::BTreeSet;
 
 use crate::RenderBackendPreference;
 
@@ -138,6 +139,7 @@ impl Project {
         let title = decode(project_fields[1], 2)?;
         let mut project = Self::new(&title)?;
         project.active_profile = identifier(project_fields[2], "active profile id")?;
+        let mut configured_profiles = BTreeSet::new();
 
         for (index, line) in lines.enumerate() {
             let line_number = index + 3;
@@ -150,7 +152,16 @@ impl Project {
             let kind = line.split('|').next().unwrap_or_default();
             match kind {
                 "profile" => parse_profile(&mut project, line, line_number)?,
-                "profile_options" => parse_profile_options(&mut project, line, line_number)?,
+                "profile_options" => {
+                    let profile_id = line.split('|').nth(1).unwrap_or_default();
+                    if !configured_profiles.insert(profile_id.to_owned()) {
+                        return Err(ProjectError::InvalidDocument {
+                            line: line_number,
+                            reason: "duplicate profile options".to_owned(),
+                        });
+                    }
+                    parse_profile_options(&mut project, line, line_number)?;
+                }
                 "scene" => parse_scene(&mut project, line, line_number)?,
                 "source" => parse_source(&mut project, line, line_number)?,
                 _ => {

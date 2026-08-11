@@ -1,4 +1,12 @@
-use std::{collections::HashMap, fmt};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use obs_rs_media::{FrameFilter, FrameTransform, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_render::{
@@ -64,14 +72,15 @@ pub struct WgpuRenderBackend {
     queue: wgpu::Queue,
     cpu: CpuRenderBackend,
     textures: HashMap<TextureId, GpuTexture>,
+    texture_pool: RefCell<Vec<(VideoFormat, wgpu::Texture)>>,
     bind_group_layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
     replace_pipeline: wgpu::RenderPipeline,
     composite_pipeline: wgpu::RenderPipeline,
     metrics: RenderMetrics,
     capabilities: RenderCapabilities,
     adapter_capabilities: WgpuAdapterCapabilities,
     state: RenderState,
+    device_lost: Arc<AtomicBool>,
 }
 
 impl WgpuRenderBackend {
@@ -89,8 +98,8 @@ impl WgpuRenderBackend {
         }))
         .ok_or_else(|| WgpuBackendError("no compatible wgpu adapter".to_owned()))?;
         let (device, queue) = request_device(&adapter)?;
-        let (bind_group_layout, sampler, replace_pipeline, composite_pipeline) =
-            gpu_compositor(&device);
+        let device_lost = install_device_loss_handler(&device);
+        let (bind_group_layout, replace_pipeline, composite_pipeline) = gpu_compositor(&device);
         let info = adapter.get_info();
         let cpu = CpuRenderBackend::with_limits(max_textures, max_texture_bytes)
             .map_err(|error| WgpuBackendError(error.to_string()))?;
@@ -100,8 +109,8 @@ impl WgpuRenderBackend {
             queue,
             cpu,
             textures: HashMap::new(),
+            texture_pool: RefCell::new(Vec::new()),
             bind_group_layout,
-            sampler,
             replace_pipeline,
             composite_pipeline,
             metrics: RenderMetrics::default(),
@@ -119,6 +128,7 @@ impl WgpuRenderBackend {
                 direct_surface_providers: Vec::new(),
             },
             state: RenderState::Ready,
+            device_lost,
         })
     }
 
@@ -127,15 +137,42 @@ impl WgpuRenderBackend {
         &self.adapter_capabilities
     }
 
+    /// Waits for submitted GPU work to finish for benchmarking/diagnostics.
+    /// Live render and capture callbacks should never call this method.
+    pub fn wait_idle(&self) {
+        self.device.poll(wgpu::Maintain::Wait);
+    }
+
+    /// Returns reusable textures currently retained by the bounded pool.
+    #[must_use]
+    pub fn pooled_texture_count(&self) -> usize {
+        self.texture_pool.borrow().len()
+    }
+
+    /// Estimates target plus pooled RGBA texture memory visible to this backend.
+    #[must_use]
+    pub fn estimated_gpu_bytes(&self) -> usize {
+        let targets = self.textures.values().fold(0_usize, |bytes, texture| {
+            bytes.saturating_add(texture.format.rgba_bytes())
+        });
+        self.texture_pool
+            .borrow()
+            .iter()
+            .fold(targets, |bytes, (format, _)| {
+                bytes.saturating_add(format.rgba_bytes())
+            })
+    }
+
     /// Marks resources lost for deterministic recovery testing.
     pub fn lose_device(&mut self) {
         self.state = RenderState::Lost;
+        self.device_lost.store(true, Ordering::Release);
         self.cpu.lose_context();
         self.metrics.record_context_loss();
     }
 
     fn ensure_ready(&self) -> Result<(), RenderError> {
-        if self.state == RenderState::Ready {
+        if self.state == RenderState::Ready && !self.device_lost.load(Ordering::Acquire) {
             Ok(())
         } else {
             Err(RenderError::ContextLost)
@@ -176,6 +213,22 @@ impl WgpuRenderBackend {
         write_texture(&self.queue, &gpu.texture, frame);
         Ok(())
     }
+
+    fn acquire_texture(&self, format: VideoFormat) -> wgpu::Texture {
+        let mut pool = self.texture_pool.borrow_mut();
+        if let Some(index) = pool.iter().position(|(candidate, _)| *candidate == format) {
+            return pool.swap_remove(index).1;
+        }
+        drop(pool);
+        Self::gpu_texture(format, &self.device)
+    }
+
+    fn recycle_texture(&self, format: VideoFormat, texture: wgpu::Texture) {
+        let mut pool = self.texture_pool.borrow_mut();
+        if pool.len() < self.capabilities.max_textures().min(32) {
+            pool.push((format, texture));
+        }
+    }
 }
 
 fn write_texture(queue: &wgpu::Queue, texture: &wgpu::Texture, frame: &VideoFrame) {
@@ -201,6 +254,10 @@ fn write_texture(queue: &wgpu::Queue, texture: &wgpu::Texture, frame: &VideoFram
 }
 
 impl WgpuRenderBackend {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one encoder owns both ping-pong textures and every ordered layer pass"
+    )]
     fn composite_textures(
         &self,
         target: TextureId,
@@ -213,9 +270,8 @@ impl WgpuRenderBackend {
             .textures
             .get(&target)
             .ok_or(RenderError::UnknownTexture(target))?;
-        let target_view = target_texture
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let scratch_a = self.acquire_texture(target_texture.format);
+        let scratch_b = self.acquire_texture(target_texture.format);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -223,6 +279,22 @@ impl WgpuRenderBackend {
             });
         for (index, (source, transform, filters)) in sources.iter().enumerate() {
             let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
+            let background = if index.is_multiple_of(2) {
+                if index == 0 {
+                    source
+                } else {
+                    &scratch_b
+                }
+            } else {
+                &scratch_a
+            };
+            let background_view = background.create_view(&wgpu::TextureViewDescriptor::default());
+            let destination = if index.is_multiple_of(2) {
+                &scratch_a
+            } else {
+                &scratch_b
+            };
+            let destination_view = destination.create_view(&wgpu::TextureViewDescriptor::default());
             let parameters = layer_parameters(target_texture.format, *transform, filters);
             let parameter_buffer =
                 self.device
@@ -241,7 +313,7 @@ impl WgpuRenderBackend {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        resource: wgpu::BindingResource::TextureView(&background_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -252,14 +324,10 @@ impl WgpuRenderBackend {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("obs-rs-layer-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target_view,
+                    view: &destination_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: if index == 0 {
-                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
-                        } else {
-                            wgpu::LoadOp::Load
-                        },
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -275,7 +343,33 @@ impl WgpuRenderBackend {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+        let completed = if sources.len().is_multiple_of(2) {
+            &scratch_b
+        } else {
+            &scratch_a
+        };
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                texture: completed,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyTexture {
+                texture: &target_texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: target_texture.format.width(),
+                height: target_texture.format.height(),
+                depth_or_array_layers: 1,
+            },
+        );
         self.queue.submit(Some(encoder.finish()));
+        self.recycle_texture(target_texture.format, scratch_a);
+        self.recycle_texture(target_texture.format, scratch_b);
         Ok(())
     }
 }
@@ -286,7 +380,11 @@ impl RenderBackend for WgpuRenderBackend {
     }
 
     fn state(&self) -> RenderState {
-        self.state
+        if self.device_lost.load(Ordering::Acquire) {
+            RenderState::Lost
+        } else {
+            self.state
+        }
     }
 
     fn metrics(&self) -> RenderMetrics {
@@ -339,7 +437,7 @@ impl RenderBackend for WgpuRenderBackend {
                 });
             }
             timestamp = frame.timestamp();
-            let texture = Self::gpu_texture(target_format, &self.device);
+            let texture = self.acquire_texture(target_format);
             write_texture(&self.queue, &texture, frame);
             prepared.push((texture, layer.transform(), layer.filters()));
         }
@@ -348,6 +446,10 @@ impl RenderBackend for WgpuRenderBackend {
             .map(|(texture, transform, filters)| (texture, *transform, *filters))
             .collect::<Vec<_>>();
         self.composite_textures(target, &sources)?;
+        drop(sources);
+        for (texture, _, _) in prepared {
+            self.recycle_texture(target_format, texture);
+        }
         let target = self
             .textures
             .get_mut(&target)
@@ -481,8 +583,12 @@ impl RenderBackend for WgpuRenderBackend {
     }
 
     fn recover(&mut self) -> Result<(), RenderError> {
-        if self.state == RenderState::Ready {
+        let device_reported_loss = self.device_lost.load(Ordering::Acquire);
+        if self.state == RenderState::Ready && !device_reported_loss {
             return Ok(());
+        }
+        if self.state == RenderState::Ready {
+            self.metrics.record_context_loss();
         }
         let (device, queue) =
             request_device(&self.adapter).map_err(|error| RenderError::Backend {
@@ -490,9 +596,10 @@ impl RenderBackend for WgpuRenderBackend {
             })?;
         self.device = device;
         self.queue = queue;
+        self.device_lost = install_device_loss_handler(&self.device);
+        self.texture_pool.get_mut().clear();
         (
             self.bind_group_layout,
-            self.sampler,
             self.replace_pipeline,
             self.composite_pipeline,
         ) = gpu_compositor(&self.device);
@@ -522,12 +629,23 @@ fn request_device(
     .map_err(|error| WgpuBackendError(error.to_string()))
 }
 
-#[allow(clippy::too_many_lines, reason = "the complete WGSL oracle is kept beside its binding layout")]
+fn install_device_loss_handler(device: &wgpu::Device) -> Arc<AtomicBool> {
+    let lost = Arc::new(AtomicBool::new(false));
+    let callback_flag = Arc::clone(&lost);
+    device.set_device_lost_callback(move |_reason, _message| {
+        callback_flag.store(true, Ordering::Release);
+    });
+    lost
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the complete WGSL oracle is kept beside its binding layout"
+)]
 fn gpu_compositor(
     device: &wgpu::Device,
 ) -> (
     wgpu::BindGroupLayout,
-    wgpu::Sampler,
     wgpu::RenderPipeline,
     wgpu::RenderPipeline,
 ) {
@@ -547,7 +665,11 @@ fn gpu_compositor(
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
@@ -562,18 +684,12 @@ fn gpu_compositor(
             },
         ],
     });
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("obs-rs-nearest-sampler"),
-        mag_filter: wgpu::FilterMode::Nearest,
-        min_filter: wgpu::FilterMode::Nearest,
-        ..wgpu::SamplerDescriptor::default()
-    });
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("obs-rs-composite-shader"),
         source: wgpu::ShaderSource::Wgsl(
             r"
 @group(0) @binding(0) var layer_texture: texture_2d<f32>;
-@group(0) @binding(1) var layer_sampler: sampler;
+@group(0) @binding(1) var background_texture: texture_2d<f32>;
 struct Parameters { values: array<i32> };
 @group(0) @binding(2) var<storage, read> parameters: Parameters;
 
@@ -596,16 +712,15 @@ fn vs_main(@builtin(vertex_index) vertex: u32) -> VertexOutput {
     return output;
 }
 
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let x = i32(input.position.x);
-    let y = i32(input.position.y);
+fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
+    let x = position.x;
+    let y = position.y;
     let width = parameters.values[0];
     let height = parameters.values[1];
     let local_x = x - parameters.values[4];
     let local_y = y - parameters.values[5];
     if (local_x < 0 || local_y < 0) {
-        return vec4<f32>(0.0);
+        return vec4<i32>(0);
     }
     let crop_left = parameters.values[9];
     let crop_top = parameters.values[10];
@@ -615,7 +730,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var source_y = crop_top + local_y * 1000 / parameters.values[3];
     if (source_x < crop_left || source_x >= visible_right ||
         source_y < crop_top || source_y >= visible_bottom) {
-        return vec4<f32>(0.0);
+        return vec4<i32>(0);
     }
     if (parameters.values[6] != 0) {
         source_x = crop_left + visible_right - 1 - source_x;
@@ -647,7 +762,52 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
         filter_index = filter_index + 1;
     }
-    return vec4<f32>(pixel) / 255.0;
+    if (pixel.a == 0) {
+        pixel.r = 0;
+        pixel.g = 0;
+        pixel.b = 0;
+    }
+    return pixel;
+}
+
+@fragment
+fn fs_replace(input: VertexOutput) -> @location(0) vec4<f32> {
+    let position = vec2<i32>(input.position.xy);
+    return vec4<f32>(layer_pixel(position)) / 255.0;
+}
+
+@fragment
+fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
+    let position = vec2<i32>(input.position.xy);
+    let source = layer_pixel(position);
+    if (source.a == 255) {
+        return vec4<f32>(source) / 255.0;
+    }
+    let sampled_background = textureLoad(background_texture, position, 0);
+    let background = vec4<i32>(floor(sampled_background * 255.0 + vec4<f32>(0.5)));
+    if (source.a == 0) {
+        return vec4<f32>(background) / 255.0;
+    }
+    let inverse_alpha = 255 - source.a;
+    if (background.a == 255) {
+        var output = vec4<i32>(0, 0, 0, 255);
+        output.r = (source.r * source.a + background.r * inverse_alpha) / 255;
+        output.g = (source.g * source.a + background.g * inverse_alpha) / 255;
+        output.b = (source.b * source.a + background.b * inverse_alpha) / 255;
+        return vec4<f32>(output) / 255.0;
+    }
+    let output_alpha = source.a + background.a * inverse_alpha / 255;
+    if (output_alpha == 0) {
+        return vec4<f32>(0.0);
+    }
+    let denominator = output_alpha * 255;
+    let source_weight = source.a * 255;
+    let background_weight = background.a * inverse_alpha;
+    var output = vec4<i32>(0, 0, 0, output_alpha);
+    output.r = (source.r * source_weight + background.r * background_weight) / denominator;
+    output.g = (source.g * source_weight + background.g * background_weight) / denominator;
+    output.b = (source.b * source_weight + background.b * background_weight) / denominator;
+    return vec4<f32>(output) / 255.0;
 }
 "
             .into(),
@@ -658,7 +818,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         bind_group_layouts: &[&layout],
         push_constant_ranges: &[],
     });
-    let create_pipeline = |label, blend| {
+    let create_pipeline = |label, entry_point| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
@@ -673,23 +833,20 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point,
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend,
+                    blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
             multiview: None,
         })
     };
-    let replace = create_pipeline("obs-rs-replace-pipeline", None);
-    let composite = create_pipeline(
-        "obs-rs-composite-pipeline",
-        Some(wgpu::BlendState::ALPHA_BLENDING),
-    );
-    (layout, sampler, replace, composite)
+    let replace = create_pipeline("obs-rs-replace-pipeline", "fs_replace");
+    let composite = create_pipeline("obs-rs-composite-pipeline", "fs_composite");
+    (layout, replace, composite)
 }
 
 fn layer_parameters(

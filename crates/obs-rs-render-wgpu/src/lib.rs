@@ -45,7 +45,7 @@ mod tests {
         use obs_rs_media::{
             FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame,
         };
-        use obs_rs_render::{RenderBackend, RenderError, SceneLayer};
+        use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderError, SceneLayer};
 
         let Ok(mut backend) = WgpuRenderBackend::new(8, 16 * 1_024 * 1_024) else {
             return;
@@ -56,26 +56,51 @@ mod tests {
             .collect();
         let frame = VideoFrame::new(format, Timestamp::from_millis(7), pixels).expect("frame");
         let target = backend.create_texture(format).expect("target");
-        let filters = [FrameFilter::Brightness { milli: 750 }];
+        let filters = [
+            FrameFilter::Grayscale,
+            FrameFilter::Brightness { milli: -250 },
+            FrameFilter::Opacity(200),
+        ];
+        let transform = FrameTransform::new(1_500, 750, -1, 2, true, false, 210)
+            .expect("transform")
+            .with_crop(1, 1, 2, 1)
+            .expect("crop");
         backend
-            .submit_layers(
-                target,
-                &[SceneLayer::frame(
-                    &frame,
-                    FrameTransform::IDENTITY,
-                    &filters,
-                )],
-            )
+            .submit_layers(target, &[SceneLayer::frame(&frame, transform, &filters)])
             .expect("GPU layer submission");
         assert_eq!(backend.metrics().readbacks(), 0);
         assert_eq!(backend.metrics().compositions(), 1);
-        let mut expected = frame;
+        let mut expected = frame.transformed(transform).expect("CPU transform oracle");
         expected.apply_filters(&filters);
         assert_eq!(
             backend.readback(target).expect("explicit readback"),
             expected
         );
         assert_eq!(backend.metrics().readbacks(), 1);
+
+        let background_pixels = (0_u8..64)
+            .flat_map(|value| [10, 200, 30, value.saturating_mul(4)])
+            .collect();
+        let foreground_pixels = (0_u8..64)
+            .flat_map(|value| [250, 20, 90, 255_u8.saturating_sub(value.saturating_mul(4))])
+            .collect();
+        let background =
+            VideoFrame::new(format, Timestamp::ZERO, background_pixels).expect("background");
+        let foreground =
+            VideoFrame::new(format, Timestamp::ZERO, foreground_pixels).expect("foreground");
+        let layers = [
+            SceneLayer::frame(&background, FrameTransform::IDENTITY, &[]),
+            SceneLayer::frame(&foreground, FrameTransform::IDENTITY, &[]),
+        ];
+        let mut cpu = CpuRenderBackend::new(1).expect("CPU oracle");
+        let cpu_target = cpu.create_texture(format).expect("CPU target");
+        cpu.submit_layers(cpu_target, &layers)
+            .expect("CPU composition");
+        let expected = cpu.readback(cpu_target).expect("CPU result");
+        backend
+            .submit_layers(target, &layers)
+            .expect("GPU alpha composition");
+        assert_eq!(backend.readback(target).expect("GPU result"), expected);
 
         backend.lose_device();
         assert_eq!(backend.state(), obs_rs_render::RenderState::Lost);
@@ -116,13 +141,16 @@ mod tests {
             if backend.composite(target, &[source]).is_err() {
                 dropped = dropped.saturating_add(1);
             }
+            backend.wait_idle();
             samples.push(started.elapsed().as_nanos());
         }
         samples.sort_unstable();
         let p95 = samples[samples.len() * 95 / 100];
         println!(
-            "gpu_frames=10000 p95_ns={p95} dropped={dropped} readbacks={}",
-            backend.metrics().readbacks()
+            "gpu_frames=10000 p95_ns={p95} dropped={dropped} readbacks={} gpu_bytes={} pooled_textures={}",
+            backend.metrics().readbacks(),
+            backend.estimated_gpu_bytes(),
+            backend.pooled_texture_count(),
         );
         assert!(p95 < 16_700_000, "p95 was {p95}ns");
         assert!(dropped <= 100, "dropped {dropped} frames");
