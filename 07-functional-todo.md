@@ -162,7 +162,8 @@ owner boundary, dependencies, tests, and an acceptance condition.
   report an explicit CPU-upload fallback rather than exposing OS handles.
 - [x] Versioned exact output profiles plus an optional approved-plugin
   `GStreamer` adapter for atomic Matroska/H.264/AAC recording and bounded
-  RTMP, SRT/MPEG-TS, and application-signaled WebRTC pipelines. Missing native
+  RTMP/FLV, TLS-protected RTMPS/FLV, SRT/MPEG-TS, and application-signaled WebRTC
+  pipelines. Missing native
   capabilities retain OBSRPKT1 and never silently substitute a production
   profile.
 - [x] Ed25519-signed subprocess plugin bundles, trust rotation, release signing,

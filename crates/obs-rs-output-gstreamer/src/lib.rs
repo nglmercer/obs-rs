@@ -6,6 +6,7 @@
 use std::{collections::BTreeMap, fmt, path::PathBuf, process::Command};
 
 use obs_rs_output::{OutputCapabilities, OutputProfile, OutputProfileKind, OutputTransport};
+use url::Url;
 
 pub const PRODUCTION_METADATA_MAGIC: &str = "OBSRGST1";
 pub const MAX_PRODUCTION_METADATA_BYTES: usize = 32 * 1_024;
@@ -106,6 +107,7 @@ impl GStreamerCapabilitySnapshot {
             && element_available("rtmpsink")
         {
             profiles.push(OutputProfileKind::RtmpH264Aac);
+            profiles.push(OutputProfileKind::RtmpsH264Aac);
         }
         if h264.is_some()
             && aac.is_some()
@@ -150,6 +152,9 @@ pub enum ProductionDestination {
     Rtmp {
         endpoint: String,
     },
+    Rtmps {
+        endpoint: String,
+    },
     Srt {
         endpoint: String,
         passphrase: Option<String>,
@@ -167,6 +172,10 @@ impl fmt::Debug for ProductionDestination {
                 .debug_struct("Rtmp")
                 .field("endpoint", &"[REDACTED]")
                 .finish(),
+            Self::Rtmps { .. } => formatter
+                .debug_struct("Rtmps")
+                .field("endpoint", &"[REDACTED]")
+                .finish(),
             Self::Srt { passphrase, .. } => formatter
                 .debug_struct("Srt")
                 .field("endpoint", &"[REDACTED]")
@@ -181,6 +190,48 @@ impl fmt::Debug for ProductionDestination {
 }
 
 impl ProductionDestination {
+    /// Parses an exact production streaming scheme into its profile and typed
+    /// destination. Private OBSRPKT1 TCP/WebSocket endpoints are deliberately
+    /// outside this production boundary.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsupported schemes and malformed protocol endpoints.
+    pub fn from_stream_endpoint(endpoint: &str) -> Result<(OutputProfile, Self), GStreamerError> {
+        let scheme = Url::parse(endpoint)
+            .map_err(|error| GStreamerError::InvalidEndpoint(error.to_string()))?
+            .scheme()
+            .to_owned();
+        let (profile, destination) = match scheme.as_str() {
+            "rtmp" => (
+                OutputProfile::rtmp_h264_aac(),
+                Self::Rtmp {
+                    endpoint: endpoint.to_owned(),
+                },
+            ),
+            "rtmps" => (
+                OutputProfile::rtmps_h264_aac(),
+                Self::Rtmps {
+                    endpoint: endpoint.to_owned(),
+                },
+            ),
+            "srt" => (
+                OutputProfile::srt_mpeg_ts_h264_aac(),
+                Self::Srt {
+                    endpoint: endpoint.to_owned(),
+                    passphrase: None,
+                },
+            ),
+            _ => {
+                return Err(GStreamerError::InvalidEndpoint(
+                    "expected an srt://, rtmp://, or rtmps:// endpoint".to_owned(),
+                ));
+            }
+        };
+        destination.validate_for(profile)?;
+        Ok((profile, destination))
+    }
+
     /// Validates that destination and profile transport agree exactly.
     ///
     /// # Errors
@@ -190,7 +241,12 @@ impl ProductionDestination {
     pub fn validate_for(&self, profile: OutputProfile) -> Result<(), GStreamerError> {
         let valid = match (profile.transport(), self) {
             (OutputTransport::Matroska, Self::Recording(path)) => !path.as_os_str().is_empty(),
-            (OutputTransport::Rtmp, Self::Rtmp { endpoint }) => valid_url(endpoint, "rtmp://"),
+            (OutputTransport::Rtmp, Self::Rtmp { endpoint }) => {
+                valid_stream_url(endpoint, "rtmp", true)
+            }
+            (OutputTransport::Rtmps, Self::Rtmps { endpoint }) => {
+                valid_stream_url(endpoint, "rtmps", true)
+            }
             (
                 OutputTransport::SrtMpegTs,
                 Self::Srt {
@@ -198,10 +254,8 @@ impl ProductionDestination {
                     passphrase,
                 },
             ) => {
-                valid_url(endpoint, "srt://")
-                    && passphrase
-                        .as_ref()
-                        .is_none_or(|value| (10..=79).contains(&value.len()))
+                valid_stream_url(endpoint, "srt", false)
+                    && srt_passphrase_valid(endpoint, passphrase.as_deref())
             }
             (OutputTransport::WebRtc, Self::WebRtc { signaling_endpoint }) => {
                 valid_url(signaling_endpoint, "wss://") || valid_url(signaling_endpoint, "https://")
@@ -484,6 +538,30 @@ fn valid_url(value: &str, scheme: &str) -> bool {
         && !value.bytes().any(|byte| byte.is_ascii_control())
 }
 
+fn valid_stream_url(value: &str, scheme: &str, require_path: bool) -> bool {
+    if value.len() > 2_048 || value.bytes().any(|byte| byte.is_ascii_control()) {
+        return false;
+    }
+    let Ok(url) = Url::parse(value) else {
+        return false;
+    };
+    url.scheme() == scheme
+        && url.host_str().is_some_and(|host| !host.is_empty())
+        && (scheme != "srt" || url.port().is_some())
+        && (!require_path || url.path().trim_matches('/').contains('/'))
+}
+
+fn srt_passphrase_valid(endpoint: &str, explicit: Option<&str>) -> bool {
+    if let Some(value) = explicit {
+        return (10..=79).contains(&value.len());
+    }
+    Url::parse(endpoint).is_ok_and(|url| {
+        url.query_pairs()
+            .find(|(key, _)| key == "passphrase")
+            .is_none_or(|(_, value)| (10..=79).contains(&value.len()))
+    })
+}
+
 #[cfg(feature = "native")]
 mod native;
 
@@ -520,6 +598,30 @@ mod tests {
         }
         .validate_for(OutputProfile::web_rtc_vp8_opus())
         .is_err());
+
+        for (endpoint, expected) in [
+            ("rtmp://media.example/live/key", OutputTransport::Rtmp),
+            ("rtmps://media.example/live/key", OutputTransport::Rtmps),
+            ("srt://media.example:9000", OutputTransport::SrtMpegTs),
+        ] {
+            let (profile, destination) =
+                ProductionDestination::from_stream_endpoint(endpoint).expect("stream endpoint");
+            assert_eq!(profile.transport(), expected);
+            assert!(destination.validate_for(profile).is_ok());
+            assert!(!format!("{destination:?}").contains("media.example"));
+        }
+        for invalid in [
+            "rtmp://media.example/live",
+            "rtmps://media.example/",
+            "srt://media.example",
+            "srt://media.example:9000?passphrase=short",
+            "https://media.example/live/key",
+        ] {
+            assert!(
+                ProductionDestination::from_stream_endpoint(invalid).is_err(),
+                "{invalid} must be rejected"
+            );
+        }
     }
 
     #[test]

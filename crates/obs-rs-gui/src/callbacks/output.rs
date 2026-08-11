@@ -96,7 +96,12 @@ fn install_streaming_callback(
                     streaming_output.borrow_mut().finish_streaming();
                     return Err(error.into());
                 }
-                Ok(format!("Streaming connected: {address}"))
+                let protocol = address
+                    .split(':')
+                    .next()
+                    .unwrap_or("stream")
+                    .to_ascii_uppercase();
+                Ok(format!("{protocol} streaming connected"))
             }
         })();
         match result {

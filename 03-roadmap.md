@@ -240,10 +240,12 @@ raw audio encoding, a canonical PCM16 WAV reference writer, a reconnectable
 packet-transport session with a memory fixture, an atomic interleaved `OBSRPKT1`
 packet-container writer with timestamp-order validation, an explicit length-framed
 standard-library TCP transport, and an uncompressed `OBSRRAW1` reference recording
-format in `obs-rs-output` for correctness and recovery fixtures. The TCP framing is
-a real Rust transport path, not a claim of RTMP/SRT/WebRTC compatibility.
-It is not yet a production codec, protocol client, or hardware/network streaming
-implementation. The same runtime now has a standard RFC 6455 `ws://` client that
+format in `obs-rs-output` for correctness and recovery fixtures. The TCP framing
+remains a Rust reference protocol rather than an RTMP/SRT wire format. Post-V1
+builds additionally negotiate an approved native GStreamer boundary for
+SRT/MPEG-TS, RTMP/FLV, and TLS-protected RTMPS/FLV with H.264/AAC; those URL
+schemes receive raw A/V through bounded appsrc queues instead of OBSRPKT1 packets.
+The same runtime also has a standard RFC 6455 `ws://` client that
 validates the HTTP upgrade, sends masked binary frames, and wraps each packet in an
 explicit `OBSRWS01` envelope. `wss://` remains unavailable until a reviewed TLS
 boundary is selected. The desktop output runtime exposes reconnect, sent, dropped,
@@ -361,8 +363,9 @@ file/TCP/WebSocket boundary.
   remain separate adapters.
 - The media correctness path is Rust/CPU first; native integrations remain behind
   typed Rust provider traits.
-- V1 output is `OBSRPKT1` with RLE video and raw `f32` audio, not an assertion of
-  RTMP/SRT/WebRTC or broadcast-container compatibility.
+- V1 output is `OBSRPKT1` with RLE video and raw `f32` audio. Production SRT,
+  RTMP, and RTMPS are post-V1 capabilities requiring the approved GStreamer
+  runtime; WebRTC remains a separately signaled profile.
 - V1 sources are full-root X11 capture and animated test pattern. Window and
   camera capture are P1.
 - PipeWire is the first real audio provider and the deterministic signal is the

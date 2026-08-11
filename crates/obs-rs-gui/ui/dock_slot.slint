@@ -20,6 +20,7 @@ export component DockSlot inherits Rectangle {
     in property <string> transition;
     in property <bool> recording;
     in property <bool> streaming;
+    in property <bool> meters-paused;
     // A floating dock fills its own window instead of a share of the row.
     in property <bool> floating;
     // Share of the dock row this panel takes, adjusted by the splitters.
@@ -39,6 +40,7 @@ export component DockSlot inherits Rectangle {
     callback remove-source(string);
     callback set-mixer-gain(string, int);
     callback toggle-mixer-mute(string);
+    callback toggle-meters-paused();
     callback cut-transition();
     callback fade-transition();
     callback set-view-mode(int);
@@ -91,9 +93,12 @@ export component DockSlot inherits Rectangle {
         locale: root.locale;
         panel-kind: root.panel-kind;
         mixer-rows: root.mixer-rows;
+        meters-paused: root.meters-paused;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
         set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+        toggle-meters-paused() => { root.toggle-meters-paused(); }
+        open-mixer-settings() => { root.open-settings-window(); }
     }
     if panel-kind == 3 : TransitionDock {
         floating: root.floating;

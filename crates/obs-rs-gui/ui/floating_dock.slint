@@ -26,6 +26,7 @@ export component FloatingDockWindow inherits Window {
     in property <string> transition;
     in property <bool> recording;
     in property <bool> streaming;
+    in property <bool> meters-paused;
 
     callback open-modal(int);
     callback select-preview(string);
@@ -38,6 +39,7 @@ export component FloatingDockWindow inherits Window {
     callback remove-source(string);
     callback set-mixer-gain(string, int);
     callback toggle-mixer-mute(string);
+    callback toggle-meters-paused();
     callback cut-transition();
     callback fade-transition();
     callback set-view-mode(int);
@@ -62,6 +64,7 @@ export component FloatingDockWindow inherits Window {
         transition: root.transition;
         recording: root.recording;
         streaming: root.streaming;
+        meters-paused: root.meters-paused;
         // A floating dock cannot be reordered, and its header button returns it
         // to the row instead of detaching it again.
         move-panel(kind, delta) => { }
@@ -78,6 +81,7 @@ export component FloatingDockWindow inherits Window {
         remove-source(id) => { root.remove-source(id); }
         set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+        toggle-meters-paused() => { root.toggle-meters-paused(); }
         cut-transition() => { root.cut-transition(); }
         fade-transition() => { root.fade-transition(); }
         toggle-recording() => { root.toggle-recording(); }

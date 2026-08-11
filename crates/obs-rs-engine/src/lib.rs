@@ -27,6 +27,11 @@ use obs_rs_output::{
     RawAudioEncoder, ReconnectPolicy, RleVideoEncoder, StreamMetrics, StreamSession, StreamState,
     TcpPacketTransport, VideoEncoder, WebSocketPacketTransport,
 };
+#[cfg(feature = "production-gstreamer")]
+use obs_rs_output_gstreamer::{
+    GStreamerCapabilitySnapshot, GStreamerError, GStreamerOutputSession, NativeOutputState,
+    ProductionDestination, ProductionPipelinePlan,
+};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Project, ProjectError};
 
@@ -214,9 +219,21 @@ pub struct EngineSnapshot {
     pub audio_backend: String,
     pub audio_fallback: bool,
     pub stream_metrics: Option<StreamMetrics>,
+    /// Native production-stream counters for SRT/RTMP/RTMPS sessions.
+    pub production_stream_metrics: Option<ProductionStreamMetrics>,
     pub stream_queued_bytes: usize,
     pub last_error: Option<String>,
     pub stats: EngineStats,
+}
+
+/// Protocol-independent telemetry copied from a native production adapter.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProductionStreamMetrics {
+    pub video_submitted: u64,
+    pub audio_submitted: u64,
+    pub dropped: u64,
+    pub reconnects: u64,
+    pub max_submit_latency_nanos: u128,
 }
 
 /// Errors raised by session construction, media processing, or output lifecycle.
@@ -230,6 +247,8 @@ pub enum EngineError {
     Audio(AudioDeviceError),
     AudioMix(obs_rs_audio::AudioError),
     Output(OutputError),
+    #[cfg(feature = "production-gstreamer")]
+    ProductionOutput(GStreamerError),
     Io(std::io::Error),
     Worker(String),
     Busy(&'static str),
@@ -248,6 +267,8 @@ impl fmt::Display for EngineError {
             Self::Audio(error) => write!(formatter, "audio input failed: {error}"),
             Self::AudioMix(error) => write!(formatter, "audio mixer failed: {error}"),
             Self::Output(error) => write!(formatter, "output failed: {error}"),
+            #[cfg(feature = "production-gstreamer")]
+            Self::ProductionOutput(error) => write!(formatter, "production output failed: {error}"),
             Self::Io(error) => write!(formatter, "engine I/O failed: {error}"),
             Self::Worker(error) => write!(formatter, "engine worker failed: {error}"),
             Self::Busy(operation) => {
@@ -295,6 +316,13 @@ impl From<OutputError> for EngineError {
     }
 }
 
+#[cfg(feature = "production-gstreamer")]
+impl From<GStreamerError> for EngineError {
+    fn from(error: GStreamerError) -> Self {
+        Self::ProductionOutput(error)
+    }
+}
+
 impl From<std::io::Error> for EngineError {
     fn from(error: std::io::Error) -> Self {
         Self::Io(error)
@@ -308,6 +336,8 @@ struct RecordingOutput {
 enum StreamOutput {
     Tcp(StreamSession<TcpPacketTransport>),
     WebSocket(StreamSession<WebSocketPacketTransport>),
+    #[cfg(feature = "production-gstreamer")]
+    Production(GStreamerOutputSession),
 }
 
 impl StreamOutput {
@@ -315,11 +345,37 @@ impl StreamOutput {
         address: &str,
         capacity_bytes: usize,
         reconnect_attempts: u32,
+        video_format: VideoFormat,
+        audio_format: AudioFormat,
     ) -> Result<Self, EngineError> {
+        #[cfg(not(feature = "production-gstreamer"))]
+        let _ = (video_format, audio_format);
         let address = address.trim();
         if address.is_empty() {
             return Err(EngineError::InvalidConfiguration(
                 "stream address is empty".to_owned(),
+            ));
+        }
+        let production_scheme = matches!(address.split(':').next(), Some("rtmp" | "rtmps" | "srt"));
+        #[cfg(feature = "production-gstreamer")]
+        if production_scheme {
+            let (profile, destination) = ProductionDestination::from_stream_endpoint(address)?;
+            let capabilities = GStreamerCapabilitySnapshot::probe();
+            let plan = ProductionPipelinePlan::negotiate(profile, &destination, &capabilities)?;
+            return Ok(Self::Production(
+                GStreamerOutputSession::start_with_reconnect_limit(
+                    &plan,
+                    &destination,
+                    video_format,
+                    audio_format,
+                    reconnect_attempts,
+                )?,
+            ));
+        }
+        #[cfg(not(feature = "production-gstreamer"))]
+        if production_scheme {
+            return Err(EngineError::InvalidConfiguration(
+                "SRT/RTMP/RTMPS support was not compiled into this host".to_owned(),
             ));
         }
         let policy = ReconnectPolicy::new(reconnect_attempts);
@@ -352,6 +408,8 @@ impl StreamOutput {
             Self::WebSocket(stream) => {
                 stream.submit(packet)?;
             }
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(_) => {}
         }
         Ok(())
     }
@@ -360,6 +418,11 @@ impl StreamOutput {
         match self {
             Self::Tcp(stream) => Ok(stream.flush()?),
             Self::WebSocket(stream) => Ok(stream.flush()?),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(stream) => {
+                stream.poll_health()?;
+                Ok(0)
+            }
         }
     }
 
@@ -367,6 +430,8 @@ impl StreamOutput {
         match self {
             Self::Tcp(stream) => stream.reconnect()?,
             Self::WebSocket(stream) => stream.reconnect()?,
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(stream) => stream.reconnect_live()?,
         }
         Ok(())
     }
@@ -375,20 +440,42 @@ impl StreamOutput {
         match self {
             Self::Tcp(stream) => stream.state(),
             Self::WebSocket(stream) => stream.state(),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(stream) => match stream.state() {
+                NativeOutputState::Opening
+                | NativeOutputState::Retrying
+                | NativeOutputState::Lost => StreamState::Disconnected,
+                NativeOutputState::Ready => StreamState::Connected,
+                NativeOutputState::Failed => StreamState::Failed,
+                NativeOutputState::Closed => StreamState::Closed,
+            },
         }
     }
 
-    fn close(&mut self) {
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(clippy::unnecessary_wraps)
+    )]
+    fn close(&mut self) -> Result<(), EngineError> {
         match self {
             Self::Tcp(stream) => stream.close(),
             Self::WebSocket(stream) => stream.close(),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(stream) => stream.close()?,
         }
+        Ok(())
     }
 
-    fn metrics(&self) -> StreamMetrics {
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(clippy::unnecessary_wraps)
+    )]
+    fn metrics(&self) -> Option<StreamMetrics> {
         match self {
-            Self::Tcp(stream) => stream.metrics(),
-            Self::WebSocket(stream) => stream.metrics(),
+            Self::Tcp(stream) => Some(stream.metrics()),
+            Self::WebSocket(stream) => Some(stream.metrics()),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(_) => None,
         }
     }
 
@@ -396,7 +483,59 @@ impl StreamOutput {
         match self {
             Self::Tcp(stream) => stream.queued_bytes(),
             Self::WebSocket(stream) => stream.queued_bytes(),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(_) => 0,
         }
+    }
+
+    #[cfg_attr(not(feature = "production-gstreamer"), allow(clippy::unused_self))]
+    fn production_metrics(&self) -> Option<ProductionStreamMetrics> {
+        #[cfg(feature = "production-gstreamer")]
+        if let Self::Production(stream) = self {
+            let telemetry = stream.telemetry();
+            return Some(ProductionStreamMetrics {
+                video_submitted: telemetry.video_submitted(),
+                audio_submitted: telemetry.audio_submitted(),
+                dropped: telemetry.dropped(),
+                reconnects: telemetry.reconnects(),
+                max_submit_latency_nanos: telemetry.max_submit_latency_nanos(),
+            });
+        }
+        None
+    }
+
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(
+            clippy::needless_pass_by_value,
+            clippy::unnecessary_wraps,
+            clippy::unused_self,
+            unused_variables
+        )
+    )]
+    fn push_raw_audio(&mut self, buffer: AudioBuffer) -> Result<(), EngineError> {
+        #[cfg(feature = "production-gstreamer")]
+        if let Self::Production(stream) = self {
+            stream.push_audio(buffer)?;
+        }
+        Ok(())
+    }
+
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(
+            clippy::needless_pass_by_value,
+            clippy::unnecessary_wraps,
+            clippy::unused_self,
+            unused_variables
+        )
+    )]
+    fn push_raw_video(&mut self, frame: VideoFrame) -> Result<(), EngineError> {
+        #[cfg(feature = "production-gstreamer")]
+        if let Self::Production(stream) = self {
+            stream.push_video(frame)?;
+        }
+        Ok(())
     }
 }
 
@@ -638,10 +777,16 @@ impl EngineSession {
         let preview_frame = preview_frame.flatten();
 
         for audio in &audio_blocks {
+            if let Some(stream) = self.streaming.as_mut() {
+                stream.push_raw_audio(audio.clone())?;
+            }
             let packet = self.audio_encoder.encode(audio)?;
             self.emit_packet(packet)?;
         }
         if let Some(frame) = program_frame.as_ref() {
+            if let Some(stream) = self.streaming.as_mut() {
+                stream.push_raw_video(frame.clone())?;
+            }
             let packet = self.video_encoder.encode(frame)?;
             self.emit_packet(packet)?;
             self.stats.video_frames = self.stats.video_frames.saturating_add(1);
@@ -684,8 +829,14 @@ impl EngineSession {
         }
         let audio_blocks = self.drain_audio_until(frame.timestamp())?;
         for audio in &audio_blocks {
+            if let Some(stream) = self.streaming.as_mut() {
+                stream.push_raw_audio(audio.clone())?;
+            }
             let packet = self.audio_encoder.encode(audio)?;
             self.emit_packet(packet)?;
+        }
+        if let Some(stream) = self.streaming.as_mut() {
+            stream.push_raw_video(frame.clone())?;
         }
         let packet = self.video_encoder.encode(frame)?;
         self.emit_packet(packet)?;
@@ -699,6 +850,23 @@ impl EngineSession {
                 .first()
                 .map_or(frame.timestamp(), AudioBuffer::timestamp),
         );
+        Ok(())
+    }
+
+    /// Samples and mixes audio up to a preview timestamp without encoding or
+    /// emitting media. Frontends use this while outputs are idle so their
+    /// mixer meters stay live without paying for an idle video encode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when capture, mixing, or timeline advancement
+    /// fails.
+    pub fn monitor_audio_until(&mut self, timestamp: Timestamp) -> Result<(), EngineError> {
+        let audio_blocks = self.drain_audio_until(timestamp)?;
+        if let Some(latest) = audio_blocks.last() {
+            self.stats.audio_peak_milli = audio_peak_milli(latest);
+            self.stats.last_audio_timestamp = Some(latest.timestamp());
+        }
         Ok(())
     }
 
@@ -794,6 +962,8 @@ impl EngineSession {
             address,
             self.config.output_queue_bytes,
             self.config.reconnect_attempts,
+            self.format,
+            self.config.audio_format,
         ) {
             Ok(stream) => {
                 self.streaming = Some(stream);
@@ -848,7 +1018,7 @@ impl EngineSession {
         };
         self.streaming_lifecycle = OutputLifecycle::Stopping;
         let _ = stream.pump();
-        stream.close();
+        stream.close()?;
         self.streaming_lifecycle = OutputLifecycle::Idle;
         Ok(())
     }
@@ -886,9 +1056,11 @@ impl EngineSession {
     /// Returns stream counters and queued bytes.
     #[must_use]
     pub fn stream_metrics(&self) -> Option<(StreamMetrics, usize)> {
-        self.streaming
-            .as_ref()
-            .map(|stream| (stream.metrics(), stream.queued_bytes()))
+        self.streaming.as_ref().and_then(|stream| {
+            stream
+                .metrics()
+                .map(|metrics| (metrics, stream.queued_bytes()))
+        })
     }
 
     /// Returns the latest engine counters.
@@ -915,7 +1087,11 @@ impl EngineSession {
             stream_state: self.stream_state(),
             audio_backend: self.audio_backend.clone(),
             audio_fallback: self.audio_fallback,
-            stream_metrics: self.streaming.as_ref().map(StreamOutput::metrics),
+            stream_metrics: self.streaming.as_ref().and_then(StreamOutput::metrics),
+            production_stream_metrics: self
+                .streaming
+                .as_ref()
+                .and_then(StreamOutput::production_metrics),
             stream_queued_bytes: self
                 .streaming
                 .as_ref()
@@ -1016,7 +1192,7 @@ impl Drop for EngineSession {
     fn drop(&mut self) {
         self.abort_recording();
         if let Some(stream) = self.streaming.as_mut() {
-            stream.close();
+            let _ = stream.close();
         }
         self.audio_input.stop();
     }
@@ -1164,6 +1340,19 @@ mod tests {
     }
 
     #[test]
+    fn monitor_audio_updates_levels_without_encoding_video() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+
+        engine
+            .monitor_audio_until(Timestamp::ZERO)
+            .expect("monitor tick");
+
+        assert!(engine.stats().microphone_peak_milli > 0);
+        assert_eq!(engine.stats().video_frames, 0);
+        assert_eq!(engine.stats().audio_blocks, 1);
+    }
+
+    #[test]
     fn recording_contains_both_media_kinds_in_timestamp_order() {
         let token = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1222,6 +1411,24 @@ mod tests {
             .any(|packet| packet.kind() == obs_rs_output::PacketKind::Audio));
         assert!(bytes > 0);
         std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[test]
+    fn worker_publishes_monitor_levels_while_outputs_are_idle() {
+        let session = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let worker = EngineWorker::spawn_with_capacity(session, 1).expect("worker");
+
+        assert!(worker.try_monitor_audio(Timestamp::ZERO));
+        // A blocking command is a queue barrier: its reply arrives only after
+        // the preceding monitor sample has been processed and published.
+        worker
+            .set_channel_gain_milli(EngineAudioChannel::Microphone, 1_000)
+            .expect("queue barrier");
+
+        let snapshot = worker.snapshot();
+        assert!(snapshot.engine.stats.microphone_peak_milli > 0);
+        assert_eq!(snapshot.engine.stats.video_frames, 0);
+        assert!(!snapshot.engine.recording && !snapshot.engine.streaming);
     }
 
     #[test]
@@ -1314,6 +1521,26 @@ mod tests {
             .finish_streaming()
             .expect("stop a stream that failed");
         assert_eq!(engine.streaming_lifecycle(), OutputLifecycle::Idle);
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn production_schemes_create_native_stream_outputs() {
+        let video = project()
+            .active_profile_spec()
+            .expect("profile")
+            .video_format();
+        let audio = EngineConfig::default().audio_format();
+        for endpoint in [
+            "rtmp://127.0.0.1:9/live/test",
+            "rtmps://127.0.0.1:9/live/test",
+            "srt://127.0.0.1:9",
+        ] {
+            let mut stream = StreamOutput::connect(endpoint, 1_048_576, 1, video, audio)
+                .expect("native production pipeline");
+            assert!(matches!(stream, StreamOutput::Production(_)));
+            stream.close().expect("close live pipeline");
+        }
     }
 
     #[test]

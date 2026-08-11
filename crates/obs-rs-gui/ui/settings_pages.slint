@@ -88,7 +88,7 @@ export component StreamPage inherits VerticalLayout {
             label: I18n.text.settings_ui.stream_server;
             LineEdit {
                 text <=> root.streaming-address;
-                placeholder-text: "127.0.0.1:9000";
+                placeholder-text: "rtmps://server.example/live/stream-key";
                 edited => { root.changed(); }
                 horizontal-stretch: 1;
             }

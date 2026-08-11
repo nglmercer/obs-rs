@@ -139,31 +139,31 @@ export component SourcePropertiesWindow inherits Window {
                 SettingsGroup {
                     title: I18n.text.transform;
                     SettingRow {
-                        label: "Scale X / Y (‰)";
+                        label: I18n.text.property_ui.scale_axes;
                         SpinBox { value: root.item-scale-x; minimum: 1; maximum: 100000; edited(value) => root.edit-transform("scale-x", value); horizontal-stretch: 1; }
                         SpinBox { value: root.item-scale-y; minimum: 1; maximum: 100000; edited(value) => root.edit-transform("scale-y", value); horizontal-stretch: 1; }
                     }
                     SettingRow {
-                        label: "Position X / Y";
+                        label: I18n.text.property_ui.position_axes;
                         SpinBox { value: root.item-x; minimum: -32768; maximum: 32768; edited(value) => root.edit-transform("x", value); horizontal-stretch: 1; }
                         SpinBox { value: root.item-y; minimum: -32768; maximum: 32768; edited(value) => root.edit-transform("y", value); horizontal-stretch: 1; }
                     }
                     SettingRow {
-                        label: "Opacity (0–255)";
+                        label: I18n.text.property_ui.opacity;
                         SpinBox { value: root.item-opacity; minimum: 0; maximum: 255; edited(value) => root.edit-transform("opacity", value); horizontal-stretch: 1; }
                     }
                     SettingRow {
-                        label: "Flip";
-                        CheckBox { text: "Horizontal"; checked: root.item-flip-x; toggled => root.edit-transform("flip-x", self.checked ? "1" : "0"); }
-                        CheckBox { text: "Vertical"; checked: root.item-flip-y; toggled => root.edit-transform("flip-y", self.checked ? "1" : "0"); }
+                        label: I18n.text.property_ui.flip;
+                        CheckBox { text: I18n.text.property_ui.flip_horizontal; checked: root.item-flip-x; toggled => root.edit-transform("flip-x", self.checked ? "1" : "0"); }
+                        CheckBox { text: I18n.text.property_ui.flip_vertical; checked: root.item-flip-y; toggled => root.edit-transform("flip-y", self.checked ? "1" : "0"); }
                     }
                     SettingRow {
-                        label: "Crop L / T";
+                        label: I18n.text.property_ui.crop_left_top;
                         SpinBox { value: root.crop-left; minimum: 0; maximum: 32768; edited(value) => root.edit-transform("crop-left", value); horizontal-stretch: 1; }
                         SpinBox { value: root.crop-top; minimum: 0; maximum: 32768; edited(value) => root.edit-transform("crop-top", value); horizontal-stretch: 1; }
                     }
                     SettingRow {
-                        label: "Crop R / B";
+                        label: I18n.text.property_ui.crop_right_bottom;
                         SpinBox { value: root.crop-right; minimum: 0; maximum: 32768; edited(value) => root.edit-transform("crop-right", value); horizontal-stretch: 1; }
                         SpinBox { value: root.crop-bottom; minimum: 0; maximum: 32768; edited(value) => root.edit-transform("crop-bottom", value); horizontal-stretch: 1; }
                     }

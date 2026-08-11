@@ -354,7 +354,7 @@ impl Default for AppSettings {
             project_path: user_file(PROJECT_FILE),
             diagnostics_path: user_file(DIAGNOSTICS_FILE),
             recording_path: user_file(RECORDING_FILE),
-            streaming_address: "127.0.0.1:9000".to_owned(),
+            streaming_address: "rtmp://127.0.0.1/live/stream".to_owned(),
             audio_input_id: String::new(),
             restore_project: true,
             save_project_on_exit: true,
@@ -778,7 +778,7 @@ mod tests {
             channels: 1,
             hotkey_swap: "F1".to_owned(),
             preview_border_color: "#00FF88".to_owned(),
-            streaming_address: "10.0.0.5:9000".to_owned(),
+            streaming_address: "rtmps://media.example/live/test-key".to_owned(),
             ..AppSettings::default()
         };
 
@@ -809,6 +809,14 @@ mod tests {
         assert_eq!(
             decoded.preview_border_color,
             AppSettings::default().preview_border_color
+        );
+    }
+
+    #[test]
+    fn default_stream_address_selects_the_production_rtmp_path() {
+        assert_eq!(
+            AppSettings::default().streaming_address,
+            "rtmp://127.0.0.1/live/stream"
         );
     }
 

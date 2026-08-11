@@ -59,6 +59,7 @@ impl DockController {
             window.set_transition(ui.get_transition());
             window.set_recording(ui.get_recording());
             window.set_streaming(ui.get_streaming());
+            window.set_meters_paused(ui.get_meters_paused());
         }
     }
 
@@ -166,6 +167,13 @@ pub(crate) fn install_dock_callbacks(
         let order = read_ints(&ui.get_panel_order());
         let weights = resize(&weights, &order, index, delta);
         ui.set_panel_weights(ModelRc::new(VecModel::from(weights)));
+    });
+
+    let weak = ui.as_weak();
+    ui.on_toggle_meters_paused(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_meters_paused(!ui.get_meters_paused());
+        }
     });
 
     install_float(ui, state, &controller);
@@ -288,6 +296,7 @@ fn forward_to_studio(
     forward!(on_remove_source, invoke_remove_source, id);
     forward!(on_set_mixer_gain, invoke_set_mixer_gain, id, gain);
     forward!(on_toggle_mixer_mute, invoke_toggle_mixer_mute, id);
+    forward!(on_toggle_meters_paused, invoke_toggle_meters_paused);
     forward!(on_cut_transition, invoke_cut_transition);
     forward!(on_fade_transition, invoke_fade_transition);
     forward!(on_toggle_recording, invoke_toggle_recording);

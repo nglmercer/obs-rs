@@ -34,6 +34,7 @@ pub(crate) struct OutputRuntime {
     audio_input_id: Option<String>,
     audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
     recording_started_at: Option<Instant>,
+    stream_protocol: Option<&'static str>,
     /// A canvas change accepted while an output was running.
     ///
     /// Rebuilding the encoders mid-recording would break the container's frame
@@ -87,6 +88,7 @@ impl OutputRuntime {
                 .map(str::to_owned),
             audio_devices_cache: None,
             recording_started_at: None,
+            stream_protocol: None,
             staged_video_format: None,
         })
     }
@@ -155,11 +157,13 @@ impl OutputRuntime {
 
     pub(crate) fn start_streaming(&mut self, address: &str) -> Result<(), Box<dyn Error>> {
         self.worker.start_streaming(address)?;
+        self.stream_protocol = Some(stream_protocol_label(address));
         Ok(())
     }
 
     pub(crate) fn finish_streaming(&mut self) {
         self.worker.finish_streaming();
+        self.stream_protocol = None;
     }
 
     /// Enqueues a program frame and its due audio without blocking the GUI.
@@ -171,6 +175,11 @@ impl OutputRuntime {
         // Queue pressure is observable in output_metrics; dropping an animation
         // frame is preferable to stalling scene editing or preview rendering.
         let _ = self.worker.try_push_frame(frame.clone());
+    }
+
+    /// Samples live input for mixer meters while no output is encoding.
+    pub(crate) fn monitor_audio(&self, frame: &VideoFrame) {
+        let _ = self.worker.try_monitor_audio(frame.timestamp());
     }
 
     pub(crate) fn set_channel_gain_milli(
@@ -251,15 +260,21 @@ impl OutputRuntime {
         // The phase is what the operator needs: "starting" and "failed" are
         // both invisible in the open/closed boolean the handle exposes.
         let recording = engine.recording_lifecycle.label();
-        let streaming = engine.stream_state.map_or_else(
-            || engine.streaming_lifecycle.label(),
-            |state| match state {
-                StreamState::Connected => "connected",
-                StreamState::Disconnected => "reconnecting",
-                StreamState::Failed => "failed",
-                StreamState::Closed => "closed",
-            },
-        );
+        let mut streaming = engine
+            .stream_state
+            .map_or_else(
+                || engine.streaming_lifecycle.label(),
+                |state| match state {
+                    StreamState::Connected => "connected",
+                    StreamState::Disconnected => "reconnecting",
+                    StreamState::Failed => "failed",
+                    StreamState::Closed => "closed",
+                },
+            )
+            .to_owned();
+        if let Some(protocol) = self.stream_protocol {
+            streaming = format!("{streaming} {protocol}");
+        }
         let audio = if engine.audio_fallback {
             "audio fallback"
         } else {
@@ -276,15 +291,25 @@ impl OutputRuntime {
     pub(crate) fn output_metrics(&self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;
-        let (sent, dropped, reconnects) = engine.stream_metrics.map_or((0, 0, 0), |metrics| {
-            (
-                metrics.sent_packets(),
-                metrics.dropped_packets(),
-                metrics.reconnects(),
-            )
-        });
+        let (mut sent, mut dropped, mut reconnects) =
+            engine.stream_metrics.map_or((0, 0, 0), |metrics| {
+                (
+                    metrics.sent_packets(),
+                    metrics.dropped_packets(),
+                    metrics.reconnects(),
+                )
+            });
+        let mut native_submit_max = 0;
+        if let Some(metrics) = engine.production_stream_metrics {
+            sent = metrics
+                .video_submitted
+                .saturating_add(metrics.audio_submitted);
+            dropped = metrics.dropped;
+            reconnects = metrics.reconnects;
+            native_submit_max = metrics.max_submit_latency_nanos;
+        }
         format!(
-            "frames={} · audio_blocks={} · sent={} · dropped={} · queued={} B · worker_queued={} · reconnects={} · frame_drops={} · format_drops={} · peak={}‰",
+            "frames={} · audio_blocks={} · submitted={} · dropped={} · queued={} B · worker_queued={} · reconnects={} · native_submit_max={} ns · frame_drops={} · format_drops={} · peak={}‰",
             engine.stats.video_frames,
             engine.stats.audio_blocks,
             sent,
@@ -292,6 +317,7 @@ impl OutputRuntime {
             engine.stream_queued_bytes,
             snapshot.queued_frames,
             reconnects,
+            native_submit_max,
             snapshot.dropped_frames,
             self.format_drops,
             engine.stats.audio_peak_milli
@@ -333,19 +359,30 @@ impl OutputRuntime {
                     .join(",")
             },
         );
-        let (sent, dropped, reconnects) = engine.stream_metrics.map_or((0, 0, 0), |metrics| {
-            (
-                metrics.sent_packets(),
-                metrics.dropped_packets(),
-                metrics.reconnects(),
-            )
-        });
+        let (mut sent, mut dropped, mut reconnects) =
+            engine.stream_metrics.map_or((0, 0, 0), |metrics| {
+                (
+                    metrics.sent_packets(),
+                    metrics.dropped_packets(),
+                    metrics.reconnects(),
+                )
+            });
+        let mut native_submit_max = 0;
+        if let Some(metrics) = engine.production_stream_metrics {
+            sent = metrics
+                .video_submitted
+                .saturating_add(metrics.audio_submitted);
+            dropped = metrics.dropped;
+            reconnects = metrics.reconnects;
+            native_submit_max = metrics.max_submit_latency_nanos;
+        }
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_sent={} stream_dropped={} stream_reconnects={} frame_drops={} format_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_submit_max_nanos={} frame_drops={} format_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
             engine.streaming,
+            self.stream_protocol.unwrap_or("none"),
             engine.recording_lifecycle.label(),
             engine.streaming_lifecycle.label(),
             engine.stream_state,
@@ -357,6 +394,7 @@ impl OutputRuntime {
             sent,
             dropped,
             reconnects,
+            native_submit_max,
             snapshot.dropped_frames,
             self.format_drops,
             engine.stats.ticks,
@@ -491,6 +529,16 @@ impl OutputRuntime {
         } else {
             (OutputLifecycle::Failed, OutputLifecycle::Failed)
         }
+    }
+}
+
+pub(crate) fn stream_protocol_label(address: &str) -> &'static str {
+    match address.trim().split(':').next() {
+        Some("srt") => "SRT",
+        Some("rtmp") => "RTMP",
+        Some("rtmps") => "RTMPS",
+        Some("ws" | "wss") => "OBSR-WebSocket",
+        _ => "OBSR-TCP",
     }
 }
 

@@ -150,7 +150,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let _preview_timer = start_preview_timer(&ui, &state, &renderer, &output, &projectors);
+    let _preview_timer = start_preview_timer(&ui, &state, &renderer, &output, &projectors, &docks);
     ui.run()?;
     // Closing the window is the ordinary way to leave OBS, so the layout and
     // the project are written back here rather than only on an explicit Save.

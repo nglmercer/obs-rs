@@ -14,6 +14,8 @@ pub enum OutputProfileKind {
     MatroskaH264Aac,
     /// RTMP stream carrying H.264 and AAC.
     RtmpH264Aac,
+    /// TLS-protected RTMPS stream carrying H.264 and AAC.
+    RtmpsH264Aac,
     /// SRT stream carrying MPEG-TS, H.264, and AAC.
     SrtMpegTsH264Aac,
     /// WebRTC stream carrying VP8 and Opus.
@@ -28,6 +30,7 @@ impl OutputProfileKind {
             Self::ReferencePacket => "reference",
             Self::MatroskaH264Aac => "matroska-h264-aac",
             Self::RtmpH264Aac => "rtmp-h264-aac",
+            Self::RtmpsH264Aac => "rtmps-h264-aac",
             Self::SrtMpegTsH264Aac => "srt-mpegts-h264-aac",
             Self::WebRtcVp8Opus => "webrtc-vp8-opus",
         }
@@ -40,6 +43,7 @@ impl OutputProfileKind {
             "reference" => Some(Self::ReferencePacket),
             "matroska-h264-aac" => Some(Self::MatroskaH264Aac),
             "rtmp-h264-aac" => Some(Self::RtmpH264Aac),
+            "rtmps-h264-aac" => Some(Self::RtmpsH264Aac),
             "srt-mpegts-h264-aac" => Some(Self::SrtMpegTsH264Aac),
             "webrtc-vp8-opus" => Some(Self::WebRtcVp8Opus),
             _ => None,
@@ -69,6 +73,7 @@ pub enum OutputTransport {
     ObsrPkt1,
     Matroska,
     Rtmp,
+    Rtmps,
     SrtMpegTs,
     WebRtc,
 }
@@ -120,6 +125,19 @@ impl OutputProfile {
             OutputVideoCodec::H264,
             OutputAudioCodec::Aac,
             OutputTransport::Rtmp,
+            8 * 1_024 * 1_024,
+            2_000,
+        )
+    }
+
+    /// Default TLS-protected RTMPS profile.
+    #[must_use]
+    pub const fn rtmps_h264_aac() -> Self {
+        Self::new(
+            OutputProfileKind::RtmpsH264Aac,
+            OutputVideoCodec::H264,
+            OutputAudioCodec::Aac,
+            OutputTransport::Rtmps,
             8 * 1_024 * 1_024,
             2_000,
         )

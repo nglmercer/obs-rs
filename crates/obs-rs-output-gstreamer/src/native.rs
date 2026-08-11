@@ -80,6 +80,8 @@ pub struct GStreamerOutputSession {
     final_path: Option<PathBuf>,
     temp_path: Option<PathBuf>,
     transport: OutputTransport,
+    video_duration: gst::ClockTime,
+    maximum_reconnects: u32,
 }
 
 impl GStreamerOutputSession {
@@ -94,6 +96,21 @@ impl GStreamerOutputSession {
         video_format: VideoFormat,
         audio_format: AudioFormat,
     ) -> Result<Self, GStreamerError> {
+        Self::start_with_reconnect_limit(plan, destination, video_format, audio_format, 3)
+    }
+
+    /// Builds a production pipeline with an explicit live reconnect budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed runtime/pipeline error before accepting media.
+    pub fn start_with_reconnect_limit(
+        plan: &ProductionPipelinePlan,
+        destination: &ProductionDestination,
+        video_format: VideoFormat,
+        audio_format: AudioFormat,
+        maximum_reconnects: u32,
+    ) -> Result<Self, GStreamerError> {
         gst::init().map_err(native_error)?;
         destination.validate_for(plan.profile())?;
         let (description, final_path, temp_path) = pipeline_description(plan, destination)?;
@@ -106,6 +123,10 @@ impl GStreamerOutputSession {
         let video = appsrc(&pipeline, "video_source")?;
         let audio = appsrc(&pipeline, "audio_source")?;
         configure_sources(&video, &audio, plan, video_format, audio_format)?;
+        let video_duration = gst::ClockTime::from_nseconds(
+            1_000_000_000_u64.saturating_mul(u64::from(video_format.frame_rate().denominator()))
+                / u64::from(video_format.frame_rate().numerator()),
+        );
         pipeline
             .set_state(gst::State::Playing)
             .map_err(native_error)?;
@@ -118,6 +139,8 @@ impl GStreamerOutputSession {
             final_path,
             temp_path,
             transport: plan.profile().transport(),
+            video_duration,
+            maximum_reconnects,
         })
     }
 
@@ -151,10 +174,11 @@ impl GStreamerOutputSession {
         }
         let started = Instant::now();
         let mut buffer = gst::Buffer::from_mut_slice(frame.into_pixels());
-        buffer
+        let writable = buffer
             .get_mut()
-            .ok_or_else(|| GStreamerError::Native("new video buffer is shared".to_owned()))?
-            .set_pts(gst::ClockTime::from_nseconds(timestamp.as_nanos()));
+            .ok_or_else(|| GStreamerError::Native("new video buffer is shared".to_owned()))?;
+        writable.set_pts(gst::ClockTime::from_nseconds(timestamp.as_nanos()));
+        writable.set_duration(self.video_duration);
         if self.video.push_buffer(buffer).is_err() {
             self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
             return Err(GStreamerError::Native(
@@ -187,16 +211,23 @@ impl GStreamerOutputSession {
             ));
         }
         let started = Instant::now();
+        let duration = gst::ClockTime::from_nseconds(
+            u64::try_from(buffer.frames())
+                .unwrap_or(u64::MAX)
+                .saturating_mul(1_000_000_000)
+                / u64::from(buffer.format().sample_rate()),
+        );
         let samples = buffer.into_samples();
         let mut bytes = Vec::with_capacity(samples.len() * size_of::<f32>());
         for sample in samples {
             bytes.extend_from_slice(&sample.to_le_bytes());
         }
         let mut gst_buffer = gst::Buffer::from_mut_slice(bytes);
-        gst_buffer
+        let writable = gst_buffer
             .get_mut()
-            .ok_or_else(|| GStreamerError::Native("new audio buffer is shared".to_owned()))?
-            .set_pts(gst::ClockTime::from_nseconds(timestamp.as_nanos()));
+            .ok_or_else(|| GStreamerError::Native("new audio buffer is shared".to_owned()))?;
+        writable.set_pts(gst::ClockTime::from_nseconds(timestamp.as_nanos()));
+        writable.set_duration(duration);
         if self.audio.push_buffer(gst_buffer).is_err() {
             self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
             return Err(GStreamerError::Native(
@@ -220,6 +251,16 @@ impl GStreamerOutputSession {
         self.ensure_ready()?;
         let _ = self.video.end_of_stream();
         let _ = self.audio.end_of_stream();
+        // Live muxers do not publish a local index and remote sinks may never
+        // acknowledge EOS after a network loss. Stop them immediately so the
+        // UI cannot hang for the recording-only finalization timeout.
+        if self.transport != OutputTransport::Matroska {
+            self.pipeline
+                .set_state(gst::State::Null)
+                .map_err(native_error)?;
+            self.state = NativeOutputState::Closed;
+            return Ok(());
+        }
         if let Some(bus) = self.pipeline.bus() {
             let message = bus.timed_pop_filtered(
                 gst::ClockTime::from_seconds(10),
@@ -229,7 +270,10 @@ impl GStreamerOutputSession {
                 Some(gst::MessageView::Eos(_)) => {}
                 Some(gst::MessageView::Error(error)) => {
                     self.state = NativeOutputState::Failed;
-                    return Err(GStreamerError::Native(error.error().to_string()));
+                    let _ = error;
+                    return Err(GStreamerError::Native(
+                        "recording pipeline reported an asynchronous error".to_owned(),
+                    ));
                 }
                 _ => {
                     self.state = NativeOutputState::Failed;
@@ -256,20 +300,19 @@ impl GStreamerOutputSession {
     ///
     /// Returns the pipeline error when a recording fails or live recovery fails.
     pub fn poll_health(&mut self) -> Result<(), GStreamerError> {
-        let error = self.pipeline.bus().and_then(|bus| {
+        let failed = self.pipeline.bus().is_some_and(|bus| {
             bus.pop_filtered(&[gst::MessageType::Error])
-                .and_then(|message| match message.view() {
-                    gst::MessageView::Error(error) => Some(error.error().to_string()),
-                    _ => None,
-                })
+                .is_some_and(|message| matches!(message.view(), gst::MessageView::Error(_)))
         });
-        let Some(error) = error else {
+        if !failed {
             return Ok(());
-        };
+        }
         self.state = NativeOutputState::Lost;
         if self.transport == OutputTransport::Matroska {
             self.state = NativeOutputState::Failed;
-            return Err(GStreamerError::Native(error));
+            return Err(GStreamerError::Native(
+                "recording pipeline reported an asynchronous error".to_owned(),
+            ));
         }
         self.reconnect_live()
     }
@@ -283,6 +326,12 @@ impl GStreamerOutputSession {
         if self.transport == OutputTransport::Matroska {
             return Err(GStreamerError::Native(
                 "recording sessions cannot reconnect".to_owned(),
+            ));
+        }
+        if self.telemetry.reconnects >= u64::from(self.maximum_reconnects) {
+            self.state = NativeOutputState::Failed;
+            return Err(GStreamerError::Native(
+                "live output reconnect limit reached".to_owned(),
             ));
         }
         self.state = NativeOutputState::Retrying;
@@ -380,6 +429,7 @@ fn configure_sources(
     for (source, caps) in [(video, &video_caps), (audio, &audio_caps)] {
         source.set_caps(Some(caps));
         source.set_format(gst::Format::Time);
+        source.set_is_live(plan.profile().transport() != OutputTransport::Matroska);
         source.set_max_bytes(plan.bounded_queue_bytes() as u64);
         source.set_block(false);
         source.set_leaky_type(gst_app::AppLeakyType::Downstream);
@@ -401,10 +451,11 @@ fn pipeline_description(
             let temp = final_path.with_extension("mkv.part");
             Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. matroskamux name=mux ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
         }
-        (OutputTransport::Rtmp, ProductionDestination::Rtmp { .. }) =>
-            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. flvmux name=mux streamable=true ! rtmpsink name=output_sink"), None, None)),
+        (OutputTransport::Rtmp, ProductionDestination::Rtmp { .. })
+        | (OutputTransport::Rtmps, ProductionDestination::Rtmps { .. }) =>
+            Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. flvmux name=mux streamable=true ! rtmpsink name=output_sink"), None, None)),
         (OutputTransport::SrtMpegTs, ProductionDestination::Srt { .. }) =>
-            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. mpegtsmux name=mux ! srtsink name=output_sink"), None, None)),
+            Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. mpegtsmux name=mux ! srtsink name=output_sink"), None, None)),
         (OutputTransport::WebRtc, ProductionDestination::WebRtc { .. }) =>
             Ok((format!("webrtcbin name=output_sink bundle-policy=max-bundle {v}rtpvp8pay ! application/x-rtp,media=video,encoding-name=VP8,payload=96 ! output_sink. {a}rtpopuspay ! application/x-rtp,media=audio,encoding-name=OPUS,payload=97 ! output_sink."), None, None)),
         _ => Err(GStreamerError::InvalidEndpoint("destination does not match pipeline".to_owned())),
@@ -426,7 +477,9 @@ fn configure_sink(
             })?;
             sink.set_property("location", location);
         }
-        ProductionDestination::Rtmp { endpoint } => sink.set_property("location", endpoint),
+        ProductionDestination::Rtmp { endpoint } | ProductionDestination::Rtmps { endpoint } => {
+            sink.set_property("location", endpoint);
+        }
         ProductionDestination::Srt {
             endpoint,
             passphrase,
@@ -447,4 +500,113 @@ fn configure_sink(
 
 fn native_error(error: impl std::fmt::Display) -> GStreamerError {
     GStreamerError::Native(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use obs_rs_output::{OutputProfile, OutputProfileKind};
+
+    fn plan(profile: OutputProfile) -> ProductionPipelinePlan {
+        ProductionPipelinePlan {
+            profile,
+            video_encoder: "openh264enc".to_owned(),
+            audio_encoder: "avenc_aac".to_owned(),
+            bounded_queue_bytes: 1_048_576,
+            atomic_recording: false,
+        }
+    }
+
+    #[test]
+    fn live_protocols_build_exact_mux_and_sink_graphs() {
+        gst::init().expect("GStreamer runtime");
+        let cases = [
+            (
+                plan(OutputProfile::rtmp_h264_aac()),
+                ProductionDestination::Rtmp {
+                    endpoint: "rtmp://127.0.0.1/live/key".to_owned(),
+                },
+                "flvmux",
+                "rtmpsink",
+            ),
+            (
+                plan(OutputProfile::rtmps_h264_aac()),
+                ProductionDestination::Rtmps {
+                    endpoint: "rtmps://127.0.0.1/live/key".to_owned(),
+                },
+                "flvmux",
+                "rtmpsink",
+            ),
+            (
+                plan(OutputProfile::srt_mpeg_ts_h264_aac()),
+                ProductionDestination::Srt {
+                    endpoint: "srt://127.0.0.1:9000".to_owned(),
+                    passphrase: None,
+                },
+                "mpegtsmux",
+                "srtsink",
+            ),
+        ];
+        for (plan, destination, mux, sink) in cases {
+            let (description, final_path, temp_path) =
+                pipeline_description(&plan, &destination).expect("pipeline description");
+            assert!(description.contains(mux));
+            assert!(description.contains(sink));
+            assert!(final_path.is_none() && temp_path.is_none());
+            let element =
+                gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
+                    .expect("pipeline parses");
+            let pipeline = element.downcast::<gst::Pipeline>().expect("pipeline");
+            configure_sink(&pipeline, &destination, None).expect("sink endpoint");
+            let output_sink = pipeline.by_name("output_sink").expect("named sink");
+            let configured = match &destination {
+                ProductionDestination::Rtmp { .. } | ProductionDestination::Rtmps { .. } => {
+                    output_sink.property::<String>("location")
+                }
+                ProductionDestination::Srt { .. } => output_sink.property::<String>("uri"),
+                _ => unreachable!("only live protocols are in the cases"),
+            };
+            let (ProductionDestination::Rtmp { endpoint }
+            | ProductionDestination::Rtmps { endpoint }
+            | ProductionDestination::Srt { endpoint, .. }) = destination
+            else {
+                unreachable!("only live protocols are in the cases")
+            };
+            assert_eq!(configured, endpoint);
+        }
+        assert_eq!(
+            OutputProfile::rtmps_h264_aac().kind(),
+            OutputProfileKind::RtmpsH264Aac
+        );
+    }
+
+    #[test]
+    fn live_session_is_live_and_enforces_reconnect_budget() {
+        let plan = plan(OutputProfile::rtmp_h264_aac());
+        let destination = ProductionDestination::Rtmp {
+            endpoint: "rtmp://127.0.0.1:9/live/key".to_owned(),
+        };
+        let video = VideoFormat::new(
+            16,
+            16,
+            obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+        )
+        .expect("video format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let mut session = GStreamerOutputSession::start_with_reconnect_limit(
+            &plan,
+            &destination,
+            video,
+            audio,
+            1,
+        )
+        .expect("live session");
+
+        assert!(session.video.is_live());
+        assert!(session.audio.is_live());
+        session.reconnect_live().expect("first reconnect");
+        assert_eq!(session.telemetry().reconnects(), 1);
+        assert!(session.reconnect_live().is_err());
+        assert_eq!(session.state(), NativeOutputState::Failed);
+    }
 }

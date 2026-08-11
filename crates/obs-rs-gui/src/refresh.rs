@@ -122,7 +122,7 @@ pub(crate) fn refresh_ui(
         ui.set_preview_metrics(renderer.borrow().metrics_summary().into());
         Some(format!("Preview renderer: {error}"))
     } else {
-        let (_, render_error) = refresh_preview_frames(
+        let (_, _, render_error) = refresh_preview_frames(
             ui,
             renderer,
             preview_scene.as_deref(),
@@ -133,14 +133,14 @@ pub(crate) fn refresh_ui(
     ui.set_status_message(render_error.unwrap_or(notice).into());
 }
 
-/// Renders the two stage images for one animation tick and returns the program
-/// frame so an active output can consume the exact frame shown to the user.
+/// Renders the two stage images for one animation tick and returns both frames
+/// so output and idle audio monitoring can use the exact preview timestamps.
 pub(crate) fn refresh_preview_frames(
     ui: &MainWindow,
     renderer: &Rc<RefCell<PreviewRenderer>>,
     preview_scene: Option<&str>,
     program_scene: Option<&str>,
-) -> (Option<VideoFrame>, Option<String>) {
+) -> (Option<VideoFrame>, Option<VideoFrame>, Option<String>) {
     refresh_preview_frames_for_view(ui, renderer, preview_scene, program_scene, true)
 }
 
@@ -153,21 +153,34 @@ pub(crate) fn refresh_preview_frames_for_view(
     preview_scene: Option<&str>,
     program_scene: Option<&str>,
     render_program: bool,
-) -> (Option<VideoFrame>, Option<String>) {
-    let (preview_image, preview_error, program_image, program_frame, program_error, metrics) = {
+) -> (Option<VideoFrame>, Option<VideoFrame>, Option<String>) {
+    let (
+        preview_image,
+        preview_frame,
+        preview_error,
+        program_image,
+        program_frame,
+        program_error,
+        metrics,
+    ) = {
         let mut renderer = renderer.borrow_mut();
         let (preview_image, preview_frame, preview_error) =
             render_scene_image(&mut renderer, preview_scene);
         let (program_image, program_frame, program_error) = if !render_program {
             (ui.get_program_image(), None, None)
         } else if preview_scene == program_scene {
-            (preview_image.clone(), preview_frame, preview_error.clone())
+            (
+                preview_image.clone(),
+                preview_frame.clone(),
+                preview_error.clone(),
+            )
         } else {
             render_scene_image(&mut renderer, program_scene)
         };
         let metrics = renderer.metrics_summary();
         (
             preview_image,
+            preview_frame,
             preview_error,
             program_image,
             program_frame,
@@ -179,7 +192,11 @@ pub(crate) fn refresh_preview_frames_for_view(
     ui.set_preview_image(preview_image);
     ui.set_program_image(program_image);
     ui.set_preview_metrics(metrics.into());
-    (program_frame, preview_error.or(program_error))
+    (
+        preview_frame,
+        program_frame,
+        preview_error.or(program_error),
+    )
 }
 
 fn render_scene_image(
@@ -362,12 +379,21 @@ pub(crate) fn refresh_mixer_rows(ui: &MainWindow, state: &DesktopState) {
             id: channel.id().into(),
             name: channel.name().into(),
             gain: f32::from(channel.gain_milli()) / 1_000.0,
-            peak: f32::from(channel.peak_milli()) / 1_000.0,
+            peak_db: peak_db(channel.peak_milli()),
             muted: channel.muted(),
         })
         .collect::<Vec<_>>();
     if !model_matches(&ui.get_mixer_rows(), &mixer_rows) {
         ui.set_mixer_rows(ModelRc::new(VecModel::from(mixer_rows)));
+    }
+}
+
+/// Converts a bounded linear peak to the conventional -60..0 dBFS meter.
+pub(crate) fn peak_db(peak_milli: u16) -> f32 {
+    if peak_milli == 0 {
+        -60.0
+    } else {
+        (20.0 * (f32::from(peak_milli) / 1_000.0).log10()).clamp(-60.0, 0.0)
     }
 }
 

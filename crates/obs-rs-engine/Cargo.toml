@@ -5,6 +5,13 @@ edition.workspace = true
 publish.workspace = true
 version.workspace = true
 
+[features]
+default = []
+production-gstreamer = [
+    "dep:obs-rs-output-gstreamer",
+    "obs-rs-output-gstreamer/native",
+]
+
 [dependencies]
 obs-rs-audio = { path = "../obs-rs-audio" }
 obs-rs-builtins = { path = "../obs-rs-builtins" }
@@ -13,5 +20,6 @@ obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-core = { path = "../obs-rs-core" }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-output = { path = "../obs-rs-output" }
+obs-rs-output-gstreamer = { path = "../obs-rs-output-gstreamer", optional = true }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
 obs-rs-project = { path = "../obs-rs-project" }

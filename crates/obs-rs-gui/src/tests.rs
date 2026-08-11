@@ -1,16 +1,36 @@
 use super::i18n::catalog;
-use super::refresh::transition_label_for_locale;
+use super::output::stream_protocol_label;
+use super::refresh::{peak_db, transition_label_for_locale};
 use super::settings::AppSettings;
 use super::{
     capture_devices, initial_project, refresh_ui, source_settings, I18n, MainWindow, OutputRuntime,
     PreviewRenderer, SettingsWindow, SourcePropertiesWindow,
 };
+use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
+use slint::platform::PointerEventButton;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
+
+#[test]
+fn stream_protocol_status_uses_redacted_scheme_labels() {
+    let cases = [
+        ("srt://media.example:9000?passphrase=top-secret", "SRT"),
+        ("rtmp://media.example/live/top-secret", "RTMP"),
+        ("rtmps://media.example/live/top-secret", "RTMPS"),
+        ("ws://127.0.0.1:9000/private", "OBSR-WebSocket"),
+        ("127.0.0.1:9000", "OBSR-TCP"),
+    ];
+    for (endpoint, expected) in cases {
+        let label = stream_protocol_label(endpoint);
+        assert_eq!(label, expected);
+        assert!(!label.contains("top-secret"));
+        assert!(!label.contains("media.example"));
+    }
+}
 
 #[test]
 fn gui_project_has_control_room_scenes() {
@@ -40,6 +60,17 @@ fn transition_labels_are_user_facing() {
             },
         ),
         "Fade 500/1000"
+    );
+}
+
+#[test]
+fn mixer_peak_meter_uses_a_bounded_dbfs_scale() {
+    assert!((peak_db(0) - -60.0).abs() < f32::EPSILON);
+    assert!((peak_db(1_000) - 0.0).abs() < f32::EPSILON);
+    assert!((peak_db(500) - -6.020_600_3).abs() < 0.001);
+    assert!(
+        (peak_db(1) - -60.0).abs() < f32::EPSILON,
+        "the visible meter has a -60 dB floor"
     );
 }
 
@@ -409,6 +440,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {
             renderer_name: Some("software".into()),
+            mock_time: true,
             ..Default::default()
         },
     )))
@@ -425,6 +457,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
     refresh_ui(&ui, &state, &renderer);
     ui.show().expect("testing window should show");
+    exercise_navbar_popup(&ui);
     let snapshot = ui
         .window()
         .take_snapshot()
@@ -456,6 +489,24 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_monitor_selection(&ui, &state, &renderer);
     exercise_recording_controls(&ui, &state, &renderer);
     exercise_menu_actions(&ui, &state, &renderer);
+}
+
+/// Opens the File menu through its actual pointer target and proves its popup
+/// participates in hit testing outside the navbar's 26px bounds.
+fn exercise_navbar_popup(ui: &MainWindow) {
+    let file_button = ElementHandle::find_by_element_id(ui, "AppNavbar::file-button")
+        .next()
+        .expect("File menu button is discoverable");
+    file_button.mock_single_click(PointerEventButton::Left);
+
+    let entries = ElementHandle::find_by_element_type_name(ui, "MenuEntry").collect::<Vec<_>>();
+    assert_eq!(entries.len(), 7, "the complete File popup is visible");
+    entries[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(ui, "MenuEntry").count(),
+        0,
+        "selecting an entry closes the popup"
+    );
 }
 
 /// Drives the menu-bar actions through the real callbacks.
@@ -570,6 +621,12 @@ fn exercise_layout_restore(ui: &MainWindow) {
 /// own window through the real callbacks.
 fn exercise_dock_layout(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let controller = crate::install_dock_callbacks(ui, state);
+
+    assert!(!ui.get_meters_paused());
+    ui.invoke_toggle_meters_paused();
+    assert!(ui.get_meters_paused(), "the mixer monitor pauses");
+    ui.invoke_toggle_meters_paused();
+    assert!(!ui.get_meters_paused(), "the mixer monitor resumes");
 
     // Reordering moves the dragged dock one place and leaves the rest alone.
     let before = read_order(ui);

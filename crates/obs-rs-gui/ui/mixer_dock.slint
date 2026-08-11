@@ -9,11 +9,14 @@ export component MixerDock inherits Rectangle {
     in property <[MixerRow]> mixer-rows;
     in property <int> panel-kind;
     in property <bool> floating;
+    in property <bool> meters-paused;
     callback move-panel(int, int);
     callback float-panel(int);
     callback close-panel(int);
     callback set-mixer-gain(string, int);
     callback toggle-mixer-mute(string);
+    callback toggle-meters-paused();
+    callback open-mixer-settings();
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -59,8 +62,12 @@ export component MixerDock inherits Rectangle {
                                     overflow: elide;
                                 }
                                 Text {
-                                    text: channel.muted ? "MUTE" : "0.0 dB";
-                                    color: Palette.tokens.text-muted;
+                                    text: channel.muted
+                                        ? "MUTE"
+                                        : round(channel.peak-db * 10) / 10 + " dB";
+                                    color: channel.peak-db > -6
+                                        ? #ef4444
+                                        : (channel.peak-db > -18 ? #eab308 : Palette.tokens.text-muted);
                                     font-size: 9px;
                                 }
                             }
@@ -73,13 +80,22 @@ export component MixerDock inherits Rectangle {
                             }
                             Rectangle {
                                 width: 100%;
-                                height: 7px;
+                                height: 9px;
                                 background: Palette.tokens.window-bg;
-                                Rectangle {
-                                    width: channel.peak * 100px;
+                                meter-fill := Rectangle {
+                                    // A logarithmic -60..0 dBFS scale makes
+                                    // ordinary speech visible instead of
+                                    // compressing it into a few linear pixels.
+                                    width: Math.clamp((channel.peak-db + 60) / 60, 0, 1) * parent.width;
                                     height: 100%;
-                                    background: channel.muted ? Palette.tokens.meter-muted : Palette.tokens.meter;
+                                    background: channel.muted
+                                        ? Palette.tokens.meter-muted
+                                        : (channel.peak-db > -6
+                                            ? #ef4444
+                                            : (channel.peak-db > -18 ? #eab308 : Palette.tokens.meter));
                                 }
+                                Rectangle { x: parent.width * 0.7; width: 1px; height: 100%; background: Palette.tokens.border-strong; }
+                                Rectangle { x: parent.width * 0.9; width: 1px; height: 100%; background: Palette.tokens.border-strong; }
                             }
                             HorizontalBox {
                                 alignment: end;
@@ -97,8 +113,16 @@ export component MixerDock inherits Rectangle {
                 }
                 HorizontalBox {
                     spacing: 4px;
-                    CompactButton { icon-name: "pause"; hint: I18n.text.pause_meters; }
-                    CompactButton { icon-name: "settings"; hint: I18n.text.mixer_options; }
+                    CompactButton {
+                        icon-name: root.meters-paused ? "volume" : "pause";
+                        hint: root.meters-paused ? I18n.text.resume_meters : I18n.text.pause_meters;
+                        clicked => { root.toggle-meters-paused(); }
+                    }
+                    CompactButton {
+                        icon-name: "settings";
+                        hint: I18n.text.mixer_options;
+                        clicked => { root.open-mixer-settings(); }
+                    }
                     Rectangle { horizontal-stretch: 1; }
                 }
             }

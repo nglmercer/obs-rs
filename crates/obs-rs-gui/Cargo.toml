@@ -16,7 +16,7 @@ obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-capture = { path = "../obs-rs-capture" }
 obs-rs-core = { path = "../obs-rs-core" }
 obs-rs-diagnostics = { path = "../obs-rs-diagnostics" }
-obs-rs-engine = { path = "../obs-rs-engine" }
+obs-rs-engine = { path = "../obs-rs-engine", features = ["production-gstreamer"] }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-output = { path = "../obs-rs-output" }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }

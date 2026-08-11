@@ -5,6 +5,20 @@ import { LocaleOption } from "models.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
 
+// Menus must be native popups: an ordinary child of the 26px bar is painted
+// underneath the following canvas and cannot receive pointer events there.
+component MenuPopup inherits PopupWindow {
+    close-policy: close-on-click-outside;
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Palette.tokens.row-bg;
+        border-width: 1px;
+        border-color: Palette.tokens.border-strong;
+        @children
+    }
+}
+
 // Mirrors the OBS menu bar: a plain text strip flush with the window edge, no
 // branding or iconography. Each dropdown anchors to the x of its own button so
 // the layout stays correct when a translation changes the label widths.
@@ -29,7 +43,6 @@ export component AppNavbar inherits Rectangle {
     callback select-collection(string);
     callback set-locale(string);
 
-    property <int> open-menu: 0;
     height: 26px;
     background: Palette.tokens.row-bg;
     z: 10;
@@ -42,43 +55,43 @@ export component AppNavbar inherits Rectangle {
         alignment: start;
         file-button := MenuBarButton {
             label: I18n.text.nav_file;
-            active: open-menu == 1;
-            clicked => { root.open-menu = open-menu == 1 ? 0 : 1; }
+            active: file-popup.is-open;
+            clicked => { file-popup.show(); }
         }
         edit-button := MenuBarButton {
             label: I18n.text.nav_edit;
-            active: open-menu == 2;
-            clicked => { root.open-menu = open-menu == 2 ? 0 : 2; }
+            active: edit-popup.is-open;
+            clicked => { edit-popup.show(); }
         }
         view-button := MenuBarButton {
             label: I18n.text.nav_view;
-            active: open-menu == 3;
-            clicked => { root.open-menu = open-menu == 3 ? 0 : 3; }
+            active: view-popup.is-open;
+            clicked => { view-popup.show(); }
         }
         docks-button := MenuBarButton {
             label: I18n.text.nav_docks;
-            active: open-menu == 4;
-            clicked => { root.open-menu = open-menu == 4 ? 0 : 4; }
+            active: docks-popup.is-open;
+            clicked => { docks-popup.show(); }
         }
         profile-button := MenuBarButton {
             label: I18n.text.nav_profile;
-            active: open-menu == 5;
-            clicked => { root.open-menu = open-menu == 5 ? 0 : 5; }
+            active: profile-popup.is-open;
+            clicked => { profile-popup.show(); }
         }
         collection-button := MenuBarButton {
             label: I18n.text.nav_scene_collection;
-            active: open-menu == 6;
-            clicked => { root.open-menu = open-menu == 6 ? 0 : 6; }
+            active: collection-popup.is-open;
+            clicked => { collection-popup.show(); }
         }
         tools-button := MenuBarButton {
             label: I18n.text.nav_tools;
-            active: open-menu == 7;
-            clicked => { root.open-menu = open-menu == 7 ? 0 : 7; }
+            active: tools-popup.is-open;
+            clicked => { tools-popup.show(); }
         }
         help-button := MenuBarButton {
             label: I18n.text.nav_help;
-            active: open-menu == 8;
-            clicked => { root.open-menu = open-menu == 8 ? 0 : 8; }
+            active: help-popup.is-open;
+            clicked => { help-popup.show(); }
         }
         Rectangle { horizontal-stretch: 1; }
         for option in locale-options : MenuBarButton {
@@ -88,37 +101,29 @@ export component AppNavbar inherits Rectangle {
         }
     }
 
-    if open-menu == 1 : Rectangle {
+    file-popup := MenuPopup {
         x: file-button.x;
         y: root.height;
         width: 224px;
         height: 200px;
-        background: Palette.tokens.row-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        z: 30;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: I18n.text.menu_new_project; clicked => { root.menu-action("new-project"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_open_project; clicked => { root.menu-action("load-project"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_save; shortcut: "Ctrl+S"; clicked => { root.menu-action("save-project"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_recover_project; clicked => { root.menu-action("recover-project"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_export_diagnostics; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_new_project; clicked => { root.menu-action("new-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_open_project; clicked => { root.menu-action("load-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_save; shortcut: "Ctrl+S"; clicked => { root.menu-action("save-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_recover_project; clicked => { root.menu-action("recover-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_export_diagnostics; clicked => { root.menu-action("export-diagnostics"); file-popup.close(); } }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
-            MenuEntry { label: I18n.text.menu_settings; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_exit; destructive: true; clicked => { root.menu-action("exit"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_settings; clicked => { root.menu-action("settings"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_exit; destructive: true; clicked => { root.menu-action("exit"); file-popup.close(); } }
         }
     }
-    if open-menu == 2 : Rectangle {
+    edit-popup := MenuPopup {
         x: edit-button.x;
         y: root.height;
         width: 224px;
         height: 108px;
-        background: Palette.tokens.row-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        z: 30;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -126,26 +131,22 @@ export component AppNavbar inherits Rectangle {
                 label: I18n.text.menu_undo;
                 shortcut: "Ctrl+Z";
                 enabled: root.can-undo;
-                clicked => { root.menu-action("undo"); root.open-menu = 0; }
+                clicked => { root.menu-action("undo"); edit-popup.close(); }
             }
             MenuEntry {
                 label: I18n.text.menu_redo;
                 shortcut: "Ctrl+Y";
                 enabled: root.can-redo;
-                clicked => { root.menu-action("redo"); root.open-menu = 0; }
+                clicked => { root.menu-action("redo"); edit-popup.close(); }
             }
-            MenuEntry { label: I18n.text.menu_preferences; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_preferences; clicked => { root.menu-action("settings"); edit-popup.close(); } }
         }
     }
-    if open-menu == 3 : Rectangle {
+    view-popup := MenuPopup {
         x: view-button.x;
         y: root.height;
         width: 260px;
         height: 108px;
-        background: Palette.tokens.row-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        z: 30;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -153,21 +154,17 @@ export component AppNavbar inherits Rectangle {
                 label: I18n.text.menu_studio_mode;
                 checkable: true;
                 checked: root.studio-mode;
-                clicked => { root.select-view-mode(-1); root.open-menu = 0; }
+                clicked => { root.select-view-mode(-1); view-popup.close(); }
             }
-            MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("projector-preview"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_program_projector; clicked => { root.menu-action("projector-program"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("projector-preview"); view-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_program_projector; clicked => { root.menu-action("projector-program"); view-popup.close(); } }
         }
     }
-    if open-menu == 4 : Rectangle {
+    docks-popup := MenuPopup {
         x: docks-button.x;
         y: root.height;
         width: 224px;
         height: 196px;
-        background: Palette.tokens.row-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        z: 30;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -175,45 +172,41 @@ export component AppNavbar inherits Rectangle {
                 label: I18n.text.menu_sources;
                 checkable: true;
                 checked: root.show-sources;
-                clicked => { root.menu-action("toggle-sources"); root.open-menu = 0; }
+                clicked => { root.menu-action("toggle-sources"); docks-popup.close(); }
             }
             MenuEntry {
                 label: I18n.text.menu_scenes;
                 checkable: true;
                 checked: root.show-scenes;
-                clicked => { root.menu-action("toggle-scenes"); root.open-menu = 0; }
+                clicked => { root.menu-action("toggle-scenes"); docks-popup.close(); }
             }
             MenuEntry {
                 label: I18n.text.menu_audio_mixer;
                 checkable: true;
                 checked: root.show-mixer;
-                clicked => { root.menu-action("toggle-mixer"); root.open-menu = 0; }
+                clicked => { root.menu-action("toggle-mixer"); docks-popup.close(); }
             }
             MenuEntry {
                 label: I18n.text.menu_transitions;
                 checkable: true;
                 checked: root.show-transitions;
-                clicked => { root.menu-action("toggle-transitions"); root.open-menu = 0; }
+                clicked => { root.menu-action("toggle-transitions"); docks-popup.close(); }
             }
             MenuEntry {
                 label: I18n.text.menu_controls;
                 checkable: true;
                 checked: root.show-controls;
-                clicked => { root.menu-action("toggle-controls"); root.open-menu = 0; }
+                clicked => { root.menu-action("toggle-controls"); docks-popup.close(); }
             }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
-            MenuEntry { label: I18n.text.menu_reset_layout; clicked => { root.menu-action("reset-layout"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_reset_layout; clicked => { root.menu-action("reset-layout"); docks-popup.close(); } }
         }
     }
-    if open-menu == 5 : Rectangle {
+    profile-popup := MenuPopup {
         x: profile-button.x;
         y: root.height;
         width: 224px;
         height: 140px;
-        background: Palette.tokens.row-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        z: 30;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -221,23 +214,19 @@ export component AppNavbar inherits Rectangle {
                 label: profile.name;
                 checkable: true;
                 checked: profile.active;
-                clicked => { root.select-profile(profile.id); root.open-menu = 0; }
+                clicked => { root.select-profile(profile.id); profile-popup.close(); }
             }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
-            MenuEntry { label: I18n.text.menu_manage_profiles; clicked => { root.menu-action("settings"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_manage_profiles; clicked => { root.menu-action("settings"); profile-popup.close(); } }
         }
     }
-    if open-menu == 6 : Rectangle {
+    collection-popup := MenuPopup {
         x: collection-button.x;
         y: root.height;
         // The discovered collections are listed inline the way the profile
         // menu lists profiles, so switching is one click rather than a dialog.
         height: 108px + (root.collection-rows.length * 29px);
         width: 260px;
-        background: Palette.tokens.row-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        z: 30;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -245,44 +234,36 @@ export component AppNavbar inherits Rectangle {
                 label: collection.name;
                 checkable: true;
                 checked: collection.active;
-                clicked => { root.select-collection(collection.id); root.open-menu = 0; }
+                clicked => { root.select-collection(collection.id); collection-popup.close(); }
             }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
-            MenuEntry { label: I18n.text.menu_new_collection; clicked => { root.menu-action("new-collection"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_save_collection; clicked => { root.menu-action("save-collection"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_new_collection; clicked => { root.menu-action("new-collection"); collection-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_save_collection; clicked => { root.menu-action("save-collection"); collection-popup.close(); } }
         }
     }
-    if open-menu == 7 : Rectangle {
+    tools-popup := MenuPopup {
         x: tools-button.x;
         y: root.height;
         width: 224px;
         height: 108px;
-        background: Palette.tokens.row-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        z: 30;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: I18n.text.menu_source_properties; clicked => { root.menu-action("source-properties"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_source_filters; clicked => { root.menu-action("source-filters"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_diagnostic_log; clicked => { root.menu-action("export-diagnostics"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_source_properties; clicked => { root.menu-action("source-properties"); tools-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_source_filters; clicked => { root.menu-action("source-filters"); tools-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_diagnostic_log; clicked => { root.menu-action("export-diagnostics"); tools-popup.close(); } }
         }
     }
-    if open-menu == 8 : Rectangle {
+    help-popup := MenuPopup {
         x: help-button.x;
         y: root.height;
         width: 224px;
         height: 80px;
-        background: Palette.tokens.row-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        z: 30;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
-            MenuEntry { label: I18n.text.menu_documentation; clicked => { root.menu-action("documentation"); root.open-menu = 0; } }
-            MenuEntry { label: I18n.text.menu_about; clicked => { root.menu-action("about"); root.open-menu = 0; } }
+            MenuEntry { label: I18n.text.menu_documentation; clicked => { root.menu-action("documentation"); help-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_about; clicked => { root.menu-action("about"); help-popup.close(); } }
         }
     }
 }

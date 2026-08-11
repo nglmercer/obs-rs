@@ -50,6 +50,7 @@ pub(crate) fn start_preview_timer(
     renderer: &Rc<RefCell<PreviewRenderer>>,
     output: &Rc<RefCell<OutputRuntime>>,
     projectors: &Rc<ProjectorController>,
+    docks: &Rc<docks::DockController>,
 ) -> Timer {
     let timer = Timer::default();
     let weak = ui.as_weak();
@@ -57,6 +58,7 @@ pub(crate) fn start_preview_timer(
     let renderer = Rc::clone(renderer);
     let output = Rc::clone(output);
     let projectors = Rc::clone(projectors);
+    let docks = Rc::clone(docks);
     let mut last_output_ui_refresh = Instant::now()
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
@@ -98,7 +100,7 @@ pub(crate) fn start_preview_timer(
                 ui.set_status_message(format!("Output project sync failed: {error}").into());
             }
         }
-        let (program_frame, render_error) = refresh_preview_frames_for_view(
+        let (preview_frame, program_frame, render_error) = refresh_preview_frames_for_view(
             &ui,
             &renderer,
             preview_scene.as_deref(),
@@ -113,6 +115,8 @@ pub(crate) fn start_preview_timer(
         projectors.sync(&ui);
         if output_active {
             push_program_frame(&ui, program_frame, &output);
+        } else if let Some(frame) = preview_frame.as_ref().or(program_frame.as_ref()) {
+            output.borrow().monitor_audio(frame);
         }
         reconcile_output_lifecycle(&ui, &state, &output);
         // Worker counters remain live in the status bar, but formatting them
@@ -120,6 +124,7 @@ pub(crate) fn start_preview_timer(
         if last_output_ui_refresh.elapsed() >= Duration::from_millis(100) {
             refresh_output_ui(&ui, &output);
             refresh_input_meter(&ui, &state, &output);
+            docks.sync(&ui);
             last_output_ui_refresh = Instant::now();
         }
     });
@@ -177,6 +182,9 @@ fn refresh_input_meter(
     state: &Rc<RefCell<DesktopState>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
+    if ui.get_meters_paused() {
+        return;
+    }
     // A fallback generator is not the user's microphone, so its level must not
     // be shown as if the input were live.
     let peak = if output.borrow().audio_is_fallback() {

@@ -8,7 +8,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use obs_rs_media::VideoFrame;
+use obs_rs_media::{Timestamp, VideoFrame};
 
 use obs_rs_project::Project;
 
@@ -38,6 +38,7 @@ enum WorkerCommand {
     StartStreaming(String, mpsc::Sender<Result<(), String>>),
     FinishStreaming,
     PushFrame(VideoFrame),
+    MonitorAudio(Timestamp),
     SetGain(EngineAudioChannel, u16, mpsc::Sender<Result<(), String>>),
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
     SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
@@ -128,6 +129,7 @@ impl EngineWorker {
                     audio_backend: "worker unavailable".to_owned(),
                     audio_fallback: true,
                     stream_metrics: None,
+                    production_stream_metrics: None,
                     stream_queued_bytes: 0,
                     last_error: Some("engine worker status lock poisoned".to_owned()),
                     stats: EngineStats::default(),
@@ -226,6 +228,17 @@ impl EngineWorker {
                 false
             }
         }
+    }
+
+    /// Attempts to enqueue one monitor-only audio sample without blocking.
+    ///
+    /// This shares the command queue with output frames, so a busy worker can
+    /// discard a cosmetic meter refresh instead of delaying media or the UI.
+    #[must_use]
+    pub fn try_monitor_audio(&self, timestamp: Timestamp) -> bool {
+        self.sender
+            .try_send(WorkerCommand::MonitorAudio(timestamp))
+            .is_ok()
     }
 
     /// Applies live input gain on the worker-owned mixer.
@@ -360,6 +373,12 @@ fn worker_loop(
             WorkerCommand::PushFrame(frame) => {
                 queued_frames.fetch_sub(1, Ordering::Relaxed);
                 if let Err(error) = session.push_program_frame(&frame) {
+                    session.last_error = Some(error.to_string());
+                }
+                false
+            }
+            WorkerCommand::MonitorAudio(timestamp) => {
+                if let Err(error) = session.monitor_audio_until(timestamp) {
                     session.last_error = Some(error.to_string());
                 }
                 false
