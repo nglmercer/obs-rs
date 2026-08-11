@@ -525,20 +525,20 @@ mod tests {
     #[test]
     fn collections_live_beside_the_configured_project_file() {
         assert_eq!(
-            collections_root("/home/user/studio/obs-rs-project.txt"),
+            collections_root("/home/user/studio/obs-rs-project.json"),
             PathBuf::from("/home/user/studio/collections")
         );
         // A bare file name has no parent, so the collections folder is resolved
         // against the working directory instead of the filesystem root.
         assert_eq!(
-            collections_root("obs-rs-project.txt"),
+            collections_root("obs-rs-project.json"),
             PathBuf::from("./collections")
         );
     }
 
     #[test]
     fn the_open_document_is_listed_even_without_a_collections_directory() {
-        let rows = discover_collections("/nonexistent/studio/obs-rs-project.txt");
+        let rows = discover_collections("/nonexistent/studio/obs-rs-project.json");
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "obs-rs-project");

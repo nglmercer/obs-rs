@@ -52,6 +52,75 @@ fn stream_requeues_failed_packets_and_reconnects_without_loss() {
 }
 
 #[test]
+fn cloning_a_packet_shares_its_payload_instead_of_copying_it() {
+    // The engine hands the same packet to the recorder and the stream when both
+    // outputs are live. That fan-out is a refcount bump, not a second copy of
+    // the payload, which is what keeps peak memory flat at 60fps.
+    let payload = vec![7_u8; 4096];
+    let packet = EncodedPacket::new(PacketKind::Video, Timestamp::ZERO, true, payload)
+        .expect("packet");
+    let duplicate = packet.clone();
+
+    assert_eq!(
+        packet.payload().as_ptr(),
+        duplicate.payload().as_ptr(),
+        "a cloned packet must alias the original payload"
+    );
+    assert_eq!(packet, duplicate);
+}
+
+#[test]
+fn a_partially_sent_batch_is_requeued_in_timestamp_order() {
+    // P1 delivers, P2 fails, and P3 never leaves the batch. The undelivered
+    // tail has to go back on the front of the queue as [P2, P3]: the queue pops
+    // from the front, so pushing the tail front-first would re-send it as
+    // P3, P2 and break the monotonic timestamp guarantee downstream.
+    let packets = (1..=3)
+        .map(|index| {
+            EncodedPacket::new(
+                PacketKind::Video,
+                Timestamp::from_millis(index),
+                true,
+                vec![u8::try_from(index).expect("small index")],
+            )
+            .expect("packet")
+        })
+        .collect::<Vec<_>>();
+
+    let mut transport = MemoryPacketTransport::new();
+    transport.fail_send_after(1);
+    let mut stream = StreamSession::new(
+        transport,
+        32,
+        PacketDropPolicy::DropNewest,
+        ReconnectPolicy::new(2),
+    )
+    .expect("stream");
+    stream.connect().expect("connect stream");
+    for packet in packets {
+        stream.submit(packet).expect("queue packet");
+    }
+
+    assert!(stream.flush().is_err(), "the second send fails");
+    assert_eq!(stream.metrics().sent_packets(), 1);
+    assert_eq!(stream.queued_bytes(), 2, "two packets are re-queued");
+
+    stream.reconnect().expect("reconnect stream");
+    assert_eq!(stream.flush().expect("retry the tail"), 2);
+
+    let delivered = stream
+        .transport()
+        .sent()
+        .map(|packet| packet.timestamp().as_nanos())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        delivered,
+        vec![1_000_000, 2_000_000, 3_000_000],
+        "packets must arrive in order"
+    );
+}
+
+#[test]
 fn tcp_transport_rejects_send_when_disconnected() {
     let mut transport = TcpPacketTransport::new("127.0.0.1:1");
     assert_eq!(transport.address(), "127.0.0.1:1");

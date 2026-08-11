@@ -3,6 +3,12 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
+pub mod json;
+pub mod random;
+
+pub use json::{Json, JsonError};
+pub use random::{fill_random, random_u64, RandomError, RandomPool};
+
 use std::{fmt, str, str::FromStr};
 
 /// Maximum UTF-8 byte length accepted for an [`Identifier`].

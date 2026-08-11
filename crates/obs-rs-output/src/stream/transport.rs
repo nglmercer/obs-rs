@@ -16,7 +16,8 @@ pub const MAX_MEMORY_TRANSPORT_PACKETS: usize = 1_024;
 
 pub struct MemoryPacketTransport {
     connected: bool,
-    fail_next_send: bool,
+    /// Successful sends remaining before one is injected to fail, if any.
+    sends_before_failure: Option<usize>,
     sent: VecDeque<EncodedPacket>,
     dropped: u64,
 }
@@ -27,7 +28,7 @@ impl MemoryPacketTransport {
     pub const fn new() -> Self {
         Self {
             connected: false,
-            fail_next_send: false,
+            sends_before_failure: None,
             sent: VecDeque::new(),
             dropped: 0,
         }
@@ -35,7 +36,16 @@ impl MemoryPacketTransport {
 
     /// Makes the next send fail and disconnect the transport.
     pub fn fail_next_send(&mut self) {
-        self.fail_next_send = true;
+        self.fail_send_after(0);
+    }
+
+    /// Makes the send that follows `count` successful ones fail.
+    ///
+    /// Failing partway through a batch is what exercises the session's
+    /// re-queue path, which has to restore the undelivered tail in its original
+    /// order for downstream timestamps to stay monotonic.
+    pub fn fail_send_after(&mut self, count: usize) {
+        self.sends_before_failure = Some(count);
     }
 
     /// Returns packets successfully delivered to the transport, oldest first.
@@ -78,10 +88,14 @@ impl PacketTransport for MemoryPacketTransport {
                 "transport is disconnected".to_owned(),
             ));
         }
-        if self.fail_next_send {
-            self.fail_next_send = false;
-            self.connected = false;
-            return Err(OutputError::Transport("injected send failure".to_owned()));
+        match self.sends_before_failure {
+            Some(0) => {
+                self.sends_before_failure = None;
+                self.connected = false;
+                return Err(OutputError::Transport("injected send failure".to_owned()));
+            }
+            Some(remaining) => self.sends_before_failure = Some(remaining - 1),
+            None => {}
         }
         if self.sent.len() == MAX_MEMORY_TRANSPORT_PACKETS {
             let _ = self.sent.pop_front();

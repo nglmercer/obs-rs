@@ -1,9 +1,11 @@
 use std::{
-    cell::Cell,
+    cell::RefCell,
     io::{Read, Write},
     net::{TcpStream, ToSocketAddrs},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
+
+use obs_rs_util::{fill_random, RandomError, RandomPool};
 
 use crate::{
     error::OutputError, types::EncodedPacket, MAX_WEBSOCKET_HEADER_BYTES, NETWORK_WRITE_TIMEOUT,
@@ -12,22 +14,26 @@ use crate::{
 
 use super::PacketTransport;
 
+/// Bytes of operating-system entropy each thread buffers for frame masking.
+///
+/// Sized so one refill covers 64 frames, which keeps the syscall well off the
+/// per-frame send path without holding meaningful unused entropy in memory.
+const MASK_POOL_BYTES: usize = 256;
+
 thread_local! {
-    /// Per-thread masking-key counter.
+    /// Per-thread pool of operating-system entropy for frame masking keys.
     ///
-    /// RFC 6455 only requires the mask to be unpredictable per frame, not
-    /// globally ordered, so a thread-local counter avoids the cache-line
-    /// contention a shared atomic caused on every send.
-    static NEXT_WEBSOCKET_NONCE: Cell<u64> = const { Cell::new(1) };
+    /// RFC 6455 5.3 requires every frame's masking key to be unpredictable and
+    /// derived from a strong source of entropy, so that an intermediary cannot
+    /// be induced to interpret attacker-chosen bytes as a framed message. The
+    /// incrementing counter this used previously satisfied neither property.
+    static MASK_ENTROPY: RefCell<RandomPool<MASK_POOL_BYTES>> =
+        const { RefCell::new(RandomPool::new()) };
 }
 
-/// Returns the next masking nonce for this thread.
-fn next_websocket_nonce() -> u64 {
-    NEXT_WEBSOCKET_NONCE.with(|nonce| {
-        let current = nonce.get();
-        nonce.set(current.wrapping_add(1));
-        current
-    })
+/// Returns a fresh, unpredictable four-byte masking key.
+fn websocket_mask() -> Result<[u8; 4], RandomError> {
+    MASK_ENTROPY.with(|pool| pool.borrow_mut().next_bytes::<4>())
 }
 
 /// A standard RFC 6455 WebSocket client carrying OBS-RS binary packets.
@@ -89,7 +95,7 @@ impl PacketTransport for WebSocketPacketTransport {
             .map_err(|error| {
                 OutputError::Transport(format!("WebSocket write timeout setup failed: {error}"))
             })?;
-        let key = websocket_key();
+        let key = websocket_key()?;
         let request = format!(
             "GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
         );
@@ -168,20 +174,16 @@ pub(crate) fn parse_websocket_endpoint(
     Ok((authority.to_owned(), authority.to_owned(), path.to_owned()))
 }
 
-fn websocket_key() -> String {
-    let counter = next_websocket_nonce();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0_u64, |duration| {
-            u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
-        });
-    let process = u64::from(std::process::id());
-    let first = counter ^ now.rotate_left(17) ^ process.rotate_right(7);
-    let second = first.wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(29);
+/// Returns a fresh `Sec-WebSocket-Key` for one handshake.
+///
+/// RFC 6455 4.1 requires this to be a 16-byte value "selected randomly" for
+/// each connection; the server echoes its digest back, which is what proves the
+/// peer actually completed a WebSocket handshake rather than replaying a
+/// cached HTTP response.
+fn websocket_key() -> Result<String, OutputError> {
     let mut nonce = [0_u8; 16];
-    nonce[..8].copy_from_slice(&first.to_be_bytes());
-    nonce[8..].copy_from_slice(&second.to_be_bytes());
-    base64_encode(&nonce)
+    fill_random(&mut nonce).map_err(|error| OutputError::Transport(error.to_string()))?;
+    Ok(base64_encode(&nonce))
 }
 
 pub(crate) fn read_websocket_headers(stream: &mut TcpStream) -> Result<String, OutputError> {
@@ -325,10 +327,7 @@ fn write_websocket_packet(stream: &mut TcpStream, packet: &EncodedPacket) -> std
         10
     };
 
-    let nonce = next_websocket_nonce();
-    let mask = nonce.to_le_bytes()[..4]
-        .try_into()
-        .unwrap_or([0x4d_u8, 0x53, 0x52, 0x53]);
+    let mask = websocket_mask().map_err(std::io::Error::other)?;
     let mut body_header = [0_u8; WEBSOCKET_PACKET_HEADER_BYTES];
     body_header[..8].copy_from_slice(WEBSOCKET_PACKET_MAGIC);
     body_header[8] = packet.kind.tag();
@@ -451,4 +450,40 @@ pub(crate) fn sha1_digest(input: &[u8]) -> [u8; 20] {
         output[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn masking_keys_are_unpredictable_rather_than_sequential() {
+        // The counter this replaced produced masks one apart, so a caller could
+        // predict the next frame's key from the previous one. Two hundred draws
+        // colliding by chance has probability under 2^-16.
+        let masks = (0..200)
+            .map(|_| websocket_mask().expect("entropy is available"))
+            .collect::<HashSet<_>>();
+
+        assert!(
+            masks.len() > 190,
+            "expected distinct masking keys, got {} unique of 200",
+            masks.len()
+        );
+    }
+
+    #[test]
+    fn each_handshake_uses_a_fresh_random_key() {
+        let keys = (0..32)
+            .map(|_| websocket_key().expect("entropy is available"))
+            .collect::<HashSet<_>>();
+
+        assert_eq!(keys.len(), 32, "handshake keys must not repeat");
+        for key in &keys {
+            // 16 random bytes base64-encode to 24 characters with one pad.
+            assert_eq!(key.len(), 24, "{key}");
+            assert!(key.ends_with('='), "{key}");
+        }
+    }
 }

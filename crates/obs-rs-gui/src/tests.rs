@@ -505,7 +505,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     )))
     .expect("software testing backend should initialize");
     let ui = MainWindow::new().expect("GUI should instantiate in the testing backend");
-    ui.set_project_path("obs-rs-project.txt".into());
+    ui.set_project_path("obs-rs-project.json".into());
     ui.set_diagnostics_path("obs-rs-diagnostics.obsrdg".into());
     ui.set_recording_path("obs-rs-recording.y4m".into());
     ui.set_streaming_address("127.0.0.1:9000".into());

@@ -1,0 +1,147 @@
+{
+  "active_profile": "live",
+  "format": "obs-rs-project",
+  "profiles": [
+    {
+      "id": "live",
+      "name": "Live profile",
+      "output_kind": "reference",
+      "render_backend": "cpu",
+      "scenes": [
+        {
+          "id": "intermission",
+          "name": "Intermission",
+          "sources": [
+            {
+              "filters": [],
+              "id": "camera_capture",
+              "kind": "camera_capture",
+              "locked": false,
+              "name": "Video capture device 1",
+              "settings": {
+                "device_id": "v4l2-video0",
+                "height": "360",
+                "width": "640"
+              },
+              "transform": {
+                "crop_bottom": 0,
+                "crop_left": 0,
+                "crop_right": 0,
+                "crop_top": 0,
+                "flip_x": false,
+                "flip_y": false,
+                "opacity": 255,
+                "scale_x_milli": 400,
+                "scale_y_milli": 350,
+                "translate_x": 372,
+                "translate_y": 4
+              },
+              "visible": true
+            },
+            {
+              "filters": [],
+              "id": "wayland_screen_capture",
+              "kind": "wayland_screen_capture",
+              "locked": false,
+              "name": "Screen capture 1",
+              "settings": {
+                "capture_cursor": "true",
+                "height": "360",
+                "restore_token": "",
+                "width": "640"
+              },
+              "transform": {
+                "crop_bottom": 0,
+                "crop_left": 0,
+                "crop_right": 0,
+                "crop_top": 0,
+                "flip_x": false,
+                "flip_y": false,
+                "opacity": 255,
+                "scale_x_milli": 1000,
+                "scale_y_milli": 1000,
+                "translate_x": 0,
+                "translate_y": 0
+              },
+              "visible": true
+            }
+          ]
+        },
+        {
+          "id": "preview",
+          "name": "Preview",
+          "sources": [
+            {
+              "filters": [],
+              "id": "background",
+              "kind": "color_source",
+              "locked": false,
+              "name": "Background",
+              "settings": {
+                "color": "#102030FF",
+                "height": "360",
+                "width": "640"
+              },
+              "transform": {
+                "crop_bottom": 0,
+                "crop_left": 0,
+                "crop_right": 0,
+                "crop_top": 0,
+                "flip_x": false,
+                "flip_y": false,
+                "opacity": 255,
+                "scale_x_milli": 1000,
+                "scale_y_milli": 1000,
+                "translate_x": 0,
+                "translate_y": 0
+              },
+              "visible": true
+            }
+          ]
+        },
+        {
+          "id": "program",
+          "name": "Program",
+          "sources": [
+            {
+              "filters": [],
+              "id": "background",
+              "kind": "color_source",
+              "locked": false,
+              "name": "Background",
+              "settings": {
+                "color": "#203040FF",
+                "height": "360",
+                "width": "640"
+              },
+              "transform": {
+                "crop_bottom": 0,
+                "crop_left": 0,
+                "crop_right": 0,
+                "crop_top": 0,
+                "flip_x": false,
+                "flip_y": false,
+                "opacity": 255,
+                "scale_x_milli": 1000,
+                "scale_y_milli": 1000,
+                "translate_x": 0,
+                "translate_y": 0
+              },
+              "visible": true
+            }
+          ]
+        }
+      ],
+      "video": {
+        "frame_rate": {
+          "denominator": 1,
+          "numerator": 30
+        },
+        "height": 360,
+        "width": 640
+      }
+    }
+  ],
+  "title": "OBS-RS Studio",
+  "version": 1
+}

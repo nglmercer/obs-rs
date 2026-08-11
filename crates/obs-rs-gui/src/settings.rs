@@ -16,7 +16,7 @@ use crate::ThemeTokens;
 /// File name the settings document is read from and written to.
 const SETTINGS_FILE: &str = "obs-rs-settings.toml";
 /// Default file names inside the per-user directory.
-const PROJECT_FILE: &str = "obs-rs-project.txt";
+const PROJECT_FILE: &str = "obs-rs-project.json";
 const DIAGNOSTICS_FILE: &str = "obs-rs-diagnostics.obsrdg";
 const RECORDING_FILE: &str = "obs-rs-recording.obsr";
 

@@ -352,7 +352,7 @@ export component AdvancedPage inherits VerticalLayout {
             label: I18n.text.settings_ui.project_file;
             LineEdit {
                 text <=> root.project-path;
-                placeholder-text: "obs-rs-project.txt";
+                placeholder-text: "obs-rs-project.json";
                 edited => { root.changed(); }
                 horizontal-stretch: 1;
             }

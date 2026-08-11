@@ -182,7 +182,11 @@ impl<T: PacketTransport> StreamSession<T> {
         if let Err(error) = result {
             self.metrics.send_failures = self.metrics.send_failures.saturating_add(1);
             self.state = StreamState::Disconnected;
-            // Re-queue the undelivered tail in its original order.
+            // Re-queue the undelivered tail in its original order. The
+            // reversal is required, not redundant: `push_front` prepends and
+            // `pop` takes from the front, so walking the tail newest-first is
+            // what leaves the queue oldest-first. Dropping the `.rev()` sends
+            // the tail back to front and breaks monotonic delivery.
             for packet in batch.into_iter().skip(sent).rev() {
                 self.queue.push_front(packet)?;
             }

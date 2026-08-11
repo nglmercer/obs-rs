@@ -3,7 +3,6 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
-pub(crate) const MAGIC: &str = "OBSRPROJECT1";
 pub const MAX_PROJECT_BYTES: usize = 1_048_576;
 
 mod codec;

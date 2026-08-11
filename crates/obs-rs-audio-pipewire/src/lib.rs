@@ -92,6 +92,57 @@ impl Default for PipeWireAudioProvider {
     }
 }
 
+/// The `pw-cat` file operand meaning "use standard input/output".
+///
+/// `pw-cat` always takes a file to read from or write to; `-` selects the
+/// stdio stream instead of a path, which is what lets OBS-RS pipe raw samples
+/// to and from the process rather than going through a temporary file. It is
+/// positional and mandatory: dropping it makes `pw-cat` exit with a usage
+/// error, and capture silently stops working.
+const STDIO_OPERAND: &str = "-";
+
+/// Direction one `pw-cat` invocation runs in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CatMode {
+    /// Read samples from a node, writing them to stdout.
+    Record,
+    /// Write samples to a node, reading them from stdin.
+    Playback,
+}
+
+impl CatMode {
+    const fn flag(self) -> &'static str {
+        match self {
+            Self::Record => "--record",
+            Self::Playback => "--playback",
+        }
+    }
+}
+
+/// Builds the complete `pw-cat` argument vector for one stream.
+///
+/// Kept separate from spawning so the command shape is covered by a test: the
+/// arguments are load-bearing and a silent change to them degrades capture to
+/// a runtime failure that no compile-time check would catch.
+fn cat_arguments(mode: CatMode, format: AudioFormat, target: Option<&str>) -> Vec<String> {
+    let mut arguments = vec![
+        mode.flag().to_owned(),
+        "--raw".to_owned(),
+        "--format".to_owned(),
+        "f32".to_owned(),
+        "--rate".to_owned(),
+        format.sample_rate().to_string(),
+        "--channels".to_owned(),
+        format.channels().to_string(),
+    ];
+    if let Some(target) = target {
+        arguments.push("--target".to_owned());
+        arguments.push(target.to_owned());
+    }
+    arguments.push(STDIO_OPERAND.to_owned());
+    arguments
+}
+
 impl AudioInputProvider for PipeWireAudioProvider {
     fn discover(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
         let output = Command::new(&self.dump_command).output().map_err(|error| {
@@ -138,23 +189,11 @@ impl AudioInputProvider for PipeWireAudioProvider {
         };
         let mut command = Command::new(&self.cat_command);
         command
-            .args([
-                "--record",
-                "--raw",
-                "--format",
-                "f32",
-                "--rate",
-                format.sample_rate().to_string().as_str(),
-                "--channels",
-                format.channels().to_string().as_str(),
-            ])
+            .args(cat_arguments(CatMode::Record, format, target))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        if let Some(target) = target {
-            command.args(["--target", target]);
-        }
-        let mut child = command.arg("-").spawn().map_err(|error| {
+        let mut child = command.spawn().map_err(|error| {
             AudioDeviceError::Unavailable(format!(
                 "PipeWire capture command {} failed to start: {error}",
                 self.cat_command.display()
@@ -199,23 +238,11 @@ impl AudioOutputProvider for PipeWireAudioProvider {
         };
         let mut command = Command::new(&self.cat_command);
         command
-            .args([
-                "--playback",
-                "--raw",
-                "--format",
-                "f32",
-                "--rate",
-                format.sample_rate().to_string().as_str(),
-                "--channels",
-                format.channels().to_string().as_str(),
-            ])
+            .args(cat_arguments(CatMode::Playback, format, target))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        if let Some(target) = target {
-            command.args(["--target", target]);
-        }
-        let mut child = command.arg("-").spawn().map_err(|error| {
+        let mut child = command.spawn().map_err(|error| {
             AudioDeviceError::Unavailable(format!(
                 "PipeWire playback command {} failed to start: {error}",
                 self.cat_command.display()
@@ -693,5 +720,65 @@ mod tests {
         assert_eq!(node_target("pipewire-node-42"), Some("42"));
         assert_eq!(node_target("pipewire-node-name"), None);
         assert_eq!(node_target("pipewire-default"), None);
+    }
+
+    #[test]
+    fn the_capture_command_keeps_its_load_bearing_argument_shape() {
+        let format = AudioFormat::new(48_000, 2).expect("format");
+
+        assert_eq!(
+            cat_arguments(CatMode::Record, format, Some("51")),
+            [
+                "--record",
+                "--raw",
+                "--format",
+                "f32",
+                "--rate",
+                "48000",
+                "--channels",
+                "2",
+                "--target",
+                "51",
+                "-",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_playback_command_keeps_its_load_bearing_argument_shape() {
+        let format = AudioFormat::new(44_100, 1).expect("format");
+
+        assert_eq!(
+            cat_arguments(CatMode::Playback, format, None),
+            [
+                "--playback",
+                "--raw",
+                "--format",
+                "f32",
+                "--rate",
+                "44100",
+                "--channels",
+                "1",
+                "-",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_stdio_operand_is_always_last() {
+        // `pw-cat` takes the file operand positionally, so it has to follow the
+        // options; a target appended after it would be read as the file name.
+        let format = AudioFormat::new(48_000, 2).expect("format");
+
+        for target in [None, Some("42")] {
+            for mode in [CatMode::Record, CatMode::Playback] {
+                let arguments = cat_arguments(mode, format, target);
+                assert_eq!(
+                    arguments.last().map(String::as_str),
+                    Some(STDIO_OPERAND),
+                    "{mode:?} with target {target:?}"
+                );
+            }
+        }
     }
 }

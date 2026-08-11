@@ -13,7 +13,14 @@ pub trait VideoEncoder {
     /// Returns the fixed input format accepted by the encoder.
     fn format(&self) -> VideoFormat;
 
-    /// Encodes one frame into one validated packet.
+    /// Encodes one borrowed frame into one validated packet.
+    ///
+    /// Because the frame is borrowed, an encoder whose payload is the pixel
+    /// buffer itself has no choice but to copy it — a full frame per call, which
+    /// at 4K60 is roughly 500 MB/s of pure memcpy. **If the caller is finished
+    /// with the frame, use [`VideoEncoder::encode_owned`] instead**, which lets
+    /// those encoders move the buffer into the packet for free. Reach for this
+    /// method only when the frame is genuinely still needed afterwards.
     ///
     /// # Errors
     ///
@@ -69,6 +76,9 @@ impl VideoEncoder for RawVideoEncoder {
                 actual: frame.format(),
             });
         }
+        // This encoder's payload *is* the pixel buffer, so a borrowed frame
+        // forces a full copy here. `encode_owned` avoids it entirely; see the
+        // trait docs.
         EncodedPacket::new(
             PacketKind::Video,
             frame.timestamp(),

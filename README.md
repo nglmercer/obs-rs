@@ -73,9 +73,8 @@ control surfaces:
   PipeWire-or-fallback audio, `OBSRPKT1` audio/video recording, and bounded
   TCP/WebSocket output for headless and GUI hosts.
 - `obs-rs-project` provides Rust-owned profiles, ordered scenes/source definitions,
-  command dispatch, dirty-state tracking, deterministic escaped persistence, and
-  atomic project-file save/load/recovery. Source visibility and lock state are
-  persisted with backward-compatible parsing.
+  command dispatch, dirty-state tracking, deterministic JSON persistence, and
+  atomic project-file save/load/recovery.
 - `obs-rs-diagnostics` provides bounded deterministic project/UI/runtime bundles,
   strict decoding, and atomic recovery-file finalization.
 - `obs-rs-ui` provides a toolkit-neutral desktop state machine for preview/program
@@ -169,6 +168,27 @@ Settings, the reopened project, and the dock layout are stored under
 `$XDG_CONFIG_HOME/obs-rs` (a file already present in the working directory keeps
 being used, so existing installs are unaffected). Both restore behaviours can be
 turned off on the settings window's Advanced page.
+
+### On-disk formats
+
+Both documents OBS-RS writes are standard, human-editable formats rather than
+bespoke text, so they can be inspected, diffed, and version-controlled with
+ordinary tooling.
+
+| File | Format | Written by |
+|------|--------|------------|
+| `obs-rs-settings.toml` | flat [TOML](https://toml.io) table of `key = value` pairs | `obs-rs-config` |
+| `obs-rs-project.json` | JSON, tagged with `"format"` and `"version"` | `obs-rs-project` |
+
+Both are serialized deterministically — keys sorted, no incidental whitespace —
+so saving unchanged state twice produces byte-identical files and a project diff
+shows only what actually changed.
+
+The settings reader accepts the flat subset of TOML it writes: bare keys, basic
+and literal strings, integers, and booleans. `[table]` headers, arrays, and
+floats are reported as unsupported rather than quietly misread. Project
+documents carry an explicit schema version, so a file written by a newer build
+is refused with a clear message instead of being partially parsed.
 
 ## Repository documents
 

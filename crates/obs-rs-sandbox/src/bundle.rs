@@ -3,12 +3,11 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
 };
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use obs_rs_plugin_api::{PluginApiVersion, PluginManifest};
-use obs_rs_util::Identifier;
+use obs_rs_util::{random_u64, Identifier};
 use sha2::{Digest, Sha256};
 
 use super::{SandboxError, MAX_SANDBOX_SOURCE_KINDS};
@@ -18,7 +17,6 @@ pub const MAX_PLUGIN_BUNDLE_BYTES: usize = 64 * 1_024 * 1_024;
 pub const MAX_PLUGIN_PAYLOADS: usize = 32;
 pub const MAX_PLUGIN_PAYLOAD_PATH_BYTES: usize = 240;
 const MAX_CANONICAL_MANIFEST_BYTES: usize = 64 * 1_024;
-static NEXT_INSTALL_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Capability that an external plugin asks the host to grant.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -446,11 +444,14 @@ pub fn install_verified_plugin(
         .parent()
         .ok_or_else(|| bundle_error("plugin installation path has no parent"))?;
     fs::create_dir_all(parent).map_err(|error| bundle_io("create plugin directory", &error))?;
-    let install_id = NEXT_INSTALL_ID.fetch_add(1, AtomicOrdering::Relaxed);
+    // A random suffix rather than a process-local counter: the counter restarted
+    // at zero in every process, so two installs racing from separate processes —
+    // or one process reusing a recycled PID after a crash left a `.part`
+    // directory behind — landed on the same staging path and one of them failed.
+    let install_id = random_u64().map_err(|error| bundle_error(&error.to_string()))?;
     let temp = parent.join(format!(
-        ".{}-{}-{install_id}.part",
+        ".{}-{install_id:016x}.part",
         manifest.plugin().version(),
-        std::process::id()
     ));
     if temp.exists() {
         return Err(bundle_error("temporary plugin installation already exists"));

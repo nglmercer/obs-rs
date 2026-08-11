@@ -1514,6 +1514,99 @@ mod tests {
         }
     }
 
+    /// An input that serves `healthy_blocks` and then fails permanently.
+    struct FailingAudioInput {
+        format: AudioFormat,
+        inner: Box<dyn AudioInput>,
+        healthy_blocks: usize,
+    }
+
+    impl AudioInput for FailingAudioInput {
+        fn format(&self) -> AudioFormat {
+            self.format
+        }
+
+        fn state(&self) -> obs_rs_audio::AudioInputState {
+            self.inner.state()
+        }
+
+        fn read_block(
+            &mut self,
+            timestamp: Timestamp,
+            frames: usize,
+        ) -> Result<obs_rs_audio::AudioBuffer, obs_rs_audio::AudioDeviceError> {
+            if self.healthy_blocks == 0 {
+                return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                    "unplugged".to_owned(),
+                ));
+            }
+            self.healthy_blocks -= 1;
+            self.inner.read_block(timestamp, frames)
+        }
+
+        fn stop(&mut self) {
+            self.inner.stop();
+        }
+    }
+
+    struct FailingProvider;
+
+    impl AudioInputProvider for FailingProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+            Ok(Vec::new())
+        }
+
+        fn open_input(
+            &self,
+            _device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+            Ok(Box::new(FailingAudioInput {
+                format,
+                inner: SimulatedAudioProvider::new().open_input("test-audio", format)?,
+                healthy_blocks: 2,
+            }))
+        }
+    }
+
+    #[test]
+    fn falling_back_after_a_device_failure_keeps_the_audio_timeline_continuous() {
+        // The timeline, not the device, issues block timestamps, and the
+        // fallback stamps the block it is handed. Swapping providers mid-session
+        // must therefore leave no gap, overlap, or repeat in the emitted
+        // timestamps — that continuity is what keeps A/V in sync afterwards.
+        let config = EngineConfig::default().with_audio_provider(Arc::new(FailingProvider));
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+
+        let mut timestamps = Vec::new();
+        for index in 0..6_u64 {
+            let blocks = engine
+                .drain_audio_until(Timestamp::from_millis(index * 100))
+                .expect("audio blocks");
+            timestamps.extend(blocks.iter().map(|block| block.timestamp().as_nanos()));
+        }
+
+        assert!(
+            engine.snapshot().audio_fallback,
+            "the failing device should have been replaced"
+        );
+        assert!(
+            timestamps.len() > 3,
+            "the fallback kept producing blocks: {timestamps:?}"
+        );
+        assert_eq!(timestamps.first(), Some(&0));
+        let steps = timestamps
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .collect::<Vec<_>>();
+        let block_nanos = steps[0];
+        assert!(block_nanos > 0, "blocks must advance the timeline");
+        assert!(
+            steps.iter().all(|step| *step == block_nanos),
+            "block spacing changed across the fallback: {steps:?}"
+        );
+    }
+
     #[test]
     fn a_playback_monitor_feeds_the_desktop_channel() {
         let config = EngineConfig::default().with_audio_provider(Arc::new(MonitorProvider));

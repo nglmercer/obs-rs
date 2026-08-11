@@ -41,7 +41,7 @@ fn unique_paths(label: &str) -> (PathBuf, PathBuf) {
         .as_nanos();
     let root = std::env::temp_dir();
     (
-        root.join(format!("obs-rs-project-{label}-{token}.txt")),
+        root.join(format!("obs-rs-project-{label}-{token}.json")),
         root.join(format!("obs-rs-project-{label}-{token}.part")),
     )
 }
@@ -54,39 +54,46 @@ fn project_round_trips_deterministically_with_escaped_values() {
 
     assert_eq!(decoded, project);
     assert_eq!(decoded.serialize(), encoded);
-    assert!(encoded.contains("Studio%20%7C%20Demo"));
+    // JSON strings carry punctuation literally, so the title needs no escaping
+    // and stays readable in the saved file.
+    assert!(encoded.contains(r#""title": "Studio | Demo""#), "{encoded}");
+    assert!(encoded.contains(r#""format": "obs-rs-project""#), "{encoded}");
 }
 
 #[test]
-fn parser_keeps_legacy_sources_visible_and_unlocked() {
+fn parser_rejects_a_document_without_the_format_and_version_tags() {
     let encoded = project().serialize();
-    let legacy = encoded
-        .lines()
-        .map(|line| {
-            if line.starts_with("source|") {
-                line.split('|').take(9).collect::<Vec<_>>().join("|")
-            } else {
-                line.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let decoded = Project::parse(&legacy).expect("legacy project parses");
-    let source = decoded
-        .profiles()
-        .next()
-        .and_then(|profile| profile.scenes().next())
-        .and_then(|scene| scene.sources().first())
-        .expect("legacy source");
-    assert!(source.visible());
-    assert!(!source.locked());
+
+    let untagged = encoded.replace(r#""format": "obs-rs-project""#, r#""format": "something-else""#);
+    assert!(matches!(
+        Project::parse(&untagged),
+        Err(ProjectError::InvalidDocument { .. })
+    ));
+
+    let future = encoded.replace(r#""version": 1"#, r#""version": 2"#);
+    let error = Project::parse(&future).expect_err("a newer schema is not guessed at");
+    assert!(
+        format!("{error}").contains("unsupported project schema version 2"),
+        "{error}"
+    );
+}
+
+#[test]
+fn parser_reports_the_line_a_syntax_error_is_on() {
+    let broken = project().serialize().replace(r#""version": 1"#, r#""version": ?"#);
+
+    let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
+    match error {
+        ProjectError::InvalidDocument { line, .. } => assert!(line > 1, "expected a real line"),
+        other => panic!("expected a document error, got {other}"),
+    }
 }
 
 #[test]
 fn optional_backend_and_output_settings_round_trip_without_changing_legacy_defaults() {
-    let legacy = project().serialize();
-    assert!(!legacy.contains("profile_options|"));
-    let decoded = Project::parse(&legacy).expect("legacy defaults parse");
+    let defaults = project().serialize();
+    assert!(defaults.contains(r#""render_backend": "cpu""#), "{defaults}");
+    let decoded = Project::parse(&defaults).expect("default preferences parse");
     let profile = decoded.profile("live").expect("live profile");
     assert_eq!(profile.render_backend(), RenderBackendPreference::Cpu);
     assert_eq!(profile.output_profile(), OutputProfileKind::ReferencePacket);
@@ -98,7 +105,11 @@ fn optional_backend_and_output_settings_round_trip_without_changing_legacy_defau
     profile.set_render_backend(RenderBackendPreference::Wgpu);
     profile.set_output_profile(OutputProfileKind::SrtMpegTsH264Aac);
     let encoded = configured.serialize();
-    assert!(encoded.contains("profile_options|live|wgpu|srt-mpegts-h264-aac"));
+    assert!(encoded.contains(r#""render_backend": "wgpu""#), "{encoded}");
+    assert!(
+        encoded.contains(r#""output_kind": "srt-mpegts-h264-aac""#),
+        "{encoded}"
+    );
     assert_eq!(Project::parse(&encoded), Ok(configured));
 }
 
@@ -255,17 +266,35 @@ fn remove_scene_command_updates_project_without_partial_mutation() {
 
 #[test]
 fn parser_rejects_duplicate_and_unknown_records() {
-    let project = project();
-    let mut duplicate = project.serialize();
-    duplicate.push_str("profile|live|Other|640|360|30|1\n");
+    // Two profile entries with the same id: the array preserves both, so the
+    // duplicate is caught when the second one is attached.
+    let mut duplicated = project();
+    let encoded = duplicated.serialize();
+    let one_profile = encoded
+        .find(r#"    {"#)
+        .and_then(|start| encoded.rfind("    }").map(|end| &encoded[start..=end + 4]))
+        .expect("the document has one profile object");
+    let duplicate = encoded.replace(one_profile, &format!("{one_profile},\n{one_profile}"));
+    assert!(
+        matches!(
+            Project::parse(&duplicate),
+            Err(ProjectError::DuplicateProfile(_))
+        ),
+        "{duplicate}"
+    );
+
+    duplicated = project();
+    let missing_member = duplicated.serialize().replace(r#""active_profile""#, r#""inactive_profile""#);
     assert!(matches!(
-        Project::parse(&duplicate),
-        Err(ProjectError::DuplicateProfile(_))
+        Project::parse(&missing_member),
+        Err(ProjectError::InvalidDocument { .. })
     ));
 
-    let unknown = format!("{MAGIC}\nproject|title|live\nunknown|value\n");
+    let unknown_filter = project()
+        .serialize()
+        .replace(r#""kind": "brightness""#, r#""kind": "sepia""#);
     assert!(matches!(
-        Project::parse(&unknown),
+        Project::parse(&unknown_filter),
         Err(ProjectError::InvalidDocument { .. })
     ));
 }

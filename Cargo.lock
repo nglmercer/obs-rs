@@ -4059,6 +4059,7 @@ version = "0.1.0"
 dependencies = [
  "obs-rs-audio",
  "obs-rs-media",
+ "obs-rs-util",
 ]
 
 [[package]]
@@ -4144,6 +4145,9 @@ dependencies = [
 [[package]]
 name = "obs-rs-util"
 version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+]
 
 [[package]]
 name = "obs-rs-video"
