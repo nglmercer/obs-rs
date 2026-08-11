@@ -46,7 +46,7 @@ owner boundary, dependencies, tests, and an acceptance condition.
 
 ### P0.1 — Move output work completely off the Slint callback thread
 
-- [ ] Add `OutputWorker` around `EngineSession` with a bounded command/frame
+- [x] Add `OutputWorker` around `EngineSession` with a bounded command/frame
   channel and an explicit shutdown acknowledgement.
   Dependencies: `obs-rs-engine` output API.
   Files: `crates/obs-rs-engine/src/worker.rs`,
@@ -54,12 +54,14 @@ owner boundary, dependencies, tests, and an acceptance condition.
   Tests: bounded frame drop, worker cancellation, recording finalization after
   shutdown, stream reconnect while frames continue arriving.
   Acceptance: Slint callbacks only enqueue commands/frames; a stalled TCP peer
-  cannot stall preview, scene edits, or shutdown.
-- [ ] Add output lifecycle events (`Starting`, `Running`, `Failed`, `Stopping`)
+  cannot stall preview or scene edits. Shutdown joins the worker after its
+  bounded transport timeout.
+- [~] Add output lifecycle events (`Starting`, `Running`, `Failed`, `Stopping`)
   and reconcile them with `DesktopState` instead of optimistic booleans.
   Dependencies: P0.1.
   Tests: connect failure, remote close, failed recording path, stop during start.
-  Acceptance: the GUI never says “streaming” after the engine reports failure.
+  Acceptance: the GUI reconciles a failed stream/worker back to stopped; explicit
+  `Starting`/`Stopping` event enums remain for the next lifecycle refinement.
 
 ### P0.2 — Complete PipeWire device lifecycle
 

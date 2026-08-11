@@ -47,12 +47,12 @@ supply their own evidence.
 | Integration | First implementation | Acceptance gate |
 | --- | --- | --- |
 | Video capture | simulated/test source, then direct Rust platform protocol | device lifecycle, permissions, timestamps, fallback |
-| Audio input/output | offline buffers and simulated clock | sample count, drift, underflow, latency |
+| Audio input/output | offline buffers, PipeWire process adapter, and simulated fallback | sample count, drift, underflow, latency, device loss |
 | GPU rendering | CPU reference renderer first | format parity, context loss, resource cleanup |
 | Encoding | Rust packet/encoder traits | deterministic fixtures, quality, bounded back-pressure |
-| Streaming | output trait with a fake transport | reconnect, cancellation, no capture-thread blocking |
+| Streaming | bounded `OBSRPKT1` queue over TCP/WebSocket, with a worker still planned for the GUI adapter | reconnect, cancellation, no capture-thread/UI blocking |
 | Plugins | compile-time Rust registration with API versioning, plus bounded subprocess frame protocol | version checks, isolation, bounded handoff, diagnostics |
-| Desktop UI | Rust application state plus Slint control-room and CPU preview adapter | capture-backed preview/editor workflows, full translation, accessibility audit, guided recovery, cross-platform packaging |
+| Desktop UI | Rust application state plus Slint control-room, CPU preview, and `obs-rs-engine` output adapter | capture-backed preview/editor workflows, output lifecycle reconciliation, full translation, accessibility audit, guided recovery, cross-platform packaging |
 
 ## Prohibited shortcuts
 

@@ -301,10 +301,8 @@ pub(crate) fn resize_letterbox(
                 .unwrap_or(0)
                 .min(source_width - 1);
             let source_offset = (source_y * source_width + source_x) * 4;
-            let output_offset = ((offset_y + destination_y) * destination_width
-                + offset_x
-                + destination_x)
-                * 4;
+            let output_offset =
+                ((offset_y + destination_y) * destination_width + offset_x + destination_x) * 4;
             output[output_offset..output_offset + 4]
                 .copy_from_slice(&source[source_offset..source_offset + 4]);
         }

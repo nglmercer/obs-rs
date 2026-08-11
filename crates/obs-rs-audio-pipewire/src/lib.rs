@@ -9,7 +9,7 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use std::{
-    io::{Read, ErrorKind},
+    io::{ErrorKind, Read},
     path::{Path, PathBuf},
     process::{Child, ChildStdout, Command, Stdio},
 };
@@ -173,10 +173,14 @@ impl AudioInput for PipeWireInput {
         }
         let sample_count = frames
             .checked_mul(usize::from(self.format.channels()))
-            .ok_or_else(|| AudioDeviceError::InvalidDevice("audio block is too large".to_owned()))?;
+            .ok_or_else(|| {
+                AudioDeviceError::InvalidDevice("audio block is too large".to_owned())
+            })?;
         let byte_count = sample_count
             .checked_mul(std::mem::size_of::<f32>())
-            .ok_or_else(|| AudioDeviceError::InvalidDevice("audio block byte size overflowed".to_owned()))?;
+            .ok_or_else(|| {
+                AudioDeviceError::InvalidDevice("audio block byte size overflowed".to_owned())
+            })?;
         let mut bytes = vec![0_u8; byte_count];
         if let Err(error) = self.stdout.read_exact(&mut bytes) {
             self.state = AudioInputState::Failed;

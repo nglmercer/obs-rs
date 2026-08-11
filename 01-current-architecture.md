@@ -10,6 +10,8 @@ implementation of the existing OBS application.
 
 ```text
 obs-rs-app
+├── obs-rs-engine ─── obs-rs-core / obs-rs-clock / obs-rs-audio / obs-rs-output
+│                 └── obs-rs-builtins / obs-rs-project
 ├── obs-rs-core ─── obs-rs-builtins ─── obs-rs-plugin-api
 ├── obs-rs-clock ─── obs-rs-audio ─── obs-rs-media
 │                └── obs-rs-video ─── obs-rs-media
@@ -19,7 +21,8 @@ obs-rs-app
 ├── obs-rs-ui ─── obs-rs-project / obs-rs-media
 └── obs-rs-render ─── obs-rs-media
 
-obs-rs-gui ────── obs-rs-ui / obs-rs-project / obs-rs-media
+obs-rs-gui ────── obs-rs-engine / obs-rs-ui / obs-rs-project / obs-rs-media
+obs-rs-audio-pipewire ─── obs-rs-audio
 obs-rs-capture ─── obs-rs-media
 obs-rs-util ────── shared validation values
 ```
@@ -35,9 +38,12 @@ item ordering. A source is created by a registered Rust `SourceFactory` and is
 stored as a boxed `Source` trait object. The caller receives a typed `SourceId`, not
 an address or a globally shared pointer.
 
-The runtime is currently single-threaded by design. This makes lifecycle and
-borrowing behavior explicit while the media clock and worker model are specified.
-Threaded execution is a later phase and must preserve the same ownership contracts.
+`obs-rs-core::Runtime` remains a synchronous, inspectable compositor. The
+`obs-rs-engine::EngineSession` now owns the coordinated media timeline, provider
+audio, packet encoders, recording lifecycle, and stream queue around it. The GUI
+adapter still drives the session from its timer while the P0 follow-up moves the
+engine/output command loop to a dedicated worker; the public ownership contracts
+must remain unchanged when that worker lands.
 
 ## Media model
 
@@ -82,7 +88,9 @@ exact format/frame/timestamp validation, bounded output, underflow/drop counters
 and post-callback deadline measurements. `AudioCallbackClock` accepts timestamped
 hardware callback edges, rejects regressions, and applies bounded ppm correction. It
 is still an offline/reference device model; it does not open a platform device or
-spawn a callback thread itself.
+spawn a callback thread itself. `obs-rs-audio-pipewire` is a separate Linux
+adapter that opens `pw-cat` only through the `AudioInputProvider` trait and lets
+the engine fall back to the deterministic signal when discovery or reads fail.
 
 `obs-rs-clock` owns `MediaTimeline`, which advances the rational video and audio
 domains together and feeds the same bounded A/V drift monitor. `MonotonicMediaClock`
@@ -184,6 +192,10 @@ Current and future crates keep these concerns separate:
   quotas, and bounded usage snapshots for diagnostics;
 - `obs-rs-audio`: sample formats, mixer, resampler, and monitoring (buffer, queue,
   and mixer MVP implemented);
+- `obs-rs-engine`: project/runtime assembly, coordinated media ticks, provider
+  fallback, A/V packet output, recording lifecycle, stream queue, and snapshots;
+- `obs-rs-audio-pipewire`: Linux `pw-dump`/`pw-cat` adapter kept outside the
+  portable audio/core crates;
 - `obs-rs-capture-*`: platform or device adapters behind Rust traits (the Linux X11
   root-screen path is implemented without a foreign binding; other platforms remain
   separate adapters);

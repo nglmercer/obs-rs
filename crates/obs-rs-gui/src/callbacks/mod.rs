@@ -66,9 +66,11 @@ pub(crate) fn start_preview_timer(
         }
         if output_active {
             push_program_frame(&ui, program_frame, &output);
-            if let Err(error) = output.borrow_mut().pump() {
-                ui.set_status_message(format!("Output transport failed: {error}").into());
-            }
+        }
+        if state.borrow().streaming() && output.borrow().stream_failed() {
+            let _ = state.borrow_mut().dispatch(obs_rs_ui::UiCommand::StopStreaming);
+            ui.set_streaming(false);
+            ui.set_status_message("Streaming stopped after transport failure".into());
         }
         refresh_output_ui(&ui, &output);
     });

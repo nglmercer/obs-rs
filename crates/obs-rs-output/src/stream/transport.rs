@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     io::{BufWriter, IoSlice, Write},
-    net::TcpStream,
+    net::{TcpStream, ToSocketAddrs},
 };
 
 use crate::{error::OutputError, types::EncodedPacket, NETWORK_WRITE_TIMEOUT, TCP_PACKET_MAGIC};
@@ -131,7 +131,15 @@ impl TcpPacketTransport {
 
 impl PacketTransport for TcpPacketTransport {
     fn connect(&mut self) -> Result<(), OutputError> {
-        let stream = TcpStream::connect(&self.address)
+        let address = self
+            .address
+            .to_socket_addrs()
+            .map_err(|error| OutputError::Transport(format!("TCP address is invalid: {error}")))?
+            .next()
+            .ok_or_else(|| {
+                OutputError::Transport("TCP address has no socket targets".to_owned())
+            })?;
+        let stream = TcpStream::connect_timeout(&address, NETWORK_WRITE_TIMEOUT)
             .map_err(|error| OutputError::Transport(format!("TCP connect failed: {error}")))?;
         stream
             .set_nodelay(true)

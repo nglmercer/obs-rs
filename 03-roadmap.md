@@ -346,13 +346,73 @@ Third-party Rust authors can build a documented plugin, incompatible versions fa
 clearly, a malicious or faulty plugin cannot corrupt core state, and release artifacts
 can be reproduced and verified.
 
+## Phase 9 — Linux/X11 functional V1 (Active)
+
+### Goal
+
+Ship one complete, honest vertical slice that works on Linux without requiring a
+native library in the portable engine: X11 screen or test-pattern video, PipeWire
+audio or deterministic fallback, CPU composition, and the existing OBS-RS packet
+file/TCP/WebSocket boundary.
+
+### Decisions
+
+- Linux/X11 is the first supported platform; Wayland and other operating systems
+  remain separate adapters.
+- The media correctness path is Rust/CPU first; native integrations remain behind
+  typed Rust provider traits.
+- V1 output is `OBSRPKT1` with RLE video and raw `f32` audio, not an assertion of
+  RTMP/SRT/WebRTC or broadcast-container compatibility.
+- V1 sources are full-root X11 capture and animated test pattern. Window and
+  camera capture are P1.
+- PipeWire is the first real audio provider and the deterministic signal is the
+  mandatory fallback.
+
+### Implemented evidence
+
+- `obs-rs-engine` assembles a project runtime, advances rational A/V deadlines,
+  mixes provider audio, recovers to fallback input, encodes both media kinds,
+  atomically finalizes packet recordings, and exposes bounded stream telemetry.
+- `obs-rs-audio` exposes typed device/input/provider contracts and
+  `obs-rs-audio-pipewire` reads bounded `pw-cat` raw `f32` blocks after discovery.
+- The GUI uses the engine output boundary, keeps idle preview animation running,
+  maps desktop gain/mute controls to the live mixer, and reports backend/fallback,
+  frame, audio, queue, drop, and reconnect state.
+- X11 captures the complete root and performs deterministic aspect-preserving
+  resize/letterbox; a source falls back to the animated screen test device and
+  retries native reconnection.
+- Unit tests cover engine timestamp ordering, A/V packet decode, fallback state,
+  PipeWire provider validation, X11 resize, and GUI packet output.
+
+### Remaining exit work
+
+The executable task list, dependencies, touched files, tests, and acceptance gates
+are maintained in [07-functional-todo.md](07-functional-todo.md). The next P0
+sequence is:
+
+1. Move output encoding/pumping and lifecycle events behind a bounded worker.
+2. Enumerate selectable PipeWire input/sink nodes and implement monitor output.
+3. Synchronize project/profile changes with active engine sessions and export their
+   diagnostics.
+4. Run live X11/PipeWire capability checks plus a 300-tick A/V soak.
+
+### Exit criteria
+
+A clean Linux session can create/edit/preview a project, capture the full X11
+desktop or use the test pattern, record an atomically committed packet file with
+monotonic audio/video timestamps, stream through TCP/WebSocket with bounded
+reconnect telemetry, show audio backend/fallback state, and recover from a missing
+display or audio service without claiming unsupported OBS parity.
+
 ## Current priority order
 
-1. Capture-backed desktop preview/editor/recovery workflows and full GUI parity.
-2. Device-clock audio adapters and long-duration synchronization under real hardware.
-3. macOS/Windows capture and accelerated render backends.
-4. Production codec/container/protocol decisions beyond the raw and RLE references.
-5. Dynamic-plugin threat modeling, signed release artifacts, and fuzz/soak automation.
+1. Complete Phase 9 P0 worker, lifecycle, PipeWire catalog, and synchronization gates.
+2. Capture-backed editor breadth: X11 windows, Linux camera, source property forms,
+   and guided recovery.
+3. Device-clock audio adapters and long-duration synchronization under real hardware.
+4. macOS/Windows capture and accelerated render backends.
+5. Production codec/container/protocol decisions, signed plugins, and release
+   hardening beyond the reference packet boundary.
 
 ## Go/no-go rule
 

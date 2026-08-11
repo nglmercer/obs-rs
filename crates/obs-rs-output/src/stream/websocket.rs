@@ -1,7 +1,7 @@
 use std::{
     cell::Cell,
     io::{Read, Write},
-    net::TcpStream,
+    net::{TcpStream, ToSocketAddrs},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -63,9 +63,19 @@ impl PacketTransport for WebSocketPacketTransport {
     fn connect(&mut self) -> Result<(), OutputError> {
         self.disconnect();
         let (address, host, path) = parse_websocket_endpoint(&self.endpoint)?;
-        let mut stream = TcpStream::connect(&address).map_err(|error| {
-            OutputError::Transport(format!("WebSocket connect failed: {error}"))
-        })?;
+        let socket_address = address
+            .to_socket_addrs()
+            .map_err(|error| {
+                OutputError::Transport(format!("WebSocket address is invalid: {error}"))
+            })?
+            .next()
+            .ok_or_else(|| {
+                OutputError::Transport("WebSocket address has no socket targets".to_owned())
+            })?;
+        let mut stream = TcpStream::connect_timeout(&socket_address, NETWORK_WRITE_TIMEOUT)
+            .map_err(|error| {
+                OutputError::Transport(format!("WebSocket connect failed: {error}"))
+            })?;
         stream
             .set_nodelay(true)
             .map_err(|error| OutputError::Transport(format!("WebSocket setup failed: {error}")))?;

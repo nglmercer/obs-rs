@@ -26,7 +26,9 @@ each adapter needs a CPU/test fallback and explicit capability reporting. The bo
 `OBSFRM01` stream provides a safe Rust IPC seam for adapters. The current
 `PlatformCaptureProvider` reports Linux/X11 availability and typed unavailable
 states on other targets, while the catalog still owns permission/hot-plug policy;
-macOS/Windows OS discovery and audio-device adapters remain open work.
+Linux now has a direct X11 root adapter with CPU resize/fallback and a separate
+PipeWire process adapter; selectable multi-device audio, monitoring, Wayland, and
+macOS/Windows OS discovery remain open work.
 
 ### Codec and protocol availability
 
@@ -62,9 +64,15 @@ unreviewed foreign binding is not allowed into the portable workspace.
 - Portable crates forbid unsafe code.
 - The initial plugin model is compile-time Rust trait registration.
 - The reference media format is owned RGBA8 on the CPU.
-- The first runtime is single-threaded to make ownership and lifecycle behavior
-  inspectable.
+- The portable `obs-rs-engine` owns the coordinated A/V session and output
+  lifecycle; the current GUI adapter still needs the planned background worker so
+  network/file work is fully removed from the Slint thread.
 - The core has no native host dependency.
+- V1 targets Linux/X11, uses PipeWire first for audio, and keeps a deterministic
+  test signal as the mandatory fallback.
+- V1 output is the Rust-owned `OBSRPKT1` packet container plus the existing
+  length-framed TCP/WebSocket transports; external broadcast-protocol compatibility
+  is intentionally not claimed.
 
 ## Questions to answer before each phase
 

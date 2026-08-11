@@ -8,6 +8,10 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
+mod worker;
+
+pub use worker::{EngineWorker, EngineWorkerSnapshot};
+
 use std::{error::Error, fmt, path::PathBuf, sync::Arc};
 
 use obs_rs_audio::{
@@ -19,9 +23,9 @@ use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{
-    AtomicPacketFileWriter, EncodedPacket, OutputError, PacketDropPolicy, ReconnectPolicy,
-    RawAudioEncoder, RleVideoEncoder, StreamMetrics, StreamSession, StreamState,
-    TcpPacketTransport, VideoEncoder, AudioEncoder, WebSocketPacketTransport,
+    AtomicPacketFileWriter, AudioEncoder, EncodedPacket, OutputError, PacketDropPolicy,
+    RawAudioEncoder, ReconnectPolicy, RleVideoEncoder, StreamMetrics, StreamSession, StreamState,
+    TcpPacketTransport, VideoEncoder, WebSocketPacketTransport,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Project, ProjectError};
@@ -101,9 +105,8 @@ impl Clone for EngineConfig {
 
 impl Default for EngineConfig {
     fn default() -> Self {
-        let format = AudioFormat::new(48_000, 2).unwrap_or_else(|error| {
-            unreachable!("the built-in audio format is valid: {error}")
-        });
+        let format = AudioFormat::new(48_000, 2)
+            .unwrap_or_else(|error| unreachable!("the built-in audio format is valid: {error}"));
         Self::new(format)
     }
 }
@@ -142,6 +145,8 @@ pub struct EngineSnapshot {
     pub stream_state: Option<StreamState>,
     pub audio_backend: String,
     pub audio_fallback: bool,
+    pub stream_metrics: Option<StreamMetrics>,
+    pub stream_queued_bytes: usize,
     pub last_error: Option<String>,
     pub stats: EngineStats,
 }
@@ -158,13 +163,16 @@ pub enum EngineError {
     AudioMix(obs_rs_audio::AudioError),
     Output(OutputError),
     Io(std::io::Error),
+    Worker(String),
     Busy(&'static str),
 }
 
 impl fmt::Display for EngineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidConfiguration(reason) => write!(formatter, "invalid engine configuration: {reason}"),
+            Self::InvalidConfiguration(reason) => {
+                write!(formatter, "invalid engine configuration: {reason}")
+            }
             Self::NoActiveProfile => formatter.write_str("project has no active profile"),
             Self::Runtime(error) => write!(formatter, "runtime failed: {error}"),
             Self::Project(error) => write!(formatter, "project failed: {error}"),
@@ -173,7 +181,10 @@ impl fmt::Display for EngineError {
             Self::AudioMix(error) => write!(formatter, "audio mixer failed: {error}"),
             Self::Output(error) => write!(formatter, "output failed: {error}"),
             Self::Io(error) => write!(formatter, "engine I/O failed: {error}"),
-            Self::Busy(operation) => write!(formatter, "cannot {operation} while an output is active"),
+            Self::Worker(error) => write!(formatter, "engine worker failed: {error}"),
+            Self::Busy(operation) => {
+                write!(formatter, "cannot {operation} while an output is active")
+            }
         }
     }
 }
@@ -233,7 +244,11 @@ enum StreamOutput {
 }
 
 impl StreamOutput {
-    fn connect(address: &str, capacity_bytes: usize, reconnect_attempts: u32) -> Result<Self, EngineError> {
+    fn connect(
+        address: &str,
+        capacity_bytes: usize,
+        reconnect_attempts: u32,
+    ) -> Result<Self, EngineError> {
         let address = address.trim();
         if address.is_empty() {
             return Err(EngineError::InvalidConfiguration(
@@ -276,8 +291,8 @@ impl StreamOutput {
 
     fn pump(&mut self) -> Result<usize, EngineError> {
         match self {
-            Self::Tcp(stream) => Ok(stream.flush()? ),
-            Self::WebSocket(stream) => Ok(stream.flush()? ),
+            Self::Tcp(stream) => Ok(stream.flush()?),
+            Self::WebSocket(stream) => Ok(stream.flush()?),
         }
     }
 
@@ -373,10 +388,8 @@ impl EngineSession {
         );
         let mut mixer = AudioMixer::new(config.audio_format);
         let audio_source = mixer.add_source(1.0)?;
-        let (audio_input, audio_backend, audio_fallback) = open_audio_input(
-            &config.audio_provider,
-            config.audio_format,
-        );
+        let (audio_input, audio_backend, audio_fallback) =
+            open_audio_input(&config.audio_provider, config.audio_format);
 
         Ok(Self {
             video_encoder: RleVideoEncoder::new(format),
@@ -478,7 +491,11 @@ impl EngineSession {
     pub fn render_scene(&mut self, scene: &str) -> Result<Option<VideoFrame>, EngineError> {
         let timestamp = self.render_timestamp;
         let frame = self.render_scene_at(scene, timestamp)?;
-        let period = self.format.frame_rate().period_nanos().unwrap_or(33_333_333);
+        let period = self
+            .format
+            .frame_rate()
+            .period_nanos()
+            .unwrap_or(33_333_333);
         self.render_timestamp = timestamp.checked_add(period).unwrap_or(Timestamp::ZERO);
         Ok(frame)
     }
@@ -514,9 +531,7 @@ impl EngineSession {
             self.stats.last_video_timestamp = Some(frame.timestamp());
         }
         self.stats.ticks = self.stats.ticks.saturating_add(1);
-        self.stats.audio_peak_milli = audio_blocks
-            .last()
-            .map_or(0, audio_peak_milli);
+        self.stats.audio_peak_milli = audio_blocks.last().map_or(0, audio_peak_milli);
         let _ = self.timeline.observe(
             timestamp,
             audio_blocks
@@ -597,9 +612,7 @@ impl EngineSession {
                 "recording is not open".to_owned(),
             ));
         };
-        recording
-            .packets
-            .sort_by_key(EncodedPacket::timestamp);
+        recording.packets.sort_by_key(EncodedPacket::timestamp);
         for packet in &recording.packets {
             if let Err(error) = recording.writer.push(packet.clone()) {
                 self.recording = Some(recording);
@@ -711,12 +724,21 @@ impl EngineSession {
             stream_state: self.stream_state(),
             audio_backend: self.audio_backend.clone(),
             audio_fallback: self.audio_fallback,
+            stream_metrics: self.streaming.as_ref().map(StreamOutput::metrics),
+            stream_queued_bytes: self
+                .streaming
+                .as_ref()
+                .map_or(0, StreamOutput::queued_bytes),
             last_error: self.last_error.clone(),
             stats: self.stats,
         }
     }
 
-    fn render_scene_at(&mut self, scene: &str, timestamp: Timestamp) -> Result<Option<VideoFrame>, EngineError> {
+    fn render_scene_at(
+        &mut self,
+        scene: &str,
+        timestamp: Timestamp,
+    ) -> Result<Option<VideoFrame>, EngineError> {
         Ok(self
             .runtime
             .render_scene(scene, &VideoRequest::new(timestamp, self.format))?)
@@ -747,13 +769,13 @@ impl EngineSession {
             .next_audio_deadline
             .is_none_or(|deadline| deadline.timestamp() <= timestamp)
         {
-            let deadline = self
-                .next_audio_deadline
-                .take()
-                .map_or_else(
-                    || self.timeline.next_audio_block(self.config.audio_block_frames),
-                    Ok,
-                )?;
+            let deadline = self.next_audio_deadline.take().map_or_else(
+                || {
+                    self.timeline
+                        .next_audio_block(self.config.audio_block_frames)
+                },
+                Ok,
+            )?;
             let input = self.read_audio_block(deadline.timestamp())?;
             let mixed = self.mixer.mix(
                 deadline.timestamp(),
@@ -762,11 +784,15 @@ impl EngineSession {
             )?;
             self.stats.audio_blocks = self.stats.audio_blocks.saturating_add(1);
             if self.audio_fallback {
-                self.stats.audio_fallback_blocks = self.stats.audio_fallback_blocks.saturating_add(1);
+                self.stats.audio_fallback_blocks =
+                    self.stats.audio_fallback_blocks.saturating_add(1);
             }
             self.stats.last_audio_timestamp = Some(mixed.timestamp());
             audio_blocks.push(mixed);
-            self.next_audio_deadline = Some(self.timeline.next_audio_block(self.config.audio_block_frames)?);
+            self.next_audio_deadline = Some(
+                self.timeline
+                    .next_audio_block(self.config.audio_block_frames)?,
+            );
         }
         Ok(audio_blocks)
     }
@@ -805,11 +831,8 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
             if !source.visible() {
                 continue;
             }
-            let source_id = runtime.create_source(
-                source.kind().as_str(),
-                source.name(),
-                source.settings(),
-            )?;
+            let source_id =
+                runtime.create_source(source.kind().as_str(), source.name(), source.settings())?;
             runtime.attach_source(scene_id, source_id)?;
             runtime.set_source_transform(scene_id, source_id, source.transform())?;
             for filter in source.filters() {
@@ -836,11 +859,7 @@ fn open_audio_input(
     let fallback = SimulatedAudioProvider::new()
         .open_input("test-audio", format)
         .unwrap_or_else(|error| unreachable!("fallback audio format is valid: {error}"));
-    (
-        fallback,
-        "simulated fallback".to_owned(),
-        true,
-    )
+    (fallback, "simulated fallback".to_owned(), true)
 }
 
 #[allow(
@@ -864,8 +883,8 @@ mod tests {
     use obs_rs_project::{Profile, SceneSpec, SourceSpec};
 
     fn project() -> Project {
-        let format = VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("rate"))
-            .expect("format");
+        let format =
+            VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("rate")).expect("format");
         let mut project = Project::new("engine test").expect("project");
         let mut profile = Profile::new("live", "Live", format).expect("profile");
         let mut settings = Config::new();
@@ -873,13 +892,9 @@ mod tests {
         settings.set("height", "36").expect("height");
         let mut scene = SceneSpec::new("program", "Program").expect("scene");
         scene
-            .add_source(SourceSpec::new(
-                "pattern",
-                "test_pattern",
-                "Pattern",
-                settings,
+            .add_source(
+                SourceSpec::new("pattern", "test_pattern", "Pattern", settings).expect("source"),
             )
-            .expect("source"))
             .expect("add source");
         profile.add_scene(scene).expect("add scene");
         project.add_profile(profile).expect("add profile");
@@ -888,8 +903,7 @@ mod tests {
 
     #[test]
     fn ticks_keep_audio_and_video_packets_monotonic() {
-        let mut engine = EngineSession::new(project(), EngineConfig::default())
-            .expect("engine");
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
         let tick = engine.tick(None, Some("program")).expect("tick");
         assert_eq!(tick.audio_blocks.len(), 1);
         for _ in 0..4 {
@@ -917,19 +931,51 @@ mod tests {
         let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
         engine.start_recording(&path).expect("recording");
         for _ in 0..4 {
-            engine
-                .tick(None, Some("program"))
-                .expect("media tick");
+            engine.tick(None, Some("program")).expect("media tick");
         }
         let bytes = engine.finish_recording().expect("finalize");
         let persisted = std::fs::read(&path).expect("read recording");
         assert_eq!(persisted.len(), bytes);
         let packets = obs_rs_output::MemoryMuxer::decode(&persisted).expect("decode recording");
-        assert!(packets.iter().any(|packet| packet.kind() == obs_rs_output::PacketKind::Video));
-        assert!(packets.iter().any(|packet| packet.kind() == obs_rs_output::PacketKind::Audio));
+        assert!(packets
+            .iter()
+            .any(|packet| packet.kind() == obs_rs_output::PacketKind::Video));
+        assert!(packets
+            .iter()
+            .any(|packet| packet.kind() == obs_rs_output::PacketKind::Audio));
         assert!(packets
             .windows(2)
             .all(|packets| packets[0].timestamp() <= packets[1].timestamp()));
+        std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[test]
+    fn worker_accepts_frames_and_finalizes_on_its_own_thread() {
+        let format = project()
+            .active_profile_spec()
+            .expect("profile")
+            .video_format();
+        let session = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let worker = EngineWorker::spawn_with_capacity(session, 1).expect("worker");
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-engine-worker-{token}.obsr"));
+        worker.start_recording(&path).expect("recording");
+        assert!(worker.try_push_frame(VideoFrame::solid(format, Timestamp::ZERO, [1, 2, 3, 255],)));
+        let bytes = worker.finish_recording().expect("finalize");
+        let packets =
+            obs_rs_output::MemoryMuxer::decode(&std::fs::read(&path).expect("read recording"))
+                .expect("decode recording");
+        assert_eq!(packets.len(), 2);
+        assert!(packets
+            .iter()
+            .any(|packet| packet.kind() == obs_rs_output::PacketKind::Video));
+        assert!(packets
+            .iter()
+            .any(|packet| packet.kind() == obs_rs_output::PacketKind::Audio));
+        assert!(bytes > 0);
         std::fs::remove_file(path).expect("remove recording");
     }
 }

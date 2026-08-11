@@ -109,10 +109,8 @@ impl Source for X11CaptureSource {
             match result {
                 Ok(frame) => return Ok(frame),
                 Err(_error) if attempt == 0 => {
-                    self.device = X11CaptureBackend::Fallback(fallback_device(
-                        &self.name,
-                        self.format,
-                    )?);
+                    self.device =
+                        X11CaptureBackend::Fallback(fallback_device(&self.name, self.format)?);
                 }
                 Err(error) => return Err(SourceError::Unavailable(error.to_string())),
             }
@@ -123,16 +121,10 @@ impl Source for X11CaptureSource {
     }
 }
 
-fn fallback_device(
-    name: &str,
-    format: VideoFormat,
-) -> Result<SimulatedCaptureDevice, SourceError> {
-    let mut device = SimulatedCaptureDevice::new(
-        X11_SCREEN_CAPTURE_SOURCE_KIND,
-        name,
-        CaptureKind::Screen,
-    )
-    .map_err(|error| SourceError::Unavailable(error.to_string()))?;
+fn fallback_device(name: &str, format: VideoFormat) -> Result<SimulatedCaptureDevice, SourceError> {
+    let mut device =
+        SimulatedCaptureDevice::new(X11_SCREEN_CAPTURE_SOURCE_KIND, name, CaptureKind::Screen)
+            .map_err(|error| SourceError::Unavailable(error.to_string()))?;
     device
         .start(format)
         .map_err(|error| SourceError::Unavailable(error.to_string()))?;

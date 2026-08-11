@@ -152,7 +152,7 @@ fn output_runtime_finalizes_an_atomic_av_recording() {
         .start_recording(final_path.to_str().expect("UTF-8 temp path"))
         .expect("recording should open");
     let frame = VideoFrame::solid(format, Timestamp::ZERO, [20, 30, 40, 255]);
-    output.push_frame(&frame).expect("frame should be accepted");
+    output.push_frame(&frame);
     let bytes = output
         .finish_recording()
         .expect("recording should finalize");
@@ -160,8 +160,12 @@ fn output_runtime_finalizes_an_atomic_av_recording() {
     let persisted = std::fs::read(&final_path).expect("recording should be persisted");
     assert_eq!(persisted.len(), bytes);
     let packets = MemoryMuxer::decode(&persisted).expect("packet recording should decode");
-    assert!(packets.iter().any(|packet| packet.kind() == PacketKind::Video));
-    assert!(packets.iter().any(|packet| packet.kind() == PacketKind::Audio));
+    assert!(packets
+        .iter()
+        .any(|packet| packet.kind() == PacketKind::Video));
+    assert!(packets
+        .iter()
+        .any(|packet| packet.kind() == PacketKind::Audio));
     std::fs::remove_file(final_path).expect("remove output fixture");
 }
 

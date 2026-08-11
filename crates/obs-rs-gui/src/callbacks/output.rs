@@ -193,11 +193,10 @@ pub(crate) fn push_program_frame(
     frame: Option<VideoFrame>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
-    let result = frame
-        .ok_or_else(|| std::io::Error::other("program scene is empty").into())
-        .and_then(|frame| output.borrow_mut().push_frame(&frame));
-    if let Err(error) = result {
-        ui.set_status_message(format!("Output failed: {error}").into());
+    if let Some(frame) = frame {
+        output.borrow_mut().push_frame(&frame);
+    } else {
+        ui.set_status_message("Output skipped: program scene is empty".into());
     }
 }
 
@@ -223,10 +222,7 @@ pub(crate) fn install_mixer_callbacks(
             },
         );
         if id == "desktop" {
-            if let Err(error) = gain_output
-                .borrow_mut()
-                .set_input_gain_milli(gain_milli)
-            {
+            if let Err(error) = gain_output.borrow_mut().set_input_gain_milli(gain_milli) {
                 if let Some(ui) = weak.upgrade() {
                     ui.set_status_message(format!("Audio output failed: {error}").into());
                 }

@@ -5,6 +5,12 @@ with one ownership responsibility each. It is an inventory first: behavior,
 public APIs, file formats, and the Rust-only/native-boundary policy must remain
 unchanged while the code is moved.
 
+> Historical note: the inventory below describes the pre-V1 monolithic baseline.
+> Functional V1 work is tracked in [07-functional-todo.md](07-functional-todo.md).
+> New `obs-rs-engine` orchestration code is intentionally being split next; its
+> current facade is above the preferred 500-line threshold until the P0 worker and
+> output/session modules land.
+
 ## Inventory
 
 The line counts below were measured on 2026-08-10 with generated `target/`
@@ -139,6 +145,15 @@ their neighboring crate is split:
 - [x] `obs-rs-builtins`: split factory registration, portable color source
   implementation, Linux X11 adapter, and tests into physical modules. The
   largest implementation module is 136 lines; all six built-in tests pass.
+
+### New functional modules to split
+
+- [ ] `obs-rs-engine`: move error/config/status types, output sessions, audio
+  scheduling, runtime assembly, and worker lifecycle into focused modules while
+  preserving the public facade. See P0.1 in `07-functional-todo.md`.
+- [ ] `obs-rs-audio-pipewire`: split provider discovery, process input, and
+  adapter tests if device enumeration/monitoring grows beyond the current
+  single-route boundary.
 
 ## Dependency-safe sequencing
 

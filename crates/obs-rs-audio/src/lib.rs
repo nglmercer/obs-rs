@@ -22,8 +22,8 @@ mod tests;
 pub use buffer::{AudioBuffer, AudioBufferPool};
 pub use callback_clock::{AudioCallbackClock, AudioCallbackObservation};
 pub use device::{
-    AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioInput, AudioInputState,
-    AudioInputProvider, SharedAudioInputProvider, SimulatedAudioInput, SimulatedAudioProvider,
+    AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioInput, AudioInputProvider,
+    AudioInputState, SharedAudioInputProvider, SimulatedAudioInput, SimulatedAudioProvider,
 };
 pub use error::{AudioError, AudioWorkerError};
 pub use mixer::AudioMixer;
