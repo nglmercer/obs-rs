@@ -4,7 +4,7 @@ use std::sync::Arc;
 use obs_rs_media::Timestamp;
 
 use super::{
-    codec::{read_exact, read_u64, read_u8, write_all, write_u64},
+    codec::{read_exact, read_u64, read_u8, read_vec, write_all, write_u64},
     error::OutputError,
     stream::PacketMuxer,
     types::{EncodedPacket, OutputState, PacketKind},
@@ -107,8 +107,7 @@ impl MemoryMuxer {
                     bytes: encoded_bytes as u64,
                 });
             }
-            let mut payload = vec![0_u8; payload_bytes];
-            read_exact(&mut cursor, &mut payload)?;
+            let payload = read_vec(&mut cursor, payload_bytes)?;
             packets.push(EncodedPacket::new(kind, timestamp, keyframe, payload)?);
         }
         if cursor.position() != u64::try_from(bytes.len()).unwrap_or(u64::MAX) {

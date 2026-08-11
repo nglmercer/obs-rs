@@ -30,6 +30,25 @@ pub(crate) fn read_exact(input: &mut Cursor<&[u8]>, bytes: &mut [u8]) -> Result<
     })
 }
 
+/// Reads an exact-length owned payload without first zero-initializing it.
+pub(crate) fn read_vec(input: &mut Cursor<&[u8]>, length: usize) -> Result<Vec<u8>, OutputError> {
+    let mut bytes = Vec::with_capacity(length);
+    let read = input
+        .take(u64::try_from(length).unwrap_or(u64::MAX))
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::UnexpectedEof {
+                OutputError::Truncated
+            } else {
+                OutputError::Write(error.to_string())
+            }
+        })?;
+    if read != length {
+        return Err(OutputError::Truncated);
+    }
+    Ok(bytes)
+}
+
 pub(crate) fn read_u32(input: &mut Cursor<&[u8]>) -> Result<u32, OutputError> {
     let mut bytes = [0_u8; 4];
     read_exact(input, &mut bytes)?;

@@ -133,7 +133,7 @@ impl Config {
         validate_identifier(key.as_bytes())
             .map_err(|error| ConfigError::InvalidKey { line, error })?;
 
-        if value.as_bytes().contains(&0) {
+        if memchr::memchr(0, value.as_bytes()).is_some() {
             return Err(ConfigError::InvalidValue { line });
         }
 

@@ -87,7 +87,7 @@ impl Plugin for SandboxedPlugin {
         &self.manifest
     }
 
-    fn source_factories(&self) -> Vec<Arc<dyn SourceFactory>> {
-        self.factories.clone()
+    fn source_factories(&self) -> &[Arc<dyn SourceFactory>] {
+        &self.factories
     }
 }

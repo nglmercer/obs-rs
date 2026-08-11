@@ -55,6 +55,9 @@ pub(crate) fn start_preview_timer(
                 state.recording() || state.streaming(),
             )
         };
+        if !output_active {
+            return;
+        }
         let (program_frame, render_error) = refresh_preview_frames(
             &ui,
             &renderer,
@@ -64,10 +67,8 @@ pub(crate) fn start_preview_timer(
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
         }
-        if output_active {
-            push_program_frame(&ui, program_frame, &output);
-            refresh_output_ui(&ui, &output);
-        }
+        push_program_frame(&ui, program_frame, &output);
+        refresh_output_ui(&ui, &output);
     });
     timer
 }

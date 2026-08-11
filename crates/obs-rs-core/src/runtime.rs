@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform};
@@ -131,7 +131,7 @@ impl Runtime {
                 limit: self.limits.max_source_kinds(),
             });
         }
-        for factory in &factories {
+        for factory in factories {
             if self.registry.sources.contains_key(factory.kind()) {
                 return Err(RuntimeError::DuplicateSourceKind(factory.kind().clone()));
             }
@@ -143,7 +143,7 @@ impl Runtime {
         for factory in factories {
             self.registry
                 .sources
-                .insert(factory.kind().clone(), factory);
+                .insert(factory.kind().clone(), Arc::clone(factory));
         }
         Ok(())
     }

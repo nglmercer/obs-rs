@@ -9,4 +9,5 @@ version.workspace = true
 crate-type = ["lib"]
 
 [dependencies]
+memchr = "2.7.4"
 obs-rs-util = { path = "../obs-rs-util" }

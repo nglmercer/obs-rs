@@ -222,9 +222,9 @@ fn install_previews(
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        let mut preview = theme_controller.settings.borrow().clone();
-        preview.theme = usize::try_from(index).unwrap_or(0).min(THEMES.len() - 1);
-        push_palette(&ui, &theme_controller, &preview);
+        let theme = usize::try_from(index).unwrap_or(0).min(THEMES.len() - 1);
+        let tokens = theme_controller.settings.borrow().tokens_for_theme(theme);
+        push_palette_tokens(&ui, &theme_controller, tokens);
     });
 
     let weak = ui.as_weak();
@@ -427,7 +427,14 @@ fn apply_to_studio(ui: &MainWindow, settings: &AppSettings) {
 
 /// Globals are per component tree, so every window is painted explicitly.
 fn push_palette(ui: &MainWindow, controller: &SettingsController, settings: &AppSettings) {
-    let tokens = settings.tokens();
+    push_palette_tokens(ui, controller, settings.tokens());
+}
+
+fn push_palette_tokens(
+    ui: &MainWindow,
+    controller: &SettingsController,
+    tokens: crate::ThemeTokens,
+) {
     ui.global::<Palette>().set_tokens(tokens.clone());
     controller
         .window

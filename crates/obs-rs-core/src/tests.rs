@@ -33,8 +33,8 @@ impl Plugin for FutureApiPlugin {
         &self.manifest
     }
 
-    fn source_factories(&self) -> Vec<Arc<dyn SourceFactory>> {
-        Vec::new()
+    fn source_factories(&self) -> &[Arc<dyn SourceFactory>] {
+        &[]
     }
 }
 

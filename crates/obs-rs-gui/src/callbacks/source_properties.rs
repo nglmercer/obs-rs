@@ -132,19 +132,9 @@ fn source_kind(state: &Rc<RefCell<DesktopState>>, source_id: &str) -> String {
     let session = state.project_session();
     let project = session.project();
     let kind = project
-        .profiles()
-        .find(|profile| profile.id() == project.active_profile())
-        .and_then(|profile| {
-            profile
-                .scenes()
-                .find(|scene| scene.id().as_str() == scene_id)
-        })
-        .and_then(|scene| {
-            scene
-                .sources()
-                .iter()
-                .find(|source| source.id().as_str() == source_id)
-        })
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id.as_str()))
+        .and_then(|scene| scene.source(source_id))
         .map(|source| source.kind().as_str().to_owned())
         .unwrap_or_default();
     kind

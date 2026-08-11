@@ -65,10 +65,10 @@ impl Runtime {
             } else {
                 frame.transformed(transform).map_err(RuntimeError::Media)?
             };
-            for filter in filters {
-                metrics.filtered_frames = metrics.filtered_frames.saturating_add(1);
-                frame.apply_filter(*filter);
-            }
+            metrics.filtered_frames = metrics
+                .filtered_frames
+                .saturating_add(u64::try_from(filters.len()).unwrap_or(u64::MAX));
+            frame.apply_filters(filters);
 
             if let Some(composite) = result.as_mut() {
                 composite.blend_over(&frame).map_err(RuntimeError::Media)?;

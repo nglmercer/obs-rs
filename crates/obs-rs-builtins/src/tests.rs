@@ -16,7 +16,7 @@ fn builtins_register_and_render_a_color_source() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
     let factory = plugin
         .source_factories()
-        .into_iter()
+        .iter()
         .find(|factory| factory.kind().as_str() == COLOR_SOURCE_KIND)
         .expect("color factory");
     let mut source = factory
@@ -37,7 +37,7 @@ fn invalid_color_is_rejected_at_creation() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
     let factory = plugin
         .source_factories()
-        .into_iter()
+        .iter()
         .find(|factory| factory.kind().as_str() == COLOR_SOURCE_KIND)
         .expect("color factory");
 
@@ -69,7 +69,7 @@ fn builtins_expose_simulated_platform_capture_kinds() {
     ] {
         let factory = plugin
             .source_factories()
-            .into_iter()
+            .iter()
             .find(|factory| factory.kind().as_str() == kind)
             .expect("capture factory");
         let mut source = factory

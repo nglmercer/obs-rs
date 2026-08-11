@@ -1,4 +1,8 @@
-use std::{env, io::Write, os::unix::net::UnixStream};
+use std::{
+    env,
+    io::{Read, Write},
+    os::unix::net::UnixStream,
+};
 
 use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 
@@ -18,6 +22,7 @@ pub struct X11CaptureDevice {
     server: ServerInfo,
     format: Option<VideoFormat>,
     frame_index: u64,
+    data: Vec<u8>,
 }
 
 impl X11CaptureDevice {
@@ -48,6 +53,7 @@ impl X11CaptureDevice {
             server,
             format: None,
             frame_index: 0,
+            data: Vec::new(),
         })
     }
 
@@ -137,15 +143,22 @@ impl X11CaptureDevice {
         if data_bytes_usize > X11_MAX_REPLY_BYTES {
             return Err(CaptureError::ReplyTooLarge { bytes: data_bytes });
         }
-        let mut data = vec![0_u8; data_bytes_usize];
-        read_exact_x11(&mut self.stream, &mut data)?;
+        self.data.clear();
+        self.data.reserve(data_bytes_usize);
+        let read = (&mut self.stream)
+            .take(data_bytes)
+            .read_to_end(&mut self.data)
+            .map_err(|error| x11_io_error(&error))?;
+        if read != data_bytes_usize {
+            return Err(protocol_error("GetImage payload is truncated"));
+        }
 
         let row_bytes = packed_row_bytes(usize::from(width), self.server.bits_per_pixel)?;
         let row_stride = padded_row_bytes(row_bytes, self.server.scanline_pad)?;
         let required_bytes = row_stride
             .checked_mul(usize::from(height))
             .ok_or(CaptureError::ReplyTooLarge { bytes: u64::MAX })?;
-        if data.len() < required_bytes {
+        if self.data.len() < required_bytes {
             return Err(protocol_error(
                 "GetImage payload is shorter than its scanlines",
             ));
@@ -157,7 +170,7 @@ impl X11CaptureDevice {
             self.server.bits_per_pixel,
             self.server.image_byte_order,
             self.server.masks,
-            &data,
+            &self.data,
         )?;
         VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)
     }

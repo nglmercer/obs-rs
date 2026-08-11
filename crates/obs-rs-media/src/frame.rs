@@ -2,6 +2,7 @@ use super::{
     error::MediaError, filters::FrameFilter, format::VideoFormat, time::Timestamp,
     transform::FrameTransform, transition::FrameTransition,
 };
+use rayon::prelude::*;
 /// An owned, tightly packed RGBA8 video frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VideoFrame {
@@ -59,15 +60,10 @@ impl VideoFrame {
     #[must_use]
     pub fn solid(format: VideoFormat, timestamp: Timestamp, color: [u8; 4]) -> Self {
         let len = format.rgba_bytes();
-        let mut pixels = Vec::with_capacity(len);
-        pixels.extend_from_slice(&color);
-        // Exponential doubling: each `extend_from_within` copies the whole
-        // prefix as one block instead of writing pixel by pixel.
-        while pixels.len().saturating_mul(2) <= len {
-            pixels.extend_from_within(..);
-        }
-        let remaining = len - pixels.len();
-        pixels.extend_from_within(..remaining);
+        let mut pixels = vec![0_u8; len];
+        pixels
+            .par_chunks_exact_mut(4)
+            .for_each(|pixel| pixel.copy_from_slice(&color));
 
         Self::new_unchecked(format, timestamp, pixels)
     }
@@ -128,32 +124,39 @@ impl VideoFrame {
             });
         }
 
-        for (background, source) in self
-            .pixels
-            .chunks_exact_mut(4)
-            .zip(foreground.pixels.chunks_exact(4))
-        {
-            let source_alpha = u32::from(source[3]);
-            let inverse_alpha = 255 - source_alpha;
-            let background_alpha = u32::from(background[3]);
-            let output_alpha = source_alpha + background_alpha * inverse_alpha / 255;
-            if output_alpha == 0 {
-                background.fill(0);
-                continue;
-            }
+        self.pixels
+            .par_chunks_exact_mut(4)
+            .zip(foreground.pixels.par_chunks_exact(4))
+            .for_each(|(background, source)| {
+                let source_alpha = u32::from(source[3]);
+                if source_alpha == 0 {
+                    return;
+                }
+                if source_alpha == u32::from(u8::MAX) {
+                    background.copy_from_slice(source);
+                    return;
+                }
 
-            // The denominator and both alpha weights are identical for all three
-            // colour channels, so they are computed once per pixel.
-            let denominator = output_alpha * 255;
-            let source_weight = source_alpha * 255;
-            let background_weight = background_alpha * inverse_alpha;
-            for channel in 0..3 {
-                let numerator = u32::from(source[channel]) * source_weight
-                    + u32::from(background[channel]) * background_weight;
-                background[channel] = to_byte(numerator / denominator);
-            }
-            background[3] = to_byte(output_alpha);
-        }
+                let inverse_alpha = 255 - source_alpha;
+                let background_alpha = u32::from(background[3]);
+                let output_alpha = source_alpha + background_alpha * inverse_alpha / 255;
+                if output_alpha == 0 {
+                    background.fill(0);
+                    return;
+                }
+
+                // The denominator and both alpha weights are identical for all
+                // three colour channels, so they are computed once per pixel.
+                let denominator = output_alpha * 255;
+                let source_weight = source_alpha * 255;
+                let background_weight = background_alpha * inverse_alpha;
+                for channel in 0..3 {
+                    let numerator = u32::from(source[channel]) * source_weight
+                        + u32::from(background[channel]) * background_weight;
+                    background[channel] = to_byte(numerator / denominator);
+                }
+                background[3] = to_byte(output_alpha);
+            });
 
         Ok(())
     }
@@ -271,13 +274,8 @@ impl VideoFrame {
 
                 let source_offset = (source_row + source_x as usize) * 4;
                 let output_offset = (output_row + x as usize) * 4;
-                let Some(source_pixel) = self.pixels.get(source_offset..source_offset + 4) else {
-                    return Err(MediaError::FrameTooLarge);
-                };
-                let Some(target_pixel) = output.pixels.get_mut(output_offset..output_offset + 4)
-                else {
-                    return Err(MediaError::FrameTooLarge);
-                };
+                let source_pixel = &self.pixels[source_offset..source_offset + 4];
+                let target_pixel = &mut output.pixels[output_offset..output_offset + 4];
                 target_pixel.copy_from_slice(source_pixel);
                 let alpha = u32::from(target_pixel[3]) * opacity / u32::from(u8::MAX);
                 target_pixel[3] = to_byte(alpha);
@@ -301,51 +299,80 @@ impl VideoFrame {
 
     /// Applies one CPU filter in place without allocating another frame.
     pub fn apply_filter(&mut self, filter: FrameFilter) {
-        for pixel in self.pixels.chunks_exact_mut(4) {
-            match filter {
-                FrameFilter::Grayscale => {
-                    let luma = (u32::from(pixel[0]) * 77
-                        + u32::from(pixel[1]) * 150
-                        + u32::from(pixel[2]) * 29)
-                        / 256;
-                    let luma = to_byte(luma);
-                    pixel[0] = luma;
-                    pixel[1] = luma;
-                    pixel[2] = luma;
-                }
-                FrameFilter::Brightness { milli } => {
-                    let multiplier = i32::from(milli) + 1_000;
-                    for channel in &mut pixel[..3] {
-                        let value = i32::from(*channel) * multiplier / 1_000;
-                        *channel = to_byte(u32::try_from(value.max(0)).unwrap_or(u32::MAX));
+        self.apply_filters(std::slice::from_ref(&filter));
+    }
+
+    /// Applies an ordered filter chain in one pass over the frame.
+    ///
+    /// Fusing the chain avoids reading and writing the complete pixel buffer for
+    /// every individual filter while preserving the caller's filter order.
+    pub fn apply_filters(&mut self, filters: &[FrameFilter]) {
+        if filters.is_empty() {
+            return;
+        }
+        self.pixels.par_chunks_exact_mut(4).for_each(|pixel| {
+            for filter in filters {
+                match *filter {
+                    FrameFilter::Grayscale => {
+                        let luma = (u32::from(pixel[0]) * 77
+                            + u32::from(pixel[1]) * 150
+                            + u32::from(pixel[2]) * 29)
+                            / 256;
+                        let luma = to_byte(luma);
+                        pixel[0] = luma;
+                        pixel[1] = luma;
+                        pixel[2] = luma;
+                    }
+                    FrameFilter::Brightness { milli } => {
+                        let multiplier = i32::from(milli) + 1_000;
+                        for channel in &mut pixel[..3] {
+                            let value = i32::from(*channel) * multiplier / 1_000;
+                            *channel = to_byte(u32::try_from(value.max(0)).unwrap_or(u32::MAX));
+                        }
+                    }
+                    FrameFilter::Opacity(opacity) => {
+                        let alpha = u32::from(pixel[3]) * u32::from(opacity) / 255;
+                        pixel[3] = to_byte(alpha);
                     }
                 }
-                FrameFilter::Opacity(opacity) => {
-                    let alpha = u32::from(pixel[3]) * u32::from(opacity) / 255;
-                    pixel[3] = to_byte(alpha);
-                }
             }
-        }
+        });
     }
 
     /// Clears RGB values on fully transparent pixels for canonical composition.
     pub fn clear_transparent_rgb(&mut self) {
-        for pixel in self.pixels.chunks_exact_mut(4) {
-            if pixel[3] == 0 {
-                pixel[..3].fill(0);
-            }
-        }
+        self.pixels.par_chunks_exact_mut(4).for_each(|pixel| {
+            let mask = 0_u8.wrapping_sub(u8::from(pixel[3] != 0));
+            pixel[0] &= mask;
+            pixel[1] &= mask;
+            pixel[2] &= mask;
+        });
     }
 
     /// Calculates a stable FNV-1a checksum of the frame bytes.
     #[must_use]
     pub fn checksum(&self) -> u64 {
         let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-        for byte in &self.pixels {
-            hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
+        for chunk in self.pixels.chunks_exact(8) {
+            hash = fnv_step(hash, chunk[0]);
+            hash = fnv_step(hash, chunk[1]);
+            hash = fnv_step(hash, chunk[2]);
+            hash = fnv_step(hash, chunk[3]);
+            hash = fnv_step(hash, chunk[4]);
+            hash = fnv_step(hash, chunk[5]);
+            hash = fnv_step(hash, chunk[6]);
+            hash = fnv_step(hash, chunk[7]);
+        }
+        for byte in self.pixels.chunks_exact(8).remainder() {
+            hash = fnv_step(hash, *byte);
         }
         hash
     }
+}
+
+#[inline]
+fn fnv_step(hash: u64, byte: u8) -> u64 {
+    (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
 }
 
 #[allow(

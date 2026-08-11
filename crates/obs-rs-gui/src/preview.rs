@@ -85,6 +85,10 @@ impl PreviewRenderer {
         Ok(true)
     }
 
+    pub(crate) const fn is_synced(&self, revision: u64) -> bool {
+        self.revision == revision
+    }
+
     pub(crate) fn render(&mut self, scene: &str) -> Result<Option<VideoFrame>, Box<dyn Error>> {
         let request = VideoRequest::new(self.timestamp, self.format);
         let frame = self.runtime.render_scene(scene, &request)?;

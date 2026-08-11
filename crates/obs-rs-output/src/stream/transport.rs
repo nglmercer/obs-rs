@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    io::{BufWriter, Write},
+    io::{BufWriter, IoSlice, Write},
     net::TcpStream,
 };
 
@@ -103,7 +103,7 @@ impl PacketTransport for MemoryPacketTransport {
 /// session a real Rust-owned network path while protocol selection remains open.
 pub struct TcpPacketTransport {
     address: String,
-    stream: Option<TcpStream>,
+    stream: Option<BufWriter<TcpStream>>,
 }
 
 impl TcpPacketTransport {
@@ -141,7 +141,7 @@ impl PacketTransport for TcpPacketTransport {
             .map_err(|error| {
                 OutputError::Transport(format!("TCP timeout setup failed: {error}"))
             })?;
-        self.stream = Some(stream);
+        self.stream = Some(BufWriter::with_capacity(16 * 1024, stream));
         Ok(())
     }
 
@@ -152,11 +152,11 @@ impl PacketTransport for TcpPacketTransport {
             .ok_or_else(|| OutputError::Transport("TCP transport is disconnected".to_owned()))?;
         // The frame header is fixed-size, so it is staged on the stack and the
         // payload is written straight from the packet: no per-packet heap
-        // buffer and no copy of the payload.
+        // buffer and no copy of the payload. Vectored output avoids a separate
+        // write call for the header and payload when the socket accepts both.
         let header = packet_header(packet);
-        stream
-            .write_all(&header)
-            .and_then(|()| stream.write_all(packet.payload()))
+        write_packet_vectored(stream, &header, packet.payload())
+            .and_then(|()| stream.flush())
             .map_err(|error| OutputError::Transport(format!("TCP send failed: {error}")))
     }
 
@@ -169,18 +169,15 @@ impl PacketTransport for TcpPacketTransport {
             .stream
             .as_mut()
             .ok_or_else(|| OutputError::Transport("TCP transport is disconnected".to_owned()))?;
-        // One buffered writer over the whole run collapses what used to be two
-        // syscalls per packet into as few as one for the batch.
-        let mut writer = BufWriter::new(stream);
+        // The writer is retained by the transport, so repeated batches do not
+        // allocate and discard an 8 KiB buffer.
         for packet in packets {
             let header = packet_header(packet);
-            writer
-                .write_all(&header)
-                .and_then(|()| writer.write_all(packet.payload()))
+            write_packet_vectored(stream, &header, packet.payload())
                 .map_err(|error| OutputError::Transport(format!("TCP send failed: {error}")))?;
             *delivered += 1;
         }
-        writer
+        stream
             .flush()
             .map_err(|error| OutputError::Transport(format!("TCP send failed: {error}")))
     }
@@ -202,4 +199,38 @@ fn packet_header(packet: &EncodedPacket) -> [u8; TCP_HEADER_BYTES] {
     header[10..18].copy_from_slice(&packet.timestamp().as_nanos().to_le_bytes());
     header[18..26].copy_from_slice(&(packet.byte_len() as u64).to_le_bytes());
     header
+}
+
+fn write_packet_vectored(
+    writer: &mut impl Write,
+    header: &[u8],
+    payload: &[u8],
+) -> std::io::Result<()> {
+    let mut header_offset = 0_usize;
+    let mut payload_offset = 0_usize;
+    while header_offset < header.len() || payload_offset < payload.len() {
+        let header_remaining = &header[header_offset..];
+        let payload_remaining = &payload[payload_offset..];
+        let written = if header_remaining.is_empty() {
+            writer.write(payload_remaining)?
+        } else {
+            writer.write_vectored(&[
+                IoSlice::new(header_remaining),
+                IoSlice::new(payload_remaining),
+            ])?
+        };
+        if written == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "TCP transport wrote zero bytes",
+            ));
+        }
+        if written <= header_remaining.len() {
+            header_offset += written;
+        } else {
+            header_offset = header.len();
+            payload_offset += written - header_remaining.len();
+        }
+    }
+    Ok(())
 }

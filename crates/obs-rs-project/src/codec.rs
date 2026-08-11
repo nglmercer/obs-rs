@@ -53,13 +53,13 @@ impl Project {
             document.push('|');
             document.push_str(&escape(&profile.name));
             document.push('|');
-            document.push_str(&format.width().to_string());
+            push_display(&mut document, &format.width());
             document.push('|');
-            document.push_str(&format.height().to_string());
+            push_display(&mut document, &format.height());
             document.push('|');
-            document.push_str(&format.frame_rate().numerator().to_string());
+            push_display(&mut document, &format.frame_rate().numerator());
             document.push('|');
-            document.push_str(&format.frame_rate().denominator().to_string());
+            push_display(&mut document, &format.frame_rate().denominator());
             document.push('\n');
 
             for scene in profile.scenes.values() {
@@ -225,19 +225,19 @@ fn parse_source(project: &mut Project, line: &str, line_number: usize) -> Result
     scene.add_source(source)
 }
 fn append_transform(document: &mut String, transform: FrameTransform) {
-    document.push_str(&transform.scale_x_milli().to_string());
+    push_display(document, &transform.scale_x_milli());
     document.push(',');
-    document.push_str(&transform.scale_y_milli().to_string());
+    push_display(document, &transform.scale_y_milli());
     document.push(',');
-    document.push_str(&transform.translate_x().to_string());
+    push_display(document, &transform.translate_x());
     document.push(',');
-    document.push_str(&transform.translate_y().to_string());
+    push_display(document, &transform.translate_y());
     document.push(',');
     document.push_str(if transform.flip_x() { "1" } else { "0" });
     document.push(',');
     document.push_str(if transform.flip_y() { "1" } else { "0" });
     document.push(',');
-    document.push_str(&transform.opacity().to_string());
+    push_display(document, &transform.opacity());
 }
 
 fn parse_transform(value: &str, line: usize) -> Result<FrameTransform, ProjectError> {
@@ -328,9 +328,7 @@ fn parse_filters(value: &str, line: usize) -> Result<Vec<FrameFilter>, ProjectEr
 }
 
 fn escape(value: &str) -> String {
-    // Worst case is three characters per byte; reserving it up front keeps the
-    // byte loop from reallocating.
-    let mut escaped = String::with_capacity(value.len() * 3);
+    let mut escaped = String::with_capacity(value.len());
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
             escaped.push(char::from(byte));
@@ -342,6 +340,8 @@ fn escape(value: &str) -> String {
     }
     escaped
 }
+
+const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 
 fn decode(value: &str, line: usize) -> Result<String, ProjectError> {
     let bytes = value.as_bytes();
@@ -377,10 +377,7 @@ fn decode(value: &str, line: usize) -> Result<String, ProjectError> {
 }
 
 fn hex(value: u8) -> char {
-    match value {
-        0..=9 => char::from(b'0' + value),
-        _ => char::from(b'A' + value - 10),
-    }
+    char::from(HEX_DIGITS[usize::from(value & 0x0F)])
 }
 
 fn from_hex(value: u8) -> Option<u8> {

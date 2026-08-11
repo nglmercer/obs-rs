@@ -4,7 +4,7 @@ use std::sync::Arc;
 use obs_rs_media::{FrameRate, MediaError, Timestamp, VideoFormat, VideoFrame};
 
 use super::{
-    codec::{read_exact, read_u32, read_u64, write_all, write_u32, write_u64},
+    codec::{read_exact, read_u32, read_u64, read_vec, write_all, write_u32, write_u64},
     error::OutputError,
     types::OutputState,
     HEADER_BYTES, MAGIC, MAX_RECORDING_BYTES, MAX_RECORDING_FRAMES,
@@ -160,8 +160,7 @@ impl RawRecording {
                     actual: usize::try_from(payload_bytes).unwrap_or(usize::MAX),
                 }));
             }
-            let mut pixels = vec![0_u8; format.rgba_bytes()];
-            read_exact(&mut cursor, &mut pixels)?;
+            let pixels = read_vec(&mut cursor, format.rgba_bytes())?;
             let frame = VideoFrame::new(format, timestamp, pixels).map_err(OutputError::Media)?;
             recording.push(frame)?;
         }

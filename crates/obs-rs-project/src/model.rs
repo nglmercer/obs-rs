@@ -3,7 +3,7 @@ use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
 use obs_rs_util::Identifier;
 use std::{
     borrow::Borrow,
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::OnceLock,
 };
 
@@ -123,9 +123,9 @@ pub struct SceneSpec {
     pub(crate) name: String,
     /// Composition order, which is part of the scene's meaning.
     pub(crate) sources: Vec<SourceSpec>,
-    /// O(1) membership mirror of `sources`, so adding N sources is O(N) rather
-    /// than the O(N^2) a linear duplicate scan per insert produced.
-    pub(crate) source_ids: HashSet<Identifier>,
+    /// O(1) source lookup and membership mirror. Values are indices into the
+    /// ordered `sources` vector, so keyed mutations do not scan the scene.
+    pub(crate) source_ids: HashMap<Identifier, usize>,
 }
 
 impl SceneSpec {
@@ -142,7 +142,7 @@ impl SceneSpec {
             id: identifier(id, "scene id")?,
             name: name.to_owned(),
             sources: Vec::new(),
-            source_ids: HashSet::new(),
+            source_ids: HashMap::new(),
         })
     }
 
@@ -183,9 +183,11 @@ impl SceneSpec {
     ///
     /// Returns [`ProjectError::DuplicateSource`] when the ID is already present.
     pub fn add_source(&mut self, source: SourceSpec) -> Result<(), ProjectError> {
-        if !self.source_ids.insert(source.id().clone()) {
+        if self.source_ids.contains_key(source.id()) {
             return Err(ProjectError::DuplicateSource(source.id().clone()));
         }
+        let index = self.sources.len();
+        self.source_ids.insert(source.id().clone(), index);
         self.sources.push(source);
         Ok(())
     }
@@ -207,13 +209,14 @@ impl SceneSpec {
         let incoming: Vec<SourceSpec> = sources.into_iter().collect();
         let mut candidate = HashSet::with_capacity(incoming.len());
         for source in &incoming {
-            if self.source_ids.contains(source.id()) || !candidate.insert(source.id()) {
+            if self.source_ids.contains_key(source.id()) || !candidate.insert(source.id()) {
                 return Err(ProjectError::DuplicateSource(source.id().clone()));
             }
         }
         self.sources.reserve(incoming.len());
         for source in incoming {
-            self.source_ids.insert(source.id().clone());
+            let index = self.sources.len();
+            self.source_ids.insert(source.id().clone(), index);
             self.sources.push(source);
         }
         Ok(())
@@ -221,22 +224,41 @@ impl SceneSpec {
 
     /// Returns whether this scene contains `id`, in constant time.
     #[must_use]
-    pub fn has_source(&self, id: &Identifier) -> bool {
-        self.source_ids.contains(id)
+    pub fn has_source<Q>(&self, id: &Q) -> bool
+    where
+        Identifier: Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        self.source_ids.contains_key(id)
     }
 
     /// Finds a mutable source by project-local ID.
     pub fn source_mut(&mut self, id: &Identifier) -> Option<&mut SourceSpec> {
-        self.sources.iter_mut().find(|source| source.id() == id)
+        let index = *self.source_ids.get(id)?;
+        self.sources.get_mut(index)
+    }
+
+    /// Finds an immutable source by an owned or borrowed project-local ID.
+    #[must_use]
+    pub fn source<Q>(&self, id: &Q) -> Option<&SourceSpec>
+    where
+        Identifier: Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        let index = *self.source_ids.get(id)?;
+        self.sources.get(index)
     }
 
     /// Removes one source item and returns its definition.
     pub fn remove_source(&mut self, id: &Identifier) -> Option<SourceSpec> {
-        if !self.source_ids.remove(id) {
-            return None;
+        let index = self.source_ids.remove(id)?;
+        let source = self.sources.remove(index);
+        for (index, source) in self.sources.iter().enumerate().skip(index) {
+            if let Some(entry) = self.source_ids.get_mut(source.id()) {
+                *entry = index;
+            }
         }
-        let index = self.sources.iter().position(|source| source.id() == id)?;
-        Some(self.sources.remove(index))
+        Some(source)
     }
 
     /// Moves one source item to an existing scene order position.
@@ -251,9 +273,9 @@ impl SceneSpec {
         target_index: usize,
     ) -> Result<(), ProjectError> {
         let current_index = self
-            .sources
-            .iter()
-            .position(|source| source.id() == id)
+            .source_ids
+            .get(id)
+            .copied()
             .ok_or_else(|| ProjectError::UnknownSource(id.clone()))?;
         if target_index >= self.sources.len() {
             return Err(ProjectError::InvalidSourceOrder {
@@ -262,6 +284,12 @@ impl SceneSpec {
         }
         let source = self.sources.remove(current_index);
         self.sources.insert(target_index, source);
+        let first = current_index.min(target_index);
+        for (index, source) in self.sources.iter().enumerate().skip(first) {
+            if let Some(entry) = self.source_ids.get_mut(source.id()) {
+                *entry = index;
+            }
+        }
         Ok(())
     }
 }

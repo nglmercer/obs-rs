@@ -1,4 +1,5 @@
 use super::{error::MediaError, format::VideoFormat, frame::VideoFrame, time::Timestamp};
+use rayon::prelude::*;
 /// Pixel layouts accepted at a portable video boundary.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum PixelFormat {
@@ -128,30 +129,39 @@ impl RawVideoFrame {
             PixelFormat::Rgba8 => bytes,
             PixelFormat::Bgra8 => {
                 let mut rgba = vec![0; format.rgba_bytes()];
-                for (source, target) in bytes.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
-                    target[0] = source[2];
-                    target[1] = source[1];
-                    target[2] = source[0];
-                    target[3] = source[3];
-                }
+                bytes
+                    .par_chunks_exact(4)
+                    .zip(rgba.par_chunks_exact_mut(4))
+                    .for_each(|(source, target)| {
+                        target[0] = source[2];
+                        target[1] = source[1];
+                        target[2] = source[0];
+                        target[3] = source[3];
+                    });
                 rgba
             }
             PixelFormat::Rgb8 => {
                 let mut rgba = vec![0; format.rgba_bytes()];
-                for (source, target) in bytes.chunks_exact(3).zip(rgba.chunks_exact_mut(4)) {
-                    target[..3].copy_from_slice(source);
-                    target[3] = u8::MAX;
-                }
+                bytes
+                    .par_chunks_exact(3)
+                    .zip(rgba.par_chunks_exact_mut(4))
+                    .for_each(|(source, target)| {
+                        target[..3].copy_from_slice(source);
+                        target[3] = u8::MAX;
+                    });
                 rgba
             }
             PixelFormat::Gray8 => {
                 let mut rgba = vec![0; format.rgba_bytes()];
-                for (luma, target) in bytes.iter().zip(rgba.chunks_exact_mut(4)) {
-                    target[0] = *luma;
-                    target[1] = *luma;
-                    target[2] = *luma;
-                    target[3] = u8::MAX;
-                }
+                bytes
+                    .par_iter()
+                    .zip(rgba.par_chunks_exact_mut(4))
+                    .for_each(|(luma, target)| {
+                        target[0] = *luma;
+                        target[1] = *luma;
+                        target[2] = *luma;
+                        target[3] = u8::MAX;
+                    });
                 rgba
             }
             PixelFormat::I420 => {
@@ -171,43 +181,46 @@ fn convert_i420_to_rgba(format: VideoFormat, source: &[u8], target: &mut [u8]) {
     let chroma_width = width / 2;
     let chroma_height = height / 2;
     let chroma_len = chroma_width.saturating_mul(chroma_height);
-    let (luma, remainder) = source.split_at(luma_len);
-    let (u_plane, v_plane) = remainder.split_at(chroma_len);
+    let Some((luma, remainder)) = source.get(..luma_len).zip(source.get(luma_len..)) else {
+        return;
+    };
+    let Some((u_plane, v_plane)) = remainder.get(..chroma_len).zip(remainder.get(chroma_len..))
+    else {
+        return;
+    };
+    let Some(target_rows) = target.get_mut(..luma_len * 4) else {
+        return;
+    };
 
-    for y in 0..height {
-        // Hoisted out of the inner loop: both the luma row and the chroma row
-        // are constant for the whole scanline.
-        let luma_row = y * width;
-        let chroma_row = (y >> 1) * chroma_width;
-        let (Some(luma_line), Some(target_line)) = (
-            luma.get(luma_row..luma_row + width),
-            target.get_mut(luma_row * 4..(luma_row + width) * 4),
-        ) else {
-            return;
-        };
+    target_rows
+        .par_chunks_exact_mut(width * 4)
+        .enumerate()
+        .for_each(|(y, target_line)| {
+            // Hoisted out of the inner loop: both the luma row and the chroma
+            // row are constant for the whole scanline.
+            let luma_row = y * width;
+            let chroma_row = (y >> 1) * chroma_width;
+            let luma_line = &luma[luma_row..luma_row + width];
 
-        for (x, (luma_value, pixel)) in luma_line
-            .iter()
-            .zip(target_line.chunks_exact_mut(4))
-            .enumerate()
-        {
-            let chroma_index = chroma_row + (x >> 1);
-            let (Some(u_value), Some(v_value)) =
-                (u_plane.get(chroma_index), v_plane.get(chroma_index))
-            else {
-                return;
-            };
-            let u = i32::from(*u_value) - 128;
-            let v = i32::from(*v_value) - 128;
-            let c = i32::from(*luma_value) - 16;
-            // `298 * c` is shared by all three channel formulas.
-            let c298 = 298 * c + 128;
-            pixel[0] = clamp_channel((c298 + 409 * v) >> 8);
-            pixel[1] = clamp_channel((c298 - 100 * u - 208 * v) >> 8);
-            pixel[2] = clamp_channel((c298 + 516 * u) >> 8);
-            pixel[3] = u8::MAX;
-        }
-    }
+            for (x, (luma_value, pixel)) in luma_line
+                .iter()
+                .zip(target_line.chunks_exact_mut(4))
+                .enumerate()
+            {
+                let chroma_index = chroma_row + (x >> 1);
+                let u_value = u_plane[chroma_index];
+                let v_value = v_plane[chroma_index];
+                let u = i32::from(u_value) - 128;
+                let v = i32::from(v_value) - 128;
+                let c = i32::from(*luma_value) - 16;
+                // `298 * c` is shared by all three channel formulas.
+                let c298 = 298 * c + 128;
+                pixel[0] = clamp_channel((c298 + 409 * v) >> 8);
+                pixel[1] = clamp_channel((c298 - 100 * u - 208 * v) >> 8);
+                pixel[2] = clamp_channel((c298 + 516 * u) >> 8);
+                pixel[3] = u8::MAX;
+            }
+        });
 }
 
 #[allow(

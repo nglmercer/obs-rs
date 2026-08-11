@@ -1,4 +1,5 @@
 use super::{commands::ProjectCommand, error::ProjectError, model::Project};
+use std::cell::RefCell;
 /// Mutable project controller that tracks unsaved changes.
 pub struct ProjectSession {
     project: Project,
@@ -9,6 +10,7 @@ pub struct ProjectSession {
     /// since I last looked?" by comparing two integers, instead of serializing
     /// the whole document and comparing strings on every frame.
     revision: u64,
+    document_cache: RefCell<Option<(u64, String)>>,
 }
 
 impl ProjectSession {
@@ -19,6 +21,7 @@ impl ProjectSession {
             project,
             dirty: false,
             revision: 1,
+            document_cache: RefCell::new(None),
         }
     }
 
@@ -31,6 +34,7 @@ impl ProjectSession {
         self.project.apply(command)?;
         self.dirty = true;
         self.revision = self.revision.wrapping_add(1);
+        self.document_cache.borrow_mut().take();
         Ok(())
     }
 
@@ -48,6 +52,7 @@ impl ProjectSession {
         self.project = project;
         self.dirty = false;
         self.revision = self.revision.wrapping_add(1);
+        self.document_cache.borrow_mut().take();
     }
 
     /// Returns the current mutation revision.
@@ -78,7 +83,14 @@ impl ProjectSession {
     /// Serializes the current state without changing dirty status.
     #[must_use]
     pub fn document(&self) -> String {
-        self.project.serialize()
+        if let Some((revision, document)) = self.document_cache.borrow().as_ref() {
+            if *revision == self.revision {
+                return document.clone();
+            }
+        }
+        let document = self.project.serialize();
+        *self.document_cache.borrow_mut() = Some((self.revision, document.clone()));
+        document
     }
 
     /// Marks the session clean after an external persistence operation succeeds.

@@ -18,7 +18,7 @@ mod worker;
 #[cfg(test)]
 mod tests;
 
-pub use buffer::AudioBuffer;
+pub use buffer::{AudioBuffer, AudioBufferPool};
 pub use callback_clock::{AudioCallbackClock, AudioCallbackObservation};
 pub use error::{AudioError, AudioWorkerError};
 pub use mixer::AudioMixer;

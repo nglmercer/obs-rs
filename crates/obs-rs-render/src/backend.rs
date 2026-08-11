@@ -40,6 +40,17 @@ pub trait RenderBackend {
     /// Returns [`RenderError`] when the context, handle, or format is invalid.
     fn upload(&mut self, texture: TextureId, frame: &VideoFrame) -> Result<(), RenderError>;
 
+    /// Uploads an owned frame without requiring a defensive copy at the backend
+    /// boundary. Backends that do not have an ownership-aware implementation
+    /// retain the borrowed upload as a compatibility fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the context, handle, or format is invalid.
+    fn upload_owned(&mut self, texture: TextureId, frame: VideoFrame) -> Result<(), RenderError> {
+        self.upload(texture, &frame)
+    }
+
     /// Converts and uploads a packed or planar frame through the media boundary.
     ///
     /// The default implementation keeps backend contracts in RGBA8 while
@@ -52,6 +63,22 @@ pub trait RenderBackend {
     fn upload_raw(&mut self, texture: TextureId, frame: &RawVideoFrame) -> Result<(), RenderError> {
         let rgba = frame.clone().into_rgba8().map_err(RenderError::Media)?;
         self.upload(texture, &rgba)
+    }
+
+    /// Converts and uploads an owned packed or planar frame without cloning the
+    /// input layout or the converted RGBA buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError::Media`] for a conversion failure or any error
+    /// returned by [`Self::upload_owned`].
+    fn upload_raw_owned(
+        &mut self,
+        texture: TextureId,
+        frame: RawVideoFrame,
+    ) -> Result<(), RenderError> {
+        let rgba = frame.into_rgba8().map_err(RenderError::Media)?;
+        self.upload_owned(texture, rgba)
     }
 
     /// Composites texture layers in order into a target texture.

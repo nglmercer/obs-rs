@@ -94,7 +94,7 @@ fn sandbox_source_reads_one_bounded_frame_from_a_child_process() {
         .expect("sandbox process configuration");
     let factory = plugin
         .source_factories()
-        .into_iter()
+        .iter()
         .next()
         .expect("sandbox source factory");
     let mut settings = Config::new();

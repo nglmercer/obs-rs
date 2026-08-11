@@ -240,7 +240,7 @@ pub trait Plugin: Send + Sync {
     fn manifest(&self) -> &PluginManifest;
 
     /// Returns the factories contributed by this plugin.
-    fn source_factories(&self) -> Vec<Arc<dyn SourceFactory>>;
+    fn source_factories(&self) -> &[Arc<dyn SourceFactory>];
 }
 
 /// Errors raised before a plugin can be registered.

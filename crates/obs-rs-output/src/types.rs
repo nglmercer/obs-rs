@@ -1,4 +1,5 @@
 use obs_rs_media::Timestamp;
+use std::sync::Arc;
 
 use super::{error::OutputError, MAX_PACKET_BYTES};
 
@@ -33,7 +34,7 @@ pub struct EncodedPacket {
     pub(crate) kind: PacketKind,
     pub(crate) timestamp: Timestamp,
     pub(crate) keyframe: bool,
-    pub(crate) payload: Vec<u8>,
+    pub(crate) payload: Arc<Vec<u8>>,
 }
 
 impl EncodedPacket {
@@ -61,7 +62,7 @@ impl EncodedPacket {
             kind,
             timestamp,
             keyframe,
-            payload,
+            payload: Arc::new(payload),
         })
     }
 

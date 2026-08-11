@@ -3,7 +3,7 @@ use obs_rs_media::Timestamp;
 use obs_rs_video::VideoClock;
 
 use super::error::ClockRateError;
-const CLOCK_PPM_SCALE: i128 = 1_000_000;
+const CLOCK_PPM_SCALE: u64 = 1_000_000;
 
 /// Maximum supported simulated device-clock error in parts per million.
 pub const MAX_CLOCK_DRIFT_PPM: i32 = 500_000;
@@ -12,6 +12,7 @@ pub const MAX_CLOCK_DRIFT_PPM: i32 = 500_000;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ClockRate {
     drift_ppm: i32,
+    scale_ppm: u64,
 }
 
 impl ClockRate {
@@ -21,11 +22,21 @@ impl ClockRate {
     ///
     /// Returns [`ClockRateError::DriftOutOfRange`] when the requested offset is
     /// outside the safe positive-rate interval.
+    #[allow(clippy::cast_lossless, reason = "unsigned_abs is at most i32::MAX")]
     pub const fn new(drift_ppm: i32) -> Result<Self, ClockRateError> {
         if drift_ppm < -MAX_CLOCK_DRIFT_PPM || drift_ppm > MAX_CLOCK_DRIFT_PPM {
             return Err(ClockRateError::DriftOutOfRange { ppm: drift_ppm });
         }
-        Ok(Self { drift_ppm })
+        let magnitude = drift_ppm.unsigned_abs() as u64;
+        let scale_ppm = if drift_ppm < 0 {
+            CLOCK_PPM_SCALE - magnitude
+        } else {
+            CLOCK_PPM_SCALE + magnitude
+        };
+        Ok(Self {
+            drift_ppm,
+            scale_ppm,
+        })
     }
 
     /// Returns the signed rate offset in parts per million.
@@ -34,18 +45,20 @@ impl ClockRate {
         self.drift_ppm
     }
 
-    fn scale(self) -> i128 {
-        CLOCK_PPM_SCALE + i128::from(self.drift_ppm)
+    const fn scale(self) -> u64 {
+        self.scale_ppm
     }
 
     fn observed_at(self, reference: Timestamp) -> Timestamp {
-        let nanos = i128::from(reference.as_nanos()) * self.scale() / CLOCK_PPM_SCALE;
+        let nanos = u128::from(reference.as_nanos()) * u128::from(self.scale())
+            / u128::from(CLOCK_PPM_SCALE);
         Timestamp::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
     }
 
     fn reference_for(self, deadline: Timestamp) -> Timestamp {
-        let numerator = i128::from(deadline.as_nanos()) * CLOCK_PPM_SCALE;
-        let reference = (numerator + self.scale() - 1) / self.scale();
+        let numerator = u128::from(deadline.as_nanos()) * u128::from(CLOCK_PPM_SCALE);
+        let scale = u128::from(self.scale());
+        let reference = numerator.div_ceil(scale);
         Timestamp::from_nanos(u64::try_from(reference).unwrap_or(u64::MAX))
     }
 }

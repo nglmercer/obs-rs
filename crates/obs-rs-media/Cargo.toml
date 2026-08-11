@@ -7,3 +7,6 @@ version.workspace = true
 
 [lib]
 crate-type = ["lib"]
+
+[dependencies]
+rayon = "1.12.0"

@@ -130,12 +130,19 @@ pub fn validate_identifier(input: &[u8]) -> Result<&str, IdentifierError> {
 
     let identifier = str::from_utf8(input).map_err(|_| IdentifierError::InvalidUtf8)?;
 
-    if !is_identifier_start(input[0]) {
-        return Err(IdentifierError::InvalidFirstCharacter);
-    }
-
-    if input[1..].iter().any(|byte| !is_identifier_continue(*byte)) {
-        return Err(IdentifierError::InvalidCharacter);
+    for (index, byte) in input.iter().copied().enumerate() {
+        let valid = if index == 0 {
+            is_identifier_start(byte)
+        } else {
+            is_identifier_continue(byte)
+        };
+        if !valid {
+            return Err(if index == 0 {
+                IdentifierError::InvalidFirstCharacter
+            } else {
+                IdentifierError::InvalidCharacter
+            });
+        }
     }
 
     Ok(identifier)

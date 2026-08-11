@@ -163,7 +163,7 @@ fn simulated_frame(
         .map_err(|_| CaptureError::Media(MediaError::FrameTooLarge))?;
     let height = usize::try_from(format.height())
         .map_err(|_| CaptureError::Media(MediaError::FrameTooLarge))?;
-    let mut pixels = vec![0_u8; format.rgba_bytes()];
+    let mut pixels = Vec::with_capacity(format.rgba_bytes());
     let phase = frame_index % 2;
     let variant = match kind {
         CaptureKind::TestPattern => 0,
@@ -179,19 +179,17 @@ fn simulated_frame(
         .map(|x| gradient_byte(x, width).saturating_add(variant / 2))
         .collect();
 
-    for (y, row) in pixels.chunks_exact_mut(width * 4).enumerate() {
+    for y in 0..height {
         let row_gradient = gradient_byte(y, height).saturating_add(variant / 3);
         let row_tile = y / 16;
-        for (x, (pixel, column)) in row.chunks_exact_mut(4).zip(&column_gradient).enumerate() {
+        for (x, column) in column_gradient.iter().enumerate() {
             let tile = ((x / 16 + row_tile) as u64 + phase) % 2;
-            pixel[0] = if tile == 0 {
+            let red = if tile == 0 {
                 32_u8.saturating_add(variant)
             } else {
                 224_u8.saturating_sub(variant)
             };
-            pixel[1] = *column;
-            pixel[2] = row_gradient;
-            pixel[3] = 255;
+            pixels.extend_from_slice(&[red, *column, row_gradient, 255]);
         }
     }
     VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)

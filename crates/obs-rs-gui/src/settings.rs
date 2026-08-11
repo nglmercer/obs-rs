@@ -356,7 +356,13 @@ impl AppSettings {
     /// Builds the complete token set for the selected theme, with the
     /// accessibility colour overrides applied on top.
     pub(crate) fn tokens(&self) -> ThemeTokens {
-        let preset = &THEMES[self.theme.min(THEMES.len() - 1)];
+        self.tokens_for_theme(self.theme)
+    }
+
+    /// Builds a palette preview for `theme` while retaining this settings
+    /// value's accessibility colour overrides.
+    pub(crate) fn tokens_for_theme(&self, theme: usize) -> ThemeTokens {
+        let preset = &THEMES[theme.min(THEMES.len() - 1)];
         ThemeTokens {
             window_bg: brush(preset.window_bg),
             panel_bg: brush(preset.panel_bg),

@@ -3326,6 +3326,7 @@ dependencies = [
 name = "obs-rs-config"
 version = "0.1.0"
 dependencies = [
+ "memchr",
  "obs-rs-util",
 ]
 
@@ -3365,6 +3366,9 @@ dependencies = [
 [[package]]
 name = "obs-rs-media"
 version = "0.1.0"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "obs-rs-output"

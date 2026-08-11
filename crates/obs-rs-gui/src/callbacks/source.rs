@@ -54,11 +54,9 @@ pub(crate) fn move_source_and_refresh(
         let target_index = {
             let state = state.borrow();
             let project = state.project_session().project();
-            let active_profile = project.active_profile();
             let scene = project
-                .profiles()
-                .find(|profile| profile.id() == active_profile)
-                .and_then(|profile| profile.scenes().find(|item| item.id().as_str() == scene));
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(scene.as_str()));
             let source_index = scene
                 .and_then(|scene| {
                     scene
@@ -189,17 +187,13 @@ fn source_display_state(
         .preview_scene()
         .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
     let profile = project
-        .profiles()
-        .find(|profile| profile.id().as_str() == profile_id)
+        .active_profile_spec()
         .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
     let scene = profile
-        .scenes()
-        .find(|scene| scene.id().as_str() == scene_id)
+        .scene(scene_id)
         .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
     let source = scene
-        .sources()
-        .iter()
-        .find(|source| source.id().as_str() == source_id)
+        .source(source_id)
         .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
     Ok((
         profile_id,

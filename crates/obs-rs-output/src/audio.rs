@@ -20,6 +20,16 @@ pub trait AudioEncoder {
     /// invalid.
     fn encode(&mut self, buffer: &AudioBuffer) -> Result<EncodedPacket, OutputError>;
 
+    /// Encodes one owned audio buffer. Codecs that can consume the sample
+    /// storage may override this to avoid a defensive copy at their boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`OutputError`] when encoding fails.
+    fn encode_owned(&mut self, buffer: AudioBuffer) -> Result<EncodedPacket, OutputError> {
+        self.encode(&buffer)
+    }
+
     /// Flushes delayed packets, if the codec has any.
     ///
     /// # Errors
@@ -53,16 +63,32 @@ impl AudioEncoder for RawAudioEncoder {
                 actual: buffer.format(),
             });
         }
-        let mut payload = Vec::with_capacity(buffer.samples().len().saturating_mul(4));
-        for sample in buffer.samples() {
-            payload.extend_from_slice(&sample.to_le_bytes());
+        encode_pcm_payload(buffer.timestamp(), buffer.samples())
+    }
+
+    fn encode_owned(&mut self, buffer: AudioBuffer) -> Result<EncodedPacket, OutputError> {
+        if buffer.format() != self.format {
+            return Err(OutputError::AudioFormatMismatch {
+                expected: self.format,
+                actual: buffer.format(),
+            });
         }
-        EncodedPacket::new(PacketKind::Audio, buffer.timestamp(), false, payload)
+        let timestamp = buffer.timestamp();
+        let samples = buffer.into_samples();
+        encode_pcm_payload(timestamp, &samples)
     }
 
     fn flush(&mut self) -> Result<Vec<EncodedPacket>, OutputError> {
         Ok(Vec::new())
     }
+}
+
+fn encode_pcm_payload(timestamp: Timestamp, samples: &[f32]) -> Result<EncodedPacket, OutputError> {
+    let mut payload = Vec::with_capacity(samples.len().saturating_mul(4));
+    for sample in samples {
+        payload.extend_from_slice(&sample.to_le_bytes());
+    }
+    EncodedPacket::new(PacketKind::Audio, timestamp, false, payload)
 }
 
 /// An offline PCM16 WAV recording assembled from one fixed audio format.
@@ -215,6 +241,12 @@ pub struct Y4mRecording {
     pub(crate) last_timestamp: Option<Timestamp>,
     /// The stream header, formatted once because the format never changes.
     pub(crate) header: String,
+    /// Reused conversion scratch owned by the recording rather than allocated
+    /// once per encoded frame.
+    chroma_u: Vec<u8>,
+    chroma_v: Vec<u8>,
+    luma_top: Vec<u8>,
+    luma_bottom: Vec<u8>,
 }
 
 impl Y4mRecording {
@@ -227,6 +259,10 @@ impl Y4mRecording {
             encoded_bytes: 0,
             last_timestamp: None,
             header: y4m_header(format),
+            chroma_u: Vec::with_capacity(format.pixel_count() / 4),
+            chroma_v: Vec::with_capacity(format.pixel_count() / 4),
+            luma_top: Vec::with_capacity(usize::try_from(format.width()).unwrap_or(0)),
+            luma_bottom: Vec::with_capacity(usize::try_from(format.width()).unwrap_or(0)),
         }
     }
 
@@ -300,12 +336,19 @@ impl Y4mRecording {
     ///
     /// Returns [`OutputError::UnsupportedFormat`] for odd dimensions or a write
     /// error from the in-memory output path.
-    pub fn encode(&self) -> Result<Vec<u8>, OutputError> {
+    pub fn encode(&mut self) -> Result<Vec<u8>, OutputError> {
         self.validate_format()?;
         let mut bytes = Vec::with_capacity(self.encoded_bytes.max(self.header.len()));
         write_all(&mut bytes, self.header.as_bytes())?;
         for frame in &self.frames {
-            write_y4m_frame(&mut bytes, frame);
+            write_y4m_frame_reusing(
+                &mut bytes,
+                frame,
+                &mut self.chroma_u,
+                &mut self.chroma_v,
+                &mut self.luma_top,
+                &mut self.luma_bottom,
+            );
         }
         Ok(bytes)
     }
@@ -348,7 +391,14 @@ fn y4m_encoded_size(
         .ok_or(OutputError::TooLarge { bytes: u64::MAX })
 }
 
-fn write_y4m_frame(output: &mut Vec<u8>, frame: &VideoFrame) {
+fn write_y4m_frame_reusing(
+    output: &mut Vec<u8>,
+    frame: &VideoFrame,
+    chroma_u: &mut Vec<u8>,
+    chroma_v: &mut Vec<u8>,
+    luma_top: &mut Vec<u8>,
+    luma_bottom: &mut Vec<u8>,
+) {
     output.extend_from_slice(b"FRAME\n");
     let format = frame.format();
     let width = usize::try_from(format.width()).unwrap_or(usize::MAX);
@@ -362,10 +412,10 @@ fn write_y4m_frame(output: &mut Vec<u8>, frame: &VideoFrame) {
     // three components are kept. Rows are processed in vertical pairs so the
     // 2x2 chroma average is available without a second conversion pass, and
     // only two scanlines of luma are buffered at a time.
-    let mut chroma_u = Vec::with_capacity(format.pixel_count() / 4);
-    let mut chroma_v = Vec::with_capacity(format.pixel_count() / 4);
-    let mut luma_top = Vec::with_capacity(width);
-    let mut luma_bottom = Vec::with_capacity(width);
+    chroma_u.clear();
+    chroma_v.clear();
+    luma_top.clear();
+    luma_bottom.clear();
 
     for rows in pixels.chunks_exact(row_bytes * 2) {
         let (top, bottom) = rows.split_at(row_bytes);
@@ -391,12 +441,30 @@ fn write_y4m_frame(output: &mut Vec<u8>, frame: &VideoFrame) {
             chroma_v.push(u8::try_from((v_sum + 2) / 4).unwrap_or(u8::MAX));
         }
 
-        output.extend_from_slice(&luma_top);
-        output.extend_from_slice(&luma_bottom);
+        output.extend_from_slice(luma_top);
+        output.extend_from_slice(luma_bottom);
     }
 
-    output.extend_from_slice(&chroma_u);
-    output.extend_from_slice(&chroma_v);
+    output.extend_from_slice(chroma_u);
+    output.extend_from_slice(chroma_v);
+}
+
+#[cfg(test)]
+fn write_y4m_frame(output: &mut Vec<u8>, frame: &VideoFrame) {
+    let format = frame.format();
+    let width = usize::try_from(format.width()).unwrap_or(0);
+    let mut chroma_u = Vec::with_capacity(format.pixel_count() / 4);
+    let mut chroma_v = Vec::with_capacity(format.pixel_count() / 4);
+    let mut luma_top = Vec::with_capacity(width);
+    let mut luma_bottom = Vec::with_capacity(width);
+    write_y4m_frame_reusing(
+        output,
+        frame,
+        &mut chroma_u,
+        &mut chroma_v,
+        &mut luma_top,
+        &mut luma_bottom,
+    );
 }
 
 fn rgb_to_yuv(red: u8, green: u8, blue: u8) -> (u8, u8, u8) {

@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use obs_rs_media::{FrameTransform, FrameTransition, VideoFrame};
 use obs_rs_project::{Profile, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
-use slint::{Image, ModelRc, SharedString, VecModel, Weak};
+use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::{
     frame_to_image, project_store, source_filters_document, source_transform_document,
@@ -35,7 +35,8 @@ pub(crate) fn dispatch_and_refresh(
         return;
     };
     if let Err(error) = result {
-        let prefix = crate::i18n::catalog(state.borrow().locale()).command_failed;
+        let locale = state.borrow().locale();
+        let prefix = crate::i18n::with_catalog(locale, |text| text.command_failed.clone());
         ui.set_status_message(format!("{prefix}{error}").into());
     } else {
         refresh_ui(&ui, state, renderer);
@@ -47,63 +48,82 @@ pub(crate) fn refresh_ui(
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
 ) {
-    let state = state.borrow();
-    crate::i18n::apply(ui, state.locale());
-    let project = state.project_session().project();
-    let profile_id = project.active_profile();
-    let profile = project
-        .profiles()
-        .find(|profile| profile.id() == profile_id);
-    let profile_name = profile.map_or_else(
-        || crate::i18n::catalog(state.locale()).no_profile.to_string(),
-        |value| value.name().to_owned(),
-    );
+    let (revision, preview_scene, program_scene, notice) = {
+        let state = state.borrow();
+        let locale = state.locale();
+        crate::i18n::apply_if_changed(ui, locale);
+        let project = state.project_session().project();
+        let profile = project.active_profile_spec();
+        let profile_name = profile.map_or_else(
+            || crate::i18n::with_catalog(locale, |text| text.no_profile.to_string()),
+            |value| value.name().to_owned(),
+        );
 
-    ui.set_project_title(project.title().into());
-    ui.set_profile_name(profile_name.into());
-    ui.set_locale(state.locale().code().into());
-    // The supported-locale list is static, so the model is built once per
-    // thread rather than rebuilt on every tick.
-    ui.set_locale_options(LOCALE_OPTIONS.with(Clone::clone));
-    ui.set_preview_scene(state.preview_scene().unwrap_or("none").into());
-    ui.set_program_scene(state.program_scene().unwrap_or("none").into());
-    ui.set_transition(transition_label_for_locale(state.locale(), state.transition()).into());
-    ui.set_recording(state.recording());
-    ui.set_streaming(state.streaming());
-    ui.set_dirty(state.is_dirty());
-    ui.set_snapshot(state.accessible_snapshot().into());
-    refresh_recovery_ui(ui, state.locale());
+        ui.set_project_title(project.title().into());
+        ui.set_profile_name(profile_name.into());
+        ui.set_locale(locale.code().into());
+        // The supported-locale list is static, so install the shared model
+        // only the first time this component tree is refreshed.
+        if ui.get_locale_options().row_count() == 0 {
+            ui.set_locale_options(LOCALE_OPTIONS.with(Clone::clone));
+        }
+        ui.set_preview_scene(state.preview_scene().unwrap_or("none").into());
+        ui.set_program_scene(state.program_scene().unwrap_or("none").into());
+        ui.set_transition(transition_label_for_locale(locale, state.transition()).into());
+        ui.set_recording(state.recording());
+        ui.set_streaming(state.streaming());
+        ui.set_dirty(state.is_dirty());
+        ui.set_snapshot(state.accessible_snapshot().into());
+        refresh_recovery_ui(ui, locale);
 
-    let profile_rows = project
-        .profiles()
-        .map(|profile| ProfileRow {
-            id: profile.id().as_str().into(),
-            name: profile.name().into(),
-        })
-        .collect::<Vec<_>>();
-    ui.set_profile_rows(ModelRc::new(VecModel::from(profile_rows)));
+        let profile_rows = project
+            .profiles()
+            .map(|profile| ProfileRow {
+                id: profile.id().as_str().into(),
+                name: profile.name().into(),
+            })
+            .collect::<Vec<_>>();
+        if !model_matches(&ui.get_profile_rows(), &profile_rows) {
+            ui.set_profile_rows(ModelRc::new(VecModel::from(profile_rows)));
+        }
 
-    let sync_error = renderer
-        .borrow_mut()
-        .sync_project(project, state.project_session().revision())
-        .err();
+        refresh_docks(ui, &state, profile);
+        (
+            state.project_session().revision(),
+            state.preview_scene().map(str::to_owned),
+            state.program_scene().map(str::to_owned),
+            latest_notice(&state).to_owned(),
+        )
+    };
+
+    // Project data is cloned only when the renderer really needs a rebuild;
+    // the state borrow is therefore never held across the renderer borrow on
+    // the common refresh path.
+    let needs_sync = {
+        let renderer = renderer.borrow();
+        !renderer.is_synced(revision)
+    };
+    let sync_error = if needs_sync {
+        let project = state.borrow().project_session().project().clone();
+        renderer.borrow_mut().sync_project(&project, revision).err()
+    } else {
+        None
+    };
     let render_error = if let Some(error) = sync_error {
         ui.set_preview_image(Image::default());
         ui.set_program_image(Image::default());
         ui.set_preview_metrics(renderer.borrow().metrics_summary().into());
         Some(format!("Preview renderer: {error}"))
     } else {
-        let (_, render_error) =
-            refresh_preview_frames(ui, renderer, state.preview_scene(), state.program_scene());
+        let (_, render_error) = refresh_preview_frames(
+            ui,
+            renderer,
+            preview_scene.as_deref(),
+            program_scene.as_deref(),
+        );
         render_error
     };
-    ui.set_status_message(
-        render_error
-            .unwrap_or_else(|| latest_notice(&state).to_owned())
-            .into(),
-    );
-
-    refresh_docks(ui, &state, profile);
+    ui.set_status_message(render_error.unwrap_or(notice).into());
 }
 
 /// Renders the two stage images for one animation tick and returns the program
@@ -174,15 +194,16 @@ thread_local! {
     /// The check builds a `ProjectFileStore` and validates a path; at 30 fps
     /// that repeated filesystem work every tick for an answer that only changes
     /// when the project path does.
-    static RECOVERY_CACHE: RefCell<Option<(String, SharedString)>> = const { RefCell::new(None) };
+    static RECOVERY_CACHE: RefCell<Option<(String, UiLocale, SharedString)>> =
+        const { RefCell::new(None) };
 }
 
 fn refresh_recovery_ui(ui: &MainWindow, locale: UiLocale) {
     let path = ui.get_project_path().to_string();
     let status = RECOVERY_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some((cached_path, status)) = cache.as_ref() {
-            if *cached_path == path {
+        if let Some((cached_path, cached_locale, status)) = cache.as_ref() {
+            if *cached_path == path && *cached_locale == locale {
                 return status.clone();
             }
         }
@@ -192,7 +213,7 @@ fn refresh_recovery_ui(ui: &MainWindow, locale: UiLocale) {
                 Ok(_) => text.no_recovery.clone(),
                 Err(error) => format!("Recovery check failed: {error}").into(),
             });
-        *cache = Some((path.clone(), status.clone()));
+        *cache = Some((path.clone(), locale, status.clone()));
         status
     });
     ui.set_recovery_status(status);
@@ -216,7 +237,9 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             })
             .collect::<Vec<_>>()
     });
-    ui.set_scene_rows(ModelRc::new(VecModel::from(scene_rows)));
+    if !model_matches(&ui.get_scene_rows(), &scene_rows) {
+        ui.set_scene_rows(ModelRc::new(VecModel::from(scene_rows)));
+    }
 
     let source_scene = state.preview_scene().unwrap_or("none");
     // The selected scene was previously located three separate times: once for
@@ -255,7 +278,9 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .collect::<Vec<_>>()
     });
     ui.set_source_scene(source_scene.into());
-    ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
+    if !model_matches(&ui.get_source_rows(), &source_rows) {
+        ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
+    }
 
     let selected_settings =
         selected_source_spec.map_or_else(String::new, |source| source.settings().serialize());
@@ -287,7 +312,17 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             muted: channel.muted(),
         })
         .collect::<Vec<_>>();
-    ui.set_mixer_rows(ModelRc::new(VecModel::from(mixer_rows)));
+    if !model_matches(&ui.get_mixer_rows(), &mixer_rows) {
+        ui.set_mixer_rows(ModelRc::new(VecModel::from(mixer_rows)));
+    }
+}
+
+fn model_matches<T: PartialEq>(model: &ModelRc<T>, expected: &[T]) -> bool {
+    model.row_count() == expected.len()
+        && expected
+            .iter()
+            .enumerate()
+            .all(|(index, expected)| model.row_data(index).as_ref() == Some(expected))
 }
 
 fn latest_notice(state: &DesktopState) -> &str {

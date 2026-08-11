@@ -262,10 +262,7 @@ fn collect_candidates(
     let state = state.borrow();
     let session = state.project_session();
     let project = session.project();
-    let Some(profile) = project
-        .profiles()
-        .find(|profile| profile.id() == project.active_profile())
-    else {
+    let Some(profile) = project.active_profile_spec() else {
         return Vec::new();
     };
     let mut candidates = Vec::new();
@@ -363,23 +360,13 @@ fn clone_spec(
         let state = state.borrow();
         let session = state.project_session();
         let project = session.project();
-        let Some(profile) = project
-            .profiles()
-            .find(|profile| profile.id() == project.active_profile())
-        else {
+        let Some(profile) = project.active_profile_spec() else {
             return Ok(None);
         };
-        let Some(scene) = profile
-            .scenes()
-            .find(|scene| scene.id().as_str() == source_scene)
-        else {
+        let Some(scene) = profile.scene(source_scene) else {
             return Ok(None);
         };
-        let Some(source) = scene
-            .sources()
-            .iter()
-            .find(|source| source.id().as_str() == source_id)
-        else {
+        let Some(source) = scene.source(source_id) else {
             return Ok(None);
         };
         source.clone()
@@ -433,27 +420,31 @@ fn target(state: &Rc<RefCell<DesktopState>>) -> Result<(String, String), Box<dyn
 
 /// Returns `kind`, `kind_2`, `kind_3`… — the first form free in the scene.
 fn unique_source_id(state: &Rc<RefCell<DesktopState>>, scene: &str, kind: &str) -> String {
-    let taken = scene_source_ids(state, scene);
-    if !taken.contains(kind) {
+    let state = state.borrow();
+    let scene = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene));
+    if scene.is_none_or(|scene| !scene.has_source(kind)) {
         return kind.to_owned();
     }
     // A scene cannot hold more sources than the runtime's per-scene limit, so
     // the bound is only there to keep the search obviously terminating.
     (2_u32..=10_000)
         .map(|suffix| format!("{kind}_{suffix}"))
-        .find(|candidate| !taken.contains(candidate))
+        .find(|candidate| scene.is_none_or(|scene| !scene.has_source(candidate.as_str())))
         .unwrap_or_else(|| kind.to_owned())
 }
 
 /// One-based count of sources of `kind` already in the scene, used for names.
 fn next_ordinal(state: &Rc<RefCell<DesktopState>>, scene: &str, kind: &str) -> usize {
     let state = state.borrow();
-    let session = state.project_session();
-    let project = session.project();
-    let ordinal = project
-        .profiles()
-        .find(|profile| profile.id() == project.active_profile())
-        .and_then(|profile| profile.scenes().find(|value| value.id().as_str() == scene))
+    let ordinal = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene))
         .map_or(1, |scene| {
             scene
                 .sources()
@@ -463,25 +454,6 @@ fn next_ordinal(state: &Rc<RefCell<DesktopState>>, scene: &str, kind: &str) -> u
                 + 1
         });
     ordinal
-}
-
-fn scene_source_ids(state: &Rc<RefCell<DesktopState>>, scene: &str) -> BTreeSet<String> {
-    let state = state.borrow();
-    let session = state.project_session();
-    let project = session.project();
-    let ids = project
-        .profiles()
-        .find(|profile| profile.id() == project.active_profile())
-        .and_then(|profile| profile.scenes().find(|value| value.id().as_str() == scene))
-        .map(|scene| {
-            scene
-                .sources()
-                .iter()
-                .map(|source| source.id().as_str().to_owned())
-                .collect()
-        })
-        .unwrap_or_default();
-    ids
 }
 
 /// Maps a runtime kind to its translated label, falling back to the raw id so

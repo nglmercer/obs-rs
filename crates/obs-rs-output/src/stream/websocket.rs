@@ -96,10 +96,7 @@ impl PacketTransport for WebSocketPacketTransport {
         let stream = self.stream.as_mut().ok_or_else(|| {
             OutputError::Transport("WebSocket transport is disconnected".to_owned())
         })?;
-        let body = websocket_packet_body(packet)?;
-        let frame = websocket_binary_frame(&body)?;
-        stream
-            .write_all(&frame)
+        write_websocket_packet(stream, packet)
             .map_err(|error| OutputError::Transport(format!("WebSocket send failed: {error}")))
     }
 
@@ -245,6 +242,7 @@ fn validate_websocket_response(response: &str, key: &str) -> Result<(), OutputEr
     }
 }
 
+#[cfg(test)]
 pub(crate) fn websocket_packet_body(packet: &EncodedPacket) -> Result<Vec<u8>, OutputError> {
     let mut body = Vec::with_capacity(26 + packet.byte_len());
     body.extend_from_slice(WEBSOCKET_PACKET_MAGIC);
@@ -262,31 +260,77 @@ pub(crate) fn websocket_packet_body(packet: &EncodedPacket) -> Result<Vec<u8>, O
     Ok(body)
 }
 
-fn websocket_binary_frame(body: &[u8]) -> Result<Vec<u8>, OutputError> {
-    let length =
-        u64::try_from(body.len()).map_err(|_| OutputError::PacketTooLarge { bytes: body.len() })?;
-    let mut frame = Vec::with_capacity(body.len().saturating_add(14));
-    frame.push(0x82);
-    if length <= 125 {
-        frame.push(0x80 | u8::try_from(length).unwrap_or(125));
+const WEBSOCKET_PACKET_HEADER_BYTES: usize = 26;
+
+fn write_websocket_packet(stream: &mut TcpStream, packet: &EncodedPacket) -> std::io::Result<()> {
+    let length = WEBSOCKET_PACKET_HEADER_BYTES
+        .checked_add(packet.byte_len())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "WebSocket packet too large",
+            )
+        })?;
+    let length = u64::try_from(length).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "WebSocket packet too large",
+        )
+    })?;
+
+    let mut frame_header = [0_u8; 10];
+    frame_header[0] = 0x82;
+    let frame_header_len = if length <= 125 {
+        frame_header[1] = 0x80 | u8::try_from(length).unwrap_or(125);
+        2
     } else if u16::try_from(length).is_ok() {
-        frame.push(0x80 | 0x7e);
-        frame.extend_from_slice(&u16::try_from(length).unwrap_or(u16::MAX).to_be_bytes());
+        frame_header[1] = 0x80 | 0x7e;
+        frame_header[2..4]
+            .copy_from_slice(&u16::try_from(length).unwrap_or(u16::MAX).to_be_bytes());
+        4
     } else {
-        frame.push(0x80 | 127);
-        frame.extend_from_slice(&length.to_be_bytes());
-    }
+        frame_header[1] = 0x80 | 127;
+        frame_header[2..10].copy_from_slice(&length.to_be_bytes());
+        10
+    };
+
     let nonce = next_websocket_nonce();
     let mask = nonce.to_le_bytes()[..4]
         .try_into()
         .unwrap_or([0x4d_u8, 0x53, 0x52, 0x53]);
-    frame.extend_from_slice(&mask);
-    frame.extend(
-        body.iter()
-            .enumerate()
-            .map(|(index, byte)| byte ^ mask[index % mask.len()]),
+    let mut body_header = [0_u8; WEBSOCKET_PACKET_HEADER_BYTES];
+    body_header[..8].copy_from_slice(WEBSOCKET_PACKET_MAGIC);
+    body_header[8] = packet.kind.tag();
+    body_header[9] = u8::from(packet.is_keyframe());
+    body_header[10..18].copy_from_slice(&packet.timestamp().as_nanos().to_le_bytes());
+    body_header[18..26].copy_from_slice(
+        &u64::try_from(packet.byte_len())
+            .unwrap_or(u64::MAX)
+            .to_le_bytes(),
     );
-    Ok(frame)
+
+    stream.write_all(&frame_header[..frame_header_len])?;
+    stream.write_all(&mask)?;
+    let mask_index = write_masked(stream, &body_header, mask, 0)?;
+    let _ = write_masked(stream, packet.payload(), mask, mask_index)?;
+    Ok(())
+}
+
+fn write_masked(
+    stream: &mut TcpStream,
+    bytes: &[u8],
+    mask: [u8; 4],
+    mut mask_index: usize,
+) -> std::io::Result<usize> {
+    let mut buffer = [0_u8; 4096];
+    for chunk in bytes.chunks(buffer.len()) {
+        for (index, byte) in chunk.iter().enumerate() {
+            buffer[index] = *byte ^ mask[(mask_index + index) & 3];
+        }
+        stream.write_all(&buffer[..chunk.len()])?;
+        mask_index = (mask_index + chunk.len()) & 3;
+    }
+    Ok(mask_index)
 }
 
 pub(crate) fn base64_encode(bytes: &[u8]) -> String {

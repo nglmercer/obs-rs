@@ -21,7 +21,7 @@ impl DesktopState {
                 kind: "profile",
                 id: project.active_profile().to_string(),
             })?;
-        if profile.scenes().any(|scene| scene.id().as_str() == id) {
+        if profile.scene(id).is_some() {
             Ok(())
         } else {
             Err(UiError::UnknownSelection {
@@ -82,17 +82,12 @@ impl DesktopState {
                 id: project.active_profile().to_string(),
             })?;
         let scene = profile
-            .scenes()
-            .find(|scene| scene.id().as_str() == preview_scene)
+            .scene(preview_scene)
             .ok_or_else(|| UiError::UnknownSelection {
                 kind: "scene",
                 id: preview_scene.to_owned(),
             })?;
-        if scene
-            .sources()
-            .iter()
-            .any(|source| source.id().as_str() == id)
-        {
+        if scene.has_source(id) {
             Ok(())
         } else {
             Err(UiError::UnknownSelection {

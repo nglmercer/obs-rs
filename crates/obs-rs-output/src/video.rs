@@ -270,9 +270,16 @@ impl Adler32 {
     }
 
     fn update(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.sum_a = (self.sum_a + u32::from(*byte)) % 65_521;
-            self.sum_b = (self.sum_b + self.sum_a) % 65_521;
+        // NMAX is the largest block for which both accumulators stay within
+        // u32, so the expensive modulo is paid once per block rather than once
+        // per byte.
+        for block in bytes.chunks(5_552) {
+            for byte in block {
+                self.sum_a += u32::from(*byte);
+                self.sum_b += self.sum_a;
+            }
+            self.sum_a %= 65_521;
+            self.sum_b %= 65_521;
         }
     }
 
@@ -347,17 +354,39 @@ pub(crate) fn crc32(bytes: &[u8]) -> u32 {
 /// concatenated into one buffer.
 pub(crate) fn crc32_update(mut crc: u32, bytes: &[u8]) -> u32 {
     for byte in bytes {
-        crc ^= u32::from(*byte);
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0xedb8_8320
-            } else {
-                crc >> 1
-            };
-        }
+        let index = usize::from(
+            u8::try_from((crc ^ u32::from(*byte)) & u32::from(u8::MAX)).unwrap_or_default(),
+        );
+        crc = (crc >> 8) ^ CRC32_TABLE[index];
     }
     crc
 }
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the table index is bounded by the 256-entry table"
+)]
+const fn make_crc32_table() -> [u32; 256] {
+    let mut table = [0_u32; 256];
+    let mut index = 0_usize;
+    while index < table.len() {
+        let mut value = index as u32;
+        let mut bit = 0;
+        while bit < 8 {
+            value = if value & 1 == 1 {
+                (value >> 1) ^ 0xedb8_8320
+            } else {
+                value >> 1
+            };
+            bit += 1;
+        }
+        table[index] = value;
+        index += 1;
+    }
+    table
+}
+
+const CRC32_TABLE: [u32; 256] = make_crc32_table();
 
 /// A deterministic lossless RGBA run-length video encoder.
 pub struct RleVideoEncoder {

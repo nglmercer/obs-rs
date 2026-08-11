@@ -4,6 +4,8 @@
 //! new `UiText` value here. Slint components consume the typed catalog through
 //! the `I18n` global and do not contain locale conditionals.
 
+use std::cell::RefCell;
+
 use obs_rs_ui::UiLocale;
 use slint::{ComponentHandle, SharedString};
 
@@ -18,11 +20,29 @@ thread_local! {
     /// when the user switches language.
     static ENGLISH_CATALOG: UiText = english();
     static SPANISH_CATALOG: UiText = spanish();
+    static APPLIED_LOCALE: RefCell<Option<(usize, UiLocale)>> = const { RefCell::new(None) };
 }
 
 /// Applies the complete catalog for `locale` to the live Slint tree.
 pub(crate) fn apply(ui: &MainWindow, locale: UiLocale) {
     ui.global::<I18n>().set_text(catalog(locale));
+}
+
+/// Applies a catalog only when this component tree changes locale.
+pub(crate) fn apply_if_changed(ui: &MainWindow, locale: UiLocale) {
+    let key = std::ptr::from_ref(ui) as usize;
+    let changed = APPLIED_LOCALE.with(|applied| {
+        let mut applied = applied.borrow_mut();
+        if *applied == Some((key, locale)) {
+            false
+        } else {
+            *applied = Some((key, locale));
+            true
+        }
+    });
+    if changed {
+        apply(ui, locale);
+    }
 }
 
 /// Returns the catalog for a supported locale.

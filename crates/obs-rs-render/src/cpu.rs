@@ -172,6 +172,10 @@ impl RenderBackend for CpuRenderBackend {
     }
 
     fn upload(&mut self, texture: TextureId, frame: &VideoFrame) -> Result<(), RenderError> {
+        self.upload_owned(texture, frame.clone())
+    }
+
+    fn upload_owned(&mut self, texture: TextureId, frame: VideoFrame) -> Result<(), RenderError> {
         self.ensure_ready()?;
         let target = self.texture_mut(texture)?;
         if target.format != frame.format() {
@@ -180,7 +184,7 @@ impl RenderBackend for CpuRenderBackend {
                 actual: frame.format(),
             });
         }
-        target.frame = Some(frame.clone());
+        target.frame = Some(frame);
         self.metrics.uploads = self.metrics.uploads.saturating_add(1);
         Ok(())
     }
@@ -214,8 +218,22 @@ impl RenderBackend for CpuRenderBackend {
             .and_then(|layer| self.textures.get(layer))
             .and_then(|texture| texture.frame.as_ref())
             .map_or(Timestamp::ZERO, VideoFrame::timestamp);
-        let mut result = VideoFrame::solid(target_format, timestamp, [0, 0, 0, 0]);
-        for layer in layers {
+        let can_reuse_first = !layers[1..].contains(&target)
+            && !layers[1..].contains(layers.first().expect("composition is non-empty"));
+        let mut result = if can_reuse_first {
+            let first = *layers.first().expect("composition is non-empty");
+            let mut frame = self
+                .texture_mut(first)?
+                .frame
+                .take()
+                .ok_or(RenderError::TextureNotReady(first))?;
+            frame.clear_transparent_rgb();
+            frame
+        } else {
+            VideoFrame::solid(target_format, timestamp, [0, 0, 0, 0])
+        };
+        let start = usize::from(can_reuse_first);
+        for layer in layers.iter().skip(start) {
             let frame = self
                 .textures
                 .get(layer)
@@ -231,9 +249,9 @@ impl RenderBackend for CpuRenderBackend {
     fn readback(&mut self, texture: TextureId) -> Result<VideoFrame, RenderError> {
         self.ensure_ready()?;
         let frame = self
-            .texture(texture)?
+            .texture_mut(texture)?
             .frame
-            .clone()
+            .take()
             .ok_or(RenderError::TextureNotReady(texture))?;
         self.metrics.readbacks = self.metrics.readbacks.saturating_add(1);
         Ok(frame)

@@ -41,6 +41,7 @@ impl Timestamp {
 pub struct FrameRate {
     numerator: u32,
     denominator: u32,
+    period_nanos: Option<u64>,
 }
 
 impl FrameRate {
@@ -55,9 +56,13 @@ impl FrameRate {
         }
 
         let divisor = greatest_common_divisor(numerator, denominator);
+        let numerator = numerator / divisor;
+        let denominator = denominator / divisor;
+        let period = 1_000_000_000_u128 * u128::from(denominator) / u128::from(numerator);
         Ok(Self {
-            numerator: numerator / divisor,
-            denominator: denominator / divisor,
+            numerator,
+            denominator,
+            period_nanos: u64::try_from(period).ok(),
         })
     }
 
@@ -75,9 +80,8 @@ impl FrameRate {
 
     /// Returns the number of nanoseconds per frame when it fits in `u64`.
     #[must_use]
-    pub fn period_nanos(self) -> Option<u64> {
-        let period = 1_000_000_000_u128 * u128::from(self.denominator) / u128::from(self.numerator);
-        u64::try_from(period).ok()
+    pub const fn period_nanos(self) -> Option<u64> {
+        self.period_nanos
     }
 }
 

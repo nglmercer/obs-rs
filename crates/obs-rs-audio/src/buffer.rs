@@ -227,8 +227,10 @@ impl AudioBuffer {
         let silence_samples = frames
             .checked_mul(channels)
             .ok_or(AudioError::BufferTooLarge { frames })?;
-        self.samples
-            .splice(..0, std::iter::repeat_n(0.0, silence_samples));
+        let old_len = self.samples.len();
+        self.samples.reserve(silence_samples);
+        self.samples.resize(old_len + silence_samples, 0.0);
+        self.samples.copy_within(..old_len, silence_samples);
         self.timestamp = timestamp;
         Ok(())
     }
@@ -244,6 +246,78 @@ impl AudioBuffer {
     /// invariant that [`AudioBuffer::new`] enforces before the buffer escapes.
     pub(crate) fn samples_mut(&mut self) -> &mut [f32] {
         &mut self.samples
+    }
+}
+
+/// Reuses interleaved sample allocations for a fixed audio format.
+///
+/// A queue deliberately owns buffers that are still scheduled for playback,
+/// so recycling happens at the producer/consumer boundary: acquire a buffer,
+/// fill it, submit it, then release it after the consumer is done. Keeping the
+/// pool explicit avoids hidden ownership or synchronization costs in
+/// [`super::queue::AudioQueue`].
+pub struct AudioBufferPool {
+    format: AudioFormat,
+    capacity: usize,
+    buffers: Vec<Vec<f32>>,
+}
+
+impl AudioBufferPool {
+    /// Creates an empty pool that retains at most `capacity` sample vectors.
+    #[must_use]
+    pub fn new(format: AudioFormat, capacity: usize) -> Self {
+        Self {
+            format,
+            capacity,
+            buffers: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// Acquires a zeroed buffer, reusing a retained allocation when possible.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::BufferTooLarge`] when the requested frame count
+    /// cannot be represented or exceeds the workspace limit.
+    pub fn acquire(
+        &mut self,
+        timestamp: Timestamp,
+        frames: usize,
+    ) -> Result<AudioBuffer, AudioError> {
+        if frames > MAX_AUDIO_FRAMES {
+            return Err(AudioError::BufferTooLarge { frames });
+        }
+        let samples = frames
+            .checked_mul(usize::from(self.format.channels))
+            .ok_or(AudioError::BufferTooLarge { frames })?;
+        let mut payload = self.buffers.pop().unwrap_or_default();
+        payload.clear();
+        payload.resize(samples, 0.0);
+        Ok(AudioBuffer {
+            format: self.format,
+            timestamp,
+            samples: payload,
+        })
+    }
+
+    /// Returns a buffer's sample allocation to the pool.
+    ///
+    /// A buffer with a different format is rejected because its interleaving
+    /// cannot safely be reused for this pool.
+    pub fn release(&mut self, buffer: AudioBuffer) -> bool {
+        if buffer.format != self.format || self.buffers.len() >= self.capacity {
+            return false;
+        }
+        let mut payload = buffer.samples;
+        payload.clear();
+        self.buffers.push(payload);
+        true
+    }
+
+    /// Returns the number of retained allocations available for reuse.
+    #[must_use]
+    pub fn available(&self) -> usize {
+        self.buffers.len()
     }
 }
 
