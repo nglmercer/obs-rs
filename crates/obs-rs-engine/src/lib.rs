@@ -21,7 +21,7 @@ use obs_rs_audio::{
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
-use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, EncodedPacket, OutputError, PacketDropPolicy,
     RawAudioEncoder, ReconnectPolicy, RleVideoEncoder, StreamMetrics, StreamSession, StreamState,
@@ -50,10 +50,19 @@ pub struct EngineConfig {
     audio_input_id: Option<String>,
     desktop_audio_id: Option<String>,
     audio_provider: Arc<dyn AudioInputProvider>,
+    video_encoder: Box<dyn VideoEncoder>,
 }
 
 impl EngineConfig {
-    /// Creates a configuration with the deterministic audio fallback.
+    /// Creates a configuration with the deterministic audio fallback and the
+    /// lossless RLE video encoder.
+    ///
+    /// Use [`Self::with_video_encoder`] to install a different [`VideoEncoder`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the hardcoded default video format is ever invalid, which
+    /// cannot happen for the constants used here.
     #[must_use]
     pub fn new(audio_format: AudioFormat) -> Self {
         Self {
@@ -65,6 +74,10 @@ impl EngineConfig {
             audio_input_id: None,
             desktop_audio_id: None,
             audio_provider: Arc::new(SimulatedAudioProvider::new()),
+            video_encoder: Box::new(RleVideoEncoder::new(
+                VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("valid rate"))
+                    .expect("valid format"),
+            )),
         }
     }
 
@@ -114,6 +127,17 @@ impl EngineConfig {
         self
     }
 
+    /// Replaces the video encoder used for recording and streaming.
+    ///
+    /// The default is a lossless RLE reference encoder; production hosts swap in
+    /// a hardware-accelerated or production-codec implementation behind this
+    /// same contract without touching engine source.
+    #[must_use]
+    pub fn with_video_encoder(mut self, encoder: Box<dyn VideoEncoder>) -> Self {
+        self.video_encoder = encoder;
+        self
+    }
+
     /// Returns the negotiated audio format.
     #[must_use]
     pub const fn audio_format(&self) -> AudioFormat {
@@ -122,7 +146,18 @@ impl EngineConfig {
 }
 
 impl Clone for EngineConfig {
+    // `Clone::clone` has no fallible contract, so documenting panics would be
+    // misleading. The `expect` calls here guard values this constructor itself
+    // produced, so they cannot fire in practice.
+    #[allow(clippy::missing_panics_doc)]
     fn clone(&self) -> Self {
+        // The video encoder is a trait object that has no `Clone`, and the
+        // format it was built for is not readable back out of the trait. A
+        // cloned config therefore installs a fresh default RLE encoder rather
+        // than producing a half-populated config the session constructor would
+        // have to special-case.
+        let format = VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("valid rate"))
+            .expect("valid format");
         Self {
             audio_format: self.audio_format,
             audio_block_frames: self.audio_block_frames,
@@ -132,6 +167,7 @@ impl Clone for EngineConfig {
             audio_input_id: self.audio_input_id.clone(),
             desktop_audio_id: self.desktop_audio_id.clone(),
             audio_provider: Arc::clone(&self.audio_provider),
+            video_encoder: Box::new(RleVideoEncoder::new(format)),
         }
     }
 }
@@ -608,7 +644,7 @@ pub struct EngineSession {
     desktop_audio_backend: String,
     next_audio_deadline: Option<obs_rs_audio::AudioDeadline>,
     render_timestamp: Timestamp,
-    video_encoder: RleVideoEncoder,
+    video_encoder: Box<dyn VideoEncoder>,
     audio_encoder: RawAudioEncoder,
     recording: Option<RecordingOutput>,
     streaming: Option<StreamOutput>,
@@ -644,29 +680,57 @@ impl EngineSession {
             EngineError::InvalidConfiguration(format!("built-in plugin failed: {error}"))
         })?;
         let runtime = build_runtime(&project, &plugin)?;
+        let EngineConfig {
+            audio_format,
+            audio_block_frames,
+            timeline_tolerance_nanos,
+            output_queue_bytes,
+            reconnect_attempts,
+            audio_input_id,
+            desktop_audio_id,
+            audio_provider,
+            video_encoder,
+        } = config;
+        if video_encoder.format() != format {
+            return Err(EngineError::InvalidConfiguration(format!(
+                "video encoder format {:?} does not match the project canvas {:?}",
+                video_encoder.format(),
+                format
+            )));
+        }
         let timeline = MediaTimeline::new(
             format.frame_rate(),
-            config.audio_format,
-            config.timeline_tolerance_nanos,
+            audio_format,
+            timeline_tolerance_nanos,
         );
-        let mut mixer = AudioMixer::new(config.audio_format);
+        let mut mixer = AudioMixer::new(audio_format);
         let desktop_audio_source = mixer.add_source(1.0)?;
         let microphone_audio_source = mixer.add_source(1.0)?;
         let (audio_input, audio_backend, audio_fallback) = open_audio_input(
-            &config.audio_provider,
-            config.audio_format,
-            config.audio_input_id.as_deref(),
+            &audio_provider,
+            audio_format,
+            audio_input_id.as_deref(),
         );
         let (desktop_audio, desktop_audio_backend) = open_desktop_audio(
-            &config.audio_provider,
-            config.audio_format,
-            config.desktop_audio_id.as_deref(),
+            &audio_provider,
+            audio_format,
+            desktop_audio_id.as_deref(),
         );
 
         Ok(Self {
-            video_encoder: RleVideoEncoder::new(format),
-            audio_encoder: RawAudioEncoder::new(config.audio_format),
-            config,
+            video_encoder,
+            audio_encoder: RawAudioEncoder::new(audio_format),
+            config: EngineConfig {
+                audio_format,
+                audio_block_frames,
+                timeline_tolerance_nanos,
+                output_queue_bytes,
+                reconnect_attempts,
+                audio_input_id,
+                desktop_audio_id,
+                audio_provider,
+                video_encoder: Box::new(RleVideoEncoder::new(format)),
+            },
             project,
             format,
             plugin,
@@ -703,6 +767,10 @@ impl EngineSession {
             "Default output",
             format,
         )?)?;
+        // The config may carry an encoder built for another canvas — a host
+        // that reuses one config across several sessions — so install an
+        // encoder matched to the requested format rather than asserting.
+        let config = config.with_video_encoder(Box::new(RleVideoEncoder::new(format)));
         Self::new(project, config)
     }
 
@@ -726,7 +794,7 @@ impl EngineSession {
         );
         self.next_audio_deadline = None;
         self.render_timestamp = Timestamp::ZERO;
-        self.video_encoder = RleVideoEncoder::new(format);
+        self.video_encoder = Box::new(RleVideoEncoder::new(format));
         self.last_error = None;
         Ok(())
     }
@@ -1218,6 +1286,12 @@ impl EngineSession {
                 self.last_error = Some(error.to_string());
                 self.audio_input = SimulatedAudioProvider::new()
                     .open_input("test-audio", self.config.audio_format)?;
+                // The fallback signal runs on its own clock, so the timeline's
+                // idea of the next audio deadline — computed against the real
+                // device that just failed — is stale. Dropping it forces the
+                // next tick to re-anchors the audio deadlines to the current
+                // video timestamp instead of chasing a device that is gone.
+                self.next_audio_deadline = None;
                 Ok(self
                     .audio_input
                     .read_block(timestamp, self.config.audio_block_frames)?)
@@ -1435,12 +1509,12 @@ mod tests {
 
     fn project() -> Project {
         let format =
-            VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("rate")).expect("format");
+            VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("rate")).expect("format");
         let mut project = Project::new("engine test").expect("project");
         let mut profile = Profile::new("live", "Live", format).expect("profile");
         let mut settings = Config::new();
-        settings.set("width", "64").expect("width");
-        settings.set("height", "36").expect("height");
+        settings.set("width", "640").expect("width");
+        settings.set("height", "360").expect("height");
         let mut scene = SceneSpec::new("program", "Program").expect("scene");
         scene
             .add_source(

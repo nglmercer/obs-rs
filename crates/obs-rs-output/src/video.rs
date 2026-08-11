@@ -9,7 +9,7 @@ use super::{
     MAX_PACKET_BYTES, PNG_SIGNATURE, RLE_MAGIC,
 };
 
-pub trait VideoEncoder {
+pub trait VideoEncoder: Send {
     /// Returns the fixed input format accepted by the encoder.
     fn format(&self) -> VideoFormat;
 
