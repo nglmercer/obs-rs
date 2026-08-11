@@ -10,6 +10,7 @@ pub struct TestPatternDevice {
     info: CaptureDeviceInfo,
     format: Option<VideoFormat>,
     frame_index: u64,
+    frames: Vec<VideoFrame>,
 }
 
 impl TestPatternDevice {
@@ -23,6 +24,7 @@ impl TestPatternDevice {
             info: CaptureDeviceInfo::new(id, name, CaptureKind::TestPattern)?,
             format: None,
             frame_index: 0,
+            frames: Vec::new(),
         })
     }
 
@@ -55,11 +57,13 @@ impl VideoCaptureDevice for TestPatternDevice {
         }
         self.format = Some(format);
         self.frame_index = 0;
+        self.frames = simulated_frames(format, self.info.kind())?;
         Ok(())
     }
 
     fn stop(&mut self) {
         self.format = None;
+        self.frames.clear();
     }
 
     fn is_running(&self) -> bool {
@@ -67,10 +71,15 @@ impl VideoCaptureDevice for TestPatternDevice {
     }
 
     fn next_frame(&mut self, timestamp: Timestamp) -> Result<Option<VideoFrame>, CaptureError> {
-        let Some(format) = self.format else {
+        let Some(_format) = self.format else {
             return Err(CaptureError::NotRunning);
         };
-        let frame = simulated_frame(format, timestamp, self.frame_index, self.info.kind())?;
+        let phase = usize::try_from(self.frame_index % 2).expect("phase is zero or one");
+        let frame = self
+            .frames
+            .get(phase)
+            .ok_or(CaptureError::NotRunning)?
+            .at_timestamp(timestamp);
         self.frame_index = self
             .frame_index
             .checked_add(1)
@@ -84,6 +93,7 @@ pub struct SimulatedCaptureDevice {
     info: CaptureDeviceInfo,
     format: Option<VideoFormat>,
     frame_index: u64,
+    frames: Vec<VideoFrame>,
 }
 
 impl SimulatedCaptureDevice {
@@ -97,6 +107,7 @@ impl SimulatedCaptureDevice {
             info: CaptureDeviceInfo::new(id, name, kind)?,
             format: None,
             frame_index: 0,
+            frames: Vec::new(),
         })
     }
 
@@ -129,11 +140,13 @@ impl VideoCaptureDevice for SimulatedCaptureDevice {
         }
         self.format = Some(format);
         self.frame_index = 0;
+        self.frames = simulated_frames(format, self.info.kind())?;
         Ok(())
     }
 
     fn stop(&mut self) {
         self.format = None;
+        self.frames.clear();
     }
 
     fn is_running(&self) -> bool {
@@ -141,10 +154,15 @@ impl VideoCaptureDevice for SimulatedCaptureDevice {
     }
 
     fn next_frame(&mut self, timestamp: Timestamp) -> Result<Option<VideoFrame>, CaptureError> {
-        let Some(format) = self.format else {
+        let Some(_format) = self.format else {
             return Err(CaptureError::NotRunning);
         };
-        let frame = simulated_frame(format, timestamp, self.frame_index, self.info.kind())?;
+        let phase = usize::try_from(self.frame_index % 2).expect("phase is zero or one");
+        let frame = self
+            .frames
+            .get(phase)
+            .ok_or(CaptureError::NotRunning)?
+            .at_timestamp(timestamp);
         self.frame_index = self
             .frame_index
             .checked_add(1)
@@ -158,9 +176,8 @@ fn simulated_frame(
     timestamp: Timestamp,
     frame_index: u64,
     kind: CaptureKind,
+    column_gradient: &[u8],
 ) -> Result<VideoFrame, CaptureError> {
-    let width = usize::try_from(format.width())
-        .map_err(|_| CaptureError::Media(MediaError::FrameTooLarge))?;
     let height = usize::try_from(format.height())
         .map_err(|_| CaptureError::Media(MediaError::FrameTooLarge))?;
     let mut pixels = Vec::with_capacity(format.rgba_bytes());
@@ -172,13 +189,6 @@ fn simulated_frame(
         CaptureKind::Camera => 48,
         CaptureKind::External => 64,
     };
-    // The column gradient repeats for every scanline and the row gradient is
-    // constant across one, so both are tabulated once instead of recomputed per
-    // pixel.
-    let column_gradient: Vec<u8> = (0..width)
-        .map(|x| gradient_byte(x, width).saturating_add(variant / 2))
-        .collect();
-
     for y in 0..height {
         let row_gradient = gradient_byte(y, height).saturating_add(variant / 3);
         let row_tile = y / 16;
@@ -193,6 +203,35 @@ fn simulated_frame(
         }
     }
     VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)
+}
+
+fn simulated_frames(
+    format: VideoFormat,
+    kind: CaptureKind,
+) -> Result<Vec<VideoFrame>, CaptureError> {
+    let columns = simulated_column_gradient(format, kind)?;
+    [0, 1]
+        .into_iter()
+        .map(|phase| simulated_frame(format, Timestamp::ZERO, phase, kind, &columns))
+        .collect()
+}
+
+fn simulated_column_gradient(
+    format: VideoFormat,
+    kind: CaptureKind,
+) -> Result<Vec<u8>, CaptureError> {
+    let width = usize::try_from(format.width())
+        .map_err(|_| CaptureError::Media(MediaError::FrameTooLarge))?;
+    let variant = match kind {
+        CaptureKind::TestPattern => 0,
+        CaptureKind::Screen => 16,
+        CaptureKind::Window => 32,
+        CaptureKind::Camera => 48,
+        CaptureKind::External => 64,
+    };
+    Ok((0..width)
+        .map(|x| gradient_byte(x, width).saturating_add(variant / 2))
+        .collect())
 }
 
 #[allow(

@@ -1,6 +1,7 @@
 use std::{fmt::Write, path::Path};
 
 use super::*;
+use ed25519_dalek::SigningKey;
 use obs_rs_capture::encode_frame_packet;
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
@@ -49,6 +50,117 @@ fn sandbox_plugin_rejects_unbounded_process_configuration() {
         SandboxedPluginManifest::parse("invalid"),
         Err(SandboxError::InvalidManifest { .. })
     ));
+}
+
+fn signed_bundle(capabilities: &[PluginCapability]) -> (SignedPluginBundle, PluginTrustStore) {
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let manifest = PluginBundleManifest::new(
+        PluginManifest::new("signed_plugin", "Signed plugin", "1.2.3").expect("plugin"),
+        "x86_64-unknown-linux-gnu",
+        "0.1.0",
+        "official-2026",
+        "bin/plugin",
+        [Identifier::new("signed_source").expect("kind")],
+        capabilities.iter().copied(),
+    )
+    .expect("bundle manifest");
+    let bundle = SignedPluginBundle::sign(
+        manifest,
+        [PluginPayload::new("bin/plugin", b"executable payload".to_vec()).expect("payload")],
+        &key,
+    )
+    .expect("sign bundle");
+    let mut trust = PluginTrustStore::new();
+    trust
+        .trust("official-2026", key.verifying_key())
+        .expect("trust key");
+    (bundle, trust)
+}
+
+#[test]
+fn signed_bundle_round_trips_and_verifies_every_launch_gate() {
+    let (bundle, trust) = signed_bundle(&[PluginCapability::Screen]);
+    let encoded = bundle.encode().expect("encode bundle");
+    let decoded = SignedPluginBundle::decode(&encoded).expect("decode bundle");
+    assert_eq!(decoded, bundle);
+    let policy = PluginVerificationPolicy::new(
+        "x86_64-unknown-linux-gnu",
+        "0.2.0",
+        obs_rs_plugin_api::PluginApiVersion::current(),
+        [PluginCapability::Screen],
+    )
+    .expect("policy");
+    let verified = decoded.verify(&trust, &policy).expect("verify bundle");
+    assert_eq!(
+        verified.bundle().manifest().plugin().id().as_str(),
+        "signed_plugin"
+    );
+}
+
+#[test]
+fn signed_bundle_rejects_paths_hashes_signatures_targets_versions_and_permissions() {
+    assert_eq!(
+        PluginPayload::new("../escape", vec![1]),
+        Err(SandboxError::UnsafeBundlePath)
+    );
+    let (bundle, trust) = signed_bundle(&[PluginCapability::Network]);
+    let policy = |target: &str, version: &str, capabilities: &[PluginCapability]| {
+        PluginVerificationPolicy::new(
+            target,
+            version,
+            obs_rs_plugin_api::PluginApiVersion::current(),
+            capabilities.iter().copied(),
+        )
+        .expect("policy")
+    };
+    assert!(matches!(
+        bundle.verify(
+            &trust,
+            &policy(
+                "aarch64-apple-darwin",
+                "0.2.0",
+                &[PluginCapability::Network]
+            )
+        ),
+        Err(SandboxError::BundleTargetMismatch { .. })
+    ));
+    assert!(matches!(
+        bundle.verify(
+            &trust,
+            &policy(
+                "x86_64-unknown-linux-gnu",
+                "0.0.9",
+                &[PluginCapability::Network]
+            )
+        ),
+        Err(SandboxError::BundleVersionIncompatible { .. })
+    ));
+    assert_eq!(
+        bundle.verify(&trust, &policy("x86_64-unknown-linux-gnu", "0.2.0", &[])),
+        Err(SandboxError::BundlePermissionDenied)
+    );
+
+    let mut bad_signature = bundle.encode().expect("encode");
+    bad_signature[14] ^= 1;
+    let bad_signature = SignedPluginBundle::decode(&bad_signature).expect("decode signature");
+    assert_eq!(
+        bad_signature.verify(
+            &trust,
+            &policy(
+                "x86_64-unknown-linux-gnu",
+                "0.2.0",
+                &[PluginCapability::Network]
+            )
+        ),
+        Err(SandboxError::InvalidBundleSignature)
+    );
+
+    let mut bad_payload = bundle.encode().expect("encode");
+    *bad_payload.last_mut().expect("payload byte") ^= 1;
+    assert_eq!(
+        SignedPluginBundle::decode(&bad_payload),
+        Err(SandboxError::PayloadHashMismatch)
+    );
 }
 
 #[cfg(unix)]

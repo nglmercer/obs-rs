@@ -87,6 +87,33 @@ fn atomic_packet_writer_abort_removes_temp_and_rejects_equal_paths() {
 }
 
 #[test]
+fn atomic_packet_writer_streams_large_payloads_before_finalize() {
+    let (final_path, temp_path) = unique_paths("packet-streaming");
+    let mut writer =
+        AtomicPacketFileWriter::new(&final_path, &temp_path).expect("valid packet paths");
+    assert!(temp_path.exists());
+
+    writer
+        .push(
+            EncodedPacket::new(
+                PacketKind::Video,
+                Timestamp::ZERO,
+                true,
+                vec![7; 32 * 1_024],
+            )
+            .expect("large packet"),
+        )
+        .expect("stream packet");
+
+    // A payload larger than BufWriter's buffer is forwarded to the temporary
+    // file immediately instead of being retained until finalization.
+    assert!(std::fs::metadata(&temp_path).expect("temporary file").len() > 32 * 1_024);
+    assert!(!final_path.exists());
+    writer.abort().expect("abort streamed packet writer");
+    assert!(!temp_path.exists());
+}
+
+#[test]
 fn atomic_file_writer_renames_only_after_successful_sync() {
     let format = format();
     let (final_path, temp_path) = unique_paths("finalize");

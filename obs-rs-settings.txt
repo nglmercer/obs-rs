@@ -1,5 +1,5 @@
 audio_channels=2
-audio_input_id=
+audio_input_id=pipewire-node-51
 audio_sample_rate=48000
 auto_record_when_streaming=false
 confirm_start_stream=false

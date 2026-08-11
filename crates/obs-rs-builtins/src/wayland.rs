@@ -9,8 +9,8 @@
 
 use crate::portable::parse_format;
 use obs_rs_capture::{
-    wayland_session_available, VideoCaptureDevice, WaylandCaptureDevice,
-    WAYLAND_SCREEN_CAPTURE_SOURCE_KIND,
+    wayland_session_available, AsyncCaptureDevice, CaptureLifecycleState, VideoCaptureDevice,
+    WaylandCaptureDevice, WAYLAND_SCREEN_CAPTURE_SOURCE_KIND,
 };
 use obs_rs_config::Config;
 use obs_rs_media::{VideoFormat, VideoFrame};
@@ -44,6 +44,7 @@ impl SourceFactory for WaylandCaptureFactory {
             restore_token: restore_token(settings),
             device: None,
             failure: None,
+            retry_countdown: 0,
         };
         source.reopen();
         Ok(Box::new(source))
@@ -64,9 +65,10 @@ struct WaylandCaptureSource {
     name: String,
     format: VideoFormat,
     restore_token: Option<String>,
-    device: Option<WaylandCaptureDevice>,
+    device: Option<AsyncCaptureDevice>,
     /// Why the last attempt to open the portal failed, for the render error.
     failure: Option<String>,
+    retry_countdown: u16,
 }
 
 impl WaylandCaptureSource {
@@ -82,28 +84,14 @@ impl WaylandCaptureSource {
                 Some("this is not a Wayland session; use the X11 screen source instead".to_owned());
             return;
         }
-        // Without a token the portal would raise its dialog from whichever
-        // thread is rendering and block it until someone answers, so the source
-        // waits for the UI to run the picker and store one instead.
-        if self.restore_token.is_none() {
-            self.failure =
-                Some("no screen has been shared yet; choose one with Select display".to_owned());
-            return;
-        }
-        match WaylandCaptureDevice::open(
-            "wayland-screen",
-            &self.name,
-            self.restore_token.as_deref(),
-        ) {
-            Ok(mut device) => match device.start(self.format) {
-                Ok(()) => {
-                    self.failure = None;
-                    self.device = Some(device);
-                }
-                Err(error) => self.failure = Some(error.to_string()),
-            },
-            Err(error) => self.failure = Some(error.to_string()),
-        }
+        let name = self.name.clone();
+        let restore_token = self.restore_token.clone();
+        self.failure = None;
+        self.retry_countdown = 0;
+        self.device = Some(AsyncCaptureDevice::open(self.format, move || {
+            WaylandCaptureDevice::open("wayland-screen", &name, restore_token.as_deref())
+                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
+        }));
     }
 }
 
@@ -144,8 +132,25 @@ impl Source for WaylandCaptureSource {
                     .unwrap_or_else(|| "the screen-cast portal is not open".to_owned()),
             ));
         };
-        device
-            .next_frame(request.timestamp())
-            .map_err(|error| SourceError::Unavailable(error.to_string()))
+        match device.poll_frame(request.timestamp()) {
+            Ok(frame) => {
+                self.failure = None;
+                Ok(frame)
+            }
+            Err(error) => {
+                self.failure = Some(error.to_string());
+                if device.state() == CaptureLifecycleState::Lost {
+                    if self.retry_countdown == 0 {
+                        let _ = device.retry();
+                        self.retry_countdown = 120;
+                    } else {
+                        self.retry_countdown -= 1;
+                    }
+                    Ok(None)
+                } else {
+                    Err(SourceError::Unavailable(error.to_string()))
+                }
+            }
+        }
     }
 }

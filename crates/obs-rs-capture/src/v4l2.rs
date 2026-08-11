@@ -260,14 +260,15 @@ impl VideoCaptureDevice for V4l2CaptureDevice {
         };
         let reader = self.reader.as_ref().ok_or(CaptureError::NotRunning)?;
         let what = self.path.display().to_string();
-        let pixels = reader.latest_frame(&what)?;
+        let pixels = reader.latest_shared_frame(&what)?;
         let Some(pixels) = pixels else {
             // The reader has not received the first camera frame yet. A
             // non-blocking empty result keeps the GUI timer responsive; the
             // following tick will consume the frame once it arrives.
             return Ok(None);
         };
-        let frame = VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)?;
+        let frame =
+            VideoFrame::from_shared(format, timestamp, pixels).map_err(CaptureError::Media)?;
         self.frame_index = self
             .frame_index
             .checked_add(1)

@@ -4,6 +4,7 @@ use obs_rs_audio::AudioFormat;
 use obs_rs_media::{MediaError, Timestamp, VideoFormat};
 
 use super::types::{OutputState, StreamState};
+use super::OutputProfileKind;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum OutputError {
@@ -24,6 +25,10 @@ pub enum OutputError {
     },
     /// A standard output format cannot represent the requested video layout.
     UnsupportedFormat { reason: String },
+    /// A serialized or configured output profile uses an unsupported version.
+    UnsupportedProfileVersion { version: u16 },
+    /// The approved native runtime cannot provide an exact requested profile.
+    ProfileUnavailable { profile: OutputProfileKind },
     /// An audio buffer does not match an audio encoder's format.
     AudioFormatMismatch {
         /// Format expected by the encoder.
@@ -102,6 +107,12 @@ impl fmt::Display for OutputError {
             }
             Self::UnsupportedFormat { reason } => {
                 write!(formatter, "output format is unsupported: {reason}")
+            }
+            Self::UnsupportedProfileVersion { version } => {
+                write!(formatter, "output profile version {version} is unsupported")
+            }
+            Self::ProfileUnavailable { profile } => {
+                write!(formatter, "output profile {profile:?} is unavailable")
             }
             Self::AudioFormatMismatch { expected, actual } => {
                 write!(

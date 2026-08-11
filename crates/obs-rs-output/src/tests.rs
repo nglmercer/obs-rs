@@ -19,6 +19,7 @@ pub(super) fn unique_paths(label: &str) -> (std::path::PathBuf, std::path::PathB
 }
 
 mod codecs;
+mod profile;
 mod recording;
 mod stream;
 mod writers;

@@ -31,6 +31,7 @@ mod audio;
 mod codec;
 mod error;
 mod muxer;
+mod profile;
 mod queue;
 mod recording;
 mod stream;
@@ -44,6 +45,10 @@ mod tests;
 pub use audio::{AudioEncoder, RawAudioEncoder, WavRecording, Y4mRecording};
 pub use error::OutputError;
 pub use muxer::MemoryMuxer;
+pub use profile::{
+    NegotiatedOutput, OutputAudioCodec, OutputCapabilities, OutputProfile, OutputProfileKind,
+    OutputTransport, OutputVideoCodec, OUTPUT_PROFILE_VERSION,
+};
 pub use queue::PacketQueue;
 pub use recording::{RawRecording, RawRecordingSession};
 pub use stream::{

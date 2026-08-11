@@ -29,6 +29,10 @@ pub enum RenderError {
     TextureNotReady(TextureId),
     /// A composition request contains no layers.
     EmptyComposition,
+    /// The backend does not implement metadata-rich layer submission.
+    LayerSubmissionUnsupported,
+    /// A native surface provider cannot be imported by this backend.
+    SurfaceUnsupported { provider: String },
     /// A media invariant failed during CPU composition.
     Media(MediaError),
 }
@@ -60,6 +64,15 @@ impl fmt::Display for RenderError {
             }
             Self::EmptyComposition => {
                 formatter.write_str("render composition needs at least one layer")
+            }
+            Self::LayerSubmissionUnsupported => {
+                formatter.write_str("render backend does not support scene-layer submission")
+            }
+            Self::SurfaceUnsupported { provider } => {
+                write!(
+                    formatter,
+                    "render backend cannot import {provider} surfaces"
+                )
             }
             Self::Media(error) => error.fmt(formatter),
         }

@@ -3,7 +3,7 @@ use super::error::MediaError;
 ///
 /// Scale values use thousandths: `1000` is 100%, `2000` is 200%. Translation is
 /// expressed in output pixels and the transform is anchored at the top-left corner.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct FrameTransform {
     pub(crate) scale_x_milli: u32,
     pub(crate) scale_y_milli: u32,

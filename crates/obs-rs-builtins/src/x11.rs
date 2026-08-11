@@ -265,10 +265,10 @@ impl X11GrabDevice {
         &mut self,
         timestamp: obs_rs_media::Timestamp,
     ) -> Result<Option<VideoFrame>, CaptureError> {
-        let Some(pixels) = self.reader.latest_frame("x11grab")? else {
+        let Some(pixels) = self.reader.latest_shared_frame("x11grab")? else {
             return Ok(None);
         };
-        VideoFrame::new(self.format, timestamp, pixels)
+        VideoFrame::from_shared(self.format, timestamp, pixels)
             .map(Some)
             .map_err(CaptureError::Media)
     }

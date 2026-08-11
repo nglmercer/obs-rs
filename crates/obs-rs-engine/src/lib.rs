@@ -303,7 +303,6 @@ impl From<std::io::Error> for EngineError {
 
 struct RecordingOutput {
     writer: AtomicPacketFileWriter,
-    packets: Vec<EncodedPacket>,
 }
 
 enum StreamOutput {
@@ -737,7 +736,6 @@ impl EngineSession {
         let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
         self.recording = Some(RecordingOutput {
             writer: AtomicPacketFileWriter::new(final_path, temp_path)?,
-            packets: Vec::new(),
         });
         Ok(())
     }
@@ -754,13 +752,6 @@ impl EngineSession {
             ));
         };
         self.recording_lifecycle = OutputLifecycle::Stopping;
-        recording.packets.sort_by_key(EncodedPacket::timestamp);
-        for packet in &recording.packets {
-            if let Err(error) = recording.writer.push(packet.clone()) {
-                self.recording = Some(recording);
-                return Err(self.fail_recording(error.into()));
-            }
-        }
         match recording.writer.finalize() {
             Ok(bytes) => {
                 self.recording_lifecycle = OutputLifecycle::Idle;
@@ -1008,11 +999,14 @@ impl EngineSession {
     }
 
     fn emit_packet(&mut self, packet: EncodedPacket) -> Result<(), EngineError> {
-        if let Some(recording) = self.recording.as_mut() {
-            recording.packets.push(packet.clone());
-        }
-        if let Some(stream) = self.streaming.as_mut() {
-            stream.submit(packet)?;
+        match (self.recording.as_mut(), self.streaming.as_mut()) {
+            (Some(recording), Some(stream)) => {
+                recording.writer.push(packet.clone())?;
+                stream.submit(packet)?;
+            }
+            (Some(recording), None) => recording.writer.push(packet)?,
+            (None, Some(stream)) => stream.submit(packet)?,
+            (None, None) => {}
         }
         Ok(())
     }
@@ -1272,13 +1266,20 @@ mod tests {
     }
 
     #[test]
-    fn a_recording_that_cannot_be_committed_stays_failed_and_keeps_its_packets() {
+    fn a_recording_that_cannot_be_committed_stays_failed_and_keeps_its_stream() {
         let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
-        // The directory does not exist, so the atomic commit fails at the end
-        // rather than when the recording opened.
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("obs-rs-engine-commit-{token}"));
+        let path = root.join("recording.obsr");
+        std::fs::create_dir_all(&path).expect("create conflicting final directory");
+        // The temporary stream can be opened beside the requested path, but a
+        // regular file cannot atomically replace the directory at commit time.
         engine
-            .start_recording("/nonexistent-obs-rs-directory/recording.obsr")
-            .expect("an unwritable directory is only discovered at commit time");
+            .start_recording(&path)
+            .expect("the temporary packet stream opens");
         engine.tick(None, Some("program")).expect("media tick");
 
         engine
@@ -1288,9 +1289,11 @@ mod tests {
         assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Failed);
         assert!(
             engine.is_recording(),
-            "a failed commit must not discard the captured packets"
+            "a failed commit must not discard the captured packet stream"
         );
         engine.abort_recording();
+        std::fs::remove_dir(&path).expect("remove conflicting final directory");
+        std::fs::remove_dir(root).expect("remove commit fixture root");
     }
 
     #[test]

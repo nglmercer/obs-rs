@@ -12,7 +12,7 @@ pub enum PacketKind {
 }
 
 impl PacketKind {
-    pub(crate) fn tag(self) -> u8 {
+    pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::Video => 0,
             Self::Audio => 1,

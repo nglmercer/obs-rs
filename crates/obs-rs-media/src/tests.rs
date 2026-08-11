@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 fn format() -> VideoFormat {
     VideoFormat::new(2, 2, FrameRate::new(60, 2).expect("valid rate")).expect("valid format")
@@ -111,6 +112,28 @@ fn filters_modify_owned_pixels_without_mutating_the_input() {
 
     assert_eq!(frame.pixel(0, 0), Some([100, 150, 200, 255]));
     assert_eq!(filtered.pixel(0, 0), Some([210, 210, 210, 128]));
+}
+
+#[test]
+fn shared_capture_storage_clones_without_copy_and_detaches_on_mutation() {
+    reset_frame_memory_metrics();
+    let pixels = Arc::new(vec![
+        100, 150, 200, 255, 100, 150, 200, 255, 100, 150, 200, 255, 100, 150, 200, 255,
+    ]);
+    let frame = VideoFrame::from_shared(format(), Timestamp::ZERO, Arc::clone(&pixels))
+        .expect("valid shared frame");
+    let mut filtered = frame.clone();
+
+    assert_eq!(frame_memory_metrics().shared_clones(), 1);
+    assert_eq!(frame_memory_metrics().copy_on_write_buffers(), 0);
+    filtered.apply_filter(FrameFilter::Grayscale);
+
+    assert_eq!(frame.pixel(0, 0), Some([100, 150, 200, 255]));
+    assert_eq!(filtered.pixel(0, 0), Some([140, 140, 140, 255]));
+    let metrics = frame_memory_metrics();
+    assert_eq!(metrics.copy_on_write_buffers(), 1);
+    assert_eq!(metrics.copy_on_write_bytes(), format().rgba_bytes());
+    assert_eq!(Arc::strong_count(&pixels), 2);
 }
 
 #[test]
@@ -285,6 +308,15 @@ fn transform_fast_paths_match_the_reference_resampler() {
             expected.pixels(),
             "transform {transform:?} diverged from the reference"
         );
+        let owned = frame
+            .clone()
+            .into_transformed(transform)
+            .expect("owned transform");
+        assert_eq!(
+            owned.pixels(),
+            expected.pixels(),
+            "owned transform {transform:?} diverged from the reference"
+        );
     }
 }
 
@@ -311,6 +343,29 @@ fn blending_onto_an_opaque_background_matches_the_general_formula() {
             Some(expected),
             "source alpha {source_alpha}"
         );
+    }
+}
+
+#[test]
+fn retaining_the_foreground_buffer_is_pixel_identical_to_blend_over() {
+    let format = VideoFormat::new(2, 1, FrameRate::new(30, 1).expect("rate")).expect("format");
+    for (source_alpha, background_alpha) in [
+        (0, 0),
+        (0, 255),
+        (1, 1),
+        (64, 128),
+        (200, 33),
+        (254, 255),
+        (255, 64),
+    ] {
+        let background =
+            VideoFrame::solid(format, Timestamp::ZERO, [10, 200, 30, background_alpha]);
+        let foreground = VideoFrame::solid(format, Timestamp::ZERO, [250, 20, 90, source_alpha]);
+        let mut expected = background.clone();
+        expected.blend_over(&foreground).expect("blend over");
+        let mut actual = foreground;
+        actual.blend_under(&background).expect("blend under");
+        assert_eq!(actual.pixels(), expected.pixels());
     }
 }
 

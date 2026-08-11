@@ -2,6 +2,10 @@ use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 use super::*;
 
@@ -125,6 +129,73 @@ fn test_device_has_start_stop_and_animated_frames() {
     assert_eq!(device.frame_index(), 2);
     device.stop();
     assert!(!device.is_running());
+}
+
+#[test]
+fn asynchronous_capture_opening_never_blocks_frame_polling() {
+    let mut device = AsyncCaptureDevice::open(format(), || {
+        Ok(Box::new(
+            TestPatternDevice::new("async-pattern", "Async pattern").expect("device"),
+        ))
+    });
+    assert_eq!(device.state(), CaptureLifecycleState::Opening);
+
+    let frame = (0..10_000).find_map(|_| {
+        let frame = device.poll_frame(Timestamp::ZERO).expect("poll capture");
+        if frame.is_none() {
+            std::thread::yield_now();
+        }
+        frame
+    });
+    assert!(frame.is_some());
+    assert_eq!(device.state(), CaptureLifecycleState::Ready);
+}
+
+#[test]
+fn asynchronous_capture_distinguishes_denial_and_retryable_loss() {
+    let mut denied = AsyncCaptureDevice::open(format(), || Err(CaptureError::PermissionDenied));
+    for _ in 0..10_000 {
+        if denied.poll_frame(Timestamp::ZERO).is_err() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(denied.state(), CaptureLifecycleState::Denied);
+    assert_eq!(denied.retry(), Err(CaptureError::AlreadyRunning));
+
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let opener_attempts = Arc::clone(&attempts);
+    let mut retryable = AsyncCaptureDevice::open(format(), move || {
+        if opener_attempts.fetch_add(1, Ordering::Relaxed) == 0 {
+            return Err(CaptureError::PlatformUnavailable {
+                message: "temporarily absent".to_owned(),
+            });
+        }
+        Ok(Box::new(
+            TestPatternDevice::new("retry-pattern", "Retry pattern").expect("device"),
+        ))
+    });
+    for _ in 0..10_000 {
+        if retryable.poll_frame(Timestamp::ZERO).is_err() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(retryable.state(), CaptureLifecycleState::Lost);
+    retryable.retry().expect("start retry");
+    assert_eq!(retryable.state(), CaptureLifecycleState::Retrying);
+    for _ in 0..10_000 {
+        if retryable
+            .poll_frame(Timestamp::from_millis(1))
+            .expect("retry poll")
+            .is_some()
+        {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(retryable.state(), CaptureLifecycleState::Ready);
+    assert_eq!(attempts.load(Ordering::Relaxed), 2);
 }
 
 #[test]

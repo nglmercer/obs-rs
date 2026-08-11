@@ -21,13 +21,12 @@ use crate::error::CaptureError;
 
 /// The newest complete frame the reader has published.
 ///
-/// The reader swaps its filled buffer in and takes the previous one back out
-/// to write the next frame into, so capture allocates and copies nothing on
-/// the producing side. The frame itself stays in the slot: a consumer polling
-/// faster than the camera must keep seeing the current image, not a gap.
+/// The reader publishes immutable shared storage and reclaims the previous
+/// allocation whenever no consumer still owns it. The frame stays in the slot,
+/// so a consumer polling faster than the camera sees the current image.
 #[derive(Default)]
 struct FrameSlot {
-    latest: Option<Vec<u8>>,
+    latest: Option<Arc<Vec<u8>>>,
 }
 
 /// A child process writing raw RGBA frames, with a newest-frame slot.
@@ -90,11 +89,11 @@ impl RawFrameReader {
                     let Ok(mut slot) = reader_slot.lock() else {
                         break;
                     };
-                    // Publish the filled buffer and take the previous one back
-                    // to write into, so a frame costs nothing on this side.
-                    pixels = slot
-                        .latest
-                        .replace(pixels)
+                    // Publish shared immutable storage. Reclaim the previous
+                    // allocation whenever every consumer has released it.
+                    let previous = slot.latest.replace(Arc::new(pixels));
+                    pixels = previous
+                        .and_then(|buffer| Arc::try_unwrap(buffer).ok())
                         .filter(|buffer| buffer.len() == frame_bytes)
                         .unwrap_or_else(|| vec![0_u8; frame_bytes]);
                 }
@@ -129,6 +128,20 @@ impl RawFrameReader {
     ///
     /// Returns [`CaptureError::Io`] once the process or the pipe has failed.
     pub fn latest_frame(&self, what: &str) -> Result<Option<Vec<u8>>, CaptureError> {
+        Ok(self
+            .latest_shared_frame(what)?
+            .map(|pixels| pixels.as_ref().clone()))
+    }
+
+    /// Returns shared ownership of the newest complete frame.
+    ///
+    /// This is the live capture path: acquiring a frame increments a reference
+    /// count instead of copying the complete RGBA buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::Io`] once the process or pipe has failed.
+    pub fn latest_shared_frame(&self, what: &str) -> Result<Option<Arc<Vec<u8>>>, CaptureError> {
         if let Ok(error) = self.read_error.lock() {
             if let Some(error) = error.as_ref() {
                 return Err(CaptureError::Io {

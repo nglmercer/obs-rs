@@ -2,7 +2,12 @@ use super::{
     error::MediaError, filters::FrameFilter, format::VideoFormat, time::Timestamp,
     transform::FrameTransform, transition::FrameTransition,
 };
+use crate::metrics::{record_copy_on_write, record_owned_buffer, record_shared_clone};
 use rayon::prelude::*;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex, OnceLock},
+};
 
 /// Bytes of pixel data one parallel task processes at a time.
 ///
@@ -17,6 +22,11 @@ const PARALLEL_BLOCK_BYTES: usize = 4 * 1_024;
 ///
 /// Waking worker threads for a handful of rows costs more than the work.
 const PARALLEL_MINIMUM_BYTES: usize = 2 * PARALLEL_BLOCK_BYTES;
+
+const TRANSFORM_PLAN_CACHE_SIZE: usize = 64;
+type TransformColumns = Arc<Vec<Option<usize>>>;
+type TransformPlanCache = VecDeque<(VideoFormat, FrameTransform, TransformColumns)>;
+static TRANSFORM_PLANS: OnceLock<Mutex<TransformPlanCache>> = OnceLock::new();
 
 /// Runs `apply` over the frame's pixels, in parallel blocks when it pays off.
 fn for_each_block(pixels: &mut [u8], apply: impl Fn(&mut [u8]) + Send + Sync) {
@@ -44,11 +54,22 @@ fn for_each_block_pair(
 }
 
 /// An owned, tightly packed RGBA8 video frame.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct VideoFrame {
     format: VideoFormat,
     timestamp: Timestamp,
-    pixels: Vec<u8>,
+    pixels: Arc<Vec<u8>>,
+}
+
+impl Clone for VideoFrame {
+    fn clone(&self) -> Self {
+        record_shared_clone();
+        Self {
+            format: self.format,
+            timestamp: self.timestamp,
+            pixels: Arc::clone(&self.pixels),
+        }
+    }
 }
 
 impl VideoFrame {
@@ -71,6 +92,35 @@ impl VideoFrame {
             });
         }
 
+        record_owned_buffer(pixels.len());
+        Ok(Self {
+            format,
+            timestamp,
+            pixels: Arc::new(pixels),
+        })
+    }
+
+    /// Creates a frame from validated shared RGBA storage.
+    ///
+    /// Capture adapters use this path to publish their newest immutable buffer
+    /// without copying every pixel. Mutating operations retain value semantics
+    /// through copy-on-write storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::BufferSize`] when `pixels` has the wrong length.
+    pub fn from_shared(
+        format: VideoFormat,
+        timestamp: Timestamp,
+        pixels: Arc<Vec<u8>>,
+    ) -> Result<Self, MediaError> {
+        let expected = format.rgba_bytes();
+        if pixels.len() != expected {
+            return Err(MediaError::BufferSize {
+                expected,
+                actual: pixels.len(),
+            });
+        }
         Ok(Self {
             format,
             timestamp,
@@ -83,17 +133,25 @@ impl VideoFrame {
     /// Internal fast path for call sites that derive `pixels` from
     /// [`VideoFormat::rgba_bytes`] and therefore cannot violate the length
     /// invariant. Callers outside this crate must use [`VideoFrame::new`].
-    pub(crate) const fn new_unchecked(
+    pub(crate) fn new_unchecked(
         format: VideoFormat,
         timestamp: Timestamp,
         pixels: Vec<u8>,
     ) -> Self {
-        debug_assert!(pixels.len() == format.rgba_bytes());
+        debug_assert_eq!(pixels.len(), format.rgba_bytes());
+        record_owned_buffer(pixels.len());
         Self {
             format,
             timestamp,
-            pixels,
+            pixels: Arc::new(pixels),
         }
+    }
+
+    fn pixels_mut(&mut self) -> &mut [u8] {
+        if Arc::strong_count(&self.pixels) > 1 {
+            record_copy_on_write(self.pixels.len());
+        }
+        Arc::make_mut(&mut self.pixels).as_mut_slice()
     }
 
     /// Creates a solid-color frame.
@@ -134,6 +192,18 @@ impl VideoFrame {
         self.timestamp
     }
 
+    /// Returns a cheap frame view carrying a different presentation timestamp.
+    ///
+    /// Immutable pixel storage is shared. This is useful for static sources
+    /// such as color mattes that would otherwise allocate identical pixels on
+    /// every render.
+    #[must_use]
+    pub fn at_timestamp(&self, timestamp: Timestamp) -> Self {
+        let mut frame = self.clone();
+        frame.timestamp = timestamp;
+        frame
+    }
+
     /// Returns the immutable RGBA8 bytes.
     #[must_use]
     pub fn pixels(&self) -> &[u8] {
@@ -146,7 +216,10 @@ impl VideoFrame {
     /// instead of copying them out of a borrowed frame.
     #[must_use]
     pub fn into_pixels(self) -> Vec<u8> {
-        self.pixels
+        if Arc::strong_count(&self.pixels) > 1 {
+            record_copy_on_write(self.pixels.len());
+        }
+        Arc::try_unwrap(self.pixels).unwrap_or_else(|pixels| pixels.as_ref().clone())
     }
 
     /// Returns one pixel if `(x, y)` is inside the frame.
@@ -179,8 +252,8 @@ impl VideoFrame {
         }
 
         for_each_block_pair(
-            &mut self.pixels,
-            &foreground.pixels,
+            self.pixels_mut(),
+            foreground.pixels(),
             |background, source| {
                 // A fully opaque run is the overwhelmingly common case — an ordinary
                 // camera, screen, or colour layer has no transparency — and it
@@ -244,6 +317,67 @@ impl VideoFrame {
         Ok(())
     }
 
+    /// Composites this foreground over `background` while retaining this
+    /// frame's storage for the result.
+    ///
+    /// This is algebraically identical to `background.blend_over(self)`, but it
+    /// lets a compositor reuse the newest layer buffer rather than copying a
+    /// cached/static first layer before every frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::FormatMismatch`] when formats differ.
+    pub fn blend_under(&mut self, background: &Self) -> Result<(), MediaError> {
+        if self.format != background.format {
+            return Err(MediaError::FormatMismatch {
+                expected: self.format,
+                actual: background.format,
+            });
+        }
+
+        for_each_block_pair(
+            self.pixels_mut(),
+            background.pixels(),
+            |source, background| {
+                for (source, background) in
+                    source.chunks_exact_mut(4).zip(background.chunks_exact(4))
+                {
+                    let source_alpha = u32::from(source[3]);
+                    if source_alpha == u32::from(u8::MAX) {
+                        continue;
+                    }
+                    if source_alpha == 0 {
+                        source.copy_from_slice(background);
+                        continue;
+                    }
+                    let inverse_alpha = 255 - source_alpha;
+                    let background_alpha = u32::from(background[3]);
+                    if background_alpha == u32::from(u8::MAX) {
+                        for channel in 0..3 {
+                            let numerator = u32::from(source[channel]) * source_alpha
+                                + u32::from(background[channel]) * inverse_alpha;
+                            source[channel] = to_byte(divide_by_255(numerator));
+                        }
+                        source[3] = u8::MAX;
+                        continue;
+                    }
+                    let output_alpha =
+                        source_alpha + divide_by_255(background_alpha * inverse_alpha);
+                    let denominator = output_alpha * 255;
+                    let source_weight = source_alpha * 255;
+                    let background_weight = background_alpha * inverse_alpha;
+                    for channel in 0..3 {
+                        let numerator = u32::from(source[channel]) * source_weight
+                            + u32::from(background[channel]) * background_weight;
+                        source[channel] = to_byte(numerator / denominator);
+                    }
+                    source[3] = to_byte(output_alpha);
+                }
+            },
+        );
+        Ok(())
+    }
+
     /// Produces a deterministic transition between two same-format frames.
     ///
     /// `destination` is taken by value and becomes the result buffer: a cut
@@ -280,7 +414,9 @@ impl VideoFrame {
                 // Both buffers have the same format and therefore the same
                 // length, so this is a straight paired walk with no branching
                 // and no intermediate allocation.
-                for (target, source_byte) in destination.pixels.iter_mut().zip(&source.pixels) {
+                for (target, source_byte) in
+                    destination.pixels_mut().iter_mut().zip(source.pixels())
+                {
                     let value = u32::from(*source_byte) * source_weight
                         + u32::from(*target) * destination_weight;
                     *target = to_byte((value + 500) / 1_000);
@@ -348,22 +484,14 @@ impl VideoFrame {
         // The source column for an output column does not depend on the row, so
         // the whole mapping is built once instead of dividing per pixel. Each
         // entry is the source byte offset within its row, or `None` outside it.
-        let columns = (0..self.format.width)
-            .map(|x| {
-                let local_x = i64::from(x) - translate_x;
-                if local_x < 0 {
-                    return None;
-                }
-                let mut source_x = crop_left + local_x * 1_000 / scale_x;
-                if source_x >= visible_right {
-                    return None;
-                }
-                if transform.flip_x {
-                    source_x = crop_left + visible_right - 1 - source_x;
-                }
-                usize::try_from(source_x).ok().map(|source_x| source_x * 4)
-            })
-            .collect::<Vec<_>>();
+        let columns = transform_columns(
+            self.format,
+            transform,
+            crop_left,
+            visible_right,
+            translate_x,
+            scale_x,
+        );
         // Consecutive source columns copy as one memmove per row, which is the
         // case for every unscaled, unflipped layer. The visible columns must
         // also form a single run, so the mapping is checked in one pass:
@@ -387,6 +515,7 @@ impl VideoFrame {
             })
         };
 
+        let output_pixels = output.pixels_mut();
         for y in 0..self.format.height {
             let local_y = i64::from(y) - translate_y;
             if local_y < 0 {
@@ -418,11 +547,11 @@ impl VideoFrame {
                 };
                 let source_start = source_row + source_offset;
                 let output_start = output_row + first * 4;
-                output.pixels[output_start..output_start + span * 4]
+                output_pixels[output_start..output_start + span * 4]
                     .copy_from_slice(&self.pixels[source_start..source_start + span * 4]);
                 if !opaque {
                     for pixel in
-                        output.pixels[output_start..output_start + span * 4].chunks_exact_mut(4)
+                        output_pixels[output_start..output_start + span * 4].chunks_exact_mut(4)
                     {
                         pixel[3] = to_byte(u32::from(pixel[3]) * opacity / u32::from(u8::MAX));
                     }
@@ -437,7 +566,7 @@ impl VideoFrame {
                 let source_offset = source_row + source_offset;
                 let output_offset = output_row + x * 4;
                 let source_pixel = &self.pixels[source_offset..source_offset + 4];
-                let target_pixel = &mut output.pixels[output_offset..output_offset + 4];
+                let target_pixel = &mut output_pixels[output_offset..output_offset + 4];
                 target_pixel.copy_from_slice(source_pixel);
                 if !opaque {
                     let alpha = u32::from(target_pixel[3]) * opacity / u32::from(u8::MAX);
@@ -447,6 +576,59 @@ impl VideoFrame {
         }
 
         Ok(output)
+    }
+
+    /// Applies a transform while reusing uniquely owned storage for the common
+    /// unscaled full-frame flip/opacity path.
+    ///
+    /// Other transforms retain [`Self::transformed`] as their pixel-identical
+    /// correctness implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransform`] for an invalid transform.
+    pub fn into_transformed(mut self, transform: FrameTransform) -> Result<Self, MediaError> {
+        if transform == FrameTransform::IDENTITY {
+            return Ok(self);
+        }
+        let full_frame = transform.scale_x_milli == 1_000
+            && transform.scale_y_milli == 1_000
+            && transform.translate_x == 0
+            && transform.translate_y == 0
+            && !transform.is_cropped();
+        if !full_frame {
+            return self.transformed(transform);
+        }
+
+        let width = self.format.width_index();
+        let width_bytes = width * 4;
+        let height = self.format.height_index();
+        let pixels = self.pixels_mut();
+        if transform.flip_x {
+            pixels.par_chunks_exact_mut(width_bytes).for_each(|row| {
+                for x in 0..width / 2 {
+                    let opposite = width - 1 - x;
+                    for channel in 0..4 {
+                        row.swap(x * 4 + channel, opposite * 4 + channel);
+                    }
+                }
+            });
+        }
+        if transform.flip_y {
+            for y in 0..height / 2 {
+                let opposite = height - 1 - y;
+                for byte in 0..width_bytes {
+                    pixels.swap(y * width_bytes + byte, opposite * width_bytes + byte);
+                }
+            }
+        }
+        if transform.opacity != u8::MAX {
+            let opacity = u32::from(transform.opacity);
+            pixels.par_chunks_exact_mut(4).for_each(|pixel| {
+                pixel[3] = to_byte(u32::from(pixel[3]) * opacity / u32::from(u8::MAX));
+            });
+        }
+        Ok(self)
     }
 
     /// Applies one CPU filter and returns a new owned frame.
@@ -479,7 +661,7 @@ impl VideoFrame {
         // arithmetic pass the compiler can vectorize.
         if let [filter] = filters {
             let filter = *filter;
-            for_each_block(&mut self.pixels, move |block| match filter {
+            for_each_block(self.pixels_mut(), move |block| match filter {
                 FrameFilter::Grayscale => {
                     for pixel in block.chunks_exact_mut(4) {
                         apply_grayscale(pixel);
@@ -499,7 +681,7 @@ impl VideoFrame {
             });
             return;
         }
-        for_each_block(&mut self.pixels, |block| {
+        for_each_block(self.pixels_mut(), |block| {
             for pixel in block.chunks_exact_mut(4) {
                 for filter in filters {
                     match *filter {
@@ -518,7 +700,10 @@ impl VideoFrame {
 
     /// Clears RGB values on fully transparent pixels for canonical composition.
     pub fn clear_transparent_rgb(&mut self) {
-        self.pixels.par_chunks_exact_mut(4).for_each(|pixel| {
+        if !self.pixels.par_chunks_exact(4).any(|pixel| pixel[3] == 0) {
+            return;
+        }
+        self.pixels_mut().par_chunks_exact_mut(4).for_each(|pixel| {
             let mask = 0_u8.wrapping_sub(u8::from(pixel[3] != 0));
             pixel[0] &= mask;
             pixel[1] &= mask;
@@ -545,6 +730,48 @@ impl VideoFrame {
         }
         hash
     }
+}
+
+fn transform_columns(
+    format: VideoFormat,
+    transform: FrameTransform,
+    crop_left: i64,
+    visible_right: i64,
+    translate_x: i64,
+    scale_x: i64,
+) -> TransformColumns {
+    let cache = TRANSFORM_PLANS.get_or_init(|| Mutex::new(VecDeque::new()));
+    let mut plans = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, _, columns)) = plans.iter().find(|(cached_format, cached_transform, _)| {
+        *cached_format == format && *cached_transform == transform
+    }) {
+        return Arc::clone(columns);
+    }
+    let columns = Arc::new(
+        (0..format.width)
+            .map(|x| {
+                let local_x = i64::from(x) - translate_x;
+                if local_x < 0 {
+                    return None;
+                }
+                let mut source_x = crop_left + local_x * 1_000 / scale_x;
+                if source_x >= visible_right {
+                    return None;
+                }
+                if transform.flip_x {
+                    source_x = crop_left + visible_right - 1 - source_x;
+                }
+                usize::try_from(source_x).ok().map(|source_x| source_x * 4)
+            })
+            .collect(),
+    );
+    if plans.len() == TRANSFORM_PLAN_CACHE_SIZE {
+        let _ = plans.pop_front();
+    }
+    plans.push_back((format, transform, Arc::clone(&columns)));
+    columns
 }
 
 #[inline]

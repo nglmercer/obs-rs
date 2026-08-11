@@ -9,8 +9,10 @@ version.workspace = true
 crate-type = ["lib"]
 
 [dependencies]
+ed25519-dalek = "2.1"
 obs-rs-capture = { path = "../obs-rs-capture" }
 obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
 obs-rs-util = { path = "../obs-rs-util" }
+sha2 = "0.10"

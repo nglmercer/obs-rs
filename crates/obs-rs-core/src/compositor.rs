@@ -63,15 +63,18 @@ impl Runtime {
             let mut frame = if transform == FrameTransform::IDENTITY {
                 frame
             } else {
-                frame.transformed(transform).map_err(RuntimeError::Media)?
+                frame
+                    .into_transformed(transform)
+                    .map_err(RuntimeError::Media)?
             };
             metrics.filtered_frames = metrics
                 .filtered_frames
                 .saturating_add(u64::try_from(filters.len()).unwrap_or(u64::MAX));
             frame.apply_filters(filters);
 
-            if let Some(composite) = result.as_mut() {
-                composite.blend_over(&frame).map_err(RuntimeError::Media)?;
+            if let Some(composite) = result.take() {
+                frame.blend_under(&composite).map_err(RuntimeError::Media)?;
+                result = Some(frame);
                 metrics.blended_layers = metrics.blended_layers.saturating_add(1);
             } else {
                 frame.clear_transparent_rgb();

@@ -1,5 +1,7 @@
 use super::*;
-use obs_rs_media::{FrameRate, RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{
+    FrameFilter, FrameRate, FrameTransform, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
+};
 
 fn format() -> VideoFormat {
     VideoFormat::new(2, 1, FrameRate::new(30, 1).expect("rate")).expect("format")
@@ -130,4 +132,41 @@ fn backend_accounts_texture_bytes_and_accepts_raw_uploads() {
     assert_eq!(metrics.readbacks(), 1);
     assert_eq!(metrics.allocated_bytes(), 0);
     assert_eq!(metrics.peak_allocated_bytes(), format.rgba_bytes());
+}
+
+#[test]
+fn cpu_scene_layer_submission_is_the_pixel_oracle_for_extended_backends() {
+    let format = format();
+    let background = VideoFrame::solid(format, Timestamp::ZERO, [0, 0, 255, 255]);
+    let foreground = VideoFrame::solid(format, Timestamp::ZERO, [255, 0, 0, 128]);
+    let filters = [FrameFilter::Grayscale];
+    let layers = [
+        SceneLayer::frame(&background, FrameTransform::IDENTITY, &[]),
+        SceneLayer::frame(&foreground, FrameTransform::IDENTITY, &filters),
+    ];
+    let mut backend = CpuRenderBackend::new(1).expect("backend");
+    let target = backend.create_texture(format).expect("target");
+    backend
+        .submit_layers(target, &layers)
+        .expect("submit layers");
+    assert_eq!(
+        backend.readback(target).expect("readback").pixel(0, 0),
+        Some([38, 38, 165, 255])
+    );
+
+    let surface =
+        OpaqueFrameSurface::new("linux-dmabuf", 7, format, Timestamp::ZERO).expect("surface");
+    assert_eq!(
+        backend.surface_import_mode(surface.provider()),
+        SurfaceImportMode::CpuFallback
+    );
+    assert_eq!(
+        backend.submit_layers(
+            target,
+            &[SceneLayer::surface(&surface, FrameTransform::IDENTITY, &[])]
+        ),
+        Err(RenderError::SurfaceUnsupported {
+            provider: "linux-dmabuf".to_owned()
+        })
+    );
 }

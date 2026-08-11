@@ -30,7 +30,7 @@ pub(crate) struct ColorSource {
     kind: Identifier,
     name: String,
     format: VideoFormat,
-    color: [u8; 4],
+    frame: VideoFrame,
 }
 
 impl ColorSource {
@@ -42,11 +42,12 @@ impl ColorSource {
         let format = parse_format(settings)?;
         let color = parse_color(settings.get("color").unwrap_or("#000000FF"))?;
 
+        let frame = VideoFrame::solid(format, obs_rs_media::Timestamp::ZERO, color);
         Ok(Self {
             kind,
             name: name.to_owned(),
             format,
-            color,
+            frame,
         })
     }
 }
@@ -64,7 +65,7 @@ impl Source for ColorSource {
         let format = parse_format(settings)?;
         let color = parse_color(settings.get("color").unwrap_or("#000000FF"))?;
         self.format = format;
-        self.color = color;
+        self.frame = VideoFrame::solid(format, obs_rs_media::Timestamp::ZERO, color);
         Ok(())
     }
 
@@ -76,11 +77,7 @@ impl Source for ColorSource {
             });
         }
 
-        Ok(Some(VideoFrame::solid(
-            self.format,
-            request.timestamp(),
-            self.color,
-        )))
+        Ok(Some(self.frame.at_timestamp(request.timestamp())))
     }
 }
 

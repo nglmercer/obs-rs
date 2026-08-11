@@ -120,10 +120,11 @@ impl VideoCaptureDevice for WaylandCaptureDevice {
             return Err(CaptureError::NotRunning);
         };
         let reader = self.reader.as_ref().ok_or(CaptureError::NotRunning)?;
-        let Some(pixels) = reader.latest_frame("the PipeWire screen cast")? else {
+        let Some(pixels) = reader.latest_shared_frame("the PipeWire screen cast")? else {
             return Ok(None);
         };
-        let frame = VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)?;
+        let frame =
+            VideoFrame::from_shared(format, timestamp, pixels).map_err(CaptureError::Media)?;
         self.frame_index = self
             .frame_index
             .checked_add(1)

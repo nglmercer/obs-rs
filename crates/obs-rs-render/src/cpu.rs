@@ -5,6 +5,7 @@ use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 use super::{
     backend::RenderBackend,
     error::RenderError,
+    layer::{LayerInput, SceneLayer, SurfaceImportMode},
     types::{RenderCapabilities, RenderMetrics, RenderState, TextureId},
     DEFAULT_MAX_TEXTURE_BYTES,
 };
@@ -115,6 +116,52 @@ impl RenderBackend for CpuRenderBackend {
 
     fn metrics(&self) -> RenderMetrics {
         self.metrics
+    }
+
+    fn surface_import_mode(&self, _provider: &str) -> SurfaceImportMode {
+        SurfaceImportMode::CpuFallback
+    }
+
+    fn submit_layers(
+        &mut self,
+        target: TextureId,
+        layers: &[SceneLayer<'_>],
+    ) -> Result<(), RenderError> {
+        self.ensure_ready()?;
+        if layers.is_empty() {
+            return Err(RenderError::EmptyComposition);
+        }
+        let target_format = self.texture(target)?.format;
+        let mut result: Option<VideoFrame> = None;
+        for layer in layers {
+            let frame = match layer.input() {
+                LayerInput::Frame(frame) => frame.clone(),
+                LayerInput::Surface(surface) => {
+                    return Err(RenderError::SurfaceUnsupported {
+                        provider: surface.provider().to_owned(),
+                    });
+                }
+            };
+            if frame.format() != target_format {
+                return Err(RenderError::FormatMismatch {
+                    expected: target_format,
+                    actual: frame.format(),
+                });
+            }
+            let mut frame = frame
+                .into_transformed(layer.transform())
+                .map_err(RenderError::Media)?;
+            frame.apply_filters(layer.filters());
+            if let Some(background) = result.take() {
+                frame.blend_under(&background).map_err(RenderError::Media)?;
+            } else {
+                frame.clear_transparent_rgb();
+            }
+            result = Some(frame);
+        }
+        self.texture_mut(target)?.frame = result;
+        self.metrics.compositions = self.metrics.compositions.saturating_add(1);
+        Ok(())
     }
 
     fn create_texture(&mut self, format: VideoFormat) -> Result<TextureId, RenderError> {

@@ -1,7 +1,7 @@
 use super::error::MediaError;
 use std::time::{Duration, Instant};
 /// A monotonic media position expressed in nanoseconds.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Timestamp(u64);
 
 impl Timestamp {

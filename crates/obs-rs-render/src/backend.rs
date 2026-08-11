@@ -2,6 +2,7 @@ use obs_rs_media::{RawVideoFrame, VideoFormat, VideoFrame};
 
 use super::{
     error::RenderError,
+    layer::{OpaqueFrameSurface, SceneLayer, SurfaceImportMode},
     types::{RenderCapabilities, RenderMetrics, RenderState, TextureId},
 };
 /// Safe operations required from a hardware or CPU render backend.
@@ -16,6 +17,44 @@ pub trait RenderBackend {
     #[must_use]
     fn metrics(&self) -> RenderMetrics {
         RenderMetrics::default()
+    }
+
+    /// Reports whether a producer's opaque surface can use direct import.
+    #[must_use]
+    fn surface_import_mode(&self, _provider: &str) -> SurfaceImportMode {
+        SurfaceImportMode::Unsupported
+    }
+
+    /// Submits ordered frames plus transform/filter metadata in one reusable
+    /// backend operation.
+    ///
+    /// The default preserves source compatibility for existing third-party
+    /// backends. Implementations opt in when they can fuse layer processing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError::LayerSubmissionUnsupported`] by default.
+    fn submit_layers(
+        &mut self,
+        _target: TextureId,
+        _layers: &[SceneLayer<'_>],
+    ) -> Result<(), RenderError> {
+        Err(RenderError::LayerSubmissionUnsupported)
+    }
+
+    /// Imports one opaque surface into an existing texture.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError::SurfaceUnsupported`] by default.
+    fn submit_surface(
+        &mut self,
+        _texture: TextureId,
+        surface: &OpaqueFrameSurface,
+    ) -> Result<(), RenderError> {
+        Err(RenderError::SurfaceUnsupported {
+            provider: surface.provider().to_owned(),
+        })
     }
 
     /// Allocates an empty texture resource.

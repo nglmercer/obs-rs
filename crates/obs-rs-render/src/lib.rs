@@ -6,6 +6,7 @@
 mod backend;
 mod cpu;
 mod error;
+mod layer;
 mod types;
 
 #[cfg(test)]
@@ -14,6 +15,7 @@ mod tests;
 pub use backend::RenderBackend;
 pub use cpu::CpuRenderBackend;
 pub use error::RenderError;
+pub use layer::{LayerInput, OpaqueFrameSurface, SceneLayer, SurfaceImportMode};
 pub use types::{RenderCapabilities, RenderMetrics, RenderState, TextureId};
 
 pub const DEFAULT_MAX_TEXTURE_BYTES: usize = 512 * 1024 * 1024;

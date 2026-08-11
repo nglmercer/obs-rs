@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
+mod bundle;
 mod discovery;
 mod error;
 mod frame_reader;
@@ -19,6 +20,11 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
+pub use bundle::{
+    PluginBundleManifest, PluginCapability, PluginPayload, PluginTrustStore,
+    PluginVerificationPolicy, SignedPluginBundle, VerifiedPluginBundle, MAX_PLUGIN_BUNDLE_BYTES,
+    MAX_PLUGIN_PAYLOADS, MAX_PLUGIN_PAYLOAD_PATH_BYTES, PLUGIN_BUNDLE_MAGIC,
+};
 pub use discovery::discover_sandbox_manifest;
 pub use error::SandboxError;
 pub use manifest::SandboxedPluginManifest;
