@@ -123,11 +123,17 @@ impl X11CaptureDevice {
         read_exact_x11(&mut self.stream, &mut response)?;
         if response[0] != 1 {
             return Err(protocol_error(format!(
-                "GetImage returned X11 error code {} for opcode {} (resource 0x{:x}, root 0x{:x})",
+                "GetImage returned X11 error code {} for opcode {} (resource 0x{:x}, root 0x{:x}, size={}x{}, depth={}, visual=0x{:x}, bpp={}, plane_mask=0x{:x})",
                 response[1],
                 response[10],
                 read_u32_le(&response, 4).unwrap_or_default(),
-                self.server.root
+                self.server.root,
+                self.server.width,
+                self.server.height,
+                self.server.depth,
+                self.server.visual,
+                self.server.bits_per_pixel,
+                plane_mask
             )));
         }
         if response[1] != self.server.depth {

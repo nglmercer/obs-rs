@@ -61,6 +61,29 @@ fn validates_interleaved_buffers() {
 }
 
 #[test]
+fn simulated_monitor_sink_validates_format_and_lifecycle() {
+    let provider = SimulatedAudioProvider::new();
+    let devices = provider.discover_outputs().expect("monitor catalog");
+    assert_eq!(devices[0].kind(), AudioDeviceKind::Output);
+    let mut output = provider
+        .open_output(devices[0].id(), format())
+        .expect("monitor output");
+    assert_eq!(output.state(), AudioOutputState::Stopped);
+    output
+        .write_block(&buffer(&[0.1, -0.1]))
+        .expect("write block");
+    assert_eq!(output.state(), AudioOutputState::Running);
+    let other_format = AudioFormat::new(44_100, 2).expect("other format");
+    let other = AudioBuffer::silence(other_format, Timestamp::ZERO, 1).expect("other buffer");
+    assert!(matches!(
+        output.write_block(&other),
+        Err(AudioDeviceError::Audio(AudioError::FormatMismatch { .. }))
+    ));
+    output.stop();
+    assert_eq!(output.state(), AudioOutputState::Stopped);
+}
+
+#[test]
 fn callback_clock_tracks_device_edges_and_bounded_correction() {
     let mut clock = AudioCallbackClock::new(format());
     let first = clock

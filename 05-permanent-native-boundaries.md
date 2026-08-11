@@ -50,7 +50,7 @@ supply their own evidence.
 | Audio input/output | offline buffers, PipeWire process adapter, and simulated fallback | sample count, drift, underflow, latency, device loss |
 | GPU rendering | CPU reference renderer first | format parity, context loss, resource cleanup |
 | Encoding | Rust packet/encoder traits | deterministic fixtures, quality, bounded back-pressure |
-| Streaming | bounded `OBSRPKT1` queue over TCP/WebSocket, with a worker still planned for the GUI adapter | reconnect, cancellation, no capture-thread/UI blocking |
+| Streaming | bounded `OBSRPKT1` queue over TCP/WebSocket owned by `EngineWorker` | reconnect, cancellation, no capture-thread/UI blocking |
 | Plugins | compile-time Rust registration with API versioning, plus bounded subprocess frame protocol | version checks, isolation, bounded handoff, diagnostics |
 | Desktop UI | Rust application state plus Slint control-room, CPU preview, and `obs-rs-engine` output adapter | capture-backed preview/editor workflows, output lifecycle reconciliation, full translation, accessibility audit, guided recovery, cross-platform packaging |
 

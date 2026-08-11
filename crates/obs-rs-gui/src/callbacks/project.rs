@@ -5,12 +5,13 @@ use obs_rs_project::{ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
-use crate::{refresh_ui, source_settings, MainWindow, PreviewRenderer};
+use crate::{refresh_ui, source_settings, MainWindow, OutputRuntime, PreviewRenderer};
 
 pub(crate) fn install_project_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
 ) {
     let weak = ui.as_weak();
     let save_state = Rc::clone(state);
@@ -36,8 +37,14 @@ pub(crate) fn install_project_callbacks(
     let weak = ui.as_weak();
     let diagnostics_state = Rc::clone(state);
     let diagnostics_renderer = Rc::clone(renderer);
+    let diagnostics_output = Rc::clone(output);
     ui.on_export_diagnostics(move || {
-        export_diagnostics(&weak, &diagnostics_state, &diagnostics_renderer);
+        export_diagnostics(
+            &weak,
+            &diagnostics_state,
+            &diagnostics_renderer,
+            &diagnostics_output,
+        );
     });
 
     let weak = ui.as_weak();
@@ -185,6 +192,7 @@ fn export_diagnostics(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
 ) {
     let Some(ui) = weak.upgrade() else {
         return;
@@ -228,6 +236,7 @@ fn export_diagnostics(
                 limits.max_filters_per_item()
             ),
         )?;
+        bundle.insert_text("output", &output.borrow().diagnostics_document())?;
         let mut writer = AtomicDiagnosticFileWriter::new(final_path, temp_path)?;
         Ok(writer.finalize(&bundle)?)
     })();

@@ -28,13 +28,15 @@ owner boundary, dependencies, tests, and an acceptance condition.
 - [x] Add typed `AudioDeviceInfo`, `AudioInput`, and provider contracts plus a
   deterministic signal provider. Files: `crates/obs-rs-audio/src/device.rs`.
 - [x] Add the reviewed Linux PipeWire process adapter. It discovers a default
-  source and reads bounded raw `f32` blocks; failure is typed and recoverable.
+  source, enumerates stable input/sink node IDs, and reads bounded raw `f32`
+  blocks; failure is typed and recoverable. The same adapter exposes an
+  optional playback sink and the GUI settings page reports the current catalog.
   Files: `crates/obs-rs-audio-pipewire/`.
 - [x] Connect GUI output to the engine. Recording now commits one `OBSRPKT1`
   file containing both media kinds; stream packets are queued before pumping.
   Files: `crates/obs-rs-gui/src/output.rs`, GUI callbacks and settings.
 - [x] Keep preview animation alive while idle and expose live audio/output
-  status in the timer path.
+  status in the timer path and includes a bounded output diagnostic section.
 - [x] Make GUI desktop-audio gain/mute controls affect the output mixer.
 - [x] Capture the complete X11 root, resize with aspect-preserving letterbox,
   and use a test-pattern fallback/reconnect path. Files:
@@ -65,44 +67,49 @@ owner boundary, dependencies, tests, and an acceptance condition.
 
 ### P0.2 — Complete PipeWire device lifecycle
 
-- [ ] Enumerate stable input/sink node IDs from `pw-dump`, not only the default
-  route; add selected-device configuration and hot-plug refresh.
+- [~] Enumerate stable input/sink node IDs from `pw-dump`, not only the default
+  route. The engine accepts a selected provider ID and settings shows live
+  availability; selected-device draft persistence and hot-plug refresh remain.
   Dependencies: `obs-rs-audio-pipewire` contract.
   Files: adapter, `obs-rs-ui` audio commands, GUI settings.
   Tests: fake `pw-dump` snapshots, duplicate/removed nodes, selected-node loss.
   Acceptance: a user can select an input, see availability changes, and fall
   back without losing the recording timeline.
-- [ ] Add a PipeWire monitor/output sink behind the same typed boundary.
+- [x] Add a PipeWire monitor/output sink behind the same typed boundary. The
+  sink is optional and must be driven outside the program-output hot path.
   Dependencies: P0.2 input catalog.
   Tests: format negotiation, underflow/overflow, stop/restart, no-device fallback.
   Acceptance: monitoring is optional and never blocks the program output.
 
 ### P0.3 — Make project/output synchronization explicit
 
-- [ ] Synchronize active profile format and source revisions into the engine at a
-  safe boundary; reject or stage edits while an output is running.
-  Dependencies: P0.1 lifecycle events.
-  Files: engine session, GUI refresh/project callbacks.
-  Tests: scene edit while recording, profile resolution change, source update
-  failure, rollback after rebuild failure.
-  Acceptance: output format, preview format, and project profile cannot diverge.
-- [ ] Add a V1 diagnostics section for engine/audio/output state and last typed
+- [~] Synchronize project revisions into the engine at a safe idle boundary.
+  `ProjectSession::revision` is forwarded through `EngineWorker`, and GUI edits
+  are rebuilt before the next idle output. Edits made while recording/streaming
+  remain staged in the UI until the output stops.
+  Dependencies: P0.1 worker.
+  Files: engine session/worker, GUI refresh/project callbacks.
+  Tests: worker sync while idle and GUI output integration.
+  Acceptance remaining: profile resolution changes must be rejected or staged
+  explicitly while output is running, with rollback after rebuild failure.
+- [x] Add a V1 diagnostics section for engine/audio/output state and last typed
   failure, including backend (`PipeWire` or fallback), queue depth, drops, and
   reconnect count.
   Dependencies: existing `obs-rs-diagnostics` bundle.
-  Tests: deterministic bundle round-trip and bounded error text.
+  Tests: GUI export path and bounded error text.
   Acceptance: an exported diagnostic artifact explains every failed V1 output.
 
 ### P0.4 — Verify the supported Linux path on real services
 
-- [ ] Add a live X11 acceptance command that captures one full-root frame when
+- [x] Add a live X11 acceptance command that captures one full-root frame when
   `DISPLAY` and authorization are usable; retain the ignored fixture for CI.
-- [ ] Add a live PipeWire acceptance command that reads one complete block when
+- [x] Add a live PipeWire acceptance command that reads one complete block when
   a source exists; skip with a typed capability result when no source exists.
-- [ ] Add a 300-tick A/V soak that writes/decodes `OBSRPKT1` and checks monotonic
+- [x] Add a 300-tick A/V soak that writes/decodes `OBSRPKT1` and checks monotonic
   timestamps, packet counts, fallback transitions, and bounded memory.
-  Acceptance: all three commands produce machine-readable pass/skip/fail output;
-  CI remains deterministic without X11/PipeWire.
+  Files: `crates/obs-rs-app/src/bin/obs-rs-linux-check.rs`.
+  Acceptance: `obs-rs-linux-check` produces machine-readable pass/skip/fail
+  output; CI remains deterministic without X11/PipeWire.
 
 ## P1 — useful capture and editing breadth
 
@@ -132,17 +139,17 @@ owner boundary, dependencies, tests, and an acceptance condition.
 
 ## Definition of done for V1
 
-- [ ] A clean Linux session can create a project, select X11 or test-pattern
+- [~] A clean Linux session can create a project, select X11 or test-pattern
   sources, preview while idle, change preview/program, take a transition, and
   recover from a missing display/audio service.
-- [ ] Recording produces an atomically committed `OBSRPKT1` file with both video
+- [x] Recording produces an atomically committed `OBSRPKT1` file with both video
   and audio packets and monotonic timestamps.
-- [ ] Streaming uses the existing TCP/WebSocket boundary with bounded queue,
+- [x] Streaming uses the existing TCP/WebSocket boundary with bounded queue,
   reconnect telemetry, and no GUI freeze under a stalled peer.
-- [ ] Audio settings, gain, mute, backend/fallback state, and meters are visible
+- [x] Audio settings, gain, mute, backend/fallback state, and meters are visible
   and actionable.
-- [ ] Project save/load/recovery and diagnostics include the engine state.
-- [ ] `fmt`, workspace check, strict clippy, workspace tests, GUI smoke, app demo,
+- [x] Project save/load/recovery and diagnostics include the engine state.
+- [x] `fmt`, workspace check, strict clippy, workspace tests, GUI smoke, app demo,
   and the Linux capability checks are green or explicitly skipped with a reason.
 
 ## Verification commands
@@ -154,4 +161,5 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo run -p obs-rs-gui -- --smoke
 cargo run -p obs-rs-app
+cargo run -p obs-rs-app --bin obs-rs-linux-check
 ```

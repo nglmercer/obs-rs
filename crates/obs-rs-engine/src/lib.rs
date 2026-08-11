@@ -15,7 +15,7 @@ pub use worker::{EngineWorker, EngineWorkerSnapshot};
 use std::{error::Error, fmt, path::PathBuf, sync::Arc};
 
 use obs_rs_audio::{
-    AudioBuffer, AudioDeviceError, AudioDeviceInfo, AudioFormat, AudioInput, AudioInputProvider,
+    AudioBuffer, AudioDeviceError, AudioDeviceKind, AudioFormat, AudioInput, AudioInputProvider,
     AudioMixer, AudioSourceId, SimulatedAudioProvider,
 };
 use obs_rs_builtins::BuiltinPlugin;
@@ -42,6 +42,7 @@ pub struct EngineConfig {
     timeline_tolerance_nanos: u64,
     output_queue_bytes: usize,
     reconnect_attempts: u32,
+    audio_input_id: Option<String>,
     audio_provider: Arc<dyn AudioInputProvider>,
 }
 
@@ -55,6 +56,7 @@ impl EngineConfig {
             timeline_tolerance_nanos: DEFAULT_TIMELINE_TOLERANCE_NANOS,
             output_queue_bytes: DEFAULT_OUTPUT_QUEUE_BYTES,
             reconnect_attempts: DEFAULT_RECONNECT_ATTEMPTS,
+            audio_input_id: None,
             audio_provider: Arc::new(SimulatedAudioProvider::new()),
         }
     }
@@ -63,6 +65,14 @@ impl EngineConfig {
     #[must_use]
     pub fn with_audio_provider(mut self, provider: Arc<dyn AudioInputProvider>) -> Self {
         self.audio_provider = provider;
+        self
+    }
+
+    /// Selects a provider-stable input ID, or clears the selection when empty.
+    #[must_use]
+    pub fn with_audio_input_id(mut self, device_id: impl Into<String>) -> Self {
+        let device_id = device_id.into();
+        self.audio_input_id = (!device_id.trim().is_empty()).then_some(device_id);
         self
     }
 
@@ -98,6 +108,7 @@ impl Clone for EngineConfig {
             timeline_tolerance_nanos: self.timeline_tolerance_nanos,
             output_queue_bytes: self.output_queue_bytes,
             reconnect_attempts: self.reconnect_attempts,
+            audio_input_id: self.audio_input_id.clone(),
             audio_provider: Arc::clone(&self.audio_provider),
         }
     }
@@ -388,8 +399,11 @@ impl EngineSession {
         );
         let mut mixer = AudioMixer::new(config.audio_format);
         let audio_source = mixer.add_source(1.0)?;
-        let (audio_input, audio_backend, audio_fallback) =
-            open_audio_input(&config.audio_provider, config.audio_format);
+        let (audio_input, audio_backend, audio_fallback) = open_audio_input(
+            &config.audio_provider,
+            config.audio_format,
+            config.audio_input_id.as_deref(),
+        );
 
         Ok(Self {
             video_encoder: RleVideoEncoder::new(format),
@@ -846,14 +860,30 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
 fn open_audio_input(
     provider: &Arc<dyn AudioInputProvider>,
     format: AudioFormat,
+    requested_id: Option<&str>,
 ) -> (Box<dyn AudioInput>, String, bool) {
-    let primary = provider
-        .discover()
-        .ok()
-        .and_then(|devices| devices.into_iter().find(AudioDeviceInfo::available));
-    if let Some(device) = primary {
-        if let Ok(input) = provider.open_input(device.id(), format) {
-            return (input, device.name().to_owned(), false);
+    let primary = provider.discover().ok().and_then(|devices| {
+        requested_id
+            .and_then(|requested| {
+                devices
+                    .iter()
+                    .find(|device| {
+                        device.kind() == AudioDeviceKind::Input
+                            && device.id() == requested
+                            && device.available()
+                    })
+                    .map(|device| (device.id().to_owned(), device.name().to_owned()))
+            })
+            .or_else(|| {
+                devices
+                    .into_iter()
+                    .find(|device| device.kind() == AudioDeviceKind::Input && device.available())
+                    .map(|device| (device.id().to_owned(), device.name().to_owned()))
+            })
+    });
+    if let Some((device_id, device_name)) = primary {
+        if let Ok(input) = provider.open_input(&device_id, format) {
+            return (input, device_name, false);
         }
     }
     let fallback = SimulatedAudioProvider::new()
@@ -957,6 +987,9 @@ mod tests {
             .video_format();
         let session = EngineSession::new(project(), EngineConfig::default()).expect("engine");
         let worker = EngineWorker::spawn_with_capacity(session, 1).expect("worker");
+        worker
+            .sync_project(project())
+            .expect("project sync while idle");
         let token = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")

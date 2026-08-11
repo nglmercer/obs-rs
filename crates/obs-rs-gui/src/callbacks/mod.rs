@@ -47,14 +47,21 @@ pub(crate) fn start_preview_timer(
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        let (preview_scene, program_scene, output_active) = {
+        let (revision, preview_scene, program_scene, output_active) = {
             let state = state.borrow();
             (
+                state.project_session().revision(),
                 state.preview_scene().map(str::to_owned),
                 state.program_scene().map(str::to_owned),
                 state.recording() || state.streaming(),
             )
         };
+        if !output_active && output.borrow().needs_project_sync(revision) {
+            let project = state.borrow().project_session().project().clone();
+            if let Err(error) = output.borrow_mut().sync_project(project, revision) {
+                ui.set_status_message(format!("Output project sync failed: {error}").into());
+            }
+        }
         let (program_frame, render_error) = refresh_preview_frames(
             &ui,
             &renderer,
@@ -68,7 +75,9 @@ pub(crate) fn start_preview_timer(
             push_program_frame(&ui, program_frame, &output);
         }
         if state.borrow().streaming() && output.borrow().stream_failed() {
-            let _ = state.borrow_mut().dispatch(obs_rs_ui::UiCommand::StopStreaming);
+            let _ = state
+                .borrow_mut()
+                .dispatch(obs_rs_ui::UiCommand::StopStreaming);
             ui.set_streaming(false);
             ui.set_status_message("Streaming stopped after transport failure".into());
         }
@@ -86,7 +95,7 @@ pub(crate) fn install_callbacks(
     install_scene_callbacks(ui, state, renderer);
     install_output_callbacks(ui, state, renderer, output);
     install_mixer_callbacks(ui, state, renderer, output);
-    install_project_callbacks(ui, state, renderer);
+    install_project_callbacks(ui, state, renderer, output);
     install_panel_callbacks(ui);
 }
 

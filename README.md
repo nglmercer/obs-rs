@@ -24,8 +24,9 @@ control surfaces:
   `AudioWorker` with exact block contracts. Callback timestamp observation rejects
   device-clock regressions and applies bounded ppm correction; mixer peak telemetry
   is available to the desktop state.
-- `obs-rs-audio-pipewire` provides the Linux PipeWire process adapter for bounded
-  raw `f32` input blocks, with typed discovery/start/read/stop failures.
+- `obs-rs-audio-pipewire` provides the Linux PipeWire process adapter with stable
+  `pw-dump` node enumeration, bounded raw `f32` input blocks, an optional output
+  sink, and typed discovery/start/read/stop failures.
 - `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
   catalog/provider contracts, atomic discovery refresh, deterministic animated test
   backends, a direct Linux X11 root-screen adapter, and a bounded `OBSFRM01` RGBA
@@ -97,6 +98,7 @@ cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 cargo run -p obs-rs-app
+cargo run -p obs-rs-app --bin obs-rs-linux-check
 cargo run -p obs-rs-gui
 cargo run -p obs-rs-gui -- --smoke
 cargo run -p obs-rs-app --bin obs-rs-console
@@ -148,14 +150,18 @@ render loop and multi-worker soak, Phase 4 callback-clock/audio-worker primitive
 the shared media-clock coordinator, the Phase 5 capture contract plus Linux X11
 adapter, and the Phase 6 packet/muxer/atomic recording lifecycle contracts are
 implemented, together with a growing Phase 7 project/GUI workflow and Phase 8
-resource diagnostics. The current V1 integration adds `obs-rs-engine`, PipeWire
-input with deterministic fallback, full-root X11 resize/letterbox capture with
-recovery, and GUI A/V packet output. A bounded subprocess extension contract and
-a tested WebSocket packet transport are also present as reference boundaries.
+resource diagnostics. The current V1 integration adds `obs-rs-engine`, a bounded
+background output worker, PipeWire input with deterministic fallback, full-root
+X11 resize/letterbox capture with recovery, idle project revision
+synchronization, and GUI A/V packet output. A bounded subprocess extension
+contract and a tested WebSocket packet transport are also present as reference
+boundaries.
 The release profile, pinned-toolchain CI workflow, and checksum manifest script
-are present. Remaining V1 gaps are the background output-worker lifecycle, full
-PipeWire device enumeration/monitoring, project/output synchronization, and live
-hardware acceptance automation. The project intentionally does not claim feature
+are present. Remaining V1 gaps are explicit output lifecycle events,
+selected-device persistence/hot-plug monitoring, synchronization/staging for
+edits during active output, and full hardware capture coverage. The
+`obs-rs-linux-check` command reports pass/skip/fail for X11, PipeWire, and the
+300-tick A/V soak. The project intentionally does not claim feature
 parity with OBS Studio: macOS/Windows capture, GPU/zero-copy rendering,
 production codecs and protocols, full GUI localization/property dialogs, signed
 plugin distribution, signing, and update channels remain roadmap work.

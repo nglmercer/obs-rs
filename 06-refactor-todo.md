@@ -7,9 +7,9 @@ unchanged while the code is moved.
 
 > Historical note: the inventory below describes the pre-V1 monolithic baseline.
 > Functional V1 work is tracked in [07-functional-todo.md](07-functional-todo.md).
-> New `obs-rs-engine` orchestration code is intentionally being split next; its
-> current facade is above the preferred 500-line threshold until the P0 worker and
-> output/session modules land.
+> `obs-rs-engine` now has a bounded worker and a functional facade, but its
+> current `lib.rs` remains above the preferred 500-line threshold until the
+> session/config/output modules are split.
 
 ## Inventory
 

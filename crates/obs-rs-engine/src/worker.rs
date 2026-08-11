@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
         Arc, Mutex,
     },
@@ -47,6 +47,7 @@ pub struct EngineWorker {
     sender: SyncSender<WorkerCommand>,
     snapshot: Arc<Mutex<EngineWorkerSnapshot>>,
     dropped_frames: Arc<AtomicU64>,
+    queued_frames: Arc<AtomicUsize>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -83,16 +84,27 @@ impl EngineWorker {
         }));
         let (sender, receiver) = mpsc::sync_channel(frame_capacity);
         let dropped_frames = Arc::new(AtomicU64::new(0));
+        let queued_frames = Arc::new(AtomicUsize::new(0));
         let thread_snapshot = Arc::clone(&snapshot);
         let thread_dropped = Arc::clone(&dropped_frames);
+        let thread_queued = Arc::clone(&queued_frames);
         let join = thread::Builder::new()
             .name("obs-rs-engine".to_owned())
-            .spawn(move || worker_loop(session, receiver, thread_snapshot, thread_dropped))
+            .spawn(move || {
+                worker_loop(
+                    session,
+                    receiver,
+                    thread_snapshot,
+                    thread_dropped,
+                    thread_queued,
+                );
+            })
             .map_err(EngineError::Io)?;
         Ok(Self {
             sender,
             snapshot,
             dropped_frames,
+            queued_frames,
             join: Some(join),
         })
     }
@@ -113,11 +125,16 @@ impl EngineWorker {
                     last_error: Some("engine worker status lock poisoned".to_owned()),
                     stats: EngineStats::default(),
                 },
-                queued_frames: 0,
+                queued_frames: self.queued_frames.load(Ordering::Relaxed),
                 dropped_frames: self.dropped_frames.load(Ordering::Relaxed),
                 alive: false,
             },
-            |snapshot| snapshot.clone(),
+            |snapshot| {
+                let mut snapshot = snapshot.clone();
+                snapshot.queued_frames = self.queued_frames.load(Ordering::Relaxed);
+                snapshot.dropped_frames = self.dropped_frames.load(Ordering::Relaxed);
+                snapshot
+            },
         )
     }
 
@@ -186,16 +203,21 @@ impl EngineWorker {
     /// already closed. The dropped count remains visible in [`snapshot`].
     #[must_use]
     pub fn try_push_frame(&self, frame: VideoFrame) -> bool {
+        self.queued_frames.fetch_add(1, Ordering::Relaxed);
         match self.sender.try_send(WorkerCommand::PushFrame(frame)) {
             Ok(()) => true,
             Err(TrySendError::Full(_)) => {
+                self.queued_frames.fetch_sub(1, Ordering::Relaxed);
                 self.dropped_frames.fetch_add(1, Ordering::Relaxed);
                 if let Ok(mut snapshot) = self.snapshot.lock() {
                     snapshot.dropped_frames = self.dropped_frames.load(Ordering::Relaxed);
                 }
                 false
             }
-            Err(TrySendError::Disconnected(_)) => false,
+            Err(TrySendError::Disconnected(_)) => {
+                self.queued_frames.fetch_sub(1, Ordering::Relaxed);
+                false
+            }
         }
     }
 
@@ -267,6 +289,7 @@ fn worker_loop(
     receiver: Receiver<WorkerCommand>,
     snapshot: Arc<Mutex<EngineWorkerSnapshot>>,
     dropped_frames: Arc<AtomicU64>,
+    queued_frames: Arc<AtomicUsize>,
 ) {
     while let Ok(command) = receiver.recv() {
         let shutdown = match command {
@@ -300,6 +323,7 @@ fn worker_loop(
                 false
             }
             WorkerCommand::PushFrame(frame) => {
+                queued_frames.fetch_sub(1, Ordering::Relaxed);
                 if let Err(error) = session.push_program_frame(&frame) {
                     session.last_error = Some(error.to_string());
                 }
@@ -323,6 +347,9 @@ fn worker_loop(
                 let result = session
                     .sync_project(project)
                     .map_err(|error| error.to_string());
+                if let Err(error) = &result {
+                    session.last_error = Some(error.clone());
+                }
                 let _ = reply.send(result);
                 false
             }
@@ -334,26 +361,33 @@ fn worker_loop(
                 session.last_error = Some(error.to_string());
             }
         }
-        publish_snapshot(&session, &snapshot, &dropped_frames, !shutdown);
+        publish_snapshot(
+            &session,
+            &snapshot,
+            &dropped_frames,
+            &queued_frames,
+            !shutdown,
+        );
         if shutdown {
             break;
         }
     }
     let _ = session.finish_streaming();
     session.abort_recording();
-    publish_snapshot(&session, &snapshot, &dropped_frames, false);
+    publish_snapshot(&session, &snapshot, &dropped_frames, &queued_frames, false);
 }
 
 fn publish_snapshot(
     session: &EngineSession,
     snapshot: &Arc<Mutex<EngineWorkerSnapshot>>,
     dropped_frames: &Arc<AtomicU64>,
+    queued_frames: &Arc<AtomicUsize>,
     alive: bool,
 ) {
     if let Ok(mut target) = snapshot.lock() {
         *target = EngineWorkerSnapshot {
             engine: session.snapshot(),
-            queued_frames: 0,
+            queued_frames: queued_frames.load(Ordering::Relaxed),
             dropped_frames: dropped_frames.load(Ordering::Relaxed),
             alive,
         };

@@ -97,6 +97,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &ui,
         &state,
         &renderer,
+        &output,
         settings,
         &add_source_window,
         &properties_window,

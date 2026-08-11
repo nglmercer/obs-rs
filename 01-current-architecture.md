@@ -41,9 +41,10 @@ an address or a globally shared pointer.
 `obs-rs-core::Runtime` remains a synchronous, inspectable compositor. The
 `obs-rs-engine::EngineSession` now owns the coordinated media timeline, provider
 audio, packet encoders, recording lifecycle, and stream queue around it. The GUI
-adapter still drives the session from its timer while the P0 follow-up moves the
-engine/output command loop to a dedicated worker; the public ownership contracts
-must remain unchanged when that worker lands.
+adapter owns only the preview timer and enqueues program frames into
+`obs-rs-engine::EngineWorker`; recording finalization, stream pumping, audio
+mixing, and project rebuilds run on the engine thread. Lifecycle event enums and
+safe staging of edits made during an active output remain the next refinement.
 
 ## Media model
 

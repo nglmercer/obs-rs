@@ -23,7 +23,8 @@ pub use buffer::{AudioBuffer, AudioBufferPool};
 pub use callback_clock::{AudioCallbackClock, AudioCallbackObservation};
 pub use device::{
     AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioInput, AudioInputProvider,
-    AudioInputState, SharedAudioInputProvider, SimulatedAudioInput, SimulatedAudioProvider,
+    AudioInputState, AudioOutput, AudioOutputProvider, AudioOutputState, SharedAudioInputProvider,
+    SharedAudioOutputProvider, SimulatedAudioInput, SimulatedAudioOutput, SimulatedAudioProvider,
 };
 pub use error::{AudioError, AudioWorkerError};
 pub use mixer::AudioMixer;

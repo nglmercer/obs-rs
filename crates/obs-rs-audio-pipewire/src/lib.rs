@@ -9,19 +9,22 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use std::{
-    io::{ErrorKind, Read},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdout, Command, Stdio},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
 };
 
 use obs_rs_audio::{
     AudioBuffer, AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInput,
-    AudioInputProvider, AudioInputState,
+    AudioInputProvider, AudioInputState, AudioOutput, AudioOutputProvider, AudioOutputState,
 };
 use obs_rs_media::Timestamp;
 
 /// Stable identifier for the `PipeWire` default input route.
 pub const DEFAULT_INPUT_ID: &str = "pipewire-default";
+
+/// Stable identifier for the `PipeWire` default output route.
+pub const DEFAULT_OUTPUT_ID: &str = "pipewire-default-output";
 
 /// Process-backed `PipeWire` provider.
 #[derive(Clone, Debug)]
@@ -87,16 +90,13 @@ impl AudioInputProvider for PipeWireAudioProvider {
             )));
         }
         let graph = String::from_utf8_lossy(&output.stdout);
-        if !graph.contains("Audio/Source") {
+        let devices = discover_devices(&graph);
+        if devices.is_empty() {
             return Err(AudioDeviceError::Unavailable(
-                "PipeWire has no discoverable audio source".to_owned(),
+                "PipeWire has no discoverable audio node".to_owned(),
             ));
         }
-        Ok(vec![AudioDeviceInfo::new(
-            DEFAULT_INPUT_ID,
-            "PipeWire default input",
-            AudioDeviceKind::Input,
-        )?])
+        Ok(devices)
     }
 
     fn open_input(
@@ -104,38 +104,44 @@ impl AudioInputProvider for PipeWireAudioProvider {
         device_id: &str,
         format: AudioFormat,
     ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
-        if device_id != DEFAULT_INPUT_ID {
-            return Err(AudioDeviceError::Unavailable(format!(
-                "unknown PipeWire input {device_id}"
-            )));
-        }
-        let sample_rate = format.sample_rate().to_string();
-        let channels = format.channels().to_string();
-        let mut child = Command::new(&self.cat_command)
+        let target = if device_id == DEFAULT_INPUT_ID {
+            None
+        } else {
+            Some(node_target(device_id).ok_or_else(|| {
+                AudioDeviceError::Unavailable(format!("unknown PipeWire input {device_id}"))
+            })?)
+        };
+        let mut command = Command::new(&self.cat_command);
+        command
             .args([
                 "--record",
                 "--raw",
                 "--format",
                 "f32",
                 "--rate",
-                sample_rate.as_str(),
+                format.sample_rate().to_string().as_str(),
                 "--channels",
-                channels.as_str(),
-                "-",
+                format.channels().to_string().as_str(),
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| {
-                AudioDeviceError::Unavailable(format!(
-                    "PipeWire capture command {} failed to start: {error}",
-                    self.cat_command.display()
-                ))
-            })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            AudioDeviceError::Unavailable("PipeWire capture has no stdout pipe".to_owned())
+            .stderr(Stdio::null());
+        if let Some(target) = target {
+            command.args(["--target", target]);
+        }
+        let mut child = command.arg("-").spawn().map_err(|error| {
+            AudioDeviceError::Unavailable(format!(
+                "PipeWire capture command {} failed to start: {error}",
+                self.cat_command.display()
+            ))
         })?;
+        let Some(stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AudioDeviceError::Unavailable(
+                "PipeWire capture has no stdout pipe".to_owned(),
+            ));
+        };
         Ok(Box::new(PipeWireInput {
             format,
             state: AudioInputState::Stopped,
@@ -145,11 +151,79 @@ impl AudioInputProvider for PipeWireAudioProvider {
     }
 }
 
+impl AudioOutputProvider for PipeWireAudioProvider {
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+        Ok(self
+            .discover()?
+            .into_iter()
+            .filter(|device| device.kind() == AudioDeviceKind::Output)
+            .collect())
+    }
+
+    fn open_output(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+        let target = if device_id == DEFAULT_OUTPUT_ID {
+            None
+        } else {
+            Some(node_target(device_id).ok_or_else(|| {
+                AudioDeviceError::Unavailable(format!("unknown PipeWire output {device_id}"))
+            })?)
+        };
+        let mut command = Command::new(&self.cat_command);
+        command
+            .args([
+                "--playback",
+                "--raw",
+                "--format",
+                "f32",
+                "--rate",
+                format.sample_rate().to_string().as_str(),
+                "--channels",
+                format.channels().to_string().as_str(),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if let Some(target) = target {
+            command.args(["--target", target]);
+        }
+        let mut child = command.arg("-").spawn().map_err(|error| {
+            AudioDeviceError::Unavailable(format!(
+                "PipeWire playback command {} failed to start: {error}",
+                self.cat_command.display()
+            ))
+        })?;
+        let Some(stdin) = child.stdin.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AudioDeviceError::Unavailable(
+                "PipeWire playback has no stdin pipe".to_owned(),
+            ));
+        };
+        Ok(Box::new(PipeWireOutput {
+            format,
+            state: AudioOutputState::Stopped,
+            child,
+            stdin,
+        }))
+    }
+}
+
 struct PipeWireInput {
     format: AudioFormat,
     state: AudioInputState,
     child: Child,
     stdout: ChildStdout,
+}
+
+struct PipeWireOutput {
+    format: AudioFormat,
+    state: AudioOutputState,
+    child: Child,
+    stdin: ChildStdin,
 }
 
 impl AudioInput for PipeWireInput {
@@ -212,6 +286,199 @@ impl Drop for PipeWireInput {
     }
 }
 
+impl AudioOutput for PipeWireOutput {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
+
+    fn state(&self) -> AudioOutputState {
+        self.state
+    }
+
+    fn write_block(&mut self, buffer: &AudioBuffer) -> Result<(), AudioDeviceError> {
+        if buffer.format() != self.format {
+            return Err(AudioDeviceError::Audio(
+                obs_rs_audio::AudioError::FormatMismatch {
+                    expected: self.format,
+                    actual: buffer.format(),
+                },
+            ));
+        }
+        for sample in buffer.samples() {
+            if let Err(error) = self.stdin.write_all(&sample.to_le_bytes()) {
+                self.state = AudioOutputState::Failed;
+                return Err(AudioDeviceError::Io(error));
+            }
+        }
+        self.state = AudioOutputState::Running;
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.state = AudioOutputState::Stopped;
+    }
+}
+
+impl Drop for PipeWireOutput {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn node_target(device_id: &str) -> Option<&str> {
+    let target = device_id.strip_prefix("pipewire-node-")?;
+    (!target.is_empty() && target.bytes().all(|byte| byte.is_ascii_digit())).then_some(target)
+}
+
+fn discover_devices(document: &str) -> Vec<AudioDeviceInfo> {
+    let mut devices = top_level_objects(document)
+        .into_iter()
+        .filter_map(parse_node)
+        .filter_map(|(id, name, kind)| {
+            AudioDeviceInfo::new(format!("pipewire-node-{id}"), name, kind).ok()
+        })
+        .collect::<Vec<_>>();
+    devices.sort_by(|left, right| left.id().cmp(right.id()));
+    devices.dedup_by(|left, right| left.id() == right.id());
+    let has_input = devices
+        .iter()
+        .any(|device| device.kind() == AudioDeviceKind::Input);
+    let has_output = devices
+        .iter()
+        .any(|device| device.kind() == AudioDeviceKind::Output);
+    if has_input {
+        devices.insert(
+            0,
+            AudioDeviceInfo::new(
+                DEFAULT_INPUT_ID,
+                "PipeWire default input",
+                AudioDeviceKind::Input,
+            )
+            .unwrap_or_else(|error| unreachable!("default PipeWire input is valid: {error}")),
+        );
+    }
+    if has_output {
+        let index = devices
+            .iter()
+            .position(|device| device.kind() == AudioDeviceKind::Output)
+            .unwrap_or(devices.len());
+        devices.insert(
+            index,
+            AudioDeviceInfo::new(
+                DEFAULT_OUTPUT_ID,
+                "PipeWire default output",
+                AudioDeviceKind::Output,
+            )
+            .unwrap_or_else(|error| unreachable!("default PipeWire output is valid: {error}")),
+        );
+    }
+    devices
+}
+
+fn parse_node(object: &str) -> Option<(u32, String, AudioDeviceKind)> {
+    if json_string_field(object, "type")? != "PipeWire:Interface:Node" {
+        return None;
+    }
+    let kind = match json_string_field(object, "media.class")?.as_str() {
+        "Audio/Source" => AudioDeviceKind::Input,
+        "Audio/Sink" => AudioDeviceKind::Output,
+        _ => return None,
+    };
+    let id = json_u32_field(object, "id")?;
+    let name = json_string_field(object, "node.description")
+        .or_else(|| json_string_field(object, "node.nick"))
+        .or_else(|| json_string_field(object, "node.name"))
+        .unwrap_or_else(|| format!("PipeWire node {id}"));
+    Some((id, name, kind))
+}
+
+fn top_level_objects(document: &str) -> Vec<&str> {
+    let mut objects = Vec::new();
+    let mut depth = 0_u32;
+    let mut start = None;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, character) in document.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(index);
+                }
+                depth = depth.saturating_add(1);
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if let Some(start) = start.take() {
+                        objects.push(&document[start..=index]);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    objects
+}
+
+fn json_string_field(object: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let position = object.find(&needle)? + needle.len();
+    let colon = object[position..].find(':')? + position + 1;
+    decode_json_string(object[colon..].trim_start())
+}
+
+fn decode_json_string(value: &str) -> Option<String> {
+    let mut chars = value.chars();
+    if chars.next()? != '"' {
+        return None;
+    }
+    let mut decoded = String::new();
+    while let Some(character) = chars.next() {
+        match character {
+            '"' => return Some(decoded),
+            '\\' => match chars.next()? {
+                '"' => decoded.push('"'),
+                '\\' => decoded.push('\\'),
+                '/' => decoded.push('/'),
+                'b' => decoded.push('\u{0008}'),
+                'f' => decoded.push('\u{000C}'),
+                'n' => decoded.push('\n'),
+                'r' => decoded.push('\r'),
+                't' => decoded.push('\t'),
+                _ => return None,
+            },
+            character if character.is_control() => return None,
+            character => decoded.push(character),
+        }
+    }
+    None
+}
+
+fn json_u32_field(object: &str, key: &str) -> Option<u32> {
+    let needle = format!("\"{key}\"");
+    let position = object.find(&needle)? + needle.len();
+    let colon = object[position..].find(':')? + position + 1;
+    object[colon..]
+        .trim_start()
+        .split(|character: char| !character.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +498,44 @@ mod tests {
             panic!("unknown device should fail")
         };
         assert!(error.to_string().contains("unknown PipeWire input"));
+    }
+
+    #[test]
+    fn discovery_enumerates_stable_input_and_output_nodes() {
+        let document = r#"
+        [
+          {"id": 42, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "node.name": "alsa_input.usb", "node.description": "USB Mic"
+          }}},
+          {"id": 7, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Sink", "node.name": "alsa_output.pci", "node.description": "Speakers"
+          }}},
+          {"id": 42, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "node.name": "duplicate"
+          }}}
+        ]
+        "#;
+        let devices = discover_devices(document);
+        assert_eq!(devices.len(), 4);
+        assert_eq!(devices[0].id(), DEFAULT_INPUT_ID);
+        assert_eq!(devices[0].kind(), AudioDeviceKind::Input);
+        let default_output = devices
+            .iter()
+            .find(|device| device.id() == DEFAULT_OUTPUT_ID)
+            .expect("default output");
+        assert_eq!(default_output.kind(), AudioDeviceKind::Output);
+        assert!(devices
+            .iter()
+            .any(|device| { device.id() == "pipewire-node-42" && device.name() == "USB Mic" }));
+        assert!(devices
+            .iter()
+            .any(|device| { device.id() == "pipewire-node-7" && device.name() == "Speakers" }));
+    }
+
+    #[test]
+    fn node_target_rejects_unstable_ids() {
+        assert_eq!(node_target("pipewire-node-42"), Some("42"));
+        assert_eq!(node_target("pipewire-node-name"), None);
+        assert_eq!(node_target("pipewire-default"), None);
     }
 }

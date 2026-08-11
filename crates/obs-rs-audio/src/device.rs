@@ -89,6 +89,17 @@ pub enum AudioInputState {
     Failed,
 }
 
+/// Lifecycle state of an audio monitoring output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AudioOutputState {
+    /// The output has not received a block.
+    Stopped,
+    /// The output is accepting mixed blocks.
+    Running,
+    /// The output failed and must be recreated.
+    Failed,
+}
+
 /// Errors crossing the platform audio boundary.
 #[derive(Debug)]
 pub enum AudioDeviceError {
@@ -155,6 +166,26 @@ pub trait AudioInput: Send {
     fn stop(&mut self);
 }
 
+/// A sink for timestamped mixed audio blocks.
+pub trait AudioOutput: Send {
+    /// Returns the fixed format negotiated at construction.
+    fn format(&self) -> AudioFormat;
+
+    /// Returns the current lifecycle state.
+    fn state(&self) -> AudioOutputState;
+
+    /// Writes one complete block without changing its media timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioDeviceError`] when the format differs or the sink cannot
+    /// accept the complete block.
+    fn write_block(&mut self, buffer: &AudioBuffer) -> Result<(), AudioDeviceError>;
+
+    /// Stops the sink and releases its device resources.
+    fn stop(&mut self);
+}
+
 /// Provider boundary for real and deterministic audio inputs.
 pub trait AudioInputProvider: Send + Sync {
     /// Discovers a complete, deterministic snapshot of input devices.
@@ -176,6 +207,29 @@ pub trait AudioInputProvider: Send + Sync {
         device_id: &str,
         format: AudioFormat,
     ) -> Result<Box<dyn AudioInput>, AudioDeviceError>;
+}
+
+/// Provider boundary for optional audio monitoring sinks.
+pub trait AudioOutputProvider: Send + Sync {
+    /// Discovers a complete snapshot of output devices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioDeviceError`] when the host audio service cannot be
+    /// queried.
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError>;
+
+    /// Opens one output at a fixed format.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioDeviceError`] when the device ID or negotiated format is
+    /// unavailable.
+    fn open_output(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError>;
 }
 
 /// Deterministic provider used when a host audio server is unavailable.
@@ -208,6 +262,27 @@ impl AudioInputProvider for SimulatedAudioProvider {
             return Err(AudioDeviceError::Unavailable(device_id.to_owned()));
         }
         Ok(Box::new(SimulatedAudioInput::new(format)?))
+    }
+}
+
+impl AudioOutputProvider for SimulatedAudioProvider {
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+        Ok(vec![AudioDeviceInfo::new(
+            "test-output",
+            "Deterministic monitor sink",
+            AudioDeviceKind::Output,
+        )?])
+    }
+
+    fn open_output(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+        if device_id != "test-output" {
+            return Err(AudioDeviceError::Unavailable(device_id.to_owned()));
+        }
+        Ok(Box::new(SimulatedAudioOutput::new(format)?))
     }
 }
 
@@ -274,5 +349,65 @@ impl Drop for SimulatedAudioInput {
     }
 }
 
+/// Deterministic sink used to exercise optional monitoring without a host
+/// device. It discards blocks after validating their format.
+pub struct SimulatedAudioOutput {
+    format: AudioFormat,
+    state: AudioOutputState,
+}
+
+impl SimulatedAudioOutput {
+    /// Creates a stopped deterministic sink.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioDeviceError::InvalidDevice`] for an invalid format.
+    pub fn new(format: AudioFormat) -> Result<Self, AudioDeviceError> {
+        if format.channels() == 0 {
+            return Err(AudioDeviceError::InvalidDevice(
+                "audio output requires at least one channel".to_owned(),
+            ));
+        }
+        Ok(Self {
+            format,
+            state: AudioOutputState::Stopped,
+        })
+    }
+}
+
+impl AudioOutput for SimulatedAudioOutput {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
+
+    fn state(&self) -> AudioOutputState {
+        self.state
+    }
+
+    fn write_block(&mut self, buffer: &AudioBuffer) -> Result<(), AudioDeviceError> {
+        if buffer.format() != self.format {
+            return Err(AudioDeviceError::Audio(AudioError::FormatMismatch {
+                expected: self.format,
+                actual: buffer.format(),
+            }));
+        }
+        self.state = AudioOutputState::Running;
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        self.state = AudioOutputState::Stopped;
+    }
+}
+
+impl Drop for SimulatedAudioOutput {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 /// Shared provider handle convenient for application dependency injection.
 pub type SharedAudioInputProvider = Arc<dyn AudioInputProvider>;
+
+/// Shared optional monitoring provider.
+pub type SharedAudioOutputProvider = Arc<dyn AudioOutputProvider>;

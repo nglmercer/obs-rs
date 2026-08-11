@@ -18,7 +18,7 @@ use crate::{
     settings::{
         AppSettings, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES, SETTINGS_FILE, THEMES,
     },
-    I18n, MainWindow, Palette, PreviewRenderer, SettingsWindow,
+    I18n, MainWindow, OutputRuntime, Palette, PreviewRenderer, SettingsWindow,
 };
 
 /// Owns the settings window and the committed settings document.
@@ -51,6 +51,7 @@ pub(crate) fn install_settings_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
     settings: AppSettings,
     add_source: &Rc<AddSourceController>,
     properties: &Rc<SourcePropertiesController>,
@@ -70,7 +71,7 @@ pub(crate) fn install_settings_window(
     push_palette(ui, &controller, &controller.settings.borrow());
     controller.sync_theme(state.borrow().locale());
 
-    install_open(ui, state, renderer, &controller);
+    install_open(ui, state, renderer, output, &controller);
     install_previews(ui, state, renderer, &controller);
     install_commit(ui, state, renderer, &controller);
     Ok(controller)
@@ -123,17 +124,19 @@ fn install_open(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
     let weak = ui.as_weak();
     let state = Rc::clone(state);
     let renderer = Rc::clone(renderer);
+    let output = Rc::clone(output);
     let controller = Rc::clone(controller);
     ui.on_open_settings_window(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        load_draft(&state, &renderer, &controller);
+        load_draft(&state, &renderer, &output, &controller);
         controller.sync_theme(state.borrow().locale());
         if let Err(error) = controller.window.show() {
             ui.set_status_message(format!("Settings window: {error}").into());
@@ -145,6 +148,7 @@ fn install_open(
 fn load_draft(
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
     let settings = controller.settings.borrow();
@@ -173,15 +177,7 @@ fn load_draft(
     let audio_format = state.borrow().audio_format();
     window.set_sample_rate_index(index_of(&SAMPLE_RATES, &audio_format.sample_rate()));
     window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.channels()));
-    window.set_devices_summary(
-        state
-            .borrow()
-            .mixer_channels()
-            .map(|channel| channel.name().to_owned())
-            .collect::<Vec<_>>()
-            .join(" · ")
-            .into(),
-    );
+    window.set_devices_summary(output.borrow().audio_devices_summary().into());
 
     let video_format = renderer.borrow().format;
     let resolution = (video_format.width(), video_format.height());

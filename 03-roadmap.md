@@ -372,17 +372,21 @@ file/TCP/WebSocket boundary.
 
 - `obs-rs-engine` assembles a project runtime, advances rational A/V deadlines,
   mixes provider audio, recovers to fallback input, encodes both media kinds,
-  atomically finalizes packet recordings, and exposes bounded stream telemetry.
+  atomically finalizes packet recordings, exposes bounded stream telemetry, and
+  runs behind a bounded `EngineWorker` for GUI hosts.
 - `obs-rs-audio` exposes typed device/input/provider contracts and
-  `obs-rs-audio-pipewire` reads bounded `pw-cat` raw `f32` blocks after discovery.
+  `obs-rs-audio-pipewire` enumerates stable `pw-dump` input/sink nodes, reads
+  bounded `pw-cat` raw `f32` blocks after discovery, and exposes an optional
+  playback sink.
 - The GUI uses the engine output boundary, keeps idle preview animation running,
   maps desktop gain/mute controls to the live mixer, and reports backend/fallback,
-  frame, audio, queue, drop, and reconnect state.
+  frame, audio, queue, drop, reconnect, worker, and idle project-sync state.
 - X11 captures the complete root and performs deterministic aspect-preserving
   resize/letterbox; a source falls back to the animated screen test device and
   retries native reconnection.
 - Unit tests cover engine timestamp ordering, A/V packet decode, fallback state,
-  PipeWire provider validation, X11 resize, and GUI packet output.
+  PipeWire provider enumeration, X11 resize, GUI packet output, and the
+  machine-readable Linux capability/300-tick check covers live pass/skip paths.
 
 ### Remaining exit work
 
@@ -390,11 +394,12 @@ The executable task list, dependencies, touched files, tests, and acceptance gat
 are maintained in [07-functional-todo.md](07-functional-todo.md). The next P0
 sequence is:
 
-1. Move output encoding/pumping and lifecycle events behind a bounded worker.
-2. Enumerate selectable PipeWire input/sink nodes and implement monitor output.
-3. Synchronize project/profile changes with active engine sessions and export their
-   diagnostics.
-4. Run live X11/PipeWire capability checks plus a 300-tick A/V soak.
+1. Finish output lifecycle events and safe staging/rejection of edits during output.
+2. Add selected-device persistence/hot-plug refresh and monitor lifecycle
+   integration.
+3. Extend project synchronization to active-profile format changes and stage
+   edits during output.
+4. Complete lifecycle events and run live hardware checks on supported displays.
 
 ### Exit criteria
 
@@ -406,7 +411,7 @@ display or audio service without claiming unsupported OBS parity.
 
 ## Current priority order
 
-1. Complete Phase 9 P0 worker, lifecycle, PipeWire catalog, and synchronization gates.
+1. Complete Phase 9 P0 lifecycle, PipeWire catalog, synchronization, and live gates.
 2. Capture-backed editor breadth: X11 windows, Linux camera, source property forms,
    and guided recovery.
 3. Device-clock audio adapters and long-duration synchronization under real hardware.

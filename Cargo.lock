@@ -3268,12 +3268,14 @@ name = "obs-rs-app"
 version = "0.1.0"
 dependencies = [
  "obs-rs-audio",
+ "obs-rs-audio-pipewire",
  "obs-rs-builtins",
  "obs-rs-capture",
  "obs-rs-clock",
  "obs-rs-config",
  "obs-rs-core",
  "obs-rs-diagnostics",
+ "obs-rs-engine",
  "obs-rs-media",
  "obs-rs-output",
  "obs-rs-plugin-api",

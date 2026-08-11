@@ -65,8 +65,10 @@ unreviewed foreign binding is not allowed into the portable workspace.
 - The initial plugin model is compile-time Rust trait registration.
 - The reference media format is owned RGBA8 on the CPU.
 - The portable `obs-rs-engine` owns the coordinated A/V session and output
-  lifecycle; the current GUI adapter still needs the planned background worker so
-  network/file work is fully removed from the Slint thread.
+  lifecycle; the GUI adapter enqueues frames and control commands through a
+  bounded `EngineWorker`, so network/file work is removed from the Slint thread.
+  Explicit `Starting`/`Stopping` events and staged project edits during output
+  remain open lifecycle work.
 - The core has no native host dependency.
 - V1 targets Linux/X11, uses PipeWire first for audio, and keeps a deterministic
   test signal as the mandatory fallback.
