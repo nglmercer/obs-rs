@@ -175,7 +175,33 @@ their neighboring crate is split:
 - [x] `cargo doc --workspace --all-features --no-deps`
 - [x] `cargo build --workspace --release`
 - [x] `scripts/release-artifacts.sh <output-directory>` and checksum validation
-- [x] Re-run the inventory and confirm no production Rust file remains above
-  the agreed threshold without an explicit exception in this document.
+- [~] Re-run the inventory and confirm no production Rust file remains above
+  the agreed threshold without an explicit exception in this document. True at
+  the close of the refactor; the regrowth inventory below lists the files V1
+  feature work has since pushed back over the threshold.
 
-The post-refactor inventory peaks at 485 lines in `crates/obs-rs-output/src/writers.rs`; no production Rust source file exceeds the 500-line threshold. The largest extracted Slint view is 325 lines.
+The refactor itself closed with a peak of 485 lines in
+`crates/obs-rs-output/src/writers.rs` and no production Rust file above the
+threshold. Functional V1 work has since grown several files back past it; see
+the regrowth inventory below. The largest extracted Slint view is 479 lines
+(`crates/obs-rs-gui/ui/main.slint`).
+
+## Regrowth since the refactor
+
+Measured on 2026-08-11. These files crossed the 500-line threshold again as V1
+features landed, so they are the next split candidates rather than accepted
+exceptions.
+
+| File | Lines | Responsibilities to separate |
+| --- | ---: | --- |
+| `crates/obs-rs-engine/src/lib.rs` | 1,037 | already tracked above: errors/config/status, output sessions, audio scheduling, runtime assembly, worker lifecycle |
+| `crates/obs-rs-gui/src/settings.rs` | 839 | settings document/codec, theme presets, and the window layout document |
+| `crates/obs-rs-gui/src/tests.rs` | 818 | test-only; split per feature area alongside the modules it proves |
+| `crates/obs-rs-gui/src/i18n.rs` | 676 | per-locale catalogs, one module per language |
+| `crates/obs-rs-gui/src/callbacks/settings.rs` | 594 | settings window lifecycle versus page-level command handling |
+| `crates/obs-rs-gui/src/callbacks/add_source.rs` | 586 | candidate discovery versus the add-source window's callbacks |
+| `crates/obs-rs-media/src/frame.rs` | 585 | raw frames versus RGBA frames and conversion |
+| `crates/obs-rs-audio-pipewire/src/lib.rs` | 575 | already tracked above: discovery, process input, adapter tests |
+| `crates/obs-rs-output/src/audio.rs` | 546 | encoder versus container framing |
+| `crates/obs-rs-output/src/video.rs` | 541 | encoder versus container framing |
+| `crates/obs-rs-project/src/model.rs` | 502 | project/profile model versus scene and source specs |

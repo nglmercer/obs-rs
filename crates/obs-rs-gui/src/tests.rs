@@ -327,7 +327,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     // it is exercised here rather than in its own test: only one test may own
     // the platform backend.
     exercise_layout_restore(&ui);
-    exercise_dock_layout(&ui, &state, &renderer);
+    exercise_dock_layout(&ui, &state);
     render_every_settings_category();
     render_source_properties_window();
     render_monitor_window();
@@ -369,13 +369,8 @@ fn exercise_layout_restore(ui: &MainWindow) {
 
 /// Drives dock reordering, splitter resizing, and detaching a dock into its
 /// own window through the real callbacks.
-fn exercise_dock_layout(
-    ui: &MainWindow,
-    state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-) {
-    let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
-    let controller = crate::install_dock_callbacks(ui, state, renderer, &output);
+fn exercise_dock_layout(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    let controller = crate::install_dock_callbacks(ui, state);
 
     // Reordering moves the dragged dock one place and leaves the rest alone.
     let before = read_order(ui);

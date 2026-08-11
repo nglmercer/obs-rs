@@ -10,7 +10,7 @@ use std::{cell::RefCell, rc::Rc};
 use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::{FloatingDockWindow, MainWindow, OutputRuntime, PreviewRenderer};
+use crate::{FloatingDockWindow, MainWindow};
 
 /// The dock kinds, in the order their IDs are numbered.
 pub(crate) const PANEL_KINDS: [i32; 5] = [0, 1, 2, 3, 4];
@@ -131,11 +131,13 @@ pub(crate) fn resize(weights: &[f32], order: &[i32], index: usize, delta_pixels:
 }
 
 /// Installs the dock reorder, resize, and detach callbacks.
+///
+/// A detached dock forwards every action to the studio window, so this needs
+/// only the studio state the window titles are localized from — not the
+/// renderer or the output runtime.
 pub(crate) fn install_dock_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    output: &Rc<RefCell<OutputRuntime>>,
 ) -> Rc<DockController> {
     let controller = Rc::new(DockController {
         windows: RefCell::new(PANEL_KINDS.map(|_| None).into_iter().collect()),
@@ -166,21 +168,17 @@ pub(crate) fn install_dock_callbacks(
         ui.set_panel_weights(ModelRc::new(VecModel::from(weights)));
     });
 
-    install_float(ui, state, renderer, output, &controller);
+    install_float(ui, state, &controller);
     controller
 }
 
 fn install_float(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<DockController>,
 ) {
     let weak = ui.as_weak();
     let state = Rc::clone(state);
-    let renderer = Rc::clone(renderer);
-    let output = Rc::clone(output);
     let controller = Rc::clone(controller);
     ui.on_float_panel(move |kind| {
         let Some(ui) = weak.upgrade() else {
@@ -198,7 +196,7 @@ fn install_float(
             redock(&ui, &controller, index);
             return;
         }
-        match float(&ui, &state, &renderer, &output, &controller, kind) {
+        match float(&ui, &state, &controller, kind) {
             Ok(window) => {
                 controller.windows.borrow_mut()[index] = Some(window);
                 set_floating(&ui, index, true);
@@ -221,8 +219,6 @@ fn redock(ui: &MainWindow, controller: &Rc<DockController>, index: usize) {
 fn float(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<DockController>,
     kind: i32,
 ) -> Result<FloatingDockWindow, slint::PlatformError> {
@@ -237,7 +233,6 @@ fn float(
     window.set_dock_title(dock_title(state, kind));
 
     forward_to_studio(&window, ui, controller);
-    let _ = (state, renderer, output);
 
     let weak = ui.as_weak();
     let redock_controller = Rc::clone(controller);

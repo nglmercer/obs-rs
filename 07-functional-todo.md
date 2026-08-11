@@ -43,6 +43,24 @@ owner boundary, dependencies, tests, and an acceptance condition.
   `crates/obs-rs-capture/src/x11/` and `crates/obs-rs-builtins/src/x11.rs`.
 - [x] Add deterministic tests for resize geometry, output A/V decoding, engine
   timestamp order, provider lifecycle, and fallback source creation.
+- [x] Edit scene items directly on the preview canvas: click-to-select the
+  topmost item under the pointer, drag to move, and drag eight handles to
+  resize. A drag mutates a draft and dispatches one `SetSourceTransform`
+  command on release, so a drag is a single undoable edit and locked items
+  refuse pointer edits. Files: `crates/obs-rs-gui/src/callbacks/canvas.rs`,
+  `crates/obs-rs-gui/ui/canvas_editor.slint`.
+  Tests: rectangle/transform round-trip, per-handle edge behavior, minimum
+  size clamping, flip/opacity preservation, and hit testing.
+- [x] Make the dock row a rearrangeable layout: reorder docks, drag the
+  splitters to trade width between neighbours, and detach any dock into its own
+  window. A detached dock forwards every action to the studio window rather
+  than installing a second handler, and order, width shares, and visibility
+  persist in the settings document. Files:
+  `crates/obs-rs-gui/src/callbacks/docks.rs`,
+  `crates/obs-rs-gui/ui/floating_dock.slint`, `crates/obs-rs-gui/src/settings.rs`.
+  Tests: reorder bounds, splitter width conservation and collapse floors,
+  layout round-trip through the settings document, and a GUI pass that detaches
+  and re-docks the mixer through the real callbacks.
 
 ## P0 — close the Linux vertical slice
 
@@ -118,10 +136,14 @@ owner boundary, dependencies, tests, and an acceptance condition.
 - [ ] Linux camera input behind a reviewed Rust adapter. Dependencies: the
   platform capture contract and a chosen safe device API. Tests: permission,
   format negotiation, disconnect/reconnect.
-- [ ] Source property forms for all V1 source settings, including display,
+- [~] Source property forms for all V1 source settings, including display,
   crop, scale, opacity, and test-pattern controls. Dependencies: project command
-  validation. Acceptance: every visible source setting round-trips through the
-  project file and takes effect in preview.
+  validation. The typed property form covers per-kind source settings and the
+  canvas editor covers position and scale directly.
+  Remaining: crop, opacity, and flip have no form control, so they round-trip
+  through the project file but can only be set programmatically.
+  Acceptance: every visible source setting round-trips through the project file
+  and takes effect in preview.
 - [ ] Real mixer channel graph: map desktop and microphone channels to separate
   engine sources and expose per-source peaks. Dependencies: P0.2.
 - [ ] Guided recovery dialog and explicit “unsupported capability” states for

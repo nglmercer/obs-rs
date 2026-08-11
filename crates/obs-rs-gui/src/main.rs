@@ -120,11 +120,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     refresh_output_ui(&ui, &output);
     install_callbacks(&ui, &state, &renderer, &output);
-    // Keeps the settings window alive for the whole session; dropping the
-    // controller would close it.
     // Keeps the canvas drag state and the detached docks alive for the session.
     let _canvas = install_canvas_callbacks(&ui, &state, &renderer);
-    let docks = install_dock_callbacks(&ui, &state, &renderer, &output);
+    let docks = install_dock_callbacks(&ui, &state);
+    // Keeps the settings window alive for the whole session; dropping the
+    // controller would close it.
     let add_source_window = install_add_source_window(&ui, &state, &renderer)?;
     let monitor_window = install_monitor_window(&ui, &state, &renderer)?;
     let properties_window = install_source_properties_window(&ui, &state, &renderer)?;
