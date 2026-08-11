@@ -21,6 +21,21 @@ pub trait VideoEncoder {
     /// invalid.
     fn encode(&mut self, frame: &VideoFrame) -> Result<EncodedPacket, OutputError>;
 
+    /// Encodes one owned frame into one validated packet.
+    ///
+    /// Callers that no longer need the frame should prefer this: an encoder
+    /// whose payload is the pixel buffer itself can move it into the packet
+    /// rather than copying it. The default implementation simply borrows, so
+    /// codecs that must transform the pixels need not override it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`OutputError`] when the frame format or encoded payload is
+    /// invalid.
+    fn encode_owned(&mut self, frame: VideoFrame) -> Result<EncodedPacket, OutputError> {
+        self.encode(&frame)
+    }
+
     /// Flushes delayed packets, if the codec has any.
     ///
     /// # Errors
@@ -60,6 +75,19 @@ impl VideoEncoder for RawVideoEncoder {
             true,
             frame.pixels().to_vec(),
         )
+    }
+
+    fn encode_owned(&mut self, frame: VideoFrame) -> Result<EncodedPacket, OutputError> {
+        if frame.format() != self.format {
+            return Err(OutputError::FormatMismatch {
+                expected: self.format,
+                actual: frame.format(),
+            });
+        }
+        // The raw payload *is* the pixel buffer, so ownership transfers with no
+        // copy at all.
+        let timestamp = frame.timestamp();
+        EncodedPacket::new(PacketKind::Video, timestamp, true, frame.into_pixels())
     }
 
     fn flush(&mut self) -> Result<Vec<EncodedPacket>, OutputError> {
@@ -147,12 +175,9 @@ pub fn encode_png(frame: &VideoFrame) -> Result<Vec<u8>, OutputError> {
         });
     }
 
-    let mut raw = Vec::with_capacity(uncompressed_bytes);
-    for row in frame.pixels().chunks_exact(scanline_bytes) {
-        raw.push(0);
-        raw.extend_from_slice(row);
-    }
-    let zlib = zlib_stored(&raw);
+    // The filtered scanlines are produced straight into the zlib stream, so a
+    // full-frame intermediate buffer is never materialized.
+    let zlib = zlib_stored_scanlines(frame.pixels(), scanline_bytes, uncompressed_bytes);
     let mut png = Vec::with_capacity(encoded_bytes);
     png.extend_from_slice(PNG_SIGNATURE);
     let mut header = Vec::with_capacity(13);
@@ -165,6 +190,104 @@ pub fn encode_png(frame: &VideoFrame) -> Result<Vec<u8>, OutputError> {
     Ok(png)
 }
 
+/// Builds a stored-mode zlib stream over PNG scanlines without materializing
+/// the filtered image first.
+///
+/// Each scanline contributes a leading zero filter byte followed by its pixels;
+/// both are written directly into the output blocks and folded into the Adler
+/// checksum as they go.
+fn zlib_stored_scanlines(
+    pixels: &[u8],
+    scanline_bytes: usize,
+    uncompressed_bytes: usize,
+) -> Vec<u8> {
+    let blocks = uncompressed_bytes.saturating_add(65_534) / 65_535;
+    let mut output =
+        Vec::with_capacity(2 + uncompressed_bytes + blocks.saturating_mul(5) + 4);
+    output.extend_from_slice(&[0x78, 0x01]);
+
+    if uncompressed_bytes == 0 {
+        output.extend_from_slice(&[1, 0, 0, 0xff, 0xff]);
+        push_u32_be(&mut output, ADLER32_INIT_VALUE);
+        return output;
+    }
+
+    let mut adler = Adler32::new();
+    let mut written = 0_usize;
+    let mut block_remaining = 0_usize;
+    let mut rows = pixels.chunks_exact(scanline_bytes);
+    let mut pending: &[u8] = &[];
+    let mut needs_filter_byte = true;
+
+    while written < uncompressed_bytes {
+        if block_remaining == 0 {
+            let block_len = (uncompressed_bytes - written).min(65_535);
+            let final_block = written + block_len == uncompressed_bytes;
+            output.push(u8::from(final_block));
+            let length = u16::try_from(block_len).unwrap_or(u16::MAX);
+            output.extend_from_slice(&length.to_le_bytes());
+            output.extend_from_slice(&(!length).to_le_bytes());
+            block_remaining = block_len;
+        }
+
+        if needs_filter_byte {
+            output.push(0);
+            adler.update(&[0]);
+            written += 1;
+            block_remaining -= 1;
+            needs_filter_byte = false;
+            pending = rows.next().unwrap_or(&[]);
+            continue;
+        }
+
+        let take = pending.len().min(block_remaining);
+        let (head, tail) = pending.split_at(take);
+        output.extend_from_slice(head);
+        adler.update(head);
+        written += take;
+        block_remaining -= take;
+        pending = tail;
+        if pending.is_empty() {
+            needs_filter_byte = true;
+        }
+    }
+
+    push_u32_be(&mut output, adler.finish());
+    output
+}
+
+/// Adler-32 checksum value for an empty input.
+const ADLER32_INIT_VALUE: u32 = 1;
+
+/// A streaming Adler-32 accumulator.
+struct Adler32 {
+    sum_a: u32,
+    sum_b: u32,
+}
+
+impl Adler32 {
+    const fn new() -> Self {
+        Self {
+            sum_a: 1,
+            sum_b: 0,
+        }
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.sum_a = (self.sum_a + u32::from(*byte)) % 65_521;
+            self.sum_b = (self.sum_b + self.sum_a) % 65_521;
+        }
+    }
+
+    const fn finish(&self) -> u32 {
+        (self.sum_b << 16) | self.sum_a
+    }
+}
+
+/// Buffered stored-mode zlib encoder, retained as the oracle that
+/// [`zlib_stored_scanlines`] is proven byte-identical against.
+#[cfg(test)]
 fn zlib_stored(raw: &[u8]) -> Vec<u8> {
     let blocks = raw.len().saturating_add(65_534) / 65_535;
     let mut output = Vec::with_capacity(2 + raw.len() + blocks.saturating_mul(5) + 4);
@@ -189,16 +312,17 @@ fn append_png_chunk(output: &mut Vec<u8>, kind: [u8; 4], payload: &[u8]) {
     push_u32_be(output, u32::try_from(payload.len()).unwrap_or(u32::MAX));
     output.extend_from_slice(&kind);
     output.extend_from_slice(payload);
-    let mut crc_input = Vec::with_capacity(kind.len() + payload.len());
-    crc_input.extend_from_slice(&kind);
-    crc_input.extend_from_slice(payload);
-    push_u32_be(output, crc32(&crc_input));
+    // CRC is a streaming checksum, so it runs over the tag and the payload in
+    // place rather than over a concatenated temporary.
+    let crc = crc32_update(crc32_update(CRC32_INIT, &kind), payload);
+    push_u32_be(output, crc ^ 0xffff_ffff);
 }
 
 fn push_u32_be(output: &mut Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_be_bytes());
 }
 
+#[cfg(test)]
 fn adler32(bytes: &[u8]) -> u32 {
     let mut sum_a = 1_u32;
     let mut sum_b = 0_u32;
@@ -209,8 +333,23 @@ fn adler32(bytes: &[u8]) -> u32 {
     (sum_b << 16) | sum_a
 }
 
+/// Initial CRC-32 register value, before any bytes are folded in.
+pub(crate) const CRC32_INIT: u32 = u32::MAX;
+
+/// Returns the finished CRC-32 of one contiguous input.
+///
+/// Production code checksums multi-part chunks with [`crc32_update`]; this
+/// one-shot form exists for tests that verify the chunk contract.
+#[cfg(test)]
 pub(crate) fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = u32::MAX;
+    crc32_update(CRC32_INIT, bytes) ^ 0xffff_ffff
+}
+
+/// Folds `bytes` into a running CRC-32 register.
+///
+/// Exposed so multi-part inputs can be checksummed without first being
+/// concatenated into one buffer.
+pub(crate) fn crc32_update(mut crc: u32, bytes: &[u8]) -> u32 {
     for byte in bytes {
         crc ^= u32::from(*byte);
         for _ in 0..8 {
@@ -221,7 +360,7 @@ pub(crate) fn crc32(bytes: &[u8]) -> u32 {
             };
         }
     }
-    !crc
+    crc
 }
 
 /// A deterministic lossless RGBA run-length video encoder.
@@ -250,7 +389,9 @@ impl VideoEncoder for RleVideoEncoder {
             });
         }
 
-        let mut payload = Vec::new();
+        // Worst case is one 8-byte run record per pixel; half that is a sane
+        // starting point for real content and avoids the early doublings.
+        let mut payload = Vec::with_capacity(RLE_MAGIC.len() + frame.pixels().len());
         write_all(&mut payload, RLE_MAGIC)?;
         let mut current = None;
         let mut run_length = 0_u32;
@@ -321,8 +462,16 @@ impl RleVideoDecoder {
             }
             let mut pixel = [0_u8; 4];
             read_exact(&mut cursor, &mut pixel)?;
-            for _ in 0..run {
-                decoded_pixels.extend_from_slice(&pixel);
+            // Write the run's first pixel, then double the tail in place so the
+            // run is filled by a few block copies instead of one call per pixel.
+            let run_start = decoded_pixels.len();
+            let run_bytes = run * 4;
+            decoded_pixels.extend_from_slice(&pixel);
+            while decoded_pixels.len() - run_start < run_bytes {
+                let filled = decoded_pixels.len() - run_start;
+                let remaining = run_bytes - filled;
+                let copy = filled.min(remaining);
+                decoded_pixels.extend_from_within(run_start..run_start + copy);
             }
             decoded_count += run;
         }
@@ -332,5 +481,36 @@ impl RleVideoDecoder {
             ));
         }
         VideoFrame::new(format, timestamp, decoded_pixels).map_err(OutputError::Media)
+    }
+}
+
+#[cfg(test)]
+mod zlib_equivalence_tests {
+    use super::{zlib_stored, zlib_stored_scanlines};
+
+    /// The streaming scanline encoder must be byte-identical to building the
+    /// filtered image up front and compressing it in one go.
+    #[test]
+    fn streaming_scanlines_match_the_buffered_encoder() {
+        for scanline_bytes in [4_usize, 12, 4 * 300, 65_535, 65_536] {
+            for rows in [0_usize, 1, 2, 5] {
+                let pixels: Vec<u8> = (0..scanline_bytes * rows)
+                    .map(|index| u8::try_from(index % 251).unwrap_or(0))
+                    .collect();
+                let uncompressed = rows * (scanline_bytes + 1);
+
+                let mut raw = Vec::with_capacity(uncompressed);
+                for row in pixels.chunks_exact(scanline_bytes.max(1)) {
+                    raw.push(0);
+                    raw.extend_from_slice(row);
+                }
+
+                assert_eq!(
+                    zlib_stored_scanlines(&pixels, scanline_bytes, uncompressed),
+                    zlib_stored(&raw),
+                    "scanline_bytes={scanline_bytes} rows={rows}"
+                );
+            }
+        }
     }
 }

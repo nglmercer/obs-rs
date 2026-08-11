@@ -7,11 +7,36 @@ use super::{
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, VideoFormat};
 
+/// Rough serialized bytes contributed by one source record.
+///
+/// Used only to size the output buffer; being approximate costs at most one
+/// growth, while `String::new` guaranteed several.
+const SOURCE_RECORD_ESTIMATE: usize = 160;
+
+/// Rough serialized bytes contributed by one profile or scene record.
+const RECORD_ESTIMATE: usize = 96;
+
 impl Project {
+    /// Estimates the serialized length so the document buffer is reserved once.
+    fn serialized_size_estimate(&self) -> usize {
+        self.profiles
+            .values()
+            .fold(MAGIC.len() + RECORD_ESTIMATE, |total, profile| {
+                profile.scenes().fold(
+                    total.saturating_add(RECORD_ESTIMATE),
+                    |profile_total, scene| {
+                        profile_total.saturating_add(RECORD_ESTIMATE).saturating_add(
+                            scene.sources().len().saturating_mul(SOURCE_RECORD_ESTIMATE),
+                        )
+                    },
+                )
+            })
+    }
+
     /// Serializes the project into a deterministic, escaped line format.
     #[must_use]
     pub fn serialize(&self) -> String {
-        let mut document = String::new();
+        let mut document = String::with_capacity(self.serialized_size_estimate());
         document.push_str(MAGIC);
         document.push('\n');
         document.push_str("project|");
@@ -59,7 +84,7 @@ impl Project {
                     document.push('|');
                     append_transform(&mut document, source.transform);
                     document.push('|');
-                    document.push_str(&serialize_filters(&source.filters));
+                    append_filters(&mut document, &source.filters);
                     document.push('|');
                     document.push_str(if source.visible { "1" } else { "0" });
                     document.push('|');
@@ -154,8 +179,19 @@ fn parse_scene(project: &mut Project, line: &str, line_number: usize) -> Result<
 }
 
 fn parse_source(project: &mut Project, line: &str, line_number: usize) -> Result<(), ProjectError> {
-    let values = line.split('|').collect::<Vec<_>>();
-    if (values.len() != 9 && values.len() != 11) || values.first() != Some(&"source") {
+    // A source record is 9 or 11 fields; both fit a fixed array, so the split
+    // is drained into it instead of into a per-record Vec.
+    let mut values = [""; 11];
+    let mut count = 0_usize;
+    for field in line.split('|') {
+        if count == values.len() {
+            count += 1;
+            break;
+        }
+        values[count] = field;
+        count += 1;
+    }
+    if (count != 9 && count != 11) || values[0] != "source" {
         return Err(ProjectError::InvalidDocument {
             line: line_number,
             reason: "expected source record with 9 or 11 fields".to_owned(),
@@ -173,7 +209,8 @@ fn parse_source(project: &mut Project, line: &str, line_number: usize) -> Result
     for filter in filters {
         source.add_filter(filter);
     }
-    if values.len() == 11 {
+    // Legacy 9-field records carry no visibility or lock flags.
+    if count == 11 {
         source.set_visible(parse_flag(values[9], line_number, "source visibility")?);
         source.set_locked(parse_flag(values[10], line_number, "source lock")?);
     }
@@ -202,8 +239,20 @@ fn append_transform(document: &mut String, transform: FrameTransform) {
 }
 
 fn parse_transform(value: &str, line: usize) -> Result<FrameTransform, ProjectError> {
-    let values = value.split(',').collect::<Vec<_>>();
-    if values.len() != 7 {
+    // Fixed arity, so the seven fields are read straight out of the split
+    // iterator rather than collected into a temporary Vec.
+    let mut parts = value.split(',');
+    let mut values = [""; 7];
+    for slot in &mut values {
+        let Some(field) = parts.next() else {
+            return Err(ProjectError::InvalidDocument {
+                line,
+                reason: "invalid transform field count".to_owned(),
+            });
+        };
+        *slot = field;
+    }
+    if parts.next().is_some() {
         return Err(ProjectError::InvalidDocument {
             line,
             reason: "invalid transform field count".to_owned(),
@@ -221,16 +270,33 @@ fn parse_transform(value: &str, line: usize) -> Result<FrameTransform, ProjectEr
     .map_err(ProjectError::Media)
 }
 
-fn serialize_filters(filters: &[FrameFilter]) -> String {
-    filters
-        .iter()
-        .map(|filter| match filter {
-            FrameFilter::Grayscale => "gray".to_owned(),
-            FrameFilter::Brightness { milli } => format!("brightness:{milli}"),
-            FrameFilter::Opacity(opacity) => format!("opacity:{opacity}"),
-        })
-        .collect::<Vec<_>>()
-        .join(",")
+/// Appends a comma-separated filter chain directly to `document`.
+///
+/// Writing in place avoids the String-per-filter, Vec, and join that the
+/// previous formulation allocated for every source record.
+fn append_filters(document: &mut String, filters: &[FrameFilter]) {
+    for (index, filter) in filters.iter().enumerate() {
+        if index > 0 {
+            document.push(',');
+        }
+        match filter {
+            FrameFilter::Grayscale => document.push_str("gray"),
+            FrameFilter::Brightness { milli } => {
+                document.push_str("brightness:");
+                push_display(document, milli);
+            }
+            FrameFilter::Opacity(opacity) => {
+                document.push_str("opacity:");
+                push_display(document, opacity);
+            }
+        }
+    }
+}
+
+/// Appends a value's `Display` form without building an intermediate String.
+fn push_display(document: &mut String, value: &impl std::fmt::Display) {
+    use std::fmt::Write as _;
+    let _ = write!(document, "{value}");
 }
 
 fn parse_filters(value: &str, line: usize) -> Result<Vec<FrameFilter>, ProjectError> {
@@ -260,7 +326,9 @@ fn parse_filters(value: &str, line: usize) -> Result<Vec<FrameFilter>, ProjectEr
 }
 
 fn escape(value: &str) -> String {
-    let mut escaped = String::new();
+    // Worst case is three characters per byte; reserving it up front keeps the
+    // byte loop from reallocating.
+    let mut escaped = String::with_capacity(value.len() * 3);
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.') {
             escaped.push(char::from(byte));

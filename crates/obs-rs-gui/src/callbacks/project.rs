@@ -62,18 +62,50 @@ pub(crate) fn install_project_callbacks(
     });
 }
 
-pub(crate) fn project_store(path: &str) -> Result<ProjectFileStore, Box<dyn Error>> {
+thread_local! {
+    /// The store built for the most recent project path.
+    ///
+    /// Save, load, recover, and the recovery status check all ask for a store
+    /// for the same path; validating the path and constructing the store once
+    /// per path serves all of them.
+    static PROJECT_STORE_CACHE: RefCell<Option<(String, Rc<ProjectFileStore>)>> =
+        const { RefCell::new(None) };
+}
+
+/// Resolves the final and temporary paths for an atomic file write.
+///
+/// Shared by the project store and the diagnostics export, which apply the same
+/// "must name a file" rule and the same `.tmp` sibling convention.
+pub(crate) fn atomic_write_paths(
+    path: &str,
+    kind: &str,
+) -> Result<(PathBuf, PathBuf), Box<dyn Error>> {
     let path = path.trim();
     if path.is_empty() {
-        return Err(std::io::Error::other("project path is empty").into());
+        return Err(std::io::Error::other(format!("{kind} path is empty")).into());
     }
     let final_path = PathBuf::from(path);
     let file_name = final_path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| std::io::Error::other("project path must name a file"))?;
+        .ok_or_else(|| std::io::Error::other(format!("{kind} path must name a file")))?;
     let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
-    Ok(ProjectFileStore::new(final_path, temp_path)?)
+    Ok((final_path, temp_path))
+}
+
+pub(crate) fn project_store(path: &str) -> Result<Rc<ProjectFileStore>, Box<dyn Error>> {
+    let key = path.trim().to_owned();
+    PROJECT_STORE_CACHE.with(|cache| {
+        if let Some((cached_path, store)) = cache.borrow().as_ref() {
+            if *cached_path == key {
+                return Ok(Rc::clone(store));
+            }
+        }
+        let (final_path, temp_path) = atomic_write_paths(&key, "project")?;
+        let store = Rc::new(ProjectFileStore::new(final_path, temp_path)?);
+        *cache.borrow_mut() = Some((key, Rc::clone(&store)));
+        Ok(store)
+    })
 }
 
 fn save_and_refresh(
@@ -91,6 +123,7 @@ fn save_and_refresh(
     })();
     match result {
         Ok(bytes) => {
+            crate::refresh::invalidate_recovery_cache();
             refresh_ui(&ui, state, renderer);
             ui.set_status_message(format!("Saved {bytes} bytes to {path}").into());
         }
@@ -114,6 +147,7 @@ fn load_and_refresh(
     })();
     match result {
         Ok(()) => {
+            crate::refresh::invalidate_recovery_cache();
             refresh_ui(&ui, state, renderer);
             ui.set_status_message(format!("Loaded project from {path}").into());
         }
@@ -136,6 +170,7 @@ fn recover_and_refresh(
     })();
     match result {
         Ok(true) => {
+            crate::refresh::invalidate_recovery_cache();
             refresh_ui(&ui, state, renderer);
             ui.set_status_message(
                 format!("Recovered interrupted project for {path}; save to publish it").into(),
@@ -156,16 +191,17 @@ fn export_diagnostics(
     };
     let path = ui.get_diagnostics_path().to_string();
     let result: Result<usize, Box<dyn Error>> = (|| {
-        let final_path = PathBuf::from(path.trim());
-        let file_name = final_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| std::io::Error::other("diagnostics path must name a file"))?;
-        let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
+        let (final_path, temp_path) = atomic_write_paths(&path, "diagnostics")?;
         let state = state.borrow();
-        let metrics = renderer.borrow().runtime.compositor_metrics();
-        let usage = renderer.borrow().runtime.usage();
-        let limits = renderer.borrow().runtime.limits();
+        // One borrow of the renderer for all three snapshots.
+        let (metrics, usage, limits) = {
+            let renderer = renderer.borrow();
+            (
+                renderer.runtime.compositor_metrics(),
+                renderer.runtime.usage(),
+                renderer.runtime.limits(),
+            )
+        };
         let mut bundle = DiagnosticBundle::new();
         bundle.insert_text("project", &state.project_document())?;
         bundle.insert_text("ui", &state.accessible_snapshot())?;

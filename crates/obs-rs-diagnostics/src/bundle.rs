@@ -8,9 +8,24 @@ use super::{
     },
 };
 /// A deterministic bundle of bounded named diagnostic sections.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiagnosticBundle {
     sections: BTreeMap<String, Vec<u8>>,
+    /// Running encoded length, kept in step by every insertion.
+    ///
+    /// Sections are append-only, so the exact encoded size can be maintained
+    /// incrementally instead of walking the whole map on each insert and on
+    /// each size query.
+    encoded_len: usize,
+}
+
+impl Default for DiagnosticBundle {
+    fn default() -> Self {
+        Self {
+            sections: BTreeMap::new(),
+            encoded_len: HEADER_BYTES,
+        }
+    }
 }
 
 impl DiagnosticBundle {
@@ -58,12 +73,16 @@ impl DiagnosticBundle {
                 bytes: candidate_count,
             });
         }
-        let candidate = encoded_size_with_extra(&self.sections, name, bytes.len())?;
+        let candidate = self
+            .encoded_len
+            .checked_add(section_bytes(name.len(), bytes.len())?)
+            .ok_or(DiagnosticError::BundleTooLarge { bytes: usize::MAX })?;
         if candidate > MAX_BUNDLE_BYTES {
             return Err(DiagnosticError::BundleTooLarge { bytes: candidate });
         }
 
         self.sections.insert(name.to_owned(), bytes.to_vec());
+        self.encoded_len = candidate;
         Ok(())
     }
 
@@ -87,9 +106,11 @@ impl DiagnosticBundle {
     }
 
     /// Returns the exact encoded byte length.
+    ///
+    /// Reads the running total rather than re-walking every section.
     #[must_use]
-    pub fn encoded_len(&self) -> usize {
-        encoded_size(&self.sections).unwrap_or(MAX_BUNDLE_BYTES)
+    pub const fn encoded_len(&self) -> usize {
+        self.encoded_len
     }
 
     /// Encodes the bundle into the versioned deterministic binary format.
@@ -99,7 +120,10 @@ impl DiagnosticBundle {
     /// Returns [`DiagnosticError::BundleTooLarge`] only if the bundle was built
     /// with invalid state outside this API's normal insertion path.
     pub fn encode(&self) -> Result<Vec<u8>, DiagnosticError> {
-        let size = encoded_size(&self.sections)?;
+        let size = self.encoded_len;
+        if size > MAX_BUNDLE_BYTES {
+            return Err(DiagnosticError::BundleTooLarge { bytes: size });
+        }
         let mut output = Vec::with_capacity(size);
         output.extend_from_slice(DIAGNOSTIC_MAGIC);
         write_u32(&mut output, self.sections.len())?;
@@ -176,37 +200,16 @@ fn validate_name(name: &str) -> Result<(), DiagnosticError> {
     Ok(())
 }
 
-fn encoded_size(sections: &BTreeMap<String, Vec<u8>>) -> Result<usize, DiagnosticError> {
-    let mut size = DIAGNOSTIC_MAGIC
-        .len()
-        .checked_add(4)
-        .ok_or(DiagnosticError::BundleTooLarge { bytes: usize::MAX })?;
-    for (name, bytes) in sections {
-        size = size
-            .checked_add(2)
-            .and_then(|value| value.checked_add(8))
-            .and_then(|value| value.checked_add(name.len()))
-            .and_then(|value| value.checked_add(bytes.len()))
-            .ok_or(DiagnosticError::BundleTooLarge { bytes: usize::MAX })?;
-    }
-    if size > MAX_BUNDLE_BYTES {
-        Err(DiagnosticError::BundleTooLarge { bytes: size })
-    } else {
-        Ok(size)
-    }
-}
+/// Bytes the encoded form spends before the first section.
+const HEADER_BYTES: usize = DIAGNOSTIC_MAGIC.len() + 4;
 
-fn encoded_size_with_extra(
-    sections: &BTreeMap<String, Vec<u8>>,
-    name: &str,
-    bytes: usize,
-) -> Result<usize, DiagnosticError> {
-    let current = encoded_size(sections)?;
-    current
-        .checked_add(2)
-        .and_then(|value| value.checked_add(8))
-        .and_then(|value| value.checked_add(name.len()))
-        .and_then(|value| value.checked_add(bytes))
+/// Encoded bytes contributed by one section: a 2-byte name length, an 8-byte
+/// payload length, then the name and payload themselves.
+fn section_bytes(name_len: usize, payload_len: usize) -> Result<usize, DiagnosticError> {
+    2_usize
+        .checked_add(8)
+        .and_then(|value| value.checked_add(name_len))
+        .and_then(|value| value.checked_add(payload_len))
         .ok_or(DiagnosticError::BundleTooLarge { bytes: usize::MAX })
 }
 

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform};
@@ -15,8 +15,19 @@ use super::{
 
 pub struct Runtime {
     pub(crate) registry: Registry,
-    pub(crate) sources: BTreeMap<SourceId, SourceInstance>,
-    pub(crate) scenes: BTreeMap<Identifier, Scene>,
+    /// Keyed lookup only; never iterated in key order, so hashing is safe here
+    /// and keeps `sources.get_mut` off the compositor's O(log n) path.
+    pub(crate) sources: HashMap<SourceId, SourceInstance>,
+    /// Keyed lookup only. Deterministic rendering comes from each scene's
+    /// ordered source vector, not from scene-map iteration order.
+    pub(crate) scenes: HashMap<Identifier, Scene>,
+    /// How many scenes currently reference each source.
+    ///
+    /// Lets `destroy_source` answer "is this source still in use?" in constant
+    /// time instead of scanning every scene's item list.
+    pub(crate) scene_references: HashMap<SourceId, usize>,
+    /// Running total of filters across every scene item.
+    pub(crate) filter_count: usize,
     pub(crate) next_source_id: u64,
     pub(crate) metrics: CompositorMetrics,
     pub(crate) limits: RuntimeLimits,
@@ -28,8 +39,10 @@ impl Runtime {
     pub fn new() -> Self {
         Self {
             registry: Registry::new(),
-            sources: BTreeMap::new(),
-            scenes: BTreeMap::new(),
+            sources: HashMap::new(),
+            scenes: HashMap::new(),
+            scene_references: HashMap::new(),
+            filter_count: 0,
             next_source_id: 1,
             metrics: CompositorMetrics::default(),
             limits: RuntimeLimits::default(),
@@ -41,8 +54,10 @@ impl Runtime {
     pub fn with_limits(limits: RuntimeLimits) -> Self {
         Self {
             registry: Registry::new(),
-            sources: BTreeMap::new(),
-            scenes: BTreeMap::new(),
+            sources: HashMap::new(),
+            scenes: HashMap::new(),
+            scene_references: HashMap::new(),
+            filter_count: 0,
             next_source_id: 1,
             metrics: CompositorMetrics::default(),
             limits,
@@ -58,13 +73,9 @@ impl Runtime {
     /// Returns a bounded resource-usage snapshot for diagnostics and UI status.
     #[must_use]
     pub fn usage(&self) -> RuntimeUsage {
-        let filters = self
-            .scenes
-            .values()
-            .flat_map(|scene| scene.filters.values())
-            .fold(0_usize, |total, filters| {
-                total.saturating_add(filters.len())
-            });
+        // Maintained incrementally by the filter mutators, so a usage snapshot
+        // is O(1) rather than a walk of every scene item.
+        let filters = self.filter_count;
         RuntimeUsage {
             plugins: self.registry.plugins.len(),
             source_kinds: self.registry.sources.len(),
@@ -82,7 +93,9 @@ impl Runtime {
     /// [`RuntimeError::DuplicateSourceKind`] when registration would collide with
     /// existing runtime state.
     pub fn register_plugin(&mut self, plugin: &dyn Plugin) -> Result<(), RuntimeError> {
-        let manifest = plugin.manifest().clone();
+        // Validate against the borrowed manifest; it is only cloned once every
+        // registration check has passed.
+        let manifest = plugin.manifest();
         if self.registry.plugins.len() >= self.limits.max_plugins() {
             return Err(RuntimeError::ResourceLimitExceeded {
                 resource: "plugins",
@@ -126,7 +139,7 @@ impl Runtime {
 
         self.registry
             .plugins
-            .insert(manifest.id().clone(), manifest);
+            .insert(manifest.id().clone(), manifest.clone());
         for factory in factories {
             self.registry
                 .sources
@@ -136,16 +149,21 @@ impl Runtime {
     }
 
     /// Returns the manifests of registered plugins in identifier order.
+    ///
+    /// Borrows the stored manifests; callers needing owned values can
+    /// `.cloned().collect()`.
     #[must_use]
-    pub fn plugins(&self) -> Vec<PluginManifest> {
-        self.registry.plugins.values().cloned().collect()
+    pub fn plugins(&self) -> impl ExactSizeIterator<Item = &PluginManifest> {
+        self.registry.plugins.values()
     }
 
     /// Returns the source kinds contributed by registered plugins, in
     /// identifier order.
+    ///
+    /// Borrows the stored identifiers rather than cloning each one.
     #[must_use]
-    pub fn source_kinds(&self) -> Vec<Identifier> {
-        self.registry.sources.keys().cloned().collect()
+    pub fn source_kinds(&self) -> impl ExactSizeIterator<Item = &Identifier> {
+        self.registry.sources.keys()
     }
 
     /// Creates a named scene.
@@ -166,14 +184,7 @@ impl Runtime {
             return Err(RuntimeError::DuplicateScene(name));
         }
 
-        self.scenes.insert(
-            name.clone(),
-            Scene {
-                sources: Vec::new(),
-                transforms: BTreeMap::new(),
-                filters: BTreeMap::new(),
-            },
-        );
+        self.scenes.insert(name, Scene::new());
         Ok(())
     }
 
@@ -232,26 +243,24 @@ impl Runtime {
     /// Returns [`RuntimeError`] when the scene or source does not exist, or when the
     /// source is already attached to that scene.
     pub fn attach_source(&mut self, scene: &str, source: SourceId) -> Result<(), RuntimeError> {
-        let scene = identifier(scene, "scene")?;
+        let name = identifier(scene, "scene")?;
         if !self.sources.contains_key(&source) {
             return Err(RuntimeError::UnknownSource(source));
         }
-        let scene = self
-            .scenes
-            .get_mut(&scene)
-            .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
-        if scene.sources.len() >= self.limits.max_sources_per_scene() {
+        let limit = self.limits.max_sources_per_scene();
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        if scene.sources.len() >= limit {
             return Err(RuntimeError::ResourceLimitExceeded {
                 resource: "sources per scene",
-                limit: self.limits.max_sources_per_scene(),
+                limit,
             });
         }
-        if scene.sources.contains(&source) {
+        if !scene.attach(source) {
             return Err(RuntimeError::SourceAlreadyAttached(source));
         }
-        scene.sources.push(source);
-        scene.transforms.insert(source, FrameTransform::IDENTITY);
-        scene.filters.insert(source, Vec::new());
+        *self.scene_references.entry(source).or_insert(0) += 1;
         Ok(())
     }
 
@@ -262,21 +271,15 @@ impl Runtime {
     /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist or
     /// [`RuntimeError::SourceNotAttached`] when the item is absent.
     pub fn detach_source(&mut self, scene: &str, source: SourceId) -> Result<(), RuntimeError> {
-        let scene = identifier(scene, "scene")?;
-        let scene = self
-            .scenes
-            .get_mut(&scene)
-            .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
-        let Some(index) = scene
-            .sources
-            .iter()
-            .position(|candidate| *candidate == source)
-        else {
+        let name = identifier(scene, "scene")?;
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        let Some(removed_filters) = scene.detach(source) else {
             return Err(RuntimeError::SourceNotAttached(source));
         };
-        scene.sources.remove(index);
-        scene.transforms.remove(&source);
-        scene.filters.remove(&source);
+        self.filter_count = self.filter_count.saturating_sub(removed_filters);
+        release_scene_reference(&mut self.scene_references, source);
         Ok(())
     }
 
@@ -292,23 +295,21 @@ impl Runtime {
         source: SourceId,
         transform: FrameTransform,
     ) -> Result<(), RuntimeError> {
-        let scene = identifier(scene, "scene")?;
-        let scene = self
-            .scenes
-            .get_mut(&scene)
-            .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
-        if !scene.sources.contains(&source) {
+        let name = identifier(scene, "scene")?;
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        let Some(item) = scene.items.get_mut(&source) else {
             return Err(RuntimeError::SourceNotAttached(source));
-        }
-        scene.transforms.insert(source, transform);
+        };
+        item.transform = transform;
         Ok(())
     }
 
     /// Returns a scene item's current transform.
     #[must_use]
     pub fn source_transform(&self, scene: &str, source: SourceId) -> Option<FrameTransform> {
-        let scene = Identifier::new(scene).ok()?;
-        self.scenes.get(&scene)?.transforms.get(&source).copied()
+        Some(self.scenes.get(scene)?.items.get(&source)?.transform)
     }
 
     /// Adds a CPU filter to the end of one scene item's filter chain.
@@ -323,22 +324,22 @@ impl Runtime {
         source: SourceId,
         filter: FrameFilter,
     ) -> Result<(), RuntimeError> {
-        let scene = identifier(scene, "scene")?;
-        let scene = self
-            .scenes
-            .get_mut(&scene)
-            .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
-        let filters = scene
-            .filters
-            .get_mut(&source)
-            .ok_or(RuntimeError::SourceNotAttached(source))?;
-        if filters.len() >= self.limits.max_filters_per_item() {
+        let name = identifier(scene, "scene")?;
+        let limit = self.limits.max_filters_per_item();
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        let Some(item) = scene.items.get_mut(&source) else {
+            return Err(RuntimeError::SourceNotAttached(source));
+        };
+        if item.filters.len() >= limit {
             return Err(RuntimeError::ResourceLimitExceeded {
                 resource: "filters per scene item",
-                limit: self.limits.max_filters_per_item(),
+                limit,
             });
         }
-        filters.push(filter);
+        item.filters.push(filter);
+        self.filter_count = self.filter_count.saturating_add(1);
         Ok(())
     }
 
@@ -353,24 +354,24 @@ impl Runtime {
         scene: &str,
         source: SourceId,
     ) -> Result<(), RuntimeError> {
-        let scene = identifier(scene, "scene")?;
-        let scene = self
-            .scenes
-            .get_mut(&scene)
-            .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
-        let filters = scene
-            .filters
-            .get_mut(&source)
-            .ok_or(RuntimeError::SourceNotAttached(source))?;
-        filters.clear();
+        let name = identifier(scene, "scene")?;
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        let Some(item) = scene.items.get_mut(&source) else {
+            return Err(RuntimeError::SourceNotAttached(source));
+        };
+        self.filter_count = self.filter_count.saturating_sub(item.filters.len());
+        item.filters.clear();
         Ok(())
     }
 
-    /// Returns a copy of one scene item's filter chain.
+    /// Returns one scene item's filter chain.
+    ///
+    /// Borrows the stored chain instead of cloning it for read-only access.
     #[must_use]
-    pub fn source_filters(&self, scene: &str, source: SourceId) -> Option<Vec<FrameFilter>> {
-        let scene = Identifier::new(scene).ok()?;
-        self.scenes.get(&scene)?.filters.get(&source).cloned()
+    pub fn source_filters(&self, scene: &str, source: SourceId) -> Option<&[FrameFilter]> {
+        Some(self.scenes.get(scene)?.items.get(&source)?.filters.as_slice())
     }
 
     /// Destroys a source that is not attached to any scene.
@@ -383,11 +384,8 @@ impl Runtime {
         if !self.sources.contains_key(&source) {
             return Err(RuntimeError::UnknownSource(source));
         }
-        if self
-            .scenes
-            .values()
-            .any(|scene| scene.sources.contains(&source))
-        {
+        // Constant-time replacement for scanning every scene's item list.
+        if self.scene_references.contains_key(&source) {
             return Err(RuntimeError::SourceInUse(source));
         }
         self.sources.remove(&source);
@@ -400,11 +398,15 @@ impl Runtime {
     ///
     /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist.
     pub fn destroy_scene(&mut self, scene: &str) -> Result<(), RuntimeError> {
-        let scene = identifier(scene, "scene")?;
-        self.scenes
-            .remove(&scene)
-            .map(|_| ())
-            .ok_or(RuntimeError::UnknownScene(scene))
+        let name = identifier(scene, "scene")?;
+        let Some(removed) = self.scenes.remove(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        self.filter_count = self.filter_count.saturating_sub(removed.filter_count());
+        for source in removed.attached {
+            release_scene_reference(&mut self.scene_references, source);
+        }
+        Ok(())
     }
 
     /// Applies new settings to a source instance.
@@ -426,6 +428,16 @@ impl Runtime {
             .source
             .update(settings)
             .map_err(RuntimeError::Source)
+    }
+}
+
+/// Drops one scene's claim on `source`, forgetting the entry at zero.
+fn release_scene_reference(references: &mut HashMap<SourceId, usize>, source: SourceId) {
+    if let Some(count) = references.get_mut(&source) {
+        *count -= 1;
+        if *count == 0 {
+            references.remove(&source);
+        }
     }
 }
 

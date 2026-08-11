@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, rc::Rc};
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::Runtime;
@@ -11,20 +11,35 @@ pub(crate) struct PreviewRenderer {
     pub(crate) format: VideoFormat,
     pub(crate) runtime: Runtime,
     timestamp: Timestamp,
-    project_document: String,
+    /// Project revision this renderer was built from.
+    ///
+    /// Change detection compares this integer against the session's current
+    /// revision. It used to serialize the whole project on every frame and
+    /// compare the resulting strings.
+    revision: u64,
+}
+
+thread_local! {
+    /// The builtin plugin, constructed once per thread.
+    ///
+    /// Rebuilding the renderer used to recreate the plugin and all of its
+    /// factory objects; the plugin is immutable, so one instance is shared.
+    static BUILTIN_PLUGIN: Rc<BuiltinPlugin> = Rc::new(
+        BuiltinPlugin::new().unwrap_or_else(|error| {
+            unreachable!("builtin plugin manifest is valid: {error}")
+        }),
+    );
 }
 
 impl PreviewRenderer {
-    pub(crate) fn new(project: &Project) -> Result<Self, Box<dyn Error>> {
-        let active_profile = project.active_profile();
+    pub(crate) fn new(project: &Project, revision: u64) -> Result<Self, Box<dyn Error>> {
         let profile = project
-            .profiles()
-            .find(|profile| profile.id() == active_profile)
+            .active_profile_spec()
             .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
         let format = profile.video_format();
         let mut runtime = Runtime::new();
-        let plugin = BuiltinPlugin::new()?;
-        runtime.register_plugin(&plugin)?;
+        let plugin = BUILTIN_PLUGIN.with(Rc::clone);
+        runtime.register_plugin(plugin.as_ref())?;
 
         for scene in profile.scenes() {
             let scene_id = scene.id().as_str();
@@ -50,16 +65,24 @@ impl PreviewRenderer {
             format,
             runtime,
             timestamp: Timestamp::ZERO,
-            project_document: project.serialize(),
+            revision,
         })
     }
 
-    pub(crate) fn sync_project(&mut self, project: &Project) -> Result<(), Box<dyn Error>> {
-        let document = project.serialize();
-        if document != self.project_document {
-            *self = Self::new(project)?;
+    /// Rebuilds the runtime when the project has changed since the last sync.
+    ///
+    /// Returns whether a rebuild happened, so the caller can skip the UI work
+    /// that depends on project content.
+    pub(crate) fn sync_project(
+        &mut self,
+        project: &Project,
+        revision: u64,
+    ) -> Result<bool, Box<dyn Error>> {
+        if revision == self.revision {
+            return Ok(false);
         }
-        Ok(())
+        *self = Self::new(project, revision)?;
+        Ok(true)
     }
 
     pub(crate) fn render(&mut self, scene: &str) -> Result<Option<VideoFrame>, Box<dyn Error>> {
@@ -115,7 +138,12 @@ impl PreviewRenderer {
 
 pub(crate) fn frame_to_image(frame: &VideoFrame) -> Image {
     let format = frame.format();
-    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(format.width(), format.height());
-    buffer.make_mut_bytes().copy_from_slice(frame.pixels());
+    // Slint owns its pixel storage, so one copy out of the engine frame is
+    // unavoidable here; `clone_from_slice` performs it as a single block copy.
+    let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+        frame.pixels(),
+        format.width(),
+        format.height(),
+    );
     Image::from_rgba8(buffer)
 }

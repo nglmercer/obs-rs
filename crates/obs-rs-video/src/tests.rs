@@ -6,6 +6,18 @@ struct FakeClock {
     requested_deadlines: Vec<Timestamp>,
 }
 
+/// Deadlines a single fixture run records, used to size the capture buffer.
+const EXPECTED_DEADLINES: usize = 64;
+
+impl FakeClock {
+    fn start(now: Timestamp) -> Self {
+        Self {
+            now,
+            requested_deadlines: Vec::with_capacity(EXPECTED_DEADLINES),
+        }
+    }
+}
+
 impl VideoClock for FakeClock {
     fn now(&self) -> Timestamp {
         self.now
@@ -189,10 +201,7 @@ fn sustained_run_reports_counter_deltas_and_drains_output() {
 
 #[test]
 fn paced_worker_reports_lateness_and_honors_callback_cancellation() {
-    let mut clock = FakeClock {
-        now: Timestamp::from_millis(5),
-        requested_deadlines: Vec::new(),
-    };
+    let mut clock = FakeClock::start(Timestamp::from_millis(5));
     let token = CancellationToken::new();
     let mut worker = VideoWorker::new(format(), 2, DropPolicy::DropOldest).expect("worker");
     let report = worker
@@ -248,10 +257,7 @@ fn multi_worker_soak_reports_wall_clock_and_owned_frame_footprint() {
 
 #[test]
 fn pacer_waits_with_an_injected_clock_and_reports_lateness() {
-    let mut clock = FakeClock {
-        now: Timestamp::from_millis(5),
-        requested_deadlines: Vec::new(),
-    };
+    let mut clock = FakeClock::start(Timestamp::from_millis(5));
     let mut pacer = VideoPacer::new(FrameRate::new(30, 1).expect("valid rate"));
 
     let first = pacer.next(&mut clock).expect("first paced deadline");

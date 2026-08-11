@@ -9,6 +9,7 @@ use super::{
     error::UiError,
     helpers::{default_mixer, first_scene_id, first_source_id, identifier},
     types::{MixerChannel, Shortcut, UiAction, UiCommand, UiLocale, UiNotice},
+    MAX_UI_NOTICES,
 };
 
 pub struct DesktopState {
@@ -51,7 +52,9 @@ impl DesktopState {
             mixer_sources,
             mixer_channels,
             shortcuts: BTreeMap::new(),
-            notices: VecDeque::new(),
+            // Bounded by `MAX_UI_NOTICES`, so the ring is sized once and never
+            // grows or reallocates afterwards.
+            notices: VecDeque::with_capacity(MAX_UI_NOTICES),
             next_notice_sequence: 1,
         }
     }
@@ -205,7 +208,7 @@ impl DesktopState {
     }
 
     fn replace_project(&mut self, project: Project) {
-        self.project = ProjectSession::new(project);
+        self.project.replace(project);
         let first_scene = first_scene_id(self.project.project());
         self.preview_scene.clone_from(&first_scene);
         self.program_scene.clone_from(&first_scene);

@@ -11,6 +11,11 @@ pub struct VideoPipeline {
     pub(crate) scheduler: VideoScheduler,
     pub(crate) queue: FrameQueue,
     pub(crate) metrics: VideoMetrics,
+    /// RGBA bytes in one frame of the pipeline format.
+    ///
+    /// Constant for the pipeline's lifetime, so it is resolved once here rather
+    /// than recomputed from the queue format on every rendered frame.
+    pub(crate) bytes_per_frame: u64,
 }
 
 /// Counters collected by the reference render loop.
@@ -165,6 +170,7 @@ impl VideoPipeline {
             scheduler: VideoScheduler::new(format.frame_rate()),
             queue: FrameQueue::new(format, capacity, policy)?,
             metrics: VideoMetrics::default(),
+            bytes_per_frame: u64::try_from(format.rgba_bytes()).unwrap_or(u64::MAX),
         })
     }
 
@@ -196,25 +202,26 @@ impl VideoPipeline {
         F: FnOnce(FrameDeadline, VideoFormat) -> Result<Option<VideoFrame>, E>,
     {
         self.metrics.render_calls = self.metrics.render_calls.saturating_add(1);
-        let frame = render(deadline, self.queue.format()).map_err(RenderError::Source)?;
+        // Hoisted: the queue format is fixed for the pipeline, so it is read
+        // once instead of three times per rendered frame.
+        let format = self.queue.format();
+        let frame = render(deadline, format).map_err(RenderError::Source)?;
         let Some(frame) = frame else {
             self.metrics.empty_frames = self.metrics.empty_frames.saturating_add(1);
             return Ok(RenderOutcome::Empty { deadline });
         };
 
         self.metrics.produced_frames = self.metrics.produced_frames.saturating_add(1);
+        // Every queued frame carries exactly one frame's worth of RGBA bytes,
+        // which the pipeline already knows; no length or format lookup needed.
         self.metrics.produced_bytes = self
             .metrics
             .produced_bytes
-            .saturating_add(u64::try_from(frame.pixels().len()).unwrap_or(u64::MAX));
+            .saturating_add(self.bytes_per_frame);
         let outcome = self.queue.push(frame).map_err(RenderError::Submit)?;
         let queued_bytes = u64::try_from(self.queue.len())
             .unwrap_or(u64::MAX)
-            .saturating_mul(
-                u64::from(self.queue.format().width())
-                    .saturating_mul(u64::from(self.queue.format().height()))
-                    .saturating_mul(4),
-            );
+            .saturating_mul(self.bytes_per_frame);
         self.metrics.peak_queued_bytes = self.metrics.peak_queued_bytes.max(queued_bytes);
         match outcome {
             PushOutcome::Enqueued => Ok(RenderOutcome::Enqueued { deadline }),

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use crate::{
     error::OutputError,
     queue::PacketQueue,
@@ -22,7 +23,7 @@ pub trait PacketMuxer {
     ///
     /// Returns an [`OutputError`] when the session is not open or serialization
     /// fails.
-    fn finalize(&mut self) -> Result<Vec<u8>, OutputError>;
+    fn finalize(&mut self) -> Result<Arc<Vec<u8>>, OutputError>;
 
     /// Cancels the session and discards uncommitted data.
     ///
@@ -51,6 +52,28 @@ pub trait PacketTransport {
     /// Returns [`OutputError::Transport`] when delivery fails. The stream session
     /// re-queues the packet before returning the error.
     fn send(&mut self, packet: &EncodedPacket) -> Result<(), OutputError>;
+
+    /// Sends a run of packets, returning how many were delivered.
+    ///
+    /// Transports backed by a socket should override this to coalesce the run
+    /// into as few writes as possible; the default sends one at a time and stops
+    /// at the first failure so the caller can re-queue the remainder.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::Transport`] from the first failed packet, after
+    /// reporting the count that did succeed via `delivered`.
+    fn send_batch(
+        &mut self,
+        packets: &[EncodedPacket],
+        delivered: &mut usize,
+    ) -> Result<(), OutputError> {
+        for packet in packets {
+            self.send(packet)?;
+            *delivered += 1;
+        }
+        Ok(())
+    }
 
     /// Closes the transport without changing queued packet ownership.
     fn disconnect(&mut self);
@@ -145,16 +168,28 @@ impl<T: PacketTransport> StreamSession<T> {
                 state: self.state,
             });
         }
-        let mut sent = 0;
+        // Drain once and submit the whole run, so a socket transport can
+        // coalesce it into a single write instead of one syscall per packet.
+        let mut batch = Vec::with_capacity(self.queue.len());
         while let Some(packet) = self.queue.pop() {
-            if let Err(error) = self.transport.send(&packet) {
-                self.metrics.send_failures = self.metrics.send_failures.saturating_add(1);
-                self.state = StreamState::Disconnected;
+            batch.push(packet);
+        }
+
+        let mut sent = 0;
+        let result = self.transport.send_batch(&batch, &mut sent);
+        self.metrics.sent_packets = self
+            .metrics
+            .sent_packets
+            .saturating_add(sent as u64);
+
+        if let Err(error) = result {
+            self.metrics.send_failures = self.metrics.send_failures.saturating_add(1);
+            self.state = StreamState::Disconnected;
+            // Re-queue the undelivered tail in its original order.
+            for packet in batch.into_iter().skip(sent).rev() {
                 self.queue.push_front(packet)?;
-                return Err(error);
             }
-            sent += 1;
-            self.metrics.sent_packets = self.metrics.sent_packets.saturating_add(1);
+            return Err(error);
         }
         Ok(sent)
     }

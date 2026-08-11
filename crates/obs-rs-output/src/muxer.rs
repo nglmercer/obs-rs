@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::io::Cursor;
 
 use obs_rs_media::Timestamp;
@@ -13,7 +14,11 @@ use super::{
 pub struct MemoryMuxer {
     packets: Vec<EncodedPacket>,
     state: OutputState,
-    committed: Option<Vec<u8>>,
+    /// Committed bytes, shared rather than duplicated.
+    ///
+    /// `finalize` used to keep one copy and hand the caller another, doubling
+    /// peak memory at exactly the moment the recording is largest.
+    committed: Option<Arc<Vec<u8>>>,
     encoded_bytes: usize,
     last_timestamp: Option<Timestamp>,
 }
@@ -40,7 +45,7 @@ impl MemoryMuxer {
     /// Returns the committed container bytes after finalization.
     #[must_use]
     pub fn committed_bytes(&self) -> Option<&[u8]> {
-        self.committed.as_deref()
+        self.committed.as_ref().map(|bytes| bytes.as_slice())
     }
 
     /// Decodes the deterministic packet fixture.
@@ -160,7 +165,7 @@ impl PacketMuxer for MemoryMuxer {
         Ok(())
     }
 
-    fn finalize(&mut self) -> Result<Vec<u8>, OutputError> {
+    fn finalize(&mut self) -> Result<Arc<Vec<u8>>, OutputError> {
         if self.state != OutputState::Open {
             return Err(OutputError::InvalidState {
                 operation: "finalize",
@@ -168,7 +173,8 @@ impl PacketMuxer for MemoryMuxer {
             });
         }
         let bytes = encode_packets(&self.packets)?;
-        self.committed = Some(bytes.clone());
+        let bytes = Arc::new(bytes);
+        self.committed = Some(Arc::clone(&bytes));
         self.state = OutputState::Finalized;
         Ok(bytes)
     }
@@ -192,7 +198,14 @@ impl PacketMuxer for MemoryMuxer {
 }
 
 pub(crate) fn encode_packets(packets: &[EncodedPacket]) -> Result<Vec<u8>, OutputError> {
-    let mut bytes = Vec::new();
+    // Exact reservation from the known record layout: a magic, a count, then a
+    // 18-byte header plus payload per packet. A large recording would otherwise
+    // reallocate and recopy its way up to the final size.
+    let capacity = packets.iter().fold(
+        PACKET_MAGIC.len().saturating_add(8),
+        |total, packet| total.saturating_add(18).saturating_add(packet.payload.len()),
+    );
+    let mut bytes = Vec::with_capacity(capacity);
     write_all(&mut bytes, PACKET_MAGIC)?;
     write_u64(&mut bytes, packets.len() as u64)?;
     for packet in packets {

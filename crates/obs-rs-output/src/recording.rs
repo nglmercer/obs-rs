@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::io::Cursor;
 
 use obs_rs_media::{FrameRate, MediaError, Timestamp, VideoFormat, VideoFrame};
@@ -172,7 +173,11 @@ impl RawRecording {
 pub struct RawRecordingSession {
     recording: RawRecording,
     state: OutputState,
-    committed: Option<Vec<u8>>,
+    /// Committed bytes, shared rather than duplicated.
+    ///
+    /// `finalize` used to keep one copy and hand the caller another, doubling
+    /// peak memory at exactly the moment the recording is largest.
+    committed: Option<Arc<Vec<u8>>>,
 }
 
 impl RawRecordingSession {
@@ -205,10 +210,11 @@ impl RawRecordingSession {
     /// # Errors
     ///
     /// Returns [`OutputError::InvalidState`] when the session is not open.
-    pub fn finalize(&mut self) -> Result<Vec<u8>, OutputError> {
+    pub fn finalize(&mut self) -> Result<Arc<Vec<u8>>, OutputError> {
         self.ensure_open("finalize")?;
         let bytes = self.recording.encode()?;
-        self.committed = Some(bytes.clone());
+        let bytes = Arc::new(bytes);
+        self.committed = Some(Arc::clone(&bytes));
         self.state = OutputState::Finalized;
         Ok(bytes)
     }
@@ -240,7 +246,7 @@ impl RawRecordingSession {
     /// Returns committed bytes after finalization.
     #[must_use]
     pub fn committed_bytes(&self) -> Option<&[u8]> {
-        self.committed.as_deref()
+        self.committed.as_ref().map(|bytes| bytes.as_slice())
     }
 
     fn ensure_open(&self, operation: &'static str) -> Result<(), OutputError> {

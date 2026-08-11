@@ -157,7 +157,7 @@ fn scene_item_transform_is_applied_before_composition() {
     assert_eq!(runtime.source_transform("main", source), Some(transform));
     assert_eq!(
         runtime.source_filters("main", source),
-        Some(vec![FrameFilter::Grayscale])
+        Some(&[FrameFilter::Grayscale][..])
     );
     assert_eq!(frame.pixel(0, 0), Some([76, 76, 76, 128]));
 }
@@ -351,21 +351,23 @@ fn lifecycle_requires_detach_before_source_destruction() {
 fn source_kinds_lists_registered_factories_in_identifier_order() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
     let mut runtime = Runtime::new();
-    assert!(runtime.source_kinds().is_empty());
+    assert_eq!(runtime.source_kinds().len(), 0);
 
     runtime
         .register_plugin(&plugin)
         .expect("registration succeeds");
+    // Owned because `create_source` below needs `&mut runtime`, but the
+    // membership checks compare borrowed text rather than allocating a String
+    // per comparison.
     let kinds = runtime
         .source_kinds()
-        .iter()
         .map(|kind| kind.as_str().to_owned())
         .collect::<Vec<_>>();
 
-    assert!(kinds.contains(&"color_source".to_owned()));
-    assert!(kinds.contains(&"test_pattern".to_owned()));
+    assert!(kinds.iter().any(|kind| kind == "color_source"));
+    assert!(kinds.iter().any(|kind| kind == "test_pattern"));
     let mut sorted = kinds.clone();
-    sorted.sort();
+    sorted.sort_unstable();
     assert_eq!(kinds, sorted, "kinds are returned in identifier order");
     // Every advertised kind must actually construct.
     for kind in &kinds {

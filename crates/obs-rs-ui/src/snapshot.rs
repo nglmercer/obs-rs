@@ -172,52 +172,120 @@ impl DesktopState {
     }
 
     /// Renders the accessible local browser control page for the current state.
+    ///
+    /// Localized text is selected while the document is assembled, so the page
+    /// is written once. The previous form built an English page and then ran a
+    /// chain of whole-document `replace` calls over it, each of which allocated
+    /// and copied the entire page.
     #[must_use]
     pub fn web_page(&self) -> String {
-        let mut page = String::new();
-        page.push_str(
-            "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>OBS-RS control room</title>\n<style>body{font-family:system-ui,sans-serif;line-height:1.45;max-width:60rem;margin:2rem auto;padding:0 1rem;background:#101419;color:#edf2f7}main{display:grid;gap:1rem}section{border:1px solid #52606d;border-radius:.5rem;padding:1rem;background:#1b222c}button,input{font:inherit;padding:.5rem;margin:.25rem;border-radius:.35rem;border:1px solid #829ab1}button{background:#2f80ed;color:white;cursor:pointer}button:focus,input:focus{outline:3px solid #f6c344;outline-offset:2px}pre{white-space:pre-wrap;overflow:auto}#status{min-height:1.5rem}</style>\n</head>\n<body>\n<main id=\"main\" aria-labelledby=\"title\">\n<h1 id=\"title\">OBS-RS control room</h1>\n<p>Rust-native local control surface using the validated desktop state model.</p>\n<section aria-labelledby=\"state-label\">\n<h2 id=\"state-label\">Current state</h2>\n<pre id=\"snapshot\" tabindex=\"0\">",
-        );
+        let text = |key: &str| web_text(self.locale, key);
+        let mut page = String::with_capacity(WEB_PAGE_ESTIMATE);
+
+        page.push_str("<!doctype html>\n<html lang=\"");
+        page.push_str(self.locale.code());
+        page.push_str("\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>OBS-RS control room</title>\n<style>body{font-family:system-ui,sans-serif;line-height:1.45;max-width:60rem;margin:2rem auto;padding:0 1rem;background:#101419;color:#edf2f7}main{display:grid;gap:1rem}section{border:1px solid #52606d;border-radius:.5rem;padding:1rem;background:#1b222c}button,input{font:inherit;padding:.5rem;margin:.25rem;border-radius:.35rem;border:1px solid #829ab1}button{background:#2f80ed;color:white;cursor:pointer}button:focus,input:focus{outline:3px solid #f6c344;outline-offset:2px}pre{white-space:pre-wrap;overflow:auto}#status{min-height:1.5rem}</style>\n</head>\n<body>\n<main id=\"main\" aria-labelledby=\"title\">\n<h1 id=\"title\">OBS-RS control room</h1>\n<p>");
+        page.push_str(text("intro"));
+        page.push_str("</p>\n<section aria-labelledby=\"state-label\">\n<h2 id=\"state-label\">");
+        page.push_str(text("current_state"));
+        page.push_str("</h2>\n<pre id=\"snapshot\" tabindex=\"0\">");
         page.push_str(&escape_html(&self.accessible_snapshot()));
-        page.push_str(
-            "</pre>\n</section>\n<section aria-labelledby=\"actions-label\">\n<h2 id=\"actions-label\">Actions</h2>\n<div role=\"group\" aria-label=\"Output and scene actions\">\n<button type=\"button\" data-command=\"swap\">Swap preview/program</button>\n<button type=\"button\" data-command=\"record start\">Start recording</button>\n<button type=\"button\" data-command=\"record stop\">Stop recording</button>\n<button type=\"button\" data-command=\"stream start\">Start streaming</button>\n<button type=\"button\" data-command=\"stream stop\">Stop streaming</button>\n<button type=\"button\" data-command=\"transition cut\">Cut transition</button>\n<button type=\"button\" data-command=\"transition fade 500\">50% fade</button>\n</div>\n<form id=\"command-form\">\n<label for=\"command\">Validated command</label>\n<input id=\"command\" name=\"command\" maxlength=\"256\" size=\"32\" autocomplete=\"off\">\n<button type=\"submit\">Apply</button>\n</form>\n<p id=\"status\" role=\"status\" aria-live=\"polite\"></p>\n</section>\n</main>\n<script>\nasync function applyCommand(command){const response=await fetch('/command',{method:'POST',headers:{'Content-Type':'text/plain'},body:command});const body=await response.text();if(response.ok){document.getElementById('snapshot').textContent=body;document.getElementById('status').textContent='Command applied';}else{document.getElementById('status').textContent=body;}}\ndocument.querySelectorAll('[data-command]').forEach((button)=>button.addEventListener('click',()=>applyCommand(button.dataset.command)));\ndocument.getElementById('command-form').addEventListener('submit',(event)=>{event.preventDefault();const input=document.getElementById('command');applyCommand(input.value);input.value='';});\n</script>\n</body>\n</html>\n",
-        );
-        page = page.replace(
-            "<html lang=\"en\">",
-            &format!("<html lang=\"{}\">", self.locale.code()),
-        );
-        page = page.replace(
-            "<button type=\"button\" data-command=\"transition fade 500\">50% fade</button>\n</div>",
-            "<button type=\"button\" data-command=\"transition fade 500\">50% fade</button>\n<button type=\"button\" data-command=\"take cut\">Take preview (cut)</button>\n<button type=\"button\" data-command=\"take fade 500\">Take preview (50% fade)</button>\n<button type=\"button\" data-command=\"language en\">English</button>\n<button type=\"button\" data-command=\"language es\">Español</button>\n</div>",
-        );
-        if self.locale == UiLocale::Spanish {
-            for (english, spanish) in [
-                (
-                    "Rust-native local control surface using the validated desktop state model.",
-                    "Superficie de control local en Rust que usa el modelo de estado validado.",
-                ),
-                ("Current state", "Estado actual"),
-                ("Actions", "Acciones"),
-                ("Output and scene actions", "Acciones de salida y escena"),
-                ("Swap preview/program", "Intercambiar vista previa/al aire"),
-                ("Start recording", "Iniciar grabación"),
-                ("Stop recording", "Detener grabación"),
-                ("Start streaming", "Iniciar transmisión"),
-                ("Stop streaming", "Detener transmisión"),
-                ("Cut transition", "Transición de corte"),
-                ("50% fade", "Fundido al 50%"),
-                ("Take preview (cut)", "Enviar vista previa (corte)"),
-                (
-                    "Take preview (50% fade)",
-                    "Enviar vista previa (fundido al 50%)",
-                ),
-                ("Validated command", "Comando validado"),
-                ("Apply", "Aplicar"),
-                ("Command applied", "Comando aplicado"),
-            ] {
-                page = page.replace(english, spanish);
-            }
+        page.push_str("</pre>\n</section>\n<section aria-labelledby=\"actions-label\">\n<h2 id=\"actions-label\">");
+        page.push_str(text("actions"));
+        page.push_str("</h2>\n<div role=\"group\" aria-label=\"");
+        page.push_str(text("actions_group"));
+        page.push_str("\">\n");
+
+        for (command, key) in [
+            ("swap", "swap"),
+            ("record start", "record_start"),
+            ("record stop", "record_stop"),
+            ("stream start", "stream_start"),
+            ("stream stop", "stream_stop"),
+            ("transition cut", "transition_cut"),
+            ("transition fade 500", "fade_50"),
+            ("take cut", "take_cut"),
+            ("take fade 500", "take_fade"),
+            ("language en", "language_en"),
+            ("language es", "language_es"),
+        ] {
+            page.push_str("<button type=\"button\" data-command=\"");
+            page.push_str(command);
+            page.push_str("\">");
+            page.push_str(text(key));
+            page.push_str("</button>\n");
         }
+
+        page.push_str("</div>\n<form id=\"command-form\">\n<label for=\"command\">");
+        page.push_str(text("validated_command"));
+        page.push_str("</label>\n<input id=\"command\" name=\"command\" maxlength=\"256\" size=\"32\" autocomplete=\"off\">\n<button type=\"submit\">");
+        page.push_str(text("apply"));
+        page.push_str("</button>\n</form>\n<p id=\"status\" role=\"status\" aria-live=\"polite\"></p>\n</section>\n</main>\n<script>\nasync function applyCommand(command){const response=await fetch('/command',{method:'POST',headers:{'Content-Type':'text/plain'},body:command});const body=await response.text();if(response.ok){document.getElementById('snapshot').textContent=body;document.getElementById('status').textContent='");
+        page.push_str(text("command_applied"));
+        page.push_str("';}else{document.getElementById('status').textContent=body;}}\ndocument.querySelectorAll('[data-command]').forEach((button)=>button.addEventListener('click',()=>applyCommand(button.dataset.command)));\ndocument.getElementById('command-form').addEventListener('submit',(event)=>{event.preventDefault();const input=document.getElementById('command');applyCommand(input.value);input.value='';});\n</script>\n</body>\n</html>\n");
+
         page
+    }
+}
+
+/// Typical rendered page length, used to reserve the buffer once.
+const WEB_PAGE_ESTIMATE: usize = 4_096;
+
+/// Returns one localized fragment of the browser control page.
+///
+/// The language-switch buttons intentionally name each language in its own
+/// language, so they are the same in every locale.
+fn web_text(locale: UiLocale, key: &str) -> &'static str {
+    // Language-switch buttons name each language in its own language, so they
+    // are handled before the locale split.
+    match key {
+        "language_en" => return "English",
+        "language_es" => return "Español",
+        _ => {}
+    }
+
+    match locale {
+        UiLocale::Spanish => match key {
+            "intro" => {
+                "Superficie de control local en Rust que usa el modelo de estado validado."
+            }
+            "current_state" => "Estado actual",
+            "actions" => "Acciones",
+            "actions_group" => "Acciones de salida y escena",
+            "swap" => "Intercambiar vista previa/al aire",
+            "record_start" => "Iniciar grabación",
+            "record_stop" => "Detener grabación",
+            "stream_start" => "Iniciar transmisión",
+            "stream_stop" => "Detener transmisión",
+            "transition_cut" => "Transición de corte",
+            "fade_50" => "Fundido al 50%",
+            "take_cut" => "Enviar vista previa (corte)",
+            "take_fade" => "Enviar vista previa (fundido al 50%)",
+            "validated_command" => "Comando validado",
+            "apply" => "Aplicar",
+            "command_applied" => "Comando aplicado",
+            _ => "",
+        },
+        UiLocale::English => match key {
+            "intro" => {
+                "Rust-native local control surface using the validated desktop state model."
+            }
+            "current_state" => "Current state",
+            "actions" => "Actions",
+            "actions_group" => "Output and scene actions",
+            "swap" => "Swap preview/program",
+            "record_start" => "Start recording",
+            "record_stop" => "Stop recording",
+            "stream_start" => "Start streaming",
+            "stream_stop" => "Stop streaming",
+            "transition_cut" => "Cut transition",
+            "fade_50" => "50% fade",
+            "take_cut" => "Take preview (cut)",
+            "take_fade" => "Take preview (50% fade)",
+            "validated_command" => "Validated command",
+            "apply" => "Apply",
+            "command_applied" => "Command applied",
+            _ => "",
+        },
     }
 }

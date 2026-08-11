@@ -30,15 +30,12 @@ impl Runtime {
         let mut result: Option<VideoFrame> = None;
 
         for source_id in &scene_state.sources {
-            let transform = scene_state
-                .transforms
-                .get(source_id)
-                .copied()
-                .unwrap_or(FrameTransform::IDENTITY);
-            let filters = scene_state
-                .filters
-                .get(source_id)
-                .map_or(&[][..], Vec::as_slice);
+            // One lookup resolves both the transform and the filter chain, and
+            // yields a plain slice with no function-pointer indirection.
+            let (transform, filters) = scene_state.items.get(source_id).map_or(
+                (FrameTransform::IDENTITY, &[][..]),
+                |item| (item.transform, item.filters.as_slice()),
+            );
             metrics.source_requests = metrics.source_requests.saturating_add(1);
             let instance = sources
                 .get_mut(source_id)

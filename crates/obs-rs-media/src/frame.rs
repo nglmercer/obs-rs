@@ -90,6 +90,15 @@ impl VideoFrame {
         &self.pixels
     }
 
+    /// Consumes the frame and returns its owned RGBA8 buffer.
+    ///
+    /// Lets an encoder at the end of the pipeline take ownership of the pixels
+    /// instead of copying them out of a borrowed frame.
+    #[must_use]
+    pub fn into_pixels(self) -> Vec<u8> {
+        self.pixels
+    }
+
     /// Returns one pixel if `(x, y)` is inside the frame.
     ///
     /// The bounds check above makes the index conversions exact, so this reads

@@ -1,7 +1,7 @@
 use std::{
+    cell::Cell,
     io::{Read, Write},
     net::TcpStream,
-    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -12,7 +12,23 @@ use crate::{
 
 use super::PacketTransport;
 
-static NEXT_WEBSOCKET_NONCE: AtomicU64 = AtomicU64::new(1);
+thread_local! {
+    /// Per-thread masking-key counter.
+    ///
+    /// RFC 6455 only requires the mask to be unpredictable per frame, not
+    /// globally ordered, so a thread-local counter avoids the cache-line
+    /// contention a shared atomic caused on every send.
+    static NEXT_WEBSOCKET_NONCE: Cell<u64> = const { Cell::new(1) };
+}
+
+/// Returns the next masking nonce for this thread.
+fn next_websocket_nonce() -> u64 {
+    NEXT_WEBSOCKET_NONCE.with(|nonce| {
+        let current = nonce.get();
+        nonce.set(current.wrapping_add(1));
+        current
+    })
+}
 
 /// A standard RFC 6455 WebSocket client carrying OBS-RS binary packets.
 pub struct WebSocketPacketTransport {
@@ -146,7 +162,7 @@ pub(crate) fn parse_websocket_endpoint(
 }
 
 fn websocket_key() -> String {
-    let counter = NEXT_WEBSOCKET_NONCE.fetch_add(1, Ordering::Relaxed);
+    let counter = next_websocket_nonce();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0_u64, |duration| {
@@ -260,7 +276,7 @@ fn websocket_binary_frame(body: &[u8]) -> Result<Vec<u8>, OutputError> {
         frame.push(0x80 | 127);
         frame.extend_from_slice(&length.to_be_bytes());
     }
-    let nonce = NEXT_WEBSOCKET_NONCE.fetch_add(1, Ordering::Relaxed);
+    let nonce = next_websocket_nonce();
     let mask = nonce.to_le_bytes()[..4]
         .try_into()
         .unwrap_or([0x4d_u8, 0x53, 0x52, 0x53]);

@@ -1,7 +1,11 @@
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
 use obs_rs_util::Identifier;
-use std::collections::BTreeMap;
+use std::{
+    borrow::Borrow,
+    collections::{BTreeMap, HashSet},
+    sync::OnceLock,
+};
 
 use super::{error::ProjectError, validation::identifier};
 /// A source definition stored in a scene collection.
@@ -117,7 +121,11 @@ impl SourceSpec {
 pub struct SceneSpec {
     pub(crate) id: Identifier,
     pub(crate) name: String,
+    /// Composition order, which is part of the scene's meaning.
     pub(crate) sources: Vec<SourceSpec>,
+    /// O(1) membership mirror of `sources`, so adding N sources is O(N) rather
+    /// than the O(N^2) a linear duplicate scan per insert produced.
+    pub(crate) source_ids: HashSet<Identifier>,
 }
 
 impl SceneSpec {
@@ -134,6 +142,7 @@ impl SceneSpec {
             id: identifier(id, "scene id")?,
             name: name.to_owned(),
             sources: Vec::new(),
+            source_ids: HashSet::new(),
         })
     }
 
@@ -174,11 +183,46 @@ impl SceneSpec {
     ///
     /// Returns [`ProjectError::DuplicateSource`] when the ID is already present.
     pub fn add_source(&mut self, source: SourceSpec) -> Result<(), ProjectError> {
-        if self.sources.iter().any(|item| item.id() == source.id()) {
+        if !self.source_ids.insert(source.id().clone()) {
             return Err(ProjectError::DuplicateSource(source.id().clone()));
         }
         self.sources.push(source);
         Ok(())
+    }
+
+    /// Appends several source definitions, rejecting duplicates atomically.
+    ///
+    /// Every ID is checked before anything is inserted, so a rejected batch
+    /// leaves the scene unchanged. Adding N sources costs O(N) rather than the
+    /// O(N^2) that N separate [`SceneSpec::add_source`] calls would.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::DuplicateSource`] when an ID is already present
+    /// or is repeated within `sources`.
+    pub fn add_sources(
+        &mut self,
+        sources: impl IntoIterator<Item = SourceSpec>,
+    ) -> Result<(), ProjectError> {
+        let incoming: Vec<SourceSpec> = sources.into_iter().collect();
+        let mut candidate = HashSet::with_capacity(incoming.len());
+        for source in &incoming {
+            if self.source_ids.contains(source.id()) || !candidate.insert(source.id()) {
+                return Err(ProjectError::DuplicateSource(source.id().clone()));
+            }
+        }
+        self.sources.reserve(incoming.len());
+        for source in incoming {
+            self.source_ids.insert(source.id().clone());
+            self.sources.push(source);
+        }
+        Ok(())
+    }
+
+    /// Returns whether this scene contains `id`, in constant time.
+    #[must_use]
+    pub fn has_source(&self, id: &Identifier) -> bool {
+        self.source_ids.contains(id)
     }
 
     /// Finds a mutable source by project-local ID.
@@ -188,6 +232,9 @@ impl SceneSpec {
 
     /// Removes one source item and returns its definition.
     pub fn remove_source(&mut self, id: &Identifier) -> Option<SourceSpec> {
+        if !self.source_ids.remove(id) {
+            return None;
+        }
         let index = self.sources.iter().position(|source| source.id() == id)?;
         Some(self.sources.remove(index))
     }
@@ -297,6 +344,20 @@ impl Profile {
         self.scenes.values()
     }
 
+    /// Returns a scene by ID.
+    ///
+    /// Scenes are stored in a keyed map, so this is a direct lookup rather than
+    /// a walk of the scene list. The key may be an [`Identifier`] or a plain
+    /// `&str`, so callers holding borrowed text need not build one.
+    #[must_use]
+    pub fn scene<Q>(&self, id: &Q) -> Option<&SceneSpec>
+    where
+        Identifier: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.scenes.get(id)
+    }
+
     /// Returns a mutable scene by ID.
     pub fn scene_mut(&mut self, id: &Identifier) -> Option<&mut SceneSpec> {
         self.scenes.get_mut(id)
@@ -320,14 +381,9 @@ impl Project {
         if title.trim().is_empty() {
             return Err(ProjectError::InvalidName { kind: "project" });
         }
-        let active_profile =
-            Identifier::new("default").map_err(|error| ProjectError::InvalidIdentifier {
-                kind: "default profile id",
-                error,
-            })?;
         Ok(Self {
             title: title.to_owned(),
-            active_profile,
+            active_profile: default_profile_id().clone(),
             profiles: BTreeMap::new(),
         })
     }
@@ -379,8 +435,41 @@ impl Project {
         self.profiles.values()
     }
 
+    /// Returns a profile by ID, keyed by [`Identifier`] or `&str`.
+    #[must_use]
+    pub fn profile<Q>(&self, id: &Q) -> Option<&Profile>
+    where
+        Identifier: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.profiles.get(id)
+    }
+
+    /// Returns the profile named by [`Project::active_profile`].
+    ///
+    /// Profiles are stored in a keyed map, so resolving the active profile is a
+    /// direct lookup; callers used to rescan the whole profile list, often
+    /// several times per UI command.
+    #[must_use]
+    pub fn active_profile_spec(&self) -> Option<&Profile> {
+        self.profiles.get(&self.active_profile)
+    }
+
     /// Returns a mutable profile by ID.
     pub fn profile_mut(&mut self, id: &Identifier) -> Option<&mut Profile> {
         self.profiles.get_mut(id)
     }
+}
+
+/// Returns the shared `"default"` profile identifier.
+///
+/// Validated and allocated once for the process instead of on every
+/// [`Project::new`]; callers clone the cached value.
+fn default_profile_id() -> &'static Identifier {
+    static DEFAULT_PROFILE_ID: OnceLock<Identifier> = OnceLock::new();
+    DEFAULT_PROFILE_ID.get_or_init(|| {
+        Identifier::new("default").unwrap_or_else(|_| {
+            unreachable!("\"default\" is a valid identifier")
+        })
+    })
 }

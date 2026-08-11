@@ -25,37 +25,46 @@ pub(crate) fn escape_html(text: &str) -> String {
     escaped
 }
 
+/// Returns one localized snapshot label.
+///
+/// The locale is resolved before the key, so a lookup compares against one
+/// language's keys rather than walking every (locale, key) pair.
 pub(crate) fn localized_label(locale: UiLocale, key: &str) -> &'static str {
-    match (locale, key) {
-        (UiLocale::Spanish, "desktop_state") => "estado de escritorio",
-        (UiLocale::Spanish, "project") => "Proyecto",
-        (UiLocale::Spanish, "profile") => "Perfil",
-        (UiLocale::Spanish, "preview_scene") => "Escena de vista previa",
-        (UiLocale::Spanish, "program_scene") => "Escena al aire",
-        (UiLocale::Spanish, "selected_source") => "Fuente seleccionada",
-        (UiLocale::Spanish, "transition") => "Transición",
-        (UiLocale::Spanish, "recording") => "Grabación",
-        (UiLocale::Spanish, "streaming") => "Transmisión",
-        (UiLocale::Spanish, "project_changes") => "Cambios del proyecto",
-        (UiLocale::Spanish, "audio_mixer") => "Mezclador de audio",
-        (UiLocale::Spanish, "scenes") => "Escenas",
-        (UiLocale::Spanish, "shortcuts") => "Atajos",
-        (UiLocale::Spanish, "recent_notices") => "Avisos recientes",
-        (UiLocale::English, "desktop_state") => "desktop state",
-        (UiLocale::English, "project") => "Project",
-        (UiLocale::English, "profile") => "Profile",
-        (UiLocale::English, "preview_scene") => "Preview scene",
-        (UiLocale::English, "program_scene") => "Program scene",
-        (UiLocale::English, "selected_source") => "Selected source",
-        (UiLocale::English, "transition") => "Transition",
-        (UiLocale::English, "recording") => "Recording",
-        (UiLocale::English, "streaming") => "Streaming",
-        (UiLocale::English, "project_changes") => "Project changes",
-        (UiLocale::English, "audio_mixer") => "Audio mixer",
-        (UiLocale::English, "scenes") => "Scenes",
-        (UiLocale::English, "shortcuts") => "Shortcuts",
-        (UiLocale::English, "recent_notices") => "Recent notices",
-        (_, _) => "State",
+    match locale {
+        UiLocale::Spanish => match key {
+            "desktop_state" => "estado de escritorio",
+            "project" => "Proyecto",
+            "profile" => "Perfil",
+            "preview_scene" => "Escena de vista previa",
+            "program_scene" => "Escena al aire",
+            "selected_source" => "Fuente seleccionada",
+            "transition" => "Transición",
+            "recording" => "Grabación",
+            "streaming" => "Transmisión",
+            "project_changes" => "Cambios del proyecto",
+            "audio_mixer" => "Mezclador de audio",
+            "scenes" => "Escenas",
+            "shortcuts" => "Atajos",
+            "recent_notices" => "Avisos recientes",
+            _ => "State",
+        },
+        UiLocale::English => match key {
+            "desktop_state" => "desktop state",
+            "project" => "Project",
+            "profile" => "Profile",
+            "preview_scene" => "Preview scene",
+            "program_scene" => "Program scene",
+            "selected_source" => "Selected source",
+            "transition" => "Transition",
+            "recording" => "Recording",
+            "streaming" => "Streaming",
+            "project_changes" => "Project changes",
+            "audio_mixer" => "Audio mixer",
+            "scenes" => "Scenes",
+            "shortcuts" => "Shortcuts",
+            "recent_notices" => "Recent notices",
+            _ => "State",
+        },
     }
 }
 
@@ -77,19 +86,21 @@ pub(crate) fn localized_saved_state(dirty: bool, locale: UiLocale) -> &'static s
     }
 }
 
+// These helpers resolve the active profile and a scene by key rather than
+// scanning the profile and scene lists, which the UI command path did several
+// times per dispatch.
+
 pub(crate) fn first_scene_id(project: &Project) -> Option<Identifier> {
     project
-        .profiles()
-        .find(|profile| profile.id() == project.active_profile())
+        .active_profile_spec()
         .and_then(|profile| profile.scenes().next())
         .map(|scene| scene.id().clone())
 }
 
 pub(crate) fn project_has_scene(project: &Project, scene_id: &Identifier) -> bool {
     project
-        .profiles()
-        .find(|profile| profile.id() == project.active_profile())
-        .is_some_and(|profile| profile.scenes().any(|scene| scene.id() == scene_id))
+        .active_profile_spec()
+        .is_some_and(|profile| profile.scene(scene_id).is_some())
 }
 
 pub(crate) fn project_has_source(
@@ -98,22 +109,15 @@ pub(crate) fn project_has_source(
     source_id: &Identifier,
 ) -> bool {
     project
-        .profiles()
-        .find(|profile| profile.id() == project.active_profile())
-        .and_then(|profile| profile.scenes().find(|scene| scene.id() == scene_id))
-        .is_some_and(|scene| {
-            scene
-                .sources()
-                .iter()
-                .any(|source| source.id() == source_id)
-        })
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .is_some_and(|scene| scene.has_source(source_id))
 }
 
 pub(crate) fn first_source_id(project: &Project, scene_id: &Identifier) -> Option<Identifier> {
     project
-        .profiles()
-        .find(|profile| profile.id() == project.active_profile())
-        .and_then(|profile| profile.scenes().find(|scene| scene.id() == scene_id))
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
         .and_then(|scene| scene.sources().first())
         .map(|source| source.id().clone())
 }

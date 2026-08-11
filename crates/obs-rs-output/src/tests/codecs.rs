@@ -132,7 +132,7 @@ fn muxer_rejects_backward_timestamps_and_container_trailing_bytes() {
     );
 
     let bytes = muxer.finalize().expect("finalize packet");
-    let mut with_trailing = bytes.clone();
+    let mut with_trailing = bytes.as_ref().clone();
     with_trailing.push(0);
     assert!(matches!(
         MemoryMuxer::decode(&with_trailing),

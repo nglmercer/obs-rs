@@ -9,17 +9,37 @@ use slint::{ComponentHandle, SharedString};
 
 use crate::{AddSourceText, I18n, MainWindow, SettingsText, UiText};
 
+thread_local! {
+    /// Catalogs are built once per thread and then reused.
+    ///
+    /// Constructing a `UiText` allocates roughly 150 strings. The refresh tick
+    /// asked for a catalog several times per frame, so at 30 fps that was
+    /// thousands of string allocations per second for data that only changes
+    /// when the user switches language.
+    static ENGLISH_CATALOG: UiText = english();
+    static SPANISH_CATALOG: UiText = spanish();
+}
+
 /// Applies the complete catalog for `locale` to the live Slint tree.
 pub(crate) fn apply(ui: &MainWindow, locale: UiLocale) {
     ui.global::<I18n>().set_text(catalog(locale));
 }
 
 /// Returns the catalog for a supported locale.
+///
+/// This clones the cached catalog, which copies `SharedString` handles rather
+/// than string data. Call sites that only read a field or two should prefer
+/// [`with_catalog`], which clones nothing.
 #[must_use]
 pub(crate) fn catalog(locale: UiLocale) -> UiText {
+    with_catalog(locale, Clone::clone)
+}
+
+/// Runs `read` against the cached catalog for `locale` without cloning it.
+pub(crate) fn with_catalog<R>(locale: UiLocale, read: impl FnOnce(&UiText) -> R) -> R {
     match locale {
-        UiLocale::English => english(),
-        UiLocale::Spanish => spanish(),
+        UiLocale::English => ENGLISH_CATALOG.with(read),
+        UiLocale::Spanish => SPANISH_CATALOG.with(read),
     }
 }
 

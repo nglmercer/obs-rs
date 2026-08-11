@@ -209,9 +209,10 @@ fn refresh_window(
         icon: "source-generic".into(),
         obsolete: false,
     }];
-    let kinds = renderer.borrow().runtime.source_kinds();
-    let mut listed = kinds
-        .iter()
+    let mut listed = renderer
+        .borrow()
+        .runtime
+        .source_kinds()
         .map(|kind| SourceKindRow {
             id: kind.as_str().into(),
             label: kind_label(&text, kind.as_str()),

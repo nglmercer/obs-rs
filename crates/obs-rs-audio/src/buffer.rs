@@ -87,6 +87,12 @@ impl AudioBuffer {
         self.samples.len() / usize::from(self.format.channels)
     }
 
+    /// Consumes the buffer and returns its owned interleaved samples.
+    #[must_use]
+    pub fn into_samples(self) -> Vec<f32> {
+        self.samples
+    }
+
     /// Returns the immutable interleaved sample slice.
     #[must_use]
     pub fn samples(&self) -> &[f32] {

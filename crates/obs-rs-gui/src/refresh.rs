@@ -1,15 +1,28 @@
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_media::{FrameTransform, FrameTransition, VideoFrame};
-use obs_rs_project::{Profile, SourceSpec};
+use obs_rs_project::{Profile, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
-use slint::{Image, ModelRc, VecModel, Weak};
+use slint::{Image, ModelRc, SharedString, VecModel, Weak};
 
 use crate::{
     frame_to_image, project_store, source_filters_document, source_transform_document,
     LocaleOption, MainWindow, MixerRow, OutputRuntime, PreviewRenderer, ProfileRow, SceneRow,
     SourceRow,
 };
+
+thread_local! {
+    /// The immutable locale picker model, shared by every refresh.
+    static LOCALE_OPTIONS: ModelRc<LocaleOption> = ModelRc::new(VecModel::from(
+        UiLocale::supported()
+            .iter()
+            .map(|locale| LocaleOption {
+                code: locale.code().into(),
+                label: locale.code().to_ascii_uppercase().into(),
+            })
+            .collect::<Vec<_>>(),
+    ));
+}
 
 pub(crate) fn dispatch_and_refresh(
     weak: &Weak<MainWindow>,
@@ -49,14 +62,9 @@ pub(crate) fn refresh_ui(
     ui.set_project_title(project.title().into());
     ui.set_profile_name(profile_name.into());
     ui.set_locale(state.locale().code().into());
-    let locale_options = UiLocale::supported()
-        .iter()
-        .map(|locale| LocaleOption {
-            code: locale.code().into(),
-            label: locale.code().to_ascii_uppercase().into(),
-        })
-        .collect::<Vec<_>>();
-    ui.set_locale_options(ModelRc::new(VecModel::from(locale_options)));
+    // The supported-locale list is static, so the model is built once per
+    // thread rather than rebuilt on every tick.
+    ui.set_locale_options(LOCALE_OPTIONS.with(Clone::clone));
     ui.set_preview_scene(state.preview_scene().unwrap_or("none").into());
     ui.set_program_scene(state.program_scene().unwrap_or("none").into());
     ui.set_transition(transition_label_for_locale(state.locale(), state.transition()).into());
@@ -157,85 +165,96 @@ pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRunti
     ui.set_output_metrics(output.output_metrics().into());
 }
 
+thread_local! {
+    /// Last project path a recovery check ran against, with its result.
+    ///
+    /// The check builds a `ProjectFileStore` and validates a path; at 30 fps
+    /// that repeated filesystem work every tick for an answer that only changes
+    /// when the project path does.
+    static RECOVERY_CACHE: RefCell<Option<(String, SharedString)>> = const { RefCell::new(None) };
+}
+
 fn refresh_recovery_ui(ui: &MainWindow, locale: UiLocale) {
-    let text = crate::i18n::catalog(locale);
     let path = ui.get_project_path().to_string();
-    let status = match project_store(&path) {
-        Ok(store) if store.recovery_available() => text.recovery_available.to_string(),
-        Ok(_) => text.no_recovery.to_string(),
-        Err(error) => {
-            return ui.set_recovery_status(format!("Recovery check failed: {error}").into())
+    let status = RECOVERY_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((cached_path, status)) = cache.as_ref() {
+            if *cached_path == path {
+                return status.clone();
+            }
         }
-    };
-    ui.set_recovery_status(status.into());
+        let status: SharedString = crate::i18n::with_catalog(locale, |text| {
+            match project_store(&path) {
+                Ok(store) if store.recovery_available() => text.recovery_available.clone(),
+                Ok(_) => text.no_recovery.clone(),
+                Err(error) => format!("Recovery check failed: {error}").into(),
+            }
+        });
+        *cache = Some((path.clone(), status.clone()));
+        status
+    });
+    ui.set_recovery_status(status);
+}
+
+/// Clears the cached recovery status so the next refresh re-checks the store.
+pub(crate) fn invalidate_recovery_cache() {
+    RECOVERY_CACHE.with(|cache| cache.borrow_mut().take());
 }
 
 fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile>) {
+    let locale = state.locale();
+    let roles = SceneRoleLabels::for_locale(locale);
     let scene_rows = profile.map_or_else(Vec::new, |profile| {
         profile
             .scenes()
-            .map(|scene| {
-                let id = scene.id().to_string();
-                let role = scene_role(state, &id, state.locale());
-                SceneRow {
-                    id: id.into(),
-                    name: scene.name().into(),
-                    role: role.into(),
-                }
+            .map(|scene| SceneRow {
+                role: roles.role(state, scene.id().as_str()),
+                id: scene.id().as_str().into(),
+                name: scene.name().into(),
             })
             .collect::<Vec<_>>()
     });
     ui.set_scene_rows(ModelRc::new(VecModel::from(scene_rows)));
 
     let source_scene = state.preview_scene().unwrap_or("none");
-    let selected_scene_name = profile
-        .and_then(|profile| {
-            profile
-                .scenes()
-                .find(|scene| scene.id().as_str() == source_scene)
-        })
-        .map_or_else(String::new, |scene| scene.name().to_owned());
+    // The selected scene was previously located three separate times: once for
+    // its name, once for its source rows, and once for the selected source.
+    // One keyed lookup now serves all three.
+    let selected_scene = profile.and_then(|profile| profile.scene(source_scene));
+
+    let selected_scene_name = selected_scene.map_or("", SceneSpec::name);
     if ui.get_scene_name_version().as_str() != selected_scene_name {
         ui.set_scene_name(selected_scene_name.into());
         ui.set_scene_name_version(ui.get_scene_name().clone());
     }
+
     let selected_source = state.selected_source().unwrap_or("none");
-    let source_rows = profile
-        .and_then(|profile| {
-            profile
-                .scenes()
-                .find(|scene| scene.id().as_str() == source_scene)
-        })
-        .map_or_else(Vec::new, |scene| {
-            scene
-                .sources()
-                .iter()
-                .enumerate()
-                .map(|(index, source)| SourceRow {
+    let mut selected_source_spec = None;
+    let source_rows = selected_scene.map_or_else(Vec::new, |scene| {
+        scene
+            .sources()
+            .iter()
+            .enumerate()
+            .map(|(index, source)| {
+                let selected = source.id().as_str() == selected_source;
+                if selected {
+                    selected_source_spec = Some(source);
+                }
+                SourceRow {
                     id: source.id().as_str().into(),
                     name: source.name().into(),
                     kind: source.kind().as_str().into(),
                     order: (index + 1).to_string().into(),
-                    selected: source.id().as_str() == selected_source,
+                    selected,
                     visible: source.visible(),
                     locked: source.locked(),
-                })
-                .collect::<Vec<_>>()
-        });
+                }
+            })
+            .collect::<Vec<_>>()
+    });
     ui.set_source_scene(source_scene.into());
     ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
-    let selected_source_spec = profile
-        .and_then(|profile| {
-            profile
-                .scenes()
-                .find(|scene| scene.id().as_str() == source_scene)
-        })
-        .and_then(|scene| {
-            scene
-                .sources()
-                .iter()
-                .find(|source| source.id().as_str() == selected_source)
-        });
+
     let selected_settings =
         selected_source_spec.map_or_else(String::new, |source| source.settings().serialize());
     if ui.get_source_settings_version().as_str() != selected_settings {
@@ -276,25 +295,44 @@ fn latest_notice(state: &DesktopState) -> &str {
         .map_or("Ready", |notice| notice.message())
 }
 
-fn scene_role(state: &DesktopState, id: &str, locale: UiLocale) -> String {
-    let text = crate::i18n::catalog(locale);
-    match (
-        state.preview_scene() == Some(id),
-        state.program_scene() == Some(id),
-    ) {
-        (true, true) => text.preview_program_role.to_string(),
-        (true, false) => text.preview_role.to_string(),
-        (false, true) => text.program_role.to_string(),
-        (false, false) => String::new(),
+/// The four role labels for one locale, resolved once per refresh.
+struct SceneRoleLabels {
+    preview_program: SharedString,
+    preview: SharedString,
+    program: SharedString,
+}
+
+impl SceneRoleLabels {
+    /// Reads the role labels from the cached catalog a single time.
+    fn for_locale(locale: UiLocale) -> Self {
+        crate::i18n::with_catalog(locale, |text| Self {
+            preview_program: text.preview_program_role.clone(),
+            preview: text.preview_role.clone(),
+            program: text.program_role.clone(),
+        })
+    }
+
+    /// Returns the label for one scene without touching the catalog again.
+    fn role(&self, state: &DesktopState, id: &str) -> SharedString {
+        match (
+            state.preview_scene() == Some(id),
+            state.program_scene() == Some(id),
+        ) {
+            (true, true) => self.preview_program.clone(),
+            (true, false) => self.preview.clone(),
+            (false, true) => self.program.clone(),
+            (false, false) => SharedString::new(),
+        }
     }
 }
 
 pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTransition) -> String {
-    let text = crate::i18n::catalog(locale);
-    match transition {
+    // Borrows the two strings it needs from the cached catalog instead of
+    // materializing a whole catalog for them.
+    crate::i18n::with_catalog(locale, |text| match transition {
         FrameTransition::Cut => text.cut.to_string(),
         FrameTransition::CrossFade { progress_milli } => {
             format!("{} {progress_milli}/1000", text.fade)
         }
-    }
+    })
 }

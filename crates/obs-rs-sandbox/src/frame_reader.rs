@@ -203,8 +203,11 @@ fn spawn_frame_reader(
     mut stream: StreamCaptureDevice<BufReader<std::process::ChildStdout>>,
     sender: SyncSender<FrameResult>,
 ) -> JoinHandle<()> {
+    // The stream device derives each frame's timestamp from its packet, so the
+    // requested start is the same value on every iteration.
+    let start = Timestamp::ZERO;
     thread::spawn(move || loop {
-        match stream.next_frame(Timestamp::ZERO) {
+        match stream.next_frame(start) {
             Ok(frame) => {
                 let end_of_stream = frame.is_none();
                 if sender.send(Ok(frame)).is_err() || end_of_stream {

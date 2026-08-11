@@ -141,6 +141,11 @@ impl AudioCallbackClock {
             });
         }
         self.correction_ppm = correction_ppm;
+        // The running numerator is only valid for one correction factor, so it
+        // is rebuilt from the frame total whenever the correction changes.
+        self.elapsed_numerator = (self.delivered_frames as i128)
+            .saturating_mul(1_000_000_000)
+            .saturating_mul(scale_for(correction_ppm));
         Ok(())
     }
 
@@ -178,20 +183,24 @@ impl AudioClock for AudioCallbackClock {
         // must never be blocked by the portable worker's pacing contract.
     }
 }
-fn corrected_audio_duration_nanos(
-    frames: u64,
-    sample_rate: u32,
-    correction_ppm: i32,
-) -> Result<u64, AudioError> {
-    let duration = u128::from(frames)
+/// Returns the numerator contribution of `frames` at one correction setting.
+///
+/// The value is `frames * 1e9 * (1e6 + correction_ppm)`; keeping the running sum
+/// in this un-divided form is what makes the per-callback update a single add.
+fn frame_numerator(frames: u64, correction_ppm: i32) -> Result<i128, AudioError> {
+    i128::from(frames)
         .checked_mul(1_000_000_000)
-        .ok_or(AudioError::ScheduleOverflow)?;
-    let duration = i128::try_from(duration).map_err(|_| AudioError::ScheduleOverflow)?;
-    let scale = i128::from(1_000_000_i32) + i128::from(correction_ppm);
-    let corrected = duration
-        .checked_mul(scale)
-        .ok_or(AudioError::ScheduleOverflow)?
-        / i128::from(1_000_000_i32)
-        / i128::from(sample_rate);
+        .and_then(|duration| duration.checked_mul(scale_for(correction_ppm)))
+        .ok_or(AudioError::ScheduleOverflow)
+}
+
+/// Converts an accumulated numerator into corrected elapsed nanoseconds.
+fn scale_elapsed_nanos(numerator: i128, sample_rate: u32) -> Result<u64, AudioError> {
+    let corrected = numerator / i128::from(1_000_000_i32) / i128::from(sample_rate);
     u64::try_from(corrected).map_err(|_| AudioError::ScheduleOverflow)
+}
+
+/// Returns the parts-per-million scale factor for one correction setting.
+const fn scale_for(correction_ppm: i32) -> i128 {
+    1_000_000_i128 + correction_ppm as i128
 }

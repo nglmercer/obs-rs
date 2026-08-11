@@ -53,7 +53,9 @@ pub fn discover_sandbox_manifest(
     })?;
     let (sender, receiver) = sync_channel(1);
     let reader = thread::spawn(move || {
-        let mut output = Vec::new();
+        // A manifest is bounded, so the buffer is sized up front instead of
+        // doubling its way there as the probe writes.
+        let mut output = Vec::with_capacity(MAX_SANDBOX_MANIFEST_BYTES + 1);
         let read_result = stdout
             .take((MAX_SANDBOX_MANIFEST_BYTES + 1) as u64)
             .read_to_end(&mut output)

@@ -1,7 +1,10 @@
-use std::{io::Write, net::TcpStream};
+use std::{
+    collections::VecDeque,
+    io::{BufWriter, Write},
+    net::TcpStream,
+};
 
 use crate::{
-    codec::{write_all, write_u64},
     error::OutputError,
     types::EncodedPacket,
     NETWORK_WRITE_TIMEOUT, TCP_PACKET_MAGIC,
@@ -9,10 +12,17 @@ use crate::{
 
 use super::PacketTransport;
 
+/// Most packets a [`MemoryPacketTransport`] retains for inspection.
+///
+/// The capture buffer exists for tests and diagnostics; bounding it stops a
+/// long-lived session from growing it without limit.
+pub const MAX_MEMORY_TRANSPORT_PACKETS: usize = 1_024;
+
 pub struct MemoryPacketTransport {
     connected: bool,
     fail_next_send: bool,
-    sent: Vec<EncodedPacket>,
+    sent: VecDeque<EncodedPacket>,
+    dropped: u64,
 }
 
 impl MemoryPacketTransport {
@@ -22,7 +32,8 @@ impl MemoryPacketTransport {
         Self {
             connected: false,
             fail_next_send: false,
-            sent: Vec::new(),
+            sent: VecDeque::new(),
+            dropped: 0,
         }
     }
 
@@ -31,10 +42,19 @@ impl MemoryPacketTransport {
         self.fail_next_send = true;
     }
 
-    /// Returns packets successfully delivered to the transport.
+    /// Returns packets successfully delivered to the transport, oldest first.
+    ///
+    /// At most [`MAX_MEMORY_TRANSPORT_PACKETS`] are retained; older ones are
+    /// discarded and counted by [`MemoryPacketTransport::dropped`].
     #[must_use]
-    pub fn sent(&self) -> &[EncodedPacket] {
-        &self.sent
+    pub fn sent(&self) -> impl ExactSizeIterator<Item = &EncodedPacket> {
+        self.sent.iter()
+    }
+
+    /// Returns how many captured packets were discarded to stay within bounds.
+    #[must_use]
+    pub const fn dropped(&self) -> u64 {
+        self.dropped
     }
 
     /// Returns whether the transport is connected.
@@ -67,7 +87,11 @@ impl PacketTransport for MemoryPacketTransport {
             self.connected = false;
             return Err(OutputError::Transport("injected send failure".to_owned()));
         }
-        self.sent.push(packet.clone());
+        if self.sent.len() == MAX_MEMORY_TRANSPORT_PACKETS {
+            let _ = self.sent.pop_front();
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        self.sent.push_back(packet.clone());
         Ok(())
     }
 
@@ -130,19 +154,56 @@ impl PacketTransport for TcpPacketTransport {
             .stream
             .as_mut()
             .ok_or_else(|| OutputError::Transport("TCP transport is disconnected".to_owned()))?;
-        let mut bytes = Vec::with_capacity(30 + packet.byte_len());
-        write_all(&mut bytes, TCP_PACKET_MAGIC)?;
-        bytes.push(packet.kind.tag());
-        bytes.push(u8::from(packet.is_keyframe()));
-        write_u64(&mut bytes, packet.timestamp().as_nanos())?;
-        write_u64(&mut bytes, packet.byte_len() as u64)?;
-        write_all(&mut bytes, packet.payload())?;
+        // The frame header is fixed-size, so it is staged on the stack and the
+        // payload is written straight from the packet: no per-packet heap
+        // buffer and no copy of the payload.
+        let header = packet_header(packet);
         stream
-            .write_all(&bytes)
+            .write_all(&header)
+            .and_then(|()| stream.write_all(packet.payload()))
+            .map_err(|error| OutputError::Transport(format!("TCP send failed: {error}")))
+    }
+
+    fn send_batch(
+        &mut self,
+        packets: &[EncodedPacket],
+        delivered: &mut usize,
+    ) -> Result<(), OutputError> {
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or_else(|| OutputError::Transport("TCP transport is disconnected".to_owned()))?;
+        // One buffered writer over the whole run collapses what used to be two
+        // syscalls per packet into as few as one for the batch.
+        let mut writer = BufWriter::new(stream);
+        for packet in packets {
+            let header = packet_header(packet);
+            writer
+                .write_all(&header)
+                .and_then(|()| writer.write_all(packet.payload()))
+                .map_err(|error| OutputError::Transport(format!("TCP send failed: {error}")))?;
+            *delivered += 1;
+        }
+        writer
+            .flush()
             .map_err(|error| OutputError::Transport(format!("TCP send failed: {error}")))
     }
 
     fn disconnect(&mut self) {
         self.stream = None;
     }
+}
+
+/// Bytes in one framed TCP packet header.
+const TCP_HEADER_BYTES: usize = 8 + 1 + 1 + 8 + 8;
+
+/// Builds the fixed-size frame header for one packet.
+fn packet_header(packet: &EncodedPacket) -> [u8; TCP_HEADER_BYTES] {
+    let mut header = [0_u8; TCP_HEADER_BYTES];
+    header[..8].copy_from_slice(TCP_PACKET_MAGIC);
+    header[8] = packet.kind.tag();
+    header[9] = u8::from(packet.is_keyframe());
+    header[10..18].copy_from_slice(&packet.timestamp().as_nanos().to_le_bytes());
+    header[18..26].copy_from_slice(&(packet.byte_len() as u64).to_le_bytes());
+    header
 }

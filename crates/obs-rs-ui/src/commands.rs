@@ -13,14 +13,13 @@ use super::{
 
 impl DesktopState {
     pub(crate) fn ensure_scene(&self, id: &str) -> Result<(), UiError> {
-        let profile = self
-            .project
-            .project()
-            .profiles()
-            .find(|profile| profile.id() == self.project.project().active_profile())
+        // One borrow of the project, one keyed profile lookup.
+        let project = self.project.project();
+        let profile = project
+            .active_profile_spec()
             .ok_or_else(|| UiError::UnknownSelection {
                 kind: "profile",
-                id: self.project.project().active_profile().to_string(),
+                id: project.active_profile().to_string(),
             })?;
         if profile.scenes().any(|scene| scene.id().as_str() == id) {
             Ok(())
@@ -49,11 +48,16 @@ impl DesktopState {
             };
             (preview_valid, program_valid, selected_valid)
         };
-        if !preview_valid {
-            self.preview_scene = first_scene_id(self.project.project());
-        }
-        if !program_valid {
-            self.program_scene = first_scene_id(self.project.project());
+        // `first_scene_id` is the same answer for preview and program, so it is
+        // resolved at most once instead of per invalid selection.
+        if !preview_valid || !program_valid {
+            let fallback = first_scene_id(self.project.project());
+            if !preview_valid {
+                self.preview_scene.clone_from(&fallback);
+            }
+            if !program_valid {
+                self.program_scene = fallback;
+            }
         }
         if !selected_valid {
             self.selected_source = self
@@ -70,14 +74,12 @@ impl DesktopState {
                 kind: "scene",
                 id: "none".to_owned(),
             })?;
-        let profile = self
-            .project
-            .project()
-            .profiles()
-            .find(|profile| profile.id() == self.project.project().active_profile())
+        let project = self.project.project();
+        let profile = project
+            .active_profile_spec()
             .ok_or_else(|| UiError::UnknownSelection {
                 kind: "profile",
-                id: self.project.project().active_profile().to_string(),
+                id: project.active_profile().to_string(),
             })?;
         let scene = profile
             .scenes()

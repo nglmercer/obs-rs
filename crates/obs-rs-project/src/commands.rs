@@ -281,11 +281,9 @@ fn set_source_filters(
     source: &str,
     filters: Vec<FrameFilter>,
 ) -> Result<(), ProjectError> {
-    let source = source_mut(project, profile, scene, source)?;
-    source.filters.clear();
-    for filter in filters {
-        source.add_filter(filter);
-    }
+    // Direct assignment: the caller already owns the complete chain, so there
+    // is nothing to gain from clearing and re-pushing element by element.
+    source_mut(project, profile, scene, source)?.filters = filters;
     Ok(())
 }
 

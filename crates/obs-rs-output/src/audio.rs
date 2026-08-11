@@ -68,7 +68,12 @@ impl AudioEncoder for RawAudioEncoder {
 /// An offline PCM16 WAV recording assembled from one fixed audio format.
 pub struct WavRecording {
     format: AudioFormat,
-    buffers: Vec<AudioBuffer>,
+    /// All appended samples, interleaved and contiguous.
+    ///
+    /// A `Vec<AudioBuffer>` scattered each block across its own allocation and
+    /// cost a cache miss per buffer during encoding; one flat buffer makes the
+    /// encode a linear walk.
+    samples: Vec<f32>,
     frames: usize,
 }
 
@@ -78,7 +83,7 @@ impl WavRecording {
     pub const fn new(format: AudioFormat) -> Self {
         Self {
             format,
-            buffers: Vec::new(),
+            samples: Vec::new(),
             frames: 0,
         }
     }
@@ -119,7 +124,7 @@ impl WavRecording {
             });
         }
         self.frames = frames;
-        self.buffers.push(buffer);
+        self.samples.extend(buffer.into_samples());
         Ok(())
     }
 
@@ -191,10 +196,8 @@ impl WavRecording {
         write_u16(&mut bytes, 16)?;
         write_all(&mut bytes, b"data")?;
         write_u32(&mut bytes, data_bytes_u32)?;
-        for buffer in &self.buffers {
-            for sample in buffer.samples() {
-                write_u16(&mut bytes, pcm16_bits(*sample))?;
-            }
+        for sample in &self.samples {
+            write_u16(&mut bytes, pcm16_bits(*sample))?;
         }
         Ok(bytes)
     }
@@ -210,17 +213,20 @@ pub struct Y4mRecording {
     pub(crate) frames: Vec<VideoFrame>,
     pub(crate) encoded_bytes: usize,
     pub(crate) last_timestamp: Option<Timestamp>,
+    /// The stream header, formatted once because the format never changes.
+    pub(crate) header: String,
 }
 
 impl Y4mRecording {
     /// Creates an empty Y4M recording for one fixed video format.
     #[must_use]
-    pub const fn new(format: VideoFormat) -> Self {
+    pub fn new(format: VideoFormat) -> Self {
         Self {
             format,
             frames: Vec::new(),
             encoded_bytes: 0,
             last_timestamp: None,
+            header: y4m_header(format),
         }
     }
 
@@ -254,15 +260,19 @@ impl Y4mRecording {
                 frames: self.frames.len() as u64 + 1,
             });
         }
-        let encoded_bytes = y4m_encoded_size(self.format, self.frames.len() + 1)?;
+        let encoded_bytes =
+            y4m_encoded_size(self.header.len(), self.format, self.frames.len() + 1)?;
         if encoded_bytes > MAX_RECORDING_BYTES {
             return Err(OutputError::TooLarge {
                 bytes: encoded_bytes as u64,
             });
         }
+        // The timestamp is already owned here; no need to re-read the vector's
+        // last element after moving the frame in.
+        let timestamp = frame.timestamp();
         self.frames.push(frame);
         self.encoded_bytes = encoded_bytes;
-        self.last_timestamp = self.frames.last().map(VideoFrame::timestamp);
+        self.last_timestamp = Some(timestamp);
         Ok(())
     }
 
@@ -292,9 +302,8 @@ impl Y4mRecording {
     /// error from the in-memory output path.
     pub fn encode(&self) -> Result<Vec<u8>, OutputError> {
         self.validate_format()?;
-        let header = y4m_header(self.format);
-        let mut bytes = Vec::with_capacity(self.encoded_bytes.max(header.len()));
-        write_all(&mut bytes, header.as_bytes())?;
+        let mut bytes = Vec::with_capacity(self.encoded_bytes.max(self.header.len()));
+        write_all(&mut bytes, self.header.as_bytes())?;
         for frame in &self.frames {
             write_y4m_frame(&mut bytes, frame);
         }
@@ -321,8 +330,11 @@ fn y4m_header(format: VideoFormat) -> String {
     )
 }
 
-fn y4m_encoded_size(format: VideoFormat, frames: usize) -> Result<usize, OutputError> {
-    let header_bytes = y4m_header(format).len();
+fn y4m_encoded_size(
+    header_bytes: usize,
+    format: VideoFormat,
+    frames: usize,
+) -> Result<usize, OutputError> {
     let frame_bytes = 6_usize
         .checked_add(format.pixel_count())
         .and_then(|bytes| bytes.checked_add(format.pixel_count() / 2))
@@ -340,36 +352,49 @@ fn write_y4m_frame(output: &mut Vec<u8>, frame: &VideoFrame) {
     output.extend_from_slice(b"FRAME\n");
     let format = frame.format();
     let width = usize::try_from(format.width()).unwrap_or(usize::MAX);
-    let height = usize::try_from(format.height()).unwrap_or(usize::MAX);
-    let mut luma = Vec::with_capacity(format.pixel_count());
-    for pixel in frame.pixels().chunks_exact(4) {
-        let (y, _, _) = rgb_to_yuv(pixel[0], pixel[1], pixel[2]);
-        luma.push(y);
+    let pixels = frame.pixels();
+    let row_bytes = width.saturating_mul(4);
+    if row_bytes == 0 {
+        return;
     }
-    output.extend_from_slice(&luma);
 
+    // Single pass: every pixel goes through `rgb_to_yuv` exactly once and all
+    // three components are kept. Rows are processed in vertical pairs so the
+    // 2x2 chroma average is available without a second conversion pass, and
+    // only two scanlines of luma are buffered at a time.
     let mut chroma_u = Vec::with_capacity(format.pixel_count() / 4);
     let mut chroma_v = Vec::with_capacity(format.pixel_count() / 4);
-    for block_y in (0..height).step_by(2) {
-        for block_x in (0..width).step_by(2) {
+    let mut luma_top = Vec::with_capacity(width);
+    let mut luma_bottom = Vec::with_capacity(width);
+
+    for rows in pixels.chunks_exact(row_bytes * 2) {
+        let (top, bottom) = rows.split_at(row_bytes);
+        luma_top.clear();
+        luma_bottom.clear();
+
+        for (top_pair, bottom_pair) in top.chunks_exact(8).zip(bottom.chunks_exact(8)) {
             let mut u_sum = 0_u32;
             let mut v_sum = 0_u32;
-            for y in block_y..block_y + 2 {
-                for x in block_x..block_x + 2 {
-                    let offset = (y * width + x) * 4;
-                    let (_, u, v) = rgb_to_yuv(
-                        frame.pixels()[offset],
-                        frame.pixels()[offset + 1],
-                        frame.pixels()[offset + 2],
-                    );
-                    u_sum += u32::from(u);
-                    v_sum += u32::from(v);
-                }
+            for pixel in top_pair.chunks_exact(4) {
+                let (y, u, v) = rgb_to_yuv(pixel[0], pixel[1], pixel[2]);
+                luma_top.push(y);
+                u_sum += u32::from(u);
+                v_sum += u32::from(v);
+            }
+            for pixel in bottom_pair.chunks_exact(4) {
+                let (y, u, v) = rgb_to_yuv(pixel[0], pixel[1], pixel[2]);
+                luma_bottom.push(y);
+                u_sum += u32::from(u);
+                v_sum += u32::from(v);
             }
             chroma_u.push(u8::try_from((u_sum + 2) / 4).unwrap_or(u8::MAX));
             chroma_v.push(u8::try_from((v_sum + 2) / 4).unwrap_or(u8::MAX));
         }
+
+        output.extend_from_slice(&luma_top);
+        output.extend_from_slice(&luma_bottom);
     }
+
     output.extend_from_slice(&chroma_u);
     output.extend_from_slice(&chroma_v);
 }
@@ -386,4 +411,69 @@ fn rgb_to_yuv(red: u8, green: u8, blue: u8) -> (u8, u8, u8) {
 
 fn clamp_byte(value: i32) -> u8 {
     u8::try_from(value.clamp(0, i32::from(u8::MAX))).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod y4m_equivalence_tests {
+    use super::{rgb_to_yuv, write_y4m_frame};
+    use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+
+    /// The original two-pass encoder, kept as the correctness oracle.
+    fn write_y4m_frame_two_pass(output: &mut Vec<u8>, frame: &VideoFrame) {
+        output.extend_from_slice(b"FRAME\n");
+        let format = frame.format();
+        let width = usize::try_from(format.width()).unwrap_or(usize::MAX);
+        let height = usize::try_from(format.height()).unwrap_or(usize::MAX);
+        let mut luma = Vec::with_capacity(format.pixel_count());
+        for pixel in frame.pixels().chunks_exact(4) {
+            let (y, _, _) = rgb_to_yuv(pixel[0], pixel[1], pixel[2]);
+            luma.push(y);
+        }
+        output.extend_from_slice(&luma);
+
+        let mut chroma_u = Vec::with_capacity(format.pixel_count() / 4);
+        let mut chroma_v = Vec::with_capacity(format.pixel_count() / 4);
+        for block_y in (0..height).step_by(2) {
+            for block_x in (0..width).step_by(2) {
+                let mut u_sum = 0_u32;
+                let mut v_sum = 0_u32;
+                for y in block_y..block_y + 2 {
+                    for x in block_x..block_x + 2 {
+                        let offset = (y * width + x) * 4;
+                        let (_, u, v) = rgb_to_yuv(
+                            frame.pixels()[offset],
+                            frame.pixels()[offset + 1],
+                            frame.pixels()[offset + 2],
+                        );
+                        u_sum += u32::from(u);
+                        v_sum += u32::from(v);
+                    }
+                }
+                chroma_u.push(u8::try_from((u_sum + 2) / 4).unwrap_or(u8::MAX));
+                chroma_v.push(u8::try_from((v_sum + 2) / 4).unwrap_or(u8::MAX));
+            }
+        }
+        output.extend_from_slice(&chroma_u);
+        output.extend_from_slice(&chroma_v);
+    }
+
+    #[test]
+    fn single_pass_yuv_matches_the_two_pass_encoder() {
+        for (width, height) in [(2_u32, 2_u32), (4, 2), (2, 4), (16, 10), (64, 36)] {
+            let rate = FrameRate::new(30, 1).expect("valid rate");
+            let format = VideoFormat::new(width, height, rate).expect("valid format");
+            let pixels: Vec<u8> = (0..format.rgba_bytes())
+                .map(|index| u8::try_from((index * 37) % 256).unwrap_or(0))
+                .collect();
+            let frame =
+                VideoFrame::new(format, Timestamp::ZERO, pixels).expect("valid frame");
+
+            let mut single = Vec::new();
+            write_y4m_frame(&mut single, &frame);
+            let mut two_pass = Vec::new();
+            write_y4m_frame_two_pass(&mut two_pass, &frame);
+
+            assert_eq!(single, two_pass, "{width}x{height}");
+        }
+    }
 }

@@ -104,7 +104,12 @@ impl Config {
     /// Serializes settings in sorted `key=value\n` order.
     #[must_use]
     pub fn serialize(&self) -> String {
-        let mut document = String::new();
+        // Exact reservation: each entry contributes its key, '=', its value,
+        // and a newline, so the document never has to grow mid-write.
+        let capacity = self.entries.iter().fold(0_usize, |total, (key, value)| {
+            total.saturating_add(key.len() + value.len() + 2)
+        });
+        let mut document = String::with_capacity(capacity);
         for (key, value) in &self.entries {
             document.push_str(key);
             document.push('=');

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use obs_rs_util::Identifier;
 
@@ -14,8 +14,11 @@ pub(crate) fn validate_source_kinds(source_kinds: &[Identifier]) -> Result<(), S
     if source_kinds.len() > MAX_SANDBOX_SOURCE_KINDS {
         return Err(invalid_manifest("too many source kinds"));
     }
-    for (index, kind) in source_kinds.iter().enumerate() {
-        if source_kinds[..index].contains(kind) {
+    // Hash-set membership instead of rescanning the prefix per element, which
+    // made the duplicate check quadratic in the kind count.
+    let mut seen = HashSet::with_capacity(source_kinds.len());
+    for kind in source_kinds {
+        if !seen.insert(kind) {
             return Err(invalid_manifest(format!(
                 "source kind {kind} is duplicated"
             )));
