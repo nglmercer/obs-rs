@@ -155,6 +155,8 @@ pub(crate) fn install_monitor_window(
     });
 
     install_open(ui, state, &controller);
+    #[cfg(target_os = "linux")]
+    install_portal_token(ui, state, renderer);
     install_selection(state, &controller);
     install_commit(ui, state, renderer, &controller);
     Ok(controller)
@@ -179,6 +181,13 @@ fn install_open(
             ui.set_status_message(crate::i18n::with_catalog(locale, |text| {
                 text.monitor_ui.not_a_screen_source.clone()
             }));
+            return;
+        }
+        // On Wayland the compositor owns the picker: OBS-RS asks the portal and
+        // stores the token it hands back, rather than showing a list of screens
+        // it is not allowed to enumerate.
+        if crate::kind_uses_portal(&kind) {
+            share_through_portal(&ui, &state, &selected);
             return;
         }
         let window = &controller.window;
@@ -261,6 +270,99 @@ fn install_commit(
         };
         ui.set_status_message(format!("{applied}{label}").into());
         let _ = window.hide();
+    });
+}
+
+/// Asks the compositor to share a screen, off the event loop.
+///
+/// The portal dialog waits for a person, so running the handshake inline would
+/// freeze the studio window for as long as the user takes to answer. The
+/// handshake therefore runs on its own thread and reports back through
+/// `apply-portal-token`, which is wired to the project on the UI thread.
+#[cfg(target_os = "linux")]
+fn share_through_portal(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>, source: &str) {
+    use obs_rs_capture::{open_screencast, CursorMode};
+
+    let cursor = source_settings_document(state, source)
+        .as_deref()
+        .and_then(|document| Config::parse(document).ok())
+        .and_then(|settings| settings.get("capture_cursor").map(str::to_owned))
+        .is_none_or(|value| value.trim() != "false");
+    let waiting = crate::i18n::with_catalog(state.borrow().locale(), |text| {
+        text.monitor_ui.portal_waiting.clone()
+    });
+    ui.set_status_message(waiting);
+
+    let weak = ui.as_weak();
+    let handshake = std::thread::Builder::new()
+        .name("obs-rs-screencast".to_owned())
+        .spawn(move || {
+            let outcome = match open_screencast(
+                None,
+                if cursor {
+                    CursorMode::Embedded
+                } else {
+                    CursorMode::Hidden
+                },
+            ) {
+                // The token outlives this session, so it is read before the
+                // session is dropped and the compositor's stream stops.
+                Ok(session) => session.restore_token().map_or_else(
+                    || Err("the compositor shared a screen but would not remember it".to_owned()),
+                    |token| Ok(token.to_owned()),
+                ),
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match outcome {
+                    Ok(token) => ui.invoke_apply_portal_token(token.into()),
+                    Err(error) => {
+                        ui.set_status_message(
+                            format!("Screen sharing was not started: {error}").into(),
+                        );
+                    }
+                }
+            });
+        });
+    if let Err(error) = handshake {
+        ui.set_status_message(format!("Screen sharing was not started: {error}").into());
+    }
+}
+
+/// Stores a portal token on the selected source, on the UI thread.
+#[cfg(target_os = "linux")]
+fn install_portal_token(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let weak = ui.as_weak();
+    let state = Rc::clone(state);
+    let renderer = Rc::clone(renderer);
+    ui.on_apply_portal_token(move |token| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let source = ui.get_selected_source().to_string();
+        let document = source_settings_document(&state, &source)
+            .as_deref()
+            .and_then(|document| Config::parse(document).ok());
+        let Some(mut settings) = document else {
+            ui.set_status_message("Screen sharing failed: source settings are invalid".into());
+            return;
+        };
+        if settings.set("restore_token", token.as_str()).is_err() {
+            ui.set_status_message("Screen sharing failed: the token could not be stored".into());
+            return;
+        }
+        apply_source_settings_and_refresh(&ui, &state, &renderer, &settings.serialize());
+        let applied = crate::i18n::with_catalog(state.borrow().locale(), |text| {
+            text.monitor_ui.portal_applied.clone()
+        });
+        ui.set_status_message(applied);
     });
 }
 

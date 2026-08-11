@@ -8,6 +8,8 @@ use obs_rs_plugin_api::{PluginError, SourceFactory};
 
 use crate::portable::ColorSourceFactory;
 #[cfg(target_os = "linux")]
+use crate::wayland::WaylandCaptureFactory;
+#[cfg(target_os = "linux")]
 use crate::x11::X11CaptureFactory;
 
 pub(crate) fn build() -> Result<Vec<Arc<dyn SourceFactory>>, PluginError> {
@@ -28,5 +30,7 @@ pub(crate) fn build() -> Result<Vec<Arc<dyn SourceFactory>>, PluginError> {
     ];
     #[cfg(target_os = "linux")]
     factories.push(Arc::new(X11CaptureFactory::new()?));
+    #[cfg(target_os = "linux")]
+    factories.push(Arc::new(WaylandCaptureFactory::new()?));
     Ok(factories)
 }

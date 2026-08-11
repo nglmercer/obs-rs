@@ -14,6 +14,7 @@ mod fixtures;
 mod i18n;
 mod output;
 mod preview;
+mod properties;
 mod refresh;
 mod settings;
 mod view;
@@ -33,8 +34,8 @@ pub(crate) use callbacks::{
     install_source_properties_window, start_preview_timer, PeerWindows,
 };
 pub(crate) use fixtures::{
-    capture_devices, initial_project, kind_selects_monitor, platform_capture_summary,
-    source_settings,
+    capture_devices, initial_project, kind_runs_in_this_session, kind_selects_monitor,
+    kind_uses_portal, platform_capture_summary, source_settings,
 };
 pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewRenderer};
@@ -44,8 +45,9 @@ pub(crate) use refresh::{
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
     AddSourceText, AddSourceWindow, I18n, LocaleOption, MainWindow, MixerRow, MonitorRow,
-    MonitorText, MonitorWindow, Palette, ProfileRow, SceneRow, SettingsText, SettingsWindow,
-    SourceCandidate, SourceKindRow, SourcePropertiesWindow, SourceRow, ThemeTokens, UiText,
+    MonitorText, MonitorWindow, Palette, ProfileRow, PropertyRow, PropertyText, SceneRow,
+    SettingsText, SettingsWindow, SourceCandidate, SourceKindRow, SourcePropertiesWindow,
+    SourceRow, ThemeTokens, UiText,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {

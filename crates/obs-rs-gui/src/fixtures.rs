@@ -88,16 +88,56 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
             settings.set("display", &display)?;
         }
         settings.set("device_id", "x11-screen-0")?;
+        settings.set("monitor", "")?;
+    }
+    if kind == "wayland_screen_capture" {
+        // The portal issues the token on the first share, so it starts empty.
+        settings.set("restore_token", "")?;
+        settings.set("capture_cursor", "true")?;
     }
     Ok(settings)
 }
 
 /// Source kinds whose frames come from one selectable display.
-pub(crate) const MONITOR_SOURCE_KINDS: [&str; 1] = ["x11_screen_capture"];
+pub(crate) const MONITOR_SOURCE_KINDS: [&str; 2] = ["x11_screen_capture", "wayland_screen_capture"];
 
 /// Returns whether `kind` reads a display the user can choose.
 pub(crate) fn kind_selects_monitor(kind: &str) -> bool {
     MONITOR_SOURCE_KINDS.contains(&kind.trim())
+}
+
+/// Returns whether `kind` picks its display through the desktop portal.
+///
+/// On Wayland the compositor owns the picker, so OBS-RS asks the portal
+/// instead of drawing a monitor list it has no way to enumerate.
+pub(crate) fn kind_uses_portal(kind: &str) -> bool {
+    kind.trim() == "wayland_screen_capture"
+}
+
+/// Returns whether a source kind can produce frames in this session.
+///
+/// Under Wayland the X11 adapter only ever sees Xwayland's own surfaces, which
+/// is a black frame for a desktop capture; under X11 there is no screen-cast
+/// portal to ask. Offering the wrong one is how a screen source ends up
+/// showing nothing, so the Add Source list hides it instead.
+pub(crate) fn kind_runs_in_this_session(kind: &str) -> bool {
+    match kind.trim() {
+        "wayland_screen_capture" => wayland_session(),
+        "x11_screen_capture" => !wayland_session(),
+        _ => true,
+    }
+}
+
+/// Returns whether this process is running under a Wayland compositor.
+fn wayland_session() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        obs_rs_capture::wayland_session_available()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
 }
 
 /// One selectable display, independent of the platform that reported it.

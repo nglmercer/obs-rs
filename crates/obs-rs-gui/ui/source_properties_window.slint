@@ -1,7 +1,66 @@
-import { Button, ComboBox, LineEdit, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, SpinBox, TextEdit } from "std-widgets.slint";
 import { FieldHeading, MutedText } from "theme.slint";
+import { SettingsGroup, SettingRow, SettingHint, ColorSwatch } from "settings_widgets.slint";
+import { PropertyRow } from "models.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
+
+// One property, rendered as the widget its kind calls for. Keeping the choice
+// here rather than in Rust means a new property is data, not new UI.
+component PropertyField inherits VerticalLayout {
+    in property <PropertyRow> field;
+    callback edited(string, string);
+    spacing: 2px;
+
+    // 0 text · 1 number · 2 toggle · 3 choice · 4 colour
+    if field.kind == 0 : SettingRow {
+        label: root.field.label;
+        LineEdit {
+            text: root.field.text;
+            edited => { root.edited(root.field.key, self.text); }
+            horizontal-stretch: 1;
+        }
+    }
+    if field.kind == 1 : SettingRow {
+        label: root.field.label;
+        SpinBox {
+            value: root.field.number;
+            minimum: root.field.minimum;
+            maximum: root.field.maximum;
+            edited(value) => { root.edited(root.field.key, value); }
+            horizontal-stretch: 1;
+        }
+    }
+    if field.kind == 2 : SettingRow {
+        label: root.field.label;
+        CheckBox {
+            checked: root.field.toggle;
+            toggled => { root.edited(root.field.key, self.checked ? "true" : "false"); }
+            horizontal-stretch: 1;
+        }
+    }
+    if field.kind == 3 : SettingRow {
+        label: root.field.label;
+        ComboBox {
+            model: root.field.choices;
+            current-index: root.field.choice_index;
+            // A choice reports its index; Rust maps it back to the stored value.
+            selected(value) => { root.edited(root.field.key, self.current-index); }
+            horizontal-stretch: 1;
+        }
+    }
+    if field.kind == 4 : SettingRow {
+        label: root.field.label;
+        ColorSwatch { value: root.field.swatch; }
+        LineEdit {
+            text: root.field.text;
+            placeholder-text: "#405070FF";
+            edited => { root.edited(root.field.key, self.text); }
+            horizontal-stretch: 1;
+        }
+    }
+    if field.hint != "" : SettingHint { text: root.field.hint; }
+}
 
 // The OBS source properties dialog as its own window, so it can be moved aside
 // while the canvas is watched. Edits stay local until OK, which is what lets
@@ -9,25 +68,25 @@ import { Palette } from "palette.slint";
 export component SourcePropertiesWindow inherits Window {
     title: I18n.text.add_source_ui.properties_for + "'" + root.source-name + "'";
     width: 720px;
-    height: 560px;
+    height: 640px;
     background: Palette.tokens.window-bg;
 
     in property <string> source-name;
     in property <string> source-kind;
+    in property <string> source-kind-label;
     in property <string> capture-capabilities;
-    in property <[string]> capture-device-names;
-    in-out property <int> capture-device-index;
-    in property <bool> capture-device-visible;
+    in property <[PropertyRow]> property-rows;
     in property <bool> monitor-visible;
     in property <string> monitor-summary;
     in-out property <string> source-settings;
     in-out property <string> source-transform;
     in-out property <string> source-filters;
+    in-out property <bool> show-advanced: false;
 
     callback accept-properties();
     callback cancel-properties();
     callback restore-defaults();
-    callback select-capture-device(int);
+    callback edit-property(string, string);
     callback open-monitor-window();
 
     VerticalLayout {
@@ -35,67 +94,71 @@ export component SourcePropertiesWindow inherits Window {
         spacing: 10px;
 
         Text {
-            text: root.source-name + "  ·  " + root.source-kind;
+            text: root.source-name + "  ·  " + root.source-kind-label;
             color: Palette.tokens.text-strong;
             font-size: 14px;
             font-weight: 700;
         }
 
-        Rectangle {
+        ScrollView {
             vertical-stretch: 1;
-            background: Palette.tokens.panel-bg;
-            border-width: 1px;
-            border-color: Palette.tokens.border;
             VerticalLayout {
-                padding: 12px;
-                spacing: 8px;
+                spacing: 12px;
+                alignment: start;
 
-                FieldHeading { text: I18n.text.source_settings; }
-                if root.capture-device-visible : FieldHeading {
-                    text: I18n.text.capture_device;
-                }
-                if root.capture-device-visible : ComboBox {
-                    model: root.capture-device-names;
-                    current-index: root.capture-device-index;
-                    selected(value) => { root.select-capture-device(self.current-index); }
-                    height: 30px;
-                }
-                if root.capture-device-visible : MutedText {
-                    text: I18n.text.capture_device_hint;
-                }
-                // A screen source is configured by display rather than by
-                // device string, so the picker sits next to the device list.
-                if root.monitor-visible : HorizontalLayout {
-                    height: 30px;
-                    spacing: 8px;
-                    Button {
-                        text: I18n.text.monitor_ui.select_monitor;
-                        width: 180px;
-                        clicked => { root.open-monitor-window(); }
+                SettingsGroup {
+                    title: I18n.text.property_ui.settings_group;
+                    for entry in root.property-rows : PropertyField {
+                        field: entry;
+                        edited(key, value) => { root.edit-property(key, value); }
                     }
-                    MutedText {
-                        text: root.monitor-summary;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
+                    // A display-backed source is pointed at a screen through
+                    // the picker rather than by typing a monitor name.
+                    if root.monitor-visible : SettingRow {
+                        label: I18n.text.monitor_ui.select_monitor;
+                        Button {
+                            text: root.monitor-summary;
+                            clicked => { root.open-monitor-window(); }
+                            horizontal-stretch: 1;
+                        }
                     }
                 }
-                TextEdit {
-                    text <=> root.source-settings;
-                    placeholder-text: "width=640\nheight=360\ncolor=#202840FF";
-                    vertical-stretch: 1;
-                    min-height: 150px;
+
+                SettingsGroup {
+                    title: I18n.text.transform;
+                    SettingRow {
+                        label: I18n.text.transform;
+                        LineEdit {
+                            text <=> root.source-transform;
+                            placeholder-text: "1000,1000,0,0,0,0,255";
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    SettingHint { text: I18n.text.property_ui.transform_hint; }
+                    SettingRow {
+                        label: I18n.text.filters_prefix;
+                        LineEdit {
+                            text <=> root.source-filters;
+                            placeholder-text: "gray,brightness:750,opacity:200";
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    SettingHint { text: I18n.text.property_ui.filters_hint; }
                 }
-                FieldHeading { text: I18n.text.transform; }
-                LineEdit {
-                    text <=> root.source-transform;
-                    placeholder-text: "1000,1000,0,0,0,0,255";
+
+                SettingsGroup {
+                    title: I18n.text.property_ui.advanced_group;
+                    CheckBox {
+                        text: I18n.text.property_ui.show_advanced;
+                        checked <=> root.show-advanced;
+                    }
+                    if root.show-advanced : TextEdit {
+                        text <=> root.source-settings;
+                        placeholder-text: "width=640\nheight=360\ncolor=#202840FF";
+                        min-height: 140px;
+                    }
+                    MutedText { text: root.capture-capabilities; }
                 }
-                FieldHeading { text: I18n.text.filters_prefix; }
-                LineEdit {
-                    text <=> root.source-filters;
-                    placeholder-text: "gray,brightness:750,opacity:200";
-                }
-                MutedText { text: root.capture-capabilities; }
             }
         }
 

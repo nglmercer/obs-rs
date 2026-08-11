@@ -9,7 +9,7 @@ use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFram
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
 #[test]
@@ -499,12 +499,11 @@ fn render_source_properties_window() {
     window.set_source_name("Background".into());
     window.set_source_kind("color_source".into());
     window.set_source_settings("color=#405070FF\nheight=360\nwidth=640\n".into());
-    window.set_capture_device_names(ModelRc::new(VecModel::from(vec![
-        SharedString::from("Camera 0"),
-        SharedString::from("Camera 1"),
-    ])));
-    window.set_capture_device_index(0);
-    window.set_capture_device_visible(true);
+    window.set_property_rows(ModelRc::new(VecModel::from(crate::properties::rows(
+        "color_source",
+        "color=#405070FF\nheight=360\nwidth=640\n",
+        UiLocale::English,
+    ))));
     window.set_source_transform("1000,1000,0,0,0,0,255".into());
     window.show().expect("properties window should show");
     for locale in UiLocale::supported() {
@@ -561,12 +560,48 @@ fn exercise_add_source_window(
         "create adds exactly one source to the current scene"
     );
 
-    // Copying an existing source in must not collide with the id just created.
+    // A source the current scene already shows is never offered: adding it
+    // again would only produce a second identical row. The fixture's scenes all
+    // hold an identically named background, so a distinct source is planted in
+    // another scene to have something that *can* be added.
+    let donor = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| {
+            profile
+                .scenes()
+                .map(|value| value.id().as_str().to_owned())
+                .find(|value| *value != scene)
+        })
+        .expect("the project has a second scene");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: donor.clone(),
+            source: SourceSpec::new(
+                "overlay",
+                "color_source",
+                "Overlay",
+                source_settings("color_source").expect("colour defaults"),
+            )
+            .expect("overlay source"),
+        }))
+        .expect("plant a source in another scene");
+
     crate::callbacks::populate_add_source_window(&controller, state, renderer, "color_source");
     let candidate = window
         .get_candidates()
-        .row_data(0)
-        .expect("at least one colour source exists");
+        .iter()
+        .find(|row| row.name == "Overlay")
+        .expect("the planted source is offered");
+    assert_ne!(
+        candidate.scene.as_str(),
+        scene.as_str(),
+        "candidates never come from the target scene"
+    );
     window.invoke_toggle_candidate(candidate.id.clone());
     assert_eq!(window.get_selected_count(), 1);
     let before = scene_source_count(state, &scene);
@@ -582,10 +617,19 @@ fn exercise_add_source_window(
         "the selection is cleared once it has been added"
     );
 
+    // Once it is in the scene, the same source is no longer a candidate.
+    crate::callbacks::populate_add_source_window(&controller, state, renderer, "color_source");
+    assert!(
+        !window
+            .get_candidates()
+            .iter()
+            .any(|row| row.id == candidate.id),
+        "a source that is already in the scene must not be offered again"
+    );
+
     // "Recently added" lists existing sources only, so it offers no creation.
     crate::callbacks::populate_add_source_window(&controller, state, renderer, "@recent");
     assert!(!window.get_can_create());
-    assert!(window.get_candidates().row_count() >= 2);
 
     window.hide().expect("add source window should hide");
 }
@@ -630,9 +674,14 @@ fn exercise_capture_device_properties_window(
     ui.invoke_open_source_properties_window();
     let window =
         crate::callbacks::source_properties::SourcePropertiesController::window(&controller);
-    assert!(window.get_capture_device_visible());
-    assert!(window.get_capture_device_names().row_count() >= 1);
-    window.invoke_select_capture_device(0);
+    // The camera kind renders a device drop-down as its first typed row.
+    let device_row = window
+        .get_property_rows()
+        .row_data(0)
+        .expect("the camera form has a device row");
+    assert_eq!(device_row.key, "device_id");
+    assert!(device_row.choices.row_count() >= 1);
+    window.invoke_edit_property(device_row.key.clone(), "0".into());
     assert!(window.get_source_settings().contains("device_id="));
     window.invoke_accept_properties();
 

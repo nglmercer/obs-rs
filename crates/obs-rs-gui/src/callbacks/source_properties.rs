@@ -1,24 +1,26 @@
 //! Controller for the standalone source properties window.
 //!
 //! The window edits copies of the selected source's settings, transform, and
-//! filter documents; the three existing apply paths run only on OK.
+//! filter documents; the three existing apply paths run only on OK. Editing is
+//! done through the typed form in [`crate::properties`], with the raw document
+//! kept behind the dialog's advanced section as the escape hatch for anything
+//! the form does not model.
 
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_config::Config;
-use obs_rs_ui::DesktopState;
-use slint::ComponentHandle;
+use obs_rs_ui::{DesktopState, UiLocale};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
     apply_source_filters_and_refresh, apply_source_settings_and_refresh,
-    apply_source_transform_and_refresh, capture_devices, kind_selects_monitor, source_settings,
-    I18n, MainWindow, Palette, PreviewRenderer, SourcePropertiesWindow,
+    apply_source_transform_and_refresh, kind_selects_monitor, properties, source_settings, I18n,
+    MainWindow, Palette, PreviewRenderer, SourcePropertiesWindow,
 };
 
 /// Owns the properties window.
 pub(crate) struct SourcePropertiesController {
     window: SourcePropertiesWindow,
-    capture_device_ids: RefCell<Vec<String>>,
 }
 
 impl SourcePropertiesController {
@@ -31,16 +33,23 @@ impl SourcePropertiesController {
     pub(crate) fn window(&self) -> &SourcePropertiesWindow {
         &self.window
     }
+
+    /// Rebuilds the typed rows from the window's current settings draft.
+    fn refresh_rows(&self, locale: UiLocale) {
+        let window = &self.window;
+        let kind = window.get_source_kind().to_string();
+        let document = window.get_source_settings().to_string();
+        window.set_property_rows(ModelRc::new(VecModel::from(properties::rows(
+            &kind, &document, locale,
+        ))));
+        window.set_monitor_summary(monitor_summary(&document, locale));
+    }
 }
 
 /// Creates the properties window and wires it to the studio window.
 ///
 /// The returned controller must outlive the event loop; dropping it closes the
 /// window.
-#[allow(
-    clippy::too_many_lines,
-    reason = "the properties dialog keeps all draft callbacks in one lifecycle boundary"
-)]
 pub(crate) fn install_source_properties_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -48,12 +57,22 @@ pub(crate) fn install_source_properties_window(
 ) -> Result<Rc<SourcePropertiesController>, slint::PlatformError> {
     let controller = Rc::new(SourcePropertiesController {
         window: SourcePropertiesWindow::new()?,
-        capture_device_ids: RefCell::new(Vec::new()),
     });
 
+    install_open(ui, state, &controller);
+    install_editing(ui, state, &controller);
+    install_commit(ui, state, renderer, &controller);
+    Ok(controller)
+}
+
+fn install_open(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &Rc<SourcePropertiesController>,
+) {
     let weak = ui.as_weak();
-    let open_state = Rc::clone(state);
-    let open_controller = Rc::clone(&controller);
+    let state = Rc::clone(state);
+    let controller = Rc::clone(controller);
     ui.on_open_source_properties_window(move || {
         let Some(ui) = weak.upgrade() else {
             return;
@@ -62,53 +81,86 @@ pub(crate) fn install_source_properties_window(
         if selected.is_empty() {
             return;
         }
-        let window = &open_controller.window;
+        let locale = state.borrow().locale();
+        let window = &controller.window;
         window
             .global::<I18n>()
-            .set_text(crate::i18n::catalog(open_state.borrow().locale()));
-        open_controller.set_tokens(ui.global::<Palette>().get_tokens());
+            .set_text(crate::i18n::catalog(locale));
+        controller.set_tokens(ui.global::<Palette>().get_tokens());
+        let kind = source_kind(&state, &selected);
         window.set_source_name(selected.as_str().into());
-        window.set_source_kind(source_kind(&open_state, &selected).into());
+        window.set_source_kind(kind.as_str().into());
+        window.set_source_kind_label(kind_label(&kind, locale));
         window.set_capture_capabilities(ui.get_capture_capabilities());
-        // Start from what the studio last synced from the project, then expose
-        // the device selector for screen/window/camera sources.
-        let settings = ui.get_source_settings();
-        window.set_source_settings(settings.clone());
-        let devices = capture_devices(window.get_source_kind().as_str());
-        open_controller
-            .capture_device_ids
-            .replace(devices.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
-        window.set_capture_device_names(slint::ModelRc::new(slint::VecModel::from(
-            devices
-                .iter()
-                .map(|(_, name)| slint::SharedString::from(name.as_str()))
-                .collect::<Vec<_>>(),
-        )));
-        window.set_capture_device_visible(!devices.is_empty());
-        window.set_capture_device_index(selected_capture_device_index(
-            settings.as_str(),
-            &open_controller.capture_device_ids.borrow(),
-        ));
-        // A display-backed source is configured through the picker rather than
-        // by typing a monitor name into the settings document.
-        let selects_monitor = kind_selects_monitor(window.get_source_kind().as_str());
-        window.set_monitor_visible(selects_monitor);
-        window.set_monitor_summary(if selects_monitor {
-            monitor_summary(settings.as_str(), open_state.borrow().locale())
-        } else {
-            slint::SharedString::new()
-        });
+        // Start from what the studio last synced from the project.
+        window.set_source_settings(ui.get_source_settings());
+        window.set_monitor_visible(kind_selects_monitor(&kind));
         window.set_source_transform(ui.get_source_transform());
         window.set_source_filters(ui.get_source_filters());
+        controller.refresh_rows(locale);
         if let Err(error) = window.show() {
             ui.set_status_message(format!("Properties window: {error}").into());
         }
     });
+}
 
+fn install_editing(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &Rc<SourcePropertiesController>,
+) {
+    let edit_state = Rc::clone(state);
+    let edit_controller = Rc::clone(controller);
+    controller.window.on_edit_property(move |key, value| {
+        let window = &edit_controller.window;
+        let kind = window.get_source_kind().to_string();
+        let document = window.get_source_settings().to_string();
+        // An edit the schema cannot represent leaves the draft untouched
+        // instead of replacing it with a partial document.
+        if let Some(updated) = properties::apply(&kind, &document, key.as_str(), value.as_str()) {
+            window.set_source_settings(updated.into());
+            edit_controller.refresh_rows(edit_state.borrow().locale());
+        }
+    });
+
+    // The picker edits the project directly, so the properties window hands the
+    // request to the studio and closes its own draft to avoid two writers.
     let weak = ui.as_weak();
-    let accept_state = Rc::clone(state);
-    let accept_renderer = Rc::clone(renderer);
-    let accept_controller = Rc::clone(&controller);
+    let monitor_controller = Rc::clone(controller);
+    controller.window.on_open_monitor_window(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let _ = monitor_controller.window.hide();
+        ui.invoke_open_monitor_window();
+    });
+
+    let defaults_state = Rc::clone(state);
+    let defaults_controller = Rc::clone(controller);
+    controller.window.on_restore_defaults(move || {
+        let window = &defaults_controller.window;
+        let kind = window.get_source_kind().to_string();
+        if let Ok(defaults) = source_settings(&kind) {
+            window.set_source_settings(defaults.serialize().into());
+            defaults_controller.refresh_rows(defaults_state.borrow().locale());
+        }
+        // The identity transform and an empty filter chain are the documented
+        // defaults for a freshly created source.
+        window.set_source_transform("1000,1000,0,0,0,0,255".into());
+        window.set_source_filters(String::new().into());
+    });
+}
+
+fn install_commit(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    controller: &Rc<SourcePropertiesController>,
+) {
+    let weak = ui.as_weak();
+    let state = Rc::clone(state);
+    let renderer = Rc::clone(renderer);
+    let accept_controller = Rc::clone(controller);
     controller.window.on_accept_properties(move || {
         let Some(ui) = weak.upgrade() else {
             return;
@@ -121,93 +173,33 @@ pub(crate) fn install_source_properties_window(
         ui.set_source_filters(window.get_source_filters());
         apply_source_settings_and_refresh(
             &ui,
-            &accept_state,
-            &accept_renderer,
+            &state,
+            &renderer,
             window.get_source_settings().as_str(),
         );
         apply_source_transform_and_refresh(
             &ui,
-            &accept_state,
-            &accept_renderer,
+            &state,
+            &renderer,
             window.get_source_transform().as_str(),
         );
         apply_source_filters_and_refresh(
             &ui,
-            &accept_state,
-            &accept_renderer,
+            &state,
+            &renderer,
             window.get_source_filters().as_str(),
         );
         let _ = window.hide();
     });
 
-    let cancel_controller = Rc::clone(&controller);
+    let cancel_controller = Rc::clone(controller);
     controller.window.on_cancel_properties(move || {
         let _ = cancel_controller.window.hide();
     });
-
-    let selection_controller = Rc::clone(&controller);
-    controller.window.on_select_capture_device(move |index| {
-        let window = &selection_controller.window;
-        let Some(device_id) = selection_controller
-            .capture_device_ids
-            .borrow()
-            .get(usize::try_from(index).unwrap_or(0))
-            .cloned()
-        else {
-            return;
-        };
-        let Ok(mut settings) = Config::parse(window.get_source_settings().as_str()) else {
-            return;
-        };
-        let kind = window.get_source_kind();
-        if kind.as_str() == "x11_screen_capture" {
-            // The X11 adapter consumes a display string, while the catalog
-            // gives the stable descriptor ID. Keep both in the document so it
-            // remains inspectable and can be upgraded by a future provider.
-            if let Ok(display) = std::env::var("DISPLAY") {
-                let _ = settings.set("display", &display);
-            }
-        }
-        if settings.set("device_id", &device_id).is_ok() {
-            window.set_source_settings(settings.serialize().into());
-        }
-    });
-
-    // The picker edits the project directly, so the properties window hands the
-    // request to the studio and closes its own draft to avoid two writers.
-    let weak = ui.as_weak();
-    let monitor_controller = Rc::clone(&controller);
-    controller.window.on_open_monitor_window(move || {
-        let Some(ui) = weak.upgrade() else {
-            return;
-        };
-        let _ = monitor_controller.window.hide();
-        ui.invoke_open_monitor_window();
-    });
-
-    let defaults_controller = Rc::clone(&controller);
-    controller.window.on_restore_defaults(move || {
-        let window = &defaults_controller.window;
-        let kind = window.get_source_kind().to_string();
-        if let Ok(defaults) = source_settings(&kind) {
-            let document = defaults.serialize();
-            window.set_source_settings(document.clone().into());
-            window.set_capture_device_index(selected_capture_device_index(
-                &document,
-                &defaults_controller.capture_device_ids.borrow(),
-            ));
-        }
-        // The identity transform and an empty filter chain are the documented
-        // defaults for a freshly created source.
-        window.set_source_transform("1000,1000,0,0,0,0,255".into());
-        window.set_source_filters(String::new().into());
-    });
-
-    Ok(controller)
 }
 
-/// Describes the display a screen source is pointed at, for the properties row.
-fn monitor_summary(document: &str, locale: obs_rs_ui::UiLocale) -> slint::SharedString {
+/// Describes the display a screen source is pointed at, for the picker button.
+fn monitor_summary(document: &str, locale: UiLocale) -> SharedString {
     let monitor = Config::parse(document)
         .ok()
         .and_then(|settings| settings.get("monitor").map(str::to_owned))
@@ -219,15 +211,11 @@ fn monitor_summary(document: &str, locale: obs_rs_ui::UiLocale) -> slint::Shared
     }
 }
 
-fn selected_capture_device_index(document: &str, ids: &[String]) -> i32 {
-    let selected = Config::parse(document)
-        .ok()
-        .and_then(|settings| settings.get("device_id").map(str::to_owned));
-    selected
-        .as_deref()
-        .and_then(|id| ids.iter().position(|candidate| candidate == id))
-        .and_then(|index| i32::try_from(index).ok())
-        .unwrap_or(0)
+/// Returns the translated name of a source kind, falling back to its id.
+fn kind_label(kind: &str, locale: UiLocale) -> SharedString {
+    crate::i18n::with_catalog(locale, |text| {
+        crate::callbacks::add_source::kind_label(&text.add_source_ui, kind)
+    })
 }
 
 /// Looks up the kind of the selected source in the preview scene.

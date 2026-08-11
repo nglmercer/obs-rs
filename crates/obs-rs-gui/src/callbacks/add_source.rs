@@ -219,6 +219,10 @@ fn refresh_window(
         .borrow()
         .runtime
         .source_kinds()
+        // A screen kind that cannot work in this session is hidden rather than
+        // offered: the X11 adapter under Wayland only sees Xwayland's own
+        // surfaces, which is a black frame, and the portal needs a compositor.
+        .filter(|kind| crate::kind_runs_in_this_session(kind.as_str()))
         .map(|kind| SourceKindRow {
             id: kind.as_str().into(),
             label: kind_label(&text, kind.as_str()),
@@ -231,7 +235,14 @@ fn refresh_window(
     kind_rows.extend(listed);
     window.set_kind_rows(ModelRc::new(VecModel::from(kind_rows)));
 
-    let candidates = collect_candidates(state, &text, &active_kind, &controller.selected.borrow());
+    let target_scene = state.borrow().preview_scene().map(str::to_owned);
+    let candidates = collect_candidates(
+        state,
+        &text,
+        &active_kind,
+        target_scene.as_deref(),
+        &controller.selected.borrow(),
+    );
     let selected_count = i32::try_from(
         candidates
             .iter()
@@ -259,10 +270,15 @@ fn refresh_window(
 
 /// Existing sources shown as cards, filtered to `kind` unless it is the
 /// "recently added" sentinel.
+///
+/// Sources that the target scene already holds are left out. OBS never offers
+/// to add a source to the scene it is already in, and offering it here produced
+/// a second identical row rather than anything the user could use.
 fn collect_candidates(
     state: &Rc<RefCell<DesktopState>>,
     text: &crate::AddSourceText,
     kind: &str,
+    target_scene: Option<&str>,
     selected: &BTreeSet<String>,
 ) -> Vec<SourceCandidate> {
     let state = state.borrow();
@@ -273,8 +289,14 @@ fn collect_candidates(
     };
     let mut candidates = Vec::new();
     for scene in profile.scenes() {
+        if target_scene == Some(scene.id().as_str()) {
+            continue;
+        }
         for source in scene.sources() {
             if kind != RECENT_KIND && source.kind().as_str() != kind {
+                continue;
+            }
+            if already_in_scene(profile, target_scene, source) {
                 continue;
             }
             let id = candidate_id(scene.id().as_str(), source.id().as_str());
@@ -295,6 +317,25 @@ fn collect_candidates(
 /// A card is addressed by scene and source, since ids are only unique per scene.
 fn candidate_id(scene: &str, source: &str) -> String {
     format!("{scene}/{source}")
+}
+
+/// Returns whether the target scene already shows this source.
+///
+/// The project owns one spec per scene, so "the same source" means one with the
+/// same kind and display name — which is exactly what the user recognizes as a
+/// duplicate row in the sources dock.
+fn already_in_scene(
+    profile: &obs_rs_project::Profile,
+    target_scene: Option<&str>,
+    source: &SourceSpec,
+) -> bool {
+    target_scene
+        .and_then(|scene| profile.scene(scene))
+        .is_some_and(|scene| {
+            scene.sources().iter().any(|existing| {
+                existing.kind() == source.kind() && existing.name() == source.name()
+            })
+        })
 }
 
 fn create_source(
@@ -337,10 +378,17 @@ fn add_existing(
     }
     let (profile, scene) = target(state)?;
     let mut added = 0_usize;
+    let mut skipped = 0_usize;
     for candidate in selected {
         let Some((source_scene, source_id)) = candidate.split_once('/') else {
             continue;
         };
+        // The card list already excludes duplicates, but the selection can
+        // outlive an edit that added the same source another way.
+        if is_duplicate(state, source_scene, source_id, &scene) {
+            skipped += 1;
+            continue;
+        }
         // The project owns source specs by value, so "add existing" copies the
         // spec — including its settings, transform, and filter chain — under a
         // fresh id in the target scene.
@@ -361,7 +409,35 @@ fn add_existing(
             .dispatch(UiCommand::SelectSource { id })?;
         added += 1;
     }
+    if skipped > 0 {
+        return Ok(format!(
+            "Sources added: {added} ({skipped} already in this scene)"
+        ));
+    }
     Ok(format!("Sources added: {added}"))
+}
+
+/// Returns whether copying `source_id` into `target_scene` would duplicate a
+/// source that scene already shows.
+fn is_duplicate(
+    state: &Rc<RefCell<DesktopState>>,
+    source_scene: &str,
+    source_id: &str,
+    target_scene: &str,
+) -> bool {
+    let state = state.borrow();
+    let session = state.project_session();
+    let project = session.project();
+    let Some(profile) = project.active_profile_spec() else {
+        return false;
+    };
+    if source_scene == target_scene {
+        return true;
+    }
+    profile
+        .scene(source_scene)
+        .and_then(|scene| scene.source(source_id))
+        .is_some_and(|source| already_in_scene(profile, Some(target_scene), source))
 }
 
 /// Copies one existing source spec under an id that is free in `target_scene`.
@@ -473,7 +549,7 @@ fn next_ordinal(state: &Rc<RefCell<DesktopState>>, scene: &str, kind: &str) -> u
 
 /// Maps a runtime kind to its translated label, falling back to the raw id so
 /// a plugin kind this build does not know still shows something usable.
-fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedString {
+pub(crate) fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedString {
     match kind {
         "color_source" => text.kind_color_source.clone(),
         "test_pattern" => text.kind_test_pattern.clone(),
@@ -481,6 +557,7 @@ fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedString {
         "window_capture" => text.kind_window_capture.clone(),
         "camera_capture" => text.kind_camera_capture.clone(),
         "x11_screen_capture" => text.kind_x11_screen_capture.clone(),
+        "wayland_screen_capture" => text.kind_wayland_screen_capture.clone(),
         other => other.into(),
     }
 }
@@ -490,7 +567,7 @@ fn kind_display(kind: &str) -> &str {
     match kind {
         "color_source" => "Color",
         "test_pattern" => "Test pattern",
-        "screen_capture" | "x11_screen_capture" => "Screen capture",
+        "screen_capture" | "x11_screen_capture" | "wayland_screen_capture" => "Screen capture",
         "window_capture" => "Window capture",
         "camera_capture" => "Video capture device",
         other => other,
@@ -501,7 +578,7 @@ fn kind_icon(kind: &str) -> &'static str {
     match kind {
         "color_source" => "source-color",
         "test_pattern" => "source-pattern",
-        "screen_capture" | "x11_screen_capture" => "source-screen",
+        "screen_capture" | "x11_screen_capture" | "wayland_screen_capture" => "source-screen",
         "window_capture" => "source-window",
         "camera_capture" => "source-camera",
         _ => "source-generic",

@@ -14,6 +14,8 @@ use obs_rs_plugin_api::{Plugin, PluginError, PluginManifest, SourceFactory};
 mod factories;
 mod portable;
 #[cfg(target_os = "linux")]
+mod wayland;
+#[cfg(target_os = "linux")]
 mod x11;
 
 #[cfg(test)]
@@ -24,6 +26,8 @@ pub const COLOR_SOURCE_KIND: &str = "color_source";
 pub use obs_rs_capture::CAMERA_CAPTURE_SOURCE_KIND as BUILTIN_CAMERA_SOURCE_KIND;
 pub use obs_rs_capture::SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_SCREEN_SOURCE_KIND;
 pub use obs_rs_capture::TEST_PATTERN_SOURCE_KIND as BUILTIN_TEST_PATTERN_SOURCE_KIND;
+#[cfg(target_os = "linux")]
+pub use obs_rs_capture::WAYLAND_SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_WAYLAND_SCREEN_SOURCE_KIND;
 pub use obs_rs_capture::WINDOW_CAPTURE_SOURCE_KIND as BUILTIN_WINDOW_SOURCE_KIND;
 #[cfg(target_os = "linux")]
 pub use obs_rs_capture::X11_SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_X11_SCREEN_SOURCE_KIND;

@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use obs_rs_ui::UiLocale;
 use slint::{ComponentHandle, SharedString};
 
-use crate::{AddSourceText, I18n, MainWindow, MonitorText, SettingsText, UiText};
+use crate::{AddSourceText, I18n, MainWindow, MonitorText, PropertyText, SettingsText, UiText};
 
 thread_local! {
     /// Catalogs are built once per thread and then reused.
@@ -84,9 +84,27 @@ fn english() -> UiText {
             kind_window_capture: s("Window capture"),
             kind_camera_capture: s("Video capture device"),
             kind_x11_screen_capture: s("Screen capture (X11)"),
+            kind_wayland_screen_capture: s("Screen capture (Wayland)"),
             properties_for: s("Properties for "),
             defaults: s("Defaults"),
             ok: s("OK"),
+        },
+        property_ui: PropertyText {
+            settings_group: s("Settings"),
+            advanced_group: s("Advanced"),
+            show_advanced: s("Edit the raw settings document"),
+            width: s("Width"),
+            height: s("Height"),
+            size_hint: s("Size of the frames this source renders into the scene."),
+            color: s("Color"),
+            color_hint: s("Hexadecimal #RRGGBBAA."),
+            monitor: s("Display"),
+            monitor_hint: s("Which monitor this source reads. The whole desktop spans every monitor."),
+            display: s("X11 display"),
+            display_hint: s("Usually :0. Leave it as the detected value unless a second server is running."),
+            capture_cursor: s("Capture the mouse cursor"),
+            transform_hint: s("scale-x, scale-y, x, y, flip-x, flip-y, opacity — thousandths for scale, 0-255 for opacity."),
+            filters_hint: s("Comma-separated, such as gray,brightness:750,opacity:200."),
         },
         monitor_ui: MonitorText {
             window_title: s("Select display"),
@@ -101,6 +119,8 @@ fn english() -> UiText {
             select_monitor: s("Select display"),
             not_a_screen_source: s("Select a screen capture source first."),
             applied: s("Display applied: "),
+            portal_applied: s("Screen sharing approved; the source keeps this screen until you change it."),
+            portal_waiting: s("Waiting for the compositor's screen-sharing dialog…"),
         },
         settings_ui: SettingsText {
             window_title: s("Settings"),
@@ -365,9 +385,27 @@ fn spanish() -> UiText {
             kind_window_capture: s("Captura de ventana"),
             kind_camera_capture: s("Dispositivo de captura de vídeo"),
             kind_x11_screen_capture: s("Captura de pantalla (X11)"),
+            kind_wayland_screen_capture: s("Captura de pantalla (Wayland)"),
             properties_for: s("Propiedades para "),
             defaults: s("Por defecto"),
             ok: s("Aceptar"),
+        },
+        property_ui: PropertyText {
+            settings_group: s("Ajustes"),
+            advanced_group: s("Avanzado"),
+            show_advanced: s("Editar el documento de ajustes"),
+            width: s("Ancho"),
+            height: s("Alto"),
+            size_hint: s("Tamaño de los fotogramas que esta fuente aporta a la escena."),
+            color: s("Color"),
+            color_hint: s("Hexadecimal #RRGGBBAA."),
+            monitor: s("Pantalla"),
+            monitor_hint: s("Qué monitor lee esta fuente. El escritorio completo abarca todos los monitores."),
+            display: s("Display X11"),
+            display_hint: s("Normalmente :0. Déjalo como está salvo que haya un segundo servidor."),
+            capture_cursor: s("Capturar el cursor del ratón"),
+            transform_hint: s("escala-x, escala-y, x, y, voltear-x, voltear-y, opacidad — milésimas para la escala, 0-255 para la opacidad."),
+            filters_hint: s("Separados por comas, por ejemplo gray,brightness:750,opacity:200."),
         },
         monitor_ui: MonitorText {
             window_title: s("Seleccionar pantalla"),
@@ -384,6 +422,8 @@ fn spanish() -> UiText {
             select_monitor: s("Seleccionar pantalla"),
             not_a_screen_source: s("Selecciona primero una fuente de captura de pantalla."),
             applied: s("Pantalla aplicada: "),
+            portal_applied: s("Pantalla compartida aprobada; la fuente la mantendrá hasta que la cambies."),
+            portal_waiting: s("Esperando el diálogo de compartir pantalla del compositor…"),
         },
         settings_ui: SettingsText {
             window_title: s("Ajustes"),

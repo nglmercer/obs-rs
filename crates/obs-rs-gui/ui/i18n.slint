@@ -95,9 +95,29 @@ export struct AddSourceText {
     kind_window_capture: string,
     kind_camera_capture: string,
     kind_x11_screen_capture: string,
+    kind_wayland_screen_capture: string,
     properties_for: string,
     defaults: string,
     ok: string,
+}
+
+// Labels for the typed source-property form.
+export struct PropertyText {
+    settings_group: string,
+    advanced_group: string,
+    show_advanced: string,
+    width: string,
+    height: string,
+    size_hint: string,
+    color: string,
+    color_hint: string,
+    monitor: string,
+    monitor_hint: string,
+    display: string,
+    display_hint: string,
+    capture_cursor: string,
+    transform_hint: string,
+    filters_hint: string,
 }
 
 // Copy for the display picker, kept beside the other window catalogs.
@@ -112,12 +132,15 @@ export struct MonitorText {
     select_monitor: string,
     not_a_screen_source: string,
     applied: string,
+    portal_applied: string,
+    portal_waiting: string,
 }
 
 export struct UiText {
     settings_ui: SettingsText,
     add_source_ui: AddSourceText,
     monitor_ui: MonitorText,
+    property_ui: PropertyText,
     app_name: string,
     shortcuts: string,
     profile: string,

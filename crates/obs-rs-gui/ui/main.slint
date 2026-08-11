@@ -15,13 +15,13 @@ import {
     SceneDialog,
 } from "dialogs.slint";
 
-export { AddSourceText, I18n, MonitorText, SettingsText, UiText } from "i18n.slint";
+export { AddSourceText, I18n, MonitorText, PropertyText, SettingsText, UiText } from "i18n.slint";
 export { Palette, ThemeTokens } from "palette.slint";
 export { SettingsWindow } from "settings_window.slint";
 export { AddSourceWindow } from "add_source_window.slint";
 export { SourcePropertiesWindow } from "source_properties_window.slint";
 export { MonitorWindow } from "monitor_window.slint";
-export { MonitorRow, SourceCandidate, SourceKindRow } from "models.slint";
+export { MonitorRow, PropertyRow, SourceCandidate, SourceKindRow } from "models.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
@@ -136,6 +136,8 @@ export component MainWindow inherits Window {
         callback open-add-source-window();
         callback open-source-properties-window();
         callback open-monitor-window();
+        // Reports the desktop portal's answer back onto the UI thread.
+        callback apply-portal-token(string);
 
         // Only a screen capture source has a display to choose, so the
         // affordance is derived from the selected row rather than duplicated in

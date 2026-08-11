@@ -67,3 +67,23 @@
         icon: string,
         selected: bool,
     }
+
+    // One editable property in the source properties dialog.
+    //
+    // `kind` selects the widget: 0 text, 1 number, 2 toggle, 3 choice,
+    // 4 colour. Keeping every value in one row means adding a property to a
+    // source kind is a Rust-side change only.
+    export struct PropertyRow {
+        key: string,
+        label: string,
+        hint: string,
+        kind: int,
+        text: string,
+        number: int,
+        minimum: int,
+        maximum: int,
+        toggle: bool,
+        choices: [string],
+        choice_index: int,
+        swatch: brush,
+    }

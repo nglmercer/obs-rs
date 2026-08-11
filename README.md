@@ -29,8 +29,10 @@ control surfaces:
   sink, and typed discovery/start/read/stop failures.
 - `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
   catalog/provider contracts, atomic discovery refresh, deterministic animated test
-  backends, a direct Linux X11 root-screen adapter, and a bounded `OBSFRM01` RGBA
-  frame-stream adapter for Rust pipes/TCP readers.
+  backends, a direct Linux X11 screen adapter with `RandR` monitor enumeration and
+  per-monitor cropping, a safe-Rust session-bus client driving the
+  `org.freedesktop.portal.ScreenCast` handshake for Wayland capture, and a bounded
+  `OBSFRM01` RGBA frame-stream adapter for Rust pipes/TCP readers.
 - `obs-rs-plugin-api` defines versioned Rust plugin and source interfaces.
 - `obs-rs-sandbox` adds a bounded subprocess extension boundary: versioned
   `OBSRPLUGIN1` manifests, bounded manifest probing before source creation,
@@ -38,7 +40,8 @@ control surfaces:
   `OBSFRM01` frame packets, a two-frame handoff queue, and frame-delivery
   timeouts.
 - `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
-  camera CPU-fallback factories plus the Linux `x11_screen_capture` source.
+  camera CPU-fallback factories plus the Linux `x11_screen_capture` and
+  portal-backed `wayland_screen_capture` sources.
 - `obs-rs-core` owns the plugin registry, sources, scenes, CPU compositor, and
   compositor-work counters. It also enforces explicit plugin/source/scene/filter
   quotas and exposes resource usage for diagnostics.
@@ -77,10 +80,11 @@ control surfaces:
 - `obs-rs-gui` provides the first Slint desktop control room: preview/program
   status cards with CPU-rendered RGBA scene frames, scene selection, transitions,
   recording/streaming controls, scene/source ordering and visibility/lock controls,
-  a mixer with gain/mute/peak state, source properties, crash-safe project
-  save/load/recover, platform-capture capability reporting, output telemetry, and
-  PipeWire/fallback status, and a visible bilingual accessible state snapshot
-  backed by the same `DesktopState` commands.
+  a mixer with gain/mute/peak state, a typed OBS-style source properties form with
+  a display picker, crash-safe project save/load/recover, session restore for the
+  project and the dock layout, platform-capture capability reporting, output
+  telemetry, and PipeWire/fallback status, and a visible bilingual accessible state
+  snapshot backed by the same `DesktopState` commands.
 - `obs-rs-app` runs a small end-to-end demo, a scriptable accessible terminal
   frontend, and a loopback-only accessible browser control surface without a native
   host dependency.
@@ -126,6 +130,29 @@ behavior is exercised through safe Rust APIs and Rust tests.
 window, renders the project preview path, and binds the state without entering the
 event loop, which keeps GUI wiring checkable in headless validation.
 
+### Screen capture on Linux
+
+The Add Source list only offers the screen source that can produce frames in the
+current session, because the wrong one silently yields a black canvas:
+
+- **X11 sessions** get `x11_screen_capture`. Its display picker lists the `RandR`
+  monitors and crops capture to the chosen rectangle; the selection is stored as
+  the source's `monitor` setting. A compositor that refuses direct `GetImage`
+  falls back to an `ffmpeg x11grab` reader on the same rectangle, and then to the
+  deterministic test pattern.
+- **Wayland sessions** get `wayland_screen_capture`. There is no direct screen
+  read on Wayland, so OBS-RS runs the `org.freedesktop.portal.ScreenCast`
+  handshake over the session bus, and the compositor's own dialog is the display
+  picker. The portal's restore token is stored in the source settings, so later
+  sessions reopen the same screen without prompting. Frames are read from the
+  `PipeWire` node the portal returns through `gst-launch-1.0 pipewiresrc`, which
+  must be installed (`gst-plugin-pipewire`).
+
+Settings, the reopened project, and the dock layout are stored under
+`$XDG_CONFIG_HOME/obs-rs` (a file already present in the working directory keeps
+being used, so existing installs are unaffected). Both restore behaviours can be
+turned off on the settings window's Advanced page.
+
 ## Repository documents
 
 1. [00-executive-summary.md](00-executive-summary.md) — mission, scope, principles,
@@ -158,7 +185,7 @@ contract and a tested WebSocket packet transport are also present as reference
 boundaries.
 The release profile, pinned-toolchain CI workflow, and checksum manifest script
 are present. Remaining V1 gaps are explicit output lifecycle events,
-selected-device persistence/hot-plug monitoring, synchronization/staging for
+hot-plug monitoring, synchronization/staging for
 edits during active output, and full hardware capture coverage. The
 `obs-rs-linux-check` command reports pass/skip/fail for X11, PipeWire, and the
 300-tick A/V soak. The project intentionally does not claim feature

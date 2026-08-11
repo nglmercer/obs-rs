@@ -7,12 +7,20 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 #[cfg(target_os = "linux")]
+mod dbus;
+#[cfg(target_os = "linux")]
 mod v4l2;
+#[cfg(target_os = "linux")]
+mod wayland;
 #[cfg(target_os = "linux")]
 mod x11;
 
 #[cfg(target_os = "linux")]
+pub use dbus::{open_screencast, CursorMode, ScreenCastSession};
+#[cfg(target_os = "linux")]
 pub use v4l2::V4l2CaptureDevice;
+#[cfg(target_os = "linux")]
+pub use wayland::{wayland_session_available, WaylandCaptureDevice};
 #[cfg(target_os = "linux")]
 pub use x11::{x11_monitors, X11CaptureDevice, X11Monitor};
 
@@ -31,12 +39,12 @@ mod tests;
 
 pub use device::VideoCaptureDevice;
 pub use error::CaptureError;
-#[cfg(target_os = "linux")]
-pub use factories::X11_SCREEN_CAPTURE_SOURCE_KIND;
 pub use factories::{
     SimulatedCaptureFactory, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
     SCREEN_CAPTURE_SOURCE_KIND, TEST_PATTERN_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
 };
+#[cfg(target_os = "linux")]
+pub use factories::{WAYLAND_SCREEN_CAPTURE_SOURCE_KIND, X11_SCREEN_CAPTURE_SOURCE_KIND};
 pub use protocol::{
     encode_frame_packet, write_frame_packet, FRAME_STREAM_MAGIC, MAX_FRAME_STREAM_PACKET_BYTES,
 };
