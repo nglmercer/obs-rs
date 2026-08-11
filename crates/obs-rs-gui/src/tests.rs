@@ -56,7 +56,7 @@ fn gui_catalog_switches_complete_copy_between_supported_locales() {
 #[test]
 fn preview_renderer_uses_the_project_scene_sources() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let frame = renderer
         .render("preview")
         .expect("preview scene should render")
@@ -67,7 +67,7 @@ fn preview_renderer_uses_the_project_scene_sources() {
 #[test]
 fn preview_renderer_composes_scene_transitions() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let frame = renderer
         .render_transition(
             "preview",
@@ -84,7 +84,7 @@ fn preview_renderer_composes_scene_transitions() {
 #[test]
 fn preview_renderer_advances_animated_capture_sources() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let first = renderer
         .render("intermission")
         .expect("first pattern frame should render")
@@ -99,7 +99,7 @@ fn preview_renderer_advances_animated_capture_sources() {
 #[test]
 fn preview_renderer_rebuilds_after_project_edit() {
     let mut project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     project
         .apply(ProjectCommand::AddScene {
             profile: "live".to_owned(),
@@ -107,9 +107,14 @@ fn preview_renderer_rebuilds_after_project_edit() {
         })
         .expect("add scene");
 
-    renderer
-        .sync_project(&project)
-        .expect("renderer should rebuild from the edited project");
+    // A different revision is what tells the renderer to rebuild.
+    assert!(renderer
+        .sync_project(&project, 1)
+        .expect("renderer should rebuild from the edited project"));
+    // The same revision must not trigger another rebuild.
+    assert!(!renderer
+        .sync_project(&project, 1)
+        .expect("unchanged revision is a no-op"));
     assert!(renderer
         .render("new-scene")
         .expect("empty scene should be renderable")
@@ -127,7 +132,7 @@ fn preview_renderer_honors_hidden_scene_sources() {
             visible: false,
         })
         .expect("hide source");
-    let mut renderer = PreviewRenderer::new(&project).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     assert!(renderer
         .render("preview")
         .expect("hidden scene should render")
@@ -174,7 +179,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui.set_streaming_address("127.0.0.1:9000".into());
     let project = initial_project().expect("initial project");
     let renderer = Rc::new(RefCell::new(
-        PreviewRenderer::new(&project).expect("preview renderer"),
+        PreviewRenderer::new(&project, 0).expect("preview renderer"),
     ));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
     refresh_ui(&ui, &state, &renderer);

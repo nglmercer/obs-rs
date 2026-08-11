@@ -25,9 +25,11 @@ impl Project {
                 profile.scenes().fold(
                     total.saturating_add(RECORD_ESTIMATE),
                     |profile_total, scene| {
-                        profile_total.saturating_add(RECORD_ESTIMATE).saturating_add(
-                            scene.sources().len().saturating_mul(SOURCE_RECORD_ESTIMATE),
-                        )
+                        profile_total
+                            .saturating_add(RECORD_ESTIMATE)
+                            .saturating_add(
+                                scene.sources().len().saturating_mul(SOURCE_RECORD_ESTIMATE),
+                            )
                     },
                 )
             })

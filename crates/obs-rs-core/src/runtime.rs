@@ -371,7 +371,14 @@ impl Runtime {
     /// Borrows the stored chain instead of cloning it for read-only access.
     #[must_use]
     pub fn source_filters(&self, scene: &str, source: SourceId) -> Option<&[FrameFilter]> {
-        Some(self.scenes.get(scene)?.items.get(&source)?.filters.as_slice())
+        Some(
+            self.scenes
+                .get(scene)?
+                .items
+                .get(&source)?
+                .filters
+                .as_slice(),
+        )
     }
 
     /// Destroys a source that is not attached to any scene.

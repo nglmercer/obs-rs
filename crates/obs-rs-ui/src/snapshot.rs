@@ -246,9 +246,7 @@ fn web_text(locale: UiLocale, key: &str) -> &'static str {
 
     match locale {
         UiLocale::Spanish => match key {
-            "intro" => {
-                "Superficie de control local en Rust que usa el modelo de estado validado."
-            }
+            "intro" => "Superficie de control local en Rust que usa el modelo de estado validado.",
             "current_state" => "Estado actual",
             "actions" => "Acciones",
             "actions_group" => "Acciones de salida y escena",
@@ -267,9 +265,7 @@ fn web_text(locale: UiLocale, key: &str) -> &'static str {
             _ => "",
         },
         UiLocale::English => match key {
-            "intro" => {
-                "Rust-native local control surface using the validated desktop state model."
-            }
+            "intro" => "Rust-native local control surface using the validated desktop state model.",
             "current_state" => "Current state",
             "actions" => "Actions",
             "actions_group" => "Output and scene actions",

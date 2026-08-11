@@ -227,7 +227,8 @@ impl AudioBuffer {
         let silence_samples = frames
             .checked_mul(channels)
             .ok_or(AudioError::BufferTooLarge { frames })?;
-        self.samples.splice(..0, std::iter::repeat_n(0.0, silence_samples));
+        self.samples
+            .splice(..0, std::iter::repeat_n(0.0, silence_samples));
         self.timestamp = timestamp;
         Ok(())
     }

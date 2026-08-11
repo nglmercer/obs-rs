@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use obs_rs_media::Timestamp;
 
@@ -201,10 +201,13 @@ pub(crate) fn encode_packets(packets: &[EncodedPacket]) -> Result<Vec<u8>, Outpu
     // Exact reservation from the known record layout: a magic, a count, then a
     // 18-byte header plus payload per packet. A large recording would otherwise
     // reallocate and recopy its way up to the final size.
-    let capacity = packets.iter().fold(
-        PACKET_MAGIC.len().saturating_add(8),
-        |total, packet| total.saturating_add(18).saturating_add(packet.payload.len()),
-    );
+    let capacity = packets
+        .iter()
+        .fold(PACKET_MAGIC.len().saturating_add(8), |total, packet| {
+            total
+                .saturating_add(18)
+                .saturating_add(packet.payload.len())
+        });
     let mut bytes = Vec::with_capacity(capacity);
     write_all(&mut bytes, PACKET_MAGIC)?;
     write_u64(&mut bytes, packets.len() as u64)?;

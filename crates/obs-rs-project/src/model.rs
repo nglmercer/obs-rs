@@ -468,8 +468,7 @@ impl Project {
 fn default_profile_id() -> &'static Identifier {
     static DEFAULT_PROFILE_ID: OnceLock<Identifier> = OnceLock::new();
     DEFAULT_PROFILE_ID.get_or_init(|| {
-        Identifier::new("default").unwrap_or_else(|_| {
-            unreachable!("\"default\" is a valid identifier")
-        })
+        Identifier::new("default")
+            .unwrap_or_else(|_| unreachable!("\"default\" is a valid identifier"))
     })
 }

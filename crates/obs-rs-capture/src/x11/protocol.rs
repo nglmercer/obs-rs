@@ -187,7 +187,6 @@ pub(crate) fn write_u16_le(bytes: &mut Vec<u8>, value: u16) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }
 
-
 pub(crate) fn read_u16_le(bytes: &[u8], offset: usize) -> Result<u16, CaptureError> {
     ensure_range(bytes, offset, 2)?;
     Ok(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]))

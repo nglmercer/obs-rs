@@ -56,7 +56,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.set_new_source_kind("test_pattern".into());
     ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
-    let renderer = Rc::new(RefCell::new(PreviewRenderer::new(&project)?));
+    // Revision 0 is the "nothing observed yet" sentinel, so the first refresh
+    // always syncs the renderer against the live session.
+    let renderer = Rc::new(RefCell::new(PreviewRenderer::new(&project, 0)?));
     {
         // The canvas size drives the zoom readout under the preview.
         let format = renderer.borrow().format;

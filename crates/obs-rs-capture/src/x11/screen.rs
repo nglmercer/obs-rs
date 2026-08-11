@@ -9,10 +9,7 @@ use super::{
     connection::{display_socket, handshake, read_authorization},
     error::{protocol_error, read_exact_x11, x11_io_error},
     image::{decode_pixels, packed_row_bytes, padded_row_bytes},
-    protocol::{
-        read_u32_le, ServerInfo, X11_GET_IMAGE, X11_MAX_REPLY_BYTES,
-        X11_Z_PIXMAP,
-    },
+    protocol::{read_u32_le, ServerInfo, X11_GET_IMAGE, X11_MAX_REPLY_BYTES, X11_Z_PIXMAP},
 };
 
 pub struct X11CaptureDevice {

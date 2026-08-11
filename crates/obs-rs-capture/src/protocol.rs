@@ -36,10 +36,7 @@ pub fn encode_frame_packet(frame: &VideoFrame) -> Result<Vec<u8>, CaptureError> 
 ///
 /// Returns [`CaptureError::FramePacketTooLarge`] when the frame exceeds
 /// [`MAX_FRAME_STREAM_PACKET_BYTES`], or [`CaptureError::Io`] from `writer`.
-pub fn write_frame_packet(
-    frame: &VideoFrame,
-    writer: &mut impl Write,
-) -> Result<(), CaptureError> {
+pub fn write_frame_packet(frame: &VideoFrame, writer: &mut impl Write) -> Result<(), CaptureError> {
     packet_bytes_for(frame)?;
     let payload_bytes = frame.pixels().len();
     let format = frame.format();

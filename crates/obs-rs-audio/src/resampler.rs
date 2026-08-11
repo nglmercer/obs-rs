@@ -78,7 +78,10 @@ impl AudioResampler {
             let second_base = second * channels;
 
             for (channel, output) in output_frame.iter_mut().enumerate() {
-                let first_sample = input_samples.get(first_base + channel).copied().unwrap_or(0.0);
+                let first_sample = input_samples
+                    .get(first_base + channel)
+                    .copied()
+                    .unwrap_or(0.0);
                 let second_sample = input_samples
                     .get(second_base + channel)
                     .copied()

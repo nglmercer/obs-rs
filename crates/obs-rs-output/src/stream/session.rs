@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use crate::{
     error::OutputError,
     queue::PacketQueue,
@@ -7,6 +6,7 @@ use crate::{
         StreamMetrics, StreamState,
     },
 };
+use std::sync::Arc;
 
 pub trait PacketMuxer {
     /// Accepts one packet in timestamp order.
@@ -177,10 +177,7 @@ impl<T: PacketTransport> StreamSession<T> {
 
         let mut sent = 0;
         let result = self.transport.send_batch(&batch, &mut sent);
-        self.metrics.sent_packets = self
-            .metrics
-            .sent_packets
-            .saturating_add(sent as u64);
+        self.metrics.sent_packets = self.metrics.sent_packets.saturating_add(sent as u64);
 
         if let Err(error) = result {
             self.metrics.send_failures = self.metrics.send_failures.saturating_add(1);

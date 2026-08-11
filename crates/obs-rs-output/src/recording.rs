@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use obs_rs_media::{FrameRate, MediaError, Timestamp, VideoFormat, VideoFrame};
 

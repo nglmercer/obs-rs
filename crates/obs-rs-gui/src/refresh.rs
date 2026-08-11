@@ -83,7 +83,10 @@ pub(crate) fn refresh_ui(
         .collect::<Vec<_>>();
     ui.set_profile_rows(ModelRc::new(VecModel::from(profile_rows)));
 
-    let sync_error = renderer.borrow_mut().sync_project(project).err();
+    let sync_error = renderer
+        .borrow_mut()
+        .sync_project(project, state.project_session().revision())
+        .err();
     let render_error = if let Some(error) = sync_error {
         ui.set_preview_image(Image::default());
         ui.set_program_image(Image::default());
@@ -183,13 +186,12 @@ fn refresh_recovery_ui(ui: &MainWindow, locale: UiLocale) {
                 return status.clone();
             }
         }
-        let status: SharedString = crate::i18n::with_catalog(locale, |text| {
-            match project_store(&path) {
+        let status: SharedString =
+            crate::i18n::with_catalog(locale, |text| match project_store(&path) {
                 Ok(store) if store.recovery_available() => text.recovery_available.clone(),
                 Ok(_) => text.no_recovery.clone(),
                 Err(error) => format!("Recovery check failed: {error}").into(),
-            }
-        });
+            });
         *cache = Some((path.clone(), status.clone()));
         status
     });

@@ -66,7 +66,10 @@ fn provider_refreshes_catalog_atomically_and_deterministically() {
         .expect("register old device");
     provider.refresh(&mut catalog).expect("refresh catalog");
 
-    let devices: Vec<&str> = catalog.devices().map(|device| device.id().as_str()).collect();
+    let devices: Vec<&str> = catalog
+        .devices()
+        .map(|device| device.id().as_str())
+        .collect();
     assert_eq!(
         devices,
         vec!["camera-0", "screen-0", "test-pattern", "window-0"]

@@ -98,15 +98,17 @@ impl Scene {
         {
             self.sources.remove(index);
         }
-        Some(self.items.remove(&source).map_or(0, |item| {
-            item.filters.len()
-        }))
+        Some(
+            self.items
+                .remove(&source)
+                .map_or(0, |item| item.filters.len()),
+        )
     }
 
     /// Returns the total number of filters across every item in this scene.
     pub(crate) fn filter_count(&self) -> usize {
-        self.items
-            .values()
-            .fold(0_usize, |total, item| total.saturating_add(item.filters.len()))
+        self.items.values().fold(0_usize, |total, item| {
+            total.saturating_add(item.filters.len())
+        })
     }
 }

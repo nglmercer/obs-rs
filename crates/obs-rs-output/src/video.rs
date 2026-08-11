@@ -202,8 +202,7 @@ fn zlib_stored_scanlines(
     uncompressed_bytes: usize,
 ) -> Vec<u8> {
     let blocks = uncompressed_bytes.saturating_add(65_534) / 65_535;
-    let mut output =
-        Vec::with_capacity(2 + uncompressed_bytes + blocks.saturating_mul(5) + 4);
+    let mut output = Vec::with_capacity(2 + uncompressed_bytes + blocks.saturating_mul(5) + 4);
     output.extend_from_slice(&[0x78, 0x01]);
 
     if uncompressed_bytes == 0 {
@@ -267,10 +266,7 @@ struct Adler32 {
 
 impl Adler32 {
     const fn new() -> Self {
-        Self {
-            sum_a: 1,
-            sum_b: 0,
-        }
+        Self { sum_a: 1, sum_b: 0 }
     }
 
     fn update(&mut self, bytes: &[u8]) {

@@ -4,11 +4,7 @@ use std::{
     net::TcpStream,
 };
 
-use crate::{
-    error::OutputError,
-    types::EncodedPacket,
-    NETWORK_WRITE_TIMEOUT, TCP_PACKET_MAGIC,
-};
+use crate::{error::OutputError, types::EncodedPacket, NETWORK_WRITE_TIMEOUT, TCP_PACKET_MAGIC};
 
 use super::PacketTransport;
 

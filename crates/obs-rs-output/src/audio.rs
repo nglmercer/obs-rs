@@ -465,8 +465,7 @@ mod y4m_equivalence_tests {
             let pixels: Vec<u8> = (0..format.rgba_bytes())
                 .map(|index| u8::try_from((index * 37) % 256).unwrap_or(0))
                 .collect();
-            let frame =
-                VideoFrame::new(format, Timestamp::ZERO, pixels).expect("valid frame");
+            let frame = VideoFrame::new(format, Timestamp::ZERO, pixels).expect("valid frame");
 
             let mut single = Vec::new();
             write_y4m_frame(&mut single, &frame);

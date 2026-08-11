@@ -32,10 +32,12 @@ impl Runtime {
         for source_id in &scene_state.sources {
             // One lookup resolves both the transform and the filter chain, and
             // yields a plain slice with no function-pointer indirection.
-            let (transform, filters) = scene_state.items.get(source_id).map_or(
-                (FrameTransform::IDENTITY, &[][..]),
-                |item| (item.transform, item.filters.as_slice()),
-            );
+            let (transform, filters) = scene_state
+                .items
+                .get(source_id)
+                .map_or((FrameTransform::IDENTITY, &[][..]), |item| {
+                    (item.transform, item.filters.as_slice())
+                });
             metrics.source_requests = metrics.source_requests.saturating_add(1);
             let instance = sources
                 .get_mut(source_id)
