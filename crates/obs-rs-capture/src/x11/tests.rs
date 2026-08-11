@@ -9,7 +9,7 @@ use super::{
     protocol::{
         parse_setup, setup_request, Authorization, ImageByteOrder, VisualMasks, X11_TRUE_COLOR,
     },
-    screen::X11CaptureDevice,
+    screen::{resize_letterbox, X11CaptureDevice},
 };
 
 fn setup_fixture() -> Vec<u8> {
@@ -115,6 +115,18 @@ fn malformed_setup_is_rejected_before_visual_access() {
     assert_eq!(scale_channel(0x00ff_0000, 0x00ff_0000), u8::MAX);
     assert_eq!(packed_row_bytes(640, 32).expect("row bytes"), 2_560);
     assert_eq!(padded_row_bytes(2_561, 32).expect("padded row"), 2_564);
+}
+
+#[test]
+fn root_capture_resize_preserves_aspect_and_fills_canvas() {
+    let source = vec![255, 0, 0, 255, 0, 255, 0, 255];
+    let output = resize_letterbox(&source, 2, 1, 3, 3).expect("resize");
+    assert_eq!(output.len(), 3 * 3 * 4);
+    assert_eq!(&output[0..4], &[0, 0, 0, 255]);
+    assert_eq!(&output[12..16], &[255, 0, 0, 255]);
+    assert_eq!(&output[16..20], &[255, 0, 0, 255]);
+    assert_eq!(&output[20..24], &[0, 255, 0, 255]);
+    assert_eq!(&output[32..36], &[0, 0, 0, 255]);
 }
 
 #[test]

@@ -196,7 +196,7 @@ fn load_draft(
     ));
     window.set_recording_format(
         format!(
-            "Uncompressed Y4M · {}x{} @ {}",
+            "OBSRPKT1 A/V · {}x{} @ {}",
             resolution.0,
             resolution.1,
             frame_rate_label((

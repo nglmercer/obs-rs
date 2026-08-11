@@ -6,10 +6,10 @@ Deliver a complete OBS-like application from zero in Rust. The roadmap is organi
 by usable capabilities and verification evidence, not by copying source files or
 counting converted lines.
 
-The current repository implements MVP slices in Phases 0–7, reference recording and
-transport fixtures in Phase 6, and the first bounded resource/diagnostic hardening in
-Phase 8. Production platform, codec, packaging, and full desktop-parity work remains
-active; this document is the source of truth for sequencing.
+The current repository implements MVP slices in Phases 0–8, reference recording and
+transport fixtures in Phase 6, and a scoped Linux/X11 V1 integration in Phase 9.
+Production platform, codec, packaging, and full desktop-parity work remains active;
+this document is the source of truth for sequencing.
 
 ## Status legend
 
@@ -287,7 +287,8 @@ those same commands. The preview/program surfaces now render project scene sourc
 through `obs-rs-core::Runtime` into Slint images on a bounded UI timer. They are CPU
 reference previews rather than platform capture/device-backed feeds. The desktop
 also has a scene/source editor plus project save/load/recover controls backed by the
-crash-safe `ProjectFileStore`, atomic Y4M/TCP output, output telemetry, bilingual
+crash-safe `ProjectFileStore`, atomic `OBSRPKT1` audio/video output, TCP/WebSocket
+telemetry, bilingual
 accessible snapshots, persisted source visibility/locking, and a diagnostics export
 action. The Slint surface also exposes keyboard focus-scope bindings for scene
 swapping, save, and fade actions and advertises those bindings in the control room.

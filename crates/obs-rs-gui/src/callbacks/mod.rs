@@ -55,9 +55,6 @@ pub(crate) fn start_preview_timer(
                 state.recording() || state.streaming(),
             )
         };
-        if !output_active {
-            return;
-        }
         let (program_frame, render_error) = refresh_preview_frames(
             &ui,
             &renderer,
@@ -67,7 +64,12 @@ pub(crate) fn start_preview_timer(
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
         }
-        push_program_frame(&ui, program_frame, &output);
+        if output_active {
+            push_program_frame(&ui, program_frame, &output);
+            if let Err(error) = output.borrow_mut().pump() {
+                ui.set_status_message(format!("Output transport failed: {error}").into());
+            }
+        }
         refresh_output_ui(&ui, &output);
     });
     timer
@@ -81,7 +83,7 @@ pub(crate) fn install_callbacks(
 ) {
     install_scene_callbacks(ui, state, renderer);
     install_output_callbacks(ui, state, renderer, output);
-    install_mixer_callbacks(ui, state, renderer);
+    install_mixer_callbacks(ui, state, renderer, output);
     install_project_callbacks(ui, state, renderer);
     install_panel_callbacks(ui);
 }

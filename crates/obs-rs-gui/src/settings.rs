@@ -185,7 +185,7 @@ impl Default for AppSettings {
             program_border_color: "#F87171".to_owned(),
             project_path: "obs-rs-project.txt".to_owned(),
             diagnostics_path: "obs-rs-diagnostics.obsrdg".to_owned(),
-            recording_path: "obs-rs-recording.y4m".to_owned(),
+            recording_path: "obs-rs-recording.obsr".to_owned(),
             streaming_address: "127.0.0.1:9000".to_owned(),
         }
     }

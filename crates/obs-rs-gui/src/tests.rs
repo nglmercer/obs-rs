@@ -5,7 +5,7 @@ use super::{
     SourcePropertiesWindow,
 };
 use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
-use obs_rs_output::encode_png;
+use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_project::{ProjectCommand, SceneSpec};
 use obs_rs_ui::{DesktopState, UiLocale};
 use slint::{ComponentHandle, Model};
@@ -140,13 +140,13 @@ fn preview_renderer_honors_hidden_scene_sources() {
 }
 
 #[test]
-fn output_runtime_finalizes_an_atomic_y4m_recording() {
+fn output_runtime_finalizes_an_atomic_av_recording() {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
     let token = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    let final_path = std::env::temp_dir().join(format!("obs-rs-gui-output-{token}.y4m"));
+    let final_path = std::env::temp_dir().join(format!("obs-rs-gui-output-{token}.obsr"));
     let mut output = OutputRuntime::new(format);
     output
         .start_recording(final_path.to_str().expect("UTF-8 temp path"))
@@ -159,7 +159,9 @@ fn output_runtime_finalizes_an_atomic_y4m_recording() {
     assert!(bytes > 0);
     let persisted = std::fs::read(&final_path).expect("recording should be persisted");
     assert_eq!(persisted.len(), bytes);
-    assert!(persisted.starts_with(b"YUV4MPEG2"));
+    let packets = MemoryMuxer::decode(&persisted).expect("packet recording should decode");
+    assert!(packets.iter().any(|packet| packet.kind() == PacketKind::Video));
+    assert!(packets.iter().any(|packet| packet.kind() == PacketKind::Audio));
     std::fs::remove_file(final_path).expect("remove output fixture");
 }
 

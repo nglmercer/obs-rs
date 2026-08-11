@@ -205,10 +205,12 @@ pub(crate) fn install_mixer_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
+    output: &Rc<RefCell<OutputRuntime>>,
 ) {
     let weak = ui.as_weak();
     let gain_state = Rc::clone(state);
     let gain_renderer = Rc::clone(renderer);
+    let gain_output = Rc::clone(output);
     ui.on_set_mixer_gain(move |id, gain_milli| {
         let gain_milli = u16::try_from(gain_milli.max(0)).unwrap_or(0);
         dispatch_and_refresh(
@@ -220,11 +222,22 @@ pub(crate) fn install_mixer_callbacks(
                 gain_milli,
             },
         );
+        if id == "desktop" {
+            if let Err(error) = gain_output
+                .borrow_mut()
+                .set_input_gain_milli(gain_milli)
+            {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_status_message(format!("Audio output failed: {error}").into());
+                }
+            }
+        }
     });
 
     let weak = ui.as_weak();
     let mute_state = Rc::clone(state);
     let mute_renderer = Rc::clone(renderer);
+    let mute_output = Rc::clone(output);
     ui.on_toggle_mixer_mute(move |id| {
         dispatch_and_refresh(
             &weak,
@@ -232,5 +245,17 @@ pub(crate) fn install_mixer_callbacks(
             &mute_renderer,
             UiCommand::ToggleMixerMute { id: id.to_string() },
         );
+        if id == "desktop" {
+            let muted = mute_state
+                .borrow()
+                .mixer_channels()
+                .find(|channel| channel.id() == "desktop")
+                .is_some_and(obs_rs_ui::MixerChannel::muted);
+            if let Err(error) = mute_output.borrow_mut().set_input_muted(muted) {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_status_message(format!("Audio output failed: {error}").into());
+                }
+            }
+        }
     });
 }

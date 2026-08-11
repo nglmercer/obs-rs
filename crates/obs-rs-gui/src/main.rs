@@ -5,6 +5,7 @@
 
 use std::{cell::RefCell, error::Error, rc::Rc};
 
+use obs_rs_audio::AudioFormat;
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::ComponentHandle;
 
@@ -66,7 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ui.set_canvas_height(i32::try_from(format.height()).unwrap_or(1080));
     }
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
-    let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
+    let audio_format = AudioFormat::new(settings.sample_rate_hz(), settings.channel_count())?;
     state
         .borrow_mut()
         .dispatch(UiCommand::SetLocale {
@@ -80,6 +81,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             channels: settings.channel_count(),
         })
         .map_err(|error| format!("stored audio format: {error}"))?;
+    let output = Rc::new(RefCell::new(OutputRuntime::with_audio(
+        renderer.borrow().format,
+        audio_format,
+    )?));
 
     refresh_ui(&ui, &state, &renderer);
     refresh_output_ui(&ui, &output);

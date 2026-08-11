@@ -24,6 +24,8 @@ control surfaces:
   `AudioWorker` with exact block contracts. Callback timestamp observation rejects
   device-clock regressions and applies bounded ppm correction; mixer peak telemetry
   is available to the desktop state.
+- `obs-rs-audio-pipewire` provides the Linux PipeWire process adapter for bounded
+  raw `f32` input blocks, with typed discovery/start/read/stop failures.
 - `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
   catalog/provider contracts, atomic discovery refresh, deterministic animated test
   backends, a direct Linux X11 root-screen adapter, and a bounded `OBSFRM01` RGBA
@@ -57,6 +59,9 @@ control surfaces:
   timestamp-order validation, a reconnectable memory transport fixture, and a
   length-framed standard-library TCP transport plus an RFC 6455 WebSocket client
   with reconnect/drop telemetry and an explicit `OBSRWS01` packet envelope.
+- `obs-rs-engine` coordinates project/runtime rendering, rational A/V deadlines,
+  PipeWire-or-fallback audio, `OBSRPKT1` audio/video recording, and bounded
+  TCP/WebSocket output for headless and GUI hosts.
 - `obs-rs-project` provides Rust-owned profiles, ordered scenes/source definitions,
   command dispatch, dirty-state tracking, deterministic escaped persistence, and
   atomic project-file save/load/recovery. Source visibility and lock state are
@@ -73,15 +78,16 @@ control surfaces:
   recording/streaming controls, scene/source ordering and visibility/lock controls,
   a mixer with gain/mute/peak state, source properties, crash-safe project
   save/load/recover, platform-capture capability reporting, output telemetry, and
-  a visible bilingual accessible state snapshot backed by the same `DesktopState`
-  commands.
+  PipeWire/fallback status, and a visible bilingual accessible state snapshot
+  backed by the same `DesktopState` commands.
 - `obs-rs-app` runs a small end-to-end demo, a scriptable accessible terminal
   frontend, and a loopback-only accessible browser control surface without a native
   host dependency.
 
-This is an engine foundation with usable reference recording and TCP/WebSocket packet
-output, not yet a production codec/protocol stack or full OBS Studio parity. The
-complete target and its acceptance gates are described in the roadmap.
+This is a usable Linux/X11 vertical slice with Rust reference codecs and the
+OBS-RS packet boundary, not yet a production codec/protocol stack or full OBS
+Studio parity. The executable V1 backlog and acceptance gates are in
+[07-functional-todo.md](07-functional-todo.md).
 
 ## Build and run
 
@@ -132,6 +138,8 @@ event loop, which keeps GUI wiring checkable in headless validation.
    decisions, and questions that must be answered before each phase advances.
 6. [05-permanent-native-boundaries.md](05-permanent-native-boundaries.md) — the
    boundary policy and evidence checklist for keeping the project Rust-native.
+7. [07-functional-todo.md](07-functional-todo.md) — the scoped Linux/X11 V1
+   roadmap with dependencies, files, tests, and acceptance criteria.
 
 ## Current status
 
@@ -140,10 +148,14 @@ render loop and multi-worker soak, Phase 4 callback-clock/audio-worker primitive
 the shared media-clock coordinator, the Phase 5 capture contract plus Linux X11
 adapter, and the Phase 6 packet/muxer/atomic recording lifecycle contracts are
 implemented, together with a growing Phase 7 project/GUI workflow and Phase 8
-resource diagnostics. A bounded subprocess extension contract and a tested
-WebSocket packet transport are now present as reference boundaries. The release
-profile, pinned-toolchain CI workflow, and checksum manifest script are also
-present. The project intentionally does not claim feature parity with OBS Studio:
-macOS/Windows capture, GPU/zero-copy rendering, production codecs and protocols,
-full GUI localization/property dialogs, signed plugin distribution, signing, and
-update channels remain roadmap work.
+resource diagnostics. The current V1 integration adds `obs-rs-engine`, PipeWire
+input with deterministic fallback, full-root X11 resize/letterbox capture with
+recovery, and GUI A/V packet output. A bounded subprocess extension contract and
+a tested WebSocket packet transport are also present as reference boundaries.
+The release profile, pinned-toolchain CI workflow, and checksum manifest script
+are present. Remaining V1 gaps are the background output-worker lifecycle, full
+PipeWire device enumeration/monitoring, project/output synchronization, and live
+hardware acceptance automation. The project intentionally does not claim feature
+parity with OBS Studio: macOS/Windows capture, GPU/zero-copy rendering,
+production codecs and protocols, full GUI localization/property dialogs, signed
+plugin distribution, signing, and update channels remain roadmap work.

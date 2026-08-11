@@ -110,7 +110,7 @@ export component OutputPage inherits VerticalLayout {
             label: I18n.text.settings_ui.recording_path;
             LineEdit {
                 text <=> root.recording-path;
-                placeholder-text: "obs-rs-recording.y4m";
+                placeholder-text: "obs-rs-recording.obsr";
                 edited => { root.changed(); }
                 horizontal-stretch: 1;
             }

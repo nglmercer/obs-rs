@@ -3293,6 +3293,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "obs-rs-audio-pipewire"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-audio",
+ "obs-rs-media",
+]
+
+[[package]]
 name = "obs-rs-builtins"
 version = "0.1.0"
 dependencies = [
@@ -3346,14 +3354,32 @@ name = "obs-rs-diagnostics"
 version = "0.1.0"
 
 [[package]]
+name = "obs-rs-engine"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-audio",
+ "obs-rs-builtins",
+ "obs-rs-clock",
+ "obs-rs-config",
+ "obs-rs-core",
+ "obs-rs-media",
+ "obs-rs-output",
+ "obs-rs-plugin-api",
+ "obs-rs-project",
+]
+
+[[package]]
 name = "obs-rs-gui"
 version = "0.1.0"
 dependencies = [
  "i-slint-backend-testing",
+ "obs-rs-audio",
+ "obs-rs-audio-pipewire",
  "obs-rs-builtins",
  "obs-rs-config",
  "obs-rs-core",
  "obs-rs-diagnostics",
+ "obs-rs-engine",
  "obs-rs-media",
  "obs-rs-output",
  "obs-rs-plugin-api",

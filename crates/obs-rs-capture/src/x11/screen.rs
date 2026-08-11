@@ -92,10 +92,13 @@ impl X11CaptureDevice {
         format: VideoFormat,
         timestamp: Timestamp,
     ) -> Result<VideoFrame, CaptureError> {
-        let width =
-            u16::try_from(format.width()).map_err(|_| CaptureError::UnsupportedFormat(format))?;
-        let height =
-            u16::try_from(format.height()).map_err(|_| CaptureError::UnsupportedFormat(format))?;
+        // Capture the complete root window first. Requesting the output canvas
+        // dimensions directly only returned the top-left corner whenever the
+        // desktop was larger than the configured scene.
+        let width = u16::try_from(self.server.width)
+            .map_err(|_| CaptureError::UnsupportedFormat(format))?;
+        let height = u16::try_from(self.server.height)
+            .map_err(|_| CaptureError::UnsupportedFormat(format))?;
         let plane_mask = if self.server.depth == 32 {
             u32::MAX
         } else {
@@ -172,6 +175,13 @@ impl X11CaptureDevice {
             self.server.masks,
             &self.data,
         )?;
+        let pixels = resize_letterbox(
+            &pixels,
+            usize::from(width),
+            usize::from(height),
+            usize::try_from(format.width()).unwrap_or(usize::MAX),
+            usize::try_from(format.height()).unwrap_or(usize::MAX),
+        )?;
         VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)
     }
 }
@@ -191,10 +201,10 @@ impl VideoCaptureDevice for X11CaptureDevice {
             CapturePermission::Denied => return Err(CaptureError::PermissionDenied),
             CapturePermission::Unavailable => return Err(CaptureError::PermissionUnavailable),
         }
-        if format.width() > self.server.width
-            || format.height() > self.server.height
-            || format.width() > u32::from(u16::MAX)
-            || format.height() > u32::from(u16::MAX)
+        if self.server.width == 0
+            || self.server.height == 0
+            || self.server.width > u32::from(u16::MAX)
+            || self.server.height > u32::from(u16::MAX)
         {
             return Err(CaptureError::UnsupportedFormat(format));
         }
@@ -222,4 +232,82 @@ impl VideoCaptureDevice for X11CaptureDevice {
             .ok_or(CaptureError::FrameCounterExhausted)?;
         Ok(Some(frame))
     }
+}
+
+/// Resizes a complete root image into the output canvas while preserving its
+/// aspect ratio. The unused canvas area is opaque black, so X11 capture remains
+/// composable with ordinary scene layers and never exposes uninitialized alpha.
+pub(crate) fn resize_letterbox(
+    source: &[u8],
+    source_width: usize,
+    source_height: usize,
+    destination_width: usize,
+    destination_height: usize,
+) -> Result<Vec<u8>, CaptureError> {
+    let source_bytes = source_width
+        .checked_mul(source_height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(CaptureError::ReplyTooLarge { bytes: u64::MAX })?;
+    if source.len() < source_bytes
+        || source_width == 0
+        || source_height == 0
+        || destination_width == 0
+        || destination_height == 0
+    {
+        return Err(protocol_error("X11 resize geometry is invalid"));
+    }
+    let destination_bytes = destination_width
+        .checked_mul(destination_height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or(CaptureError::ReplyTooLarge { bytes: u64::MAX })?;
+    let mut output = vec![0_u8; destination_bytes];
+    for pixel in output.chunks_exact_mut(4) {
+        pixel[3] = u8::MAX;
+    }
+
+    let width_limited = destination_width.saturating_mul(source_height)
+        <= destination_height.saturating_mul(source_width);
+    let (scaled_width, scaled_height) = if width_limited {
+        (
+            destination_width,
+            destination_width
+                .saturating_mul(source_height)
+                .checked_div(source_width)
+                .unwrap_or(0)
+                .max(1),
+        )
+    } else {
+        (
+            destination_height
+                .saturating_mul(source_width)
+                .checked_div(source_height)
+                .unwrap_or(0)
+                .max(1),
+            destination_height,
+        )
+    };
+    let offset_x = (destination_width - scaled_width) / 2;
+    let offset_y = (destination_height - scaled_height) / 2;
+    for destination_y in 0..scaled_height {
+        let source_y = destination_y
+            .saturating_mul(source_height)
+            .checked_div(scaled_height)
+            .unwrap_or(0)
+            .min(source_height - 1);
+        for destination_x in 0..scaled_width {
+            let source_x = destination_x
+                .saturating_mul(source_width)
+                .checked_div(scaled_width)
+                .unwrap_or(0)
+                .min(source_width - 1);
+            let source_offset = (source_y * source_width + source_x) * 4;
+            let output_offset = ((offset_y + destination_y) * destination_width
+                + offset_x
+                + destination_x)
+                * 4;
+            output[output_offset..output_offset + 4]
+                .copy_from_slice(&source[source_offset..source_offset + 4]);
+        }
+    }
+    Ok(output)
 }

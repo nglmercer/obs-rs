@@ -5,6 +5,7 @@
 
 mod buffer;
 mod callback_clock;
+mod device;
 mod error;
 mod mixer;
 mod monitor;
@@ -20,6 +21,10 @@ mod tests;
 
 pub use buffer::{AudioBuffer, AudioBufferPool};
 pub use callback_clock::{AudioCallbackClock, AudioCallbackObservation};
+pub use device::{
+    AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioInput, AudioInputState,
+    AudioInputProvider, SharedAudioInputProvider, SimulatedAudioInput, SimulatedAudioProvider,
+};
 pub use error::{AudioError, AudioWorkerError};
 pub use mixer::AudioMixer;
 pub use monitor::AudioMonitorTap;

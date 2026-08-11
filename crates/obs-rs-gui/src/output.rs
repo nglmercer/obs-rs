@@ -1,228 +1,126 @@
-use std::{error::Error, path::PathBuf};
+use std::{error::Error, sync::Arc};
 
+use obs_rs_audio::AudioFormat;
+use obs_rs_audio_pipewire::PipeWireAudioProvider;
+use obs_rs_engine::{EngineConfig, EngineSession};
 use obs_rs_media::{VideoFormat, VideoFrame};
-use obs_rs_output::{
-    AtomicY4mFileWriter, PacketDropPolicy, ReconnectPolicy, RleVideoEncoder, StreamSession,
-    StreamState, TcpPacketTransport, VideoEncoder, WebSocketPacketTransport,
-};
+use obs_rs_output::StreamState;
 
+/// GUI-owned handle over the portable engine output boundary.
 pub(crate) struct OutputRuntime {
-    pub(crate) format: VideoFormat,
-    recording: Option<AtomicY4mFileWriter>,
-    streaming: Option<StreamOutput>,
-    encoder: RleVideoEncoder,
-    frames_pushed: u64,
-}
-
-enum StreamOutput {
-    Tcp(StreamSession<TcpPacketTransport>),
-    WebSocket(StreamSession<WebSocketPacketTransport>),
-}
-
-impl StreamOutput {
-    fn connect(address: &str) -> Result<Self, Box<dyn Error>> {
-        let address = address.trim();
-        if address.starts_with("ws://") {
-            let mut stream = StreamSession::new(
-                WebSocketPacketTransport::new(address),
-                8 * 1024 * 1024,
-                PacketDropPolicy::DropNewest,
-                ReconnectPolicy::new(3),
-            )?;
-            stream.connect()?;
-            Ok(Self::WebSocket(stream))
-        } else {
-            let mut stream = StreamSession::new(
-                TcpPacketTransport::new(address),
-                8 * 1024 * 1024,
-                PacketDropPolicy::DropNewest,
-                ReconnectPolicy::new(3),
-            )?;
-            stream.connect()?;
-            Ok(Self::Tcp(stream))
-        }
-    }
-
-    fn state(&self) -> StreamState {
-        match self {
-            Self::Tcp(stream) => stream.state(),
-            Self::WebSocket(stream) => stream.state(),
-        }
-    }
-
-    fn reconnect(&mut self) -> Result<(), Box<dyn Error>> {
-        match self {
-            Self::Tcp(stream) => stream.reconnect()?,
-            Self::WebSocket(stream) => stream.reconnect()?,
-        }
-        Ok(())
-    }
-
-    fn submit(&mut self, packet: obs_rs_output::EncodedPacket) -> Result<(), Box<dyn Error>> {
-        match self {
-            Self::Tcp(stream) => {
-                stream.submit(packet)?;
-            }
-            Self::WebSocket(stream) => {
-                stream.submit(packet)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn flush(&mut self) -> Result<usize, Box<dyn Error>> {
-        match self {
-            Self::Tcp(stream) => Ok(stream.flush()?),
-            Self::WebSocket(stream) => Ok(stream.flush()?),
-        }
-    }
-
-    fn close(&mut self) {
-        match self {
-            Self::Tcp(stream) => stream.close(),
-            Self::WebSocket(stream) => stream.close(),
-        }
-    }
-
-    fn queued_bytes(&self) -> usize {
-        match self {
-            Self::Tcp(stream) => stream.queued_bytes(),
-            Self::WebSocket(stream) => stream.queued_bytes(),
-        }
-    }
-
-    fn metrics(&self) -> obs_rs_output::StreamMetrics {
-        match self {
-            Self::Tcp(stream) => stream.metrics(),
-            Self::WebSocket(stream) => stream.metrics(),
-        }
-    }
+    engine: EngineSession,
 }
 
 impl OutputRuntime {
+    /// Creates an output with the reference 48 kHz stereo format.
+    #[cfg(test)]
     pub(crate) fn new(format: VideoFormat) -> Self {
-        Self {
-            format,
-            recording: None,
-            streaming: None,
-            encoder: RleVideoEncoder::new(format),
-            frames_pushed: 0,
-        }
+        let audio_format = AudioFormat::new(48_000, 2).unwrap_or_else(|error| {
+            unreachable!("the built-in audio format is valid: {error}")
+        });
+        Self::with_audio(format, audio_format).unwrap_or_else(|error| {
+            unreachable!("the built-in output session is valid: {error}")
+        })
+    }
+
+    /// Creates an output using the audio format selected in settings.
+    pub(crate) fn with_audio(
+        format: VideoFormat,
+        audio_format: AudioFormat,
+    ) -> Result<Self, Box<dyn Error>> {
+        let config = EngineConfig::new(audio_format)
+            .with_audio_provider(Arc::new(PipeWireAudioProvider::new()));
+        let engine = EngineSession::for_format(format, config)?;
+        Ok(Self { engine })
     }
 
     pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
-        if self.recording.is_some() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "recording output is already open",
-            )
-            .into());
-        }
-        let final_path = PathBuf::from(path.trim());
-        let file_name = final_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| std::io::Error::other("recording path must name a file"))?;
-        let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
-        self.recording = Some(AtomicY4mFileWriter::new(
-            final_path,
-            temp_path,
-            self.format,
-        )?);
+        self.engine.start_recording(path)?;
         Ok(())
     }
 
     pub(crate) fn finish_recording(&mut self) -> Result<usize, Box<dyn Error>> {
-        let Some(mut recording) = self.recording.take() else {
-            return Err(std::io::Error::other("recording output is not open").into());
-        };
-        match recording.finalize() {
-            Ok(bytes) => Ok(bytes),
-            Err(error) => {
-                self.recording = Some(recording);
-                Err(error.into())
-            }
-        }
+        Ok(self.engine.finish_recording()?)
     }
 
     pub(crate) fn abort_recording(&mut self) {
-        if let Some(mut recording) = self.recording.take() {
-            let _ = recording.abort();
-        }
+        self.engine.abort_recording();
     }
 
     pub(crate) fn start_streaming(&mut self, address: &str) -> Result<(), Box<dyn Error>> {
-        if self.streaming.is_some() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "stream output is already open",
-            )
-            .into());
-        }
-        self.streaming = Some(StreamOutput::connect(address)?);
+        self.engine.start_streaming(address)?;
         Ok(())
     }
 
     pub(crate) fn finish_streaming(&mut self) {
-        if let Some(mut stream) = self.streaming.take() {
-            let _ = stream.flush();
-            stream.close();
-        }
+        let _ = self.engine.finish_streaming();
     }
 
+    /// Queues a program frame and its due audio without flushing a socket.
     pub(crate) fn push_frame(&mut self, frame: &VideoFrame) -> Result<(), Box<dyn Error>> {
-        if let Some(recording) = self.recording.as_mut() {
-            recording.push(frame.clone())?;
-        }
-        if let Some(stream) = self.streaming.as_mut() {
-            if stream.state() == StreamState::Disconnected {
-                stream.reconnect()?;
-            }
-            let packet = self.encoder.encode(frame)?;
-            stream.submit(packet)?;
-            if let Err(error) = stream.flush() {
-                stream.reconnect().map_err(|reconnect| {
-                    std::io::Error::other(format!("{error}; reconnect failed: {reconnect}"))
-                })?;
-                stream.flush()?;
-            }
-        }
-        self.frames_pushed = self.frames_pushed.saturating_add(1);
+        self.engine.push_program_frame(frame)?;
+        Ok(())
+    }
+
+    /// Pumps the bounded stream queue from the GUI timer.
+    pub(crate) fn pump(&mut self) -> Result<(), Box<dyn Error>> {
+        self.engine.pump_stream()?;
+        Ok(())
+    }
+
+    pub(crate) fn set_input_gain_milli(&mut self, gain_milli: u16) -> Result<(), Box<dyn Error>> {
+        self.engine.set_input_gain_milli(gain_milli)?;
+        Ok(())
+    }
+
+    pub(crate) fn set_input_muted(&mut self, muted: bool) -> Result<(), Box<dyn Error>> {
+        self.engine.set_input_muted(muted)?;
         Ok(())
     }
 
     pub(crate) fn output_status(&self) -> String {
-        let recording = if self.recording.is_some() {
+        let snapshot = self.engine.snapshot();
+        let recording = if snapshot.recording {
             "recording open"
         } else {
             "recording stopped"
         };
-        let streaming =
-            self.streaming
-                .as_ref()
-                .map_or("stream stopped", |stream| match stream.state() {
-                    StreamState::Connected => "stream connected",
-                    StreamState::Disconnected => "stream reconnecting",
-                    StreamState::Failed => "stream failed",
-                    StreamState::Closed => "stream closed",
-                });
-        format!("Output: {recording} · {streaming}")
+        let streaming = snapshot.stream_state.map_or("stream stopped", |state| match state {
+            StreamState::Connected => "stream connected",
+            StreamState::Disconnected => "stream reconnecting",
+            StreamState::Failed => "stream failed",
+            StreamState::Closed => "stream closed",
+        });
+        let audio = if snapshot.audio_fallback {
+            "audio fallback"
+        } else {
+            "audio live"
+        };
+        format!("Output: {recording} · {streaming} · {audio}")
     }
 
     pub(crate) fn output_metrics(&self) -> String {
-        let stream = self.streaming.as_ref();
-        let (sent, dropped, queued, reconnects) = stream.map_or((0, 0, 0, 0), |stream| {
-            let metrics = stream.metrics();
-            (
-                metrics.sent_packets(),
-                metrics.dropped_packets(),
-                stream.queued_bytes() as u64,
-                metrics.reconnects(),
-            )
-        });
+        let snapshot = self.engine.snapshot();
+        let (sent, dropped, queued, reconnects) = self
+            .engine
+            .stream_metrics()
+            .map_or((0, 0, 0, 0), |(metrics, queued)| {
+                (
+                    metrics.sent_packets(),
+                    metrics.dropped_packets(),
+                    queued as u64,
+                    metrics.reconnects(),
+                )
+            });
         format!(
-            "frames={} · sent={} · dropped={} · queued={} B · reconnects={reconnects}",
-            self.frames_pushed, sent, dropped, queued
+            "frames={} · audio_blocks={} · sent={} · dropped={} · queued={} B · reconnects={} · peak={}‰",
+            snapshot.stats.video_frames,
+            snapshot.stats.audio_blocks,
+            sent,
+            dropped,
+            queued,
+            reconnects,
+            snapshot.stats.audio_peak_milli
         )
     }
 }
