@@ -1,5 +1,11 @@
 //! Slint desktop control room for the Rust-owned OBS-RS state machine.
 
+// `deny`, not `forbid`, and deliberately so: this binary includes Slint's
+// generated UI module, which carries its own `#[allow(unsafe_code)]`
+// attributes. `forbid` cannot be lifted by an inner `allow`, so it fails the
+// build outright. `deny` gives the same "no hand-written unsafe" guarantee for
+// this crate's own code while letting the generated module compile. Every other
+// crate in the workspace uses `forbid`.
 #![deny(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 

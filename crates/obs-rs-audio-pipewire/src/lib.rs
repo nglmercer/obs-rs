@@ -211,6 +211,7 @@ impl AudioInputProvider for PipeWireAudioProvider {
             state: AudioInputState::Stopped,
             child,
             stdout,
+            scratch: Vec::new(),
         }))
     }
 }
@@ -269,6 +270,12 @@ struct PipeWireInput {
     state: AudioInputState,
     child: Child,
     stdout: ChildStdout,
+    /// Scratch buffer reused across reads.
+    ///
+    /// Blocks arrive around 200 times a second at a fixed size, so allocating
+    /// and freeing the same buffer on every read was pure churn on the audio
+    /// path. It is kept here and resized only when the block size changes.
+    scratch: Vec<u8>,
 }
 
 struct PipeWireOutput {
@@ -307,8 +314,10 @@ impl AudioInput for PipeWireInput {
             .ok_or_else(|| {
                 AudioDeviceError::InvalidDevice("audio block byte size overflowed".to_owned())
             })?;
-        let mut bytes = vec![0_u8; byte_count];
-        if let Err(error) = self.stdout.read_exact(&mut bytes) {
+        // `resize` keeps the existing allocation whenever the block size is
+        // unchanged, which is every read after the first.
+        self.scratch.resize(byte_count, 0);
+        if let Err(error) = self.stdout.read_exact(&mut self.scratch) {
             self.state = AudioInputState::Failed;
             let error = if error.kind() == ErrorKind::UnexpectedEof {
                 std::io::Error::new(ErrorKind::UnexpectedEof, "PipeWire ended the audio stream")
@@ -317,7 +326,8 @@ impl AudioInput for PipeWireInput {
             };
             return Err(AudioDeviceError::Io(error));
         }
-        let samples = bytes
+        let samples = self
+            .scratch
             .chunks_exact(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect();

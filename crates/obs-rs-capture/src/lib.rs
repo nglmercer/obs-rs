@@ -24,7 +24,10 @@ pub use raw_reader::RawFrameReader;
 #[cfg(target_os = "linux")]
 pub use v4l2::V4l2CaptureDevice;
 #[cfg(target_os = "linux")]
-pub use wayland::{wayland_session_available, WaylandCaptureDevice};
+pub use wayland::{
+    pipewire_reader_available, wayland_session_available, WaylandCaptureDevice,
+    PIPEWIRE_READER_COMMAND,
+};
 #[cfg(target_os = "linux")]
 pub use x11::{
     parse_window_id, x11_monitors, x11_windows, X11CaptureDevice, X11Monitor, X11Window,

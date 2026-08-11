@@ -159,7 +159,7 @@ impl SignedUpdateManifest {
     pub fn serialize(&self) -> String {
         format!(
             "{}signature={}\n",
-            String::from_utf8_lossy(&self.canonical()),
+            self.canonical_text(),
             hex(&self.signature)
         )
     }
@@ -210,7 +210,18 @@ impl SignedUpdateManifest {
         })
     }
 
+    /// Returns the exact bytes covered by the detached signature.
     fn canonical(&self) -> Vec<u8> {
+        self.canonical_text().into_bytes()
+    }
+
+    /// Returns the canonical manifest as text.
+    ///
+    /// The canonical form is built by formatting, so it is UTF-8 by
+    /// construction. Producing the `String` first and taking its bytes when
+    /// signing keeps that guarantee in the type system, instead of round-tripping
+    /// through `Vec<u8>` and needing a lossy decode that could never fire.
+    fn canonical_text(&self) -> String {
         format!(
             "{UPDATE_MANIFEST_MAGIC}\nurl={}\ntarget={}\nversion={}\nsize={}\nsha256={}\nminimum_version={}\nkey={}\n",
             self.artifact_url,
@@ -221,7 +232,6 @@ impl SignedUpdateManifest {
             self.minimum_version,
             self.signing_key_id,
         )
-        .into_bytes()
     }
 }
 

@@ -23,9 +23,71 @@ const PARALLEL_BLOCK_BYTES: usize = 4 * 1_024;
 /// Waking worker threads for a handful of rows costs more than the work.
 const PARALLEL_MINIMUM_BYTES: usize = 2 * PARALLEL_BLOCK_BYTES;
 
+/// Most transform plans retained, regardless of how small each one is.
 const TRANSFORM_PLAN_CACHE_SIZE: usize = 64;
+
+/// Total bytes of column indices the plan cache may retain.
+///
+/// The entry count alone is not a memory bound: one plan holds an index per
+/// output column, so an entry costs 16 bytes at 1x1 and 60 KB at 4K. Sixty-four
+/// 4K plans is a few megabytes of cache that a session may never reuse, so the
+/// cache is bounded by bytes as well as by count and evicts oldest-first until
+/// it fits.
+const MAX_TRANSFORM_PLAN_BYTES: usize = 4 * 1_024 * 1_024;
+
 type TransformColumns = Arc<Vec<Option<usize>>>;
-type TransformPlanCache = VecDeque<(VideoFormat, FrameTransform, TransformColumns)>;
+
+/// Cached column plans, oldest first, with a running byte total.
+#[derive(Default)]
+struct TransformPlanCache {
+    entries: VecDeque<(VideoFormat, FrameTransform, TransformColumns)>,
+    bytes: usize,
+}
+
+impl TransformPlanCache {
+    /// Returns the bytes of index storage one plan occupies.
+    fn plan_bytes(columns: &TransformColumns) -> usize {
+        columns.len() * std::mem::size_of::<Option<usize>>()
+    }
+
+    fn get(&self, format: VideoFormat, transform: FrameTransform) -> Option<TransformColumns> {
+        self.entries
+            .iter()
+            .find(|(cached_format, cached_transform, _)| {
+                *cached_format == format && *cached_transform == transform
+            })
+            .map(|(_, _, columns)| Arc::clone(columns))
+    }
+
+    fn insert(
+        &mut self,
+        format: VideoFormat,
+        transform: FrameTransform,
+        columns: &TransformColumns,
+    ) {
+        let bytes = Self::plan_bytes(columns);
+        // A plan larger than the whole budget is still returned to the caller;
+        // it is simply not worth retaining, so it is never inserted.
+        if bytes > MAX_TRANSFORM_PLAN_BYTES {
+            return;
+        }
+
+        while self.entries.len() >= TRANSFORM_PLAN_CACHE_SIZE
+            || self.bytes + bytes > MAX_TRANSFORM_PLAN_BYTES
+        {
+            match self.entries.pop_front() {
+                Some((_, _, evicted)) => {
+                    self.bytes = self.bytes.saturating_sub(Self::plan_bytes(&evicted));
+                }
+                None => break,
+            }
+        }
+
+        self.bytes += bytes;
+        self.entries.push_back((format, transform, Arc::clone(columns)));
+    }
+}
+
 static TRANSFORM_PLANS: OnceLock<Mutex<TransformPlanCache>> = OnceLock::new();
 
 /// Runs `apply` over the frame's pixels, in parallel blocks when it pays off.
@@ -258,7 +320,12 @@ impl VideoFrame {
                 // A fully opaque run is the overwhelmingly common case — an ordinary
                 // camera, screen, or colour layer has no transparency — and it
                 // reduces to a copy, so it is detected per block before any
-                // per-pixel arithmetic runs.
+                // per-pixel arithmetic runs. This is not a redundant extra pass:
+                // when the block is opaque the scan replaces the per-pixel loop
+                // with a memcpy, and when it is not, `all` short-circuits at the
+                // first translucent pixel. The only case that pays for the scan
+                // without benefiting is a block whose sole translucent pixel is
+                // at its very end.
                 if source.chunks_exact(4).all(|pixel| pixel[3] == u8::MAX) {
                     background.copy_from_slice(source);
                     return;
@@ -740,14 +807,12 @@ fn transform_columns(
     translate_x: i64,
     scale_x: i64,
 ) -> TransformColumns {
-    let cache = TRANSFORM_PLANS.get_or_init(|| Mutex::new(VecDeque::new()));
+    let cache = TRANSFORM_PLANS.get_or_init(|| Mutex::new(TransformPlanCache::default()));
     let mut plans = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some((_, _, columns)) = plans.iter().find(|(cached_format, cached_transform, _)| {
-        *cached_format == format && *cached_transform == transform
-    }) {
-        return Arc::clone(columns);
+    if let Some(columns) = plans.get(format, transform) {
+        return columns;
     }
     let columns = Arc::new(
         (0..format.width)
@@ -767,10 +832,7 @@ fn transform_columns(
             })
             .collect(),
     );
-    if plans.len() == TRANSFORM_PLAN_CACHE_SIZE {
-        let _ = plans.pop_front();
-    }
-    plans.push_back((format, transform, Arc::clone(&columns)));
+    plans.insert(format, transform, &columns);
     columns
 }
 
@@ -818,4 +880,74 @@ fn apply_opacity(pixel: &mut [u8], opacity: u32) {
 /// produce — and the tests pin it across the whole range a composite uses.
 pub(crate) const fn divide_by_255(value: u32) -> u32 {
     ((value as u64 * 0x8080_8081) >> 39) as u32
+}
+
+#[cfg(test)]
+mod transform_plan_cache_tests {
+    use super::*;
+
+    fn columns(len: usize) -> TransformColumns {
+        Arc::new(vec![Some(0_usize); len])
+    }
+
+    fn format(width: u32) -> VideoFormat {
+        VideoFormat::new(
+            width,
+            2,
+            crate::FrameRate::new(30, 1).expect("valid rate"),
+        )
+        .expect("valid format")
+    }
+
+    #[test]
+    fn the_cache_stays_within_its_byte_budget() {
+        let mut cache = TransformPlanCache::default();
+        // Each plan is a quarter of the budget, so a fifth insert must evict.
+        let per_plan = MAX_TRANSFORM_PLAN_BYTES / 4 / std::mem::size_of::<Option<usize>>();
+
+        for index in 0..8_u32 {
+            cache.insert(format(index + 1), FrameTransform::IDENTITY, &columns(per_plan));
+            assert!(
+                cache.bytes <= MAX_TRANSFORM_PLAN_BYTES,
+                "budget exceeded after {index} inserts: {} bytes",
+                cache.bytes
+            );
+        }
+
+        assert_eq!(cache.entries.len(), 4, "older plans must be evicted");
+    }
+
+    #[test]
+    fn the_cache_stays_within_its_entry_count() {
+        let mut cache = TransformPlanCache::default();
+
+        for index in 0..u32::try_from(TRANSFORM_PLAN_CACHE_SIZE + 10).expect("small count") {
+            cache.insert(format(index + 1), FrameTransform::IDENTITY, &columns(1));
+        }
+
+        assert_eq!(cache.entries.len(), TRANSFORM_PLAN_CACHE_SIZE);
+    }
+
+    #[test]
+    fn a_plan_larger_than_the_budget_is_never_retained() {
+        let mut cache = TransformPlanCache::default();
+        let oversized = MAX_TRANSFORM_PLAN_BYTES / std::mem::size_of::<Option<usize>>() + 1;
+
+        cache.insert(format(1), FrameTransform::IDENTITY, &columns(oversized));
+
+        assert!(cache.entries.is_empty());
+        assert_eq!(cache.bytes, 0);
+    }
+
+    #[test]
+    fn a_cached_plan_is_returned_for_a_repeated_lookup() {
+        let mut cache = TransformPlanCache::default();
+        let plan = columns(4);
+        cache.insert(format(4), FrameTransform::IDENTITY, &plan);
+
+        let found = cache.get(format(4), FrameTransform::IDENTITY).expect("cached");
+
+        assert!(Arc::ptr_eq(&found, &plan));
+        assert!(cache.get(format(8), FrameTransform::IDENTITY).is_none());
+    }
 }

@@ -1067,10 +1067,13 @@ impl EngineSession {
             return Ok(0);
         };
         if stream.state() == StreamState::Disconnected {
-            if let Err(error) = stream.reconnect() {
-                self.last_error = Some(error.to_string());
-                self.streaming_lifecycle = OutputLifecycle::Failed;
-                return Err(error);
+            match stream.reconnect() {
+                Ok(()) => self.streaming_lifecycle = OutputLifecycle::Running,
+                Err(error) => {
+                    self.last_error = Some(error.to_string());
+                    self.streaming_lifecycle = OutputLifecycle::Failed;
+                    return Err(error);
+                }
             }
         }
         match stream.pump() {
@@ -1085,6 +1088,11 @@ impl EngineSession {
                     self.streaming_lifecycle = OutputLifecycle::Failed;
                     return Err(error);
                 }
+                // The transport is carrying media again, so the phase must say
+                // so. Leaving it at `Failed` from the attempt that just
+                // recovered would show a stopped stream in the UI while packets
+                // were flowing.
+                self.streaming_lifecycle = OutputLifecycle::Running;
                 Ok(0)
             }
         }

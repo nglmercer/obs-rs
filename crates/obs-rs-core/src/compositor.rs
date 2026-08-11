@@ -12,6 +12,21 @@ use super::{
 impl Runtime {
     /// Renders one scene in item order using the CPU reference compositor.
     ///
+    /// # Concurrency
+    ///
+    /// Rendering is serialized by design, and the `&mut self` receiver states
+    /// that guarantee rather than merely reflecting an implementation detail.
+    /// A source is a stateful device — a capture node advances its buffer, a
+    /// decoder its position — so `render` takes `&mut` on the source itself,
+    /// and two scenes sharing a source could not be composited concurrently
+    /// without changing what a source is. Scene compositing is therefore one
+    /// scene at a time; within a scene, the per-frame pixel work is what
+    /// parallelizes, across rayon blocks inside `obs-rs-media`.
+    ///
+    /// Rendering independent scenes in parallel would require per-source
+    /// interior mutability and a defined answer for shared sources; that is a
+    /// deliberate future change, not something a caller can assume today.
+    ///
     /// # Errors
     ///
     /// Returns [`RuntimeError`] when a scene or source is missing, a source

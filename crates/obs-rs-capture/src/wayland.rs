@@ -18,6 +18,28 @@ use crate::{
     types::{CaptureDeviceInfo, CaptureKind, CapturePermission},
 };
 
+/// The external tool that reads frames from the portal's `PipeWire` node.
+///
+/// This is a genuine runtime dependency, not an optional accelerator: on
+/// Wayland there is no other path to screen pixels, so a session without it can
+/// discover a screen source but never produce a frame from one. It ships in the
+/// `gstreamer1.0-tools` (or `gstreamer-tools`) package and needs
+/// `gst-plugin-pipewire` for the `pipewiresrc` element.
+pub const PIPEWIRE_READER_COMMAND: &str = "gst-launch-1.0";
+
+/// Returns whether [`PIPEWIRE_READER_COMMAND`] can be found on `PATH`.
+///
+/// Checked up front so a missing tool is reported once, by name, when the
+/// screen source is offered — rather than as an opaque spawn failure at the
+/// moment the operator hits "start streaming".
+#[must_use]
+pub fn pipewire_reader_available() -> bool {
+    let Some(path) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&path).any(|directory| directory.join(PIPEWIRE_READER_COMMAND).is_file())
+}
+
 /// Returns whether this process is running in a Wayland session.
 ///
 /// The X11 adapter still works under Xwayland but only ever sees Xwayland's own
@@ -138,8 +160,16 @@ fn start_pipewire_reader(
     node_id: u32,
     format: VideoFormat,
 ) -> Result<RawFrameReader, CaptureError> {
+    if !pipewire_reader_available() {
+        return Err(CaptureError::PlatformUnavailable {
+            message: format!(
+            "{PIPEWIRE_READER_COMMAND} was not found on PATH; Wayland screen capture needs it \
+                 (install the GStreamer tools package and gst-plugin-pipewire)"
+            ),
+        });
+    }
     let frame_rate = format.frame_rate();
-    let mut command = Command::new("gst-launch-1.0");
+    let mut command = Command::new(PIPEWIRE_READER_COMMAND);
     command.args([
         "-q",
         "pipewiresrc",
