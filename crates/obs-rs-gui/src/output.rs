@@ -254,6 +254,17 @@ impl OutputRuntime {
             .unwrap_or(id)
     }
 
+    /// Returns the playback monitor the desktop channel captures, if any.
+    ///
+    /// `None` means the channel is genuinely silent, which the mixer row shows
+    /// as such instead of naming a device that is not being read.
+    pub(crate) fn desktop_audio_name(&self) -> Option<String> {
+        match self.worker.snapshot().engine.desktop_audio {
+            obs_rs_engine::DesktopAudioSource::Monitor(name) => Some(name),
+            obs_rs_engine::DesktopAudioSource::Silent(_) => None,
+        }
+    }
+
     pub(crate) fn output_status(&self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;
@@ -377,7 +388,7 @@ impl OutputRuntime {
             native_submit_max = metrics.max_submit_latency_nanos;
         }
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_submit_max_nanos={} frame_drops={} format_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_submit_max_nanos={} frame_drops={} format_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
@@ -388,6 +399,8 @@ impl OutputRuntime {
             engine.stream_state,
             engine.audio_backend,
             engine.audio_fallback,
+            engine.desktop_audio.label(),
+            engine.desktop_audio.is_capturing(),
             devices,
             snapshot.queued_frames,
             engine.stream_queued_bytes,

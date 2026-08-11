@@ -160,6 +160,26 @@ fn capture_source_defaults_have_a_real_selectable_device_id() {
 }
 
 #[test]
+fn the_desktop_channel_names_its_monitor_or_admits_it_is_silent() {
+    let format = VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+
+    // Whether a playback monitor exists depends on the machine running the
+    // suite, so the invariant under test is that the two answers stay
+    // distinguishable: a named device, or nothing at all. What must never
+    // happen is a channel that claims a device it is not reading.
+    match output.desktop_audio_name() {
+        Some(name) => assert!(!name.trim().is_empty(), "a captured monitor has a name"),
+        None => assert!(
+            output
+                .diagnostics_document()
+                .contains("desktop_audio_active=false"),
+            "a silent desktop channel says so in diagnostics"
+        ),
+    }
+}
+
+#[test]
 fn a_selected_audio_input_survives_disappearing_from_the_graph() {
     let format = VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("rate")).expect("format");
     let mut output = OutputRuntime::new(format);
@@ -256,6 +276,45 @@ fn a_canvas_change_the_engine_rejects_is_rolled_back() {
     );
     assert_eq!(output.borrow().video_format(), original);
     output.borrow_mut().abort_recording();
+}
+
+#[test]
+fn a_failed_output_clears_the_claim_and_offers_guided_recovery() {
+    let ui = MainWindow::new().expect("window");
+    let (state, output) = canvas_fixture();
+    // The desktop optimistically believes it is streaming; the engine never
+    // connected. Reconciling is what turns that mismatch into an answer the
+    // operator can act on rather than a control stuck in the on position.
+    state
+        .borrow_mut()
+        .dispatch(obs_rs_ui::UiCommand::StartStreaming)
+        .expect("claim streaming");
+    ui.set_streaming(true);
+    let _ = output
+        .borrow_mut()
+        .start_streaming("127.0.0.1:1")
+        .expect_err("a closed port cannot accept a stream");
+
+    // The worker publishes its snapshot after replying, so the failure can be
+    // one tick behind the rejected connect. In the app that only delays the
+    // dialog by a frame; here it has to be waited for.
+    for _ in 0..100 {
+        if output.borrow().lifecycles().1 == obs_rs_engine::OutputLifecycle::Failed {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    crate::callbacks::reconcile_output_lifecycle(&ui, &state, &output);
+
+    assert!(!ui.get_streaming(), "the control stops claiming an output");
+    assert!(!state.borrow().streaming());
+    assert_eq!(
+        ui.get_active_modal(),
+        11,
+        "a failure opens the recovery dialog rather than only logging a status line"
+    );
+    assert!(!ui.get_status_message().is_empty());
 }
 
 /// Builds a desktop state and an output runtime that agree on the canvas.

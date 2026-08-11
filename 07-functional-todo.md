@@ -146,8 +146,14 @@ owner boundary, dependencies, tests, and an acceptance condition.
   and takes effect in preview.
 - [x] Real mixer channel graph: map desktop and microphone channels to separate
   engine sources and expose per-source peaks. Dependencies: P0.2.
+  The desktop channel records the playback monitor `PipeWire` exposes; a host
+  with no readable monitor keeps the channel silent and names the reason instead
+  of borrowing the microphone's fallback signal.
 - [x] Guided recovery dialog and explicit “unsupported capability” states for
   projector, virtual camera, and platform-specific menu actions.
+  The projector now exists, so it is no longer an unsupported state; the virtual
+  camera explains its absence when clicked, and a failed output opens a recovery
+  dialog that names the next step rather than only clearing the button.
 
 ## P2 — post-V1 capabilities
 

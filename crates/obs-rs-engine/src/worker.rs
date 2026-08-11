@@ -13,7 +13,8 @@ use obs_rs_media::{Timestamp, VideoFrame};
 use obs_rs_project::Project;
 
 use crate::{
-    EngineAudioChannel, EngineError, EngineSession, EngineSnapshot, EngineStats, OutputLifecycle,
+    DesktopAudioSource, EngineAudioChannel, EngineError, EngineSession, EngineSnapshot,
+    EngineStats, OutputLifecycle,
 };
 
 const DEFAULT_FRAME_QUEUE: usize = 8;
@@ -128,6 +129,7 @@ impl EngineWorker {
                     stream_state: None,
                     audio_backend: "worker unavailable".to_owned(),
                     audio_fallback: true,
+                    desktop_audio: DesktopAudioSource::Silent("worker unavailable".to_owned()),
                     stream_metrics: None,
                     production_stream_metrics: None,
                     stream_queued_bytes: 0,

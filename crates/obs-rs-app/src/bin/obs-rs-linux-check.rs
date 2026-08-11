@@ -121,24 +121,37 @@ fn check_x11_window() -> CheckResult {
         Err(CaptureError::PlatformUnavailable { message }) => return CheckResult::skip(message),
         Err(error) => return CheckResult::fail(error.to_string()),
     };
-    let Some(target) = windows.first() else {
-        return CheckResult::skip("no top-level window is open on this display".to_owned());
-    };
     let mut device = match X11CaptureDevice::connect(&display, "x11-window", "X11 window") {
         Ok(device) => device,
         Err(CaptureError::PlatformUnavailable { message }) => return CheckResult::skip(message),
         Err(error) => return CheckResult::fail(error.to_string()),
     };
-    if let Err(error) = device.select_window(Some(&target.device_id())) {
-        return CheckResult::fail(error.to_string());
-    }
     let format = match VideoFormat::new(320, 180, FrameRate::new(30, 1).expect("valid rate")) {
         Ok(format) => format,
         Err(error) => return CheckResult::fail(error.to_string()),
     };
-    if let Err(error) = device.start(format) {
-        return CheckResult::fail(error.to_string());
+    // A window on another workspace, iconified, or otherwise parked off the
+    // root is a real state of a real desktop, not a defect: the check walks the
+    // list until it finds one that is actually on screen, and only reports a
+    // capability gap when none of them are.
+    let mut unavailable = "no top-level window is open on this display".to_owned();
+    let mut target = None;
+    for window in &windows {
+        match device
+            .select_window(Some(&window.device_id()))
+            .and_then(|()| device.start(format))
+        {
+            Ok(()) => {
+                target = Some(window);
+                break;
+            }
+            Err(CaptureError::PlatformUnavailable { message }) => unavailable = message,
+            Err(error) => return CheckResult::fail(error.to_string()),
+        }
     }
+    let Some(target) = target else {
+        return CheckResult::skip(unavailable);
+    };
     match device.next_frame(Timestamp::ZERO) {
         Ok(Some(frame)) if frame.format() == format => CheckResult::pass(format!(
             "windows={} captured={} size={}x{}",
@@ -151,6 +164,8 @@ fn check_x11_window() -> CheckResult {
             CheckResult::fail(format!("captured format mismatch: {:?}", frame.format()))
         }
         Ok(None) => CheckResult::fail("X11 returned no window frame".to_owned()),
+        // The window moved off screen or closed between selection and readback.
+        Err(CaptureError::PlatformUnavailable { message }) => CheckResult::skip(message),
         Err(CaptureError::Protocol { message })
             if message.contains("GetImage returned X11 error code 8") =>
         {

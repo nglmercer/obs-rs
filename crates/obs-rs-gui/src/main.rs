@@ -59,6 +59,13 @@ pub(crate) use view::{
 /// and meter correspond to real audio rather than to a placeholder.
 pub(crate) const MIC_CHANNEL_ID: &str = "mic";
 
+/// Mixer channel backed by the playback monitor the engine records.
+///
+/// A machine with no readable monitor keeps this channel silent rather than
+/// hiding it: its fader and mute still apply to the mix, and the row says what
+/// it is capturing so a silent meter is never mistaken for a broken one.
+pub(crate) const DESKTOP_CHANNEL_ID: &str = "desktop";
+
 fn main() -> Result<(), Box<dyn Error>> {
     let smoke = std::env::args().any(|argument| argument == "--smoke");
     if smoke {
@@ -108,9 +115,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     // The mixer's live channel shows the input it captures from the first
     // frame, rather than a generic label that never matches the device list.
     let input_name = output.borrow_mut().audio_input_name();
-    let _ = state
-        .borrow_mut()
-        .set_channel_name(MIC_CHANNEL_ID, &input_name);
+    let desktop_name = output
+        .borrow()
+        .desktop_audio_name()
+        .unwrap_or_else(|| "Desktop Audio (silent)".to_owned());
+    {
+        let mut state = state.borrow_mut();
+        let _ = state.set_channel_name(MIC_CHANNEL_ID, &input_name);
+        let _ = state.set_channel_name(DESKTOP_CHANNEL_ID, &desktop_name);
+    }
     // Paths and the dock layout are pushed before the first refresh so the
     // recovery check and the docks both see the restored session.
     ui.set_project_path(settings.project_path.as_str().into());

@@ -48,6 +48,7 @@ pub struct EngineConfig {
     output_queue_bytes: usize,
     reconnect_attempts: u32,
     audio_input_id: Option<String>,
+    desktop_audio_id: Option<String>,
     audio_provider: Arc<dyn AudioInputProvider>,
 }
 
@@ -62,6 +63,7 @@ impl EngineConfig {
             output_queue_bytes: DEFAULT_OUTPUT_QUEUE_BYTES,
             reconnect_attempts: DEFAULT_RECONNECT_ATTEMPTS,
             audio_input_id: None,
+            desktop_audio_id: None,
             audio_provider: Arc::new(SimulatedAudioProvider::new()),
         }
     }
@@ -78,6 +80,20 @@ impl EngineConfig {
     pub fn with_audio_input_id(mut self, device_id: impl Into<String>) -> Self {
         let device_id = device_id.into();
         self.audio_input_id = (!device_id.trim().is_empty()).then_some(device_id);
+        self
+    }
+
+    /// Selects the playback device whose monitor feeds the desktop channel.
+    ///
+    /// An empty value clears the selection, which makes the session pick the
+    /// first available playback route. Desktop capture has no deterministic
+    /// stand-in: when no monitor can be opened the channel stays silent rather
+    /// than borrowing the microphone's test signal, so what the meter shows is
+    /// what the recording contains.
+    #[must_use]
+    pub fn with_desktop_audio_id(mut self, device_id: impl Into<String>) -> Self {
+        let device_id = device_id.into();
+        self.desktop_audio_id = (!device_id.trim().is_empty()).then_some(device_id);
         self
     }
 
@@ -114,6 +130,7 @@ impl Clone for EngineConfig {
             output_queue_bytes: self.output_queue_bytes,
             reconnect_attempts: self.reconnect_attempts,
             audio_input_id: self.audio_input_id.clone(),
+            desktop_audio_id: self.desktop_audio_id.clone(),
             audio_provider: Arc::clone(&self.audio_provider),
         }
     }
@@ -206,6 +223,36 @@ impl OutputLifecycle {
     }
 }
 
+/// What the desktop mixer channel is reading.
+///
+/// A silent desktop channel is an ordinary outcome rather than an error — a
+/// headless machine or a platform without monitor capture simply has nothing to
+/// record — so the reason travels with the state instead of being reported as a
+/// failure the operator has to dismiss.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DesktopAudioSource {
+    /// The named playback monitor is open and feeding the channel.
+    Monitor(String),
+    /// Nothing is open; the payload explains why, for the diagnostics report.
+    Silent(String),
+}
+
+impl DesktopAudioSource {
+    /// Returns the device name, or the reason the channel is silent.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Monitor(label) | Self::Silent(label) => label,
+        }
+    }
+
+    /// Returns whether a real monitor is feeding the channel.
+    #[must_use]
+    pub const fn is_capturing(&self) -> bool {
+        matches!(self, Self::Monitor(_))
+    }
+}
+
 /// A small immutable status snapshot suitable for a status bar.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EngineSnapshot {
@@ -218,6 +265,8 @@ pub struct EngineSnapshot {
     pub stream_state: Option<StreamState>,
     pub audio_backend: String,
     pub audio_fallback: bool,
+    /// What the desktop channel is capturing, or why it is silent.
+    pub desktop_audio: DesktopAudioSource,
     pub stream_metrics: Option<StreamMetrics>,
     /// Native production-stream counters for SRT/RTMP/RTMPS sessions.
     pub production_stream_metrics: Option<ProductionStreamMetrics>,
@@ -553,6 +602,10 @@ pub struct EngineSession {
     audio_input: Box<dyn AudioInput>,
     audio_backend: String,
     audio_fallback: bool,
+    /// Absent when no playback monitor could be opened, which keeps the desktop
+    /// channel silent instead of substituting another signal for it.
+    desktop_audio: Option<Box<dyn AudioInput>>,
+    desktop_audio_backend: String,
     next_audio_deadline: Option<obs_rs_audio::AudioDeadline>,
     render_timestamp: Timestamp,
     video_encoder: RleVideoEncoder,
@@ -604,6 +657,11 @@ impl EngineSession {
             config.audio_format,
             config.audio_input_id.as_deref(),
         );
+        let (desktop_audio, desktop_audio_backend) = open_desktop_audio(
+            &config.audio_provider,
+            config.audio_format,
+            config.desktop_audio_id.as_deref(),
+        );
 
         Ok(Self {
             video_encoder: RleVideoEncoder::new(format),
@@ -620,6 +678,8 @@ impl EngineSession {
             audio_input,
             audio_backend,
             audio_fallback,
+            desktop_audio,
+            desktop_audio_backend,
             next_audio_deadline: None,
             render_timestamp: Timestamp::ZERO,
             recording: None,
@@ -741,6 +801,28 @@ impl EngineSession {
             .map(str::to_owned);
         self.next_audio_deadline = None;
         self.last_error = None;
+    }
+
+    /// Switches the playback monitor feeding the desktop channel.
+    ///
+    /// Unlike the microphone there is no fallback signal, so an unavailable
+    /// device leaves the channel silent and names the reason in the snapshot.
+    pub fn set_desktop_audio_id(&mut self, device_id: Option<&str>) {
+        if let Some(desktop) = self.desktop_audio.as_mut() {
+            desktop.stop();
+        }
+        let (desktop_audio, desktop_audio_backend) = open_desktop_audio(
+            &self.config.audio_provider,
+            self.config.audio_format,
+            device_id,
+        );
+        self.desktop_audio = desktop_audio;
+        self.desktop_audio_backend = desktop_audio_backend;
+        self.config.desktop_audio_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        self.next_audio_deadline = None;
     }
 
     /// Renders one scene using the session's independent preview clock.
@@ -1087,6 +1169,11 @@ impl EngineSession {
             stream_state: self.stream_state(),
             audio_backend: self.audio_backend.clone(),
             audio_fallback: self.audio_fallback,
+            desktop_audio: if self.desktop_audio.is_some() {
+                DesktopAudioSource::Monitor(self.desktop_audio_backend.clone())
+            } else {
+                DesktopAudioSource::Silent(self.desktop_audio_backend.clone())
+            },
             stream_metrics: self.streaming.as_ref().and_then(StreamOutput::metrics),
             production_stream_metrics: self
                 .streaming
@@ -1130,6 +1217,30 @@ impl EngineSession {
         }
     }
 
+    /// Reads one desktop block, or silence when no monitor is open.
+    ///
+    /// A monitor that fails mid-session is closed rather than retried every
+    /// block: the desktop channel degrades to silence and says so in the
+    /// backend label, which keeps a broken device from stalling the tick.
+    fn read_desktop_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
+        let frames = self.config.audio_block_frames;
+        if let Some(desktop) = self.desktop_audio.as_mut() {
+            match desktop.read_block(timestamp, frames) {
+                Ok(buffer) => return Ok(buffer),
+                Err(error) => {
+                    self.desktop_audio = None;
+                    self.desktop_audio_backend = format!("unavailable ({error})");
+                    self.last_error = Some(error.to_string());
+                }
+            }
+        }
+        Ok(AudioBuffer::silence(
+            self.config.audio_format,
+            timestamp,
+            frames,
+        )?)
+    }
+
     fn drain_audio_until(&mut self, timestamp: Timestamp) -> Result<Vec<AudioBuffer>, EngineError> {
         let mut audio_blocks = Vec::new();
         while self
@@ -1144,11 +1255,7 @@ impl EngineSession {
                 Ok,
             )?;
             let input = self.read_audio_block(deadline.timestamp())?;
-            let desktop = AudioBuffer::silence(
-                self.config.audio_format,
-                deadline.timestamp(),
-                self.config.audio_block_frames,
-            )?;
+            let desktop = self.read_desktop_block(deadline.timestamp())?;
             self.stats.desktop_peak_milli = audio_peak_milli(&desktop);
             self.stats.microphone_peak_milli = audio_peak_milli(&input);
             let mixed = self.mixer.mix(
@@ -1195,6 +1302,9 @@ impl Drop for EngineSession {
             let _ = stream.close();
         }
         self.audio_input.stop();
+        if let Some(desktop) = self.desktop_audio.as_mut() {
+            desktop.stop();
+        }
     }
 }
 
@@ -1258,6 +1368,42 @@ fn open_audio_input(
     (fallback, "simulated fallback".to_owned(), true)
 }
 
+/// Opens the playback monitor that feeds the desktop channel.
+///
+/// Desktop capture reads a device the platform classifies as an *output*; a
+/// provider that can record from it hands back what the machine is playing.
+/// Returning `None` is a normal outcome — a headless session or a provider
+/// without monitor support simply records a silent desktop channel — so this
+/// never substitutes the simulated signal, which would make the meter lie.
+fn open_desktop_audio(
+    provider: &Arc<dyn AudioInputProvider>,
+    format: AudioFormat,
+    requested_id: Option<&str>,
+) -> (Option<Box<dyn AudioInput>>, String) {
+    let Ok(devices) = provider.discover() else {
+        return (None, "unavailable".to_owned());
+    };
+    let selected = requested_id
+        .and_then(|requested| {
+            devices
+                .iter()
+                .find(|device| device.id() == requested && device.available())
+        })
+        .or_else(|| {
+            devices
+                .iter()
+                .find(|device| device.kind() == AudioDeviceKind::Output && device.available())
+        })
+        .map(|device| (device.id().to_owned(), device.name().to_owned()));
+    let Some((device_id, device_name)) = selected else {
+        return (None, "no playback monitor".to_owned());
+    };
+    match provider.open_input(&device_id, format) {
+        Ok(input) => (Some(input), device_name),
+        Err(error) => (None, format!("unavailable ({error})")),
+    }
+}
+
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -1274,6 +1420,7 @@ fn audio_peak_milli(buffer: &AudioBuffer) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obs_rs_audio::AudioDeviceInfo;
     use obs_rs_config::Config;
     use obs_rs_media::FrameRate;
     use obs_rs_project::{Profile, SceneSpec, SourceSpec};
@@ -1337,6 +1484,61 @@ mod tests {
             stats.microphone_peak_milli > 0,
             "the deterministic input drives only the microphone node"
         );
+    }
+
+    /// Provider exposing one playback route whose monitor is readable, which is
+    /// the shape a real desktop capture takes on Linux.
+    #[derive(Debug)]
+    struct MonitorProvider;
+
+    impl AudioInputProvider for MonitorProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+            Ok(vec![AudioDeviceInfo::new(
+                "speakers",
+                "Speakers",
+                AudioDeviceKind::Output,
+            )?])
+        }
+
+        fn open_input(
+            &self,
+            device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+            if device_id != "speakers" {
+                return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                    device_id.to_owned(),
+                ));
+            }
+            SimulatedAudioProvider::new().open_input("test-audio", format)
+        }
+    }
+
+    #[test]
+    fn a_playback_monitor_feeds_the_desktop_channel() {
+        let config = EngineConfig::default().with_audio_provider(Arc::new(MonitorProvider));
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+
+        assert_eq!(
+            engine.snapshot().desktop_audio,
+            DesktopAudioSource::Monitor("Speakers".to_owned())
+        );
+
+        engine.tick(None, Some("program")).expect("tick");
+
+        assert!(
+            engine.stats().desktop_peak_milli > 0,
+            "the opened monitor drives the desktop meter"
+        );
+    }
+
+    #[test]
+    fn a_session_without_a_playback_route_keeps_the_desktop_channel_silent() {
+        let engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let snapshot = engine.snapshot();
+
+        assert!(!snapshot.desktop_audio.is_capturing());
+        assert_eq!(snapshot.desktop_audio.label(), "no playback monitor");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { CompactButton, DockHeader } from "theme.slint";
+import { CompactButton, DockHeader, MutedText } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
 
@@ -11,6 +11,8 @@ export component ControlsDock inherits Rectangle {
     in property <int> panel-kind;
 
     in property <bool> floating;
+    /// Whether the unavailable virtual camera is currently explaining itself.
+    property <bool> virtual-camera-explained: false;
     callback move-panel(int, int);
     callback float-panel(int);
     callback close-panel(int);
@@ -51,23 +53,37 @@ export component ControlsDock inherits Rectangle {
                 height: 30px;
                 clicked => toggle-recording();
             }
-            HorizontalBox {
-                padding: 0px;
-                spacing: 4px;
-                Button {
-                    // OBS-RS has no virtual camera backend yet; the control
-                    // keeps its place in the dock but stays disabled.
-                    text: I18n.text.start_virtual_camera;
-                    height: 30px;
-                    enabled: false;
-                    horizontal-stretch: 1;
+            // OBS-RS has no virtual camera backend yet. The control keeps its
+            // place in the dock but stays disabled, and clicking it explains
+            // the missing capability instead of doing nothing — a dead button
+            // reads as a bug, an answered one reads as a limitation.
+            Rectangle {
+                height: 30px;
+                HorizontalBox {
+                    padding: 0px;
+                    spacing: 4px;
+                    Button {
+                        text: I18n.text.start_virtual_camera;
+                        height: 30px;
+                        enabled: false;
+                        horizontal-stretch: 1;
+                    }
+                    CompactButton {
+                        icon-name: "settings";
+                        hint: I18n.text.virtual_camera_options;
+                        enabled: false;
+                        height: 30px;
+                    }
                 }
-                CompactButton {
-                    icon-name: "settings";
-                    hint: I18n.text.virtual_camera_options;
-                    enabled: false;
-                    height: 30px;
+                TouchArea {
+                    clicked => {
+                        root.virtual-camera-explained = !root.virtual-camera-explained;
+                    }
                 }
+            }
+            if root.virtual-camera-explained : MutedText {
+                text: I18n.text.camera_unsupported_hint;
+                wrap: word-wrap;
             }
             Button {
                 text: I18n.text.studio_mode;

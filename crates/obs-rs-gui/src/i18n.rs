@@ -395,6 +395,16 @@ fn english() -> UiText {
         recovery_available: s("Recovery available: choose Recover to review the temporary project"),
         no_recovery: s("No recovery file detected"),
         unsupported_language: s("Unsupported language: "),
+        output_recovery_title: s("Output needs attention"),
+        output_recovery_steps: s(
+            "Check the recording folder has room and the stream address is reachable, then start the output again. If it keeps failing, export diagnostics from Tools and include them in the report.",
+        ),
+        open_settings: s("Open Settings"),
+        dismiss: s("Dismiss"),
+        camera_unsupported: s("Camera"),
+        camera_unsupported_hint: s(
+            "Virtual camera output is not available on this platform yet — nothing is sent to other applications.",
+        ),
         command_failed: s("Command failed: "),
         preview_program_role: s("Preview / Program"),
         preview_role: s("Preview"),
@@ -744,6 +754,16 @@ fn spanish() -> UiText {
         ),
         no_recovery: s("No hay archivo de recuperación"),
         unsupported_language: s("Idioma no compatible: "),
+        output_recovery_title: s("La salida necesita atención"),
+        output_recovery_steps: s(
+            "Comprueba que la carpeta de grabación tenga espacio y que la dirección de transmisión responda, y vuelve a iniciar la salida. Si sigue fallando, exporta el diagnóstico desde Herramientas e inclúyelo en el informe.",
+        ),
+        open_settings: s("Abrir ajustes"),
+        dismiss: s("Descartar"),
+        camera_unsupported: s("Cámara"),
+        camera_unsupported_hint: s(
+            "La cámara virtual todavía no está disponible en esta plataforma: no se envía nada a otras aplicaciones.",
+        ),
         command_failed: s("Comando fallido: "),
         preview_program_role: s("Vista previa / Programa"),
         preview_role: s("Vista previa"),

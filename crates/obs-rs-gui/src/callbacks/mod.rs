@@ -198,7 +198,7 @@ fn refresh_input_meter(
         .set_channel_peak_milli(crate::MIC_CHANNEL_ID, peak)
         .is_ok()
         | state_guard
-            .set_channel_peak_milli("desktop", desktop_peak)
+            .set_channel_peak_milli(crate::DESKTOP_CHANNEL_ID, desktop_peak)
             .is_ok();
     drop(state_guard);
     if changed {

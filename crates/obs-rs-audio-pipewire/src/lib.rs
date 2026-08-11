@@ -67,6 +67,23 @@ impl PipeWireAudioProvider {
     pub fn cat_command(&self) -> &Path {
         &self.cat_command
     }
+
+    /// Returns the `pw-cat` target of the first playback node in the graph.
+    ///
+    /// `pw-cat` accepts no "default sink" alias, so the alias this crate
+    /// publishes has to be resolved to a concrete node before capture starts.
+    fn default_sink_target(&self) -> Result<String, AudioDeviceError> {
+        let output = Command::new(&self.dump_command).output().map_err(|error| {
+            AudioDeviceError::Unavailable(format!(
+                "PipeWire discovery command {} failed to start: {error}",
+                self.dump_command.display()
+            ))
+        })?;
+        let graph = String::from_utf8_lossy(&output.stdout);
+        first_sink_target(&graph).ok_or_else(|| {
+            AudioDeviceError::Unavailable("PipeWire has no playback node".to_owned())
+        })
+    }
 }
 
 impl Default for PipeWireAudioProvider {
@@ -104,8 +121,16 @@ impl AudioInputProvider for PipeWireAudioProvider {
         device_id: &str,
         format: AudioFormat,
     ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+        // Recording *from* a playback node is how desktop audio is captured:
+        // `pw-cat --record --target <sink>` reads that sink's monitor. The
+        // default-output alias has no node number of its own, so it is resolved
+        // against the graph here rather than being rejected as an input.
+        let resolved;
         let target = if device_id == DEFAULT_INPUT_ID {
             None
+        } else if device_id == DEFAULT_OUTPUT_ID {
+            resolved = self.default_sink_target()?;
+            Some(resolved.as_str())
         } else {
             Some(node_target(device_id).ok_or_else(|| {
                 AudioDeviceError::Unavailable(format!("unknown PipeWire input {device_id}"))
@@ -332,6 +357,14 @@ fn node_target(device_id: &str) -> Option<&str> {
     (!target.is_empty() && target.bytes().all(|byte| byte.is_ascii_digit())).then_some(target)
 }
 
+fn first_sink_target(graph: &str) -> Option<String> {
+    top_level_objects(graph)
+        .into_iter()
+        .filter_map(parse_node)
+        .find(|(_, _, kind)| *kind == AudioDeviceKind::Output)
+        .map(|(id, _, _)| id.to_string())
+}
+
 fn discover_devices(document: &str) -> Vec<AudioDeviceInfo> {
     let mut devices = top_level_objects(document)
         .into_iter()
@@ -498,6 +531,22 @@ mod tests {
             panic!("unknown device should fail")
         };
         assert!(error.to_string().contains("unknown PipeWire input"));
+    }
+
+    #[test]
+    fn the_default_output_alias_resolves_to_a_concrete_sink_node() {
+        let document = r#"
+        [
+          {"id": 42, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Source", "node.name": "alsa_input.usb"
+          }}},
+          {"id": 7, "type": "PipeWire:Interface:Node", "info": {"props": {
+            "media.class": "Audio/Sink", "node.name": "alsa_output.pci"
+          }}}
+        ]
+        "#;
+        assert_eq!(first_sink_target(document).as_deref(), Some("7"));
+        assert_eq!(first_sink_target("[]"), None);
     }
 
     #[test]
