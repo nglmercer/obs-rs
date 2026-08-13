@@ -5,7 +5,10 @@
 
 use std::{collections::BTreeMap, fmt, path::PathBuf, process::Command};
 
-use obs_rs_output::{OutputCapabilities, OutputProfile, OutputProfileKind, OutputTransport};
+use obs_rs_output::{
+    OutputAudioCodec, OutputCapabilities, OutputProfile, OutputProfileKind, OutputTransport,
+    OutputVideoCodec,
+};
 use url::Url;
 
 pub const PRODUCTION_METADATA_MAGIC: &str = "OBSRGST1";
@@ -51,6 +54,141 @@ pub struct GStreamerCapabilitySnapshot {
     runtime_version: Option<String>,
     selected_elements: BTreeMap<&'static str, String>,
     output: OutputCapabilities,
+    protocols: Vec<ProtocolCapability>,
+    video_encoders: Vec<VideoEncoderCapability>,
+    audio_encoders: Vec<AudioEncoderCapability>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ProductionProtocol {
+    Reference,
+    Rtmp,
+    Rtmps,
+    Srt,
+    WebRtc,
+    Matroska,
+}
+
+impl ProductionProtocol {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Reference => "reference",
+            Self::Rtmp => "rtmp",
+            Self::Rtmps => "rtmps",
+            Self::Srt => "srt",
+            Self::WebRtc => "webrtc",
+            Self::Matroska => "matroska",
+        }
+    }
+
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Reference => "Custom reference transport",
+            Self::Rtmp => "RTMP",
+            Self::Rtmps => "RTMPS",
+            Self::Srt => "SRT",
+            Self::WebRtc => "WHIP / WebRTC",
+            Self::Matroska => "Matroska",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolCapability {
+    protocol: ProductionProtocol,
+    available: bool,
+}
+
+impl ProtocolCapability {
+    #[must_use]
+    pub const fn protocol(&self) -> ProductionProtocol {
+        self.protocol
+    }
+
+    #[must_use]
+    pub const fn available(&self) -> bool {
+        self.available
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VideoEncoderCapability {
+    id: String,
+    display_name: &'static str,
+    codec: OutputVideoCodec,
+    hardware: bool,
+}
+
+impl VideoEncoderCapability {
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub const fn display_name(&self) -> &'static str {
+        self.display_name
+    }
+
+    #[must_use]
+    pub const fn codec(&self) -> OutputVideoCodec {
+        self.codec
+    }
+
+    #[must_use]
+    pub const fn hardware(&self) -> bool {
+        self.hardware
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioEncoderCapability {
+    id: String,
+    display_name: &'static str,
+    codec: OutputAudioCodec,
+}
+
+impl AudioEncoderCapability {
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub const fn display_name(&self) -> &'static str {
+        self.display_name
+    }
+
+    #[must_use]
+    pub const fn codec(&self) -> OutputAudioCodec {
+        self.codec
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutputCapabilitiesSnapshot {
+    protocols: Vec<ProtocolCapability>,
+    video_encoders: Vec<VideoEncoderCapability>,
+    audio_encoders: Vec<AudioEncoderCapability>,
+}
+
+impl OutputCapabilitiesSnapshot {
+    #[must_use]
+    pub fn protocols(&self) -> &[ProtocolCapability] {
+        &self.protocols
+    }
+
+    #[must_use]
+    pub fn video_encoders(&self) -> &[VideoEncoderCapability] {
+        &self.video_encoders
+    }
+
+    #[must_use]
+    pub fn audio_encoders(&self) -> &[AudioEncoderCapability] {
+        &self.audio_encoders
+    }
 }
 
 impl GStreamerCapabilitySnapshot {
@@ -63,6 +201,9 @@ impl GStreamerCapabilitySnapshot {
                 runtime_version: None,
                 selected_elements: BTreeMap::new(),
                 output: OutputCapabilities::reference_only(),
+                protocols: unavailable_protocols(),
+                video_encoders: Vec::new(),
+                audio_encoders: Vec::new(),
             };
         }
         let runtime_version = Command::new("gst-inspect-1.0")
@@ -76,6 +217,9 @@ impl GStreamerCapabilitySnapshot {
                 runtime_version: None,
                 selected_elements: BTreeMap::new(),
                 output: OutputCapabilities::reference_only(),
+                protocols: unavailable_protocols(),
+                video_encoders: Vec::new(),
+                audio_encoders: Vec::new(),
             };
         };
 
@@ -122,10 +266,26 @@ impl GStreamerCapabilitySnapshot {
         let hardware_h264 = h264
             .as_deref()
             .is_some_and(|encoder| matches!(encoder, "vah264enc" | "vaapih264enc" | "nvh264enc"));
+        let output = OutputCapabilities::approved(profiles, hardware_h264);
+        let protocols = protocol_capabilities(&output);
+        let video_encoders = ["vah264enc", "vaapih264enc", "nvh264enc", "openh264enc"]
+            .into_iter()
+            .filter(|element| element_available(element))
+            .map(video_encoder_capability)
+            .chain(element_available("vp8enc").then(|| video_encoder_capability("vp8enc")))
+            .collect();
+        let audio_encoders = ["avenc_aac", "opusenc"]
+            .into_iter()
+            .filter(|element| element_available(element))
+            .map(audio_encoder_capability)
+            .collect();
         Self {
             runtime_version: Some(runtime_version),
             selected_elements: selected,
-            output: OutputCapabilities::approved(profiles, hardware_h264),
+            output,
+            protocols,
+            video_encoders,
+            audio_encoders,
         }
     }
 
@@ -142,6 +302,85 @@ impl GStreamerCapabilitySnapshot {
     #[must_use]
     pub fn selected_element(&self, role: &str) -> Option<&str> {
         self.selected_elements.get(role).map(String::as_str)
+    }
+
+    #[must_use]
+    pub fn capabilities(&self) -> OutputCapabilitiesSnapshot {
+        OutputCapabilitiesSnapshot {
+            protocols: self.protocols.clone(),
+            video_encoders: self.video_encoders.clone(),
+            audio_encoders: self.audio_encoders.clone(),
+        }
+    }
+}
+
+fn unavailable_protocols() -> Vec<ProtocolCapability> {
+    [
+        ProductionProtocol::Reference,
+        ProductionProtocol::Rtmp,
+        ProductionProtocol::Rtmps,
+        ProductionProtocol::Srt,
+        ProductionProtocol::WebRtc,
+        ProductionProtocol::Matroska,
+    ]
+    .into_iter()
+    .map(|protocol| ProtocolCapability {
+        available: protocol == ProductionProtocol::Reference,
+        protocol,
+    })
+    .collect()
+}
+
+fn protocol_capabilities(output: &OutputCapabilities) -> Vec<ProtocolCapability> {
+    [
+        (
+            ProductionProtocol::Reference,
+            OutputProfileKind::ReferencePacket,
+        ),
+        (ProductionProtocol::Rtmp, OutputProfileKind::RtmpH264Aac),
+        (ProductionProtocol::Rtmps, OutputProfileKind::RtmpsH264Aac),
+        (ProductionProtocol::Srt, OutputProfileKind::SrtMpegTsH264Aac),
+        (ProductionProtocol::WebRtc, OutputProfileKind::WebRtcVp8Opus),
+        (
+            ProductionProtocol::Matroska,
+            OutputProfileKind::MatroskaH264Aac,
+        ),
+    ]
+    .into_iter()
+    .map(|(protocol, profile)| ProtocolCapability {
+        protocol,
+        available: output.supports(profile),
+    })
+    .collect()
+}
+
+fn video_encoder_capability(element: &str) -> VideoEncoderCapability {
+    let (display_name, codec, hardware) = match element {
+        "vah264enc" => ("VA H.264", OutputVideoCodec::H264, true),
+        "vaapih264enc" => ("VA-API H.264", OutputVideoCodec::H264, true),
+        "nvh264enc" => ("NVIDIA NVENC H.264", OutputVideoCodec::H264, true),
+        "openh264enc" => ("OpenH264", OutputVideoCodec::H264, false),
+        "vp8enc" => ("VP8 Software", OutputVideoCodec::Vp8, false),
+        _ => ("Unknown encoder", OutputVideoCodec::ReferenceRle, false),
+    };
+    VideoEncoderCapability {
+        id: element.to_owned(),
+        display_name,
+        codec,
+        hardware,
+    }
+}
+
+fn audio_encoder_capability(element: &str) -> AudioEncoderCapability {
+    let (display_name, codec) = match element {
+        "avenc_aac" => ("FFmpeg AAC", OutputAudioCodec::Aac),
+        "opusenc" => ("Opus", OutputAudioCodec::Opus),
+        _ => ("Unknown encoder", OutputAudioCodec::Pcm),
+    };
+    AudioEncoderCapability {
+        id: element.to_owned(),
+        display_name,
+        codec,
     }
 }
 
@@ -571,6 +810,35 @@ pub use native::{GStreamerOutputSession, NativeOutputState, OutputSessionTelemet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capability_model_separates_protocol_codec_and_encoder_implementation() {
+        let output = OutputCapabilities::approved(
+            [
+                OutputProfileKind::RtmpH264Aac,
+                OutputProfileKind::SrtMpegTsH264Aac,
+            ],
+            true,
+        );
+        let protocols = protocol_capabilities(&output);
+        assert!(protocols.iter().any(|capability| {
+            capability.protocol() == ProductionProtocol::Reference && capability.available()
+        }));
+        assert!(protocols.iter().any(|capability| {
+            capability.protocol() == ProductionProtocol::Rtmp && capability.available()
+        }));
+        assert!(protocols.iter().any(|capability| {
+            capability.protocol() == ProductionProtocol::Rtmps && !capability.available()
+        }));
+
+        let hardware = video_encoder_capability("nvh264enc");
+        let software = video_encoder_capability("openh264enc");
+        assert_eq!(hardware.codec(), OutputVideoCodec::H264);
+        assert_eq!(software.codec(), OutputVideoCodec::H264);
+        assert!(hardware.hardware());
+        assert!(!software.hardware());
+        assert_ne!(hardware.id(), software.id());
+    }
 
     #[test]
     fn disabled_native_feature_never_claims_production_support() {

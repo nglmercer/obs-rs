@@ -33,6 +33,20 @@ fn stream_protocol_status_uses_redacted_scheme_labels() {
 }
 
 #[test]
+fn output_runtime_exposes_backend_protocol_capabilities() {
+    let format = initial_project()
+        .expect("project")
+        .active_profile_spec()
+        .expect("profile")
+        .video_format();
+    let output = OutputRuntime::new(format);
+    assert!(output.capabilities().protocols().iter().any(|capability| {
+        capability.protocol() == obs_rs_engine::ProductionProtocol::Reference
+            && capability.available()
+    }));
+}
+
+#[test]
 fn gui_project_has_control_room_scenes() {
     let project = initial_project().expect("initial GUI project should validate");
     let profile = project

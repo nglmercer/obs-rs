@@ -7,7 +7,8 @@ use std::{
 use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
 use obs_rs_engine::{
-    EngineAudioChannel, EngineConfig, EngineSession, EngineWorker, OutputEvent, OutputLifecycle,
+    output_capabilities_snapshot, EngineAudioChannel, EngineConfig, EngineSession, EngineWorker,
+    OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle,
 };
 use obs_rs_media::{VideoFormat, VideoFrame};
 use obs_rs_output::StreamState;
@@ -41,6 +42,7 @@ pub(crate) struct OutputRuntime {
     /// geometry, so the change is held here and applied at the next idle
     /// boundary instead of being either silently dropped or forced through.
     staged_video_format: Option<VideoFormat>,
+    capabilities: OutputCapabilitiesSnapshot,
 }
 
 impl OutputRuntime {
@@ -90,6 +92,7 @@ impl OutputRuntime {
             recording_started_at: None,
             stream_protocol: None,
             staged_video_format: None,
+            capabilities: output_capabilities_snapshot(),
         })
     }
 
@@ -117,6 +120,11 @@ impl OutputRuntime {
 
     pub(crate) fn needs_project_sync(&self, revision: u64) -> bool {
         revision != self.last_revision
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn capabilities(&self) -> &OutputCapabilitiesSnapshot {
+        &self.capabilities
     }
 
     pub(crate) fn sync_project(
@@ -307,7 +315,17 @@ impl OutputRuntime {
         } else {
             "worker stopped"
         };
-        format!("Output: recording {recording} · stream {streaming} · {audio} · {worker}")
+        let protocols = self
+            .capabilities
+            .protocols()
+            .iter()
+            .filter(|capability| capability.available())
+            .map(|capability| capability.protocol().display_name())
+            .collect::<Vec<_>>()
+            .join("/");
+        format!(
+            "Output: recording {recording} · stream {streaming} · {audio} · {worker} · available {protocols}"
+        )
     }
 
     pub(crate) fn output_metrics(&self) -> String {

@@ -29,6 +29,11 @@ use obs_rs_output::{
     WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
+pub use obs_rs_output_gstreamer::{
+    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
+    VideoEncoderCapability,
+};
+#[cfg(feature = "production-gstreamer")]
 use obs_rs_output_gstreamer::{
     GStreamerCapabilitySnapshot, GStreamerError, GStreamerOutputSession, NativeOutputState,
     ProductionDestination, ProductionPipelinePlan,
@@ -40,6 +45,13 @@ const DEFAULT_AUDIO_BLOCK_FRAMES: usize = 480;
 const DEFAULT_TIMELINE_TOLERANCE_NANOS: u64 = 5_000_000;
 const DEFAULT_OUTPUT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
+
+/// Probes the production backend once and returns its typed GUI-safe model.
+#[cfg(feature = "production-gstreamer")]
+#[must_use]
+pub fn output_capabilities_snapshot() -> OutputCapabilitiesSnapshot {
+    GStreamerCapabilitySnapshot::probe().capabilities()
+}
 
 /// Configuration for one portable engine session.
 pub struct EngineConfig {
