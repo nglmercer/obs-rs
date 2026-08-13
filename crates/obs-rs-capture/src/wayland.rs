@@ -163,7 +163,7 @@ fn start_pipewire_reader(
     if !pipewire_reader_available() {
         return Err(CaptureError::PlatformUnavailable {
             message: format!(
-            "{PIPEWIRE_READER_COMMAND} was not found on PATH; Wayland screen capture needs it \
+                "{PIPEWIRE_READER_COMMAND} was not found on PATH; Wayland screen capture needs it \
                  (install the GStreamer tools package and gst-plugin-pipewire)"
             ),
         });

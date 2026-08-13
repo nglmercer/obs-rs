@@ -57,8 +57,8 @@ fn cloning_a_packet_shares_its_payload_instead_of_copying_it() {
     // outputs are live. That fan-out is a refcount bump, not a second copy of
     // the payload, which is what keeps peak memory flat at 60fps.
     let payload = vec![7_u8; 4096];
-    let packet = EncodedPacket::new(PacketKind::Video, Timestamp::ZERO, true, payload)
-        .expect("packet");
+    let packet =
+        EncodedPacket::new(PacketKind::Video, Timestamp::ZERO, true, payload).expect("packet");
     let duplicate = packet.clone();
 
     assert_eq!(

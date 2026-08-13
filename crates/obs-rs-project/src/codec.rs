@@ -152,7 +152,7 @@ fn encode_source(source: &SourceSpec) -> Json {
         ("transform", encode_transform(source.transform)),
         (
             "filters",
-            Json::Array(source.filters.iter().map(encode_filter).collect()),
+            Json::Array(source.filters.iter().copied().map(encode_filter).collect()),
         ),
         ("visible", Json::Bool(source.visible)),
         ("locked", Json::Bool(source.locked)),
@@ -175,7 +175,7 @@ fn encode_transform(transform: FrameTransform) -> Json {
     ])
 }
 
-fn encode_filter(filter: &FrameFilter) -> Json {
+fn encode_filter(filter: FrameFilter) -> Json {
     match filter {
         FrameFilter::Grayscale => Json::object([("kind", Json::string("grayscale"))]),
         FrameFilter::Brightness { milli } => Json::object([

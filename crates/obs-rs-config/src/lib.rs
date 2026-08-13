@@ -267,7 +267,9 @@ fn parse_basic_string(value: &str, line: usize) -> Result<String, ConfigError> {
                 };
             }
             '\\' => {
-                let (_, escape) = characters.next().ok_or(ConfigError::InvalidValue { line })?;
+                let (_, escape) = characters
+                    .next()
+                    .ok_or(ConfigError::InvalidValue { line })?;
                 match escape {
                     '"' => decoded.push('"'),
                     '\\' => decoded.push('\\'),
@@ -297,7 +299,9 @@ fn parse_escape(
 ) -> Result<char, ConfigError> {
     let mut code = 0_u32;
     for _ in 0..width {
-        let (_, digit) = characters.next().ok_or(ConfigError::InvalidValue { line })?;
+        let (_, digit) = characters
+            .next()
+            .ok_or(ConfigError::InvalidValue { line })?;
         let digit = digit
             .to_digit(16)
             .ok_or(ConfigError::InvalidValue { line })?;

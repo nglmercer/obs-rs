@@ -18,11 +18,26 @@ fn parses_every_value_kind() {
     assert_eq!(value.get("null"), Some(&Json::Null));
     assert_eq!(value.get("yes").and_then(Json::as_bool), Some(true));
     assert_eq!(value.get("no").and_then(Json::as_bool), Some(false));
-    assert_eq!(value.get("count").and_then(Json::as_number::<i32>), Some(-12));
-    assert_eq!(value.get("ratio").and_then(Json::as_number::<f64>), Some(0.0015));
+    assert_eq!(
+        value.get("count").and_then(Json::as_number::<i32>),
+        Some(-12)
+    );
+    assert_eq!(
+        value.get("ratio").and_then(Json::as_number::<f64>),
+        Some(0.0015)
+    );
     assert_eq!(value.get("text").and_then(Json::as_str), Some("hello"));
-    assert_eq!(value.get("list").and_then(Json::as_array).map(<[Json]>::len), Some(3));
-    assert!(value.get("nested").and_then(|inner| inner.get("inner")).is_some());
+    assert_eq!(
+        value
+            .get("list")
+            .and_then(Json::as_array)
+            .map(<[Json]>::len),
+        Some(3)
+    );
+    assert!(value
+        .get("nested")
+        .and_then(|inner| inner.get("inner"))
+        .is_some());
 }
 
 #[test]
@@ -73,7 +88,10 @@ fn writes_deterministic_sorted_output() {
 #[test]
 fn round_trips_through_parse_and_write() {
     let original = Json::object([
-        ("text", Json::string("control\u{1}\ttab \"quoted\" \\ back\n")),
+        (
+            "text",
+            Json::string("control\u{1}\ttab \"quoted\" \\ back\n"),
+        ),
         ("unicode", Json::string("emoji \u{1F600} and ünïcode")),
         ("number", Json::number(i64::MIN)),
     ]);

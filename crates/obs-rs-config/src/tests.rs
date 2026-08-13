@@ -2,8 +2,7 @@ use super::*;
 
 #[test]
 fn parses_comments_and_serializes_in_key_order() {
-    let config =
-        Config::parse("# comment\nzeta = \"2\"\nalpha = \"1\"\n").expect("valid config");
+    let config = Config::parse("# comment\nzeta = \"2\"\nalpha = \"1\"\n").expect("valid config");
 
     assert_eq!(config.len(), 2);
     assert_eq!(config.get("alpha"), Some("1"));
@@ -32,8 +31,8 @@ fn parses_values_that_contain_equals_and_hashes() {
 
 #[test]
 fn strips_trailing_comments_outside_strings() {
-    let config = Config::parse("alpha = \"one\" # trailing\nbeta = 2 # also\n")
-        .expect("valid config");
+    let config =
+        Config::parse("alpha = \"one\" # trailing\nbeta = 2 # also\n").expect("valid config");
 
     assert_eq!(config.get("alpha"), Some("one"));
     assert_eq!(config.get("beta"), Some("2"));
@@ -83,7 +82,9 @@ fn writes_canonical_integers_and_booleans_bare() {
     // Leading zeros are not valid bare TOML integers, so this stays quoted.
     config.set("padded", "007").expect("valid entry");
     // Wider than i64, so it is data that merely looks numeric.
-    config.set("huge", "99999999999999999999").expect("valid entry");
+    config
+        .set("huge", "99999999999999999999")
+        .expect("valid entry");
 
     let document = config.serialize();
     assert_eq!(

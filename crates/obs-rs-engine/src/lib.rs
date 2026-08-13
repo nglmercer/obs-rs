@@ -744,24 +744,15 @@ impl EngineSession {
                 format
             )));
         }
-        let timeline = MediaTimeline::new(
-            format.frame_rate(),
-            audio_format,
-            timeline_tolerance_nanos,
-        );
+        let timeline =
+            MediaTimeline::new(format.frame_rate(), audio_format, timeline_tolerance_nanos);
         let mut mixer = AudioMixer::new(audio_format);
         let desktop_audio_source = mixer.add_source(1.0)?;
         let microphone_audio_source = mixer.add_source(1.0)?;
-        let (audio_input, audio_backend, audio_fallback) = open_audio_input(
-            &audio_provider,
-            audio_format,
-            audio_input_id.as_deref(),
-        );
-        let (desktop_audio, desktop_audio_backend) = open_desktop_audio(
-            &audio_provider,
-            audio_format,
-            desktop_audio_id.as_deref(),
-        );
+        let (audio_input, audio_backend, audio_fallback) =
+            open_audio_input(&audio_provider, audio_format, audio_input_id.as_deref());
+        let (desktop_audio, desktop_audio_backend) =
+            open_desktop_audio(&audio_provider, audio_format, desktop_audio_id.as_deref());
 
         Ok(Self {
             video_encoder,

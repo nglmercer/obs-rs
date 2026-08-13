@@ -84,7 +84,8 @@ impl TransformPlanCache {
         }
 
         self.bytes += bytes;
-        self.entries.push_back((format, transform, Arc::clone(columns)));
+        self.entries
+            .push_back((format, transform, Arc::clone(columns)));
     }
 }
 
@@ -891,12 +892,8 @@ mod transform_plan_cache_tests {
     }
 
     fn format(width: u32) -> VideoFormat {
-        VideoFormat::new(
-            width,
-            2,
-            crate::FrameRate::new(30, 1).expect("valid rate"),
-        )
-        .expect("valid format")
+        VideoFormat::new(width, 2, crate::FrameRate::new(30, 1).expect("valid rate"))
+            .expect("valid format")
     }
 
     #[test]
@@ -906,7 +903,11 @@ mod transform_plan_cache_tests {
         let per_plan = MAX_TRANSFORM_PLAN_BYTES / 4 / std::mem::size_of::<Option<usize>>();
 
         for index in 0..8_u32 {
-            cache.insert(format(index + 1), FrameTransform::IDENTITY, &columns(per_plan));
+            cache.insert(
+                format(index + 1),
+                FrameTransform::IDENTITY,
+                &columns(per_plan),
+            );
             assert!(
                 cache.bytes <= MAX_TRANSFORM_PLAN_BYTES,
                 "budget exceeded after {index} inserts: {} bytes",
@@ -945,7 +946,9 @@ mod transform_plan_cache_tests {
         let plan = columns(4);
         cache.insert(format(4), FrameTransform::IDENTITY, &plan);
 
-        let found = cache.get(format(4), FrameTransform::IDENTITY).expect("cached");
+        let found = cache
+            .get(format(4), FrameTransform::IDENTITY)
+            .expect("cached");
 
         assert!(Arc::ptr_eq(&found, &plan));
         assert!(cache.get(format(8), FrameTransform::IDENTITY).is_none());

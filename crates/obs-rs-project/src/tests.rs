@@ -57,14 +57,20 @@ fn project_round_trips_deterministically_with_escaped_values() {
     // JSON strings carry punctuation literally, so the title needs no escaping
     // and stays readable in the saved file.
     assert!(encoded.contains(r#""title": "Studio | Demo""#), "{encoded}");
-    assert!(encoded.contains(r#""format": "obs-rs-project""#), "{encoded}");
+    assert!(
+        encoded.contains(r#""format": "obs-rs-project""#),
+        "{encoded}"
+    );
 }
 
 #[test]
 fn parser_rejects_a_document_without_the_format_and_version_tags() {
     let encoded = project().serialize();
 
-    let untagged = encoded.replace(r#""format": "obs-rs-project""#, r#""format": "something-else""#);
+    let untagged = encoded.replace(
+        r#""format": "obs-rs-project""#,
+        r#""format": "something-else""#,
+    );
     assert!(matches!(
         Project::parse(&untagged),
         Err(ProjectError::InvalidDocument { .. })
@@ -80,7 +86,9 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
 
 #[test]
 fn parser_reports_the_line_a_syntax_error_is_on() {
-    let broken = project().serialize().replace(r#""version": 1"#, r#""version": ?"#);
+    let broken = project()
+        .serialize()
+        .replace(r#""version": 1"#, r#""version": ?"#);
 
     let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
     match error {
@@ -92,7 +100,10 @@ fn parser_reports_the_line_a_syntax_error_is_on() {
 #[test]
 fn optional_backend_and_output_settings_round_trip_without_changing_legacy_defaults() {
     let defaults = project().serialize();
-    assert!(defaults.contains(r#""render_backend": "cpu""#), "{defaults}");
+    assert!(
+        defaults.contains(r#""render_backend": "cpu""#),
+        "{defaults}"
+    );
     let decoded = Project::parse(&defaults).expect("default preferences parse");
     let profile = decoded.profile("live").expect("live profile");
     assert_eq!(profile.render_backend(), RenderBackendPreference::Cpu);
@@ -271,7 +282,7 @@ fn parser_rejects_duplicate_and_unknown_records() {
     let mut duplicated = project();
     let encoded = duplicated.serialize();
     let one_profile = encoded
-        .find(r#"    {"#)
+        .find(r"    {")
         .and_then(|start| encoded.rfind("    }").map(|end| &encoded[start..=end + 4]))
         .expect("the document has one profile object");
     let duplicate = encoded.replace(one_profile, &format!("{one_profile},\n{one_profile}"));
@@ -284,7 +295,9 @@ fn parser_rejects_duplicate_and_unknown_records() {
     );
 
     duplicated = project();
-    let missing_member = duplicated.serialize().replace(r#""active_profile""#, r#""inactive_profile""#);
+    let missing_member = duplicated
+        .serialize()
+        .replace(r#""active_profile""#, r#""inactive_profile""#);
     assert!(matches!(
         Project::parse(&missing_member),
         Err(ProjectError::InvalidDocument { .. })

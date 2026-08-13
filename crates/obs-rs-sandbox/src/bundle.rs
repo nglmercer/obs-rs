@@ -448,7 +448,7 @@ pub fn install_verified_plugin(
     // at zero in every process, so two installs racing from separate processes —
     // or one process reusing a recycled PID after a crash left a `.part`
     // directory behind — landed on the same staging path and one of them failed.
-    let install_id = random_u64().map_err(|error| bundle_error(&error.to_string()))?;
+    let install_id = random_u64().map_err(|error| bundle_error(error.to_string()))?;
     let temp = parent.join(format!(
         ".{}-{install_id:016x}.part",
         manifest.plugin().version(),

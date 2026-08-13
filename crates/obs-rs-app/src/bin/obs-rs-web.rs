@@ -133,7 +133,9 @@ fn tokens_match(expected: &str, presented: &str) -> bool {
     expected
         .bytes()
         .zip(presented.bytes())
-        .fold(0_u8, |difference, (left, right)| difference | (left ^ right))
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
         == 0
 }
 

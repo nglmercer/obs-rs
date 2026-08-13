@@ -368,7 +368,7 @@ impl Parser<'_> {
             let start = self.offset;
             // Ordinary runs are the common case, so they are located in bulk and
             // copied once instead of pushed a character at a time.
-            while !matches!(self.peek(), None | Some(b'"' | b'\\') | Some(0x00..=0x1F)) {
+            while !matches!(self.peek(), None | Some(b'"' | b'\\' | 0x00..=0x1F)) {
                 self.bump();
             }
             match self.bytes.get(start..self.offset).map(std::str::from_utf8) {
