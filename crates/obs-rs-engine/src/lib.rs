@@ -237,6 +237,21 @@ pub enum OutputLifecycle {
     Failed,
 }
 
+/// A streaming lifecycle transition published by the engine worker.
+///
+/// Frontends consume these events asynchronously; output setup and teardown
+/// never need to complete on their event thread.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OutputEvent {
+    Starting,
+    Running,
+    Disconnected,
+    Reconnecting { attempt: u32 },
+    Failed { reason: String },
+    Stopping,
+    Stopped,
+}
+
 impl OutputLifecycle {
     /// Returns whether this phase means the output is no longer carrying media.
     ///
@@ -1438,19 +1453,17 @@ impl EngineSession {
     fn packetized_video_required(&self) -> bool {
         (self.recording.is_some()
             && RecordingOutput::video_requirement() == VideoInputRequirement::Packetized)
-            || self
-            .streaming
-            .as_ref()
-            .is_some_and(|stream| stream.video_requirement() == VideoInputRequirement::Packetized)
+            || self.streaming.as_ref().is_some_and(|stream| {
+                stream.video_requirement() == VideoInputRequirement::Packetized
+            })
     }
 
     fn packetized_audio_required(&self) -> bool {
         (self.recording.is_some()
             && RecordingOutput::audio_requirement() == AudioInputRequirement::Packetized)
-            || self
-            .streaming
-            .as_ref()
-            .is_some_and(|stream| stream.audio_requirement() == AudioInputRequirement::Packetized)
+            || self.streaming.as_ref().is_some_and(|stream| {
+                stream.audio_requirement() == AudioInputRequirement::Packetized
+            })
     }
 
     fn raw_video_required(&self) -> bool {

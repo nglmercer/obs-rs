@@ -133,16 +133,64 @@ pub(crate) fn start_preview_timer(
 
 /// Brings the desktop's output booleans back in line with the engine's phases.
 ///
-/// Pressing Record or Stream sets a boolean optimistically, but the engine is
-/// what decides whether an output actually runs: a refused peer, a rejected
-/// recording path, or a dead worker all end the output without the desktop
-/// asking. Reconciling here means the controls can never keep claiming an
-/// output is live after the engine has stopped it.
+/// The stream callback only enqueues lifecycle work. This bridge consumes the
+/// worker's bounded event queue and changes the desktop's streaming boolean
+/// once the worker reports `Running`, `Failed`, or `Stopped`. Recording remains
+/// synchronously validated by its existing worker command for now.
 pub(crate) fn reconcile_output_lifecycle(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
+    for event in output.borrow_mut().take_output_events() {
+        match event {
+            obs_rs_engine::OutputEvent::Starting => {
+                ui.set_status_message("Streaming connection starting".into());
+            }
+            obs_rs_engine::OutputEvent::Running => {
+                if !state.borrow().streaming() {
+                    let _ = state
+                        .borrow_mut()
+                        .dispatch(obs_rs_ui::UiCommand::StartStreaming);
+                }
+                ui.set_streaming(true);
+                ui.set_status_message("Streaming connected".into());
+                // Auto-record begins only after the transport is actually
+                // running, never merely because a start was enqueued.
+                if ui.get_auto_record_when_streaming() && !state.borrow().recording() {
+                    ui.invoke_toggle_recording();
+                }
+            }
+            obs_rs_engine::OutputEvent::Disconnected => {
+                ui.set_status_message("Streaming disconnected".into());
+            }
+            obs_rs_engine::OutputEvent::Reconnecting { attempt } => {
+                ui.set_status_message(format!("Streaming reconnect attempt {attempt}").into());
+            }
+            obs_rs_engine::OutputEvent::Failed { reason } => {
+                if state.borrow().streaming() {
+                    let _ = state
+                        .borrow_mut()
+                        .dispatch(obs_rs_ui::UiCommand::StopStreaming);
+                }
+                ui.set_streaming(false);
+                ui.set_status_message(format!("Streaming failed: {reason}").into());
+                ui.set_active_modal(11);
+            }
+            obs_rs_engine::OutputEvent::Stopping => {
+                ui.set_status_message("Streaming stopping".into());
+            }
+            obs_rs_engine::OutputEvent::Stopped => {
+                if state.borrow().streaming() {
+                    let _ = state
+                        .borrow_mut()
+                        .dispatch(obs_rs_ui::UiCommand::StopStreaming);
+                }
+                ui.set_streaming(false);
+                ui.set_status_message("Streaming stopped".into());
+            }
+        }
+    }
     let (recording, streaming) = output.borrow().lifecycles();
     let (claims_recording, claims_streaming) = {
         let state = state.borrow();

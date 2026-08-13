@@ -290,10 +290,10 @@ fn a_failed_output_clears_the_claim_and_offers_guided_recovery() {
         .dispatch(obs_rs_ui::UiCommand::StartStreaming)
         .expect("claim streaming");
     ui.set_streaming(true);
-    let _ = output
+    output
         .borrow_mut()
         .start_streaming("127.0.0.1:1")
-        .expect_err("a closed port cannot accept a stream");
+        .expect("the non-blocking start request is accepted");
 
     // The worker publishes its snapshot after replying, so the failure can be
     // one tick behind the rejected connect. In the app that only delays the

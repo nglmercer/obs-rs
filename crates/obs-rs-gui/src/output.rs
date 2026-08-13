@@ -7,7 +7,7 @@ use std::{
 use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
 use obs_rs_engine::{
-    EngineAudioChannel, EngineConfig, EngineSession, EngineWorker, OutputLifecycle,
+    EngineAudioChannel, EngineConfig, EngineSession, EngineWorker, OutputEvent, OutputLifecycle,
 };
 use obs_rs_media::{VideoFormat, VideoFrame};
 use obs_rs_output::StreamState;
@@ -161,9 +161,20 @@ impl OutputRuntime {
         Ok(())
     }
 
-    pub(crate) fn finish_streaming(&mut self) {
-        self.worker.finish_streaming();
-        self.stream_protocol = None;
+    pub(crate) fn finish_streaming(&mut self) -> Result<(), Box<dyn Error>> {
+        self.worker.finish_streaming()?;
+        Ok(())
+    }
+
+    pub(crate) fn take_output_events(&mut self) -> Vec<OutputEvent> {
+        let events = self.worker.take_output_events();
+        if events
+            .iter()
+            .any(|event| matches!(event, OutputEvent::Stopped | OutputEvent::Failed { .. }))
+        {
+            self.stream_protocol = None;
+        }
+        events
     }
 
     /// Enqueues a program frame and its due audio without blocking the GUI.

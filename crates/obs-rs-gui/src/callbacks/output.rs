@@ -1,5 +1,6 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
+use obs_rs_engine::OutputLifecycle;
 use obs_rs_media::{FrameTransition, VideoFrame};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
@@ -80,42 +81,28 @@ fn install_streaming_callback(
             return;
         };
         let result: Result<String, Box<dyn Error>> = (|| {
-            if streaming_state.borrow().streaming() {
-                streaming_output.borrow_mut().finish_streaming();
-                streaming_state
-                    .borrow_mut()
-                    .dispatch(UiCommand::StopStreaming)?;
-                Ok("Streaming stopped".to_owned())
+            let lifecycle = streaming_output.borrow().lifecycles().1;
+            if matches!(
+                lifecycle,
+                OutputLifecycle::Starting | OutputLifecycle::Running | OutputLifecycle::Stopping
+            ) {
+                streaming_output.borrow_mut().finish_streaming()?;
+                Ok("Streaming stop requested".to_owned())
             } else {
                 let address = ui.get_streaming_address().to_string();
                 streaming_output.borrow_mut().start_streaming(&address)?;
-                if let Err(error) = streaming_state
-                    .borrow_mut()
-                    .dispatch(UiCommand::StartStreaming)
-                {
-                    streaming_output.borrow_mut().finish_streaming();
-                    return Err(error.into());
-                }
                 let protocol = address
                     .split(':')
                     .next()
                     .unwrap_or("stream")
                     .to_ascii_uppercase();
-                Ok(format!("{protocol} streaming connected"))
+                Ok(format!("{protocol} streaming starting"))
             }
         })();
         match result {
             Ok(message) => {
                 refresh_ui(&ui, &streaming_state, &streaming_renderer);
                 ui.set_status_message(message.into());
-                // "Automatically record when streaming" only ever starts a
-                // recording; stopping the stream leaves it to the user.
-                if ui.get_auto_record_when_streaming()
-                    && streaming_state.borrow().streaming()
-                    && !streaming_state.borrow().recording()
-                {
-                    ui.invoke_toggle_recording();
-                }
             }
             Err(error) => ui.set_status_message(format!("Streaming failed: {error}").into()),
         }

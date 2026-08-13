@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -14,10 +15,11 @@ use obs_rs_project::Project;
 
 use crate::{
     DesktopAudioSource, EngineAudioChannel, EngineError, EngineSession, EngineSnapshot,
-    EngineStats, OutputLifecycle,
+    EngineStats, OutputEvent, OutputLifecycle,
 };
 
 const DEFAULT_FRAME_QUEUE: usize = 8;
+const OUTPUT_EVENT_CAPACITY: usize = 64;
 
 /// State published by an [`EngineWorker`] without exposing the worker thread.
 #[derive(Clone, Debug)]
@@ -36,7 +38,7 @@ enum WorkerCommand {
     StartRecording(PathBuf, mpsc::Sender<Result<(), String>>),
     FinishRecording(mpsc::Sender<Result<usize, String>>),
     AbortRecording,
-    StartStreaming(String, mpsc::Sender<Result<(), String>>),
+    StartStreaming(String),
     FinishStreaming,
     PushFrame(VideoFrame),
     MonitorAudio(Timestamp),
@@ -44,6 +46,8 @@ enum WorkerCommand {
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
     SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
     SyncProject(Project, mpsc::Sender<Result<(), String>>),
+    #[cfg(test)]
+    TestBlock(mpsc::Sender<()>, Receiver<()>),
     Shutdown,
 }
 
@@ -53,6 +57,7 @@ pub struct EngineWorker {
     snapshot: Arc<Mutex<EngineWorkerSnapshot>>,
     dropped_frames: Arc<AtomicU64>,
     queued_frames: Arc<AtomicUsize>,
+    output_events: Arc<Mutex<VecDeque<OutputEvent>>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -90,9 +95,11 @@ impl EngineWorker {
         let (sender, receiver) = mpsc::sync_channel(frame_capacity);
         let dropped_frames = Arc::new(AtomicU64::new(0));
         let queued_frames = Arc::new(AtomicUsize::new(0));
+        let output_events = Arc::new(Mutex::new(VecDeque::with_capacity(OUTPUT_EVENT_CAPACITY)));
         let thread_snapshot = Arc::clone(&snapshot);
         let thread_dropped = Arc::clone(&dropped_frames);
         let thread_queued = Arc::clone(&queued_frames);
+        let thread_events = Arc::clone(&output_events);
         let join = thread::Builder::new()
             .name("obs-rs-engine".to_owned())
             .spawn(move || {
@@ -102,6 +109,7 @@ impl EngineWorker {
                     thread_snapshot,
                     thread_dropped,
                     thread_queued,
+                    thread_events,
                 );
             })
             .map_err(EngineError::Io)?;
@@ -110,6 +118,7 @@ impl EngineWorker {
             snapshot,
             dropped_frames,
             queued_frames,
+            output_events,
             join: Some(join),
         })
     }
@@ -187,25 +196,66 @@ impl EngineWorker {
         let _ = self.sender.send(WorkerCommand::AbortRecording);
     }
 
-    /// Starts a TCP/WebSocket stream on the worker thread.
+    /// Enqueues a stream start without waiting for transport or encoder setup.
     ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] when transport setup fails or the worker closes.
+    /// Returns [`EngineError`] only when the bounded worker queue cannot accept
+    /// the request. Transport failures are published through
+    /// [`Self::take_output_events`] and [`Self::snapshot`].
     pub fn start_streaming(&self, address: &str) -> Result<(), EngineError> {
-        let (reply, receive) = mpsc::channel();
-        self.sender
-            .send(WorkerCommand::StartStreaming(address.to_owned(), reply))
-            .map_err(|_| worker_closed())?;
-        receive
-            .recv()
-            .map_err(|_| worker_closed())?
-            .map_err(EngineError::Worker)
+        set_streaming_lifecycle(&self.snapshot, OutputLifecycle::Starting);
+        push_output_event(&self.output_events, OutputEvent::Starting);
+        match self
+            .sender
+            .try_send(WorkerCommand::StartStreaming(address.to_owned()))
+        {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_streaming_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                push_output_event(
+                    &self.output_events,
+                    OutputEvent::Failed {
+                        reason: error.to_string(),
+                    },
+                );
+                Err(error)
+            }
+        }
     }
 
-    /// Stops streaming on the worker thread.
-    pub fn finish_streaming(&self) {
-        let _ = self.sender.send(WorkerCommand::FinishStreaming);
+    /// Enqueues stream teardown without waiting for network or pipeline work.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the bounded worker queue cannot accept the
+    /// request.
+    pub fn finish_streaming(&self) -> Result<(), EngineError> {
+        set_streaming_lifecycle(&self.snapshot, OutputLifecycle::Stopping);
+        push_output_event(&self.output_events, OutputEvent::Stopping);
+        match self.sender.try_send(WorkerCommand::FinishStreaming) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_streaming_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                push_output_event(
+                    &self.output_events,
+                    OutputEvent::Failed {
+                        reason: error.to_string(),
+                    },
+                );
+                Err(error)
+            }
+        }
+    }
+
+    /// Drains the bounded lifecycle event queue without blocking.
+    #[must_use]
+    pub fn take_output_events(&self) -> Vec<OutputEvent> {
+        self.output_events
+            .lock()
+            .map_or_else(|_| Vec::new(), |mut events| events.drain(..).collect())
     }
 
     /// Attempts to enqueue one program frame without blocking the caller.
@@ -340,6 +390,7 @@ fn worker_loop(
     snapshot: Arc<Mutex<EngineWorkerSnapshot>>,
     dropped_frames: Arc<AtomicU64>,
     queued_frames: Arc<AtomicUsize>,
+    output_events: Arc<Mutex<VecDeque<OutputEvent>>>,
 ) {
     while let Ok(command) = receiver.recv() {
         let shutdown = match command {
@@ -361,15 +412,12 @@ fn worker_loop(
                 session.abort_recording();
                 false
             }
-            WorkerCommand::StartStreaming(address, reply) => {
-                let result = session
-                    .start_streaming(&address)
-                    .map_err(|error| error.to_string());
-                let _ = reply.send(result);
+            WorkerCommand::StartStreaming(address) => {
+                start_streaming(&mut session, &address, &output_events);
                 false
             }
             WorkerCommand::FinishStreaming => {
-                let _ = session.finish_streaming();
+                finish_streaming(&mut session, &output_events);
                 false
             }
             WorkerCommand::PushFrame(frame) => {
@@ -412,6 +460,12 @@ fn worker_loop(
                     session.last_error = Some(error.clone());
                 }
                 let _ = reply.send(result);
+                false
+            }
+            #[cfg(test)]
+            WorkerCommand::TestBlock(entered, release) => {
+                let _ = entered.send(());
+                let _ = release.recv();
                 false
             }
             WorkerCommand::Shutdown => true,
@@ -457,4 +511,177 @@ fn publish_snapshot(
 
 fn worker_closed() -> EngineError {
     EngineError::Worker("engine worker is closed".to_owned())
+}
+
+fn start_streaming(
+    session: &mut EngineSession,
+    address: &str,
+    output_events: &Arc<Mutex<VecDeque<OutputEvent>>>,
+) {
+    match session.start_streaming(address) {
+        Ok(()) => push_output_event(output_events, OutputEvent::Running),
+        Err(error) => push_output_event(
+            output_events,
+            OutputEvent::Failed {
+                reason: error.to_string(),
+            },
+        ),
+    }
+}
+
+fn finish_streaming(
+    session: &mut EngineSession,
+    output_events: &Arc<Mutex<VecDeque<OutputEvent>>>,
+) {
+    match session.finish_streaming() {
+        Ok(()) => push_output_event(output_events, OutputEvent::Stopped),
+        Err(error) => push_output_event(
+            output_events,
+            OutputEvent::Failed {
+                reason: error.to_string(),
+            },
+        ),
+    }
+}
+
+fn command_enqueue_error(error: &TrySendError<WorkerCommand>) -> EngineError {
+    match error {
+        TrySendError::Full(_) => EngineError::Worker("engine worker queue is full".to_owned()),
+        TrySendError::Disconnected(_) => worker_closed(),
+    }
+}
+
+fn set_streaming_lifecycle(
+    snapshot: &Arc<Mutex<EngineWorkerSnapshot>>,
+    lifecycle: OutputLifecycle,
+) {
+    if let Ok(mut snapshot) = snapshot.lock() {
+        snapshot.engine.streaming_lifecycle = lifecycle;
+    }
+}
+
+fn push_output_event(events: &Arc<Mutex<VecDeque<OutputEvent>>>, event: OutputEvent) {
+    if let Ok(mut events) = events.lock() {
+        if events.len() == OUTPUT_EVENT_CAPACITY {
+            events.pop_front();
+        }
+        events.push_back(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use obs_rs_audio::AudioFormat;
+    use obs_rs_media::{FrameRate, VideoFormat};
+
+    use super::*;
+    use crate::EngineConfig;
+
+    fn worker(capacity: usize) -> EngineWorker {
+        let format = VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("valid frame rate"))
+            .expect("valid video format");
+        let audio = AudioFormat::new(48_000, 2).expect("valid audio format");
+        let session = EngineSession::for_format(format, EngineConfig::new(audio)).expect("session");
+        EngineWorker::spawn_with_capacity(session, capacity).expect("worker")
+    }
+
+    #[test]
+    fn stream_start_returns_without_waiting_for_worker_or_transport_setup() {
+        let worker = Arc::new(worker(1));
+        let (entered_send, entered_receive) = mpsc::channel();
+        let (release_send, release_receive) = mpsc::channel();
+        worker
+            .sender
+            .send(WorkerCommand::TestBlock(entered_send, release_receive))
+            .expect("block command");
+        entered_receive.recv().expect("worker entered barrier");
+
+        let requesting_worker = Arc::clone(&worker);
+        let (result_send, result_receive) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = result_send.send(requesting_worker.start_streaming("127.0.0.1:0"));
+        });
+        result_receive
+            .recv_timeout(Duration::from_millis(250))
+            .expect("start must return while the worker remains blocked")
+            .expect("start request accepted");
+        assert_eq!(
+            worker.snapshot().engine.streaming_lifecycle,
+            OutputLifecycle::Starting
+        );
+        assert_eq!(worker.take_output_events(), vec![OutputEvent::Starting]);
+
+        release_send.send(()).expect("release worker");
+        for _ in 0..100 {
+            if worker.snapshot().engine.streaming_lifecycle == OutputLifecycle::Failed {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            worker.snapshot().engine.streaming_lifecycle,
+            OutputLifecycle::Failed
+        );
+        assert!(matches!(
+            worker.take_output_events().as_slice(),
+            [OutputEvent::Failed { .. }]
+        ));
+    }
+
+    #[test]
+    fn stream_stop_returns_without_waiting_for_worker_teardown() {
+        let worker = Arc::new(worker(1));
+        let (entered_send, entered_receive) = mpsc::channel();
+        let (release_send, release_receive) = mpsc::channel();
+        worker
+            .sender
+            .send(WorkerCommand::TestBlock(entered_send, release_receive))
+            .expect("block command");
+        entered_receive.recv().expect("worker entered barrier");
+
+        let requesting_worker = Arc::clone(&worker);
+        let (result_send, result_receive) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = result_send.send(requesting_worker.finish_streaming());
+        });
+        result_receive
+            .recv_timeout(Duration::from_millis(250))
+            .expect("stop must return while the worker remains blocked")
+            .expect("stop request accepted");
+        assert_eq!(
+            worker.snapshot().engine.streaming_lifecycle,
+            OutputLifecycle::Stopping
+        );
+        assert_eq!(worker.take_output_events(), vec![OutputEvent::Stopping]);
+
+        release_send.send(()).expect("release worker");
+        for _ in 0..100 {
+            if worker.snapshot().engine.streaming_lifecycle == OutputLifecycle::Idle {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            worker.snapshot().engine.streaming_lifecycle,
+            OutputLifecycle::Idle
+        );
+        assert_eq!(worker.take_output_events(), vec![OutputEvent::Stopped]);
+    }
+
+    #[test]
+    fn output_lifecycle_events_stay_bounded() {
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let attempts = u32::try_from(OUTPUT_EVENT_CAPACITY).expect("small event capacity") + 10;
+        for attempt in 0..attempts {
+            push_output_event(&events, OutputEvent::Reconnecting { attempt });
+        }
+        let events = events.lock().expect("event queue");
+        assert_eq!(events.len(), OUTPUT_EVENT_CAPACITY);
+        assert_eq!(
+            events.front(),
+            Some(&OutputEvent::Reconnecting { attempt: 10 })
+        );
+    }
 }
