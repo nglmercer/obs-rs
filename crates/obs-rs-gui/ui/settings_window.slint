@@ -78,6 +78,8 @@ export component SettingsWindow inherits Window {
     in-out property <string> recording-path;
     in property <[string]> recording-format-names;
     in-out property <int> recording-format-index;
+    in property <[string]> recording-codec-names;
+    in-out property <int> recording-codec-index;
     // Audio
     in property <[string]> sample-rate-names;
     in-out property <int> sample-rate-index;
@@ -285,8 +287,14 @@ export component SettingsWindow inherits Window {
                         recording-path <=> root.recording-path;
                         recording-format-names: root.recording-format-names;
                         recording-format-index: root.recording-format-index;
+                        recording-codec-names: root.recording-codec-names;
+                        recording-codec-index: root.recording-codec-index;
                         select-recording-format(index) => {
                             root.recording-format-index = index;
+                            root.dirty = true;
+                        }
+                        select-recording-codec(index) => {
+                            root.recording-codec-index = index;
                             root.dirty = true;
                         }
                         changed => { root.dirty = true; }

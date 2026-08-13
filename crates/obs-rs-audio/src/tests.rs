@@ -237,14 +237,15 @@ fn resampler_changes_rate_and_preserves_channel_layout() {
 }
 
 #[test]
-fn resampler_rejects_different_channel_counts() {
+fn resampler_maps_mono_to_stereo() {
     let input = AudioFormat::new(48_000, 1).expect("input format");
     let output = AudioFormat::new(48_000, 2).expect("output format");
-
-    assert_eq!(
-        AudioResampler::new(input, output),
-        Err(AudioError::ChannelMismatch)
-    );
+    let buffer = AudioBuffer::new(input, Timestamp::ZERO, vec![0.25, -0.5]).expect("buffer");
+    let converted = AudioResampler::new(input, output)
+        .expect("converter")
+        .process(&buffer)
+        .expect("converted buffer");
+    assert_eq!(converted.samples(), &[0.25, 0.25, -0.5, -0.5]);
 }
 
 #[test]

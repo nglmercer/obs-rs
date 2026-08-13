@@ -256,6 +256,9 @@ export component OutputPage inherits VerticalLayout {
     in property <[string]> recording-format-names;
     in-out property <int> recording-format-index;
     callback select-recording-format(int);
+    in property <[string]> recording-codec-names;
+    in-out property <int> recording-codec-index;
+    callback select-recording-codec(int);
     callback changed();
     spacing: 14px;
 
@@ -267,6 +270,15 @@ export component OutputPage inherits VerticalLayout {
                 text <=> root.recording-path;
                 placeholder-text: "obs-rs-recording.obsr";
                 edited => { root.changed(); }
+                horizontal-stretch: 1;
+            }
+        }
+        if root.recording-format-index == 0 : SettingRow {
+            label: "Video Codec";
+            ComboBox {
+                model: root.recording-codec-names;
+                current-index: root.recording-codec-index;
+                selected(value) => { root.select-recording-codec(self.current-index); }
                 horizontal-stretch: 1;
             }
         }

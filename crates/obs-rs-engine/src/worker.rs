@@ -36,7 +36,11 @@ pub struct EngineWorkerSnapshot {
 }
 
 enum WorkerCommand {
-    StartRecording(PathBuf, mpsc::Sender<Result<(), String>>),
+    StartRecording(
+        PathBuf,
+        Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+        mpsc::Sender<Result<(), String>>,
+    ),
     FinishRecording(mpsc::Sender<Result<usize, String>>),
     AbortRecording,
     StartStreaming(String, Option<(VideoEncoderConfig, AudioEncoderConfig)>),
@@ -166,9 +170,32 @@ impl EngineWorker {
     /// Returns [`EngineError`] when the worker is closed or the engine rejects
     /// the recording.
     pub fn start_recording(&self, path: impl Into<PathBuf>) -> Result<(), EngineError> {
+        self.start_recording_with_config(path.into(), None)
+    }
+
+    /// Requests a configured production recording start on the worker thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker is closed or the runtime rejects
+    /// the selected codec or encoder.
+    pub fn start_recording_configured(
+        &self,
+        path: impl Into<PathBuf>,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        self.start_recording_with_config(path.into(), Some((video, audio)))
+    }
+
+    fn start_recording_with_config(
+        &self,
+        path: PathBuf,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
         let (reply, receive) = mpsc::channel();
         self.sender
-            .send(WorkerCommand::StartRecording(path.into(), reply))
+            .send(WorkerCommand::StartRecording(path, encoder_config, reply))
             .map_err(|_| worker_closed())?;
         receive
             .recv()
@@ -417,10 +444,8 @@ fn worker_loop(
 ) {
     while let Ok(command) = receiver.recv() {
         let shutdown = match command {
-            WorkerCommand::StartRecording(path, reply) => {
-                let result = session
-                    .start_recording(path)
-                    .map_err(|error| error.to_string());
+            WorkerCommand::StartRecording(path, encoder_config, reply) => {
+                let result = start_recording(&mut session, path, encoder_config);
                 let _ = reply.send(result);
                 false
             }
@@ -541,6 +566,18 @@ fn worker_closed() -> EngineError {
 fn abort_recording(session: &mut EngineSession) -> bool {
     session.abort_recording();
     false
+}
+
+fn start_recording(
+    session: &mut EngineSession,
+    path: PathBuf,
+    encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+) -> Result<(), String> {
+    match encoder_config {
+        Some((video, audio)) => session.start_recording_configured(path, video, audio),
+        None => session.start_recording(path),
+    }
+    .map_err(|error| error.to_string())
 }
 
 fn start_stream(

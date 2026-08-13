@@ -170,8 +170,35 @@ pub enum SrtKeyLength {
 pub enum VideoCodec {
     #[default]
     H264,
+    Hevc,
+    Av1,
     Vp8,
     ReferenceRle,
+}
+
+impl VideoCodec {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::H264 => "h264",
+            Self::Hevc => "hevc",
+            Self::Av1 => "av1",
+            Self::Vp8 => "vp8",
+            Self::ReferenceRle => "reference-rle",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id.trim().to_ascii_lowercase().as_str() {
+            "h264" | "avc" => Some(Self::H264),
+            "hevc" | "h265" => Some(Self::Hevc),
+            "av1" => Some(Self::Av1),
+            "vp8" => Some(Self::Vp8),
+            "reference-rle" | "rle" => Some(Self::ReferenceRle),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -315,6 +342,9 @@ pub struct AudioEncoderConfig {
     pub codec: AudioCodec,
     pub implementation: EncoderImplementation,
     pub bitrate_kbps: u32,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub complexity: Option<u8>,
 }
 
 impl Default for AudioEncoderConfig {
@@ -323,6 +353,9 @@ impl Default for AudioEncoderConfig {
             codec: AudioCodec::Aac,
             implementation: EncoderImplementation::default(),
             bitrate_kbps: 160,
+            sample_rate: 48_000,
+            channels: 2,
+            complexity: None,
         }
     }
 }

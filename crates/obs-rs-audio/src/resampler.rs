@@ -3,7 +3,7 @@ use super::{
     error::AudioError,
     types::{AudioFormat, MAX_AUDIO_FRAMES},
 };
-/// A deterministic linear resampler for interleaved buffers with equal channels.
+/// A deterministic linear resampler and channel mapper for interleaved buffers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AudioResampler {
     input: AudioFormat,
@@ -14,12 +14,10 @@ impl AudioResampler {
     ///
     /// # Errors
     ///
-    /// Returns [`AudioError::ChannelMismatch`] when the formats do not have the
-    /// same channel layout.
+    /// Channel layouts are mapped deterministically: mono is duplicated,
+    /// downmixing to mono averages all input channels, and wider layouts retain
+    /// corresponding channels while duplicating the final available channel.
     pub const fn new(input: AudioFormat, output: AudioFormat) -> Result<Self, AudioError> {
-        if input.channels != output.channels {
-            return Err(AudioError::ChannelMismatch);
-        }
         Ok(Self { input, output })
     }
 
@@ -51,8 +49,9 @@ impl AudioResampler {
             .ok()
             .filter(|frames| *frames <= MAX_AUDIO_FRAMES)
             .ok_or(AudioError::BufferTooLarge { frames: usize::MAX })?;
-        let channels = usize::from(self.input.channels);
-        let mut samples = vec![0.0; output_frames * channels];
+        let input_channels = usize::from(self.input.channels);
+        let output_channels = usize::from(self.output.channels);
+        let mut samples = vec![0.0; output_frames * output_channels];
 
         // Bresenham-style rational accumulator. `position` is the same value the
         // closed form `output_frame * input_rate * 1_000_000 / output_rate`
@@ -69,19 +68,26 @@ impl AudioResampler {
         let last_frame = input.frames() - 1;
         let input_samples = input.samples();
 
-        for output_frame in samples.chunks_exact_mut(channels) {
+        for output_frame in samples.chunks_exact_mut(output_channels) {
             let base = usize::try_from(position / 1_000_000).unwrap_or(usize::MAX);
             let fraction = (position % 1_000_000) as f32 / 1_000_000.0;
             let first = base.min(last_frame);
             let second = (first + 1).min(last_frame);
-            let first_base = first * channels;
-            let second_base = second * channels;
-            let first_samples = &input_samples[first_base..first_base + channels];
-            let second_samples = &input_samples[second_base..second_base + channels];
+            let first_base = first * input_channels;
+            let second_base = second * input_channels;
+            let first_samples = &input_samples[first_base..first_base + input_channels];
+            let second_samples = &input_samples[second_base..second_base + input_channels];
 
             for (channel, output) in output_frame.iter_mut().enumerate() {
-                let first_sample = first_samples[channel];
-                let second_sample = second_samples[channel];
+                let sample = |frame: &[f32]| {
+                    if output_channels == 1 {
+                        frame.iter().sum::<f32>() / input_channels as f32
+                    } else {
+                        frame[channel.min(input_channels - 1)]
+                    }
+                };
+                let first_sample = sample(first_samples);
+                let second_sample = sample(second_samples);
                 *output = first_sample + (second_sample - first_sample) * fraction;
             }
 

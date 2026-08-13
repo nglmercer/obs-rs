@@ -12,6 +12,24 @@ use obs_rs_output::{
 };
 use url::Url;
 
+const H264_ENCODERS: &[&str] = &["vah264enc", "vaapih264enc", "nvh264enc", "openh264enc"];
+const HEVC_ENCODERS: &[&str] = &[
+    "vah265enc",
+    "vaapih265enc",
+    "nvh265enc",
+    "x265enc",
+    "svthevcenc",
+];
+const AV1_ENCODERS: &[&str] = &[
+    "vaav1enc",
+    "vaapiav1enc",
+    "nvav1enc",
+    "svtav1enc",
+    "rav1enc",
+    "av1enc",
+    "aomenc",
+];
+
 pub const PRODUCTION_METADATA_MAGIC: &str = "OBSRGST1";
 pub const MAX_PRODUCTION_METADATA_BYTES: usize = 32 * 1_024;
 pub const MAX_WEBRTC_SIGNALING_BYTES: usize = 256 * 1_024;
@@ -237,6 +255,7 @@ pub struct OutputCapabilitiesSnapshot {
     protocols: Vec<ProtocolCapability>,
     video_encoders: Vec<VideoEncoderCapability>,
     audio_encoders: Vec<AudioEncoderCapability>,
+    recording_codecs: Vec<VideoCodec>,
 }
 
 impl OutputCapabilitiesSnapshot {
@@ -253,6 +272,11 @@ impl OutputCapabilitiesSnapshot {
     #[must_use]
     pub fn audio_encoders(&self) -> &[AudioEncoderCapability] {
         &self.audio_encoders
+    }
+
+    #[must_use]
+    pub fn recording_codecs(&self) -> &[VideoCodec] {
+        &self.recording_codecs
     }
 }
 
@@ -289,13 +313,21 @@ impl GStreamerCapabilitySnapshot {
         };
 
         let mut selected = BTreeMap::new();
-        let h264 = first_available(&["vah264enc", "vaapih264enc", "nvh264enc", "openh264enc"]);
+        let h264 = first_available(H264_ENCODERS);
+        let hevc = first_available(HEVC_ENCODERS);
+        let av1 = first_available(AV1_ENCODERS);
         let aac = first_available(&["avenc_aac"]);
         let vp8 = first_available(&["vp8enc"]);
         let opus = first_available(&["opusenc"]);
         let rtmp_sink = first_available(&["rtmp2sink", "rtmpsink"]);
         if let Some(value) = &h264 {
             selected.insert("h264", value.clone());
+        }
+        if let Some(value) = &hevc {
+            selected.insert("hevc", value.clone());
+        }
+        if let Some(value) = &av1 {
+            selected.insert("av1", value.clone());
         }
         if let Some(value) = &aac {
             selected.insert("aac", value.clone());
@@ -310,31 +342,17 @@ impl GStreamerCapabilitySnapshot {
             selected.insert("rtmp_sink", value.clone());
         }
 
-        let mut profiles = Vec::new();
-        if h264.is_some() && aac.is_some() && element_available("matroskamux") {
-            profiles.push(OutputProfileKind::MatroskaH264Aac);
-        }
-        if h264.is_some() && aac.is_some() && element_available("flvmux") && rtmp_sink.is_some() {
-            profiles.push(OutputProfileKind::RtmpH264Aac);
-            profiles.push(OutputProfileKind::RtmpsH264Aac);
-        }
-        if h264.is_some()
-            && aac.is_some()
-            && element_available("mpegtsmux")
-            && element_available("srtsink")
-        {
-            profiles.push(OutputProfileKind::SrtMpegTsH264Aac);
-        }
-        if vp8.is_some() && opus.is_some() && element_available("webrtcbin") {
-            profiles.push(OutputProfileKind::WebRtcVp8Opus);
-        }
+        let profiles = production_profiles(&selected);
         let hardware_h264 = h264
             .as_deref()
             .is_some_and(|encoder| matches!(encoder, "vah264enc" | "vaapih264enc" | "nvh264enc"));
         let output = OutputCapabilities::approved(profiles, hardware_h264);
         let protocols = protocol_capabilities(&output);
-        let video_encoders = ["vah264enc", "vaapih264enc", "nvh264enc", "openh264enc"]
-            .into_iter()
+        let video_encoders = H264_ENCODERS
+            .iter()
+            .chain(HEVC_ENCODERS)
+            .chain(AV1_ENCODERS)
+            .copied()
             .filter(|element| element_available(element))
             .map(video_encoder_capability)
             .chain(element_available("vp8enc").then(|| video_encoder_capability("vp8enc")))
@@ -375,8 +393,48 @@ impl GStreamerCapabilitySnapshot {
             protocols: self.protocols.clone(),
             video_encoders: self.video_encoders.clone(),
             audio_encoders: self.audio_encoders.clone(),
+            recording_codecs: [
+                (OutputProfileKind::MatroskaH264Aac, VideoCodec::H264),
+                (OutputProfileKind::MatroskaHevcAac, VideoCodec::Hevc),
+                (OutputProfileKind::MatroskaAv1Aac, VideoCodec::Av1),
+            ]
+            .into_iter()
+            .filter_map(|(profile, codec)| self.output.supports(profile).then_some(codec))
+            .collect(),
         }
     }
+}
+
+fn production_profiles(selected: &BTreeMap<&'static str, String>) -> Vec<OutputProfileKind> {
+    let has = |role| selected.contains_key(role);
+    let mut profiles = Vec::new();
+    if has("h264") && has("aac") && element_available("matroskamux") {
+        profiles.push(OutputProfileKind::MatroskaH264Aac);
+    }
+    if has("hevc")
+        && has("aac")
+        && element_available("h265parse")
+        && element_available("matroskamux")
+    {
+        profiles.push(OutputProfileKind::MatroskaHevcAac);
+    }
+    if has("av1") && has("aac") && element_available("av1parse") && element_available("matroskamux")
+    {
+        profiles.push(OutputProfileKind::MatroskaAv1Aac);
+    }
+    if has("h264") && has("aac") && element_available("flvmux") && has("rtmp_sink") {
+        profiles.extend([
+            OutputProfileKind::RtmpH264Aac,
+            OutputProfileKind::RtmpsH264Aac,
+        ]);
+    }
+    if has("h264") && has("aac") && element_available("mpegtsmux") && element_available("srtsink") {
+        profiles.push(OutputProfileKind::SrtMpegTsH264Aac);
+    }
+    if has("vp8") && has("opus") && element_available("webrtcbin") {
+        profiles.push(OutputProfileKind::WebRtcVp8Opus);
+    }
+    profiles
 }
 
 fn unavailable_protocols() -> Vec<ProtocolCapability> {
@@ -414,7 +472,17 @@ fn protocol_capabilities(output: &OutputCapabilities) -> Vec<ProtocolCapability>
     .into_iter()
     .map(|(protocol, profile)| ProtocolCapability {
         protocol,
-        available: output.supports(profile),
+        available: if protocol == ProductionProtocol::Matroska {
+            [
+                OutputProfileKind::MatroskaH264Aac,
+                OutputProfileKind::MatroskaHevcAac,
+                OutputProfileKind::MatroskaAv1Aac,
+            ]
+            .into_iter()
+            .any(|candidate| output.supports(candidate))
+        } else {
+            output.supports(profile)
+        },
     })
     .collect()
 }
@@ -425,6 +493,17 @@ fn video_encoder_capability(element: &str) -> VideoEncoderCapability {
         "vaapih264enc" => ("VA-API H.264", VideoCodec::H264, true),
         "nvh264enc" => ("NVIDIA NVENC H.264", VideoCodec::H264, true),
         "openh264enc" => ("OpenH264", VideoCodec::H264, false),
+        "vah265enc" => ("VA HEVC", VideoCodec::Hevc, true),
+        "vaapih265enc" => ("VA-API HEVC", VideoCodec::Hevc, true),
+        "nvh265enc" => ("NVIDIA NVENC HEVC", VideoCodec::Hevc, true),
+        "x265enc" => ("x265 HEVC", VideoCodec::Hevc, false),
+        "svthevcenc" => ("SVT-HEVC", VideoCodec::Hevc, false),
+        "vaav1enc" => ("VA AV1", VideoCodec::Av1, true),
+        "vaapiav1enc" => ("VA-API AV1", VideoCodec::Av1, true),
+        "nvav1enc" => ("NVIDIA NVENC AV1", VideoCodec::Av1, true),
+        "svtav1enc" => ("SVT-AV1", VideoCodec::Av1, false),
+        "rav1enc" => ("rav1e AV1", VideoCodec::Av1, false),
+        "av1enc" | "aomenc" => ("AOM AV1", VideoCodec::Av1, false),
         "vp8enc" => ("VP8 Software", VideoCodec::Vp8, false),
         _ => ("Unknown encoder", VideoCodec::ReferenceRle, false),
     };
@@ -807,10 +886,12 @@ impl ProductionPipelinePlan {
             .output
             .negotiate(profile)
             .map_err(|_| GStreamerError::ProfileUnavailable(profile.kind()))?;
-        let video_role = if profile.kind() == OutputProfileKind::WebRtcVp8Opus {
-            "vp8"
-        } else {
-            "h264"
+        let video_role = match profile.video_codec() {
+            OutputVideoCodec::H264 => "h264",
+            OutputVideoCodec::Hevc => "hevc",
+            OutputVideoCodec::Av1 => "av1",
+            OutputVideoCodec::Vp8 => "vp8",
+            OutputVideoCodec::ReferenceRle => "reference",
         };
         let audio_role = if profile.kind() == OutputProfileKind::WebRtcVp8Opus {
             "opus"
@@ -873,6 +954,14 @@ impl ProductionPipelinePlan {
         {
             return Err(GStreamerError::InvalidMetadata(
                 "encoder codecs do not match the output profile".to_owned(),
+            ));
+        }
+        if !(8_000..=192_000).contains(&audio.sample_rate)
+            || !(1..=8).contains(&audio.channels)
+            || audio.complexity.is_some_and(|complexity| complexity > 10)
+        {
+            return Err(GStreamerError::InvalidMetadata(
+                "audio sample rate, channels, or complexity are out of range".to_owned(),
             ));
         }
         let video_capability = capabilities
@@ -1021,6 +1110,8 @@ fn selected_rtmp_sink(
 const fn profile_video_codec(codec: OutputVideoCodec) -> VideoCodec {
     match codec {
         OutputVideoCodec::H264 => VideoCodec::H264,
+        OutputVideoCodec::Hevc => VideoCodec::Hevc,
+        OutputVideoCodec::Av1 => VideoCodec::Av1,
         OutputVideoCodec::Vp8 => VideoCodec::Vp8,
         OutputVideoCodec::ReferenceRle => VideoCodec::ReferenceRle,
     }
@@ -1304,46 +1395,50 @@ mod tests {
 
     #[cfg(feature = "native")]
     #[test]
-    fn native_matroska_session_finalizes_atomically_when_runtime_is_available() {
+    fn native_matroska_codecs_finalize_atomically_when_runtime_is_available() {
         use obs_rs_audio::{AudioBuffer, AudioFormat};
         use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 
         let capabilities = GStreamerCapabilitySnapshot::probe();
-        if !capabilities
-            .output_capabilities()
-            .supports(OutputProfileKind::MatroskaH264Aac)
-        {
-            return;
-        }
         let token = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("obs-rs-gstreamer-{token}.mkv"));
-        let destination = ProductionDestination::Recording(path.clone());
-        let profile = OutputProfile::matroska_h264_aac();
-        let plan = ProductionPipelinePlan::negotiate(profile, &destination, &capabilities)
-            .expect("approved pipeline");
         let rate = FrameRate::new(30, 1).expect("rate");
-        let video = VideoFormat::new(16, 16, rate).expect("video format");
+        let video = VideoFormat::new(64, 64, rate).expect("video format");
         let audio = AudioFormat::new(48_000, 2).expect("audio format");
-        let mut session = GStreamerOutputSession::start(&plan, &destination, video, audio)
-            .expect("start native session");
-        for index in 0_u64..30 {
-            let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
-            session
-                .push_video(VideoFrame::solid(video, timestamp, [24, 96, 180, 255]))
-                .expect("video submission");
-            session
-                .push_audio(AudioBuffer::silence(audio, timestamp, 1_600).expect("audio buffer"))
-                .expect("audio submission");
+        for (suffix, profile) in [
+            ("h264", OutputProfile::matroska_h264_aac()),
+            ("hevc", OutputProfile::matroska_hevc_aac()),
+            ("av1", OutputProfile::matroska_av1_aac()),
+        ] {
+            if !capabilities.output_capabilities().supports(profile.kind()) {
+                continue;
+            }
+            let path = std::env::temp_dir().join(format!("obs-rs-gstreamer-{token}-{suffix}.mkv"));
+            let destination = ProductionDestination::Recording(path.clone());
+            let plan = ProductionPipelinePlan::negotiate(profile, &destination, &capabilities)
+                .expect("approved pipeline");
+            let mut session = GStreamerOutputSession::start(&plan, &destination, video, audio)
+                .expect("start native session");
+            for index in 0_u64..4 {
+                let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
+                session
+                    .push_video(VideoFrame::solid(video, timestamp, [24, 96, 180, 255]))
+                    .expect("video submission");
+                session
+                    .push_audio(
+                        AudioBuffer::silence(audio, timestamp, 1_600).expect("audio buffer"),
+                    )
+                    .expect("audio submission");
+            }
+            session.close().expect("atomic finalization");
+            let metadata = std::fs::metadata(&path).expect("published recording");
+            assert!(metadata.len() > 0, "{suffix} recording must not be empty");
+            assert!(!path.with_extension("mkv.part").exists());
+            assert_eq!(session.telemetry().video_submitted(), 4);
+            assert_eq!(session.telemetry().audio_submitted(), 4);
+            let _ = std::fs::remove_file(path);
         }
-        session.close().expect("atomic finalization");
-        let metadata = std::fs::metadata(&path).expect("published recording");
-        assert!(metadata.len() > 0);
-        assert!(!path.with_extension("mkv.part").exists());
-        assert_eq!(session.telemetry().video_submitted(), 30);
-        assert_eq!(session.telemetry().audio_submitted(), 30);
-        let _ = std::fs::remove_file(path);
     }
 }

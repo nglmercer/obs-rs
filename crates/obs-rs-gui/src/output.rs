@@ -12,7 +12,8 @@ use obs_rs_engine::{
 };
 use obs_rs_media::{VideoFormat, VideoFrame};
 use obs_rs_output::{
-    AudioEncoderConfig, RtmpConfig, StreamProtocol, StreamState, StreamTarget, VideoEncoderConfig,
+    AudioCodec, AudioEncoderConfig, EncoderImplementation, RtmpConfig, StreamProtocol, StreamState,
+    StreamTarget, VideoCodec, VideoEncoderConfig,
 };
 use obs_rs_project::Project;
 
@@ -43,6 +44,8 @@ pub(crate) struct OutputRuntime {
     configured_stream: StreamTarget,
     configured_video_encoder: VideoEncoderConfig,
     configured_audio_encoder: AudioEncoderConfig,
+    recording_video_encoder: VideoEncoderConfig,
+    recording_audio_encoder: AudioEncoderConfig,
     /// A canvas change accepted while an output was running.
     ///
     /// Rebuilding the encoders mid-recording would break the container's frame
@@ -101,6 +104,8 @@ impl OutputRuntime {
             configured_stream: StreamTarget::Rtmp(RtmpConfig::default()),
             configured_video_encoder: VideoEncoderConfig::default(),
             configured_audio_encoder: AudioEncoderConfig::default(),
+            recording_video_encoder: VideoEncoderConfig::default(),
+            recording_audio_encoder: AudioEncoderConfig::default(),
             staged_video_format: None,
             capabilities: output_capabilities_snapshot(),
         })
@@ -156,7 +161,15 @@ impl OutputRuntime {
     }
 
     pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
-        self.worker.start_recording(path)?;
+        if path.to_ascii_lowercase().ends_with(".mkv") {
+            self.worker.start_recording_configured(
+                path,
+                self.recording_video_encoder.clone(),
+                self.recording_audio_encoder.clone(),
+            )?;
+        } else {
+            self.worker.start_recording(path)?;
+        }
         self.recording_started_at = Some(Instant::now());
         Ok(())
     }
@@ -181,6 +194,31 @@ impl OutputRuntime {
 
     pub(crate) fn configure_stream(&mut self, settings: &AppSettings) {
         self.configured_stream = settings.stream_target();
+        self.recording_video_encoder = VideoEncoderConfig {
+            codec: settings.recording_codec,
+            implementation: self
+                .capabilities
+                .video_encoders()
+                .iter()
+                .find(|encoder| encoder.codec() == settings.recording_codec)
+                .map_or_else(EncoderImplementation::default, |encoder| {
+                    EncoderImplementation::new(encoder.id())
+                }),
+            profile: (settings.recording_codec == VideoCodec::H264).then(|| "high".to_owned()),
+            ..VideoEncoderConfig::default()
+        };
+        self.recording_audio_encoder = AudioEncoderConfig {
+            codec: AudioCodec::Aac,
+            implementation: self
+                .capabilities
+                .audio_encoders()
+                .iter()
+                .find(|encoder| encoder.codec() == AudioCodec::Aac)
+                .map_or_else(EncoderImplementation::default, |encoder| {
+                    EncoderImplementation::new(encoder.id())
+                }),
+            ..AudioEncoderConfig::default()
+        };
         self.configured_video_encoder = settings.rtmp.video.clone();
         self.configured_audio_encoder = settings.rtmp.audio.clone();
         if self.configured_video_encoder.implementation.is_automatic() {

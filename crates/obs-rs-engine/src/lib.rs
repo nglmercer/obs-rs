@@ -16,7 +16,7 @@ use std::{error::Error, fmt, path::PathBuf, sync::Arc, time::Instant};
 
 use obs_rs_audio::{
     AudioBuffer, AudioDeviceError, AudioDeviceKind, AudioFormat, AudioInput, AudioInputProvider,
-    AudioMixer, AudioSourceId, SimulatedAudioProvider,
+    AudioInputState, AudioMixer, AudioResampler, AudioSourceId, SimulatedAudioProvider,
 };
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
@@ -1166,11 +1166,35 @@ impl EngineSession {
     /// `Running` or `Failed`, so a caller that only sees the error still leaves
     /// an observable record of what happened behind.
     pub fn start_recording(&mut self, path: impl Into<PathBuf>) -> Result<(), EngineError> {
+        self.start_recording_with_config(path.into(), None)
+    }
+
+    /// Starts a production recording with an explicit codec and encoder choice.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the codec combination or implementation is not
+    /// supported by the current runtime.
+    pub fn start_recording_configured(
+        &mut self,
+        path: impl Into<PathBuf>,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        let encoder_config = (video, audio);
+        self.start_recording_with_config(path.into(), Some(&encoder_config))
+    }
+
+    fn start_recording_with_config(
+        &mut self,
+        path: PathBuf,
+        encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
         if self.recording.is_some() {
             return Err(EngineError::Busy("start recording"));
         }
         self.recording_lifecycle = OutputLifecycle::Starting;
-        let result = self.open_recording(path.into());
+        let result = self.open_recording(path, encoder_config);
         match result {
             Ok(()) => {
                 self.recording_lifecycle = OutputLifecycle::Running;
@@ -1184,7 +1208,11 @@ impl EngineSession {
         }
     }
 
-    fn open_recording(&mut self, final_path: PathBuf) -> Result<(), EngineError> {
+    fn open_recording(
+        &mut self,
+        final_path: PathBuf,
+        encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
         let file_name = final_path
             .file_name()
             .and_then(|name| name.to_str())
@@ -1211,10 +1239,27 @@ impl EngineSession {
         {
             let destination = ProductionDestination::Recording(final_path.clone());
             let capabilities = GStreamerCapabilitySnapshot::probe();
-            let plan = ProductionPipelinePlan::negotiate(
-                OutputProfile::matroska_h264_aac(),
-                &destination,
-                &capabilities,
+            let profile =
+                encoder_config.map_or_else(OutputProfile::matroska_h264_aac, |config| match config
+                    .0
+                    .codec
+                {
+                    obs_rs_output::VideoCodec::H264 => OutputProfile::matroska_h264_aac(),
+                    obs_rs_output::VideoCodec::Hevc => OutputProfile::matroska_hevc_aac(),
+                    obs_rs_output::VideoCodec::Av1 => OutputProfile::matroska_av1_aac(),
+                    _ => OutputProfile::reference(),
+                });
+            let plan = encoder_config.map_or_else(
+                || ProductionPipelinePlan::negotiate(profile, &destination, &capabilities),
+                |(video, audio)| {
+                    ProductionPipelinePlan::negotiate_configured(
+                        profile,
+                        &destination,
+                        &capabilities,
+                        video,
+                        audio,
+                    )
+                },
             )?;
             let session = GStreamerOutputSession::start(
                 &plan,
@@ -1228,6 +1273,8 @@ impl EngineSession {
             });
             Ok(())
         }
+        #[cfg(not(feature = "production-gstreamer"))]
+        let _ = encoder_config;
         #[cfg(not(feature = "production-gstreamer"))]
         Err(EngineError::InvalidConfiguration(
             "Matroska support was not compiled into this host".to_owned(),
@@ -1743,7 +1790,7 @@ fn open_audio_input(
             })
     });
     if let Some((device_id, device_name)) = primary {
-        if let Ok(input) = provider.open_input(&device_id, format) {
+        if let Some(input) = open_input_with_conversion(provider, &device_id, format) {
             return (input, device_name, false);
         }
     }
@@ -1783,9 +1830,79 @@ fn open_desktop_audio(
     let Some((device_id, device_name)) = selected else {
         return (None, "no playback monitor".to_owned());
     };
-    match provider.open_input(&device_id, format) {
-        Ok(input) => (Some(input), device_name),
-        Err(error) => (None, format!("unavailable ({error})")),
+    match open_input_with_conversion(provider, &device_id, format) {
+        Some(input) => (Some(input), device_name),
+        None => (None, "unavailable (no compatible device format)".to_owned()),
+    }
+}
+
+fn open_input_with_conversion(
+    provider: &Arc<dyn AudioInputProvider>,
+    device_id: &str,
+    mix_format: AudioFormat,
+) -> Option<Box<dyn AudioInput>> {
+    let mut candidates = vec![mix_format];
+    for (rate, channels) in [(48_000, 2), (44_100, 2), (48_000, 1), (44_100, 1)] {
+        let candidate = AudioFormat::new(rate, channels).ok()?;
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    for device_format in candidates {
+        let Ok(input) = provider.open_input(device_id, device_format) else {
+            continue;
+        };
+        if device_format == mix_format {
+            return Some(input);
+        }
+        return Some(Box::new(ConvertedAudioInput {
+            input,
+            converter: AudioResampler::new(device_format, mix_format).ok()?,
+            mix_format,
+        }));
+    }
+    None
+}
+
+struct ConvertedAudioInput {
+    input: Box<dyn AudioInput>,
+    converter: AudioResampler,
+    mix_format: AudioFormat,
+}
+
+impl AudioInput for ConvertedAudioInput {
+    fn format(&self) -> AudioFormat {
+        self.mix_format
+    }
+
+    fn state(&self) -> AudioInputState {
+        self.input.state()
+    }
+
+    fn read_block(
+        &mut self,
+        timestamp: Timestamp,
+        frames: usize,
+    ) -> Result<AudioBuffer, AudioDeviceError> {
+        let source = self.converter.input_format();
+        let source_frames = (frames
+            .saturating_mul(source.sample_rate() as usize)
+            .saturating_add(self.mix_format.sample_rate() as usize - 1))
+            / self.mix_format.sample_rate() as usize;
+        let input = self.input.read_block(timestamp, source_frames.max(1))?;
+        let converted = self.converter.process(&input)?;
+        if converted.frames() == frames {
+            return Ok(converted);
+        }
+        let sample_count = frames.saturating_mul(usize::from(self.mix_format.channels()));
+        let mut samples = converted.samples().to_vec();
+        samples.resize(sample_count, 0.0);
+        samples.truncate(sample_count);
+        AudioBuffer::new(self.mix_format, timestamp, samples).map_err(Into::into)
+    }
+
+    fn stop(&mut self) {
+        self.input.stop();
     }
 }
 
@@ -1899,6 +2016,52 @@ mod tests {
             }
             SimulatedAudioProvider::new().open_input("test-audio", format)
         }
+    }
+
+    #[derive(Debug)]
+    struct NativeFormatProvider;
+
+    impl AudioInputProvider for NativeFormatProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+            Ok(vec![AudioDeviceInfo::new(
+                "native-mono",
+                "Native mono device",
+                AudioDeviceKind::Input,
+            )?])
+        }
+
+        fn open_input(
+            &self,
+            device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+            let native = AudioFormat::new(44_100, 1)?;
+            if device_id != "native-mono" || format != native {
+                return Err(AudioDeviceError::Unavailable(
+                    "device only accepts its native 44.1 kHz mono format".to_owned(),
+                ));
+            }
+            SimulatedAudioProvider::new().open_input("test-audio", native)
+        }
+    }
+
+    #[test]
+    fn device_native_audio_is_mapped_and_resampled_to_the_mix_format() {
+        let provider: Arc<dyn AudioInputProvider> = Arc::new(NativeFormatProvider);
+        let mix = AudioFormat::new(48_000, 2).expect("mix format");
+        let (mut input, name, fallback) = open_audio_input(&provider, mix, Some("native-mono"));
+        assert_eq!(name, "Native mono device");
+        assert!(!fallback);
+        assert_eq!(input.format(), mix);
+        let block = input
+            .read_block(Timestamp::ZERO, 480)
+            .expect("converted block");
+        assert_eq!(block.format(), mix);
+        assert_eq!(block.frames(), 480);
+        assert!(block
+            .samples()
+            .chunks_exact(2)
+            .all(|frame| (frame[0] - frame[1]).abs() < f32::EPSILON));
     }
 
     /// An input that serves `healthy_blocks` and then fails permanently.

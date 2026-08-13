@@ -455,11 +455,24 @@ fn pipeline_description(
         _ => "",
     };
     let v = format!("appsrc name=video_source ! queue max-size-bytes={queue} leaky=downstream ! videoconvert ! {video} name=video_encoder ! {profile_caps}");
-    let a = format!("appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream ! audioconvert ! audioresample ! {audio} name=audio_encoder ! ");
+    let audio_config = plan.audio_config();
+    let audio_rate = audio_config.sample_rate;
+    let audio_channels = audio_config.channels;
+    let a = format!("appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream ! audioconvert ! audioresample ! audio/x-raw,rate={audio_rate},channels={audio_channels} ! {audio} name=audio_encoder ! ");
     match (plan.profile().transport(), destination) {
         (OutputTransport::Matroska, ProductionDestination::Recording(final_path)) => {
             let temp = final_path.with_extension("mkv.part");
-            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. matroskamux name=mux ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+            let parser = match plan.video_config().codec {
+                VideoCodec::H264 => "h264parse",
+                VideoCodec::Hevc => "h265parse",
+                VideoCodec::Av1 => "av1parse",
+                codec => {
+                    return Err(GStreamerError::Native(format!(
+                        "unsupported Matroska video codec {codec:?}"
+                    )))
+                }
+            };
+            Ok((format!("{v}{parser} ! mux. {a}aacparse ! mux. matroskamux name=mux ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
         }
         (OutputTransport::Rtmp, ProductionDestination::Rtmp { .. })
         | (OutputTransport::Rtmps, ProductionDestination::Rtmps { .. }) => {
@@ -491,7 +504,23 @@ fn configure_encoders(
     let fps = u64::from(format.frame_rate().numerator())
         .div_ceil(u64::from(format.frame_rate().denominator()));
     let gop = u64::from(config.keyframe_interval_secs).saturating_mul(fps);
-    match plan.video_encoder() {
+    configure_video_encoder(video, plan.video_encoder(), config, gop)?;
+    configure_audio_encoder(&audio, plan)?;
+    Ok(())
+}
+
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines,
+    reason = "the exhaustive plugin dispatch keeps each encoder's property vocabulary isolated"
+)]
+fn configure_video_encoder(
+    video: gst::Element,
+    encoder: &str,
+    config: &obs_rs_output::VideoEncoderConfig,
+    gop: u64,
+) -> Result<(), GStreamerError> {
+    match encoder {
         "openh264enc" => {
             video.set_property("bitrate", config.bitrate_kbps.saturating_mul(1_000));
             video.set_property(
@@ -565,17 +594,95 @@ fn configure_encoders(
                 &config.b_frames.to_string(),
             );
         }
+        "vah265enc" | "vaapih265enc" | "nvh265enc" => {
+            set_first_string_property(&video, &["bitrate"], &config.bitrate_kbps.to_string());
+            set_first_string_property(
+                &video,
+                &["key-int-max", "gop-size", "keyframe-period"],
+                &gop.to_string(),
+            );
+            set_first_string_property(
+                &video,
+                &["bframes", "b-frames", "max-bframes"],
+                &config.b_frames.to_string(),
+            );
+        }
+        "x265enc" => {
+            video.set_property("bitrate", config.bitrate_kbps);
+            video.set_property("key-int-max", i32::try_from(gop).unwrap_or(i32::MAX));
+            video.set_property_from_str(
+                "speed-preset",
+                match config.preset {
+                    EncoderPreset::Speed => "ultrafast",
+                    EncoderPreset::Balanced => "medium",
+                    EncoderPreset::Quality => "slow",
+                },
+            );
+        }
+        "svthevcenc" => {
+            video.set_property("bitrate", config.bitrate_kbps);
+            video.set_property("key-int-max", i32::try_from(gop.min(255)).unwrap_or(255));
+            video.set_property_from_str("rc", config.rate_control.id());
+            video.set_property(
+                "speed",
+                match config.preset {
+                    EncoderPreset::Speed => 9_u32,
+                    EncoderPreset::Balanced => 6,
+                    EncoderPreset::Quality => 2,
+                },
+            );
+        }
+        "svtav1enc" => {
+            video.set_property("target-bitrate", config.bitrate_kbps);
+            video.set_property("max-bitrate", config.max_bitrate_kbps.unwrap_or(0));
+            video.set_property(
+                "intra-period-length",
+                i32::try_from(gop).unwrap_or(i32::MAX),
+            );
+            video.set_property(
+                "preset",
+                match config.preset {
+                    EncoderPreset::Speed => 12_u32,
+                    EncoderPreset::Balanced => 8,
+                    EncoderPreset::Quality => 4,
+                },
+            );
+        }
+        "av1enc" | "aomenc" => {
+            video.set_property("target-bitrate", config.bitrate_kbps);
+            set_first_string_property(&video, &["keyframe-max-dist"], &gop.to_string());
+            set_first_string_property(
+                &video,
+                &["cpu-used"],
+                match config.preset {
+                    EncoderPreset::Speed => "8",
+                    EncoderPreset::Balanced => "4",
+                    EncoderPreset::Quality => "1",
+                },
+            );
+        }
+        "rav1enc" => {
+            set_first_string_property(
+                &video,
+                &["bitrate", "target-bitrate"],
+                &config.bitrate_kbps.to_string(),
+            );
+            set_first_string_property(
+                &video,
+                &["key-frame-interval", "keyframe-max-dist"],
+                &gop.to_string(),
+            );
+        }
         "vp8enc" => {
             video.set_property("target-bitrate", config.bitrate_kbps.saturating_mul(1_000));
             video.set_property("keyframe-max-dist", i32::try_from(gop).unwrap_or(i32::MAX));
         }
-        encoder => {
+        unsupported => {
             return Err(GStreamerError::Native(format!(
-                "unsupported configured video encoder {encoder}"
+                "unsupported configured video encoder {unsupported}"
             )));
         }
     }
-    configure_audio_encoder(&audio, plan)?;
     Ok(())
 }
 
@@ -585,8 +692,14 @@ fn configure_audio_encoder(
 ) -> Result<(), GStreamerError> {
     let audio_bitrate = plan.audio_config().bitrate_kbps.saturating_mul(1_000);
     match plan.audio_encoder() {
-        "avenc_aac" | "opusenc" => {
+        "avenc_aac" => {
             audio.set_property("bitrate", i32::try_from(audio_bitrate).unwrap_or(i32::MAX));
+        }
+        "opusenc" => {
+            audio.set_property("bitrate", i32::try_from(audio_bitrate).unwrap_or(i32::MAX));
+            if let Some(complexity) = plan.audio_config().complexity {
+                audio.set_property("complexity", i32::from(complexity));
+            }
         }
         encoder => {
             return Err(GStreamerError::Native(format!(

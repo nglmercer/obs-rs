@@ -242,6 +242,7 @@ pub(crate) struct AppSettings {
     pub(crate) diagnostics_path: String,
     pub(crate) recording_path: String,
     pub(crate) recording_format: RecordingFormat,
+    pub(crate) recording_codec: VideoCodec,
     pub(crate) stream_protocol: StreamProtocol,
     pub(crate) rtmp: RtmpConfig,
     pub(crate) srt: SrtConfig,
@@ -403,6 +404,7 @@ impl Default for AppSettings {
             diagnostics_path: user_file(DIAGNOSTICS_FILE),
             recording_path: user_file("obs-rs-recording.mkv"),
             recording_format: RecordingFormat::Matroska,
+            recording_codec: VideoCodec::H264,
             stream_protocol: StreamProtocol::Rtmp,
             rtmp: RtmpConfig::default(),
             srt: SrtConfig::default(),
@@ -569,6 +571,10 @@ impl AppSettings {
                 .get("recording_format")
                 .and_then(RecordingFormat::from_id)
                 .unwrap_or(defaults.recording_format),
+            recording_codec: config
+                .get("recording_codec")
+                .and_then(VideoCodec::from_id)
+                .unwrap_or(defaults.recording_codec),
             stream_protocol: config
                 .get("stream_protocol")
                 .and_then(StreamProtocol::from_id)
@@ -628,6 +634,7 @@ impl AppSettings {
             ("diagnostics_path", self.diagnostics_path.clone()),
             ("recording_path", self.recording_path.clone()),
             ("recording_format", self.recording_format.id().to_owned()),
+            ("recording_codec", self.recording_codec.id().to_owned()),
             ("audio_input_id", self.audio_input_id.clone()),
             ("restore_project", self.restore_project.to_string()),
             (
@@ -692,6 +699,21 @@ impl AppSettings {
             (
                 "stream_audio_bitrate_kbps",
                 self.rtmp.audio.bitrate_kbps.to_string(),
+            ),
+            (
+                "stream_audio_sample_rate",
+                self.rtmp.audio.sample_rate.to_string(),
+            ),
+            (
+                "stream_audio_channels",
+                self.rtmp.audio.channels.to_string(),
+            ),
+            (
+                "stream_audio_complexity",
+                self.rtmp
+                    .audio
+                    .complexity
+                    .map_or_else(String::new, |value| value.to_string()),
             ),
             (
                 "stream_rate_control",
@@ -965,6 +987,15 @@ fn rtmp_from_config(config: &Config, defaults: &RtmpConfig) -> RtmpConfig {
                 "stream_audio_bitrate_kbps",
                 defaults.audio.bitrate_kbps,
             ),
+            sample_rate: number(
+                config,
+                "stream_audio_sample_rate",
+                defaults.audio.sample_rate,
+            ),
+            channels: number(config, "stream_audio_channels", defaults.audio.channels),
+            complexity: config
+                .get("stream_audio_complexity")
+                .and_then(|value| value.parse().ok()),
         },
         reconnect: flag(config, "stream_reconnect", defaults.reconnect),
         maximum_retries: number(config, "stream_maximum_retries", defaults.maximum_retries),

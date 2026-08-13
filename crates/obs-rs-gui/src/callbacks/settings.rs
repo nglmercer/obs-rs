@@ -8,7 +8,7 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use obs_rs_engine::ProductionProtocol;
 use obs_rs_media::{FrameRate, VideoFormat};
-use obs_rs_output::{EncoderImplementation, EncoderPreset, RateControl};
+use obs_rs_output::{EncoderImplementation, EncoderPreset, RateControl, VideoCodec};
 use obs_rs_output::{SecretString, SrtKeyLength, SrtMode, StreamProtocol};
 use obs_rs_project::ProjectCommand;
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
@@ -42,6 +42,7 @@ pub(crate) struct SettingsController {
     protocol_ids: RefCell<Vec<StreamProtocol>>,
     video_encoder_ids: RefCell<Vec<String>>,
     audio_encoder_ids: RefCell<Vec<String>>,
+    recording_codec_ids: RefCell<Vec<VideoCodec>>,
 }
 
 impl SettingsController {
@@ -127,6 +128,7 @@ pub(crate) fn install_settings_window(
         protocol_ids: RefCell::new(Vec::new()),
         video_encoder_ids: RefCell::new(Vec::new()),
         audio_encoder_ids: RefCell::new(Vec::new()),
+        recording_codec_ids: RefCell::new(Vec::new()),
     });
 
     populate_static_models(&controller.window);
@@ -258,7 +260,12 @@ fn populate_stream_models(
     window.set_protocol_index(i32::try_from(selected).unwrap_or(0));
     show_protocol_fields(window, selected_protocol);
 
-    let video = output.capabilities().video_encoders();
+    let video = output
+        .capabilities()
+        .video_encoders()
+        .iter()
+        .filter(|encoder| encoder.codec() == VideoCodec::H264)
+        .collect::<Vec<_>>();
     *controller.video_encoder_ids.borrow_mut() = video
         .iter()
         .map(|encoder| encoder.id().to_owned())
@@ -275,6 +282,19 @@ fn populate_stream_models(
         &controller.video_encoder_ids.borrow(),
         &settings.rtmp.video.implementation.id().to_owned(),
     ));
+
+    let recording_codecs = output.capabilities().recording_codecs().to_vec();
+    window.set_recording_codec_names(string_model(recording_codecs.iter().map(|codec| {
+        SharedString::from(match codec {
+            VideoCodec::H264 => "H.264",
+            VideoCodec::Hevc => "HEVC / H.265",
+            VideoCodec::Av1 => "AV1",
+            VideoCodec::Vp8 => "VP8",
+            VideoCodec::ReferenceRle => "Reference RLE",
+        })
+    })));
+    window.set_recording_codec_index(index_of(&recording_codecs, &settings.recording_codec));
+    *controller.recording_codec_ids.borrow_mut() = recording_codecs;
 
     let audio = output.capabilities().audio_encoders();
     *controller.audio_encoder_ids.borrow_mut() = audio
@@ -735,7 +755,7 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.program_border_color = window.get_program_border_color().to_string();
     settings.project_path = window.get_project_path().to_string();
     settings.diagnostics_path = window.get_diagnostics_path().to_string();
-    read_recording_draft(window, &mut settings);
+    read_recording_draft(controller, &mut settings);
     settings.stream_protocol = controller
         .protocol_ids
         .borrow()
@@ -811,13 +831,22 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings
 }
 
-fn read_recording_draft(window: &SettingsWindow, settings: &mut AppSettings) {
+fn read_recording_draft(controller: &SettingsController, settings: &mut AppSettings) {
+    let window = &controller.window;
     settings.recording_format = RecordingFormat::ALL
         .get(usize::try_from(window.get_recording_format_index()).unwrap_or(0))
         .copied()
         .unwrap_or_default();
     settings.recording_path =
         recording_path_for_format(&window.get_recording_path(), settings.recording_format);
+    if let Some(codec) = controller
+        .recording_codec_ids
+        .borrow()
+        .get(usize::try_from(window.get_recording_codec_index()).unwrap_or(0))
+        .copied()
+    {
+        settings.recording_codec = codec;
+    }
 }
 
 fn commit(

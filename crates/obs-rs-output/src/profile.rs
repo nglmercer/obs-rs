@@ -12,6 +12,10 @@ pub enum OutputProfileKind {
     ReferencePacket,
     /// Matroska recording with H.264 video and AAC audio.
     MatroskaH264Aac,
+    /// Matroska recording with HEVC video and AAC audio.
+    MatroskaHevcAac,
+    /// Matroska recording with AV1 video and AAC audio.
+    MatroskaAv1Aac,
     /// RTMP stream carrying H.264 and AAC.
     RtmpH264Aac,
     /// TLS-protected RTMPS stream carrying H.264 and AAC.
@@ -29,6 +33,8 @@ impl OutputProfileKind {
         match self {
             Self::ReferencePacket => "reference",
             Self::MatroskaH264Aac => "matroska-h264-aac",
+            Self::MatroskaHevcAac => "matroska-hevc-aac",
+            Self::MatroskaAv1Aac => "matroska-av1-aac",
             Self::RtmpH264Aac => "rtmp-h264-aac",
             Self::RtmpsH264Aac => "rtmps-h264-aac",
             Self::SrtMpegTsH264Aac => "srt-mpegts-h264-aac",
@@ -42,6 +48,8 @@ impl OutputProfileKind {
         match id {
             "reference" => Some(Self::ReferencePacket),
             "matroska-h264-aac" => Some(Self::MatroskaH264Aac),
+            "matroska-hevc-aac" => Some(Self::MatroskaHevcAac),
+            "matroska-av1-aac" => Some(Self::MatroskaAv1Aac),
             "rtmp-h264-aac" => Some(Self::RtmpH264Aac),
             "rtmps-h264-aac" => Some(Self::RtmpsH264Aac),
             "srt-mpegts-h264-aac" => Some(Self::SrtMpegTsH264Aac),
@@ -56,6 +64,8 @@ impl OutputProfileKind {
 pub enum OutputVideoCodec {
     ReferenceRle,
     H264,
+    Hevc,
+    Av1,
     Vp8,
 }
 
@@ -110,6 +120,32 @@ impl OutputProfile {
         Self::new(
             OutputProfileKind::MatroskaH264Aac,
             OutputVideoCodec::H264,
+            OutputAudioCodec::Aac,
+            OutputTransport::Matroska,
+            32 * 1_024 * 1_024,
+            4_000,
+        )
+    }
+
+    /// Matroska recording with dynamically selected HEVC and AAC encoders.
+    #[must_use]
+    pub const fn matroska_hevc_aac() -> Self {
+        Self::new(
+            OutputProfileKind::MatroskaHevcAac,
+            OutputVideoCodec::Hevc,
+            OutputAudioCodec::Aac,
+            OutputTransport::Matroska,
+            32 * 1_024 * 1_024,
+            4_000,
+        )
+    }
+
+    /// Matroska recording with dynamically selected AV1 and AAC encoders.
+    #[must_use]
+    pub const fn matroska_av1_aac() -> Self {
+        Self::new(
+            OutputProfileKind::MatroskaAv1Aac,
+            OutputVideoCodec::Av1,
             OutputAudioCodec::Aac,
             OutputTransport::Matroska,
             32 * 1_024 * 1_024,
