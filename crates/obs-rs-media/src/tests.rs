@@ -196,6 +196,36 @@ fn converts_i420_and_rejects_odd_planar_dimensions() {
 }
 
 #[test]
+fn nv12_and_p010_have_validated_layouts_and_convert_to_rgba() {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let nv12 = RawVideoFrame::new(
+        format,
+        PixelFormat::Nv12,
+        Timestamp::ZERO,
+        vec![16, 235, 81, 145, 128, 128],
+    )
+    .expect("NV12");
+    assert_eq!(nv12.bytes().len(), 6);
+    assert_eq!(nv12.into_rgba8().expect("RGBA").pixels()[3], 255);
+
+    let word = |value: u16| (value << 6).to_le_bytes();
+    let p010 = [
+        word(64),
+        word(940),
+        word(256),
+        word(580),
+        word(512),
+        word(512),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let p010 = RawVideoFrame::new(format, PixelFormat::P010, Timestamp::ZERO, p010).expect("P010");
+    assert_eq!(p010.bytes().len(), 12);
+    assert_eq!(p010.into_rgba8().expect("RGBA").pixels()[3], 255);
+}
+
+#[test]
 fn transitions_are_deterministic_and_validate_progress() {
     let source = VideoFrame::solid(format(), Timestamp::ZERO, [0, 0, 0, 0]);
     let destination = VideoFrame::solid(format(), Timestamp::from_millis(10), [100, 200, 255, 255]);

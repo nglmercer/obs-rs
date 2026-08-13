@@ -10,7 +10,7 @@ use obs_rs_engine::{
     output_capabilities_snapshot, EngineAudioChannel, EngineConfig, EngineSession, EngineWorker,
     OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle,
 };
-use obs_rs_media::{VideoFormat, VideoFrame};
+use obs_rs_media::{RawVideoFrame, VideoFormat, VideoFrame};
 use obs_rs_output::{
     AudioCodec, AudioEncoderConfig, EncoderImplementation, RtmpConfig, StreamProtocol, StreamState,
     StreamTarget, VideoCodec, VideoEncoderConfig,
@@ -288,6 +288,14 @@ impl OutputRuntime {
         // Queue pressure is observable in output_metrics; dropping an animation
         // frame is preferable to stalling scene editing or preview rendering.
         let _ = self.worker.try_push_frame(frame.clone());
+    }
+
+    pub(crate) fn push_raw_frame(&mut self, frame: RawVideoFrame) {
+        if frame.format() != self.format {
+            self.format_drops = self.format_drops.saturating_add(1);
+            return;
+        }
+        let _ = self.worker.try_push_raw_frame(frame);
     }
 
     /// Samples live input for mixer meters while no output is encoding.

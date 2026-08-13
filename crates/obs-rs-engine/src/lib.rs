@@ -21,7 +21,7 @@ use obs_rs_audio::{
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
-use obs_rs_media::{FrameRate, LatencyMetrics, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{FrameRate, LatencyMetrics, RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
 use obs_rs_output::{
@@ -498,6 +498,16 @@ impl RecordingOutput {
         }
     }
 
+    fn push_raw_video(&mut self, frame: &RawVideoFrame) -> Result<(), EngineError> {
+        match self {
+            Self::Reference(_) => Ok(()),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production { session, .. } => {
+                session.push_raw_video(frame.clone()).map_err(Into::into)
+            }
+        }
+    }
+
     #[cfg_attr(
         not(feature = "production-gstreamer"),
         allow(clippy::unnecessary_wraps)
@@ -808,7 +818,24 @@ impl StreamOutput {
             unused_variables
         )
     )]
-    fn push_raw_video(&mut self, frame: VideoFrame) -> Result<(), EngineError> {
+    fn push_raw_video(&mut self, frame: RawVideoFrame) -> Result<(), EngineError> {
+        #[cfg(feature = "production-gstreamer")]
+        if let Self::Production(stream) = self {
+            stream.push_raw_video(frame)?;
+        }
+        Ok(())
+    }
+
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(
+            clippy::needless_pass_by_value,
+            clippy::unnecessary_wraps,
+            clippy::unused_self,
+            unused_variables
+        )
+    )]
+    fn push_video(&mut self, frame: VideoFrame) -> Result<(), EngineError> {
         #[cfg(feature = "production-gstreamer")]
         if let Self::Production(stream) = self {
             stream.push_video(frame)?;
@@ -1180,6 +1207,36 @@ impl EngineSession {
                 .first()
                 .map_or(frame.timestamp(), AudioBuffer::timestamp),
         );
+        Ok(())
+    }
+
+    /// Queues a validated packed/planar program frame from an accelerated
+    /// compositor and schedules audio against its timestamp.
+    pub fn push_program_raw_frame(&mut self, frame: &RawVideoFrame) -> Result<(), EngineError> {
+        if frame.format() != self.format {
+            return Err(EngineError::InvalidConfiguration(
+                "program frame format does not match the output canvas".to_owned(),
+            ));
+        }
+        if self
+            .stats
+            .last_video_timestamp
+            .is_some_and(|last| frame.timestamp() < last)
+        {
+            return Err(EngineError::InvalidConfiguration(
+                "program frame timestamp moved backwards".to_owned(),
+            ));
+        }
+        let audio_blocks = self.drain_audio_until(frame.timestamp())?;
+        for audio in &audio_blocks {
+            self.dispatch_audio(audio)?;
+        }
+        self.dispatch_raw_video(frame)?;
+        self.stats.ticks = self.stats.ticks.saturating_add(1);
+        self.stats.audio_blocks_per_video_tick =
+            u32::try_from(audio_blocks.len()).unwrap_or(u32::MAX);
+        self.stats.video_frames = self.stats.video_frames.saturating_add(1);
+        self.stats.last_video_timestamp = Some(frame.timestamp());
         Ok(())
     }
 
@@ -1759,7 +1816,7 @@ impl EngineSession {
                 .as_mut()
                 .filter(|stream| stream.video_requirement() == VideoInputRequirement::Raw)
             {
-                stream.push_raw_video(frame.clone())?;
+                stream.push_video(frame.clone())?;
             }
             self.stats.output_submit_latency.record(started.elapsed());
         }
@@ -1771,6 +1828,45 @@ impl EngineSession {
             }
             let started = Instant::now();
             let packet = self.video_encoder.encode(frame)?;
+            self.stats.video_encode_latency.record(started.elapsed());
+            let started = Instant::now();
+            self.emit_packet(packet)?;
+            self.stats.output_submit_latency.record(started.elapsed());
+        }
+        Ok(())
+    }
+
+    fn dispatch_raw_video(&mut self, frame: &RawVideoFrame) -> Result<(), EngineError> {
+        if self.raw_video_required() {
+            let started = Instant::now();
+            if let Some(recording) = self
+                .recording
+                .as_mut()
+                .filter(|recording| recording.video_requirement() == VideoInputRequirement::Raw)
+            {
+                recording.push_raw_video(frame)?;
+            }
+            if let Some(stream) = self
+                .streaming
+                .as_mut()
+                .filter(|stream| stream.video_requirement() == VideoInputRequirement::Raw)
+            {
+                stream.push_raw_video(frame.clone())?;
+            }
+            self.stats.output_submit_latency.record(started.elapsed());
+        }
+        if self.packetized_video_required() {
+            let rgba = frame
+                .clone()
+                .into_rgba8()
+                .map_err(|error| EngineError::InvalidConfiguration(error.to_string()))?;
+            #[cfg(test)]
+            {
+                self.reference_video_encode_calls =
+                    self.reference_video_encode_calls.saturating_add(1);
+            }
+            let started = Instant::now();
+            let packet = self.video_encoder.encode(&rgba)?;
             self.stats.video_encode_latency.record(started.elapsed());
             let started = Instant::now();
             self.emit_packet(packet)?;

@@ -170,3 +170,27 @@ fn cpu_scene_layer_submission_is_the_pixel_oracle_for_extended_backends() {
         })
     );
 }
+
+#[test]
+fn portable_gpu_surface_contains_only_backend_tokens_and_media_metadata() {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut backend = CpuRenderBackend::new(2).expect("backend");
+    let texture = backend.create_texture(format).expect("texture");
+    let handle = GpuFrameHandle::new(
+        "test-backend",
+        format,
+        obs_rs_media::PixelFormat::Nv12,
+        Timestamp::from_millis(9),
+        vec![
+            GpuPlaneHandle::new(texture, format.width(), format.height()),
+            GpuPlaneHandle::new(texture, format.width() / 2, format.height() / 2),
+        ],
+    )
+    .expect("portable handle");
+    let surface = VideoSurface::Gpu(handle.clone());
+    assert_eq!(surface.format(), format);
+    assert_eq!(surface.timestamp(), Timestamp::from_millis(9));
+    assert_eq!(handle.provider(), "test-backend");
+    assert_eq!(handle.planes().len(), 2);
+    assert_eq!(handle.pixel_format(), obs_rs_media::PixelFormat::Nv12);
+}

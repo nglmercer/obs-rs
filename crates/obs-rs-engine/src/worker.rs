@@ -9,7 +9,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use obs_rs_media::{Timestamp, VideoFrame};
+use obs_rs_media::{RawVideoFrame, Timestamp, VideoFrame};
 use obs_rs_output::{AudioEncoderConfig, StreamTarget, VideoEncoderConfig};
 
 use obs_rs_project::Project;
@@ -47,6 +47,7 @@ enum WorkerCommand {
     StartStreamingTarget(StreamTarget, VideoEncoderConfig, AudioEncoderConfig),
     FinishStreaming,
     PushFrame(VideoFrame),
+    PushRawFrame(RawVideoFrame),
     MonitorAudio(Timestamp),
     SetGain(EngineAudioChannel, u16, mpsc::Sender<Result<(), String>>),
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
@@ -351,6 +352,27 @@ impl EngineWorker {
         }
     }
 
+    /// Attempts to enqueue one packed/planar program frame without blocking.
+    #[must_use]
+    pub fn try_push_raw_frame(&self, frame: RawVideoFrame) -> bool {
+        self.queued_frames.fetch_add(1, Ordering::Relaxed);
+        match self.sender.try_send(WorkerCommand::PushRawFrame(frame)) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_)) => {
+                self.queued_frames.fetch_sub(1, Ordering::Relaxed);
+                self.dropped_frames.fetch_add(1, Ordering::Relaxed);
+                if let Ok(mut snapshot) = self.snapshot.lock() {
+                    snapshot.dropped_frames = self.dropped_frames.load(Ordering::Relaxed);
+                }
+                false
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.queued_frames.fetch_sub(1, Ordering::Relaxed);
+                false
+            }
+        }
+    }
+
     /// Attempts to enqueue one monitor-only audio sample without blocking.
     ///
     /// This shares the command queue with output frames, so a busy worker can
@@ -453,6 +475,10 @@ impl Drop for EngineWorker {
     clippy::needless_pass_by_value,
     reason = "the worker thread takes ownership of its receive and status handles"
 )]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one exhaustive command loop keeps worker state transitions serialized"
+)]
 fn worker_loop(
     mut session: EngineSession,
     receiver: Receiver<WorkerCommand>,
@@ -496,6 +522,13 @@ fn worker_loop(
             WorkerCommand::PushFrame(frame) => {
                 queued_frames.fetch_sub(1, Ordering::Relaxed);
                 if let Err(error) = session.push_program_frame(&frame) {
+                    session.last_error = Some(error.to_string());
+                }
+                false
+            }
+            WorkerCommand::PushRawFrame(frame) => {
+                queued_frames.fetch_sub(1, Ordering::Relaxed);
+                if let Err(error) = session.push_program_raw_frame(&frame) {
                     session.last_error = Some(error.to_string());
                 }
                 false

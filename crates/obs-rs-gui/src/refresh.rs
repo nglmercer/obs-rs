@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use obs_rs_media::{FrameTransform, FrameTransition, VideoFrame};
+use obs_rs_media::{FrameTransform, FrameTransition, RawVideoFrame, VideoFrame};
 use obs_rs_project::{Profile, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
@@ -130,9 +130,14 @@ pub(crate) fn refresh_ui(
 pub(crate) fn refresh_preview_frames_for_view(
     ui: &MainWindow,
     worker: &PreviewWorker,
-) -> (Option<VideoFrame>, Option<VideoFrame>, Option<String>) {
+) -> (
+    Option<VideoFrame>,
+    Option<VideoFrame>,
+    Option<RawVideoFrame>,
+    Option<String>,
+) {
     let Some(result) = worker.try_take_latest() else {
-        return (None, None, None);
+        return (None, None, None, None);
     };
     match (&result.preview_scene, &result.preview_frame) {
         (_, Some(frame)) => {
@@ -179,6 +184,7 @@ pub(crate) fn refresh_preview_frames_for_view(
     (
         result.preview_frame,
         result.program_frame,
+        result.program_output,
         result.error.map(|error| format!("Preview worker: {error}")),
     )
 }

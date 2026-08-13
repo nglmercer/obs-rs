@@ -102,6 +102,18 @@ mod tests {
             .expect("GPU alpha composition");
         assert_eq!(backend.readback(target).expect("GPU result"), expected);
 
+        backend
+            .upload(
+                target,
+                &VideoFrame::solid(format, Timestamp::ZERO, [0, 0, 0, 255]),
+            )
+            .expect("black frame");
+        let nv12 = backend.readback_nv12(target).expect("GPU NV12 conversion");
+        assert_eq!(nv12.pixel_format(), obs_rs_media::PixelFormat::Nv12);
+        assert!(nv12.bytes()[..64].iter().all(|value| *value == 16));
+        assert!(nv12.bytes()[64..].iter().all(|value| *value == 128));
+        assert_eq!(backend.metrics().color_conversions(), 1);
+
         backend.lose_device();
         assert_eq!(backend.state(), obs_rs_render::RenderState::Lost);
         backend.recover().expect("device recovery");

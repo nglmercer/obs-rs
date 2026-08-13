@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use obs_rs_media::{LatencyMetrics, VideoFrame};
+use obs_rs_media::{LatencyMetrics, RawVideoFrame, VideoFrame};
 use obs_rs_project::Project;
 
 use crate::PreviewRenderer;
@@ -19,6 +19,7 @@ struct PreviewRequest {
     preview_scene: Option<String>,
     program_scene: Option<String>,
     render_program: bool,
+    prepare_output: bool,
 }
 
 pub(crate) struct PreviewResult {
@@ -26,6 +27,7 @@ pub(crate) struct PreviewResult {
     pub(crate) preview_frame: Option<VideoFrame>,
     pub(crate) program_scene: Option<String>,
     pub(crate) program_frame: Option<VideoFrame>,
+    pub(crate) program_output: Option<RawVideoFrame>,
     pub(crate) error: Option<String>,
     pub(crate) metrics: String,
     #[cfg(test)]
@@ -121,6 +123,7 @@ impl PreviewWorker {
         preview_scene: Option<&str>,
         program_scene: Option<&str>,
         render_program: bool,
+        prepare_output: bool,
     ) {
         let project =
             (self.applied_revision.load(Ordering::Acquire) != revision).then(|| project.clone());
@@ -130,6 +133,7 @@ impl PreviewWorker {
             preview_scene: preview_scene.map(str::to_owned),
             program_scene: program_scene.map(str::to_owned),
             render_program,
+            prepare_output,
         };
         enqueue_request(
             &self.request,
@@ -222,6 +226,7 @@ fn preview_loop(project: &Project, revision: u64, shared: PreviewLoopShared<'_>)
                 preview_frame: None,
                 program_scene: None,
                 program_frame: None,
+                program_output: None,
                 error: Some(error.clone()),
                 metrics: "Preview worker unavailable".to_owned(),
                 #[cfg(test)]
@@ -285,11 +290,24 @@ fn render_request(
                 && matches!(program, Ok(None)))
             .then(|| "program scene produced no frame".to_owned())
         });
+    let output = if request.prepare_output {
+        match (
+            request.program_scene.as_deref(),
+            program.as_ref().ok().and_then(Option::as_ref),
+        ) {
+            (Some(scene), Some(frame)) => renderer.encoder_frame(scene, frame),
+            _ => Ok(None),
+        }
+    } else {
+        Ok(None)
+    };
+    let error = error.or_else(|| output.as_ref().err().map(ToString::to_string));
     PreviewResult {
         preview_scene: request.preview_scene,
         preview_frame: preview.as_ref().ok().cloned().flatten(),
         program_scene: request.program_scene,
         program_frame: program.as_ref().ok().cloned().flatten(),
+        program_output: output.ok().flatten(),
         error,
         metrics: renderer.metrics_summary(),
         #[cfg(test)]
@@ -320,6 +338,7 @@ fn renderer_error(
             preview_frame: None,
             program_scene: None,
             program_frame: None,
+            program_output: None,
             error: Some(error),
             metrics: "Preview project sync failed".to_owned(),
             #[cfg(test)]
@@ -368,6 +387,7 @@ mod tests {
             preview_scene: Some(scene.to_owned()),
             program_scene: None,
             render_program: false,
+            prepare_output: false,
         }
     }
 
@@ -411,7 +431,7 @@ mod tests {
             .to_owned();
         let worker = PreviewWorker::spawn(project.clone(), 0).expect("preview worker");
         let caller = thread::current().id();
-        worker.request_render(&project, 0, Some(&scene), Some(&scene), true);
+        worker.request_render(&project, 0, Some(&scene), Some(&scene), true, false);
 
         let mut result = None;
         for _ in 0..100 {

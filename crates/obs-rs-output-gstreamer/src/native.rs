@@ -4,7 +4,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use obs_rs_audio::{AudioBuffer, AudioFormat};
-use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{PixelFormat, RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{EncoderPreset, OutputTransport, RateControl, VideoCodec};
 
 use super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
@@ -82,6 +82,8 @@ pub struct GStreamerOutputSession {
     transport: OutputTransport,
     video_duration: gst::ClockTime,
     maximum_reconnects: u32,
+    video_format: VideoFormat,
+    video_pixel_format: PixelFormat,
 }
 
 impl GStreamerOutputSession {
@@ -144,6 +146,8 @@ impl GStreamerOutputSession {
             transport: plan.profile().transport(),
             video_duration,
             maximum_reconnects,
+            video_format,
+            video_pixel_format: PixelFormat::Rgba8,
         })
     }
 
@@ -163,9 +167,50 @@ impl GStreamerOutputSession {
     ///
     /// Rejects closed sessions, timestamp regression, or downstream failure.
     pub fn push_video(&mut self, frame: VideoFrame) -> Result<(), GStreamerError> {
+        if self.video_pixel_format != PixelFormat::Rgba8 {
+            self.set_video_caps(PixelFormat::Rgba8)?;
+        }
+        let timestamp = frame.timestamp();
+        self.push_video_bytes(timestamp, frame.into_pixels())
+    }
+
+    /// Moves an owned validated packed/planar frame into the video queue.
+    ///
+    /// Appsrc caps are renegotiated only when the input layout changes, letting
+    /// GPU-converted NV12/P010 reach `videoconvert` and hardware encoders
+    /// without an intermediate RGBA expansion.
+    ///
+    /// # Errors
+    ///
+    /// Rejects mismatched formats, closed sessions, timestamp regression,
+    /// invalid caps, or downstream failure.
+    pub fn push_raw_video(&mut self, frame: RawVideoFrame) -> Result<(), GStreamerError> {
+        if frame.format() != self.video_format {
+            return Err(GStreamerError::Native(
+                "raw video format does not match the output canvas".to_owned(),
+            ));
+        }
+        if self.video_pixel_format != frame.pixel_format() {
+            self.set_video_caps(frame.pixel_format())?;
+        }
+        let timestamp = frame.timestamp();
+        self.push_video_bytes(timestamp, frame.into_bytes())
+    }
+
+    fn set_video_caps(&mut self, pixel_format: PixelFormat) -> Result<(), GStreamerError> {
+        self.video
+            .set_caps(Some(&video_caps(self.video_format, pixel_format)?));
+        self.video_pixel_format = pixel_format;
+        Ok(())
+    }
+
+    fn push_video_bytes(
+        &mut self,
+        timestamp: Timestamp,
+        bytes: Vec<u8>,
+    ) -> Result<(), GStreamerError> {
         self.poll_health()?;
         self.ensure_ready()?;
-        let timestamp = frame.timestamp();
         if self
             .telemetry
             .last_video_timestamp
@@ -176,7 +221,7 @@ impl GStreamerOutputSession {
             ));
         }
         let started = Instant::now();
-        let mut buffer = gst::Buffer::from_mut_slice(frame.into_pixels());
+        let mut buffer = gst::Buffer::from_mut_slice(bytes);
         let writable = buffer
             .get_mut()
             .ok_or_else(|| GStreamerError::Native("new video buffer is shared".to_owned()))?;
@@ -411,24 +456,7 @@ fn configure_sources(
     video_format: VideoFormat,
     audio_format: AudioFormat,
 ) -> Result<(), GStreamerError> {
-    let video_caps = gst::Caps::builder("video/x-raw")
-        .field("format", "RGBA")
-        .field(
-            "width",
-            i32::try_from(video_format.width()).map_err(native_error)?,
-        )
-        .field(
-            "height",
-            i32::try_from(video_format.height()).map_err(native_error)?,
-        )
-        .field(
-            "framerate",
-            gst::Fraction::new(
-                i32::try_from(video_format.frame_rate().numerator()).map_err(native_error)?,
-                i32::try_from(video_format.frame_rate().denominator()).map_err(native_error)?,
-            ),
-        )
-        .build();
+    let video_caps = video_caps(video_format, PixelFormat::Rgba8)?;
     let audio_caps = gst::Caps::builder("audio/x-raw")
         .field("format", "F32LE")
         .field("layout", "interleaved")
@@ -447,6 +475,39 @@ fn configure_sources(
         source.set_leaky_type(gst_app::AppLeakyType::Downstream);
     }
     Ok(())
+}
+
+fn video_caps(
+    video_format: VideoFormat,
+    pixel_format: PixelFormat,
+) -> Result<gst::Caps, GStreamerError> {
+    let format = match pixel_format {
+        PixelFormat::Rgba8 => "RGBA",
+        PixelFormat::Bgra8 => "BGRA",
+        PixelFormat::Rgb8 => "RGB",
+        PixelFormat::Gray8 => "GRAY8",
+        PixelFormat::I420 => "I420",
+        PixelFormat::Nv12 => "NV12",
+        PixelFormat::P010 => "P010_10LE",
+    };
+    Ok(gst::Caps::builder("video/x-raw")
+        .field("format", format)
+        .field(
+            "width",
+            i32::try_from(video_format.width()).map_err(native_error)?,
+        )
+        .field(
+            "height",
+            i32::try_from(video_format.height()).map_err(native_error)?,
+        )
+        .field(
+            "framerate",
+            gst::Fraction::new(
+                i32::try_from(video_format.frame_rate().numerator()).map_err(native_error)?,
+                i32::try_from(video_format.frame_rate().denominator()).map_err(native_error)?,
+            ),
+        )
+        .build())
 }
 
 fn pipeline_description(

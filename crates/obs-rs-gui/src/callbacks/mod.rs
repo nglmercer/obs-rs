@@ -112,16 +112,17 @@ pub(crate) fn start_preview_timer(
                 // A program projector is a third consumer of the program canvas,
                 // so single-canvas editing has to render it again while one is up.
                 output_active || ui.get_view_mode() == 0 || projectors.wants_program(),
+                output_active,
             );
         }
-        let (preview_frame, program_frame, render_error) =
+        let (preview_frame, program_frame, program_output, render_error) =
             refresh_preview_frames_for_view(&ui, &preview_worker);
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
         }
         projectors.sync(&ui);
         if output_active {
-            push_program_frame(&ui, program_frame, &output);
+            push_program_frame(&ui, program_frame, program_output, &output);
         } else if let Some(frame) = preview_frame.as_ref().or(program_frame.as_ref()) {
             output.borrow().monitor_audio(frame);
         }

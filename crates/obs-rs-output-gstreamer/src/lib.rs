@@ -1555,7 +1555,9 @@ mod tests {
     #[test]
     fn native_matroska_codecs_finalize_atomically_when_runtime_is_available() {
         use obs_rs_audio::{AudioBuffer, AudioFormat};
-        use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+        use obs_rs_media::{
+            FrameRate, PixelFormat, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
+        };
 
         let capabilities = GStreamerCapabilitySnapshot::probe();
         let token = std::time::SystemTime::now()
@@ -1581,9 +1583,20 @@ mod tests {
                 .expect("start native session");
             for index in 0_u64..4 {
                 let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
-                session
-                    .push_video(VideoFrame::solid(video, timestamp, [24, 96, 180, 255]))
-                    .expect("video submission");
+                if index == 0 {
+                    let mut nv12 = vec![16; video.pixel_count()];
+                    nv12.resize(PixelFormat::Nv12.bytes_for(video).expect("NV12 size"), 128);
+                    session
+                        .push_raw_video(
+                            RawVideoFrame::new(video, PixelFormat::Nv12, timestamp, nv12)
+                                .expect("NV12 frame"),
+                        )
+                        .expect("NV12 video submission");
+                } else {
+                    session
+                        .push_video(VideoFrame::solid(video, timestamp, [24, 96, 180, 255]))
+                        .expect("RGBA video submission");
+                }
                 session
                     .push_audio(
                         AudioBuffer::silence(audio, timestamp, 1_600).expect("audio buffer"),

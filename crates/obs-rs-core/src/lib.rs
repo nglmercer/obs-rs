@@ -14,6 +14,7 @@ mod runtime;
 #[cfg(test)]
 mod tests;
 
+pub use compositor::RenderedSceneLayer;
 pub use error::RuntimeError;
 pub use ids::SourceId;
 pub use limits::{RuntimeLimits, RuntimeUsage};

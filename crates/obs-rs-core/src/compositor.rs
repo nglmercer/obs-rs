@@ -1,4 +1,4 @@
-use obs_rs_media::{FrameTransform, FrameTransition, MediaError, VideoFrame};
+use obs_rs_media::{FrameFilter, FrameTransform, FrameTransition, MediaError, VideoFrame};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_util::Identifier;
 use std::time::Instant;
@@ -9,6 +9,38 @@ use super::{
     metrics::CompositorMetrics,
     runtime::Runtime,
 };
+
+/// One captured scene layer before compositor-specific pixel processing.
+///
+/// This is the portable handoff used by accelerated compositors: sources stay
+/// owned by [`Runtime`], while the returned RGBA frame and its scene metadata
+/// can be uploaded without first performing CPU transforms, filters, or blends.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderedSceneLayer {
+    frame: VideoFrame,
+    transform: FrameTransform,
+    filters: Vec<FrameFilter>,
+}
+
+impl RenderedSceneLayer {
+    /// Returns the captured source frame.
+    #[must_use]
+    pub const fn frame(&self) -> &VideoFrame {
+        &self.frame
+    }
+
+    /// Returns the scene transform associated with the frame.
+    #[must_use]
+    pub const fn transform(&self) -> FrameTransform {
+        self.transform
+    }
+
+    /// Returns the ordered filter chain associated with the frame.
+    #[must_use]
+    pub fn filters(&self) -> &[FrameFilter] {
+        &self.filters
+    }
+}
 
 impl Runtime {
     /// Renders one scene in item order using the CPU reference compositor.
@@ -37,13 +69,56 @@ impl Runtime {
         scene: &str,
         request: &VideoRequest,
     ) -> Result<Option<VideoFrame>, RuntimeError> {
+        let layers = self.render_scene_layers(scene, request)?;
+        let mut result: Option<VideoFrame> = None;
+
+        for layer in layers {
+            let mut frame = if layer.transform == FrameTransform::IDENTITY {
+                layer.frame
+            } else {
+                layer
+                    .frame
+                    .into_transformed(layer.transform)
+                    .map_err(RuntimeError::Media)?
+            };
+            frame.apply_filters(&layer.filters);
+
+            if let Some(composite) = result.take() {
+                frame.blend_under(&composite).map_err(RuntimeError::Media)?;
+                result = Some(frame);
+                self.metrics.blended_layers = self.metrics.blended_layers.saturating_add(1);
+            } else {
+                frame.clear_transparent_rgb();
+                result = Some(frame);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Captures the ordered source frames and scene metadata without applying
+    /// CPU transforms, filters, or alpha blending.
+    ///
+    /// Accelerated adapters use this boundary to upload source frames once and
+    /// perform composition on their selected device. Calling this method counts
+    /// as one scene render just like [`Self::render_scene`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when a scene or source is missing, a source
+    /// rejects the request, or a frame violates the requested media format.
+    pub fn render_scene_layers(
+        &mut self,
+        scene: &str,
+        request: &VideoRequest,
+    ) -> Result<Vec<RenderedSceneLayer>, RuntimeError> {
         self.metrics.render_calls = self.metrics.render_calls.saturating_add(1);
         let scene = identifier(scene, "scene")?;
         let (scenes, sources, metrics) = (&self.scenes, &mut self.sources, &mut self.metrics);
         let scene_state = scenes
             .get(&scene)
             .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
-        let mut result: Option<VideoFrame> = None;
+        let mut result = Vec::with_capacity(scene_state.sources.len());
 
         for source_id in &scene_state.sources {
             // One lookup resolves both the transform and the filter chain, and
@@ -78,26 +153,14 @@ impl Runtime {
             if transform != FrameTransform::IDENTITY {
                 metrics.transformed_frames = metrics.transformed_frames.saturating_add(1);
             }
-            let mut frame = if transform == FrameTransform::IDENTITY {
-                frame
-            } else {
-                frame
-                    .into_transformed(transform)
-                    .map_err(RuntimeError::Media)?
-            };
             metrics.filtered_frames = metrics
                 .filtered_frames
                 .saturating_add(u64::try_from(filters.len()).unwrap_or(u64::MAX));
-            frame.apply_filters(filters);
-
-            if let Some(composite) = result.take() {
-                frame.blend_under(&composite).map_err(RuntimeError::Media)?;
-                result = Some(frame);
-                metrics.blended_layers = metrics.blended_layers.saturating_add(1);
-            } else {
-                frame.clear_transparent_rgb();
-                result = Some(frame);
-            }
+            result.push(RenderedSceneLayer {
+                frame,
+                transform,
+                filters: filters.to_vec(),
+            });
         }
 
         Ok(result)

@@ -1115,7 +1115,7 @@ fn exercise_recording_controls(
         .render("program")
         .expect("program frame")
         .expect("program scene frame");
-    crate::callbacks::push_program_frame(ui, Some(frame), &output);
+    crate::callbacks::push_program_frame(ui, Some(frame), None, &output);
     ui.invoke_toggle_recording();
     assert!(
         !state.borrow().recording(),

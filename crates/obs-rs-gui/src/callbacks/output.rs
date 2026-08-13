@@ -1,7 +1,7 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_engine::OutputLifecycle;
-use obs_rs_media::{FrameTransition, VideoFrame};
+use obs_rs_media::{FrameTransition, RawVideoFrame, VideoFrame};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
@@ -163,9 +163,12 @@ pub(crate) fn take_transition_and_refresh(
 pub(crate) fn push_program_frame(
     ui: &MainWindow,
     frame: Option<VideoFrame>,
+    raw_frame: Option<RawVideoFrame>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
-    if let Some(frame) = frame {
+    if let Some(frame) = raw_frame {
+        output.borrow_mut().push_raw_frame(frame);
+    } else if let Some(frame) = frame {
         output.borrow_mut().push_frame(&frame);
     } else {
         ui.set_status_message("Output skipped: program scene is empty".into());

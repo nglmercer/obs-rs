@@ -89,6 +89,7 @@ pub struct RenderMetrics {
     pub(crate) uploads: u64,
     pub(crate) compositions: u64,
     pub(crate) readbacks: u64,
+    pub(crate) color_conversions: u64,
     pub(crate) context_losses: u64,
     pub(crate) recoveries: u64,
     pub(crate) allocated_bytes: usize,
@@ -122,6 +123,11 @@ impl RenderMetrics {
     /// Records one explicit backend-to-host readback.
     pub fn record_readback(&mut self) {
         self.readbacks = self.readbacks.saturating_add(1);
+    }
+
+    /// Records one device-side pixel-format conversion.
+    pub fn record_color_conversion(&mut self) {
+        self.color_conversions = self.color_conversions.saturating_add(1);
     }
 
     /// Records a context/device loss notification.
@@ -162,6 +168,12 @@ impl RenderMetrics {
     #[must_use]
     pub const fn readbacks(self) -> u64 {
         self.readbacks
+    }
+
+    /// Returns the number of completed device-side color conversions.
+    #[must_use]
+    pub const fn color_conversions(self) -> u64 {
+        self.color_conversions
     }
 
     /// Returns the number of simulated context-loss events.

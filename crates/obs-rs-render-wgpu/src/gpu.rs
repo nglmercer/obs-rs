@@ -8,7 +8,9 @@ use std::{
     },
 };
 
-use obs_rs_media::{FrameFilter, FrameTransform, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{
+    FrameFilter, FrameTransform, PixelFormat, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
+};
 use obs_rs_render::{
     CpuRenderBackend, OpaqueFrameSurface, RenderBackend, RenderCapabilities, RenderError,
     RenderMetrics, RenderState, SceneLayer, SurfaceImportMode, TextureId,
@@ -141,6 +143,159 @@ impl WgpuRenderBackend {
     /// Live render and capture callbacks should never call this method.
     pub fn wait_idle(&self) {
         self.device.poll(wgpu::Maintain::Wait);
+    }
+
+    /// Converts one composed RGBA texture to packed NV12 on the GPU and reads
+    /// back only the encoder-oriented 4:2:0 payload.
+    ///
+    /// This is the compatibility bridge for encoders that cannot yet import a
+    /// WGPU texture directly. Color math remains on the GPU and the transfer is
+    /// 62.5% smaller than an RGBA readback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown/unready texture, odd 4:2:0 dimensions,
+    /// device loss, or a failed GPU mapping operation.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "GPU conversion owns pipeline creation, dispatch, and explicit mapped readback"
+    )]
+    pub fn readback_nv12(&mut self, texture_id: TextureId) -> Result<RawVideoFrame, RenderError> {
+        self.ensure_ready()?;
+        let texture = self
+            .textures
+            .get(&texture_id)
+            .ok_or(RenderError::UnknownTexture(texture_id))?;
+        if !texture.uploaded {
+            return Err(RenderError::TextureNotReady(texture_id));
+        }
+        let byte_len = PixelFormat::Nv12
+            .bytes_for(texture.format)
+            .map_err(RenderError::Media)?;
+        let word_count = byte_len.div_ceil(4);
+        let buffer_size = u64::try_from(word_count)
+            .unwrap_or(u64::MAX / 4)
+            .saturating_mul(4);
+        let output = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("obs-rs-nv12-output"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("obs-rs-nv12-readback"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("obs-rs-rgba-to-nv12"),
+                source: wgpu::ShaderSource::Wgsl(NV12_SHADER.into()),
+            });
+        let layout = self
+            .device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("obs-rs-nv12-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("obs-rs-nv12-pipeline-layout"),
+                bind_group_layouts: &[&layout],
+                push_constant_ranges: &[],
+            });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("obs-rs-nv12-pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: "main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            });
+        let view = texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("obs-rs-nv12-bind-group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: output.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("obs-rs-nv12-conversion"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("obs-rs-nv12-pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            let groups = u32::try_from(word_count.div_ceil(64)).unwrap_or(u32::MAX);
+            let groups_x = groups.min(65_535);
+            let groups_y = groups.div_ceil(65_535);
+            pass.dispatch_workgroups(groups_x, groups_y, 1);
+        }
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, buffer_size);
+        self.queue.submit(Some(encoder.finish()));
+        let slice = readback.slice(..);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        receiver
+            .recv()
+            .map_err(|error| RenderError::Backend {
+                message: format!("NV12 readback callback failed: {error}"),
+            })?
+            .map_err(|error| RenderError::Backend {
+                message: format!("NV12 readback mapping failed: {error}"),
+            })?;
+        let mapped = slice.get_mapped_range();
+        let bytes = mapped[..byte_len].to_vec();
+        drop(mapped);
+        readback.unmap();
+        let frame = RawVideoFrame::new(texture.format, PixelFormat::Nv12, texture.timestamp, bytes)
+            .map_err(RenderError::Media)?;
+        self.metrics.record_color_conversion();
+        self.metrics.record_readback();
+        Ok(frame)
     }
 
     /// Returns reusable textures currently retained by the bounded pool.
@@ -614,6 +769,61 @@ impl RenderBackend for WgpuRenderBackend {
         Ok(())
     }
 }
+
+const NV12_SHADER: &str = r"
+@group(0) @binding(0) var rgba: texture_2d<f32>;
+@group(0) @binding(1) var<storage, read_write> packed: array<u32>;
+
+fn source_rgb(x: u32, y: u32) -> vec3<f32> {
+    return textureLoad(rgba, vec2<i32>(i32(x), i32(y)), 0).rgb;
+}
+
+fn byte_for(index: u32, dimensions: vec2<u32>) -> u32 {
+    let pixel_count = dimensions.x * dimensions.y;
+    if index < pixel_count {
+        let x = index % dimensions.x;
+        let y = index / dimensions.x;
+        let rgb = source_rgb(x, y);
+        let luma = 16.0 + 65.738 * rgb.r + 129.057 * rgb.g + 25.064 * rgb.b;
+        return u32(clamp(round(luma), 0.0, 255.0));
+    }
+
+    let chroma_index = index - pixel_count;
+    let sample_index = chroma_index / 2u;
+    let chroma_width = dimensions.x / 2u;
+    let base_x = (sample_index % chroma_width) * 2u;
+    let base_y = (sample_index / chroma_width) * 2u;
+    let rgb = (source_rgb(base_x, base_y)
+        + source_rgb(base_x + 1u, base_y)
+        + source_rgb(base_x, base_y + 1u)
+        + source_rgb(base_x + 1u, base_y + 1u)) * 0.25;
+    if chroma_index % 2u == 0u {
+        let u = 128.0 - 37.945 * rgb.r - 74.494 * rgb.g + 112.439 * rgb.b;
+        return u32(clamp(round(u), 0.0, 255.0));
+    }
+    let v = 128.0 + 112.439 * rgb.r - 94.154 * rgb.g - 18.285 * rgb.b;
+    return u32(clamp(round(v), 0.0, 255.0));
+}
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    let word_index = id.x + id.y * 4194240u;
+    let dimensions = textureDimensions(rgba);
+    let byte_count = dimensions.x * dimensions.y * 3u / 2u;
+    let first = word_index * 4u;
+    if first >= byte_count {
+        return;
+    }
+    var word = 0u;
+    for (var lane = 0u; lane < 4u; lane = lane + 1u) {
+        let index = first + lane;
+        if index < byte_count {
+            word = word | (byte_for(index, dimensions) << (lane * 8u));
+        }
+    }
+    packed[word_index] = word;
+}
+";
 
 fn request_device(
     adapter: &wgpu::Adapter,

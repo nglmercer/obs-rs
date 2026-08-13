@@ -13,13 +13,17 @@ pub enum PixelFormat {
     Gray8,
     /// Planar 4:2:0 YUV with Y, U, and V planes.
     I420,
+    /// 8-bit 4:2:0 YUV with one luma plane and one interleaved UV plane.
+    Nv12,
+    /// 10-bit 4:2:0 YUV stored in the high bits of little-endian 16-bit words.
+    P010,
 }
 
 impl PixelFormat {
     /// Returns the exact byte count required for one frame in this layout.
     ///
-    /// I420 requires even width and height because each chroma sample covers a
-    /// 2x2 luma block.
+    /// 4:2:0 layouts require even width and height because each chroma sample
+    /// covers a 2x2 luma block.
     ///
     /// # Errors
     ///
@@ -32,13 +36,19 @@ impl PixelFormat {
             Self::Rgba8 | Self::Bgra8 => pixels.checked_mul(4).ok_or(MediaError::FrameTooLarge),
             Self::Rgb8 => pixels.checked_mul(3).ok_or(MediaError::FrameTooLarge),
             Self::Gray8 => Ok(pixels),
-            Self::I420 => {
+            Self::I420 | Self::Nv12 => {
                 if !format.width.is_multiple_of(2) || !format.height.is_multiple_of(2) {
                     return Err(MediaError::UnsupportedPixelDimensions { pixel_format: self });
                 }
                 pixels
                     .checked_add(pixels / 2)
                     .ok_or(MediaError::FrameTooLarge)
+            }
+            Self::P010 => {
+                if !format.width.is_multiple_of(2) || !format.height.is_multiple_of(2) {
+                    return Err(MediaError::UnsupportedPixelDimensions { pixel_format: self });
+                }
+                pixels.checked_mul(3).ok_or(MediaError::FrameTooLarge)
             }
         }
     }
@@ -105,6 +115,12 @@ impl RawVideoFrame {
         &self.bytes
     }
 
+    /// Moves the validated pixel payload out of the frame.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
     /// Converts this frame into the engine's owned RGBA8 reference format.
     ///
     /// I420 conversion uses the BT.601 limited-range integer matrix. All
@@ -169,10 +185,92 @@ impl RawVideoFrame {
                 convert_i420_to_rgba(format, &bytes, &mut rgba);
                 rgba
             }
+            PixelFormat::Nv12 => {
+                let mut rgba = vec![0; format.rgba_bytes()];
+                convert_nv12_to_rgba(format, &bytes, &mut rgba);
+                rgba
+            }
+            PixelFormat::P010 => {
+                let mut rgba = vec![0; format.rgba_bytes()];
+                convert_p010_to_rgba(format, &bytes, &mut rgba);
+                rgba
+            }
         };
 
         VideoFrame::new(format, timestamp, rgba)
     }
+}
+
+fn convert_nv12_to_rgba(format: VideoFormat, source: &[u8], target: &mut [u8]) {
+    let width = format.width_index();
+    let height = format.height_index();
+    let luma_len = width.saturating_mul(height);
+    let Some((luma, chroma)) = source.get(..luma_len).zip(source.get(luma_len..)) else {
+        return;
+    };
+    let Some(target_rows) = target.get_mut(..luma_len * 4) else {
+        return;
+    };
+    target_rows
+        .par_chunks_exact_mut(width * 4)
+        .enumerate()
+        .for_each(|(y, target_line)| {
+            let luma_row = y * width;
+            let chroma_row = (y >> 1) * width;
+            for (x, pixel) in target_line.chunks_exact_mut(4).enumerate() {
+                let chroma_index = chroma_row + (x & !1);
+                write_yuv_pixel(
+                    luma[luma_row + x],
+                    chroma[chroma_index],
+                    chroma[chroma_index + 1],
+                    pixel,
+                );
+            }
+        });
+}
+
+fn convert_p010_to_rgba(format: VideoFormat, source: &[u8], target: &mut [u8]) {
+    let width = format.width_index();
+    let height = format.height_index();
+    let pixels = width.saturating_mul(height);
+    let luma_len = pixels.saturating_mul(2);
+    let Some((luma, chroma)) = source.get(..luma_len).zip(source.get(luma_len..)) else {
+        return;
+    };
+    let Some(target_rows) = target.get_mut(..pixels * 4) else {
+        return;
+    };
+    target_rows
+        .par_chunks_exact_mut(width * 4)
+        .enumerate()
+        .for_each(|(y, target_line)| {
+            let luma_row = y * width * 2;
+            let chroma_row = (y >> 1) * width * 2;
+            for (x, pixel) in target_line.chunks_exact_mut(4).enumerate() {
+                let y_index = luma_row + x * 2;
+                let chroma_index = chroma_row + (x & !1) * 2;
+                let y10 = u16::from_le_bytes([luma[y_index], luma[y_index + 1]]) >> 6;
+                let u10 = u16::from_le_bytes([chroma[chroma_index], chroma[chroma_index + 1]]) >> 6;
+                let v10 =
+                    u16::from_le_bytes([chroma[chroma_index + 2], chroma[chroma_index + 3]]) >> 6;
+                write_yuv_pixel(
+                    u8::try_from((u32::from(y10) * 255 + 511) / 1_023).unwrap_or(u8::MAX),
+                    u8::try_from((u32::from(u10) * 255 + 511) / 1_023).unwrap_or(u8::MAX),
+                    u8::try_from((u32::from(v10) * 255 + 511) / 1_023).unwrap_or(u8::MAX),
+                    pixel,
+                );
+            }
+        });
+}
+
+fn write_yuv_pixel(y_value: u8, u_value: u8, v_value: u8, pixel: &mut [u8]) {
+    let u = i32::from(u_value) - 128;
+    let v = i32::from(v_value) - 128;
+    let c298 = 298 * (i32::from(y_value) - 16) + 128;
+    pixel[0] = clamp_channel((c298 + 409 * v) >> 8);
+    pixel[1] = clamp_channel((c298 - 100 * u - 208 * v) >> 8);
+    pixel[2] = clamp_channel((c298 + 516 * u) >> 8);
+    pixel[3] = u8::MAX;
 }
 fn convert_i420_to_rgba(format: VideoFormat, source: &[u8], target: &mut [u8]) {
     let width = format.width_index();

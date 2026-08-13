@@ -4176,6 +4176,8 @@ dependencies = [
  "obs-rs-output",
  "obs-rs-plugin-api",
  "obs-rs-project",
+ "obs-rs-render",
+ "obs-rs-render-wgpu",
  "obs-rs-ui",
  "slint",
  "slint-build",
