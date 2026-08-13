@@ -6,7 +6,9 @@ use std::{
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::Runtime;
-use obs_rs_media::{FrameTransition, Timestamp, VideoFormat, VideoFrame};
+#[cfg(test)]
+use obs_rs_media::FrameTransition;
+use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::Project;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
@@ -26,7 +28,6 @@ pub(crate) struct PreviewRenderer {
     /// timestamps are issued to the output encoder.
     static_scenes: HashSet<String>,
     static_frames: HashMap<String, Vec<u8>>,
-    static_images: HashMap<String, Image>,
 }
 
 thread_local! {
@@ -94,7 +95,6 @@ impl PreviewRenderer {
             revision,
             static_scenes,
             static_frames: HashMap::new(),
-            static_images: HashMap::new(),
         })
     }
 
@@ -140,21 +140,7 @@ impl PreviewRenderer {
         Ok(frame)
     }
 
-    /// Converts one frame for Slint, reusing the immutable image for static
-    /// scenes so the UI does not allocate another full RGBA buffer every tick.
-    pub(crate) fn image_for_scene(&mut self, scene: &str, frame: &VideoFrame) -> Image {
-        if self.static_scenes.contains(scene) {
-            if let Some(image) = self.static_images.get(scene) {
-                return image.clone();
-            }
-            let image = frame_to_image(frame);
-            self.static_images.insert(scene.to_owned(), image.clone());
-            image
-        } else {
-            frame_to_image(frame)
-        }
-    }
-
+    #[cfg(test)]
     pub(crate) fn render_transition(
         &mut self,
         source_scene: &str,

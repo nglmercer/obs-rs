@@ -21,6 +21,7 @@ use slint::{ComponentHandle, Timer, TimerMode};
 
 use crate::{
     refresh_output_ui, refresh_preview_frames_for_view, MainWindow, OutputRuntime, PreviewRenderer,
+    PreviewWorker,
 };
 
 pub(crate) use add_source::install_add_source_window;
@@ -47,7 +48,7 @@ pub(crate) use source_properties::install_source_properties_window;
 pub(crate) fn start_preview_timer(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    preview_worker: &Rc<PreviewWorker>,
     output: &Rc<RefCell<OutputRuntime>>,
     projectors: &Rc<ProjectorController>,
     docks: &Rc<docks::DockController>,
@@ -55,7 +56,7 @@ pub(crate) fn start_preview_timer(
     let timer = Timer::default();
     let weak = ui.as_weak();
     let state = Rc::clone(state);
-    let renderer = Rc::clone(renderer);
+    let preview_worker = Rc::clone(preview_worker);
     let output = Rc::clone(output);
     let projectors = Rc::clone(projectors);
     let docks = Rc::clone(docks);
@@ -100,15 +101,20 @@ pub(crate) fn start_preview_timer(
                 ui.set_status_message(format!("Output project sync failed: {error}").into());
             }
         }
-        let (preview_frame, program_frame, render_error) = refresh_preview_frames_for_view(
-            &ui,
-            &renderer,
-            preview_scene.as_deref(),
-            program_scene.as_deref(),
-            // A program projector is a third consumer of the program canvas,
-            // so single-canvas editing has to render it again while one is up.
-            output_active || ui.get_view_mode() == 0 || projectors.wants_program(),
-        );
+        {
+            let state = state.borrow();
+            preview_worker.request_render(
+                state.project_session().project(),
+                revision,
+                preview_scene.as_deref(),
+                program_scene.as_deref(),
+                // A program projector is a third consumer of the program canvas,
+                // so single-canvas editing has to render it again while one is up.
+                output_active || ui.get_view_mode() == 0 || projectors.wants_program(),
+            );
+        }
+        let (preview_frame, program_frame, render_error) =
+            refresh_preview_frames_for_view(&ui, &preview_worker);
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
         }

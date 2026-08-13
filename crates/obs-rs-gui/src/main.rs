@@ -20,6 +20,7 @@ mod fixtures;
 mod i18n;
 mod output;
 mod preview;
+mod preview_worker;
 mod properties;
 mod refresh;
 mod settings;
@@ -47,6 +48,7 @@ pub(crate) use fixtures::{
 };
 pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewRenderer};
+pub(crate) use preview_worker::PreviewWorker;
 pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames_for_view, refresh_ui,
 };
@@ -98,6 +100,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // resumes with the scenes and sources it was left with rather than with the
     // starter fixture.
     let restored = restore_project(&state, &settings);
+    let (preview_project, preview_revision) = {
+        let state = state.borrow();
+        (
+            state.project_session().project().clone(),
+            state.project_session().revision(),
+        )
+    };
+    let preview_worker = Rc::new(PreviewWorker::spawn(preview_project, preview_revision)?);
     let audio_format = AudioFormat::new(settings.sample_rate_hz(), settings.channel_count())?;
     state
         .borrow_mut()
@@ -169,7 +179,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let _preview_timer = start_preview_timer(&ui, &state, &renderer, &output, &projectors, &docks);
+    let _preview_timer =
+        start_preview_timer(&ui, &state, &preview_worker, &output, &projectors, &docks);
     ui.run()?;
     // Closing the window is the ordinary way to leave OBS, so the layout and
     // the project are written back here rather than only on an explicit Save.

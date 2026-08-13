@@ -6,8 +6,9 @@ use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::{
-    project_store, source_filters_document, source_transform_document, LocaleOption, MainWindow,
-    MixerRow, OutputRuntime, PreviewRenderer, ProfileRow, SceneRow, SourceRow,
+    frame_to_image, project_store, source_filters_document, source_transform_document,
+    LocaleOption, MainWindow, MixerRow, OutputRuntime, PreviewRenderer, PreviewWorker, ProfileRow,
+    SceneRow, SourceRow,
 };
 
 thread_local! {
@@ -47,7 +48,7 @@ pub(crate) fn refresh_ui(
     state: &Rc<RefCell<DesktopState>>,
     renderer: &Rc<RefCell<PreviewRenderer>>,
 ) {
-    let (revision, preview_scene, program_scene, notice) = {
+    let (revision, notice) = {
         let state = state.borrow();
         let locale = state.locale();
         crate::i18n::apply_if_changed(ui, locale);
@@ -97,8 +98,6 @@ pub(crate) fn refresh_ui(
         refresh_docks(ui, &state, profile);
         (
             state.project_session().revision(),
-            state.preview_scene().map(str::to_owned),
-            state.program_scene().map(str::to_owned),
             latest_notice(&state).to_owned(),
         )
     };
@@ -122,103 +121,43 @@ pub(crate) fn refresh_ui(
         ui.set_preview_metrics(renderer.borrow().metrics_summary().into());
         Some(format!("Preview renderer: {error}"))
     } else {
-        let (_, _, render_error) = refresh_preview_frames(
-            ui,
-            renderer,
-            preview_scene.as_deref(),
-            program_scene.as_deref(),
-        );
-        render_error
+        None
     };
     ui.set_status_message(render_error.unwrap_or(notice).into());
 }
 
-/// Renders the two stage images for one animation tick and returns both frames
-/// so output and idle audio monitoring can use the exact preview timestamps.
-pub(crate) fn refresh_preview_frames(
-    ui: &MainWindow,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    preview_scene: Option<&str>,
-    program_scene: Option<&str>,
-) -> (Option<VideoFrame>, Option<VideoFrame>, Option<String>) {
-    refresh_preview_frames_for_view(ui, renderer, preview_scene, program_scene, true)
-}
-
-/// Renders the preview plus the program only when the current view or an active
-/// output needs it. Single-canvas editing otherwise avoids a second full-size
-/// composition and a second Slint image update on every timer tick.
+/// Applies the newest completed background composition without waiting for one.
 pub(crate) fn refresh_preview_frames_for_view(
     ui: &MainWindow,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    preview_scene: Option<&str>,
-    program_scene: Option<&str>,
-    render_program: bool,
+    worker: &PreviewWorker,
 ) -> (Option<VideoFrame>, Option<VideoFrame>, Option<String>) {
-    let (
-        preview_image,
-        preview_frame,
-        preview_error,
-        program_image,
-        program_frame,
-        program_error,
-        metrics,
-    ) = {
-        let mut renderer = renderer.borrow_mut();
-        let (preview_image, preview_frame, preview_error) =
-            render_scene_image(&mut renderer, preview_scene);
-        let (program_image, program_frame, program_error) = if !render_program {
-            (ui.get_program_image(), None, None)
-        } else if preview_scene == program_scene {
-            (
-                preview_image.clone(),
-                preview_frame.clone(),
-                preview_error.clone(),
-            )
-        } else {
-            render_scene_image(&mut renderer, program_scene)
-        };
-        let metrics = renderer.metrics_summary();
-        (
-            preview_image,
-            preview_frame,
-            preview_error,
-            program_image,
-            program_frame,
-            program_error,
-            metrics,
-        )
+    let Some(result) = worker.try_take_latest() else {
+        return (None, None, None);
     };
-
-    ui.set_preview_image(preview_image);
-    ui.set_program_image(program_image);
-    ui.set_preview_metrics(metrics.into());
-    (
-        preview_frame,
-        program_frame,
-        preview_error.or(program_error),
-    )
-}
-
-fn render_scene_image(
-    renderer: &mut PreviewRenderer,
-    scene: Option<&str>,
-) -> (Image, Option<VideoFrame>, Option<String>) {
-    let Some(scene) = scene else {
-        return (Image::default(), None, None);
-    };
-    match renderer.render(scene) {
-        Ok(Some(frame)) => (renderer.image_for_scene(scene, &frame), Some(frame), None),
-        Ok(None) => (
-            Image::default(),
-            None,
-            Some(format!("Scene {scene} has no frame")),
-        ),
-        Err(error) => (
-            Image::default(),
-            None,
-            Some(format!("Preview renderer: {error}")),
-        ),
+    match (&result.preview_scene, &result.preview_frame) {
+        (_, Some(frame)) => ui.set_preview_image(frame_to_image(frame)),
+        (None, None) => ui.set_preview_image(Image::default()),
+        (Some(_), None) => {}
     }
+    match (&result.program_scene, &result.program_frame) {
+        (_, Some(frame)) => ui.set_program_image(frame_to_image(frame)),
+        (None, None) => ui.set_program_image(Image::default()),
+        (Some(_), None) => {}
+    }
+    ui.set_preview_metrics(
+        format!(
+            "{} · queue={} · dropped={}",
+            result.metrics,
+            worker.queue_depth(),
+            worker.dropped_requests()
+        )
+        .into(),
+    );
+    (
+        result.preview_frame,
+        result.program_frame,
+        result.error.map(|error| format!("Preview worker: {error}")),
+    )
 }
 
 pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {

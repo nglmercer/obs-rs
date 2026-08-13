@@ -6,8 +6,7 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
 use crate::{
-    dispatch_and_refresh, frame_to_image, refresh_output_ui, refresh_ui, MainWindow, OutputRuntime,
-    PreviewRenderer,
+    dispatch_and_refresh, refresh_output_ui, refresh_ui, MainWindow, OutputRuntime, PreviewRenderer,
 };
 
 pub(crate) fn install_output_callbacks(
@@ -144,13 +143,12 @@ pub(crate) fn take_transition_and_refresh(
     transition: FrameTransition,
 ) {
     let target = state.borrow().preview_scene().map(str::to_owned);
-    let Some(target) = target else {
+    if target.is_none() {
         if let Some(ui) = weak.upgrade() {
             ui.set_status_message("Transition failed: no preview scene is selected".into());
         }
         return;
-    };
-    let source = state.borrow().program_scene().map(str::to_owned);
+    }
     let result: Result<(), Box<dyn Error>> = (|| {
         state
             .borrow_mut()
@@ -163,18 +161,6 @@ pub(crate) fn take_transition_and_refresh(
     match result {
         Ok(()) => {
             refresh_ui(&ui, state, renderer);
-            if let (Some(source), FrameTransition::CrossFade { .. }) = (source, transition) {
-                match renderer
-                    .borrow_mut()
-                    .render_transition(&source, &target, transition)
-                {
-                    Ok(Some(frame)) => ui.set_program_image(frame_to_image(&frame)),
-                    Ok(None) => {}
-                    Err(error) => {
-                        ui.set_status_message(format!("Transition preview failed: {error}").into());
-                    }
-                }
-            }
         }
         Err(error) => ui.set_status_message(format!("Transition failed: {error}").into()),
     }
