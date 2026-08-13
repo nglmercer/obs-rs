@@ -4,9 +4,11 @@ use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::ComponentHandle;
 
 use crate::{
-    apply_source_filters_and_refresh, apply_source_settings_and_refresh,
-    apply_source_transform_and_refresh, dispatch_and_refresh, move_source_and_refresh,
-    remove_scene_and_refresh, remove_source_and_refresh, rename_scene_and_refresh,
+    apply_source_filters_and_refresh, apply_source_name_and_refresh,
+    apply_source_settings_and_refresh, apply_source_transform_and_refresh, dispatch_and_refresh,
+    duplicate_scene_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
+    move_source_and_refresh, move_source_to_and_refresh, remove_scene_and_refresh,
+    remove_source_and_refresh, rename_scene_and_refresh, reset_source_transform_and_refresh,
     toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh, MainWindow,
     PreviewRenderer,
 };
@@ -70,6 +72,13 @@ fn install_scene_selection_callbacks(
     });
 
     let weak = ui.as_weak();
+    let duplicate_state = Rc::clone(state);
+    let duplicate_renderer = Rc::clone(renderer);
+    ui.on_duplicate_scene(move |id| {
+        duplicate_scene_and_refresh(&weak, &duplicate_state, &duplicate_renderer, id.as_str());
+    });
+
+    let weak = ui.as_weak();
     let rename_state = Rc::clone(state);
     let rename_renderer = Rc::clone(renderer);
     ui.on_rename_scene(move || {
@@ -117,6 +126,10 @@ fn install_scene_selection_callbacks(
     });
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one UI surface owns all source-list actions and their refresh paths"
+)]
 fn install_source_list_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -158,6 +171,86 @@ fn install_source_list_callbacks(
     let move_renderer = Rc::clone(renderer);
     ui.on_move_source(move |id, delta| {
         move_source_and_refresh(&weak, &move_state, &move_renderer, id.as_str(), delta);
+    });
+
+    let weak = ui.as_weak();
+    let move_to_state = Rc::clone(state);
+    let move_to_renderer = Rc::clone(renderer);
+    ui.on_move_source_to(move |id, index| {
+        move_source_to_and_refresh(&weak, &move_to_state, &move_to_renderer, id.as_str(), index);
+    });
+
+    let weak = ui.as_weak();
+    let reset_state = Rc::clone(state);
+    let reset_renderer = Rc::clone(renderer);
+    ui.on_reset_source_transform(move |id| {
+        reset_source_transform_and_refresh(&weak, &reset_state, &reset_renderer, id.as_str());
+    });
+
+    let weak = ui.as_weak();
+    let flip_state = Rc::clone(state);
+    let flip_renderer = Rc::clone(renderer);
+    ui.on_flip_source(move |id, horizontal| {
+        flip_source_and_refresh(&weak, &flip_state, &flip_renderer, id.as_str(), horizontal);
+    });
+
+    let weak = ui.as_weak();
+    let duplicate_source_state = Rc::clone(state);
+    let duplicate_source_renderer = Rc::clone(renderer);
+    ui.on_duplicate_source(move |id| {
+        duplicate_source_and_refresh(
+            &weak,
+            &duplicate_source_state,
+            &duplicate_source_renderer,
+            id.as_str(),
+        );
+    });
+
+    let weak = ui.as_weak();
+    let rename_state = Rc::clone(state);
+    let rename_renderer = Rc::clone(renderer);
+    ui.on_open_source_rename(move |id| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let source_name = {
+            let state = rename_state.borrow();
+            state
+                .preview_scene()
+                .and_then(|scene_id| {
+                    state
+                        .project_session()
+                        .project()
+                        .active_profile_spec()
+                        .and_then(|profile| profile.scene(scene_id))
+                })
+                .and_then(|scene| scene.source(id.as_str()))
+                .map(|source| source.name().to_owned())
+        };
+        match source_name {
+            Some(source_name) => {
+                dispatch_and_refresh(
+                    &ui.as_weak(),
+                    &rename_state,
+                    &rename_renderer,
+                    UiCommand::SelectSource { id: id.to_string() },
+                );
+                ui.set_source_name_draft(source_name.into());
+                ui.set_active_modal(12);
+            }
+            None => ui.set_status_message("Source is not in the preview scene".into()),
+        }
+    });
+
+    let weak = ui.as_weak();
+    let apply_name_state = Rc::clone(state);
+    let apply_name_renderer = Rc::clone(renderer);
+    ui.on_apply_source_name(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let name = ui.get_source_name_draft().to_string();
+        apply_source_name_and_refresh(&ui, &apply_name_state, &apply_name_renderer, &name);
     });
 
     let weak = ui.as_weak();

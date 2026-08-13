@@ -1,0 +1,236 @@
+import { I18n } from "i18n.slint";
+
+// Each row owns one of these areas. Keeping the target on the row means a
+// command cannot accidentally act on whatever was selected before the menu
+// opened. The same component is also used for the Source dock's ellipsis
+// button, so both entry points expose the identical menu.
+export component SourceContextMenuArea inherits Rectangle {
+    in property <string> source-id;
+    in property <bool> source-visible;
+    in property <bool> source-locked;
+    in property <bool> can-move-up;
+    in property <bool> can-move-down;
+    in property <bool> can-move-top;
+    in property <bool> can-move-bottom;
+    in property <int> source-count;
+
+    callback select-source(string);
+    callback open-properties(string);
+    callback rename-source(string);
+    callback duplicate-source(string);
+    callback toggle-source-visibility(string);
+    callback toggle-source-locked(string);
+    callback move-source(string, int);
+    callback move-source-to(string, int);
+    callback reset-source-transform(string);
+    callback flip-source(string, bool);
+    callback remove-source(string);
+
+    public function show-at(position: Point) {
+        context-menu.show(position);
+    }
+
+    context-menu := ContextMenuArea {
+        width: 100%;
+        height: 100%;
+
+        Menu {
+            MenuItem {
+                title: I18n.text.source_properties;
+                enabled: root.source-id != "";
+                activated => {
+                    root.select-source(root.source-id);
+                    root.open-properties(root.source-id);
+                }
+            }
+            MenuItem {
+                title: I18n.text.rename;
+                enabled: root.source-id != "";
+                activated => {
+                    root.select-source(root.source-id);
+                    root.rename-source(root.source-id);
+                }
+            }
+            MenuItem {
+                title: I18n.text.duplicate;
+                enabled: root.source-id != "";
+                activated => {
+                    root.select-source(root.source-id);
+                    root.duplicate-source(root.source-id);
+                }
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: root.source-visible ? I18n.text.source_hide : I18n.text.source_show;
+                enabled: root.source-id != "";
+                checkable: true;
+                checked: root.source-visible;
+                activated => {
+                    root.select-source(root.source-id);
+                    root.toggle-source-visibility(root.source-id);
+                }
+            }
+            MenuItem {
+                title: root.source-locked ? I18n.text.source_unlock : I18n.text.source_lock;
+                enabled: root.source-id != "";
+                checkable: true;
+                checked: root.source-locked;
+                activated => {
+                    root.select-source(root.source-id);
+                    root.toggle-source-locked(root.source-id);
+                }
+            }
+            MenuSeparator {}
+            Menu {
+                title: I18n.text.source_order;
+                enabled: root.source-id != "" && !root.source-locked;
+                MenuItem {
+                    title: I18n.text.source_move_up;
+                    enabled: root.can-move-up;
+                    activated => root.move-source(root.source-id, -1);
+                }
+                MenuItem {
+                    title: I18n.text.source_move_down;
+                    enabled: root.can-move-down;
+                    activated => root.move-source(root.source-id, 1);
+                }
+                MenuItem {
+                    title: I18n.text.move_top;
+                    enabled: root.can-move-top;
+                    activated => root.move-source-to(root.source-id, 0);
+                }
+                MenuItem {
+                    title: I18n.text.move_bottom;
+                    enabled: root.can-move-bottom;
+                    activated => root.move-source-to(root.source-id, root.source-count - 1);
+                }
+            }
+            Menu {
+                title: I18n.text.transform_menu;
+                enabled: root.source-id != "" && !root.source-locked;
+                MenuItem {
+                    title: I18n.text.reset_transform;
+                    activated => root.reset-source-transform(root.source-id);
+                }
+                MenuSeparator {}
+                MenuItem {
+                    title: I18n.text.flip_horizontal;
+                    activated => root.flip-source(root.source-id, true);
+                }
+                MenuItem {
+                    title: I18n.text.flip_vertical;
+                    activated => root.flip-source(root.source-id, false);
+                }
+                MenuSeparator {}
+                MenuItem {
+                    title: I18n.text.edit_transform;
+                    activated => {
+                        root.select-source(root.source-id);
+                        root.open-properties(root.source-id);
+                    }
+                }
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: I18n.text.remove_source;
+                enabled: root.source-id != "" && !root.source-locked;
+                activated => {
+                    root.select-source(root.source-id);
+                    root.remove-source(root.source-id);
+                }
+            }
+        }
+
+    }
+
+    @children
+}
+
+export component SceneContextMenuArea inherits Rectangle {
+    in property <string> scene-id;
+    in property <bool> can-remove;
+
+    callback select-scene(string);
+    callback add-scene();
+    callback duplicate-scene(string);
+    callback rename-scene(string);
+    callback remove-scene(string);
+
+    public function show-at(position: Point) {
+        context-menu.show(position);
+    }
+
+    context-menu := ContextMenuArea {
+        width: 100%;
+        height: 100%;
+
+        Menu {
+            MenuItem {
+                title: I18n.text.add_scene;
+                activated => root.add-scene();
+            }
+            MenuItem {
+                title: I18n.text.duplicate;
+                enabled: root.scene-id != "";
+                activated => {
+                    root.select-scene(root.scene-id);
+                    root.duplicate-scene(root.scene-id);
+                }
+            }
+            MenuItem {
+                title: I18n.text.rename;
+                enabled: root.scene-id != "";
+                activated => {
+                    root.select-scene(root.scene-id);
+                    root.rename-scene(root.scene-id);
+                }
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: I18n.text.remove_scene;
+                enabled: root.scene-id != "" && root.can-remove;
+                activated => {
+                    root.select-scene(root.scene-id);
+                    root.remove-scene(root.scene-id);
+                }
+            }
+        }
+
+    }
+
+    @children
+}
+
+export component MixerContextMenuArea inherits Rectangle {
+    in property <string> channel-id;
+    in property <bool> channel-muted;
+    in property <int> channel-gain;
+
+    callback toggle-mixer-mute(string);
+    callback set-mixer-gain(string, int);
+
+    @children
+
+    context-menu := ContextMenuArea {
+        width: 100%;
+        height: 100%;
+
+        Menu {
+            MenuItem {
+                title: root.channel-muted ? I18n.text.unmute : I18n.text.mute;
+                enabled: root.channel-id != "";
+                checkable: true;
+                checked: root.channel-muted;
+                activated => root.toggle-mixer-mute(root.channel-id);
+            }
+            MenuSeparator {}
+            MenuItem {
+                title: I18n.text.reset_volume;
+                enabled: root.channel-id != "" && root.channel-gain != 1000;
+                activated => root.set-mixer-gain(root.channel-id, 1000);
+            }
+        }
+
+    }
+
+}

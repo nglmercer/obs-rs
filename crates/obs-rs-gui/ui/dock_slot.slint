@@ -17,6 +17,10 @@ export component DockSlot inherits Rectangle {
     in property <string> preview-scene;
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
+    in property <bool> selected-source-visible;
+    in property <bool> selected-source-locked;
+    in property <bool> selected-source-first;
+    in property <bool> selected-source-last;
     in property <string> transition;
     in property <bool> recording;
     in property <bool> streaming;
@@ -32,11 +36,17 @@ export component DockSlot inherits Rectangle {
     callback open-modal(int);
     callback select-preview(string);
     callback select-program(string);
+    callback duplicate-scene(string);
     callback remove-scene(string);
     callback select-source(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
     callback move-source(string, int);
+    callback move-source-to(string, int);
+    callback reset-source-transform(string);
+    callback flip-source(string, bool);
+    callback open-source-rename(string);
+    callback duplicate-source(string);
     callback remove-source(string);
     callback set-mixer-gain(string, int);
     callback toggle-mixer-mute(string);
@@ -66,6 +76,7 @@ export component DockSlot inherits Rectangle {
         open-modal(modal) => { root.open-modal(modal); }
         select-preview(id) => { root.select-preview(id); }
         select-program(id) => { root.select-program(id); }
+        duplicate-scene(id) => { root.duplicate-scene(id); }
         remove-scene(id) => { root.remove-scene(id); }
     }
     if panel-kind == 1 : SourceDock {
@@ -78,12 +89,21 @@ export component DockSlot inherits Rectangle {
         source-rows: root.source-rows;
         selected-source: root.selected-source;
         selected-source-is-screen: root.selected-source-is-screen;
+        selected-source-visible: root.selected-source-visible;
+        selected-source-locked: root.selected-source-locked;
+        selected-source-first: root.selected-source-first;
+        selected-source-last: root.selected-source-last;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
         open-modal(modal) => { root.open-modal(modal); }
         select-source(id) => { root.select-source(id); }
         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
         toggle-source-locked(id) => { root.toggle-source-locked(id); }
         move-source(id, delta) => { root.move-source(id, delta); }
+        move-source-to(id, index) => { root.move-source-to(id, index); }
+        reset-source-transform(id) => { root.reset-source-transform(id); }
+        flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+        open-source-rename(id) => { root.open-source-rename(id); }
+        duplicate-source(id) => { root.duplicate-source(id); }
         remove-source(id) => { root.remove-source(id); }
     }
     if panel-kind == 2 : MixerDock {

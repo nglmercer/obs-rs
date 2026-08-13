@@ -1,6 +1,7 @@
 import { ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { SceneRow } from "models.slint";
+import { SceneContextMenuArea } from "context_menus.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
 
@@ -16,6 +17,7 @@ export component SceneDock inherits Rectangle {
     callback open-modal(int);
     callback select-preview(string);
     callback select-program(string);
+    callback duplicate-scene(string);
     callback remove-scene(string);
 
     background: Palette.tokens.panel-bg;
@@ -44,8 +46,15 @@ export component SceneDock inherits Rectangle {
                     VerticalLayout {
                         alignment: start;
                         spacing: 1px;
-                    for scene in scene-rows : Rectangle {
+                    for scene in scene-rows : scene-menu := SceneContextMenuArea {
                         height: 38px;
+                        scene-id: scene.id;
+                        can-remove: scene-rows.length > 1;
+                        select-scene(id) => { root.select-preview(id); }
+                        add-scene() => { root.open-modal(2); }
+                        duplicate-scene(id) => { root.select-preview(id); root.duplicate-scene(id); }
+                        rename-scene(id) => { root.select-preview(id); root.open-modal(5); }
+                        remove-scene(id) => { root.select-preview(id); root.remove-scene(id); }
                         background: scene.role != "" ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;
@@ -67,6 +76,13 @@ export component SceneDock inherits Rectangle {
                         TouchArea {
                             clicked => select-preview(scene.id);
                             double-clicked => select-program(scene.id);
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.down
+                                    && event.button == PointerEventButton.right {
+                                    select-preview(scene.id);
+                                    scene-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
+                                }
+                            }
                         }
                     }
                     }

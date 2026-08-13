@@ -315,6 +315,33 @@ pub(crate) fn rename_scene_and_refresh(
     }
 }
 
+pub(crate) fn duplicate_scene_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    scene_id: &str,
+) {
+    let profile = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile()
+        .to_string();
+    let result = state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::DuplicateScene {
+            profile,
+            scene: scene_id.to_owned(),
+        }));
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Duplicate scene failed: {error}").into()),
+    }
+}
+
 pub(crate) fn add_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,

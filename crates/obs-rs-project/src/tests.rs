@@ -225,6 +225,92 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
 }
 
 #[test]
+fn duplicate_commands_copy_definitions_and_choose_unique_ids() {
+    let mut project = project();
+    project
+        .apply(ProjectCommand::SetSourceName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            name: "Renamed background".to_owned(),
+        })
+        .expect("rename source command");
+    assert_eq!(
+        project.apply(ProjectCommand::SetSourceName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            name: "  ".to_owned(),
+        }),
+        Err(ProjectError::InvalidName { kind: "source" })
+    );
+
+    project
+        .apply(ProjectCommand::DuplicateSource {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+        })
+        .expect("duplicate source command");
+    project
+        .apply(ProjectCommand::DuplicateSource {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+        })
+        .expect("duplicate source command chooses a suffix");
+
+    let scene = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .expect("main scene");
+    assert_eq!(scene.sources().len(), 3);
+    let original = scene.source("background").expect("original source");
+    let copy = scene.source("background_copy").expect("first source copy");
+    let second_copy = scene
+        .source("background_copy_2")
+        .expect("second source copy");
+    assert_eq!(copy.name(), "Renamed background Copy");
+    assert_eq!(second_copy.name(), "Renamed background Copy 2");
+    assert_eq!(copy.transform(), original.transform());
+    assert_eq!(copy.filters(), original.filters());
+    assert_eq!(copy.settings(), original.settings());
+
+    project
+        .apply(ProjectCommand::DuplicateScene {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+        })
+        .expect("duplicate scene command");
+    project
+        .apply(ProjectCommand::DuplicateScene {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+        })
+        .expect("duplicate scene command chooses a suffix");
+    let profile = project.profile("live").expect("live profile");
+    assert_eq!(
+        profile.scene("main_copy").expect("scene copy").name(),
+        "Main scene Copy"
+    );
+    assert_eq!(
+        profile
+            .scene("main_copy")
+            .expect("scene copy")
+            .sources()
+            .len(),
+        3
+    );
+    assert_eq!(
+        profile
+            .scene("main_copy_2")
+            .expect("second scene copy")
+            .name(),
+        "Main scene Copy 2"
+    );
+}
+
+#[test]
 fn remove_scene_command_updates_project_without_partial_mutation() {
     let mut project = project();
     let extra = SceneSpec::new("extra", "Extra").expect("scene");

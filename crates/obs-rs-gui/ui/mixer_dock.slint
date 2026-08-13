@@ -1,6 +1,7 @@
 import { Button, ScrollView, HorizontalBox, VerticalBox, Slider } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { MixerRow } from "models.slint";
+import { MixerContextMenuArea } from "context_menus.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
 
@@ -44,8 +45,13 @@ export component MixerDock inherits Rectangle {
                     VerticalLayout {
                         alignment: start;
                         spacing: 1px;
-                    for channel in mixer-rows : Rectangle {
+                    for channel in mixer-rows : MixerContextMenuArea {
                         height: 78px;
+                        channel-id: channel.id;
+                        channel-muted: channel.muted;
+                        channel-gain: round(channel.gain * 1000);
+                        toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+                        set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
                         background: Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;

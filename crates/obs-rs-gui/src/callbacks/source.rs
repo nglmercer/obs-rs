@@ -90,6 +90,53 @@ pub(crate) fn move_source_and_refresh(
     }
 }
 
+pub(crate) fn move_source_to_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+    target_index: i32,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
+        if locked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "source is locked",
+            )
+            .into());
+        }
+        let source_count = {
+            let state = state.borrow();
+            let project = state.project_session().project();
+            let scene = project
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(scene.as_str()))
+                .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
+            scene.sources().len()
+        };
+        let target_index = usize::try_from(target_index)
+            .map_err(|_| std::io::Error::other("source order is invalid"))?
+            .min(source_count.saturating_sub(1));
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::MoveSource {
+                profile,
+                scene,
+                source: source_id.to_owned(),
+                target_index,
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Move source failed: {error}").into()),
+    }
+}
+
 pub(crate) fn remove_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -174,6 +221,147 @@ pub(crate) fn toggle_source_locked_and_refresh(
     match result {
         Ok(()) => refresh_ui(&ui, state, renderer),
         Err(error) => ui.set_status_message(format!("Source lock failed: {error}").into()),
+    }
+}
+
+pub(crate) fn reset_source_transform_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+) {
+    update_source_transform_and_refresh(weak, state, renderer, source_id, |_: FrameTransform| {
+        Ok(FrameTransform::IDENTITY)
+    });
+}
+
+pub(crate) fn flip_source_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+    horizontal: bool,
+) {
+    update_source_transform_and_refresh(weak, state, renderer, source_id, move |transform| {
+        FrameTransform::new(
+            transform.scale_x_milli(),
+            transform.scale_y_milli(),
+            transform.translate_x(),
+            transform.translate_y(),
+            if horizontal {
+                !transform.flip_x()
+            } else {
+                transform.flip_x()
+            },
+            if horizontal {
+                transform.flip_y()
+            } else {
+                !transform.flip_y()
+            },
+            transform.opacity(),
+        )?
+        .with_crop(
+            transform.crop_left(),
+            transform.crop_top(),
+            transform.crop_right(),
+            transform.crop_bottom(),
+        )
+        .map_err(Into::into)
+    });
+}
+
+fn update_source_transform_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+    update: impl FnOnce(FrameTransform) -> Result<FrameTransform, Box<dyn Error>>,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
+        if locked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "source is locked",
+            )
+            .into());
+        }
+        let transform = {
+            let state = state.borrow();
+            let project = state.project_session().project();
+            project
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(scene.as_str()))
+                .and_then(|scene| scene.source(source_id))
+                .map(obs_rs_project::SourceSpec::transform)
+                .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?
+        };
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceTransform {
+                profile,
+                scene,
+                source: source_id.to_owned(),
+                transform: update(transform)?,
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Source transform failed: {error}").into()),
+    }
+}
+
+pub(crate) fn duplicate_source_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    source_id: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, _, _) = source_display_state(&state.borrow(), source_id)?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::DuplicateSource {
+                profile,
+                scene,
+                source: source_id.to_owned(),
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Duplicate source failed: {error}").into()),
+    }
+}
+
+pub(crate) fn apply_source_name_and_refresh(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    name: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let (profile, scene, source) = selected_source_context(&state.borrow())?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceName {
+                profile,
+                scene,
+                source,
+                name: name.to_owned(),
+            }))?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => refresh_ui(ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Rename source failed: {error}").into()),
     }
 }
 

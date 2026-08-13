@@ -236,6 +236,10 @@ pub(crate) fn invalidate_recovery_cache() {
     RECOVERY_CACHE.with(|cache| cache.borrow_mut().take());
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the dock models are refreshed together to keep their selection state consistent"
+)]
 fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile>) {
     let locale = state.locale();
     let roles = SceneRoleLabels::for_locale(locale);
@@ -285,6 +289,8 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
                     selected,
                     visible: source.visible(),
                     locked: source.locked(),
+                    first: index == 0,
+                    last: index + 1 == scene.sources().len(),
                 }
             })
             .collect::<Vec<_>>()
@@ -293,6 +299,18 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     if !model_matches(&ui.get_source_rows(), &source_rows) {
         ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
     }
+    let selected_source_index = selected_scene.and_then(|scene| {
+        scene
+            .sources()
+            .iter()
+            .position(|source| source.id().as_str() == selected_source)
+    });
+    ui.set_selected_source_visible(selected_source_spec.is_some_and(SourceSpec::visible));
+    ui.set_selected_source_locked(selected_source_spec.is_some_and(SourceSpec::locked));
+    ui.set_selected_source_first(selected_source_index == Some(0));
+    ui.set_selected_source_last(selected_source_index.is_some_and(|index| {
+        selected_scene.is_some_and(|scene| index + 1 == scene.sources().len())
+    }));
 
     let selected_settings =
         selected_source_spec.map_or_else(String::new, |source| source.settings().serialize());

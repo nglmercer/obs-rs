@@ -62,6 +62,19 @@ impl SourceSpec {
         &self.name
     }
 
+    /// Replaces the source's display name after validating that it is non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::InvalidName`] when the new name is empty.
+    pub fn set_name(&mut self, name: &str) -> Result<(), ProjectError> {
+        if name.trim().is_empty() {
+            return Err(ProjectError::InvalidName { kind: "source" });
+        }
+        name.clone_into(&mut self.name);
+        Ok(())
+    }
+
     /// Returns source settings.
     #[must_use]
     pub const fn settings(&self) -> &Config {

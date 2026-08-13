@@ -96,6 +96,28 @@ export component RenameSceneDialog inherits ModalShell {
     }
 }
 
+export component RenameSourceDialog inherits ModalShell {
+    in property <string> locale;
+    in-out property <string> source-name;
+    callback rename-source();
+
+    title: I18n.text.source_properties;
+    subtitle: I18n.text.source_name;
+    accept-label: I18n.text.rename;
+    cancel-label: I18n.text.cancel;
+    panel-height: 240px;
+    accepted => rename-source();
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: I18n.text.source_name; }
+        LineEdit {
+            text <=> source-name;
+            placeholder-text: I18n.text.source_name_placeholder;
+        }
+    }
+}
+
 export component OutputDialog inherits ModalShell {
     in property <string> locale;
     in-out property <string> recording-path;

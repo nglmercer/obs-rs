@@ -6,6 +6,7 @@ use super::{
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
 use obs_rs_output::OutputProfileKind;
+use obs_rs_util::{Identifier, MAX_IDENTIFIER_BYTES};
 /// Commands that mutate project state through one validated path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectCommand {
@@ -30,6 +31,8 @@ pub enum ProjectCommand {
     },
     /// Adds a scene to a profile.
     AddScene { profile: String, scene: SceneSpec },
+    /// Duplicates one scene with a fresh project-local ID.
+    DuplicateScene { profile: String, scene: String },
     /// Adds a source to a profile scene.
     AddSource {
         profile: String,
@@ -42,6 +45,19 @@ pub enum ProjectCommand {
     SetSceneName {
         profile: String,
         scene: String,
+        name: String,
+    },
+    /// Duplicates one source with a fresh scene-local ID.
+    DuplicateSource {
+        profile: String,
+        scene: String,
+        source: String,
+    },
+    /// Replaces one source's display name.
+    SetSourceName {
+        profile: String,
+        scene: String,
+        source: String,
         name: String,
     },
     /// Replaces one source's validated settings document.
@@ -108,6 +124,10 @@ impl Project {
     ///
     /// Returns a validation or reference error without intentionally applying a
     /// partial command.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the command enum intentionally has one centralized dispatch point"
+    )]
     pub fn apply(&mut self, command: ProjectCommand) -> Result<(), ProjectError> {
         match command {
             ProjectCommand::AddProfile(profile) => self.add_profile(profile),
@@ -122,6 +142,9 @@ impl Project {
                 set_profile_output(self, &profile, output)
             }
             ProjectCommand::AddScene { profile, scene } => add_scene(self, &profile, scene),
+            ProjectCommand::DuplicateScene { profile, scene } => {
+                duplicate_scene(self, &profile, &scene)
+            }
             ProjectCommand::AddSource {
                 profile,
                 scene,
@@ -160,6 +183,17 @@ impl Project {
                     .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
                 scene.set_name(&name)
             }
+            ProjectCommand::DuplicateSource {
+                profile,
+                scene,
+                source,
+            } => duplicate_source(self, &profile, &scene, &source),
+            ProjectCommand::SetSourceName {
+                profile,
+                scene,
+                source,
+                name,
+            } => set_source_name(self, &profile, &scene, &source, &name),
             ProjectCommand::SetSourceSettings {
                 profile,
                 scene,
@@ -258,6 +292,25 @@ fn add_scene(project: &mut Project, profile: &str, scene: SceneSpec) -> Result<(
         .add_scene(scene)
 }
 
+fn duplicate_scene(project: &mut Project, profile: &str, scene: &str) -> Result<(), ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let profile = project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let original = profile
+        .scene(&scene_id)
+        .cloned()
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    let (id, name) = copy_identity(original.id().as_str(), original.name(), |candidate| {
+        profile.scene(candidate).is_some()
+    })?;
+    let mut duplicate = original;
+    duplicate.id = id;
+    duplicate.name = name;
+    profile.add_scene(duplicate)
+}
+
 fn scene_mut<'a>(
     project: &'a mut Project,
     profile: &str,
@@ -295,6 +348,75 @@ fn set_source_settings(
 ) -> Result<(), ProjectError> {
     source_mut(project, profile, scene, source)?.set_settings(settings);
     Ok(())
+}
+
+fn duplicate_source(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+) -> Result<(), ProjectError> {
+    let source_id = source_id(source)?;
+    let scene = scene_mut(project, profile, scene)?;
+    let original = scene
+        .source(&source_id)
+        .cloned()
+        .ok_or_else(|| ProjectError::UnknownSource(source_id.clone()))?;
+    let (id, name) = copy_identity(original.id().as_str(), original.name(), |candidate| {
+        scene.has_source(candidate)
+    })?;
+    let mut duplicate = original;
+    duplicate.id = id;
+    duplicate.name = name;
+    scene.add_source(duplicate)
+}
+
+fn set_source_name(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    name: &str,
+) -> Result<(), ProjectError> {
+    source_mut(project, profile, scene, source)?.set_name(name)
+}
+
+/// Builds a deterministic copy ID and display name without letting the GUI
+/// invent identifiers or bypass the project's validation rules.
+fn copy_identity(
+    base_id: &str,
+    base_name: &str,
+    is_taken: impl Fn(&str) -> bool,
+) -> Result<(Identifier, String), ProjectError> {
+    for ordinal in 1..=10_000_u32 {
+        let suffix = if ordinal == 1 {
+            "_copy".to_owned()
+        } else {
+            format!("_copy_{ordinal}")
+        };
+        let prefix_length = MAX_IDENTIFIER_BYTES.saturating_sub(suffix.len());
+        let prefix = base_id
+            .get(..base_id.len().min(prefix_length))
+            .unwrap_or(base_id);
+        let candidate = format!("{prefix}{suffix}");
+        if !is_taken(&candidate) {
+            let id =
+                Identifier::new(&candidate).map_err(|error| ProjectError::InvalidIdentifier {
+                    kind: "duplicate id",
+                    error,
+                })?;
+            let name = if ordinal == 1 {
+                format!("{base_name} Copy")
+            } else {
+                format!("{base_name} Copy {ordinal}")
+            };
+            return Ok((id, name));
+        }
+    }
+    Err(ProjectError::InvalidIdentifier {
+        kind: "duplicate id",
+        error: obs_rs_util::IdentifierError::TooLong,
+    })
 }
 
 fn set_source_transform(

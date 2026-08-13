@@ -16,6 +16,7 @@ import {
     ProjectDialog,
     RecoveryDialog,
     RenameSceneDialog,
+    RenameSourceDialog,
     SceneDialog,
 } from "dialogs.slint";
 
@@ -81,6 +82,10 @@ export component MainWindow inherits Window {
         in property <string> scene-name-version;
         in-out property <string> scene-name;
         in property <string> selected-source;
+        in property <bool> selected-source-visible: false;
+        in property <bool> selected-source-locked: false;
+        in property <bool> selected-source-first: false;
+        in property <bool> selected-source-last: false;
         in property <string> source-settings-version;
         in property <string> source-properties-version;
         in-out property <string> source-settings;
@@ -95,6 +100,7 @@ export component MainWindow inherits Window {
         in-out property <string> new-source-id;
         in-out property <string> new-source-kind;
         in-out property <string> new-source-name;
+        in-out property <string> source-name-draft;
 
         // Driven by the settings window; empty means the action is unbound.
         in property <string> hotkey-swap;
@@ -120,7 +126,7 @@ export component MainWindow inherits Window {
         in-out property <bool> meters-paused: false;
         // 1 project · 2 add scene · 3 add source · 4 output · 5 rename scene
         // · 6 source properties · 7 source filters · 9 new collection
-        // · 10 about
+        // · 10 about · 12 rename source
         in-out property <int> active-modal: 0;
         // 0 none · 1 start stream · 2 stop stream · 3 stop recording
         property <int> pending-confirm: 0;
@@ -138,6 +144,7 @@ export component MainWindow inherits Window {
         callback fade-transition();
         callback select-preview(string);
         callback select-program(string);
+        callback duplicate-scene(string);
         callback remove-scene(string);
         callback rename-scene();
         callback select-profile(string);
@@ -146,6 +153,12 @@ export component MainWindow inherits Window {
         callback toggle-source-visibility(string);
         callback toggle-source-locked(string);
         callback move-source(string, int);
+        callback move-source-to(string, int);
+        callback reset-source-transform(string);
+        callback flip-source(string, bool);
+        callback open-source-rename(string);
+        callback apply-source-name();
+        callback duplicate-source(string);
         callback remove-source(string);
         callback apply-source-settings();
         callback apply-source-transform();
@@ -471,6 +484,10 @@ export component MainWindow inherits Window {
                         preview-scene: root.preview-scene;
                         selected-source: root.selected-source;
                         selected-source-is-screen: root.selected-source-is-screen;
+                        selected-source-visible: root.selected-source-visible;
+                        selected-source-locked: root.selected-source-locked;
+                        selected-source-first: root.selected-source-first;
+                        selected-source-last: root.selected-source-last;
                         transition: root.transition;
                         recording: root.recording;
                         streaming: root.streaming;
@@ -491,11 +508,17 @@ export component MainWindow inherits Window {
                         }
                         select-preview(id) => { root.select-preview(id); }
                         select-program(id) => { root.select-program(id); }
+                        duplicate-scene(id) => { root.duplicate-scene(id); }
                         remove-scene(id) => { root.remove-scene(id); }
                         select-source(id) => { root.select-source(id); }
                         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
                         toggle-source-locked(id) => { root.toggle-source-locked(id); }
                         move-source(id, delta) => { root.move-source(id, delta); }
+                        move-source-to(id, index) => { root.move-source-to(id, index); }
+                        reset-source-transform(id) => { root.reset-source-transform(id); }
+                        flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+                        open-source-rename(id) => { root.open-source-rename(id); }
+                        duplicate-source(id) => { root.duplicate-source(id); }
                         remove-source(id) => { root.remove-source(id); }
                         set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
                         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
@@ -575,6 +598,14 @@ export component MainWindow inherits Window {
         locale: root.locale;
         scene-name <=> root.scene-name;
         rename-scene() => { root.rename-scene(); }
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    RenameSourceDialog {
+        open: root.active-modal == 12;
+        locale: root.locale;
+        source-name <=> root.source-name-draft;
+        rename-source() => { root.apply-source-name(); }
         close => { root.active-modal = 0; }
         accepted => { root.active-modal = 0; }
     }

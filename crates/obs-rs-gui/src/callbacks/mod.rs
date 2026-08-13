@@ -32,15 +32,19 @@ pub(crate) use docks::install_dock_callbacks;
 pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
-pub(crate) use project::{install_project_callbacks, project_store, rename_scene_and_refresh};
+pub(crate) use project::{
+    duplicate_scene_and_refresh, install_project_callbacks, project_store, rename_scene_and_refresh,
+};
 pub(crate) use scene::install_scene_callbacks;
 #[cfg(test)]
 pub(crate) use settings::populate_settings_models;
 pub(crate) use settings::{install_settings_window, PeerWindows};
 pub(crate) use source::{
-    apply_source_filters_and_refresh, apply_source_settings_and_refresh,
-    apply_source_transform_and_refresh, move_source_and_refresh, remove_scene_and_refresh,
-    remove_source_and_refresh, source_filters_document, source_transform_document,
+    apply_source_filters_and_refresh, apply_source_name_and_refresh,
+    apply_source_settings_and_refresh, apply_source_transform_and_refresh,
+    duplicate_source_and_refresh, flip_source_and_refresh, move_source_and_refresh,
+    move_source_to_and_refresh, remove_scene_and_refresh, remove_source_and_refresh,
+    reset_source_transform_and_refresh, source_filters_document, source_transform_document,
     toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
 };
 pub(crate) use source_properties::install_source_properties_window;

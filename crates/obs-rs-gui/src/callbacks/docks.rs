@@ -56,6 +56,10 @@ impl DockController {
             window.set_preview_scene(ui.get_preview_scene());
             window.set_selected_source(ui.get_selected_source());
             window.set_selected_source_is_screen(ui.get_selected_source_is_screen());
+            window.set_selected_source_visible(ui.get_selected_source_visible());
+            window.set_selected_source_locked(ui.get_selected_source_locked());
+            window.set_selected_source_first(ui.get_selected_source_first());
+            window.set_selected_source_last(ui.get_selected_source_last());
             window.set_transition(ui.get_transition());
             window.set_recording(ui.get_recording());
             window.set_streaming(ui.get_streaming());
@@ -284,6 +288,7 @@ fn forward_to_studio(
 
     forward!(on_select_preview, invoke_select_preview, id);
     forward!(on_select_program, invoke_select_program, id);
+    forward!(on_duplicate_scene, invoke_duplicate_scene, id);
     forward!(on_remove_scene, invoke_remove_scene, id);
     forward!(on_select_source, invoke_select_source, id);
     forward!(
@@ -293,6 +298,11 @@ fn forward_to_studio(
     );
     forward!(on_toggle_source_locked, invoke_toggle_source_locked, id);
     forward!(on_move_source, invoke_move_source, id, delta);
+    forward!(on_move_source_to, invoke_move_source_to, id, index);
+    forward!(on_reset_source_transform, invoke_reset_source_transform, id);
+    forward!(on_flip_source, invoke_flip_source, id, horizontal);
+    forward!(on_open_source_rename, invoke_open_source_rename, id);
+    forward!(on_duplicate_source, invoke_duplicate_source, id);
     forward!(on_remove_source, invoke_remove_source, id);
     forward!(on_set_mixer_gain, invoke_set_mixer_gain, id, gain);
     forward!(on_toggle_mixer_mute, invoke_toggle_mixer_mute, id);

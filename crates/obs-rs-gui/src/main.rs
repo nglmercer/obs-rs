@@ -30,9 +30,11 @@ mod view;
 mod tests;
 
 pub(crate) use callbacks::{
-    apply_source_filters_and_refresh, apply_source_settings_and_refresh,
-    apply_source_transform_and_refresh, move_source_and_refresh, project_store,
-    remove_scene_and_refresh, remove_source_and_refresh, rename_scene_and_refresh,
+    apply_source_filters_and_refresh, apply_source_name_and_refresh,
+    apply_source_settings_and_refresh, apply_source_transform_and_refresh,
+    duplicate_scene_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
+    move_source_and_refresh, move_source_to_and_refresh, project_store, remove_scene_and_refresh,
+    remove_source_and_refresh, rename_scene_and_refresh, reset_source_transform_and_refresh,
     source_filters_document, source_transform_document, toggle_source_locked_and_refresh,
     toggle_source_visibility_and_refresh,
 };
