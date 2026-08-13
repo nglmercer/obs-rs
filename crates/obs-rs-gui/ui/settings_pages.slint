@@ -145,8 +145,16 @@ export component StreamPage inherits VerticalLayout {
             LineEdit { text <=> root.rtmp-stream-key; input-type: InputType.password; edited => { root.changed(); } horizontal-stretch: 1; }
         }
         if root.show-rtmp : SettingRow {
+            label: "Video Codec";
+            Text { text: "H.264"; color: Palette.tokens.text-muted; vertical-alignment: center; height: 28px; horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
             label: "Video Encoder";
             ComboBox { model: root.video-encoder-names; current-index: root.video-encoder-index; selected(value) => { root.select-video-encoder(self.current-index); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Audio Codec";
+            Text { text: "AAC"; color: Palette.tokens.text-muted; vertical-alignment: center; height: 28px; horizontal-stretch: 1; }
         }
         if root.show-rtmp : SettingRow {
             label: "Audio Encoder";

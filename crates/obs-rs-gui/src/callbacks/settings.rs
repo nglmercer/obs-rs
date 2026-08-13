@@ -8,6 +8,7 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use obs_rs_engine::ProductionProtocol;
 use obs_rs_media::{FrameRate, VideoFormat};
+use obs_rs_output::{EncoderImplementation, EncoderPreset, RateControl};
 use obs_rs_output::{SecretString, SrtKeyLength, SrtMode, StreamProtocol};
 use obs_rs_project::ProjectCommand;
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
@@ -272,7 +273,7 @@ fn populate_stream_models(
     })));
     window.set_video_encoder_index(index_of(
         &controller.video_encoder_ids.borrow(),
-        &settings.rtmp.video_encoder,
+        &settings.rtmp.video.implementation.id().to_owned(),
     ));
 
     let audio = output.capabilities().audio_encoders();
@@ -287,7 +288,7 @@ fn populate_stream_models(
     ));
     window.set_audio_encoder_index(index_of(
         &controller.audio_encoder_ids.borrow(),
-        &settings.rtmp.audio_encoder,
+        &settings.rtmp.audio.implementation.id().to_owned(),
     ));
 }
 
@@ -408,18 +409,18 @@ fn load_draft(
     window.set_rtmp_server(settings.rtmp.server.as_str().into());
     window.set_rtmp_stream_key(settings.rtmp.stream_key.expose_secret().into());
     window.set_stream_video_bitrate(
-        i32::try_from(settings.rtmp.video_bitrate_kbps).unwrap_or(i32::MAX),
+        i32::try_from(settings.rtmp.video.bitrate_kbps).unwrap_or(i32::MAX),
     );
     window.set_stream_audio_bitrate(
-        i32::try_from(settings.rtmp.audio_bitrate_kbps).unwrap_or(i32::MAX),
+        i32::try_from(settings.rtmp.audio.bitrate_kbps).unwrap_or(i32::MAX),
     );
-    window.set_stream_rate_control(settings.rtmp.rate_control.as_str().into());
+    window.set_stream_rate_control(settings.rtmp.video.rate_control.id().to_uppercase().into());
     window.set_stream_keyframe_interval(
-        i32::try_from(settings.rtmp.keyframe_interval_secs).unwrap_or(i32::MAX),
+        i32::try_from(settings.rtmp.video.keyframe_interval_secs).unwrap_or(i32::MAX),
     );
-    window.set_stream_encoder_preset(settings.rtmp.preset.as_str().into());
-    window.set_stream_encoder_profile(settings.rtmp.profile.as_str().into());
-    window.set_stream_b_frames(i32::try_from(settings.rtmp.b_frames).unwrap_or(i32::MAX));
+    window.set_stream_encoder_preset(settings.rtmp.video.preset.id().into());
+    window.set_stream_encoder_profile(settings.rtmp.video.profile.as_deref().unwrap_or("").into());
+    window.set_stream_b_frames(i32::from(settings.rtmp.video.b_frames));
     window.set_stream_reconnect(settings.rtmp.reconnect);
     window.set_stream_maximum_retries(
         i32::try_from(settings.rtmp.maximum_retries).unwrap_or(i32::MAX),
@@ -749,22 +750,24 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
         .borrow()
         .get(usize::try_from(window.get_video_encoder_index()).unwrap_or(0))
     {
-        encoder.clone_into(&mut settings.rtmp.video_encoder);
+        settings.rtmp.video.implementation = EncoderImplementation::new(encoder.clone());
     }
     if let Some(encoder) = controller
         .audio_encoder_ids
         .borrow()
         .get(usize::try_from(window.get_audio_encoder_index()).unwrap_or(0))
     {
-        encoder.clone_into(&mut settings.rtmp.audio_encoder);
+        settings.rtmp.audio.implementation = EncoderImplementation::new(encoder.clone());
     }
-    settings.rtmp.video_bitrate_kbps = unsigned(window.get_stream_video_bitrate());
-    settings.rtmp.audio_bitrate_kbps = unsigned(window.get_stream_audio_bitrate());
-    settings.rtmp.rate_control = window.get_stream_rate_control().to_string();
-    settings.rtmp.keyframe_interval_secs = unsigned(window.get_stream_keyframe_interval());
-    settings.rtmp.preset = window.get_stream_encoder_preset().to_string();
-    settings.rtmp.profile = window.get_stream_encoder_profile().to_string();
-    settings.rtmp.b_frames = unsigned(window.get_stream_b_frames());
+    settings.rtmp.video.bitrate_kbps = unsigned(window.get_stream_video_bitrate());
+    settings.rtmp.audio.bitrate_kbps = unsigned(window.get_stream_audio_bitrate());
+    settings.rtmp.video.rate_control =
+        RateControl::from_id(&window.get_stream_rate_control()).unwrap_or(RateControl::Cbr);
+    settings.rtmp.video.keyframe_interval_secs = unsigned(window.get_stream_keyframe_interval());
+    settings.rtmp.video.preset = EncoderPreset::from_id(&window.get_stream_encoder_preset())
+        .unwrap_or(EncoderPreset::Balanced);
+    settings.rtmp.video.profile = nonempty(window.get_stream_encoder_profile().to_string());
+    settings.rtmp.video.b_frames = u8::try_from(window.get_stream_b_frames()).unwrap_or(0);
     settings.rtmp.reconnect = window.get_stream_reconnect();
     settings.rtmp.maximum_retries = unsigned(window.get_stream_maximum_retries());
     settings.rtmp.network_buffer_ms = unsigned(window.get_stream_network_buffer());

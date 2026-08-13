@@ -45,7 +45,9 @@ mod tests;
 
 pub use audio::{AudioEncoder, RawAudioEncoder, WavRecording, Y4mRecording};
 pub use config::{
-    RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol, StreamTarget,
+    AudioCodec, AudioEncoderConfig, EncoderImplementation, EncoderPreset, RateControl, RtmpConfig,
+    SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol, StreamTarget, VideoCodec,
+    VideoEncoderConfig,
 };
 pub use error::OutputError;
 pub use muxer::MemoryMuxer;

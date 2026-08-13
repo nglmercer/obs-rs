@@ -6,8 +6,8 @@
 use std::{collections::BTreeMap, fmt, path::PathBuf, process::Command};
 
 use obs_rs_output::{
-    OutputAudioCodec, OutputCapabilities, OutputProfile, OutputProfileKind, OutputTransport,
-    OutputVideoCodec,
+    AudioCodec, EncoderPreset, OutputCapabilities, OutputProfile, OutputProfileKind,
+    OutputTransport, RateControl, VideoCodec,
 };
 use url::Url;
 
@@ -117,8 +117,67 @@ impl ProtocolCapability {
 pub struct VideoEncoderCapability {
     id: String,
     display_name: &'static str,
-    codec: OutputVideoCodec,
+    codec: VideoCodec,
     hardware: bool,
+    options: VideoEncoderOptionCapabilities,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VideoEncoderOptionCapabilities {
+    supported: Vec<VideoEncoderOption>,
+    rate_controls: Vec<RateControl>,
+    presets: Vec<EncoderPreset>,
+    profiles: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VideoEncoderOption {
+    Bitrate,
+    MaxBitrate,
+    KeyframeInterval,
+    BFrames,
+}
+
+impl VideoEncoderOptionCapabilities {
+    #[must_use]
+    pub fn bitrate(&self) -> bool {
+        self.supports(VideoEncoderOption::Bitrate)
+    }
+
+    #[must_use]
+    pub fn max_bitrate(&self) -> bool {
+        self.supports(VideoEncoderOption::MaxBitrate)
+    }
+
+    #[must_use]
+    pub fn keyframe_interval(&self) -> bool {
+        self.supports(VideoEncoderOption::KeyframeInterval)
+    }
+
+    #[must_use]
+    pub fn b_frames(&self) -> bool {
+        self.supports(VideoEncoderOption::BFrames)
+    }
+
+    #[must_use]
+    pub fn supports(&self, option: VideoEncoderOption) -> bool {
+        self.supported.contains(&option)
+    }
+
+    #[must_use]
+    pub fn rate_controls(&self) -> &[RateControl] {
+        &self.rate_controls
+    }
+
+    #[must_use]
+    pub fn presets(&self) -> &[EncoderPreset] {
+        &self.presets
+    }
+
+    #[must_use]
+    pub fn profiles(&self) -> &[String] {
+        &self.profiles
+    }
 }
 
 impl VideoEncoderCapability {
@@ -133,7 +192,7 @@ impl VideoEncoderCapability {
     }
 
     #[must_use]
-    pub const fn codec(&self) -> OutputVideoCodec {
+    pub const fn codec(&self) -> VideoCodec {
         self.codec
     }
 
@@ -141,13 +200,18 @@ impl VideoEncoderCapability {
     pub const fn hardware(&self) -> bool {
         self.hardware
     }
+
+    #[must_use]
+    pub const fn options(&self) -> &VideoEncoderOptionCapabilities {
+        &self.options
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AudioEncoderCapability {
     id: String,
     display_name: &'static str,
-    codec: OutputAudioCodec,
+    codec: AudioCodec,
 }
 
 impl AudioEncoderCapability {
@@ -162,7 +226,7 @@ impl AudioEncoderCapability {
     }
 
     #[must_use]
-    pub const fn codec(&self) -> OutputAudioCodec {
+    pub const fn codec(&self) -> AudioCodec {
         self.codec
     }
 }
@@ -356,26 +420,102 @@ fn protocol_capabilities(output: &OutputCapabilities) -> Vec<ProtocolCapability>
 
 fn video_encoder_capability(element: &str) -> VideoEncoderCapability {
     let (display_name, codec, hardware) = match element {
-        "vah264enc" => ("VA H.264", OutputVideoCodec::H264, true),
-        "vaapih264enc" => ("VA-API H.264", OutputVideoCodec::H264, true),
-        "nvh264enc" => ("NVIDIA NVENC H.264", OutputVideoCodec::H264, true),
-        "openh264enc" => ("OpenH264", OutputVideoCodec::H264, false),
-        "vp8enc" => ("VP8 Software", OutputVideoCodec::Vp8, false),
-        _ => ("Unknown encoder", OutputVideoCodec::ReferenceRle, false),
+        "vah264enc" => ("VA H.264", VideoCodec::H264, true),
+        "vaapih264enc" => ("VA-API H.264", VideoCodec::H264, true),
+        "nvh264enc" => ("NVIDIA NVENC H.264", VideoCodec::H264, true),
+        "openh264enc" => ("OpenH264", VideoCodec::H264, false),
+        "vp8enc" => ("VP8 Software", VideoCodec::Vp8, false),
+        _ => ("Unknown encoder", VideoCodec::ReferenceRle, false),
     };
     VideoEncoderCapability {
         id: element.to_owned(),
         display_name,
         codec,
         hardware,
+        options: encoder_option_capabilities(element),
     }
+}
+
+fn encoder_option_capabilities(element: &str) -> VideoEncoderOptionCapabilities {
+    let inspection = Command::new("gst-inspect-1.0")
+        .arg(element)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    let has = |names: &[&str]| names.iter().any(|name| property_present(&inspection, name));
+    let rate_controls = if has(&[
+        "rate-control",
+        "rate-control-mode",
+        "rc-mode",
+        "bitrate-type",
+    ]) {
+        vec![RateControl::Cbr, RateControl::Vbr, RateControl::Cqp]
+    } else {
+        Vec::new()
+    };
+    let presets = if has(&["preset", "speed-preset", "complexity", "target-usage"]) {
+        vec![
+            EncoderPreset::Speed,
+            EncoderPreset::Balanced,
+            EncoderPreset::Quality,
+        ]
+    } else {
+        Vec::new()
+    };
+    let profiles = if inspection.contains("constrained-baseline")
+        || inspection.contains("profile: { (string)")
+    {
+        ["baseline", "main", "high"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let supported = [
+        (
+            VideoEncoderOption::Bitrate,
+            has(&["bitrate", "target-bitrate"]),
+        ),
+        (
+            VideoEncoderOption::MaxBitrate,
+            has(&["max-bitrate", "maxrate"]),
+        ),
+        (
+            VideoEncoderOption::KeyframeInterval,
+            has(&["gop-size", "key-int-max", "keyframe-period"]),
+        ),
+        (
+            VideoEncoderOption::BFrames,
+            has(&["bframes", "b-frames", "max-bframes", "max-b-frames"]),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(option, available)| available.then_some(option))
+    .collect();
+    VideoEncoderOptionCapabilities {
+        supported,
+        rate_controls,
+        presets,
+        profiles,
+    }
+}
+
+fn property_present(inspection: &str, property: &str) -> bool {
+    inspection.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix(property)
+            .is_some_and(|rest| rest.trim_start().starts_with(':'))
+    })
 }
 
 fn audio_encoder_capability(element: &str) -> AudioEncoderCapability {
     let (display_name, codec) = match element {
-        "avenc_aac" => ("FFmpeg AAC", OutputAudioCodec::Aac),
-        "opusenc" => ("Opus", OutputAudioCodec::Opus),
-        _ => ("Unknown encoder", OutputAudioCodec::Pcm),
+        "avenc_aac" => ("FFmpeg AAC", AudioCodec::Aac),
+        "opusenc" => ("Opus", AudioCodec::Opus),
+        _ => ("Unknown encoder", AudioCodec::Pcm),
     };
     AudioEncoderCapability {
         id: element.to_owned(),
@@ -833,11 +973,31 @@ mod tests {
 
         let hardware = video_encoder_capability("nvh264enc");
         let software = video_encoder_capability("openh264enc");
-        assert_eq!(hardware.codec(), OutputVideoCodec::H264);
-        assert_eq!(software.codec(), OutputVideoCodec::H264);
+        assert_eq!(hardware.codec(), VideoCodec::H264);
+        assert_eq!(software.codec(), VideoCodec::H264);
         assert!(hardware.hardware());
         assert!(!software.hardware());
         assert_ne!(hardware.id(), software.id());
+    }
+
+    #[test]
+    fn option_discovery_matches_exact_property_names() {
+        let inspection =
+            "Element Properties:\n  bitrate : target\n  not-bitrate : no\n  gop-size : interval\n";
+        assert!(property_present(inspection, "bitrate"));
+        assert!(property_present(inspection, "gop-size"));
+        assert!(!property_present(inspection, "rate-control"));
+
+        if element_available("openh264enc") {
+            let options = encoder_option_capabilities("openh264enc");
+            assert!(options.bitrate());
+            assert!(options.max_bitrate());
+            assert!(options.keyframe_interval());
+            assert!(!options.b_frames());
+            assert!(options.rate_controls().contains(&RateControl::Cbr));
+            assert!(options.presets().contains(&EncoderPreset::Quality));
+            assert!(options.profiles().iter().any(|profile| profile == "high"));
+        }
     }
 
     #[test]

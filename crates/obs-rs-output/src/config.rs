@@ -166,6 +166,167 @@ pub enum SrtKeyLength {
     Bits256 = 32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum VideoCodec {
+    #[default]
+    H264,
+    Vp8,
+    ReferenceRle,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AudioCodec {
+    #[default]
+    Aac,
+    Opus,
+    Pcm,
+}
+
+impl AudioCodec {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Aac => "aac",
+            Self::Opus => "opus",
+            Self::Pcm => "pcm",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id.trim().to_ascii_lowercase().as_str() {
+            "aac" | "avenc_aac" => Some(Self::Aac),
+            "opus" | "opusenc" => Some(Self::Opus),
+            "pcm" => Some(Self::Pcm),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EncoderImplementation(String);
+
+impl EncoderImplementation {
+    #[must_use]
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn is_automatic(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RateControl {
+    #[default]
+    Cbr,
+    Vbr,
+    Cqp,
+}
+
+impl RateControl {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Cbr => "cbr",
+            Self::Vbr => "vbr",
+            Self::Cqp => "cqp",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id.trim().to_ascii_lowercase().as_str() {
+            "cbr" => Some(Self::Cbr),
+            "vbr" => Some(Self::Vbr),
+            "cqp" | "quality" => Some(Self::Cqp),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum EncoderPreset {
+    Speed,
+    #[default]
+    Balanced,
+    Quality,
+}
+
+impl EncoderPreset {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Speed => "speed",
+            Self::Balanced => "balanced",
+            Self::Quality => "quality",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id.trim().to_ascii_lowercase().as_str() {
+            "speed" | "fast" => Some(Self::Speed),
+            "balanced" | "medium" => Some(Self::Balanced),
+            "quality" | "slow" => Some(Self::Quality),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VideoEncoderConfig {
+    pub codec: VideoCodec,
+    pub implementation: EncoderImplementation,
+    pub rate_control: RateControl,
+    pub bitrate_kbps: u32,
+    pub max_bitrate_kbps: Option<u32>,
+    pub keyframe_interval_secs: u32,
+    pub preset: EncoderPreset,
+    pub profile: Option<String>,
+    pub b_frames: u8,
+}
+
+impl Default for VideoEncoderConfig {
+    fn default() -> Self {
+        Self {
+            codec: VideoCodec::H264,
+            implementation: EncoderImplementation::default(),
+            rate_control: RateControl::Cbr,
+            bitrate_kbps: 6_000,
+            max_bitrate_kbps: None,
+            keyframe_interval_secs: 2,
+            preset: EncoderPreset::Balanced,
+            profile: Some("high".to_owned()),
+            b_frames: 2,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioEncoderConfig {
+    pub codec: AudioCodec,
+    pub implementation: EncoderImplementation,
+    pub bitrate_kbps: u32,
+}
+
+impl Default for AudioEncoderConfig {
+    fn default() -> Self {
+        Self {
+            codec: AudioCodec::Aac,
+            implementation: EncoderImplementation::default(),
+            bitrate_kbps: 160,
+        }
+    }
+}
+
 impl SrtKeyLength {
     #[must_use]
     pub const fn bytes(self) -> u16 {
@@ -194,15 +355,8 @@ pub struct RtmpConfig {
     pub service: String,
     pub server: String,
     pub stream_key: SecretString,
-    pub video_encoder: String,
-    pub audio_encoder: String,
-    pub video_bitrate_kbps: u32,
-    pub audio_bitrate_kbps: u32,
-    pub rate_control: String,
-    pub keyframe_interval_secs: u32,
-    pub preset: String,
-    pub profile: String,
-    pub b_frames: u32,
+    pub video: VideoEncoderConfig,
+    pub audio: AudioEncoderConfig,
     pub reconnect: bool,
     pub maximum_retries: u32,
     pub network_buffer_ms: u32,
@@ -214,15 +368,8 @@ impl Default for RtmpConfig {
             service: "Custom".to_owned(),
             server: "127.0.0.1/live".to_owned(),
             stream_key: SecretString::new("stream"),
-            video_encoder: String::new(),
-            audio_encoder: String::new(),
-            video_bitrate_kbps: 6_000,
-            audio_bitrate_kbps: 160,
-            rate_control: "CBR".to_owned(),
-            keyframe_interval_secs: 2,
-            preset: "balanced".to_owned(),
-            profile: "high".to_owned(),
-            b_frames: 2,
+            video: VideoEncoderConfig::default(),
+            audio: AudioEncoderConfig::default(),
             reconnect: true,
             maximum_retries: 20,
             network_buffer_ms: 1_000,

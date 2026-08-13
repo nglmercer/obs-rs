@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use obs_rs_config::Config;
 use obs_rs_output::{
-    RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol, StreamTarget,
+    AudioCodec, AudioEncoderConfig, EncoderImplementation, EncoderPreset, RateControl, RtmpConfig,
+    SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol, StreamTarget, VideoCodec,
+    VideoEncoderConfig,
 };
 use obs_rs_ui::UiLocale;
 use slint::{Brush, Color, Model, ModelRc, VecModel};
@@ -675,24 +677,36 @@ impl AppSettings {
                 "rtmp_stream_key",
                 self.rtmp.stream_key.expose_secret().to_owned(),
             ),
-            ("stream_video_encoder", self.rtmp.video_encoder.clone()),
-            ("stream_audio_encoder", self.rtmp.audio_encoder.clone()),
+            (
+                "stream_video_encoder",
+                self.rtmp.video.implementation.id().to_owned(),
+            ),
+            (
+                "stream_audio_encoder",
+                self.rtmp.audio.implementation.id().to_owned(),
+            ),
             (
                 "stream_video_bitrate_kbps",
-                self.rtmp.video_bitrate_kbps.to_string(),
+                self.rtmp.video.bitrate_kbps.to_string(),
             ),
             (
                 "stream_audio_bitrate_kbps",
-                self.rtmp.audio_bitrate_kbps.to_string(),
+                self.rtmp.audio.bitrate_kbps.to_string(),
             ),
-            ("stream_rate_control", self.rtmp.rate_control.clone()),
+            (
+                "stream_rate_control",
+                self.rtmp.video.rate_control.id().to_owned(),
+            ),
             (
                 "stream_keyframe_interval_secs",
-                self.rtmp.keyframe_interval_secs.to_string(),
+                self.rtmp.video.keyframe_interval_secs.to_string(),
             ),
-            ("stream_preset", self.rtmp.preset.clone()),
-            ("stream_profile", self.rtmp.profile.clone()),
-            ("stream_b_frames", self.rtmp.b_frames.to_string()),
+            ("stream_preset", self.rtmp.video.preset.id().to_owned()),
+            (
+                "stream_profile",
+                self.rtmp.video.profile.clone().unwrap_or_default(),
+            ),
+            ("stream_b_frames", self.rtmp.video.b_frames.to_string()),
             ("stream_reconnect", self.rtmp.reconnect.to_string()),
             (
                 "stream_maximum_retries",
@@ -909,27 +923,49 @@ fn rtmp_from_config(config: &Config, defaults: &RtmpConfig) -> RtmpConfig {
             "rtmp_stream_key",
             defaults.stream_key.expose_secret(),
         )),
-        video_encoder: text(config, "stream_video_encoder", &defaults.video_encoder),
-        audio_encoder: text(config, "stream_audio_encoder", &defaults.audio_encoder),
-        video_bitrate_kbps: number(
-            config,
-            "stream_video_bitrate_kbps",
-            defaults.video_bitrate_kbps,
-        ),
-        audio_bitrate_kbps: number(
-            config,
-            "stream_audio_bitrate_kbps",
-            defaults.audio_bitrate_kbps,
-        ),
-        rate_control: text(config, "stream_rate_control", &defaults.rate_control),
-        keyframe_interval_secs: number(
-            config,
-            "stream_keyframe_interval_secs",
-            defaults.keyframe_interval_secs,
-        ),
-        preset: text(config, "stream_preset", &defaults.preset),
-        profile: text(config, "stream_profile", &defaults.profile),
-        b_frames: number(config, "stream_b_frames", defaults.b_frames),
+        video: VideoEncoderConfig {
+            codec: VideoCodec::H264,
+            implementation: EncoderImplementation::new(text(
+                config,
+                "stream_video_encoder",
+                defaults.video.implementation.id(),
+            )),
+            rate_control: config
+                .get("stream_rate_control")
+                .and_then(RateControl::from_id)
+                .unwrap_or(defaults.video.rate_control),
+            bitrate_kbps: number(
+                config,
+                "stream_video_bitrate_kbps",
+                defaults.video.bitrate_kbps,
+            ),
+            max_bitrate_kbps: None,
+            keyframe_interval_secs: number(
+                config,
+                "stream_keyframe_interval_secs",
+                defaults.video.keyframe_interval_secs,
+            ),
+            preset: config
+                .get("stream_preset")
+                .and_then(EncoderPreset::from_id)
+                .unwrap_or(defaults.video.preset),
+            profile: optional_text(config, "stream_profile")
+                .or_else(|| defaults.video.profile.clone()),
+            b_frames: number(config, "stream_b_frames", defaults.video.b_frames),
+        },
+        audio: AudioEncoderConfig {
+            codec: AudioCodec::Aac,
+            implementation: EncoderImplementation::new(text(
+                config,
+                "stream_audio_encoder",
+                defaults.audio.implementation.id(),
+            )),
+            bitrate_kbps: number(
+                config,
+                "stream_audio_bitrate_kbps",
+                defaults.audio.bitrate_kbps,
+            ),
+        },
         reconnect: flag(config, "stream_reconnect", defaults.reconnect),
         maximum_retries: number(config, "stream_maximum_retries", defaults.maximum_retries),
         network_buffer_ms: number(
@@ -1025,15 +1061,21 @@ mod tests {
                 service: "Example Live".to_owned(),
                 server: "media.example/live".to_owned(),
                 stream_key: SecretString::new("test-key"),
-                video_encoder: "nvh264enc".to_owned(),
-                audio_encoder: "avenc_aac".to_owned(),
-                video_bitrate_kbps: 8_500,
-                audio_bitrate_kbps: 192,
-                rate_control: "VBR".to_owned(),
-                keyframe_interval_secs: 3,
-                preset: "quality".to_owned(),
-                profile: "main".to_owned(),
-                b_frames: 3,
+                video: VideoEncoderConfig {
+                    implementation: EncoderImplementation::new("nvh264enc"),
+                    rate_control: RateControl::Vbr,
+                    bitrate_kbps: 8_500,
+                    keyframe_interval_secs: 3,
+                    preset: EncoderPreset::Quality,
+                    profile: Some("main".to_owned()),
+                    b_frames: 3,
+                    ..VideoEncoderConfig::default()
+                },
+                audio: AudioEncoderConfig {
+                    implementation: EncoderImplementation::new("avenc_aac"),
+                    bitrate_kbps: 192,
+                    ..AudioEncoderConfig::default()
+                },
                 reconnect: false,
                 maximum_retries: 7,
                 network_buffer_ms: 2_500,
