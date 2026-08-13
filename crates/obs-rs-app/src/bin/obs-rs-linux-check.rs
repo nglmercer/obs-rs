@@ -13,7 +13,8 @@ use std::{
 use obs_rs_audio::{AudioDeviceKind, AudioFormat, AudioInputProvider};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
 use obs_rs_capture::{
-    x11_windows, CaptureError, V4l2CaptureDevice, VideoCaptureDevice, X11CaptureDevice,
+    discover_nokhwa_cameras, x11_windows, CaptureError, NokhwaCaptureDevice, VideoCaptureDevice,
+    X11CaptureDevice,
 };
 use obs_rs_engine::{EngineConfig, EngineSession};
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
@@ -177,19 +178,25 @@ fn check_x11_window() -> CheckResult {
     }
 }
 
-/// Negotiates and reads one frame from the first connected V4L2 camera.
+/// Negotiates and reads one frame from the first connected Nokhwa camera.
 ///
-/// A host with no camera, or without `ffmpeg`, skips: a missing camera is a
-/// capability this machine lacks, not a defect in the adapter.
+/// A host with no camera skips: a missing camera is a capability this machine
+/// lacks, not a defect in the adapter.
 fn check_camera() -> CheckResult {
-    let Some(node) = first_camera_node() else {
-        return CheckResult::skip("no /dev/video* node is present".to_owned());
+    let cameras = match discover_nokhwa_cameras() {
+        Ok(cameras) => cameras,
+        Err(CaptureError::PlatformUnavailable { message }) => return CheckResult::skip(message),
+        Err(error) => return CheckResult::fail(error.to_string()),
     };
-    let mut device = match V4l2CaptureDevice::from_device_id(&node, "camera") {
+    let Some(camera) = cameras.first() else {
+        return CheckResult::skip("no native camera is present".to_owned());
+    };
+    let node = camera.id().to_string();
+    let mut device = match NokhwaCaptureDevice::from_device_id(&node, camera.name()) {
         Ok(device) => device,
         Err(error) => return CheckResult::fail(error.to_string()),
     };
-    let sizes = device.supported_sizes();
+    let mode_count = camera.modes().len();
     let format = match VideoFormat::new(320, 180, FrameRate::new(30, 1).expect("valid rate")) {
         Ok(format) => format,
         Err(error) => return CheckResult::fail(error.to_string()),
@@ -205,12 +212,12 @@ fn check_camera() -> CheckResult {
         Err(error) => return CheckResult::fail(error.to_string()),
     }
     // The reader is non-blocking, so the first frames legitimately return
-    // nothing while `ffmpeg` negotiates the camera.
+    // nothing while Nokhwa negotiates the camera.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         match device.next_frame(Timestamp::ZERO) {
             Ok(Some(frame)) if frame.format() == format => {
-                return CheckResult::pass(format!("device={node} modes={}", sizes.len()));
+                return CheckResult::pass(format!("device={node} modes={mode_count}"));
             }
             Ok(Some(frame)) => {
                 return CheckResult::fail(format!("camera format mismatch: {:?}", frame.format()));
@@ -224,22 +231,6 @@ fn check_camera() -> CheckResult {
             Err(error) => return CheckResult::skip(error.to_string()),
         }
     }
-}
-
-/// Returns the stable ID of the lowest-numbered camera node, if any exists.
-fn first_camera_node() -> Option<String> {
-    let mut nodes = std::fs::read_dir("/dev")
-        .ok()?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let name = entry.file_name().into_string().ok()?;
-            let suffix = name.strip_prefix("video")?;
-            (!suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit()))
-                .then(|| format!("v4l2-{name}"))
-        })
-        .collect::<Vec<_>>();
-    nodes.sort();
-    nodes.into_iter().next()
 }
 
 fn check_pipewire() -> CheckResult {

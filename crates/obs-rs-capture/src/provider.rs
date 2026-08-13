@@ -1,7 +1,5 @@
 #[cfg(target_os = "linux")]
 use std::env;
-#[cfg(all(target_os = "linux", feature = "legacy-v4l2"))]
-use std::{fs, process::Command};
 
 use super::{
     adapter::PlatformCaptureAdapter,
@@ -139,22 +137,8 @@ impl PlatformCaptureAdapter for LinuxCaptureAdapter {
                 .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>);
         }
         if stable_id.starts_with("v4l2-") || stable_id.starts_with("nokhwa-camera-") {
-            match crate::NokhwaCaptureDevice::from_device_id(stable_id, stable_id) {
-                Ok(device) => return Ok(Box::new(device)),
-                Err(nokhwa_error) => {
-                    #[cfg(feature = "legacy-v4l2")]
-                    if let Some(node) = stable_id.strip_prefix("v4l2-") {
-                        if node.starts_with("video")
-                            && node[5..].bytes().all(|byte| byte.is_ascii_digit())
-                        {
-                            let path = std::path::PathBuf::from("/dev").join(node);
-                            return crate::V4l2CaptureDevice::new(stable_id, stable_id, path)
-                                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>);
-                        }
-                    }
-                    return Err(nokhwa_error);
-                }
-            }
+            let device = crate::NokhwaCaptureDevice::from_device_id(stable_id, stable_id)?;
+            return Ok(Box::new(device));
         }
         let display = env::var("DISPLAY").map_err(|error| CaptureError::PlatformUnavailable {
             message: format!("DISPLAY is unavailable: {error}"),
@@ -235,68 +219,11 @@ fn discover_x11_windows(display: &str) -> Vec<CaptureDeviceInfo> {
 
 #[cfg(target_os = "linux")]
 fn discover_nokhwa_devices() -> Vec<CaptureDeviceInfo> {
-    let mut devices = crate::discover_nokhwa_cameras()
+    crate::discover_nokhwa_cameras()
         .unwrap_or_default()
         .into_iter()
         .map(super::types::CameraDevice::into_info)
-        .collect::<Vec<_>>();
-    if devices.is_empty() {
-        devices.extend(discover_legacy_v4l2_devices());
-    }
-    devices
-}
-
-#[cfg(feature = "legacy-v4l2")]
-fn discover_legacy_v4l2_devices() -> Vec<CaptureDeviceInfo> {
-    let Ok(entries) = fs::read_dir("/dev") else {
-        return Vec::new();
-    };
-    let mut devices = entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_name()?.to_str()?;
-            let suffix = name.strip_prefix("video")?;
-            if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
-                return None;
-            }
-            let label = v4l2_capture_label(&path)?;
-            let id = format!("v4l2-{name}");
-            let label = format!("{label} ({})", path.display());
-            CaptureDeviceInfo::new(&id, &label, CaptureKind::Camera).ok()
-        })
-        .collect::<Vec<_>>();
-    devices.sort_by(|left, right| left.id().cmp(right.id()));
-    devices
-}
-
-#[cfg(not(feature = "legacy-v4l2"))]
-fn discover_legacy_v4l2_devices() -> Vec<CaptureDeviceInfo> {
-    Vec::new()
-}
-
-#[cfg(all(target_os = "linux", feature = "legacy-v4l2"))]
-fn v4l2_capture_label(path: &std::path::Path) -> Option<String> {
-    // `video4linux` also exposes metadata-only nodes. Ask the userspace
-    // utility for capabilities so those nodes never become misleading camera
-    // choices in the GUI. If the utility is absent, the deterministic camera
-    // fallback remains available through SimulatedCaptureProvider.
-    let output = Command::new("v4l2-ctl")
-        .args(["--device", path.to_string_lossy().as_ref(), "--all"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let document = String::from_utf8_lossy(&output.stdout);
-    if !document.contains("Format Video Capture") {
-        return None;
-    }
-    document
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("Card type")?.split_once(':'))
-        .map(|(_, value)| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
 }
 
 /// A deterministic discovery provider for the portable CPU fallback devices.

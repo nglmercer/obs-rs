@@ -7,6 +7,9 @@
 
 use std::{cell::RefCell, rc::Rc};
 
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use obs_rs_config::Config;
 use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -16,6 +19,22 @@ use crate::{
     fixtures::{kind_selects_monitor, screen_monitors, MonitorChoice},
     I18n, MainWindow, MonitorRow, MonitorWindow, Palette, PreviewRenderer,
 };
+
+/// Only one compositor picker may be active at a time. A portal request is a
+/// separate D-Bus session, so repeated UI callbacks otherwise create several
+/// identical dialogs stacked on top of each other.
+#[cfg(target_os = "linux")]
+static PORTAL_REQUEST_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+struct PortalRequestGuard;
+
+#[cfg(target_os = "linux")]
+impl Drop for PortalRequestGuard {
+    fn drop(&mut self) {
+        PORTAL_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
+    }
+}
 
 /// Owns the picker window and the draft selection it edits.
 pub(crate) struct MonitorController {
@@ -283,7 +302,16 @@ fn install_commit(
 fn share_through_portal(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>, source: &str) {
     use obs_rs_capture::{open_screencast, CursorMode};
 
-    let cursor = source_settings_document(state, source)
+    if PORTAL_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
+        let waiting = crate::i18n::with_catalog(state.borrow().locale(), |text| {
+            text.monitor_ui.portal_waiting.clone()
+        });
+        ui.set_status_message(waiting);
+        return;
+    }
+
+    let source = source.to_owned();
+    let cursor = source_settings_document(state, &source)
         .as_deref()
         .and_then(|document| Config::parse(document).ok())
         .and_then(|settings| settings.get("capture_cursor").map(str::to_owned))
@@ -297,6 +325,7 @@ fn share_through_portal(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>, sour
     let handshake = std::thread::Builder::new()
         .name("obs-rs-screencast".to_owned())
         .spawn(move || {
+            let _request_guard = PortalRequestGuard;
             let outcome = match open_screencast(
                 None,
                 if cursor {
@@ -318,7 +347,7 @@ fn share_through_portal(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>, sour
                     return;
                 };
                 match outcome {
-                    Ok(token) => ui.invoke_apply_portal_token(token.into()),
+                    Ok(token) => ui.invoke_apply_portal_token(source.into(), token.into()),
                     Err(error) => {
                         ui.set_status_message(
                             format!("Screen sharing was not started: {error}").into(),
@@ -328,6 +357,7 @@ fn share_through_portal(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>, sour
             });
         });
     if let Err(error) = handshake {
+        PORTAL_REQUEST_IN_FLIGHT.store(false, Ordering::Release);
         ui.set_status_message(format!("Screen sharing was not started: {error}").into());
     }
 }
@@ -342,11 +372,11 @@ fn install_portal_token(
     let weak = ui.as_weak();
     let state = Rc::clone(state);
     let renderer = Rc::clone(renderer);
-    ui.on_apply_portal_token(move |token| {
+    ui.on_apply_portal_token(move |source, token| {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        let source = ui.get_selected_source().to_string();
+        let source = source.to_string();
         let document = source_settings_document(&state, &source)
             .as_deref()
             .and_then(|document| Config::parse(document).ok());

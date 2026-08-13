@@ -340,9 +340,6 @@ fn select_mode(modes: &[CameraMode], output: VideoFormat) -> Option<CameraMode> 
 
 fn stable_camera_id(index: &CameraIndex) -> String {
     match index {
-        CameraIndex::Index(number) if cfg!(target_os = "linux") => {
-            format!("v4l2-video{number}")
-        }
         CameraIndex::Index(number) => format!("nokhwa-camera-{number}"),
         CameraIndex::String(value) => {
             let safe = value
@@ -361,6 +358,8 @@ fn stable_camera_id(index: &CameraIndex) -> String {
 }
 
 fn camera_index_from_stable_id(id: &str) -> Result<CameraIndex, CaptureError> {
+    // Accept the old Linux spelling so existing projects migrate by opening
+    // through Nokhwa, but never emit it for newly discovered cameras.
     if let Some(value) = id.strip_prefix("v4l2-video") {
         return value
             .parse::<u32>()
@@ -510,20 +509,13 @@ mod tests {
 
     #[test]
     fn stable_linux_ids_round_trip_to_nokhwa_indices() {
-        assert_eq!(
-            stable_camera_id(&CameraIndex::Index(3)),
-            if cfg!(target_os = "linux") {
-                "v4l2-video3"
-            } else {
-                "nokhwa-camera-3"
-            }
-        );
-        let id = if cfg!(target_os = "linux") {
-            "v4l2-video3"
-        } else {
-            "nokhwa-camera-3"
-        };
+        assert_eq!(stable_camera_id(&CameraIndex::Index(3)), "nokhwa-camera-3");
+        let id = "nokhwa-camera-3";
         assert_eq!(camera_index_from_stable_id(id), Ok(CameraIndex::Index(3)));
+        assert_eq!(
+            camera_index_from_stable_id("v4l2-video3"),
+            Ok(CameraIndex::Index(3))
+        );
     }
 
     #[test]

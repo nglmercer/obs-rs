@@ -46,7 +46,18 @@ impl SourceFactory for WaylandCaptureFactory {
             failure: None,
             retry_countdown: 0,
         };
-        source.reopen();
+        // Creating a source must not open a compositor dialog by itself. The
+        // Add Source flow launches the explicit display picker once; the
+        // resulting restore token is then applied through `update` and opens
+        // the stream without another prompt.
+        if source.restore_token.is_some() {
+            source.reopen();
+        } else {
+            source.failure = Some(
+                "screen sharing has not been approved; choose a display from the screen picker"
+                    .to_owned(),
+            );
+        }
         Ok(Box::new(source))
     }
 }
@@ -114,7 +125,16 @@ impl Source for WaylandCaptureSource {
         }
         self.format = format;
         self.restore_token = token;
-        self.reopen();
+        if self.restore_token.is_some() {
+            self.reopen();
+        } else {
+            self.device = None;
+            self.failure = Some(
+                "screen sharing has not been approved; choose a display from the screen picker"
+                    .to_owned(),
+            );
+            self.retry_countdown = 0;
+        }
         Ok(())
     }
 

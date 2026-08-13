@@ -13,9 +13,6 @@ mod nokhwa_camera;
 #[cfg(target_os = "linux")]
 mod raw_reader;
 #[cfg(target_os = "linux")]
-#[cfg(feature = "legacy-v4l2")]
-mod v4l2;
-#[cfg(target_os = "linux")]
 mod wayland;
 #[cfg(target_os = "linux")]
 mod x11;
@@ -26,9 +23,6 @@ pub use dbus::{open_screencast, CursorMode, ScreenCastSession};
 pub use nokhwa_camera::{discover_nokhwa_cameras, NokhwaCaptureDevice};
 #[cfg(target_os = "linux")]
 pub use raw_reader::RawFrameReader;
-#[cfg(target_os = "linux")]
-#[cfg(feature = "legacy-v4l2")]
-pub use v4l2::V4l2CaptureDevice;
 #[cfg(target_os = "linux")]
 pub use wayland::{
     pipewire_reader_available, wayland_session_available, WaylandCaptureDevice,

@@ -3,8 +3,6 @@ use obs_rs_media::{VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
 
-#[cfg(all(target_os = "linux", feature = "legacy-v4l2"))]
-use super::v4l2::V4l2CaptureDevice;
 use super::{
     device::{CaptureRequest, VideoCaptureDevice},
     settings::{parse_camera_mode, parse_format},
@@ -270,20 +268,6 @@ impl NativeCameraSource {
             Err(error) => failures.push(error.to_string()),
         }
 
-        #[cfg(all(target_os = "linux", feature = "legacy-v4l2"))]
-        if self.device_id.starts_with("v4l2-") {
-            match V4l2CaptureDevice::from_device_id(&self.device_id, &self.name) {
-                Ok(mut device) => match device.start(self.format) {
-                    Ok(()) => {
-                        self.failure = None;
-                        self.device = Some(Box::new(device));
-                        return;
-                    }
-                    Err(error) => failures.push(error.to_string()),
-                },
-                Err(error) => failures.push(error.to_string()),
-            }
-        }
         self.failure = Some(
             failures
                 .into_iter()

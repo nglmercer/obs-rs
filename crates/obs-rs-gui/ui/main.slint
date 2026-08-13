@@ -178,7 +178,10 @@ export component MainWindow inherits Window {
         callback create-collection(string);
         callback save-collection();
         // Reports the desktop portal's answer back onto the UI thread.
-        callback apply-portal-token(string);
+        // Includes the source that initiated the request so a selection
+        // change while the compositor dialog is open cannot apply the token
+        // to a different source.
+        callback apply-portal-token(string, string);
         // Interactive canvas editing: `handle` is 0 for a move and 1-8 for the
         // resize handles, with the deltas already in canvas pixels.
         callback transform-dragged(int, int, int);
