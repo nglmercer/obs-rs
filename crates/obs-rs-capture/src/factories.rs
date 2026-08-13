@@ -3,11 +3,11 @@ use obs_rs_media::{VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "legacy-v4l2"))]
 use super::v4l2::V4l2CaptureDevice;
 use super::{
-    device::VideoCaptureDevice,
-    settings::parse_format,
+    device::{CaptureRequest, VideoCaptureDevice},
+    settings::{parse_camera_mode, parse_format},
     simulated::{SimulatedCaptureDevice, TestPatternDevice},
     types::CaptureKind,
 };
@@ -27,7 +27,7 @@ pub const WINDOW_CAPTURE_SOURCE_KIND: &str = "window_capture";
 /// Stable source kind for the direct Linux X11 window adapter.
 #[cfg(target_os = "linux")]
 pub const X11_WINDOW_CAPTURE_SOURCE_KIND: &str = "x11_window_capture";
-/// Stable source kind for a camera capture source with a V4L2/portable backend.
+/// Stable source kind for a camera capture source with a Nokhwa/portable backend.
 pub const CAMERA_CAPTURE_SOURCE_KIND: &str = "camera_capture";
 
 /// Factory that adapts [`TestPatternDevice`] to the Rust source API.
@@ -142,13 +142,17 @@ impl SourceFactory for SimulatedCaptureFactory {
             .get("device_id")
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(self.kind.as_str());
-        #[cfg(target_os = "linux")]
-        if self.capture_kind == CaptureKind::Camera && device_id.starts_with("v4l2-") {
-            let mut source = V4l2CaptureSource {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        if self.capture_kind == CaptureKind::Camera
+            && (device_id.starts_with("v4l2-") || device_id.starts_with("nokhwa-camera-"))
+        {
+            let native_mode = parse_camera_mode(settings)?;
+            let mut source = NativeCameraSource {
                 kind: self.kind.clone(),
                 name: name.to_owned(),
                 format,
                 device_id: device_id.to_owned(),
+                native_mode,
                 device: None,
                 failure: None,
                 retry_countdown: CAMERA_RETRY_FRAMES,
@@ -220,14 +224,15 @@ impl Source for SimulatedCaptureSource {
     }
 }
 
-#[cfg(target_os = "linux")]
-struct V4l2CaptureSource {
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+struct NativeCameraSource {
     kind: Identifier,
     name: String,
     format: VideoFormat,
     device_id: String,
+    native_mode: Option<super::types::CameraMode>,
     /// `None` while the camera cannot be opened; see `failure` for the reason.
-    device: Option<V4l2CaptureDevice>,
+    device: Option<Box<dyn VideoCaptureDevice>>,
     failure: Option<String>,
     /// Renders since the last attempt to reopen a camera that was unavailable.
     retry_countdown: u32,
@@ -237,34 +242,59 @@ struct V4l2CaptureSource {
 ///
 /// Spawning a process on every frame would cost more than the capture itself,
 /// so a camera that is busy or unplugged is retried about twice a second.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const CAMERA_RETRY_FRAMES: u32 = 15;
 
-#[cfg(target_os = "linux")]
-impl V4l2CaptureSource {
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl NativeCameraSource {
     /// Opens the camera, recording why if it cannot be opened.
     fn reopen(&mut self) {
         self.device = None;
         self.retry_countdown = CAMERA_RETRY_FRAMES;
-        let device = match V4l2CaptureDevice::from_device_id(&self.device_id, &self.name) {
-            Ok(device) => device,
-            Err(error) => {
-                self.failure = Some(error.to_string());
-                return;
+        let mut failures = Vec::new();
+        match crate::NokhwaCaptureDevice::from_device_id(&self.device_id, &self.name) {
+            Ok(mut device) => {
+                let request = self.native_mode.map_or_else(
+                    || CaptureRequest::output(self.format),
+                    |mode| CaptureRequest::camera(self.format, mode),
+                );
+                match device.start_capture(request) {
+                    Ok(()) => {
+                        self.failure = None;
+                        self.device = Some(Box::new(device));
+                        return;
+                    }
+                    Err(error) => failures.push(error.to_string()),
+                }
             }
-        };
-        let mut device = device;
-        if let Err(error) = device.start(self.format) {
-            self.failure = Some(error.to_string());
-            return;
+            Err(error) => failures.push(error.to_string()),
         }
-        self.failure = None;
-        self.device = Some(device);
+
+        #[cfg(all(target_os = "linux", feature = "legacy-v4l2"))]
+        if self.device_id.starts_with("v4l2-") {
+            match V4l2CaptureDevice::from_device_id(&self.device_id, &self.name) {
+                Ok(mut device) => match device.start(self.format) {
+                    Ok(()) => {
+                        self.failure = None;
+                        self.device = Some(Box::new(device));
+                        return;
+                    }
+                    Err(error) => failures.push(error.to_string()),
+                },
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+        self.failure = Some(
+            failures
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| format!("camera {} is unavailable", self.device_id)),
+        );
     }
 }
 
-#[cfg(target_os = "linux")]
-impl Source for V4l2CaptureSource {
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl Source for NativeCameraSource {
     fn kind(&self) -> &Identifier {
         &self.kind
     }
@@ -277,18 +307,24 @@ impl Source for V4l2CaptureSource {
         let format = parse_format(settings)?;
         let device_id = settings
             .get("device_id")
-            .filter(|value| value.starts_with("v4l2-"))
+            .filter(|value| value.starts_with("v4l2-") || value.starts_with("nokhwa-camera-"))
             .ok_or_else(|| {
-                SourceError::invalid_setting("device_id", "expected a V4L2 camera ID")
+                SourceError::invalid_setting("device_id", "expected a native camera ID")
             })?;
-        // Restarting the capture process drops frames and re-negotiates the
-        // camera, so it only happens when the camera or the format changed —
+        let native_mode = parse_camera_mode(settings)?;
+        // Restarting the camera stream drops frames and re-negotiates the
+        // device, so it only happens when the camera, mode, or format changed —
         // not because an unrelated property was edited.
-        if format == self.format && device_id == self.device_id && self.device.is_some() {
+        if format == self.format
+            && device_id == self.device_id
+            && native_mode == self.native_mode
+            && self.device.is_some()
+        {
             return Ok(());
         }
         self.format = format;
         device_id.clone_into(&mut self.device_id);
+        self.native_mode = native_mode;
         self.reopen();
         Ok(())
     }

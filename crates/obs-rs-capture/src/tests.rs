@@ -77,6 +77,44 @@ fn device_capabilities_are_sorted_deduplicated_and_handle_unknown_formats() {
 }
 
 #[test]
+fn camera_capabilities_keep_native_modes_separate_from_output_formats() {
+    let mode = CameraMode::new(
+        CameraPixelFormat::Mjpeg,
+        1280,
+        720,
+        FrameRate::new(30, 1).expect("rate"),
+    )
+    .expect("mode");
+    let camera = CameraDevice::new("camera-1", "Webcam", vec![mode, mode]).expect("camera");
+
+    assert_eq!(camera.modes(), &[mode]);
+    assert!(camera.info().capabilities().supports_camera_mode(mode));
+    assert!(camera.info().capabilities().hotplug());
+    assert!(camera.info().capabilities().reconnectable());
+    assert_eq!(camera.info().target().id().as_str(), "camera-1");
+    assert_eq!(camera.info().target().kind(), CaptureKind::Camera);
+}
+
+#[test]
+fn catalog_tracks_hotplug_state_without_changing_stable_target_id() {
+    let info =
+        CaptureDeviceInfo::new("camera", "Camera", CaptureKind::Camera).expect("device info");
+    let id = info.id().clone();
+    let mut catalog = CaptureCatalog::new();
+    catalog.register(info).expect("register camera");
+    catalog
+        .apply(CaptureEvent::StateChanged {
+            id: id.clone(),
+            state: CaptureDeviceState::Disconnected,
+        })
+        .expect("state event");
+
+    let disconnected = catalog.get(id.as_str()).expect("retained descriptor");
+    assert_eq!(disconnected.state(), CaptureDeviceState::Disconnected);
+    assert_eq!(disconnected.id(), &id);
+}
+
+#[test]
 fn provider_refreshes_catalog_atomically_and_deterministically() {
     let provider = SimulatedCaptureProvider::new();
     let mut catalog = CaptureCatalog::new();

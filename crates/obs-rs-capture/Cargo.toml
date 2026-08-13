@@ -5,8 +5,23 @@ edition.workspace = true
 publish.workspace = true
 version.workspace = true
 
+[features]
+default = ["legacy-v4l2"]
+# Keep the subprocess adapter available while native Nokhwa deployments are
+# tested against real hardware. The source factory tries Nokhwa first.
+legacy-v4l2 = []
+
 [dependencies]
 obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
 obs-rs-util = { path = "../obs-rs-util" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nokhwa = { version = "0.10.11", features = ["input-v4l", "camera-sync-impl"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nokhwa = { version = "0.10.11", features = ["input-avfoundation", "camera-sync-impl"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+nokhwa = { version = "0.10.11", features = ["input-msmf", "camera-sync-impl"] }

@@ -180,6 +180,10 @@ export component SourcePropertiesWindow inherits Window {
                         }
                     }
                     SettingHint { text: I18n.text.property_ui.transform_hint; }
+                }
+
+                SettingsGroup {
+                    title: I18n.text.filters_group;
                     SettingRow {
                         label: I18n.text.filters_prefix;
                         LineEdit {

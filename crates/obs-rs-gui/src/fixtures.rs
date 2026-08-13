@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use obs_rs_builtins::BuiltinPlugin;
-use obs_rs_capture::CaptureKind;
+use obs_rs_capture::{CameraMode, CaptureKind};
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, VideoFormat};
 use obs_rs_project::{Profile, Project, SceneSpec, SourceSpec};
@@ -75,13 +75,21 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
         let device_id = if kind == "camera_capture" {
             devices
                 .iter()
-                .find(|(id, _)| id.starts_with("v4l2-"))
+                .find(|(id, _)| id.starts_with("v4l2-") || id.starts_with("nokhwa-camera-"))
                 .or_else(|| devices.first())
                 .map_or(fallback, |(id, _)| id.as_str())
         } else {
             devices.first().map_or(fallback, |(id, _)| id.as_str())
         };
         settings.set("device_id", device_id)?;
+        if kind == "camera_capture" {
+            if let Some(mode) = camera_modes_for_device(device_id).first().copied() {
+                settings.set("capture_width", &mode.width().to_string())?;
+                settings.set("capture_height", &mode.height().to_string())?;
+                settings.set("capture_fps", &camera_fps_setting(mode))?;
+                settings.set("capture_pixel_format", mode.pixel_format().as_str())?;
+            }
+        }
     }
     if kind == "x11_screen_capture" {
         if let Ok(display) = std::env::var("DISPLAY") {
@@ -261,6 +269,35 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     devices.sort_by(|left, right| left.0.cmp(&right.0));
     devices.dedup_by(|left, right| left.0 == right.0);
     devices
+}
+
+/// Returns the native modes reported by the selected camera.
+///
+/// Modes are looked up separately from the displayable device list: that list
+/// is also used by non-camera sources and only needs stable IDs and labels.
+/// An unavailable device produces an empty list, so the properties form omits
+/// controls it cannot honour.
+pub(crate) fn camera_modes_for_device(device_id: &str) -> Vec<CameraMode> {
+    let Ok(plugin) = BuiltinPlugin::new() else {
+        return Vec::new();
+    };
+    plugin
+        .discover_platform_capture_devices()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|device| device.kind() == CaptureKind::Camera && device.id().as_str() == device_id)
+        .map_or_else(Vec::new, |device| {
+            device.capabilities().camera_modes().to_vec()
+        })
+}
+
+fn camera_fps_setting(mode: CameraMode) -> String {
+    let frame_rate = mode.frame_rate();
+    if frame_rate.denominator() == 1 {
+        frame_rate.numerator().to_string()
+    } else {
+        format!("{}/{}", frame_rate.numerator(), frame_rate.denominator())
+    }
 }
 
 fn scene(id: &str, name: &str, color: &str) -> Result<SceneSpec, Box<dyn Error>> {

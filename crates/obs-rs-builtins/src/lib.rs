@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use obs_rs_capture::CaptureKind;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use obs_rs_capture::PlatformCaptureProvider;
 use obs_rs_capture::{CaptureDeviceInfo, CaptureError, CaptureProvider, SimulatedCaptureProvider};
@@ -69,9 +71,34 @@ impl BuiltinPlugin {
         &self,
     ) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
         #[cfg(target_os = "macos")]
-        return obs_rs_capture_macos::MacOsCaptureAdapter::default().discover();
+        {
+            let mut devices = obs_rs_capture_macos::MacOsCaptureAdapter::default().discover()?;
+            // Screen/window capture stays on the native helper boundary, while
+            // cameras use the shared Nokhwa capability model.
+            devices.retain(|device| device.kind() != CaptureKind::Camera);
+            devices.extend(
+                obs_rs_capture::discover_nokhwa_cameras()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(obs_rs_capture::CameraDevice::into_info),
+            );
+            return Ok(devices);
+        }
         #[cfg(target_os = "windows")]
-        return obs_rs_capture_windows::WindowsCaptureAdapter::default().discover();
+        {
+            let mut devices =
+                obs_rs_capture_windows::WindowsCaptureAdapter::default().discover()?;
+            // Screen/window capture stays on the native helper boundary, while
+            // cameras use the shared Nokhwa capability model.
+            devices.retain(|device| device.kind() != CaptureKind::Camera);
+            devices.extend(
+                obs_rs_capture::discover_nokhwa_cameras()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(obs_rs_capture::CameraDevice::into_info),
+            );
+            return Ok(devices);
+        }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         PlatformCaptureProvider::new().discover()
     }

@@ -8,9 +8,12 @@
 
 #[cfg(target_os = "linux")]
 mod dbus;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+mod nokhwa_camera;
 #[cfg(target_os = "linux")]
 mod raw_reader;
 #[cfg(target_os = "linux")]
+#[cfg(feature = "legacy-v4l2")]
 mod v4l2;
 #[cfg(target_os = "linux")]
 mod wayland;
@@ -19,9 +22,12 @@ mod x11;
 
 #[cfg(target_os = "linux")]
 pub use dbus::{open_screencast, CursorMode, ScreenCastSession};
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub use nokhwa_camera::{discover_nokhwa_cameras, NokhwaCaptureDevice};
 #[cfg(target_os = "linux")]
 pub use raw_reader::RawFrameReader;
 #[cfg(target_os = "linux")]
+#[cfg(feature = "legacy-v4l2")]
 pub use v4l2::V4l2CaptureDevice;
 #[cfg(target_os = "linux")]
 pub use wayland::{
@@ -49,7 +55,7 @@ mod types;
 mod tests;
 
 pub use adapter::PlatformCaptureAdapter;
-pub use device::VideoCaptureDevice;
+pub use device::{CaptureRequest, VideoCaptureDevice};
 pub use error::CaptureError;
 pub use factories::{
     SimulatedCaptureFactory, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
@@ -70,6 +76,7 @@ pub use provider::{CaptureProvider, PlatformCaptureProvider, SimulatedCapturePro
 pub use simulated::{SimulatedCaptureDevice, TestPatternDevice};
 pub use stream_device::StreamCaptureDevice;
 pub use types::{
-    CaptureCapabilities, CaptureCatalog, CaptureDeviceInfo, CaptureEvent, CaptureKind,
-    CapturePermission,
+    CameraDevice, CameraMode, CameraPixelFormat, CaptureBackendCapabilities, CaptureCapabilities,
+    CaptureCatalog, CaptureDeviceInfo, CaptureDeviceState, CaptureEvent, CaptureKind,
+    CapturePermission, CaptureTarget,
 };

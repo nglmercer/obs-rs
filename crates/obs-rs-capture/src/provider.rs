@@ -1,5 +1,7 @@
 #[cfg(target_os = "linux")]
-use std::{env, fs, process::Command};
+use std::env;
+#[cfg(all(target_os = "linux", feature = "legacy-v4l2"))]
+use std::{fs, process::Command};
 
 use super::{
     adapter::PlatformCaptureAdapter,
@@ -31,10 +33,11 @@ pub trait CaptureProvider {
 /// A host-platform discovery provider with an explicit unavailable fallback.
 ///
 /// Linux exposes a real local X11 screen descriptor when `DISPLAY` is present
-/// and discovers capture-capable V4L2 camera nodes. macOS and Windows keep a
-/// typed unavailable result until their safe Rust capture adapters are
-/// supplied. Callers can therefore show capability state instead of confusing
-/// a missing platform backend with an empty device list.
+/// and discovers capture-capable cameras through Nokhwa. macOS and Windows
+/// expose their Nokhwa cameras here while their screen/window adapters remain
+/// in the separate native-helper crates. Callers can therefore show capability
+/// state instead of confusing a missing platform backend with an empty device
+/// list.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlatformCaptureProvider;
 
@@ -55,16 +58,12 @@ impl CaptureProvider for PlatformCaptureProvider {
 
         #[cfg(target_os = "macos")]
         {
-            Err(CaptureError::PlatformUnavailable {
-                message: "macOS ScreenCaptureKit adapter is not enabled".to_owned(),
-            })
+            discover_nokhwa_platform_devices()
         }
 
         #[cfg(target_os = "windows")]
         {
-            Err(CaptureError::PlatformUnavailable {
-                message: "Windows Graphics Capture adapter is not enabled".to_owned(),
-            })
+            discover_nokhwa_platform_devices()
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -76,7 +75,22 @@ impl CaptureProvider for PlatformCaptureProvider {
     }
 }
 
-/// Linux platform boundary for portal/PipeWire, X11, and V4L2 capture.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn discover_nokhwa_platform_devices() -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
+    let devices = crate::discover_nokhwa_cameras()?
+        .into_iter()
+        .map(super::types::CameraDevice::into_info)
+        .collect::<Vec<_>>();
+    if devices.is_empty() {
+        Err(CaptureError::PlatformUnavailable {
+            message: "Nokhwa reported no native camera devices".to_owned(),
+        })
+    } else {
+        Ok(devices)
+    }
+}
+
+/// Linux platform boundary for portal/PipeWire, X11, and native camera capture.
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LinuxCaptureAdapter;
@@ -84,7 +98,7 @@ pub struct LinuxCaptureAdapter;
 #[cfg(target_os = "linux")]
 impl PlatformCaptureAdapter for LinuxCaptureAdapter {
     fn backend_name(&self) -> &'static str {
-        "linux-portal-x11-v4l2"
+        "linux-portal-x11-nokhwa"
     }
 
     fn discover(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
@@ -109,10 +123,11 @@ impl PlatformCaptureAdapter for LinuxCaptureAdapter {
                 devices.extend(discover_x11_windows(&display));
             }
         }
-        devices.extend(discover_v4l2_devices());
+        devices.extend(discover_nokhwa_devices());
         if devices.is_empty() {
             return Err(CaptureError::PlatformUnavailable {
-                message: "Wayland portal, DISPLAY, and /dev/video* are unavailable".to_owned(),
+                message: "Wayland portal, DISPLAY, and native camera devices are unavailable"
+                    .to_owned(),
             });
         }
         Ok(devices)
@@ -123,15 +138,23 @@ impl PlatformCaptureAdapter for LinuxCaptureAdapter {
             return crate::WaylandCaptureDevice::open(stable_id, "Wayland display", None)
                 .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>);
         }
-        if let Some(node) = stable_id.strip_prefix("v4l2-") {
-            if !node.starts_with("video") || !node[5..].bytes().all(|byte| byte.is_ascii_digit()) {
-                return Err(CaptureError::InvalidDevice {
-                    reason: "V4L2 stable ID is invalid".to_owned(),
-                });
+        if stable_id.starts_with("v4l2-") || stable_id.starts_with("nokhwa-camera-") {
+            match crate::NokhwaCaptureDevice::from_device_id(stable_id, stable_id) {
+                Ok(device) => return Ok(Box::new(device)),
+                Err(nokhwa_error) => {
+                    #[cfg(feature = "legacy-v4l2")]
+                    if let Some(node) = stable_id.strip_prefix("v4l2-") {
+                        if node.starts_with("video")
+                            && node[5..].bytes().all(|byte| byte.is_ascii_digit())
+                        {
+                            let path = std::path::PathBuf::from("/dev").join(node);
+                            return crate::V4l2CaptureDevice::new(stable_id, stable_id, path)
+                                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>);
+                        }
+                    }
+                    return Err(nokhwa_error);
+                }
             }
-            let path = std::path::PathBuf::from("/dev").join(node);
-            return crate::V4l2CaptureDevice::new(stable_id, stable_id, path)
-                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>);
         }
         let display = env::var("DISPLAY").map_err(|error| CaptureError::PlatformUnavailable {
             message: format!("DISPLAY is unavailable: {error}"),
@@ -211,7 +234,20 @@ fn discover_x11_windows(display: &str) -> Vec<CaptureDeviceInfo> {
 }
 
 #[cfg(target_os = "linux")]
-fn discover_v4l2_devices() -> Vec<CaptureDeviceInfo> {
+fn discover_nokhwa_devices() -> Vec<CaptureDeviceInfo> {
+    let mut devices = crate::discover_nokhwa_cameras()
+        .unwrap_or_default()
+        .into_iter()
+        .map(super::types::CameraDevice::into_info)
+        .collect::<Vec<_>>();
+    if devices.is_empty() {
+        devices.extend(discover_legacy_v4l2_devices());
+    }
+    devices
+}
+
+#[cfg(feature = "legacy-v4l2")]
+fn discover_legacy_v4l2_devices() -> Vec<CaptureDeviceInfo> {
     let Ok(entries) = fs::read_dir("/dev") else {
         return Vec::new();
     };
@@ -234,7 +270,12 @@ fn discover_v4l2_devices() -> Vec<CaptureDeviceInfo> {
     devices
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(feature = "legacy-v4l2"))]
+fn discover_legacy_v4l2_devices() -> Vec<CaptureDeviceInfo> {
+    Vec::new()
+}
+
+#[cfg(all(target_os = "linux", feature = "legacy-v4l2"))]
 fn v4l2_capture_label(path: &std::path::Path) -> Option<String> {
     // `video4linux` also exposes metadata-only nodes. Ask the userspace
     // utility for capabilities so those nodes never become misleading camera
