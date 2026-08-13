@@ -22,7 +22,7 @@ pub use format::VideoFormat;
 pub use frame::VideoFrame;
 pub use metrics::{
     frame_memory_metrics, reset_frame_memory_metrics, reset_thread_frame_memory_metrics,
-    thread_frame_memory_metrics, FrameMemoryMetrics,
+    thread_frame_memory_metrics, FrameMemoryMetrics, LatencyMetrics,
 };
 pub use pixel::{PixelFormat, RawVideoFrame};
 pub use time::{sleep_precise, FrameRate, Timestamp, SLEEP_SPIN_WINDOW};

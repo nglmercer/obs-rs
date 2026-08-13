@@ -1,6 +1,7 @@
 use obs_rs_media::{FrameTransform, FrameTransition, MediaError, VideoFrame};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_util::Identifier;
+use std::time::Instant;
 
 use super::{
     error::{identifier, RuntimeError},
@@ -57,10 +58,12 @@ impl Runtime {
             let instance = sources
                 .get_mut(source_id)
                 .ok_or(RuntimeError::UnknownSource(*source_id))?;
+            let capture_started = Instant::now();
             let frame = instance
                 .source
                 .render(request)
                 .map_err(RuntimeError::Source)?;
+            metrics.capture_latency.record(capture_started.elapsed());
             let Some(frame) = frame else {
                 metrics.empty_sources = metrics.empty_sources.saturating_add(1);
                 continue;

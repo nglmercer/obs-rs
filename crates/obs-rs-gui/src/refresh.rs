@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use obs_rs_media::{FrameTransform, FrameTransition, VideoFrame};
 use obs_rs_project::{Profile, SceneSpec, SourceSpec};
@@ -135,21 +135,44 @@ pub(crate) fn refresh_preview_frames_for_view(
         return (None, None, None);
     };
     match (&result.preview_scene, &result.preview_frame) {
-        (_, Some(frame)) => ui.set_preview_image(frame_to_image(frame)),
+        (_, Some(frame)) => {
+            let copy_started = Instant::now();
+            let image = frame_to_image(frame);
+            worker.record_frame_copy(copy_started.elapsed());
+            let update_started = Instant::now();
+            ui.set_preview_image(image);
+            worker.record_slint_update(update_started.elapsed());
+        }
         (None, None) => ui.set_preview_image(Image::default()),
         (Some(_), None) => {}
     }
     match (&result.program_scene, &result.program_frame) {
-        (_, Some(frame)) => ui.set_program_image(frame_to_image(frame)),
+        (_, Some(frame)) => {
+            let copy_started = Instant::now();
+            let image = frame_to_image(frame);
+            worker.record_frame_copy(copy_started.elapsed());
+            let update_started = Instant::now();
+            ui.set_program_image(image);
+            worker.record_slint_update(update_started.elapsed());
+        }
         (None, None) => ui.set_program_image(Image::default()),
         (Some(_), None) => {}
     }
+    let performance = worker.performance();
     ui.set_preview_metrics(
         format!(
-            "{} · queue={} · dropped={}",
+            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · copy p95={} µs · Slint p95={} µs · callback p95={} µs",
             result.metrics,
             worker.queue_depth(),
-            worker.dropped_requests()
+            worker.dropped_requests(),
+            nanos_to_micros(performance.preview_render.percentile_nanos(50)),
+            nanos_to_micros(performance.preview_render.percentile_nanos(95)),
+            nanos_to_micros(performance.preview_render.percentile_nanos(99)),
+            nanos_to_micros(performance.preview_render.max_nanos()),
+            nanos_to_micros(performance.program_render.percentile_nanos(95)),
+            nanos_to_micros(performance.frame_copy.percentile_nanos(95)),
+            nanos_to_micros(performance.slint_update.percentile_nanos(95)),
+            nanos_to_micros(performance.ui_callback.percentile_nanos(95)),
         )
         .into(),
     );
@@ -158,6 +181,10 @@ pub(crate) fn refresh_preview_frames_for_view(
         result.program_frame,
         result.error.map(|error| format!("Preview worker: {error}")),
     )
+}
+
+const fn nanos_to_micros(nanos: u64) -> u64 {
+    nanos / 1_000
 }
 
 pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {

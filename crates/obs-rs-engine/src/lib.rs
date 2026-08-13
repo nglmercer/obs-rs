@@ -12,7 +12,7 @@ mod worker;
 
 pub use worker::{EngineWorker, EngineWorkerSnapshot};
 
-use std::{error::Error, fmt, path::PathBuf, sync::Arc};
+use std::{error::Error, fmt, path::PathBuf, sync::Arc, time::Instant};
 
 use obs_rs_audio::{
     AudioBuffer, AudioDeviceError, AudioDeviceKind, AudioFormat, AudioInput, AudioInputProvider,
@@ -21,7 +21,7 @@ use obs_rs_audio::{
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
-use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{FrameRate, LatencyMetrics, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, AudioInputRequirement, EncodedPacket, OutputError,
     PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, RleVideoEncoder, StreamMetrics,
@@ -207,6 +207,10 @@ pub struct EngineStats {
     pub audio_peak_milli: u16,
     pub desktop_peak_milli: u16,
     pub microphone_peak_milli: u16,
+    pub video_encode_latency: LatencyMetrics,
+    pub audio_encode_latency: LatencyMetrics,
+    pub output_submit_latency: LatencyMetrics,
+    pub audio_blocks_per_video_tick: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -976,6 +980,8 @@ impl EngineSession {
             self.stats.last_video_timestamp = Some(frame.timestamp());
         }
         self.stats.ticks = self.stats.ticks.saturating_add(1);
+        self.stats.audio_blocks_per_video_tick =
+            u32::try_from(audio_blocks.len()).unwrap_or(u32::MAX);
         self.stats.audio_peak_milli = audio_blocks.last().map_or(0, audio_peak_milli);
         let _ = self.timeline.observe(
             timestamp,
@@ -1016,6 +1022,8 @@ impl EngineSession {
         }
         self.dispatch_video(frame)?;
         self.stats.ticks = self.stats.ticks.saturating_add(1);
+        self.stats.audio_blocks_per_video_tick =
+            u32::try_from(audio_blocks.len()).unwrap_or(u32::MAX);
         self.stats.video_frames = self.stats.video_frames.saturating_add(1);
         self.stats.last_video_timestamp = Some(frame.timestamp());
         self.stats.audio_peak_milli = audio_blocks.last().map_or(0, audio_peak_milli);
@@ -1407,7 +1415,9 @@ impl EngineSession {
                 .streaming
                 .as_mut()
                 .expect("raw audio requirement comes from an active stream");
+            let started = Instant::now();
             stream.push_raw_audio(audio.clone())?;
+            self.stats.output_submit_latency.record(started.elapsed());
         }
         if self.packetized_audio_required() {
             #[cfg(test)]
@@ -1415,8 +1425,12 @@ impl EngineSession {
                 self.reference_audio_encode_calls =
                     self.reference_audio_encode_calls.saturating_add(1);
             }
+            let started = Instant::now();
             let packet = self.audio_encoder.encode(audio)?;
+            self.stats.audio_encode_latency.record(started.elapsed());
+            let started = Instant::now();
             self.emit_packet(packet)?;
+            self.stats.output_submit_latency.record(started.elapsed());
         }
         Ok(())
     }
@@ -1427,7 +1441,9 @@ impl EngineSession {
                 .streaming
                 .as_mut()
                 .expect("raw video requirement comes from an active stream");
+            let started = Instant::now();
             stream.push_raw_video(frame.clone())?;
+            self.stats.output_submit_latency.record(started.elapsed());
         }
         if self.packetized_video_required() {
             #[cfg(test)]
@@ -1435,8 +1451,12 @@ impl EngineSession {
                 self.reference_video_encode_calls =
                     self.reference_video_encode_calls.saturating_add(1);
             }
+            let started = Instant::now();
             let packet = self.video_encoder.encode(frame)?;
+            self.stats.video_encode_latency.record(started.elapsed());
+            let started = Instant::now();
             self.emit_packet(packet)?;
+            self.stats.output_submit_latency.record(started.elapsed());
         }
         Ok(())
     }
@@ -2045,6 +2065,13 @@ mod tests {
 
             assert_eq!(engine.reference_video_encode_calls, 0, "{endpoint}");
             assert_eq!(engine.reference_audio_encode_calls, 0, "{endpoint}");
+            assert_eq!(engine.stats.video_encode_latency.samples(), 0, "{endpoint}");
+            assert_eq!(engine.stats.audio_encode_latency.samples(), 0, "{endpoint}");
+            assert_eq!(
+                engine.stats.output_submit_latency.samples(),
+                2,
+                "{endpoint}"
+            );
             let metrics = engine
                 .snapshot()
                 .production_stream_metrics
@@ -2071,6 +2098,9 @@ mod tests {
 
         assert_eq!(engine.reference_video_encode_calls, 1);
         assert_eq!(engine.reference_audio_encode_calls, 1);
+        assert_eq!(engine.stats.video_encode_latency.samples(), 1);
+        assert_eq!(engine.stats.audio_encode_latency.samples(), 1);
+        assert_eq!(engine.stats.output_submit_latency.samples(), 2);
         engine.finish_recording().expect("finalize recording");
         std::fs::remove_file(path).expect("remove recording");
     }

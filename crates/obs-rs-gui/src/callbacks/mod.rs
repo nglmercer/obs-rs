@@ -67,6 +67,7 @@ pub(crate) fn start_preview_timer(
         let Some(ui) = weak.upgrade() else {
             return;
         };
+        let callback_started = Instant::now();
         let (revision, preview_scene, program_scene, output_active) = {
             let state = state.borrow();
             (
@@ -133,6 +134,7 @@ pub(crate) fn start_preview_timer(
             docks.sync(&ui);
             last_output_ui_refresh = Instant::now();
         }
+        preview_worker.record_ui_callback(callback_started.elapsed());
     });
     timer
 }

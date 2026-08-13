@@ -172,15 +172,20 @@ impl PreviewRenderer {
 
     pub(crate) fn metrics_summary(&self) -> String {
         let metrics = self.runtime.compositor_metrics();
+        let capture = metrics.capture_latency();
         format!(
-            "Preview work: renders={} · source requests={} · frames={} · empty={} · transforms={} · filters={} · blends={}",
+            "Preview work: renders={} · source requests={} · frames={} · empty={} · transforms={} · filters={} · blends={} · capture p50/p95/p99/max={}/{}/{}/{} µs",
             metrics.render_calls(),
             metrics.source_requests(),
             metrics.source_frames(),
             metrics.empty_sources(),
             metrics.transformed_frames(),
             metrics.filtered_frames(),
-            metrics.blended_layers()
+            metrics.blended_layers(),
+            capture.percentile_nanos(50) / 1_000,
+            capture.percentile_nanos(95) / 1_000,
+            capture.percentile_nanos(99) / 1_000,
+            capture.max_nanos() / 1_000,
         )
     }
 }

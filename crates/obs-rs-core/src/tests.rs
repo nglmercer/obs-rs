@@ -201,6 +201,7 @@ fn compositor_metrics_report_work_and_reset() {
     assert_eq!(metrics.transformed_frames(), 1);
     assert_eq!(metrics.filtered_frames(), 1);
     assert_eq!(metrics.blended_layers(), 0);
+    assert_eq!(metrics.capture_latency().samples(), 1);
 
     runtime.reset_compositor_metrics();
     assert_eq!(runtime.compositor_metrics(), CompositorMetrics::default());

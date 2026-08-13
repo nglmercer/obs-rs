@@ -1,3 +1,5 @@
+use obs_rs_media::LatencyMetrics;
+
 /// Counters for CPU compositor work and source behavior.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CompositorMetrics {
@@ -8,6 +10,7 @@ pub struct CompositorMetrics {
     pub(crate) transformed_frames: u64,
     pub(crate) filtered_frames: u64,
     pub(crate) blended_layers: u64,
+    pub(crate) capture_latency: LatencyMetrics,
 }
 
 impl CompositorMetrics {
@@ -51,5 +54,11 @@ impl CompositorMetrics {
     #[must_use]
     pub const fn blended_layers(self) -> u64 {
         self.blended_layers
+    }
+
+    /// Distribution of source capture/render call latency.
+    #[must_use]
+    pub const fn capture_latency(self) -> LatencyMetrics {
+        self.capture_latency
     }
 }

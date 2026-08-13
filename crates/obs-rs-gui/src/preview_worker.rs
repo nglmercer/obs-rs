@@ -5,9 +5,10 @@ use std::{
         Arc, Condvar, Mutex,
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
-use obs_rs_media::VideoFrame;
+use obs_rs_media::{LatencyMetrics, VideoFrame};
 use obs_rs_project::Project;
 
 use crate::PreviewRenderer;
@@ -37,6 +38,26 @@ struct SharedRequest {
     stopped: AtomicBool,
 }
 
+#[derive(Clone, Copy)]
+struct PreviewLoopShared<'a> {
+    request: &'a SharedRequest,
+    result: &'a Mutex<Option<PreviewResult>>,
+    applied_revision: &'a AtomicU64,
+    queue_depth: &'a AtomicUsize,
+    dropped_requests: &'a AtomicU64,
+    performance: &'a Mutex<PreviewPerformanceSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PreviewPerformanceSnapshot {
+    pub(crate) preview_render: LatencyMetrics,
+    pub(crate) program_render: LatencyMetrics,
+    pub(crate) worker: LatencyMetrics,
+    pub(crate) frame_copy: LatencyMetrics,
+    pub(crate) slint_update: LatencyMetrics,
+    pub(crate) ui_callback: LatencyMetrics,
+}
+
 /// Background scene compositor with capacity-one latest-request/result slots.
 pub(crate) struct PreviewWorker {
     request: Arc<SharedRequest>,
@@ -44,6 +65,7 @@ pub(crate) struct PreviewWorker {
     applied_revision: Arc<AtomicU64>,
     queue_depth: Arc<AtomicUsize>,
     dropped_requests: Arc<AtomicU64>,
+    performance: Arc<Mutex<PreviewPerformanceSnapshot>>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -58,22 +80,27 @@ impl PreviewWorker {
         let applied_revision = Arc::new(AtomicU64::new(u64::MAX));
         let queue_depth = Arc::new(AtomicUsize::new(0));
         let dropped_requests = Arc::new(AtomicU64::new(0));
+        let performance = Arc::new(Mutex::new(PreviewPerformanceSnapshot::default()));
         let thread_request = Arc::clone(&request);
         let thread_result = Arc::clone(&result);
         let thread_revision = Arc::clone(&applied_revision);
         let thread_depth = Arc::clone(&queue_depth);
         let thread_drops = Arc::clone(&dropped_requests);
+        let thread_performance = Arc::clone(&performance);
         let join = thread::Builder::new()
             .name("obs-rs-preview".to_owned())
             .spawn(move || {
                 preview_loop(
                     &project,
                     revision,
-                    &thread_request,
-                    &thread_result,
-                    &thread_revision,
-                    &thread_depth,
-                    &thread_drops,
+                    PreviewLoopShared {
+                        request: &thread_request,
+                        result: &thread_result,
+                        applied_revision: &thread_revision,
+                        queue_depth: &thread_depth,
+                        dropped_requests: &thread_drops,
+                        performance: &thread_performance,
+                    },
                 );
             })?;
         Ok(Self {
@@ -82,6 +109,7 @@ impl PreviewWorker {
             applied_revision,
             queue_depth,
             dropped_requests,
+            performance,
             join: Some(join),
         })
     }
@@ -122,6 +150,31 @@ impl PreviewWorker {
     pub(crate) fn dropped_requests(&self) -> u64 {
         self.dropped_requests.load(Ordering::Relaxed)
     }
+
+    pub(crate) fn record_frame_copy(&self, duration: Duration) {
+        if let Ok(mut performance) = self.performance.lock() {
+            performance.frame_copy.record(duration);
+        }
+    }
+
+    pub(crate) fn record_slint_update(&self, duration: Duration) {
+        if let Ok(mut performance) = self.performance.lock() {
+            performance.slint_update.record(duration);
+        }
+    }
+
+    pub(crate) fn record_ui_callback(&self, duration: Duration) {
+        if let Ok(mut performance) = self.performance.lock() {
+            performance.ui_callback.record(duration);
+        }
+    }
+
+    pub(crate) fn performance(&self) -> PreviewPerformanceSnapshot {
+        self.performance.lock().map_or_else(
+            |_| PreviewPerformanceSnapshot::default(),
+            |performance| *performance,
+        )
+    }
 }
 
 impl Drop for PreviewWorker {
@@ -134,26 +187,21 @@ impl Drop for PreviewWorker {
     }
 }
 
-fn preview_loop(
-    project: &Project,
-    revision: u64,
-    request: &SharedRequest,
-    result: &Mutex<Option<PreviewResult>>,
-    applied_revision: &AtomicU64,
-    queue_depth: &AtomicUsize,
-    dropped_requests: &AtomicU64,
-) {
+fn preview_loop(project: &Project, revision: u64, shared: PreviewLoopShared<'_>) {
     let mut renderer = PreviewRenderer::new(project, revision).map_err(|error| error.to_string());
     if renderer.is_ok() {
-        applied_revision.store(revision, Ordering::Release);
+        shared.applied_revision.store(revision, Ordering::Release);
     }
-    while let Some(next) = wait_for_request(request, queue_depth) {
+    while let Some(next) = wait_for_request(shared.request, shared.queue_depth) {
+        let worker_started = std::time::Instant::now();
         if let (Ok(renderer), Some(project)) = (&mut renderer, next.project.as_ref()) {
             if let Err(error) = renderer.sync_project(project, next.revision) {
-                renderer_error(result, dropped_requests, error.to_string());
+                renderer_error(shared.result, shared.dropped_requests, error.to_string());
                 continue;
             }
-            applied_revision.store(next.revision, Ordering::Release);
+            shared
+                .applied_revision
+                .store(next.revision, Ordering::Release);
         } else if renderer.is_err() {
             let Some(project) = next.project.as_ref() else {
                 continue;
@@ -161,12 +209,14 @@ fn preview_loop(
             renderer =
                 PreviewRenderer::new(project, next.revision).map_err(|error| error.to_string());
             if renderer.is_ok() {
-                applied_revision.store(next.revision, Ordering::Release);
+                shared
+                    .applied_revision
+                    .store(next.revision, Ordering::Release);
             }
         }
 
         let completed = match &mut renderer {
-            Ok(renderer) => render_request(renderer, next),
+            Ok(renderer) => render_request(renderer, next, shared.performance),
             Err(error) => PreviewResult {
                 preview_scene: None,
                 preview_frame: None,
@@ -178,7 +228,10 @@ fn preview_loop(
                 render_thread: thread::current().id(),
             },
         };
-        publish_result(result, dropped_requests, completed);
+        if let Ok(mut performance) = shared.performance.lock() {
+            performance.worker.record(worker_started.elapsed());
+        }
+        publish_result(shared.result, shared.dropped_requests, completed);
     }
 }
 
@@ -195,14 +248,27 @@ fn wait_for_request(request: &SharedRequest, queue_depth: &AtomicUsize) -> Optio
     request
 }
 
-fn render_request(renderer: &mut PreviewRenderer, request: PreviewRequest) -> PreviewResult {
+fn render_request(
+    renderer: &mut PreviewRenderer,
+    request: PreviewRequest,
+    performance: &Mutex<PreviewPerformanceSnapshot>,
+) -> PreviewResult {
+    let preview_started = std::time::Instant::now();
     let preview = render_scene(renderer, request.preview_scene.as_deref());
+    if let Ok(mut performance) = performance.lock() {
+        performance.preview_render.record(preview_started.elapsed());
+    }
     let program = if !request.render_program {
         Ok(None)
     } else if request.preview_scene == request.program_scene {
         preview.clone()
     } else {
-        render_scene(renderer, request.program_scene.as_deref())
+        let program_started = std::time::Instant::now();
+        let program = render_scene(renderer, request.program_scene.as_deref());
+        if let Ok(mut performance) = performance.lock() {
+            performance.program_render.record(program_started.elapsed());
+        }
+        program
     };
     let error = preview
         .as_ref()
@@ -360,5 +426,8 @@ mod tests {
         assert!(result.preview_frame.is_some());
         assert!(result.program_frame.is_some());
         assert_eq!(worker.queue_depth(), 0);
+        let performance = worker.performance();
+        assert_eq!(performance.preview_render.samples(), 1);
+        assert_eq!(performance.worker.samples(), 1);
     }
 }

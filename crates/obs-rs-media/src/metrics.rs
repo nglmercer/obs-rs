@@ -1,7 +1,104 @@
 use std::{
     cell::Cell,
     sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
 };
+
+const LATENCY_BUCKETS: usize = 16;
+const FIRST_LATENCY_BUCKET_BITS: u32 = 16;
+
+/// Fixed-memory logarithmic latency distribution in nanoseconds.
+///
+/// Buckets are powers of two, so percentile values are conservative upper
+/// bounds with no retained samples and no allocation in [`Self::record`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LatencyMetrics {
+    buckets: [u16; LATENCY_BUCKETS],
+    samples: u32,
+    max_nanos: u64,
+}
+
+impl Default for LatencyMetrics {
+    fn default() -> Self {
+        Self {
+            buckets: [0; LATENCY_BUCKETS],
+            samples: 0,
+            max_nanos: 0,
+        }
+    }
+}
+
+impl LatencyMetrics {
+    /// Records one duration into a bounded logarithmic bucket.
+    pub fn record(&mut self, duration: Duration) {
+        self.record_nanos(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+    }
+
+    /// Records one latency expressed in nanoseconds.
+    pub fn record_nanos(&mut self, nanos: u64) {
+        let significant_bits = u64::BITS - nanos.leading_zeros();
+        let bucket = usize::try_from(significant_bits.saturating_sub(FIRST_LATENCY_BUCKET_BITS))
+            .unwrap_or(LATENCY_BUCKETS - 1)
+            .min(LATENCY_BUCKETS - 1);
+        if self.buckets[bucket] == u16::MAX {
+            self.rescale();
+        }
+        self.buckets[bucket] = self.buckets[bucket].saturating_add(1);
+        self.samples = self.samples.saturating_add(1);
+        self.max_nanos = self.max_nanos.max(nanos);
+    }
+
+    /// Number of observations represented by this distribution.
+    #[must_use]
+    pub const fn samples(self) -> u32 {
+        self.samples
+    }
+
+    /// Conservative percentile upper bound in nanoseconds.
+    #[must_use]
+    pub fn percentile_nanos(self, percentile: u8) -> u64 {
+        if self.samples == 0 {
+            return 0;
+        }
+        let percentile = u64::from(percentile.clamp(1, 100));
+        let target = u64::from(self.samples)
+            .saturating_mul(percentile)
+            .div_ceil(100);
+        let mut seen = 0_u64;
+        for (bucket, count) in self.buckets.into_iter().enumerate() {
+            seen = seen.saturating_add(u64::from(count));
+            if seen >= target {
+                return if bucket == LATENCY_BUCKETS - 1 {
+                    self.max_nanos
+                } else {
+                    bucket_upper_bound(bucket)
+                };
+            }
+        }
+        self.max_nanos
+    }
+
+    /// Largest exact observation in nanoseconds.
+    #[must_use]
+    pub const fn max_nanos(self) -> u64 {
+        self.max_nanos
+    }
+
+    fn rescale(&mut self) {
+        self.samples = 0;
+        for count in &mut self.buckets {
+            *count = (*count / 2).max(u16::from(*count > 0));
+            self.samples = self.samples.saturating_add(u32::from(*count));
+        }
+    }
+}
+
+fn bucket_upper_bound(bucket: usize) -> u64 {
+    let bits = u32::try_from(bucket)
+        .unwrap_or(u32::MAX)
+        .saturating_add(FIRST_LATENCY_BUCKET_BITS);
+    1_u64.checked_shl(bits).map_or(u64::MAX, |value| value - 1)
+}
 
 static OWNED_BUFFERS: AtomicUsize = AtomicUsize::new(0);
 static OWNED_BYTES: AtomicUsize = AtomicUsize::new(0);
@@ -148,4 +245,22 @@ pub(crate) fn record_copy_on_write(bytes: usize) {
         metrics.copy_on_write_buffers = metrics.copy_on_write_buffers.saturating_add(1);
         metrics.copy_on_write_bytes = metrics.copy_on_write_bytes.saturating_add(bytes);
     });
+}
+
+#[cfg(test)]
+mod latency_tests {
+    use super::*;
+
+    #[test]
+    fn latency_percentiles_are_bounded_conservative_and_allocation_free() {
+        let mut metrics = LatencyMetrics::default();
+        for nanos in [1, 2, 3, 4, 100] {
+            metrics.record_nanos(nanos);
+        }
+        assert_eq!(metrics.samples(), 5);
+        assert_eq!(metrics.percentile_nanos(50), 65_535);
+        assert_eq!(metrics.percentile_nanos(95), 65_535);
+        assert_eq!(metrics.percentile_nanos(99), 65_535);
+        assert_eq!(metrics.max_nanos(), 100);
+    }
 }
