@@ -10,7 +10,7 @@ use std::{
 };
 
 use obs_rs_media::{Timestamp, VideoFrame};
-use obs_rs_output::{AudioEncoderConfig, VideoEncoderConfig};
+use obs_rs_output::{AudioEncoderConfig, StreamTarget, VideoEncoderConfig};
 
 use obs_rs_project::Project;
 
@@ -44,6 +44,7 @@ enum WorkerCommand {
     FinishRecording(mpsc::Sender<Result<usize, String>>),
     AbortRecording,
     StartStreaming(String, Option<(VideoEncoderConfig, AudioEncoderConfig)>),
+    StartStreamingTarget(StreamTarget, VideoEncoderConfig, AudioEncoderConfig),
     FinishStreaming,
     PushFrame(VideoFrame),
     MonitorAudio(Timestamp),
@@ -247,6 +248,24 @@ impl EngineWorker {
         audio: AudioEncoderConfig,
     ) -> Result<(), EngineError> {
         self.start_streaming_with_config(address, Some((video, audio)))
+    }
+
+    /// Enqueues a typed production target without exposing secrets in an URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the bounded worker queue rejects the request.
+    pub fn start_streaming_target_configured(
+        &self,
+        target: StreamTarget,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        set_streaming_lifecycle(&self.snapshot, OutputLifecycle::Starting);
+        push_output_event(&self.output_events, OutputEvent::Starting);
+        self.sender
+            .try_send(WorkerCommand::StartStreamingTarget(target, video, audio))
+            .map_err(|error| command_enqueue_error(&error))
     }
 
     fn start_streaming_with_config(
@@ -466,6 +485,10 @@ fn worker_loop(
                 );
                 false
             }
+            WorkerCommand::StartStreamingTarget(target, video, audio) => {
+                start_stream_target(&mut session, &target, &video, &audio, &output_events);
+                false
+            }
             WorkerCommand::FinishStreaming => {
                 finish_streaming(&mut session, &output_events);
                 false
@@ -521,11 +544,7 @@ fn worker_loop(
             WorkerCommand::Shutdown => true,
         };
 
-        if session.is_streaming() {
-            if let Err(error) = session.pump_stream() {
-                session.last_error = Some(error.to_string());
-            }
-        }
+        pump_stream(&mut session);
         publish_snapshot(
             &session,
             &snapshot,
@@ -540,6 +559,14 @@ fn worker_loop(
     let _ = session.finish_streaming();
     session.abort_recording();
     publish_snapshot(&session, &snapshot, &dropped_frames, &queued_frames, false);
+}
+
+fn pump_stream(session: &mut EngineSession) {
+    if session.is_streaming() {
+        if let Err(error) = session.pump_stream() {
+            session.last_error = Some(error.to_string());
+        }
+    }
 }
 
 fn publish_snapshot(
@@ -591,6 +618,24 @@ fn start_stream(
         None => session.start_streaming(address),
     };
     match result {
+        Ok(()) => push_output_event(output_events, OutputEvent::Running),
+        Err(error) => push_output_event(
+            output_events,
+            OutputEvent::Failed {
+                reason: error.to_string(),
+            },
+        ),
+    }
+}
+
+fn start_stream_target(
+    session: &mut EngineSession,
+    target: &StreamTarget,
+    video: &VideoEncoderConfig,
+    audio: &AudioEncoderConfig,
+    output_events: &Arc<Mutex<VecDeque<OutputEvent>>>,
+) {
+    match session.start_streaming_target_configured(target, video, audio) {
         Ok(()) => push_output_event(output_events, OutputEvent::Running),
         Err(error) => push_output_event(
             output_events,

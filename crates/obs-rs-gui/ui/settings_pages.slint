@@ -83,6 +83,8 @@ export component StreamPage inherits VerticalLayout {
     in property <bool> show-rtmp;
     in property <bool> show-srt;
     in property <bool> show-whip;
+    in property <bool> show-hls;
+    in property <bool> show-rist;
     in property <bool> show-reference;
     in-out property <string> rtmp-service;
     in-out property <string> rtmp-server;
@@ -112,6 +114,15 @@ export component StreamPage inherits VerticalLayout {
     in-out property <string> srt-stream-id;
     in-out property <int> srt-timeout;
     in-out property <string> whip-endpoint;
+    in-out property <string> whip-bearer-token;
+    in-out property <string> hls-directory;
+    in-out property <int> hls-segment-duration;
+    in-out property <int> hls-playlist-size;
+    in-out property <bool> hls-low-latency;
+    in-out property <string> rist-host;
+    in-out property <int> rist-port;
+    in-out property <int> rist-buffer;
+    in-out property <string> rist-shared-secret;
     in-out property <string> reference-address;
     callback select-protocol(int);
     callback select-video-encoder(int);
@@ -236,6 +247,43 @@ export component StreamPage inherits VerticalLayout {
         if root.show-whip : SettingRow {
             label: "WHIP Endpoint";
             LineEdit { text <=> root.whip-endpoint; placeholder-text: "https://service.example/whip"; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-whip : SettingRow {
+            label: "Bearer Token";
+            LineEdit { text <=> root.whip-bearer-token; input-type: InputType.password; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-hls : SettingRow {
+            label: "Output Directory";
+            LineEdit { text <=> root.hls-directory; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-hls : SettingRow {
+            label: "Segment Duration (s)";
+            SpinBox { value <=> root.hls-segment-duration; minimum: 1; maximum: 60; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-hls : SettingRow {
+            label: "Playlist Size";
+            SpinBox { value <=> root.hls-playlist-size; minimum: 3; maximum: 1000; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-hls : CheckRow {
+            label: "Low-latency mode (when supported)";
+            checked <=> root.hls-low-latency;
+            toggled(value) => { root.changed(); }
+        }
+        if root.show-rist : SettingRow {
+            label: "Address";
+            LineEdit { text <=> root.rist-host; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rist : SettingRow {
+            label: "Even RTP Port";
+            SpinBox { value <=> root.rist-port; minimum: 2; maximum: 65534; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rist : SettingRow {
+            label: "Sender Buffer (ms)";
+            SpinBox { value <=> root.rist-buffer; minimum: 0; maximum: 60000; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rist : SettingRow {
+            label: "Shared Secret";
+            LineEdit { text <=> root.rist-shared-secret; input-type: InputType.password; edited => { root.changed(); } horizontal-stretch: 1; }
         }
         if root.show-reference : SettingRow {
             label: I18n.text.settings_ui.stream_server;

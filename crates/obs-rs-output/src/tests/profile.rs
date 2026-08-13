@@ -11,6 +11,8 @@ fn production_profile_presets_are_versioned_and_bounded() {
         OutputProfile::rtmps_h264_aac(),
         OutputProfile::srt_mpeg_ts_h264_aac(),
         OutputProfile::web_rtc_vp8_opus(),
+        OutputProfile::hls_h264_aac(),
+        OutputProfile::rist_mpeg_ts_h264_aac(),
     ];
     assert!(profiles
         .iter()

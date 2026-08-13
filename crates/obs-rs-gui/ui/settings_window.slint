@@ -45,6 +45,8 @@ export component SettingsWindow inherits Window {
     in property <bool> stream-show-rtmp;
     in property <bool> stream-show-srt;
     in property <bool> stream-show-whip;
+    in property <bool> stream-show-hls;
+    in property <bool> stream-show-rist;
     in property <bool> stream-show-reference;
     in-out property <string> rtmp-service;
     in-out property <string> rtmp-server;
@@ -74,6 +76,15 @@ export component SettingsWindow inherits Window {
     in-out property <string> srt-stream-id;
     in-out property <int> srt-timeout;
     in-out property <string> whip-endpoint;
+    in-out property <string> whip-bearer-token;
+    in-out property <string> hls-directory;
+    in-out property <int> hls-segment-duration;
+    in-out property <int> hls-playlist-size;
+    in-out property <bool> hls-low-latency;
+    in-out property <string> rist-host;
+    in-out property <int> rist-port;
+    in-out property <int> rist-buffer;
+    in-out property <string> rist-shared-secret;
     in-out property <string> reference-address;
     in-out property <string> recording-path;
     in property <[string]> recording-format-names;
@@ -230,6 +241,8 @@ export component SettingsWindow inherits Window {
                         show-rtmp: root.stream-show-rtmp;
                         show-srt: root.stream-show-srt;
                         show-whip: root.stream-show-whip;
+                        show-hls: root.stream-show-hls;
+                        show-rist: root.stream-show-rist;
                         show-reference: root.stream-show-reference;
                         rtmp-service <=> root.rtmp-service;
                         rtmp-server <=> root.rtmp-server;
@@ -259,6 +272,15 @@ export component SettingsWindow inherits Window {
                         srt-stream-id <=> root.srt-stream-id;
                         srt-timeout <=> root.srt-timeout;
                         whip-endpoint <=> root.whip-endpoint;
+                        whip-bearer-token <=> root.whip-bearer-token;
+                        hls-directory <=> root.hls-directory;
+                        hls-segment-duration <=> root.hls-segment-duration;
+                        hls-playlist-size <=> root.hls-playlist-size;
+                        hls-low-latency <=> root.hls-low-latency;
+                        rist-host <=> root.rist-host;
+                        rist-port <=> root.rist-port;
+                        rist-buffer <=> root.rist-buffer;
+                        rist-shared-secret <=> root.rist-shared-secret;
                         reference-address <=> root.reference-address;
                         select-protocol(index) => {
                             root.protocol-index = index;

@@ -27,7 +27,7 @@ use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig, AudioInputRequirement, EncodedPacket,
     OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, RleVideoEncoder,
-    StreamMetrics, StreamSession, StreamState, TcpPacketTransport, VideoEncoder,
+    StreamMetrics, StreamSession, StreamState, StreamTarget, TcpPacketTransport, VideoEncoder,
     VideoEncoderConfig, VideoInputRequirement, WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
@@ -636,6 +636,46 @@ impl StreamOutput {
             stream.connect()?;
             Ok(Self::Tcp(stream))
         }
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    fn connect_target(
+        target: &StreamTarget,
+        capacity_bytes: usize,
+        reconnect_attempts: u32,
+        video_format: VideoFormat,
+        audio_format: AudioFormat,
+        video: &VideoEncoderConfig,
+        audio: &AudioEncoderConfig,
+    ) -> Result<Self, EngineError> {
+        if let StreamTarget::Reference { address } = target {
+            return Self::connect(
+                address,
+                capacity_bytes,
+                reconnect_attempts,
+                video_format,
+                audio_format,
+                Some((video, audio)),
+            );
+        }
+        let (profile, destination) = ProductionDestination::from_stream_target(target)?;
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        let plan = ProductionPipelinePlan::negotiate_configured(
+            profile,
+            &destination,
+            &capabilities,
+            video,
+            audio,
+        )?;
+        Ok(Self::Production(
+            GStreamerOutputSession::start_with_reconnect_limit(
+                &plan,
+                &destination,
+                video_format,
+                audio_format,
+                reconnect_attempts,
+            )?,
+        ))
     }
 
     fn submit(&mut self, packet: EncodedPacket) -> Result<(), EngineError> {
@@ -1338,6 +1378,57 @@ impl EngineSession {
         audio: &AudioEncoderConfig,
     ) -> Result<(), EngineError> {
         self.start_streaming_with_config(address, Some((video, audio)))
+    }
+
+    /// Opens a semantic production target without flattening credentials into a URL.
+    pub fn start_streaming_target_configured(
+        &mut self,
+        target: &StreamTarget,
+        video: &VideoEncoderConfig,
+        audio: &AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        if self.streaming.is_some() {
+            return Err(EngineError::Busy("start streaming"));
+        }
+        self.streaming_lifecycle = OutputLifecycle::Starting;
+        #[cfg(feature = "production-gstreamer")]
+        let result = StreamOutput::connect_target(
+            target,
+            self.config.output_queue_bytes,
+            self.config.reconnect_attempts,
+            self.format,
+            self.config.audio_format,
+            video,
+            audio,
+        );
+        #[cfg(not(feature = "production-gstreamer"))]
+        let result = target
+            .endpoint()
+            .ok_or_else(|| {
+                EngineError::InvalidConfiguration("stream target is incomplete".to_owned())
+            })
+            .and_then(|address| {
+                StreamOutput::connect(
+                    &address,
+                    self.config.output_queue_bytes,
+                    self.config.reconnect_attempts,
+                    self.format,
+                    self.config.audio_format,
+                    Some((video, audio)),
+                )
+            });
+        match result {
+            Ok(stream) => {
+                self.streaming = Some(stream);
+                self.streaming_lifecycle = OutputLifecycle::Running;
+                Ok(())
+            }
+            Err(error) => {
+                self.streaming_lifecycle = OutputLifecycle::Failed;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
     }
 
     fn start_streaming_with_config(

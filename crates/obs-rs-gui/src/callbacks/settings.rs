@@ -236,6 +236,8 @@ fn populate_stream_models(
             ProductionProtocol::Rtmps => StreamProtocol::Rtmps,
             ProductionProtocol::Srt => StreamProtocol::Srt,
             ProductionProtocol::WebRtc => StreamProtocol::Whip,
+            ProductionProtocol::Hls => StreamProtocol::Hls,
+            ProductionProtocol::Rist => StreamProtocol::Rist,
             ProductionProtocol::Reference => StreamProtocol::Reference,
             ProductionProtocol::Matroska => continue,
         };
@@ -319,6 +321,8 @@ fn show_protocol_fields(window: &SettingsWindow, protocol: StreamProtocol) {
     ));
     window.set_stream_show_srt(protocol == StreamProtocol::Srt);
     window.set_stream_show_whip(protocol == StreamProtocol::Whip);
+    window.set_stream_show_hls(protocol == StreamProtocol::Hls);
+    window.set_stream_show_rist(protocol == StreamProtocol::Rist);
     window.set_stream_show_reference(protocol == StreamProtocol::Reference);
 }
 
@@ -472,6 +476,7 @@ fn load_draft(
     });
     window.set_srt_stream_id(settings.srt.stream_id.as_deref().unwrap_or("").into());
     window.set_srt_timeout(i32::try_from(settings.srt.connect_timeout_ms).unwrap_or(i32::MAX));
+    load_extended_stream_draft(window, &settings);
     window.set_whip_endpoint(settings.whip_endpoint.as_str().into());
     window.set_reference_address(settings.reference_address.as_str().into());
     window.set_recording_path(settings.recording_path.as_str().into());
@@ -810,6 +815,7 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.srt.stream_id = nonempty(window.get_srt_stream_id().to_string());
     settings.srt.connect_timeout_ms = unsigned(window.get_srt_timeout());
     settings.whip_endpoint = window.get_whip_endpoint().to_string();
+    read_extended_stream_draft(window, &mut settings);
     settings.reference_address = window.get_reference_address().to_string();
     settings.restore_project = window.get_restore_project();
     settings.save_project_on_exit = window.get_save_project_on_exit();
@@ -829,6 +835,47 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
         locale.code().clone_into(&mut settings.locale);
     }
     settings
+}
+
+fn load_extended_stream_draft(window: &SettingsWindow, settings: &AppSettings) {
+    window.set_whip_bearer_token(
+        settings
+            .whip_bearer_token
+            .as_ref()
+            .map_or("", SecretString::expose_secret)
+            .into(),
+    );
+    window.set_hls_directory(settings.hls.directory.to_string_lossy().as_ref().into());
+    window.set_hls_segment_duration(
+        i32::try_from(settings.hls.segment_duration_secs).unwrap_or(i32::MAX),
+    );
+    window.set_hls_playlist_size(i32::try_from(settings.hls.playlist_size).unwrap_or(i32::MAX));
+    window.set_hls_low_latency(settings.hls.low_latency);
+    window.set_rist_host(settings.rist.host.as_str().into());
+    window.set_rist_port(i32::from(settings.rist.port));
+    window.set_rist_buffer(i32::try_from(settings.rist.sender_buffer_ms).unwrap_or(i32::MAX));
+    window.set_rist_shared_secret(
+        settings
+            .rist
+            .shared_secret
+            .as_ref()
+            .map_or("", SecretString::expose_secret)
+            .into(),
+    );
+}
+
+fn read_extended_stream_draft(window: &SettingsWindow, settings: &mut AppSettings) {
+    settings.whip_bearer_token =
+        nonempty(window.get_whip_bearer_token().to_string()).map(SecretString::new);
+    settings.hls.directory = PathBuf::from(window.get_hls_directory().to_string());
+    settings.hls.segment_duration_secs = unsigned(window.get_hls_segment_duration());
+    settings.hls.playlist_size = unsigned(window.get_hls_playlist_size());
+    settings.hls.low_latency = window.get_hls_low_latency();
+    settings.rist.host = window.get_rist_host().to_string();
+    settings.rist.port = u16::try_from(window.get_rist_port()).unwrap_or(0);
+    settings.rist.sender_buffer_ms = unsigned(window.get_rist_buffer());
+    settings.rist.shared_secret =
+        nonempty(window.get_rist_shared_secret().to_string()).map(SecretString::new);
 }
 
 fn read_recording_draft(controller: &SettingsController, settings: &mut AppSettings) {
@@ -978,6 +1025,8 @@ fn stream_display_label(settings: &AppSettings) -> String {
         StreamProtocol::Rtmps => format!("RTMPS · {}", settings.rtmp.server),
         StreamProtocol::Srt => format!("SRT · {}:{}", settings.srt.host, settings.srt.port),
         StreamProtocol::Whip => format!("WHIP · {}", settings.whip_endpoint),
+        StreamProtocol::Hls => format!("HLS · {}", settings.hls.directory.display()),
+        StreamProtocol::Rist => format!("RIST · {}:{}", settings.rist.host, settings.rist.port),
         StreamProtocol::Reference => format!("Reference · {}", settings.reference_address),
     }
 }

@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use obs_rs_config::Config;
 use obs_rs_output::{
-    AudioCodec, AudioEncoderConfig, EncoderImplementation, EncoderPreset, RateControl, RtmpConfig,
-    SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol, StreamTarget, VideoCodec,
-    VideoEncoderConfig,
+    AudioCodec, AudioEncoderConfig, EncoderImplementation, EncoderPreset, HlsConfig, RateControl,
+    RistConfig, RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol,
+    StreamTarget, VideoCodec, VideoEncoderConfig, WhipConfig,
 };
 use obs_rs_ui::UiLocale;
 use slint::{Brush, Color, Model, ModelRc, VecModel};
@@ -247,6 +247,9 @@ pub(crate) struct AppSettings {
     pub(crate) rtmp: RtmpConfig,
     pub(crate) srt: SrtConfig,
     pub(crate) whip_endpoint: String,
+    pub(crate) whip_bearer_token: Option<SecretString>,
+    pub(crate) hls: HlsConfig,
+    pub(crate) rist: RistConfig,
     pub(crate) reference_address: String,
     /// Provider-stable `PipeWire` input ID; empty selects the first available
     /// input and keeps the deterministic fallback as a safe last resort.
@@ -409,6 +412,9 @@ impl Default for AppSettings {
             rtmp: RtmpConfig::default(),
             srt: SrtConfig::default(),
             whip_endpoint: "https://127.0.0.1/whip".to_owned(),
+            whip_bearer_token: None,
+            hls: HlsConfig::default(),
+            rist: RistConfig::default(),
             reference_address: "127.0.0.1:9000".to_owned(),
             audio_input_id: String::new(),
             restore_project: true,
@@ -466,9 +472,12 @@ impl AppSettings {
             StreamProtocol::Rtmp => StreamTarget::Rtmp(self.rtmp.clone()),
             StreamProtocol::Rtmps => StreamTarget::Rtmps(self.rtmp.clone()),
             StreamProtocol::Srt => StreamTarget::Srt(self.srt.clone()),
-            StreamProtocol::Whip => StreamTarget::Whip {
+            StreamProtocol::Whip => StreamTarget::Whip(WhipConfig {
                 endpoint: self.whip_endpoint.clone(),
-            },
+                bearer_token: self.whip_bearer_token.clone(),
+            }),
+            StreamProtocol::Hls => StreamTarget::Hls(self.hls.clone()),
+            StreamProtocol::Rist => StreamTarget::Rist(self.rist.clone()),
             StreamProtocol::Reference => StreamTarget::Reference {
                 address: self.reference_address.clone(),
             },
@@ -498,6 +507,7 @@ impl AppSettings {
 
     fn from_config(config: &Config) -> Self {
         let defaults = Self::default();
+        let (hls, rist) = extended_stream_config(config, &defaults);
         Self {
             locale: config
                 .get("locale")
@@ -582,6 +592,9 @@ impl AppSettings {
             rtmp: rtmp_from_config(config, &defaults.rtmp),
             srt: srt_from_config(config, &defaults.srt),
             whip_endpoint: text(config, "whip_endpoint", &defaults.whip_endpoint),
+            whip_bearer_token: optional_text(config, "whip_bearer_token").map(SecretString::new),
+            hls,
+            rist,
             reference_address: text(config, "reference_address", &defaults.reference_address),
             audio_input_id: text(config, "audio_input_id", &defaults.audio_input_id),
             restore_project: flag(config, "restore_project", defaults.restore_project),
@@ -676,7 +689,7 @@ impl AppSettings {
     }
 
     fn stream_config_entries(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut entries = vec![
             ("stream_protocol", self.stream_protocol.id().to_owned()),
             ("rtmp_service", self.rtmp.service.clone()),
             ("rtmp_server", self.rtmp.server.clone()),
@@ -764,14 +777,79 @@ impl AppSettings {
                 self.srt.connect_timeout_ms.to_string(),
             ),
             ("whip_endpoint", self.whip_endpoint.clone()),
+            (
+                "whip_bearer_token",
+                self.whip_bearer_token
+                    .as_ref()
+                    .map_or_else(String::new, |value| value.expose_secret().to_owned()),
+            ),
             ("reference_address", self.reference_address.clone()),
-        ]
+        ];
+        entries.extend(extended_stream_entries(self));
+        entries
     }
 
     /// Restores the stored dock layout into a freshly built window.
     pub(crate) fn apply_layout(&self, ui: &crate::MainWindow) {
         self.layout.apply(ui);
     }
+}
+
+fn extended_stream_config(config: &Config, defaults: &AppSettings) -> (HlsConfig, RistConfig) {
+    let hls = HlsConfig {
+        directory: PathBuf::from(text(
+            config,
+            "hls_directory",
+            defaults.hls.directory.to_string_lossy().as_ref(),
+        )),
+        segment_duration_secs: number(
+            config,
+            "hls_segment_duration_secs",
+            defaults.hls.segment_duration_secs,
+        ),
+        playlist_size: number(config, "hls_playlist_size", defaults.hls.playlist_size),
+        low_latency: flag(config, "hls_low_latency", defaults.hls.low_latency),
+    };
+    let rist = RistConfig {
+        host: text(config, "rist_host", &defaults.rist.host),
+        port: number(config, "rist_port", defaults.rist.port),
+        sender_buffer_ms: number(
+            config,
+            "rist_sender_buffer_ms",
+            defaults.rist.sender_buffer_ms,
+        ),
+        shared_secret: optional_text(config, "rist_shared_secret").map(SecretString::new),
+    };
+    (hls, rist)
+}
+
+fn extended_stream_entries(settings: &AppSettings) -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "hls_directory",
+            settings.hls.directory.to_string_lossy().into_owned(),
+        ),
+        (
+            "hls_segment_duration_secs",
+            settings.hls.segment_duration_secs.to_string(),
+        ),
+        ("hls_playlist_size", settings.hls.playlist_size.to_string()),
+        ("hls_low_latency", settings.hls.low_latency.to_string()),
+        ("rist_host", settings.rist.host.clone()),
+        ("rist_port", settings.rist.port.to_string()),
+        (
+            "rist_sender_buffer_ms",
+            settings.rist.sender_buffer_ms.to_string(),
+        ),
+        (
+            "rist_shared_secret",
+            settings
+                .rist
+                .shared_secret
+                .as_ref()
+                .map_or_else(String::new, |value| value.expose_secret().to_owned()),
+        ),
+    ]
 }
 
 /// Restores the layout OBS-RS ships with, discarding the session's arrangement.
@@ -1121,6 +1199,11 @@ mod tests {
                 stream_id: Some("publish/feed".to_owned()),
                 connect_timeout_ms: 12_000,
             },
+            whip_bearer_token: Some(SecretString::new("private-whip-token")),
+            rist: RistConfig {
+                shared_secret: Some(SecretString::new("private-rist-secret")),
+                ..RistConfig::default()
+            },
             ..AppSettings::default()
         };
 
@@ -1190,6 +1273,8 @@ mod tests {
         let debug = format!("{settings:?}");
         assert!(!debug.contains("private-stream-key"));
         assert!(!debug.contains("private-passphrase"));
+        assert!(!debug.contains("private-whip-token"));
+        assert!(!debug.contains("private-rist-secret"));
     }
 
     #[test]

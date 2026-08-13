@@ -115,6 +115,7 @@ fn diagnostics_redact_plugin_update_streaming_and_portal_secrets() {
         "update_credentials=bearer-token\n",
         "srt_passphrase=hunter2\n",
         "webrtc_signaling=wss://user:secret@example.invalid\n",
+        "whip_bearer_token=whip-secret\n",
         "restore_token=portal-secret\n",
         "custom_password:secret\n",
     );
@@ -126,6 +127,7 @@ fn diagnostics_redact_plugin_update_streaming_and_portal_secrets() {
         "hunter2",
         "user:secret",
         "portal-secret",
+        "whip-secret",
         "custom_password:secret",
     ] {
         assert!(!redacted.contains(secret));

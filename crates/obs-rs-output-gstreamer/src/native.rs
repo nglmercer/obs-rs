@@ -119,7 +119,9 @@ impl GStreamerOutputSession {
         let pipeline = element.downcast::<gst::Pipeline>().map_err(|_| {
             GStreamerError::Native("GStreamer did not create a pipeline".to_owned())
         })?;
-        configure_encoders(&pipeline, plan, video_format)?;
+        if plan.profile().transport() != OutputTransport::WebRtc {
+            configure_encoders(&pipeline, plan, video_format)?;
+        }
         configure_sink(&pipeline, destination, temp_path.as_deref())?;
         let video = appsrc(&pipeline, "video_source")?;
         let audio = appsrc(&pipeline, "audio_source")?;
@@ -255,7 +257,10 @@ impl GStreamerOutputSession {
         // Live muxers do not publish a local index and remote sinks may never
         // acknowledge EOS after a network loss. Stop them immediately so the
         // UI cannot hang for the recording-only finalization timeout.
-        if self.transport != OutputTransport::Matroska {
+        if !matches!(
+            self.transport,
+            OutputTransport::Matroska | OutputTransport::Hls
+        ) {
             self.pipeline
                 .set_state(gst::State::Null)
                 .map_err(native_error)?;
@@ -309,7 +314,10 @@ impl GStreamerOutputSession {
             return Ok(());
         }
         self.state = NativeOutputState::Lost;
-        if self.transport == OutputTransport::Matroska {
+        if matches!(
+            self.transport,
+            OutputTransport::Matroska | OutputTransport::Hls
+        ) {
             self.state = NativeOutputState::Failed;
             return Err(GStreamerError::Native(
                 "recording pipeline reported an asynchronous error".to_owned(),
@@ -324,9 +332,12 @@ impl GStreamerOutputSession {
     ///
     /// Rejects recording sessions and reports a failed `GStreamer` state change.
     pub fn reconnect_live(&mut self) -> Result<(), GStreamerError> {
-        if self.transport == OutputTransport::Matroska {
+        if matches!(
+            self.transport,
+            OutputTransport::Matroska | OutputTransport::Hls
+        ) {
             return Err(GStreamerError::Native(
-                "recording sessions cannot reconnect".to_owned(),
+                "file outputs cannot reconnect".to_owned(),
             ));
         }
         if self.telemetry.reconnects >= u64::from(self.maximum_reconnects) {
@@ -484,7 +495,11 @@ fn pipeline_description(
         (OutputTransport::SrtMpegTs, ProductionDestination::Srt { .. }) =>
             Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. mpegtsmux name=mux ! srtsink name=output_sink"), None, None)),
         (OutputTransport::WebRtc, ProductionDestination::WebRtc { .. }) =>
-            Ok((format!("webrtcbin name=output_sink bundle-policy=max-bundle {v}rtpvp8pay ! application/x-rtp,media=video,encoding-name=VP8,payload=96 ! output_sink. {a}rtpopuspay ! application/x-rtp,media=audio,encoding-name=OPUS,payload=97 ! output_sink."), None, None)),
+            Ok((format!("whipclientsink name=output_sink appsrc name=video_source ! queue max-size-bytes={queue} leaky=downstream ! videoconvert ! output_sink. appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream ! audioconvert ! audioresample ! output_sink."), None, None)),
+        (OutputTransport::Hls, ProductionDestination::Hls { .. }) =>
+            Ok((format!("hlssink2 name=output_sink {v}h264parse ! output_sink.video {a}aacparse ! output_sink.audio"), None, None)),
+        (OutputTransport::RistMpegTs, ProductionDestination::Rist { .. }) =>
+            Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. mpegtsmux name=mux ! rtpmp2tpay ! ristsink name=output_sink"), None, None)),
         _ => Err(GStreamerError::InvalidEndpoint("destination does not match pipeline".to_owned())),
     }
 }
@@ -750,7 +765,41 @@ fn configure_sink(
             );
             sink.set_property("uri", uri);
         }
-        ProductionDestination::WebRtc { .. } => {}
+        ProductionDestination::WebRtc {
+            signaling_endpoint,
+            bearer_token,
+        } => {
+            set_first_string_property(&sink, &["whip-endpoint", "endpoint"], signaling_endpoint);
+            if let Some(token) = bearer_token {
+                set_first_string_property(&sink, &["auth-token", "bearer-token"], token);
+            }
+        }
+        ProductionDestination::Hls {
+            directory,
+            segment_duration_secs,
+            playlist_size,
+            ..
+        } => {
+            fs::create_dir_all(directory).map_err(native_error)?;
+            let segments = directory.join("segment%05d.ts");
+            let playlist = directory.join("playlist.m3u8");
+            sink.set_property("location", segments.to_string_lossy().as_ref());
+            sink.set_property("playlist-location", playlist.to_string_lossy().as_ref());
+            sink.set_property("target-duration", segment_duration_secs);
+            sink.set_property("playlist-length", playlist_size);
+            sink.set_property("max-files", playlist_size.saturating_add(1));
+        }
+        ProductionDestination::Rist {
+            host,
+            port,
+            sender_buffer_ms,
+            ..
+        } => {
+            sink.set_property("address", host);
+            sink.set_property("port", u32::from(*port));
+            sink.set_property("sender-buffer", sender_buffer_ms);
+            sink.set_property("stats-update-interval", 1_000_u32);
+        }
     }
     Ok(())
 }
@@ -889,6 +938,41 @@ mod tests {
         assert_eq!(video.property::<u32>("max-bitrate"), 8_000_000);
         assert_eq!(video.property::<u32>("gop-size"), 90);
         assert_eq!(audio.property::<i32>("bitrate"), 192_000);
+    }
+
+    #[test]
+    fn hls_and_rist_sinks_receive_bounded_typed_configuration() {
+        gst::init().expect("GStreamer runtime");
+        let hls = ProductionDestination::Hls {
+            directory: PathBuf::from("hls-output"),
+            segment_duration_secs: 3,
+            playlist_size: 5,
+            low_latency: false,
+        };
+        let mut hls_plan = plan(OutputProfile::hls_h264_aac());
+        hls_plan.atomic_recording = false;
+        let (description, _, _) = pipeline_description(&hls_plan, &hls).expect("HLS graph");
+        assert!(description.contains("hlssink2"));
+
+        let rist = ProductionDestination::Rist {
+            host: "127.0.0.1".to_owned(),
+            port: 5_000,
+            sender_buffer_ms: 750,
+            shared_secret: None,
+        };
+        let rist_plan = plan(OutputProfile::rist_mpeg_ts_h264_aac());
+        let (description, _, _) = pipeline_description(&rist_plan, &rist).expect("RIST graph");
+        assert!(description.contains("mpegtsmux"));
+        assert!(description.contains("rtpmp2tpay"));
+        let pipeline = gst::parse::launch(&description)
+            .expect("RIST pipeline")
+            .downcast::<gst::Pipeline>()
+            .expect("pipeline type");
+        configure_sink(&pipeline, &rist, None).expect("RIST configuration");
+        let sink = pipeline.by_name("output_sink").expect("RIST sink");
+        assert_eq!(sink.property::<String>("address"), "127.0.0.1");
+        assert_eq!(sink.property::<u32>("port"), 5_000);
+        assert_eq!(sink.property::<u32>("sender-buffer"), 750);
     }
 
     #[test]

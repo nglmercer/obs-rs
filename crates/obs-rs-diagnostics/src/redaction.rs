@@ -70,6 +70,8 @@ fn is_sensitive_key(key: &str) -> bool {
             | "webrtc_signaling"
             | "signaling_endpoint"
             | "signaling_token"
+            | "bearer_token"
+            | "whip_bearer_token"
             | "restore_token"
             | "portal_token"
     ) || key.ends_with("_secret")

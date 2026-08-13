@@ -7,8 +7,8 @@ use std::{collections::BTreeMap, fmt, path::PathBuf, process::Command};
 
 use obs_rs_output::{
     AudioCodec, AudioEncoderConfig, EncoderPreset, OutputAudioCodec, OutputCapabilities,
-    OutputProfile, OutputProfileKind, OutputTransport, OutputVideoCodec, RateControl, VideoCodec,
-    VideoEncoderConfig,
+    OutputProfile, OutputProfileKind, OutputTransport, OutputVideoCodec, RateControl, StreamTarget,
+    VideoCodec, VideoEncoderConfig,
 };
 use url::Url;
 
@@ -86,6 +86,8 @@ pub enum ProductionProtocol {
     Srt,
     WebRtc,
     Matroska,
+    Hls,
+    Rist,
 }
 
 impl ProductionProtocol {
@@ -98,6 +100,8 @@ impl ProductionProtocol {
             Self::Srt => "srt",
             Self::WebRtc => "webrtc",
             Self::Matroska => "matroska",
+            Self::Hls => "hls",
+            Self::Rist => "rist",
         }
     }
 
@@ -110,6 +114,8 @@ impl ProductionProtocol {
             Self::Srt => "SRT",
             Self::WebRtc => "WHIP / WebRTC",
             Self::Matroska => "Matroska",
+            Self::Hls => "HLS",
+            Self::Rist => "RIST",
         }
     }
 }
@@ -431,8 +437,23 @@ fn production_profiles(selected: &BTreeMap<&'static str, String>) -> Vec<OutputP
     if has("h264") && has("aac") && element_available("mpegtsmux") && element_available("srtsink") {
         profiles.push(OutputProfileKind::SrtMpegTsH264Aac);
     }
-    if has("vp8") && has("opus") && element_available("webrtcbin") {
+    if has("vp8")
+        && has("opus")
+        && element_available("webrtcbin")
+        && element_available("whipclientsink")
+    {
         profiles.push(OutputProfileKind::WebRtcVp8Opus);
+    }
+    if has("h264") && has("aac") && element_available("hlssink2") {
+        profiles.push(OutputProfileKind::HlsH264Aac);
+    }
+    if has("h264")
+        && has("aac")
+        && element_available("mpegtsmux")
+        && element_available("rtpmp2tpay")
+        && element_available("ristsink")
+    {
+        profiles.push(OutputProfileKind::RistMpegTsH264Aac);
     }
     profiles
 }
@@ -445,6 +466,8 @@ fn unavailable_protocols() -> Vec<ProtocolCapability> {
         ProductionProtocol::Srt,
         ProductionProtocol::WebRtc,
         ProductionProtocol::Matroska,
+        ProductionProtocol::Hls,
+        ProductionProtocol::Rist,
     ]
     .into_iter()
     .map(|protocol| ProtocolCapability {
@@ -467,6 +490,11 @@ fn protocol_capabilities(output: &OutputCapabilities) -> Vec<ProtocolCapability>
         (
             ProductionProtocol::Matroska,
             OutputProfileKind::MatroskaH264Aac,
+        ),
+        (ProductionProtocol::Hls, OutputProfileKind::HlsH264Aac),
+        (
+            ProductionProtocol::Rist,
+            OutputProfileKind::RistMpegTsH264Aac,
         ),
     ]
     .into_iter()
@@ -620,6 +648,19 @@ pub enum ProductionDestination {
     },
     WebRtc {
         signaling_endpoint: String,
+        bearer_token: Option<String>,
+    },
+    Hls {
+        directory: PathBuf,
+        segment_duration_secs: u32,
+        playlist_size: u32,
+        low_latency: bool,
+    },
+    Rist {
+        host: String,
+        port: u16,
+        sender_buffer_ms: u32,
+        shared_secret: Option<String>,
     },
 }
 
@@ -640,9 +681,22 @@ impl fmt::Debug for ProductionDestination {
                 .field("endpoint", &"[REDACTED]")
                 .field("passphrase", &passphrase.as_ref().map(|_| "[REDACTED]"))
                 .finish(),
-            Self::WebRtc { .. } => formatter
+            Self::WebRtc { bearer_token, .. } => formatter
                 .debug_struct("WebRtc")
                 .field("signaling_endpoint", &"[REDACTED]")
+                .field("bearer_token", &bearer_token.as_ref().map(|_| "[REDACTED]"))
+                .finish(),
+            Self::Hls { directory, .. } => formatter
+                .debug_struct("Hls")
+                .field("directory", directory)
+                .finish_non_exhaustive(),
+            Self::Rist { shared_secret, .. } => formatter
+                .debug_struct("Rist")
+                .field("endpoint", &"[REDACTED]")
+                .field(
+                    "shared_secret",
+                    &shared_secret.as_ref().map(|_| "[REDACTED]"),
+                )
                 .finish(),
         }
     }
@@ -681,14 +735,82 @@ impl ProductionDestination {
                     passphrase: None,
                 },
             ),
+            "rist" => {
+                let url = Url::parse(endpoint)
+                    .map_err(|error| GStreamerError::InvalidEndpoint(error.to_string()))?;
+                (
+                    OutputProfile::rist_mpeg_ts_h264_aac(),
+                    Self::Rist {
+                        host: url.host_str().unwrap_or_default().to_owned(),
+                        port: url.port().unwrap_or(5_000),
+                        sender_buffer_ms: 1_000,
+                        shared_secret: None,
+                    },
+                )
+            }
             _ => {
                 return Err(GStreamerError::InvalidEndpoint(
-                    "expected an srt://, rtmp://, or rtmps:// endpoint".to_owned(),
+                    "expected an srt://, rist://, rtmp://, or rtmps:// endpoint".to_owned(),
                 ));
             }
         };
         destination.validate_for(profile)?;
         Ok((profile, destination))
+    }
+
+    /// Converts a semantic frontend target at the worker-owned native boundary.
+    ///
+    /// # Errors
+    ///
+    /// Rejects incomplete targets and unsupported reference transports.
+    pub fn from_stream_target(
+        target: &StreamTarget,
+    ) -> Result<(OutputProfile, Self), GStreamerError> {
+        let result = match target {
+            StreamTarget::Rtmp(_) | StreamTarget::Rtmps(_) | StreamTarget::Srt(_) => {
+                return Self::from_stream_endpoint(&target.endpoint().ok_or_else(|| {
+                    GStreamerError::InvalidEndpoint("target endpoint is incomplete".to_owned())
+                })?);
+            }
+            StreamTarget::Whip(config) => (
+                OutputProfile::web_rtc_vp8_opus(),
+                Self::WebRtc {
+                    signaling_endpoint: config.endpoint.clone(),
+                    bearer_token: config
+                        .bearer_token
+                        .as_ref()
+                        .map(|secret| secret.expose_secret().to_owned()),
+                },
+            ),
+            StreamTarget::Hls(config) => (
+                OutputProfile::hls_h264_aac(),
+                Self::Hls {
+                    directory: config.directory.clone(),
+                    segment_duration_secs: config.segment_duration_secs,
+                    playlist_size: config.playlist_size,
+                    low_latency: config.low_latency,
+                },
+            ),
+            StreamTarget::Rist(config) => (
+                OutputProfile::rist_mpeg_ts_h264_aac(),
+                Self::Rist {
+                    host: config.host.clone(),
+                    port: config.port,
+                    sender_buffer_ms: config.sender_buffer_ms,
+                    shared_secret: config
+                        .shared_secret
+                        .as_ref()
+                        .map(|secret| secret.expose_secret().to_owned()),
+                },
+            ),
+            StreamTarget::Reference { .. } => {
+                return Err(GStreamerError::InvalidEndpoint(
+                    "reference target is not a production destination".to_owned(),
+                ))
+            }
+        };
+        result.1.validate_for(result.0)?;
+        Ok(result)
     }
 
     /// Validates that destination and profile transport agree exactly.
@@ -716,8 +838,42 @@ impl ProductionDestination {
                 valid_stream_url(endpoint, "srt", false)
                     && srt_passphrase_valid(endpoint, passphrase.as_deref())
             }
-            (OutputTransport::WebRtc, Self::WebRtc { signaling_endpoint }) => {
+            (
+                OutputTransport::WebRtc,
+                Self::WebRtc {
+                    signaling_endpoint, ..
+                },
+            ) => {
                 valid_url(signaling_endpoint, "wss://") || valid_url(signaling_endpoint, "https://")
+            }
+            (
+                OutputTransport::Hls,
+                Self::Hls {
+                    directory,
+                    segment_duration_secs,
+                    playlist_size,
+                    low_latency,
+                },
+            ) => {
+                !directory.as_os_str().is_empty()
+                    && (1..=60).contains(segment_duration_secs)
+                    && (3..=1_000).contains(playlist_size)
+                    && !low_latency
+            }
+            (
+                OutputTransport::RistMpegTs,
+                Self::Rist {
+                    host,
+                    port,
+                    sender_buffer_ms,
+                    shared_secret,
+                },
+            ) => {
+                !host.trim().is_empty()
+                    && *port > 0
+                    && port.is_multiple_of(2)
+                    && *sender_buffer_ms <= 60_000
+                    && shared_secret.is_none()
             }
             _ => false,
         };
@@ -1311,7 +1467,8 @@ mod tests {
             .is_ok());
         assert!(!format!("{srt:?}").contains("long-enough-secret"));
         assert!(ProductionDestination::WebRtc {
-            signaling_endpoint: String::new()
+            signaling_endpoint: String::new(),
+            bearer_token: None,
         }
         .validate_for(OutputProfile::web_rtc_vp8_opus())
         .is_err());
@@ -1373,6 +1530,7 @@ mod tests {
     fn webrtc_signaling_lifecycle_is_bounded_and_application_driven() {
         let destination = ProductionDestination::WebRtc {
             signaling_endpoint: "https://signal.invalid/session-secret".to_owned(),
+            bearer_token: None,
         };
         let mut session = WebRtcSignalingSession::new(&destination).expect("signaling session");
         session
@@ -1440,5 +1598,59 @@ mod tests {
             assert_eq!(session.telemetry().audio_submitted(), 4);
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn native_hls_session_writes_a_bounded_playlist_and_segments() {
+        use obs_rs_audio::{AudioBuffer, AudioFormat};
+        use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(OutputProfileKind::HlsH264Aac)
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("obs-rs-hls-{token}"));
+        let destination = ProductionDestination::Hls {
+            directory: directory.clone(),
+            segment_duration_secs: 1,
+            playlist_size: 3,
+            low_latency: false,
+        };
+        let profile = OutputProfile::hls_h264_aac();
+        let plan = ProductionPipelinePlan::negotiate(profile, &destination, &capabilities)
+            .expect("HLS plan");
+        let rate = FrameRate::new(30, 1).expect("rate");
+        let video = VideoFormat::new(64, 64, rate).expect("video format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let mut session =
+            GStreamerOutputSession::start(&plan, &destination, video, audio).expect("HLS session");
+        for index in 0_u64..40 {
+            let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
+            session
+                .push_video(VideoFrame::solid(video, timestamp, [40, 80, 120, 255]))
+                .expect("video");
+            session
+                .push_audio(AudioBuffer::silence(audio, timestamp, 1_600).expect("silence"))
+                .expect("audio");
+        }
+        session.close().expect("HLS close");
+        let playlist =
+            std::fs::read_to_string(directory.join("playlist.m3u8")).expect("published playlist");
+        assert!(playlist.starts_with("#EXTM3U"));
+        let segments = std::fs::read_dir(&directory)
+            .expect("HLS directory")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|value| value == "ts"))
+            .count();
+        assert!((1..=4).contains(&segments));
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

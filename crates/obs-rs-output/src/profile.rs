@@ -24,6 +24,10 @@ pub enum OutputProfileKind {
     SrtMpegTsH264Aac,
     /// WebRTC stream carrying VP8 and Opus.
     WebRtcVp8Opus,
+    /// HLS output carrying MPEG-TS, H.264, and AAC.
+    HlsH264Aac,
+    /// RIST output carrying MPEG-TS, H.264, and AAC.
+    RistMpegTsH264Aac,
 }
 
 impl OutputProfileKind {
@@ -39,6 +43,8 @@ impl OutputProfileKind {
             Self::RtmpsH264Aac => "rtmps-h264-aac",
             Self::SrtMpegTsH264Aac => "srt-mpegts-h264-aac",
             Self::WebRtcVp8Opus => "webrtc-vp8-opus",
+            Self::HlsH264Aac => "hls-h264-aac",
+            Self::RistMpegTsH264Aac => "rist-mpegts-h264-aac",
         }
     }
 
@@ -54,6 +60,8 @@ impl OutputProfileKind {
             "rtmps-h264-aac" => Some(Self::RtmpsH264Aac),
             "srt-mpegts-h264-aac" => Some(Self::SrtMpegTsH264Aac),
             "webrtc-vp8-opus" => Some(Self::WebRtcVp8Opus),
+            "hls-h264-aac" => Some(Self::HlsH264Aac),
+            "rist-mpegts-h264-aac" => Some(Self::RistMpegTsH264Aac),
             _ => None,
         }
     }
@@ -86,6 +94,8 @@ pub enum OutputTransport {
     Rtmps,
     SrtMpegTs,
     WebRtc,
+    Hls,
+    RistMpegTs,
 }
 
 /// Versioned, bounded output policy independent of a native media runtime.
@@ -202,6 +212,32 @@ impl OutputProfile {
             OutputTransport::WebRtc,
             4 * 1_024 * 1_024,
             500,
+        )
+    }
+
+    /// Segmented HLS output with bounded playlist retention.
+    #[must_use]
+    pub const fn hls_h264_aac() -> Self {
+        Self::new(
+            OutputProfileKind::HlsH264Aac,
+            OutputVideoCodec::H264,
+            OutputAudioCodec::Aac,
+            OutputTransport::Hls,
+            16 * 1_024 * 1_024,
+            8_000,
+        )
+    }
+
+    /// Reliable Internet Stream Transport output over MPEG-TS.
+    #[must_use]
+    pub const fn rist_mpeg_ts_h264_aac() -> Self {
+        Self::new(
+            OutputProfileKind::RistMpegTsH264Aac,
+            OutputVideoCodec::H264,
+            OutputAudioCodec::Aac,
+            OutputTransport::RistMpegTs,
+            8 * 1_024 * 1_024,
+            2_000,
         )
     }
 

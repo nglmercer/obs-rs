@@ -1,6 +1,6 @@
 //! Typed production-stream settings shared by frontends and output backends.
 
-use std::fmt;
+use std::{fmt, path::PathBuf};
 use url::Url;
 use zeroize::Zeroize;
 
@@ -51,6 +51,8 @@ pub enum StreamProtocol {
     Rtmps,
     Srt,
     Whip,
+    Hls,
+    Rist,
     Reference,
 }
 
@@ -62,6 +64,8 @@ impl StreamProtocol {
             Self::Rtmps => "rtmps",
             Self::Srt => "srt",
             Self::Whip => "whip",
+            Self::Hls => "hls",
+            Self::Rist => "rist",
             Self::Reference => "reference",
         }
     }
@@ -73,6 +77,8 @@ impl StreamProtocol {
             "rtmps" => Some(Self::Rtmps),
             "srt" => Some(Self::Srt),
             "whip" | "webrtc" => Some(Self::Whip),
+            "hls" => Some(Self::Hls),
+            "rist" => Some(Self::Rist),
             "reference" => Some(Self::Reference),
             _ => None,
         }
@@ -85,7 +91,9 @@ pub enum StreamTarget {
     Rtmp(RtmpConfig),
     Rtmps(RtmpConfig),
     Srt(SrtConfig),
-    Whip { endpoint: String },
+    Whip(WhipConfig),
+    Hls(HlsConfig),
+    Rist(RistConfig),
     Reference { address: String },
 }
 
@@ -96,7 +104,9 @@ impl StreamTarget {
             Self::Rtmp(_) => StreamProtocol::Rtmp,
             Self::Rtmps(_) => StreamProtocol::Rtmps,
             Self::Srt(_) => StreamProtocol::Srt,
-            Self::Whip { .. } => StreamProtocol::Whip,
+            Self::Whip(_) => StreamProtocol::Whip,
+            Self::Hls(_) => StreamProtocol::Hls,
+            Self::Rist(_) => StreamProtocol::Rist,
             Self::Reference { .. } => StreamProtocol::Reference,
         }
     }
@@ -108,9 +118,64 @@ impl StreamTarget {
             Self::Rtmp(config) => config.endpoint(StreamProtocol::Rtmp),
             Self::Rtmps(config) => config.endpoint(StreamProtocol::Rtmps),
             Self::Srt(config) => config.endpoint(),
-            Self::Whip { endpoint } => nonempty(endpoint),
+            Self::Whip(config) => nonempty(&config.endpoint),
+            Self::Hls(config) => nonempty(config.directory.to_str()?),
+            Self::Rist(config) => config.endpoint(),
             Self::Reference { address } => nonempty(address),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WhipConfig {
+    pub endpoint: String,
+    pub bearer_token: Option<SecretString>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HlsConfig {
+    pub directory: PathBuf,
+    pub segment_duration_secs: u32,
+    pub playlist_size: u32,
+    pub low_latency: bool,
+}
+
+impl Default for HlsConfig {
+    fn default() -> Self {
+        Self {
+            directory: PathBuf::from("hls"),
+            segment_duration_secs: 4,
+            playlist_size: 6,
+            low_latency: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RistConfig {
+    pub host: String,
+    pub port: u16,
+    pub sender_buffer_ms: u32,
+    pub shared_secret: Option<SecretString>,
+}
+
+impl Default for RistConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_owned(),
+            port: 5_000,
+            sender_buffer_ms: 1_000,
+            shared_secret: None,
+        }
+    }
+}
+
+impl RistConfig {
+    #[must_use]
+    pub fn endpoint(&self) -> Option<String> {
+        let host = self.host.trim();
+        (!host.is_empty() && self.port > 0 && self.port.is_multiple_of(2))
+            .then(|| format!("rist://{host}:{}", self.port))
     }
 }
 
@@ -519,6 +584,8 @@ mod tests {
             StreamProtocol::Rtmps,
             StreamProtocol::Srt,
             StreamProtocol::Whip,
+            StreamProtocol::Hls,
+            StreamProtocol::Rist,
             StreamProtocol::Reference,
         ] {
             assert_eq!(StreamProtocol::from_id(protocol.id()), Some(protocol));
@@ -526,6 +593,28 @@ mod tests {
         for mode in [SrtMode::Caller, SrtMode::Listener, SrtMode::Rendezvous] {
             assert_eq!(SrtMode::from_id(mode.id()), Some(mode));
         }
+    }
+
+    #[test]
+    fn extended_targets_are_typed_bounded_and_redacted() {
+        let whip = StreamTarget::Whip(WhipConfig {
+            endpoint: "https://service.example/whip".to_owned(),
+            bearer_token: Some(SecretString::new("private-bearer")),
+        });
+        assert_eq!(whip.protocol(), StreamProtocol::Whip);
+        assert!(!format!("{whip:?}").contains("private-bearer"));
+
+        let hls = StreamTarget::Hls(HlsConfig::default());
+        assert_eq!(hls.protocol(), StreamProtocol::Hls);
+        assert_eq!(hls.endpoint().as_deref(), Some("hls"));
+
+        let rist = StreamTarget::Rist(RistConfig::default());
+        assert_eq!(rist.endpoint().as_deref(), Some("rist://127.0.0.1:5000"));
+        let invalid = StreamTarget::Rist(RistConfig {
+            port: 5_001,
+            ..RistConfig::default()
+        });
+        assert!(invalid.endpoint().is_none());
     }
 
     #[test]

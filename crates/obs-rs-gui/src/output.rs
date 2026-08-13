@@ -221,6 +221,13 @@ impl OutputRuntime {
         };
         self.configured_video_encoder = settings.rtmp.video.clone();
         self.configured_audio_encoder = settings.rtmp.audio.clone();
+        if settings.stream_protocol == StreamProtocol::Whip {
+            self.configured_video_encoder.codec = VideoCodec::Vp8;
+            self.configured_video_encoder.implementation = EncoderImplementation::default();
+            self.configured_video_encoder.profile = None;
+            self.configured_audio_encoder.codec = AudioCodec::Opus;
+            self.configured_audio_encoder.implementation = EncoderImplementation::default();
+        }
         if self.configured_video_encoder.implementation.is_automatic() {
             if let Some(encoder) = self
                 .capabilities
@@ -246,15 +253,9 @@ impl OutputRuntime {
     }
 
     pub(crate) fn start_configured_stream(&mut self) -> Result<&'static str, Box<dyn Error>> {
-        let address = self.configured_stream.endpoint().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "the selected stream endpoint is invalid",
-            )
-        })?;
         let protocol = stream_protocol_name(self.configured_stream.protocol());
-        self.worker.start_streaming_configured(
-            &address,
+        self.worker.start_streaming_target_configured(
+            self.configured_stream.clone(),
             self.configured_video_encoder.clone(),
             self.configured_audio_encoder.clone(),
         )?;
@@ -693,6 +694,8 @@ const fn stream_protocol_name(protocol: StreamProtocol) -> &'static str {
         StreamProtocol::Rtmps => "RTMPS",
         StreamProtocol::Srt => "SRT",
         StreamProtocol::Whip => "WHIP",
+        StreamProtocol::Hls => "HLS",
+        StreamProtocol::Rist => "RIST",
         StreamProtocol::Reference => "Reference",
     }
 }
