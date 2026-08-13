@@ -56,8 +56,8 @@ pub use stream::{
     StreamSession, TcpPacketTransport, WebSocketPacketTransport,
 };
 pub use types::{
-    EncodedPacket, OutputState, PacketDropPolicy, PacketKind, PacketPushOutcome, ReconnectPolicy,
-    StreamMetrics, StreamState,
+    AudioInputRequirement, EncodedPacket, OutputState, PacketDropPolicy, PacketKind,
+    PacketPushOutcome, ReconnectPolicy, StreamMetrics, StreamState, VideoInputRequirement,
 };
 pub use video::{
     encode_png, PngVideoEncoder, RawVideoEncoder, RleVideoDecoder, RleVideoEncoder, VideoEncoder,

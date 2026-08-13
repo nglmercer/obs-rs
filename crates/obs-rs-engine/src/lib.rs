@@ -23,9 +23,10 @@ use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{
-    AtomicPacketFileWriter, AudioEncoder, EncodedPacket, OutputError, PacketDropPolicy,
-    RawAudioEncoder, ReconnectPolicy, RleVideoEncoder, StreamMetrics, StreamSession, StreamState,
-    TcpPacketTransport, VideoEncoder, WebSocketPacketTransport,
+    AtomicPacketFileWriter, AudioEncoder, AudioInputRequirement, EncodedPacket, OutputError,
+    PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, RleVideoEncoder, StreamMetrics,
+    StreamSession, StreamState, TcpPacketTransport, VideoEncoder, VideoInputRequirement,
+    WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output_gstreamer::{
@@ -418,6 +419,16 @@ struct RecordingOutput {
     writer: AtomicPacketFileWriter,
 }
 
+impl RecordingOutput {
+    const fn video_requirement() -> VideoInputRequirement {
+        VideoInputRequirement::Packetized
+    }
+
+    const fn audio_requirement() -> AudioInputRequirement {
+        AudioInputRequirement::Packetized
+    }
+}
+
 enum StreamOutput {
     Tcp(StreamSession<TcpPacketTransport>),
     WebSocket(StreamSession<WebSocketPacketTransport>),
@@ -426,6 +437,22 @@ enum StreamOutput {
 }
 
 impl StreamOutput {
+    const fn video_requirement(&self) -> VideoInputRequirement {
+        match self {
+            Self::Tcp(_) | Self::WebSocket(_) => VideoInputRequirement::Packetized,
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(_) => VideoInputRequirement::Raw,
+        }
+    }
+
+    const fn audio_requirement(&self) -> AudioInputRequirement {
+        match self {
+            Self::Tcp(_) | Self::WebSocket(_) => AudioInputRequirement::Packetized,
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production(_) => AudioInputRequirement::Raw,
+        }
+    }
+
     fn connect(
         address: &str,
         capacity_bytes: usize,
@@ -653,6 +680,10 @@ pub struct EngineSession {
     streaming_lifecycle: OutputLifecycle,
     stats: EngineStats,
     last_error: Option<String>,
+    #[cfg(test)]
+    reference_video_encode_calls: u64,
+    #[cfg(test)]
+    reference_audio_encode_calls: u64,
 }
 
 #[allow(
@@ -752,6 +783,10 @@ impl EngineSession {
             streaming_lifecycle: OutputLifecycle::Idle,
             stats: EngineStats::default(),
             last_error: None,
+            #[cfg(test)]
+            reference_video_encode_calls: 0,
+            #[cfg(test)]
+            reference_audio_encode_calls: 0,
         })
     }
 
@@ -927,18 +962,10 @@ impl EngineSession {
         let preview_frame = preview_frame.flatten();
 
         for audio in &audio_blocks {
-            if let Some(stream) = self.streaming.as_mut() {
-                stream.push_raw_audio(audio.clone())?;
-            }
-            let packet = self.audio_encoder.encode(audio)?;
-            self.emit_packet(packet)?;
+            self.dispatch_audio(audio)?;
         }
         if let Some(frame) = program_frame.as_ref() {
-            if let Some(stream) = self.streaming.as_mut() {
-                stream.push_raw_video(frame.clone())?;
-            }
-            let packet = self.video_encoder.encode(frame)?;
-            self.emit_packet(packet)?;
+            self.dispatch_video(frame)?;
             self.stats.video_frames = self.stats.video_frames.saturating_add(1);
             self.stats.last_video_timestamp = Some(frame.timestamp());
         }
@@ -979,17 +1006,9 @@ impl EngineSession {
         }
         let audio_blocks = self.drain_audio_until(frame.timestamp())?;
         for audio in &audio_blocks {
-            if let Some(stream) = self.streaming.as_mut() {
-                stream.push_raw_audio(audio.clone())?;
-            }
-            let packet = self.audio_encoder.encode(audio)?;
-            self.emit_packet(packet)?;
+            self.dispatch_audio(audio)?;
         }
-        if let Some(stream) = self.streaming.as_mut() {
-            stream.push_raw_video(frame.clone())?;
-        }
-        let packet = self.video_encoder.encode(frame)?;
-        self.emit_packet(packet)?;
+        self.dispatch_video(frame)?;
         self.stats.ticks = self.stats.ticks.saturating_add(1);
         self.stats.video_frames = self.stats.video_frames.saturating_add(1);
         self.stats.last_video_timestamp = Some(frame.timestamp());
@@ -1375,6 +1394,76 @@ impl EngineSession {
         }
         Ok(())
     }
+
+    fn dispatch_audio(&mut self, audio: &AudioBuffer) -> Result<(), EngineError> {
+        if self.raw_audio_required() {
+            let stream = self
+                .streaming
+                .as_mut()
+                .expect("raw audio requirement comes from an active stream");
+            stream.push_raw_audio(audio.clone())?;
+        }
+        if self.packetized_audio_required() {
+            #[cfg(test)]
+            {
+                self.reference_audio_encode_calls =
+                    self.reference_audio_encode_calls.saturating_add(1);
+            }
+            let packet = self.audio_encoder.encode(audio)?;
+            self.emit_packet(packet)?;
+        }
+        Ok(())
+    }
+
+    fn dispatch_video(&mut self, frame: &VideoFrame) -> Result<(), EngineError> {
+        if self.raw_video_required() {
+            let stream = self
+                .streaming
+                .as_mut()
+                .expect("raw video requirement comes from an active stream");
+            stream.push_raw_video(frame.clone())?;
+        }
+        if self.packetized_video_required() {
+            #[cfg(test)]
+            {
+                self.reference_video_encode_calls =
+                    self.reference_video_encode_calls.saturating_add(1);
+            }
+            let packet = self.video_encoder.encode(frame)?;
+            self.emit_packet(packet)?;
+        }
+        Ok(())
+    }
+
+    fn packetized_video_required(&self) -> bool {
+        (self.recording.is_some()
+            && RecordingOutput::video_requirement() == VideoInputRequirement::Packetized)
+            || self
+            .streaming
+            .as_ref()
+            .is_some_and(|stream| stream.video_requirement() == VideoInputRequirement::Packetized)
+    }
+
+    fn packetized_audio_required(&self) -> bool {
+        (self.recording.is_some()
+            && RecordingOutput::audio_requirement() == AudioInputRequirement::Packetized)
+            || self
+            .streaming
+            .as_ref()
+            .is_some_and(|stream| stream.audio_requirement() == AudioInputRequirement::Packetized)
+    }
+
+    fn raw_video_required(&self) -> bool {
+        self.streaming
+            .as_ref()
+            .is_some_and(|stream| stream.video_requirement() == VideoInputRequirement::Raw)
+    }
+
+    fn raw_audio_required(&self) -> bool {
+        self.streaming
+            .as_ref()
+            .is_some_and(|stream| stream.audio_requirement() == AudioInputRequirement::Raw)
+    }
 }
 
 impl Drop for EngineSession {
@@ -1536,6 +1625,8 @@ mod tests {
         }
         assert_eq!(engine.stats().video_frames, 5);
         assert!(engine.stats().audio_blocks >= 10);
+        assert_eq!(engine.reference_video_encode_calls, 0);
+        assert_eq!(engine.reference_audio_encode_calls, 0);
     }
 
     #[test]
@@ -1916,8 +2007,147 @@ mod tests {
             let mut stream = StreamOutput::connect(endpoint, 1_048_576, 1, video, audio)
                 .expect("native production pipeline");
             assert!(matches!(stream, StreamOutput::Production(_)));
+            assert_eq!(stream.video_requirement(), VideoInputRequirement::Raw);
+            assert_eq!(stream.audio_requirement(), AudioInputRequirement::Raw);
             stream.close().expect("close live pipeline");
         }
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn production_only_streams_skip_reference_encoders_and_receive_raw_media() {
+        let frame = VideoFrame::solid(
+            project()
+                .active_profile_spec()
+                .expect("profile")
+                .video_format(),
+            Timestamp::ZERO,
+            [24, 96, 180, 255],
+        );
+        for endpoint in [
+            "rtmp://127.0.0.1:9/live/test",
+            "rtmps://127.0.0.1:9/live/test",
+            "srt://127.0.0.1:9",
+        ] {
+            let mut engine =
+                EngineSession::new(project(), EngineConfig::default()).expect("engine");
+            engine
+                .start_streaming(endpoint)
+                .expect("native production pipeline");
+
+            engine
+                .push_program_frame(&frame)
+                .expect("raw media submission");
+
+            assert_eq!(engine.reference_video_encode_calls, 0, "{endpoint}");
+            assert_eq!(engine.reference_audio_encode_calls, 0, "{endpoint}");
+            let metrics = engine
+                .snapshot()
+                .production_stream_metrics
+                .expect("production telemetry");
+            assert_eq!(metrics.video_submitted, 1, "{endpoint}");
+            assert_eq!(metrics.audio_submitted, 1, "{endpoint}");
+        }
+    }
+
+    #[test]
+    fn reference_recording_runs_reference_encoders_once_per_media_item() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-reference-only-{token}.obsr"));
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let frame = VideoFrame::solid(engine.format(), Timestamp::ZERO, [24, 96, 180, 255]);
+        engine.start_recording(&path).expect("recording");
+
+        engine
+            .push_program_frame(&frame)
+            .expect("packetized media submission");
+
+        assert_eq!(engine.reference_video_encode_calls, 1);
+        assert_eq!(engine.reference_audio_encode_calls, 1);
+        engine.finish_recording().expect("finalize recording");
+        std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[test]
+    fn reference_tcp_and_websocket_streams_keep_packetized_encoding() {
+        let policy = ReconnectPolicy::new(1);
+        let streams = [
+            StreamOutput::Tcp(
+                StreamSession::new(
+                    TcpPacketTransport::new("127.0.0.1:9"),
+                    1_048_576,
+                    PacketDropPolicy::DropNewest,
+                    policy,
+                )
+                .expect("TCP stream"),
+            ),
+            StreamOutput::WebSocket(
+                StreamSession::new(
+                    WebSocketPacketTransport::new("ws://127.0.0.1:9/live"),
+                    1_048_576,
+                    PacketDropPolicy::DropNewest,
+                    policy,
+                )
+                .expect("WebSocket stream"),
+            ),
+        ];
+
+        for stream in streams {
+            assert_eq!(
+                stream.video_requirement(),
+                VideoInputRequirement::Packetized
+            );
+            assert_eq!(
+                stream.audio_requirement(),
+                AudioInputRequirement::Packetized
+            );
+            let mut engine =
+                EngineSession::new(project(), EngineConfig::default()).expect("engine");
+            let frame = VideoFrame::solid(engine.format(), Timestamp::ZERO, [24, 96, 180, 255]);
+            engine.streaming = Some(stream);
+
+            engine
+                .push_program_frame(&frame)
+                .expect("packetized media submission");
+
+            assert_eq!(engine.reference_video_encode_calls, 1);
+            assert_eq!(engine.reference_audio_encode_calls, 1);
+            assert!(engine.snapshot().stream_queued_bytes > 0);
+        }
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn reference_recording_and_rtmp_encode_once_and_submit_raw_once() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-mixed-output-{token}.obsr"));
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let frame = VideoFrame::solid(engine.format(), Timestamp::ZERO, [24, 96, 180, 255]);
+        engine.start_recording(&path).expect("recording");
+        engine
+            .start_streaming("rtmp://127.0.0.1:9/live/test")
+            .expect("native production pipeline");
+
+        engine
+            .push_program_frame(&frame)
+            .expect("mixed media submission");
+
+        assert_eq!(engine.reference_video_encode_calls, 1);
+        assert_eq!(engine.reference_audio_encode_calls, 1);
+        let metrics = engine
+            .snapshot()
+            .production_stream_metrics
+            .expect("production telemetry");
+        assert_eq!(metrics.video_submitted, 1);
+        assert_eq!(metrics.audio_submitted, 1);
+        engine.finish_recording().expect("finalize recording");
+        std::fs::remove_file(path).expect("remove recording");
     }
 
     #[test]

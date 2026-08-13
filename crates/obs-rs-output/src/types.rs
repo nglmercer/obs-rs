@@ -3,6 +3,24 @@ use std::sync::Arc;
 
 use super::{error::OutputError, MAX_PACKET_BYTES};
 
+/// Video representation consumed by an output session.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum VideoInputRequirement {
+    /// The output performs its own video encoding from raw frames.
+    Raw,
+    /// The output consumes packets produced by an OBS-RS video encoder.
+    Packetized,
+}
+
+/// Audio representation consumed by an output session.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AudioInputRequirement {
+    /// The output performs its own audio encoding from raw buffers.
+    Raw,
+    /// The output consumes packets produced by an OBS-RS audio encoder.
+    Packetized,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PacketKind {
     /// Encoded video data.
