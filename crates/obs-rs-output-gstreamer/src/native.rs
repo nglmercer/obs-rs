@@ -462,8 +462,12 @@ fn pipeline_description(
             Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. matroskamux name=mux ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
         }
         (OutputTransport::Rtmp, ProductionDestination::Rtmp { .. })
-        | (OutputTransport::Rtmps, ProductionDestination::Rtmps { .. }) =>
-            Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. flvmux name=mux streamable=true ! rtmpsink name=output_sink"), None, None)),
+        | (OutputTransport::Rtmps, ProductionDestination::Rtmps { .. }) => {
+            let sink = plan.rtmp_sink().ok_or_else(|| {
+                GStreamerError::Native("negotiated RTMP sink is missing".to_owned())
+            })?;
+            Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. flvmux name=mux streamable=true ! {sink} name=output_sink"), None, None))
+        }
         (OutputTransport::SrtMpegTs, ProductionDestination::Srt { .. }) =>
             Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. mpegtsmux name=mux ! srtsink name=output_sink"), None, None)),
         (OutputTransport::WebRtc, ProductionDestination::WebRtc { .. }) =>
@@ -667,6 +671,11 @@ mod tests {
             atomic_recording: false,
             video_config,
             audio_config,
+            rtmp_sink: matches!(
+                profile.kind(),
+                OutputProfileKind::RtmpH264Aac | OutputProfileKind::RtmpsH264Aac
+            )
+            .then(|| "rtmp2sink".to_owned()),
         }
     }
 
@@ -680,7 +689,7 @@ mod tests {
                     endpoint: "rtmp://127.0.0.1/live/key".to_owned(),
                 },
                 "flvmux",
-                "rtmpsink",
+                "rtmp2sink",
             ),
             (
                 plan(OutputProfile::rtmps_h264_aac()),
@@ -688,7 +697,7 @@ mod tests {
                     endpoint: "rtmps://127.0.0.1/live/key".to_owned(),
                 },
                 "flvmux",
-                "rtmpsink",
+                "rtmp2sink",
             ),
             (
                 plan(OutputProfile::srt_mpeg_ts_h264_aac()),

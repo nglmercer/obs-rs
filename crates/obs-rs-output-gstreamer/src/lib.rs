@@ -293,6 +293,7 @@ impl GStreamerCapabilitySnapshot {
         let aac = first_available(&["avenc_aac"]);
         let vp8 = first_available(&["vp8enc"]);
         let opus = first_available(&["opusenc"]);
+        let rtmp_sink = first_available(&["rtmp2sink", "rtmpsink"]);
         if let Some(value) = &h264 {
             selected.insert("h264", value.clone());
         }
@@ -305,16 +306,15 @@ impl GStreamerCapabilitySnapshot {
         if let Some(value) = &opus {
             selected.insert("opus", value.clone());
         }
+        if let Some(value) = &rtmp_sink {
+            selected.insert("rtmp_sink", value.clone());
+        }
 
         let mut profiles = Vec::new();
         if h264.is_some() && aac.is_some() && element_available("matroskamux") {
             profiles.push(OutputProfileKind::MatroskaH264Aac);
         }
-        if h264.is_some()
-            && aac.is_some()
-            && element_available("flvmux")
-            && element_available("rtmpsink")
-        {
+        if h264.is_some() && aac.is_some() && element_available("flvmux") && rtmp_sink.is_some() {
             profiles.push(OutputProfileKind::RtmpH264Aac);
             profiles.push(OutputProfileKind::RtmpsH264Aac);
         }
@@ -788,6 +788,7 @@ pub struct ProductionPipelinePlan {
     atomic_recording: bool,
     video_config: VideoEncoderConfig,
     audio_config: AudioEncoderConfig,
+    rtmp_sink: Option<String>,
 }
 
 impl ProductionPipelinePlan {
@@ -845,6 +846,7 @@ impl ProductionPipelinePlan {
             atomic_recording: matches!(destination, ProductionDestination::Recording(_)),
             video_config,
             audio_config,
+            rtmp_sink: selected_rtmp_sink(profile, capabilities)?,
         })
     }
 
@@ -900,6 +902,7 @@ impl ProductionPipelinePlan {
             atomic_recording: matches!(destination, ProductionDestination::Recording(_)),
             video_config: video.clone(),
             audio_config: audio.clone(),
+            rtmp_sink: selected_rtmp_sink(profile, capabilities)?,
         })
     }
 
@@ -936,6 +939,11 @@ impl ProductionPipelinePlan {
     #[must_use]
     pub const fn audio_config(&self) -> &AudioEncoderConfig {
         &self.audio_config
+    }
+
+    #[must_use]
+    pub fn rtmp_sink(&self) -> Option<&str> {
+        self.rtmp_sink.as_deref()
     }
 
     /// Encodes bounded production metadata for diagnostics/fuzzing.
@@ -983,10 +991,31 @@ impl ProductionPipelinePlan {
 }
 
 fn first_available(elements: &[&str]) -> Option<String> {
+    first_matching(elements, element_available)
+}
+
+fn first_matching(elements: &[&str], mut available: impl FnMut(&str) -> bool) -> Option<String> {
     elements
         .iter()
-        .find(|element| element_available(element))
+        .find(|element| available(element))
         .map(|element| (*element).to_owned())
+}
+
+fn selected_rtmp_sink(
+    profile: OutputProfile,
+    capabilities: &GStreamerCapabilitySnapshot,
+) -> Result<Option<String>, GStreamerError> {
+    if matches!(
+        profile.kind(),
+        OutputProfileKind::RtmpH264Aac | OutputProfileKind::RtmpsH264Aac
+    ) {
+        capabilities
+            .selected_element("rtmp_sink")
+            .map(|sink| Some(sink.to_owned()))
+            .ok_or(GStreamerError::ProfileUnavailable(profile.kind()))
+    } else {
+        Ok(None)
+    }
 }
 
 const fn profile_video_codec(codec: OutputVideoCodec) -> VideoCodec {
@@ -1051,6 +1080,20 @@ pub use native::{GStreamerOutputSession, NativeOutputState, OutputSessionTelemet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rtmp_sink_selection_prefers_rtmp2_and_falls_back_to_legacy() {
+        let candidates = ["rtmp2sink", "rtmpsink"];
+        assert_eq!(
+            first_matching(&candidates, |_| true).as_deref(),
+            Some("rtmp2sink")
+        );
+        assert_eq!(
+            first_matching(&candidates, |element| element == "rtmpsink").as_deref(),
+            Some("rtmpsink")
+        );
+        assert_eq!(first_matching(&candidates, |_| false), None);
+    }
 
     #[test]
     fn capability_model_separates_protocol_codec_and_encoder_implementation() {
