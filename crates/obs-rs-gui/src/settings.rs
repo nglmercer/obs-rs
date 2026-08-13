@@ -8,6 +8,9 @@
 use std::path::{Path, PathBuf};
 
 use obs_rs_config::Config;
+use obs_rs_output::{
+    RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol, StreamTarget,
+};
 use obs_rs_ui::UiLocale;
 use slint::{Brush, Color, Model, ModelRc, VecModel};
 
@@ -198,7 +201,11 @@ pub(crate) struct AppSettings {
     pub(crate) project_path: String,
     pub(crate) diagnostics_path: String,
     pub(crate) recording_path: String,
-    pub(crate) streaming_address: String,
+    pub(crate) stream_protocol: StreamProtocol,
+    pub(crate) rtmp: RtmpConfig,
+    pub(crate) srt: SrtConfig,
+    pub(crate) whip_endpoint: String,
+    pub(crate) reference_address: String,
     /// Provider-stable `PipeWire` input ID; empty selects the first available
     /// input and keeps the deterministic fallback as a safe last resort.
     pub(crate) audio_input_id: String,
@@ -354,7 +361,11 @@ impl Default for AppSettings {
             project_path: user_file(PROJECT_FILE),
             diagnostics_path: user_file(DIAGNOSTICS_FILE),
             recording_path: user_file(RECORDING_FILE),
-            streaming_address: "rtmp://127.0.0.1/live/stream".to_owned(),
+            stream_protocol: StreamProtocol::Rtmp,
+            rtmp: RtmpConfig::default(),
+            srt: SrtConfig::default(),
+            whip_endpoint: "https://127.0.0.1/whip".to_owned(),
+            reference_address: "127.0.0.1:9000".to_owned(),
             audio_input_id: String::new(),
             restore_project: true,
             save_project_on_exit: true,
@@ -401,6 +412,25 @@ impl LayoutSettings {
 }
 
 impl AppSettings {
+    #[cfg(test)]
+    pub(crate) fn stream_endpoint(&self) -> Option<String> {
+        self.stream_target().endpoint()
+    }
+
+    pub(crate) fn stream_target(&self) -> StreamTarget {
+        match self.stream_protocol {
+            StreamProtocol::Rtmp => StreamTarget::Rtmp(self.rtmp.clone()),
+            StreamProtocol::Rtmps => StreamTarget::Rtmps(self.rtmp.clone()),
+            StreamProtocol::Srt => StreamTarget::Srt(self.srt.clone()),
+            StreamProtocol::Whip => StreamTarget::Whip {
+                endpoint: self.whip_endpoint.clone(),
+            },
+            StreamProtocol::Reference => StreamTarget::Reference {
+                address: self.reference_address.clone(),
+            },
+        }
+    }
+
     /// Reads settings from `path`, falling back to defaults for anything the
     /// document does not contain or cannot express.
     pub(crate) fn load(path: &Path) -> Self {
@@ -493,7 +523,14 @@ impl AppSettings {
             project_path: text(config, "project_path", &defaults.project_path),
             diagnostics_path: text(config, "diagnostics_path", &defaults.diagnostics_path),
             recording_path: text(config, "recording_path", &defaults.recording_path),
-            streaming_address: text(config, "streaming_address", &defaults.streaming_address),
+            stream_protocol: config
+                .get("stream_protocol")
+                .and_then(StreamProtocol::from_id)
+                .unwrap_or(defaults.stream_protocol),
+            rtmp: rtmp_from_config(config, &defaults.rtmp),
+            srt: srt_from_config(config, &defaults.srt),
+            whip_endpoint: text(config, "whip_endpoint", &defaults.whip_endpoint),
+            reference_address: text(config, "reference_address", &defaults.reference_address),
             audio_input_id: text(config, "audio_input_id", &defaults.audio_input_id),
             restore_project: flag(config, "restore_project", defaults.restore_project),
             save_project_on_exit: flag(
@@ -507,7 +544,7 @@ impl AppSettings {
 
     fn to_config(&self) -> Config {
         let mut config = Config::new();
-        let entries: [(&str, String); 32] = [
+        let entries = [
             ("locale", self.locale.clone()),
             (
                 "theme",
@@ -544,7 +581,6 @@ impl AppSettings {
             ("project_path", self.project_path.clone()),
             ("diagnostics_path", self.diagnostics_path.clone()),
             ("recording_path", self.recording_path.clone()),
-            ("streaming_address", self.streaming_address.clone()),
             ("audio_input_id", self.audio_input_id.clone()),
             ("restore_project", self.restore_project.to_string()),
             (
@@ -574,7 +610,81 @@ impl AppSettings {
             debug_assert!(config.set(key, &value).is_ok(), "settings key {key}");
             let _ = config.set(key, &value);
         }
+        self.write_stream_config(&mut config);
         config
+    }
+
+    fn write_stream_config(&self, config: &mut Config) {
+        for (key, value) in self.stream_config_entries() {
+            debug_assert!(config.set(key, &value).is_ok(), "settings key {key}");
+            let _ = config.set(key, &value);
+        }
+    }
+
+    fn stream_config_entries(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("stream_protocol", self.stream_protocol.id().to_owned()),
+            ("rtmp_service", self.rtmp.service.clone()),
+            ("rtmp_server", self.rtmp.server.clone()),
+            (
+                "rtmp_stream_key",
+                self.rtmp.stream_key.expose_secret().to_owned(),
+            ),
+            ("stream_video_encoder", self.rtmp.video_encoder.clone()),
+            ("stream_audio_encoder", self.rtmp.audio_encoder.clone()),
+            (
+                "stream_video_bitrate_kbps",
+                self.rtmp.video_bitrate_kbps.to_string(),
+            ),
+            (
+                "stream_audio_bitrate_kbps",
+                self.rtmp.audio_bitrate_kbps.to_string(),
+            ),
+            ("stream_rate_control", self.rtmp.rate_control.clone()),
+            (
+                "stream_keyframe_interval_secs",
+                self.rtmp.keyframe_interval_secs.to_string(),
+            ),
+            ("stream_preset", self.rtmp.preset.clone()),
+            ("stream_profile", self.rtmp.profile.clone()),
+            ("stream_b_frames", self.rtmp.b_frames.to_string()),
+            ("stream_reconnect", self.rtmp.reconnect.to_string()),
+            (
+                "stream_maximum_retries",
+                self.rtmp.maximum_retries.to_string(),
+            ),
+            (
+                "stream_network_buffer_ms",
+                self.rtmp.network_buffer_ms.to_string(),
+            ),
+            ("srt_host", self.srt.host.clone()),
+            ("srt_port", self.srt.port.to_string()),
+            ("srt_mode", self.srt.mode.id().to_owned()),
+            ("srt_latency_ms", self.srt.latency_ms.to_string()),
+            (
+                "srt_passphrase",
+                self.srt
+                    .passphrase
+                    .as_ref()
+                    .map_or_else(String::new, |value| value.expose_secret().to_owned()),
+            ),
+            (
+                "srt_pbkeylen",
+                self.srt
+                    .pbkeylen
+                    .map_or_else(String::new, |value| value.bytes().to_string()),
+            ),
+            (
+                "srt_stream_id",
+                self.srt.stream_id.clone().unwrap_or_default(),
+            ),
+            (
+                "srt_connect_timeout_ms",
+                self.srt.connect_timeout_ms.to_string(),
+            ),
+            ("whip_endpoint", self.whip_endpoint.clone()),
+            ("reference_address", self.reference_address.clone()),
+        ]
     }
 
     /// Restores the stored dock layout into a freshly built window.
@@ -733,6 +843,91 @@ fn text(config: &Config, key: &str, fallback: &str) -> String {
         .map_or_else(|| fallback.to_owned(), str::to_owned)
 }
 
+fn optional_text(config: &Config, key: &str) -> Option<String> {
+    config
+        .get(key)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn optional_secret(config: &Config, key: &str) -> Option<SecretString> {
+    optional_text(config, key).map(SecretString::new)
+}
+
+fn rtmp_from_config(config: &Config, defaults: &RtmpConfig) -> RtmpConfig {
+    RtmpConfig {
+        service: text(config, "rtmp_service", &defaults.service),
+        server: text(config, "rtmp_server", &defaults.server),
+        stream_key: SecretString::new(text(
+            config,
+            "rtmp_stream_key",
+            defaults.stream_key.expose_secret(),
+        )),
+        video_encoder: text(config, "stream_video_encoder", &defaults.video_encoder),
+        audio_encoder: text(config, "stream_audio_encoder", &defaults.audio_encoder),
+        video_bitrate_kbps: number(
+            config,
+            "stream_video_bitrate_kbps",
+            defaults.video_bitrate_kbps,
+        ),
+        audio_bitrate_kbps: number(
+            config,
+            "stream_audio_bitrate_kbps",
+            defaults.audio_bitrate_kbps,
+        ),
+        rate_control: text(config, "stream_rate_control", &defaults.rate_control),
+        keyframe_interval_secs: number(
+            config,
+            "stream_keyframe_interval_secs",
+            defaults.keyframe_interval_secs,
+        ),
+        preset: text(config, "stream_preset", &defaults.preset),
+        profile: text(config, "stream_profile", &defaults.profile),
+        b_frames: number(config, "stream_b_frames", defaults.b_frames),
+        reconnect: flag(config, "stream_reconnect", defaults.reconnect),
+        maximum_retries: number(config, "stream_maximum_retries", defaults.maximum_retries),
+        network_buffer_ms: number(
+            config,
+            "stream_network_buffer_ms",
+            defaults.network_buffer_ms,
+        ),
+    }
+}
+
+fn srt_from_config(config: &Config, defaults: &SrtConfig) -> SrtConfig {
+    SrtConfig {
+        host: text(config, "srt_host", &defaults.host),
+        port: number(config, "srt_port", defaults.port),
+        mode: config
+            .get("srt_mode")
+            .and_then(SrtMode::from_id)
+            .unwrap_or(defaults.mode),
+        latency_ms: number(config, "srt_latency_ms", defaults.latency_ms),
+        passphrase: optional_secret(config, "srt_passphrase"),
+        pbkeylen: config
+            .get("srt_pbkeylen")
+            .and_then(|value| value.parse::<u16>().ok())
+            .and_then(SrtKeyLength::from_bytes),
+        stream_id: optional_text(config, "srt_stream_id"),
+        connect_timeout_ms: number(
+            config,
+            "srt_connect_timeout_ms",
+            defaults.connect_timeout_ms,
+        ),
+    }
+}
+
+fn number<T>(config: &Config, key: &str, fallback: T) -> T
+where
+    T: std::str::FromStr,
+{
+    config
+        .get(key)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(fallback)
+}
+
 /// Colour fields fall back rather than persisting text the palette cannot use.
 fn colour_text(config: &Config, key: &str, fallback: &str) -> String {
     config
@@ -778,7 +973,34 @@ mod tests {
             channels: 1,
             hotkey_swap: "F1".to_owned(),
             preview_border_color: "#00FF88".to_owned(),
-            streaming_address: "rtmps://media.example/live/test-key".to_owned(),
+            stream_protocol: StreamProtocol::Rtmps,
+            rtmp: RtmpConfig {
+                service: "Example Live".to_owned(),
+                server: "media.example/live".to_owned(),
+                stream_key: SecretString::new("test-key"),
+                video_encoder: "nvh264enc".to_owned(),
+                audio_encoder: "avenc_aac".to_owned(),
+                video_bitrate_kbps: 8_500,
+                audio_bitrate_kbps: 192,
+                rate_control: "VBR".to_owned(),
+                keyframe_interval_secs: 3,
+                preset: "quality".to_owned(),
+                profile: "main".to_owned(),
+                b_frames: 3,
+                reconnect: false,
+                maximum_retries: 7,
+                network_buffer_ms: 2_500,
+            },
+            srt: SrtConfig {
+                host: "srt.example".to_owned(),
+                port: 10_000,
+                mode: SrtMode::Rendezvous,
+                latency_ms: 400,
+                passphrase: Some(SecretString::new("long-enough-passphrase")),
+                pbkeylen: Some(SrtKeyLength::Bits256),
+                stream_id: Some("publish/feed".to_owned()),
+                connect_timeout_ms: 12_000,
+            },
             ..AppSettings::default()
         };
 
@@ -813,11 +1035,29 @@ mod tests {
     }
 
     #[test]
-    fn default_stream_address_selects_the_production_rtmp_path() {
+    fn default_stream_config_selects_the_production_rtmp_path() {
         assert_eq!(
-            AppSettings::default().streaming_address,
-            "rtmp://127.0.0.1/live/stream"
+            AppSettings::default().stream_endpoint().as_deref(),
+            Some("rtmp://127.0.0.1/live/stream")
         );
+    }
+
+    #[test]
+    fn settings_debug_output_redacts_stream_secrets() {
+        let settings = AppSettings {
+            rtmp: RtmpConfig {
+                stream_key: SecretString::new("private-stream-key"),
+                ..RtmpConfig::default()
+            },
+            srt: SrtConfig {
+                passphrase: Some(SecretString::new("private-passphrase")),
+                ..SrtConfig::default()
+            },
+            ..AppSettings::default()
+        };
+        let debug = format!("{settings:?}");
+        assert!(!debug.contains("private-stream-key"));
+        assert!(!debug.contains("private-passphrase"));
     }
 
     #[test]

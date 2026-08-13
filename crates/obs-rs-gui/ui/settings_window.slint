@@ -40,7 +40,41 @@ export component SettingsWindow inherits Window {
     in property <[string]> theme-names;
     in-out property <int> theme-index;
     // Stream / Output
-    in-out property <string> streaming-address;
+    in property <[string]> protocol-names;
+    in-out property <int> protocol-index;
+    in property <bool> stream-show-rtmp;
+    in property <bool> stream-show-srt;
+    in property <bool> stream-show-whip;
+    in property <bool> stream-show-reference;
+    in-out property <string> rtmp-service;
+    in-out property <string> rtmp-server;
+    in-out property <string> rtmp-stream-key;
+    in property <[string]> video-encoder-names;
+    in-out property <int> video-encoder-index;
+    in property <[string]> audio-encoder-names;
+    in-out property <int> audio-encoder-index;
+    in-out property <int> stream-video-bitrate;
+    in-out property <int> stream-audio-bitrate;
+    in-out property <string> stream-rate-control;
+    in-out property <int> stream-keyframe-interval;
+    in-out property <string> stream-encoder-preset;
+    in-out property <string> stream-encoder-profile;
+    in-out property <int> stream-b-frames;
+    in-out property <bool> stream-reconnect;
+    in-out property <int> stream-maximum-retries;
+    in-out property <int> stream-network-buffer;
+    in property <[string]> srt-mode-names;
+    in-out property <int> srt-mode-index;
+    in-out property <string> srt-host;
+    in-out property <int> srt-port;
+    in-out property <int> srt-latency;
+    in-out property <string> srt-passphrase;
+    in property <[string]> srt-key-length-names;
+    in-out property <int> srt-key-length-index;
+    in-out property <string> srt-stream-id;
+    in-out property <int> srt-timeout;
+    in-out property <string> whip-endpoint;
+    in-out property <string> reference-address;
     in-out property <string> recording-path;
     in property <string> recording-format;
     // Audio
@@ -83,6 +117,7 @@ export component SettingsWindow inherits Window {
     // before the user commits it.
     callback preview-theme(int);
     callback preview-language(int);
+    callback select-stream-protocol(int);
 
     HorizontalLayout {
         padding: 10px;
@@ -187,7 +222,62 @@ export component SettingsWindow inherits Window {
                         }
                     }
                     if root.category == 2 : StreamPage {
-                        streaming-address <=> root.streaming-address;
+                        protocol-names: root.protocol-names;
+                        protocol-index: root.protocol-index;
+                        show-rtmp: root.stream-show-rtmp;
+                        show-srt: root.stream-show-srt;
+                        show-whip: root.stream-show-whip;
+                        show-reference: root.stream-show-reference;
+                        rtmp-service <=> root.rtmp-service;
+                        rtmp-server <=> root.rtmp-server;
+                        rtmp-stream-key <=> root.rtmp-stream-key;
+                        video-encoder-names: root.video-encoder-names;
+                        video-encoder-index: root.video-encoder-index;
+                        audio-encoder-names: root.audio-encoder-names;
+                        audio-encoder-index: root.audio-encoder-index;
+                        video-bitrate <=> root.stream-video-bitrate;
+                        audio-bitrate <=> root.stream-audio-bitrate;
+                        rate-control <=> root.stream-rate-control;
+                        keyframe-interval <=> root.stream-keyframe-interval;
+                        encoder-preset <=> root.stream-encoder-preset;
+                        encoder-profile <=> root.stream-encoder-profile;
+                        b-frames <=> root.stream-b-frames;
+                        reconnect <=> root.stream-reconnect;
+                        maximum-retries <=> root.stream-maximum-retries;
+                        network-buffer <=> root.stream-network-buffer;
+                        srt-mode-names: root.srt-mode-names;
+                        srt-mode-index: root.srt-mode-index;
+                        srt-host <=> root.srt-host;
+                        srt-port <=> root.srt-port;
+                        srt-latency <=> root.srt-latency;
+                        srt-passphrase <=> root.srt-passphrase;
+                        srt-key-length-names: root.srt-key-length-names;
+                        srt-key-length-index: root.srt-key-length-index;
+                        srt-stream-id <=> root.srt-stream-id;
+                        srt-timeout <=> root.srt-timeout;
+                        whip-endpoint <=> root.whip-endpoint;
+                        reference-address <=> root.reference-address;
+                        select-protocol(index) => {
+                            root.protocol-index = index;
+                            root.dirty = true;
+                            root.select-stream-protocol(index);
+                        }
+                        select-video-encoder(index) => {
+                            root.video-encoder-index = index;
+                            root.dirty = true;
+                        }
+                        select-audio-encoder(index) => {
+                            root.audio-encoder-index = index;
+                            root.dirty = true;
+                        }
+                        select-srt-mode(index) => {
+                            root.srt-mode-index = index;
+                            root.dirty = true;
+                        }
+                        select-srt-key-length(index) => {
+                            root.srt-key-length-index = index;
+                            root.dirty = true;
+                        }
                         changed => { root.dirty = true; }
                     }
                     if root.category == 3 : OutputPage {

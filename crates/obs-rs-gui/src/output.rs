@@ -11,8 +11,10 @@ use obs_rs_engine::{
     OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle,
 };
 use obs_rs_media::{VideoFormat, VideoFrame};
-use obs_rs_output::StreamState;
+use obs_rs_output::{RtmpConfig, StreamProtocol, StreamState, StreamTarget};
 use obs_rs_project::Project;
+
+use crate::AppSettings;
 
 /// One entry in the settings window's audio-input picker.
 ///
@@ -36,6 +38,7 @@ pub(crate) struct OutputRuntime {
     audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
     recording_started_at: Option<Instant>,
     stream_protocol: Option<&'static str>,
+    configured_stream: StreamTarget,
     /// A canvas change accepted while an output was running.
     ///
     /// Rebuilding the encoders mid-recording would break the container's frame
@@ -91,6 +94,7 @@ impl OutputRuntime {
             audio_devices_cache: None,
             recording_started_at: None,
             stream_protocol: None,
+            configured_stream: StreamTarget::Rtmp(RtmpConfig::default()),
             staged_video_format: None,
             capabilities: output_capabilities_snapshot(),
         })
@@ -122,7 +126,6 @@ impl OutputRuntime {
         revision != self.last_revision
     }
 
-    #[cfg(test)]
     pub(crate) const fn capabilities(&self) -> &OutputCapabilitiesSnapshot {
         &self.capabilities
     }
@@ -163,10 +166,28 @@ impl OutputRuntime {
         self.recording_started_at = None;
     }
 
+    #[cfg(test)]
     pub(crate) fn start_streaming(&mut self, address: &str) -> Result<(), Box<dyn Error>> {
         self.worker.start_streaming(address)?;
         self.stream_protocol = Some(stream_protocol_label(address));
         Ok(())
+    }
+
+    pub(crate) fn configure_stream(&mut self, settings: &AppSettings) {
+        self.configured_stream = settings.stream_target();
+    }
+
+    pub(crate) fn start_configured_stream(&mut self) -> Result<&'static str, Box<dyn Error>> {
+        let address = self.configured_stream.endpoint().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the selected stream endpoint is invalid",
+            )
+        })?;
+        let protocol = stream_protocol_name(self.configured_stream.protocol());
+        self.worker.start_streaming(&address)?;
+        self.stream_protocol = Some(protocol);
+        Ok(protocol)
     }
 
     pub(crate) fn finish_streaming(&mut self) -> Result<(), Box<dyn Error>> {
@@ -594,6 +615,17 @@ impl OutputRuntime {
     }
 }
 
+const fn stream_protocol_name(protocol: StreamProtocol) -> &'static str {
+    match protocol {
+        StreamProtocol::Rtmp => "RTMP",
+        StreamProtocol::Rtmps => "RTMPS",
+        StreamProtocol::Srt => "SRT",
+        StreamProtocol::Whip => "WHIP",
+        StreamProtocol::Reference => "Reference",
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn stream_protocol_label(address: &str) -> &'static str {
     match address.trim().split(':').next() {
         Some("srt") => "SRT",

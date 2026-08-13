@@ -29,6 +29,7 @@ pub const NETWORK_WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from
 
 mod audio;
 mod codec;
+mod config;
 mod error;
 mod muxer;
 mod profile;
@@ -43,6 +44,9 @@ mod writers;
 mod tests;
 
 pub use audio::{AudioEncoder, RawAudioEncoder, WavRecording, Y4mRecording};
+pub use config::{
+    RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol, StreamTarget,
+};
 pub use error::OutputError;
 pub use muxer::MemoryMuxer;
 pub use profile::{

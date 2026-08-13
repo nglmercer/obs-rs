@@ -6,7 +6,9 @@
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
+use obs_rs_engine::ProductionProtocol;
 use obs_rs_media::{FrameRate, VideoFormat};
+use obs_rs_output::{SecretString, SrtKeyLength, SrtMode, StreamProtocol};
 use obs_rs_project::ProjectCommand;
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -33,6 +35,9 @@ pub(crate) struct SettingsController {
     projectors: Rc<crate::ProjectorController>,
     /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_device_ids: RefCell<Vec<String>>,
+    protocol_ids: RefCell<Vec<StreamProtocol>>,
+    video_encoder_ids: RefCell<Vec<String>>,
+    audio_encoder_ids: RefCell<Vec<String>>,
 }
 
 impl SettingsController {
@@ -115,9 +120,16 @@ pub(crate) fn install_settings_window(
         docks: Rc::clone(&peers.docks),
         projectors: Rc::clone(&peers.projectors),
         audio_device_ids: RefCell::new(Vec::new()),
+        protocol_ids: RefCell::new(Vec::new()),
+        video_encoder_ids: RefCell::new(Vec::new()),
+        audio_encoder_ids: RefCell::new(Vec::new()),
     });
 
     populate_static_models(&controller.window);
+    install_stream_protocol_switch(&controller);
+    output
+        .borrow_mut()
+        .configure_stream(&controller.settings.borrow());
     apply_to_studio(ui, &controller.settings.borrow());
     push_palette(ui, &controller, &controller.settings.borrow());
     controller.sync_theme(state.borrow().locale());
@@ -169,6 +181,116 @@ fn populate_static_models(window: &SettingsWindow) {
             .iter()
             .map(|rate| SharedString::from(frame_rate_label(*rate))),
     ));
+    window.set_srt_mode_names(string_model(
+        ["Caller", "Listener", "Rendezvous"]
+            .into_iter()
+            .map(SharedString::from),
+    ));
+    window.set_srt_key_length_names(string_model(
+        ["None", "AES-128", "AES-192", "AES-256"]
+            .into_iter()
+            .map(SharedString::from),
+    ));
+}
+
+fn install_stream_protocol_switch(controller: &Rc<SettingsController>) {
+    let callback_controller = Rc::clone(controller);
+    controller.window.on_select_stream_protocol(move |index| {
+        let protocol = callback_controller
+            .protocol_ids
+            .borrow()
+            .get(usize::try_from(index).unwrap_or(0))
+            .copied()
+            .unwrap_or(StreamProtocol::Reference);
+        show_protocol_fields(&callback_controller.window, protocol);
+    });
+}
+
+fn populate_stream_models(
+    window: &SettingsWindow,
+    output: &OutputRuntime,
+    controller: &SettingsController,
+    settings: &AppSettings,
+) {
+    let mut protocol_ids = Vec::new();
+    let mut protocol_names = Vec::new();
+    for capability in output
+        .capabilities()
+        .protocols()
+        .iter()
+        .filter(|capability| capability.available())
+    {
+        let protocol = match capability.protocol() {
+            ProductionProtocol::Rtmp => StreamProtocol::Rtmp,
+            ProductionProtocol::Rtmps => StreamProtocol::Rtmps,
+            ProductionProtocol::Srt => StreamProtocol::Srt,
+            ProductionProtocol::WebRtc => StreamProtocol::Whip,
+            ProductionProtocol::Reference => StreamProtocol::Reference,
+            ProductionProtocol::Matroska => continue,
+        };
+        protocol_ids.push(protocol);
+        protocol_names.push(SharedString::from(capability.protocol().display_name()));
+    }
+    let selected = protocol_ids
+        .iter()
+        .position(|protocol| *protocol == settings.stream_protocol)
+        .unwrap_or_else(|| {
+            protocol_ids
+                .iter()
+                .position(|protocol| *protocol == StreamProtocol::Reference)
+                .unwrap_or(0)
+        });
+    let selected_protocol = protocol_ids
+        .get(selected)
+        .copied()
+        .unwrap_or(StreamProtocol::Reference);
+    *controller.protocol_ids.borrow_mut() = protocol_ids;
+    window.set_protocol_names(ModelRc::new(VecModel::from(protocol_names)));
+    window.set_protocol_index(i32::try_from(selected).unwrap_or(0));
+    show_protocol_fields(window, selected_protocol);
+
+    let video = output.capabilities().video_encoders();
+    *controller.video_encoder_ids.borrow_mut() = video
+        .iter()
+        .map(|encoder| encoder.id().to_owned())
+        .collect();
+    window.set_video_encoder_names(string_model(video.iter().map(|encoder| {
+        let suffix = if encoder.hardware() {
+            "hardware"
+        } else {
+            "software"
+        };
+        SharedString::from(format!("{} ({suffix})", encoder.display_name()))
+    })));
+    window.set_video_encoder_index(index_of(
+        &controller.video_encoder_ids.borrow(),
+        &settings.rtmp.video_encoder,
+    ));
+
+    let audio = output.capabilities().audio_encoders();
+    *controller.audio_encoder_ids.borrow_mut() = audio
+        .iter()
+        .map(|encoder| encoder.id().to_owned())
+        .collect();
+    window.set_audio_encoder_names(string_model(
+        audio
+            .iter()
+            .map(|encoder| SharedString::from(encoder.display_name())),
+    ));
+    window.set_audio_encoder_index(index_of(
+        &controller.audio_encoder_ids.borrow(),
+        &settings.rtmp.audio_encoder,
+    ));
+}
+
+fn show_protocol_fields(window: &SettingsWindow, protocol: StreamProtocol) {
+    window.set_stream_show_rtmp(matches!(
+        protocol,
+        StreamProtocol::Rtmp | StreamProtocol::Rtmps
+    ));
+    window.set_stream_show_srt(protocol == StreamProtocol::Srt);
+    window.set_stream_show_whip(protocol == StreamProtocol::Whip);
+    window.set_stream_show_reference(protocol == StreamProtocol::Reference);
 }
 
 fn install_open(
@@ -273,7 +395,56 @@ fn load_draft(
     window.set_confirm_stop_stream(settings.confirm_stop_stream);
     window.set_confirm_stop_recording(settings.confirm_stop_recording);
     window.set_auto_record_when_streaming(settings.auto_record_when_streaming);
-    window.set_streaming_address(settings.streaming_address.as_str().into());
+    populate_stream_models(window, &output.borrow(), controller, &settings);
+    window.set_rtmp_service(settings.rtmp.service.as_str().into());
+    window.set_rtmp_server(settings.rtmp.server.as_str().into());
+    window.set_rtmp_stream_key(settings.rtmp.stream_key.expose_secret().into());
+    window.set_stream_video_bitrate(
+        i32::try_from(settings.rtmp.video_bitrate_kbps).unwrap_or(i32::MAX),
+    );
+    window.set_stream_audio_bitrate(
+        i32::try_from(settings.rtmp.audio_bitrate_kbps).unwrap_or(i32::MAX),
+    );
+    window.set_stream_rate_control(settings.rtmp.rate_control.as_str().into());
+    window.set_stream_keyframe_interval(
+        i32::try_from(settings.rtmp.keyframe_interval_secs).unwrap_or(i32::MAX),
+    );
+    window.set_stream_encoder_preset(settings.rtmp.preset.as_str().into());
+    window.set_stream_encoder_profile(settings.rtmp.profile.as_str().into());
+    window.set_stream_b_frames(i32::try_from(settings.rtmp.b_frames).unwrap_or(i32::MAX));
+    window.set_stream_reconnect(settings.rtmp.reconnect);
+    window.set_stream_maximum_retries(
+        i32::try_from(settings.rtmp.maximum_retries).unwrap_or(i32::MAX),
+    );
+    window.set_stream_network_buffer(
+        i32::try_from(settings.rtmp.network_buffer_ms).unwrap_or(i32::MAX),
+    );
+    window.set_srt_mode_index(match settings.srt.mode {
+        SrtMode::Caller => 0,
+        SrtMode::Listener => 1,
+        SrtMode::Rendezvous => 2,
+    });
+    window.set_srt_host(settings.srt.host.as_str().into());
+    window.set_srt_port(i32::from(settings.srt.port));
+    window.set_srt_latency(i32::try_from(settings.srt.latency_ms).unwrap_or(i32::MAX));
+    window.set_srt_passphrase(
+        settings
+            .srt
+            .passphrase
+            .as_ref()
+            .map_or("", SecretString::expose_secret)
+            .into(),
+    );
+    window.set_srt_key_length_index(match settings.srt.pbkeylen {
+        None => 0,
+        Some(SrtKeyLength::Bits128) => 1,
+        Some(SrtKeyLength::Bits192) => 2,
+        Some(SrtKeyLength::Bits256) => 3,
+    });
+    window.set_srt_stream_id(settings.srt.stream_id.as_deref().unwrap_or("").into());
+    window.set_srt_timeout(i32::try_from(settings.srt.connect_timeout_ms).unwrap_or(i32::MAX));
+    window.set_whip_endpoint(settings.whip_endpoint.as_str().into());
+    window.set_reference_address(settings.reference_address.as_str().into());
     window.set_recording_path(settings.recording_path.as_str().into());
     window.set_project_path(settings.project_path.as_str().into());
     window.set_diagnostics_path(settings.diagnostics_path.as_str().into());
@@ -567,7 +738,59 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.project_path = window.get_project_path().to_string();
     settings.diagnostics_path = window.get_diagnostics_path().to_string();
     settings.recording_path = window.get_recording_path().to_string();
-    settings.streaming_address = window.get_streaming_address().to_string();
+    settings.stream_protocol = controller
+        .protocol_ids
+        .borrow()
+        .get(usize::try_from(window.get_protocol_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or(StreamProtocol::Reference);
+    settings.rtmp.service = window.get_rtmp_service().to_string();
+    settings.rtmp.server = window.get_rtmp_server().to_string();
+    settings.rtmp.stream_key = SecretString::new(window.get_rtmp_stream_key().to_string());
+    if let Some(encoder) = controller
+        .video_encoder_ids
+        .borrow()
+        .get(usize::try_from(window.get_video_encoder_index()).unwrap_or(0))
+    {
+        encoder.clone_into(&mut settings.rtmp.video_encoder);
+    }
+    if let Some(encoder) = controller
+        .audio_encoder_ids
+        .borrow()
+        .get(usize::try_from(window.get_audio_encoder_index()).unwrap_or(0))
+    {
+        encoder.clone_into(&mut settings.rtmp.audio_encoder);
+    }
+    settings.rtmp.video_bitrate_kbps = unsigned(window.get_stream_video_bitrate());
+    settings.rtmp.audio_bitrate_kbps = unsigned(window.get_stream_audio_bitrate());
+    settings.rtmp.rate_control = window.get_stream_rate_control().to_string();
+    settings.rtmp.keyframe_interval_secs = unsigned(window.get_stream_keyframe_interval());
+    settings.rtmp.preset = window.get_stream_encoder_preset().to_string();
+    settings.rtmp.profile = window.get_stream_encoder_profile().to_string();
+    settings.rtmp.b_frames = unsigned(window.get_stream_b_frames());
+    settings.rtmp.reconnect = window.get_stream_reconnect();
+    settings.rtmp.maximum_retries = unsigned(window.get_stream_maximum_retries());
+    settings.rtmp.network_buffer_ms = unsigned(window.get_stream_network_buffer());
+    settings.srt.mode = match window.get_srt_mode_index() {
+        1 => SrtMode::Listener,
+        2 => SrtMode::Rendezvous,
+        _ => SrtMode::Caller,
+    };
+    settings.srt.host = window.get_srt_host().to_string();
+    settings.srt.port = u16::try_from(window.get_srt_port()).unwrap_or(9_000);
+    settings.srt.latency_ms = unsigned(window.get_srt_latency());
+    settings.srt.passphrase =
+        nonempty(window.get_srt_passphrase().to_string()).map(SecretString::new);
+    settings.srt.pbkeylen = match window.get_srt_key_length_index() {
+        1 => Some(SrtKeyLength::Bits128),
+        2 => Some(SrtKeyLength::Bits192),
+        3 => Some(SrtKeyLength::Bits256),
+        _ => None,
+    };
+    settings.srt.stream_id = nonempty(window.get_srt_stream_id().to_string());
+    settings.srt.connect_timeout_ms = unsigned(window.get_srt_timeout());
+    settings.whip_endpoint = window.get_whip_endpoint().to_string();
+    settings.reference_address = window.get_reference_address().to_string();
     settings.restore_project = window.get_restore_project();
     settings.save_project_on_exit = window.get_save_project_on_exit();
     if let Some(device_id) = controller
@@ -613,6 +836,8 @@ fn commit(
     ) {
         notes.push(format!("audio input: {error}"));
     }
+
+    output.borrow_mut().configure_stream(&settings);
     // A selection the graph cannot resolve is kept rather than reset, so the
     // user has to be told the engine is on the fallback in the meantime;
     // silently recording from a different source would be worse.
@@ -698,7 +923,25 @@ fn apply_to_studio(ui: &MainWindow, settings: &AppSettings) {
     ui.set_project_path(settings.project_path.as_str().into());
     ui.set_diagnostics_path(settings.diagnostics_path.as_str().into());
     ui.set_recording_path(settings.recording_path.as_str().into());
-    ui.set_streaming_address(settings.streaming_address.as_str().into());
+    ui.set_streaming_address(stream_display_label(settings).into());
+}
+
+fn unsigned(value: i32) -> u32 {
+    u32::try_from(value).unwrap_or(0)
+}
+
+fn nonempty(value: String) -> Option<String> {
+    (!value.trim().is_empty()).then_some(value)
+}
+
+fn stream_display_label(settings: &AppSettings) -> String {
+    match settings.stream_protocol {
+        StreamProtocol::Rtmp => format!("RTMP · {}", settings.rtmp.server),
+        StreamProtocol::Rtmps => format!("RTMPS · {}", settings.rtmp.server),
+        StreamProtocol::Srt => format!("SRT · {}:{}", settings.srt.host, settings.srt.port),
+        StreamProtocol::Whip => format!("WHIP · {}", settings.whip_endpoint),
+        StreamProtocol::Reference => format!("Reference · {}", settings.reference_address),
+    }
 }
 
 /// Globals are per component tree, so every window is painted explicitly.

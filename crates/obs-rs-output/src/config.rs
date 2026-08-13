@@ -1,0 +1,371 @@
+//! Typed production-stream settings shared by frontends and output backends.
+
+use std::fmt;
+use url::Url;
+use zeroize::Zeroize;
+
+/// Text whose formatting traits never reveal its contents.
+#[derive(Clone, Default, Eq, PartialEq)]
+pub struct SecretString(String);
+
+impl SecretString {
+    #[must_use]
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    /// Explicitly exposes the value at the narrow boundary that consumes it.
+    #[must_use]
+    pub fn expose_secret(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SecretString([REDACTED])")
+    }
+}
+
+impl fmt::Display for SecretString {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("[REDACTED]")
+    }
+}
+
+impl Drop for SecretString {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StreamProtocol {
+    #[default]
+    Rtmp,
+    Rtmps,
+    Srt,
+    Whip,
+    Reference,
+}
+
+impl StreamProtocol {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Rtmp => "rtmp",
+            Self::Rtmps => "rtmps",
+            Self::Srt => "srt",
+            Self::Whip => "whip",
+            Self::Reference => "reference",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id.trim().to_ascii_lowercase().as_str() {
+            "rtmp" => Some(Self::Rtmp),
+            "rtmps" => Some(Self::Rtmps),
+            "srt" => Some(Self::Srt),
+            "whip" | "webrtc" => Some(Self::Whip),
+            "reference" => Some(Self::Reference),
+            _ => None,
+        }
+    }
+}
+
+/// A semantic destination retained without materializing credentials into a URL.
+#[derive(Clone, Eq, PartialEq)]
+pub enum StreamTarget {
+    Rtmp(RtmpConfig),
+    Rtmps(RtmpConfig),
+    Srt(SrtConfig),
+    Whip { endpoint: String },
+    Reference { address: String },
+}
+
+impl StreamTarget {
+    #[must_use]
+    pub const fn protocol(&self) -> StreamProtocol {
+        match self {
+            Self::Rtmp(_) => StreamProtocol::Rtmp,
+            Self::Rtmps(_) => StreamProtocol::Rtmps,
+            Self::Srt(_) => StreamProtocol::Srt,
+            Self::Whip { .. } => StreamProtocol::Whip,
+            Self::Reference { .. } => StreamProtocol::Reference,
+        }
+    }
+
+    /// Materializes the destination only for the transport connection call.
+    #[must_use]
+    pub fn endpoint(&self) -> Option<String> {
+        match self {
+            Self::Rtmp(config) => config.endpoint(StreamProtocol::Rtmp),
+            Self::Rtmps(config) => config.endpoint(StreamProtocol::Rtmps),
+            Self::Srt(config) => config.endpoint(),
+            Self::Whip { endpoint } => nonempty(endpoint),
+            Self::Reference { address } => nonempty(address),
+        }
+    }
+}
+
+impl fmt::Debug for StreamTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StreamTarget")
+            .field("protocol", &self.protocol())
+            .field("endpoint", &"[REDACTED]")
+            .finish()
+    }
+}
+
+fn nonempty(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SrtMode {
+    #[default]
+    Caller,
+    Listener,
+    Rendezvous,
+}
+
+impl SrtMode {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Caller => "caller",
+            Self::Listener => "listener",
+            Self::Rendezvous => "rendezvous",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id.trim().to_ascii_lowercase().as_str() {
+            "caller" => Some(Self::Caller),
+            "listener" => Some(Self::Listener),
+            "rendezvous" => Some(Self::Rendezvous),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u16)]
+pub enum SrtKeyLength {
+    Bits128 = 16,
+    Bits192 = 24,
+    Bits256 = 32,
+}
+
+impl SrtKeyLength {
+    #[must_use]
+    pub const fn bytes(self) -> u16 {
+        self as u16
+    }
+
+    #[must_use]
+    pub const fn bits(self) -> u16 {
+        self.bytes() * 8
+    }
+
+    #[must_use]
+    pub const fn from_bytes(bytes: u16) -> Option<Self> {
+        match bytes {
+            16 => Some(Self::Bits128),
+            24 => Some(Self::Bits192),
+            32 => Some(Self::Bits256),
+            _ => None,
+        }
+    }
+}
+
+/// Connection and encoder choices common to RTMP and RTMPS services.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RtmpConfig {
+    pub service: String,
+    pub server: String,
+    pub stream_key: SecretString,
+    pub video_encoder: String,
+    pub audio_encoder: String,
+    pub video_bitrate_kbps: u32,
+    pub audio_bitrate_kbps: u32,
+    pub rate_control: String,
+    pub keyframe_interval_secs: u32,
+    pub preset: String,
+    pub profile: String,
+    pub b_frames: u32,
+    pub reconnect: bool,
+    pub maximum_retries: u32,
+    pub network_buffer_ms: u32,
+}
+
+impl Default for RtmpConfig {
+    fn default() -> Self {
+        Self {
+            service: "Custom".to_owned(),
+            server: "127.0.0.1/live".to_owned(),
+            stream_key: SecretString::new("stream"),
+            video_encoder: String::new(),
+            audio_encoder: String::new(),
+            video_bitrate_kbps: 6_000,
+            audio_bitrate_kbps: 160,
+            rate_control: "CBR".to_owned(),
+            keyframe_interval_secs: 2,
+            preset: "balanced".to_owned(),
+            profile: "high".to_owned(),
+            b_frames: 2,
+            reconnect: true,
+            maximum_retries: 20,
+            network_buffer_ms: 1_000,
+        }
+    }
+}
+
+impl RtmpConfig {
+    /// Builds the transport endpoint while percent-encoding the secret path
+    /// segment. The returned value is intended only for the connection API.
+    #[must_use]
+    pub fn endpoint(&self, protocol: StreamProtocol) -> Option<String> {
+        let scheme = match protocol {
+            StreamProtocol::Rtmp => "rtmp",
+            StreamProtocol::Rtmps => "rtmps",
+            _ => return None,
+        };
+        let server = self
+            .server
+            .trim()
+            .trim_start_matches("rtmp://")
+            .trim_start_matches("rtmps://")
+            .trim_end_matches('/');
+        let mut url = Url::parse(&format!("{scheme}://{server}")).ok()?;
+        if !self.stream_key.is_empty() {
+            url.path_segments_mut()
+                .ok()?
+                .push(self.stream_key.expose_secret());
+        }
+        Some(url.into())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SrtConfig {
+    pub host: String,
+    pub port: u16,
+    pub mode: SrtMode,
+    pub latency_ms: u32,
+    pub passphrase: Option<SecretString>,
+    pub pbkeylen: Option<SrtKeyLength>,
+    pub stream_id: Option<String>,
+    pub connect_timeout_ms: u32,
+}
+
+impl Default for SrtConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_owned(),
+            port: 9_000,
+            mode: SrtMode::Caller,
+            latency_ms: 120,
+            passphrase: None,
+            pbkeylen: None,
+            stream_id: None,
+            connect_timeout_ms: 5_000,
+        }
+    }
+}
+
+impl SrtConfig {
+    /// Builds an SRT URI using URL query encoding for all optional values.
+    #[must_use]
+    pub fn endpoint(&self) -> Option<String> {
+        if self.host.trim().is_empty() || self.port == 0 {
+            return None;
+        }
+        let mut url = Url::parse(&format!("srt://{}:{}", self.host.trim(), self.port)).ok()?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("mode", self.mode.id());
+            query.append_pair("latency", &self.latency_ms.to_string());
+            query.append_pair("connect_timeout", &self.connect_timeout_ms.to_string());
+            if let Some(passphrase) = &self.passphrase {
+                query.append_pair("passphrase", passphrase.expose_secret());
+            }
+            if let Some(key_length) = self.pbkeylen {
+                query.append_pair("pbkeylen", &key_length.bytes().to_string());
+            }
+            if let Some(stream_id) = self.stream_id.as_deref() {
+                query.append_pair("streamid", stream_id);
+            }
+        }
+        Some(url.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secrets_are_redacted_by_all_formatting_traits() {
+        let secret = SecretString::new("do-not-print-this");
+        assert_eq!(secret.to_string(), "[REDACTED]");
+        assert!(!format!("{secret:?}").contains("do-not-print-this"));
+
+        let config = RtmpConfig {
+            stream_key: secret,
+            ..RtmpConfig::default()
+        };
+        assert!(!format!("{config:?}").contains("do-not-print-this"));
+        let target = StreamTarget::Rtmp(config);
+        assert_eq!(
+            format!("{target:?}"),
+            "StreamTarget { protocol: Rtmp, endpoint: \"[REDACTED]\" }"
+        );
+    }
+
+    #[test]
+    fn protocol_and_srt_values_round_trip_through_stable_ids() {
+        for protocol in [
+            StreamProtocol::Rtmp,
+            StreamProtocol::Rtmps,
+            StreamProtocol::Srt,
+            StreamProtocol::Whip,
+            StreamProtocol::Reference,
+        ] {
+            assert_eq!(StreamProtocol::from_id(protocol.id()), Some(protocol));
+        }
+        for mode in [SrtMode::Caller, SrtMode::Listener, SrtMode::Rendezvous] {
+            assert_eq!(SrtMode::from_id(mode.id()), Some(mode));
+        }
+    }
+
+    #[test]
+    fn endpoints_encode_secret_and_stream_identifier_components() {
+        let rtmp = RtmpConfig {
+            server: "media.example/live".to_owned(),
+            stream_key: SecretString::new("key with/slash"),
+            ..RtmpConfig::default()
+        };
+        assert_eq!(
+            rtmp.endpoint(StreamProtocol::Rtmps).as_deref(),
+            Some("rtmps://media.example/live/key%20with%2Fslash")
+        );
+        let srt = SrtConfig {
+            passphrase: Some(SecretString::new("secret phrase")),
+            stream_id: Some("#!::r=feed,m=publish".to_owned()),
+            ..SrtConfig::default()
+        };
+        let endpoint = srt.endpoint().expect("valid SRT endpoint");
+        assert!(endpoint.contains("passphrase=secret+phrase"));
+        assert!(endpoint.contains("streamid=%23%21%3A%3Ar%3Dfeed%2Cm%3Dpublish"));
+    }
+}

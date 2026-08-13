@@ -88,13 +88,7 @@ fn install_streaming_callback(
                 streaming_output.borrow_mut().finish_streaming()?;
                 Ok("Streaming stop requested".to_owned())
             } else {
-                let address = ui.get_streaming_address().to_string();
-                streaming_output.borrow_mut().start_streaming(&address)?;
-                let protocol = address
-                    .split(':')
-                    .next()
-                    .unwrap_or("stream")
-                    .to_ascii_uppercase();
+                let protocol = streaming_output.borrow_mut().start_configured_stream()?;
                 Ok(format!("{protocol} streaming starting"))
             }
         })();

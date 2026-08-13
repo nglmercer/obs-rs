@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { CheckRow, ColorSwatch, SettingHint, SettingRow, SettingsGroup } from "settings_widgets.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
@@ -78,22 +78,167 @@ export component AppearancePage inherits VerticalLayout {
 }
 
 export component StreamPage inherits VerticalLayout {
-    in-out property <string> streaming-address;
+    in property <[string]> protocol-names;
+    in-out property <int> protocol-index;
+    in property <bool> show-rtmp;
+    in property <bool> show-srt;
+    in property <bool> show-whip;
+    in property <bool> show-reference;
+    in-out property <string> rtmp-service;
+    in-out property <string> rtmp-server;
+    in-out property <string> rtmp-stream-key;
+    in property <[string]> video-encoder-names;
+    in-out property <int> video-encoder-index;
+    in property <[string]> audio-encoder-names;
+    in-out property <int> audio-encoder-index;
+    in-out property <int> video-bitrate;
+    in-out property <int> audio-bitrate;
+    in-out property <string> rate-control;
+    in-out property <int> keyframe-interval;
+    in-out property <string> encoder-preset;
+    in-out property <string> encoder-profile;
+    in-out property <int> b-frames;
+    in-out property <bool> reconnect;
+    in-out property <int> maximum-retries;
+    in-out property <int> network-buffer;
+    in property <[string]> srt-mode-names;
+    in-out property <int> srt-mode-index;
+    in-out property <string> srt-host;
+    in-out property <int> srt-port;
+    in-out property <int> srt-latency;
+    in-out property <string> srt-passphrase;
+    in property <[string]> srt-key-length-names;
+    in-out property <int> srt-key-length-index;
+    in-out property <string> srt-stream-id;
+    in-out property <int> srt-timeout;
+    in-out property <string> whip-endpoint;
+    in-out property <string> reference-address;
+    callback select-protocol(int);
+    callback select-video-encoder(int);
+    callback select-audio-encoder(int);
+    callback select-srt-mode(int);
+    callback select-srt-key-length(int);
     callback changed();
     spacing: 14px;
 
     SettingsGroup {
         title: I18n.text.settings_ui.group_service;
         SettingRow {
+            label: "Protocol";
+            ComboBox {
+                model: root.protocol-names;
+                current-index: root.protocol-index;
+                selected(value) => { root.select-protocol(self.current-index); }
+                horizontal-stretch: 1;
+            }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Service";
+            LineEdit { text <=> root.rtmp-service; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Server";
+            LineEdit { text <=> root.rtmp-server; placeholder-text: "ingest.example/live"; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Stream Key";
+            LineEdit { text <=> root.rtmp-stream-key; input-type: InputType.password; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Video Encoder";
+            ComboBox { model: root.video-encoder-names; current-index: root.video-encoder-index; selected(value) => { root.select-video-encoder(self.current-index); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Audio Encoder";
+            ComboBox { model: root.audio-encoder-names; current-index: root.audio-encoder-index; selected(value) => { root.select-audio-encoder(self.current-index); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Video Bitrate (kbps)";
+            SpinBox { value <=> root.video-bitrate; minimum: 100; maximum: 100000; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Audio Bitrate (kbps)";
+            SpinBox { value <=> root.audio-bitrate; minimum: 32; maximum: 1024; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Rate Control";
+            LineEdit { text <=> root.rate-control; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Keyframe Interval (s)";
+            SpinBox { value <=> root.keyframe-interval; minimum: 0; maximum: 20; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Preset";
+            LineEdit { text <=> root.encoder-preset; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Profile";
+            LineEdit { text <=> root.encoder-profile; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "B-frames";
+            SpinBox { value <=> root.b-frames; minimum: 0; maximum: 16; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : CheckRow {
+            label: "Automatically reconnect";
+            checked <=> root.reconnect;
+            toggled(value) => { root.changed(); }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Maximum Retries";
+            SpinBox { value <=> root.maximum-retries; minimum: 0; maximum: 1000; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-rtmp : SettingRow {
+            label: "Network Buffer (ms)";
+            SpinBox { value <=> root.network-buffer; minimum: 0; maximum: 60000; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-srt : SettingRow {
+            label: "Mode";
+            ComboBox { model: root.srt-mode-names; current-index: root.srt-mode-index; selected(value) => { root.select-srt-mode(self.current-index); } horizontal-stretch: 1; }
+        }
+        if root.show-srt : SettingRow {
+            label: "Address";
+            LineEdit { text <=> root.srt-host; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-srt : SettingRow {
+            label: "Port";
+            SpinBox { value <=> root.srt-port; minimum: 1; maximum: 65535; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-srt : SettingRow {
+            label: "Latency (ms)";
+            SpinBox { value <=> root.srt-latency; minimum: 20; maximum: 60000; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-srt : SettingRow {
+            label: "Passphrase";
+            LineEdit { text <=> root.srt-passphrase; input-type: InputType.password; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-srt : SettingRow {
+            label: "PBKeyLen";
+            ComboBox { model: root.srt-key-length-names; current-index: root.srt-key-length-index; selected(value) => { root.select-srt-key-length(self.current-index); } horizontal-stretch: 1; }
+        }
+        if root.show-srt : SettingRow {
+            label: "Stream ID";
+            LineEdit { text <=> root.srt-stream-id; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-srt : SettingRow {
+            label: "Connection Timeout (ms)";
+            SpinBox { value <=> root.srt-timeout; minimum: 100; maximum: 120000; edited(value) => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-whip : SettingRow {
+            label: "WHIP Endpoint";
+            LineEdit { text <=> root.whip-endpoint; placeholder-text: "https://service.example/whip"; edited => { root.changed(); } horizontal-stretch: 1; }
+        }
+        if root.show-reference : SettingRow {
             label: I18n.text.settings_ui.stream_server;
             LineEdit {
-                text <=> root.streaming-address;
-                placeholder-text: "rtmps://server.example/live/stream-key";
+                text <=> root.reference-address;
+                placeholder-text: "127.0.0.1:9000";
                 edited => { root.changed(); }
                 horizontal-stretch: 1;
             }
         }
-        SettingHint { text: I18n.text.settings_ui.stream_hint; }
+        SettingHint { text: "Only protocols and encoder implementations detected at runtime are listed."; }
     }
     Rectangle { vertical-stretch: 1; }
 }
