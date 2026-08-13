@@ -6,8 +6,9 @@
 use std::{collections::BTreeMap, fmt, path::PathBuf, process::Command};
 
 use obs_rs_output::{
-    AudioCodec, EncoderPreset, OutputCapabilities, OutputProfile, OutputProfileKind,
-    OutputTransport, RateControl, VideoCodec,
+    AudioCodec, AudioEncoderConfig, EncoderPreset, OutputAudioCodec, OutputCapabilities,
+    OutputProfile, OutputProfileKind, OutputTransport, OutputVideoCodec, RateControl, VideoCodec,
+    VideoEncoderConfig,
 };
 use url::Url;
 
@@ -785,6 +786,8 @@ pub struct ProductionPipelinePlan {
     audio_encoder: String,
     bounded_queue_bytes: usize,
     atomic_recording: bool,
+    video_config: VideoEncoderConfig,
+    audio_config: AudioEncoderConfig,
 }
 
 impl ProductionPipelinePlan {
@@ -813,18 +816,90 @@ impl ProductionPipelinePlan {
         } else {
             "aac"
         };
+        let video_encoder = capabilities
+            .selected_element(video_role)
+            .ok_or(GStreamerError::ProfileUnavailable(profile.kind()))?
+            .to_owned();
+        let audio_encoder = capabilities
+            .selected_element(audio_role)
+            .ok_or(GStreamerError::ProfileUnavailable(profile.kind()))?
+            .to_owned();
+        let mut video_config = VideoEncoderConfig {
+            codec: profile_video_codec(profile.video_codec()),
+            implementation: obs_rs_output::EncoderImplementation::new(&video_encoder),
+            ..VideoEncoderConfig::default()
+        };
+        if video_config.codec != VideoCodec::H264 {
+            video_config.profile = None;
+        }
+        let audio_config = AudioEncoderConfig {
+            codec: profile_audio_codec(profile.audio_codec()),
+            implementation: obs_rs_output::EncoderImplementation::new(&audio_encoder),
+            ..AudioEncoderConfig::default()
+        };
         Ok(Self {
             profile,
-            video_encoder: capabilities
-                .selected_element(video_role)
-                .ok_or(GStreamerError::ProfileUnavailable(profile.kind()))?
-                .to_owned(),
-            audio_encoder: capabilities
-                .selected_element(audio_role)
-                .ok_or(GStreamerError::ProfileUnavailable(profile.kind()))?
-                .to_owned(),
+            video_encoder,
+            audio_encoder,
             bounded_queue_bytes: profile.queue_bytes(),
             atomic_recording: matches!(destination, ProductionDestination::Recording(_)),
+            video_config,
+            audio_config,
+        })
+    }
+
+    /// Negotiates explicit encoder implementations and typed tuning.
+    ///
+    /// # Errors
+    ///
+    /// Rejects codec/profile mismatches and implementations absent from the
+    /// runtime capability snapshot.
+    pub fn negotiate_configured(
+        profile: OutputProfile,
+        destination: &ProductionDestination,
+        capabilities: &GStreamerCapabilitySnapshot,
+        video: &VideoEncoderConfig,
+        audio: &AudioEncoderConfig,
+    ) -> Result<Self, GStreamerError> {
+        destination.validate_for(profile)?;
+        capabilities
+            .output
+            .negotiate(profile)
+            .map_err(|_| GStreamerError::ProfileUnavailable(profile.kind()))?;
+        if video.codec != profile_video_codec(profile.video_codec())
+            || audio.codec != profile_audio_codec(profile.audio_codec())
+        {
+            return Err(GStreamerError::InvalidMetadata(
+                "encoder codecs do not match the output profile".to_owned(),
+            ));
+        }
+        let video_capability = capabilities
+            .video_encoders
+            .iter()
+            .find(|encoder| encoder.id() == video.implementation.id())
+            .ok_or_else(|| {
+                GStreamerError::InvalidMetadata("selected video encoder is unavailable".to_owned())
+            })?;
+        let audio_capability = capabilities
+            .audio_encoders
+            .iter()
+            .find(|encoder| encoder.id() == audio.implementation.id())
+            .ok_or_else(|| {
+                GStreamerError::InvalidMetadata("selected audio encoder is unavailable".to_owned())
+            })?;
+        if video_capability.codec() != video.codec || audio_capability.codec() != audio.codec {
+            return Err(GStreamerError::InvalidMetadata(
+                "selected encoder implementation has the wrong codec".to_owned(),
+            ));
+        }
+        Ok(Self {
+            profile,
+            video_encoder: video.implementation.id().to_owned(),
+            audio_encoder: audio.implementation.id().to_owned(),
+            bounded_queue_bytes: profile.queue_bytes(),
+            atomic_recording: matches!(destination, ProductionDestination::Recording(_)),
+            video_config: video.clone(),
+            audio_config: audio.clone(),
         })
     }
 
@@ -851,6 +926,16 @@ impl ProductionPipelinePlan {
     #[must_use]
     pub const fn atomic_recording(&self) -> bool {
         self.atomic_recording
+    }
+
+    #[must_use]
+    pub const fn video_config(&self) -> &VideoEncoderConfig {
+        &self.video_config
+    }
+
+    #[must_use]
+    pub const fn audio_config(&self) -> &AudioEncoderConfig {
+        &self.audio_config
     }
 
     /// Encodes bounded production metadata for diagnostics/fuzzing.
@@ -902,6 +987,22 @@ fn first_available(elements: &[&str]) -> Option<String> {
         .iter()
         .find(|element| element_available(element))
         .map(|element| (*element).to_owned())
+}
+
+const fn profile_video_codec(codec: OutputVideoCodec) -> VideoCodec {
+    match codec {
+        OutputVideoCodec::H264 => VideoCodec::H264,
+        OutputVideoCodec::Vp8 => VideoCodec::Vp8,
+        OutputVideoCodec::ReferenceRle => VideoCodec::ReferenceRle,
+    }
+}
+
+const fn profile_audio_codec(codec: OutputAudioCodec) -> AudioCodec {
+    match codec {
+        OutputAudioCodec::Aac => AudioCodec::Aac,
+        OutputAudioCodec::Opus => AudioCodec::Opus,
+        OutputAudioCodec::Pcm => AudioCodec::Pcm,
+    }
 }
 
 fn element_available(element: &str) -> bool {
@@ -998,6 +1099,60 @@ mod tests {
             assert!(options.presets().contains(&EncoderPreset::Quality));
             assert!(options.profiles().iter().any(|profile| profile == "high"));
         }
+    }
+
+    #[test]
+    fn configured_negotiation_honors_explicit_implementations_and_tuning() {
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(OutputProfileKind::MatroskaH264Aac)
+        {
+            return;
+        }
+        let video_encoder = capabilities
+            .video_encoders
+            .iter()
+            .find(|encoder| encoder.codec() == VideoCodec::H264)
+            .expect("H.264 implementation");
+        let audio_encoder = capabilities
+            .audio_encoders
+            .iter()
+            .find(|encoder| encoder.codec() == AudioCodec::Aac)
+            .expect("AAC implementation");
+        let mut video = VideoEncoderConfig {
+            implementation: obs_rs_output::EncoderImplementation::new(video_encoder.id()),
+            bitrate_kbps: 8_000,
+            ..VideoEncoderConfig::default()
+        };
+        let audio = AudioEncoderConfig {
+            implementation: obs_rs_output::EncoderImplementation::new(audio_encoder.id()),
+            bitrate_kbps: 192,
+            ..AudioEncoderConfig::default()
+        };
+        let destination = ProductionDestination::Recording(PathBuf::from("configured.mkv"));
+        let plan = ProductionPipelinePlan::negotiate_configured(
+            OutputProfile::matroska_h264_aac(),
+            &destination,
+            &capabilities,
+            &video,
+            &audio,
+        )
+        .expect("configured plan");
+        assert_eq!(plan.video_encoder(), video_encoder.id());
+        assert_eq!(plan.audio_encoder(), audio_encoder.id());
+        assert_eq!(plan.video_config().bitrate_kbps, 8_000);
+        assert_eq!(plan.audio_config().bitrate_kbps, 192);
+
+        video.implementation = obs_rs_output::EncoderImplementation::new("missing-encoder");
+        assert!(ProductionPipelinePlan::negotiate_configured(
+            OutputProfile::matroska_h264_aac(),
+            &destination,
+            &capabilities,
+            &video,
+            &audio,
+        )
+        .is_err());
     }
 
     #[test]

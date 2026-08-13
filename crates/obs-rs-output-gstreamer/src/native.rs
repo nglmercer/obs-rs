@@ -5,7 +5,7 @@ use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use obs_rs_audio::{AudioBuffer, AudioFormat};
 use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
-use obs_rs_output::OutputTransport;
+use obs_rs_output::{EncoderPreset, OutputTransport, RateControl, VideoCodec};
 
 use super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
 
@@ -119,6 +119,7 @@ impl GStreamerOutputSession {
         let pipeline = element.downcast::<gst::Pipeline>().map_err(|_| {
             GStreamerError::Native("GStreamer did not create a pipeline".to_owned())
         })?;
+        configure_encoders(&pipeline, plan, video_format)?;
         configure_sink(&pipeline, destination, temp_path.as_deref())?;
         let video = appsrc(&pipeline, "video_source")?;
         let audio = appsrc(&pipeline, "audio_source")?;
@@ -444,8 +445,17 @@ fn pipeline_description(
     let queue = plan.bounded_queue_bytes();
     let video = plan.video_encoder();
     let audio = plan.audio_encoder();
-    let v = format!("appsrc name=video_source ! queue max-size-bytes={queue} leaky=downstream ! videoconvert ! {video} ! ");
-    let a = format!("appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream ! audioconvert ! audioresample ! {audio} ! ");
+    let profile_caps = match (
+        plan.video_config().codec,
+        plan.video_config().profile.as_deref(),
+    ) {
+        (VideoCodec::H264, Some("baseline")) => "video/x-h264,profile=baseline ! ",
+        (VideoCodec::H264, Some("main")) => "video/x-h264,profile=main ! ",
+        (VideoCodec::H264, Some("high")) => "video/x-h264,profile=high ! ",
+        _ => "",
+    };
+    let v = format!("appsrc name=video_source ! queue max-size-bytes={queue} leaky=downstream ! videoconvert ! {video} name=video_encoder ! {profile_caps}");
+    let a = format!("appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream ! audioconvert ! audioresample ! {audio} name=audio_encoder ! ");
     match (plan.profile().transport(), destination) {
         (OutputTransport::Matroska, ProductionDestination::Recording(final_path)) => {
             let temp = final_path.with_extension("mkv.part");
@@ -459,6 +469,136 @@ fn pipeline_description(
         (OutputTransport::WebRtc, ProductionDestination::WebRtc { .. }) =>
             Ok((format!("webrtcbin name=output_sink bundle-policy=max-bundle {v}rtpvp8pay ! application/x-rtp,media=video,encoding-name=VP8,payload=96 ! output_sink. {a}rtpopuspay ! application/x-rtp,media=audio,encoding-name=OPUS,payload=97 ! output_sink."), None, None)),
         _ => Err(GStreamerError::InvalidEndpoint("destination does not match pipeline".to_owned())),
+    }
+}
+
+fn configure_encoders(
+    pipeline: &gst::Pipeline,
+    plan: &ProductionPipelinePlan,
+    format: VideoFormat,
+) -> Result<(), GStreamerError> {
+    let video = pipeline
+        .by_name("video_encoder")
+        .ok_or_else(|| GStreamerError::Native("video encoder is missing".to_owned()))?;
+    let audio = pipeline
+        .by_name("audio_encoder")
+        .ok_or_else(|| GStreamerError::Native("audio encoder is missing".to_owned()))?;
+    let config = plan.video_config();
+    let fps = u64::from(format.frame_rate().numerator())
+        .div_ceil(u64::from(format.frame_rate().denominator()));
+    let gop = u64::from(config.keyframe_interval_secs).saturating_mul(fps);
+    match plan.video_encoder() {
+        "openh264enc" => {
+            video.set_property("bitrate", config.bitrate_kbps.saturating_mul(1_000));
+            video.set_property(
+                "max-bitrate",
+                config.max_bitrate_kbps.unwrap_or(0).saturating_mul(1_000),
+            );
+            video.set_property("gop-size", u32::try_from(gop).unwrap_or(u32::MAX));
+            video.set_property_from_str(
+                "rate-control",
+                match config.rate_control {
+                    RateControl::Cbr | RateControl::Vbr => "bitrate",
+                    RateControl::Cqp => "quality",
+                },
+            );
+            video.set_property_from_str(
+                "complexity",
+                match config.preset {
+                    EncoderPreset::Speed => "low",
+                    EncoderPreset::Balanced => "medium",
+                    EncoderPreset::Quality => "high",
+                },
+            );
+        }
+        "nvh264enc" => {
+            set_first_string_property(&video, &["bitrate"], &config.bitrate_kbps.to_string());
+            set_first_string_property(&video, &["gop-size"], &gop.to_string());
+            set_first_string_property(
+                &video,
+                &["bframes", "b-frames", "max-bframes"],
+                &config.b_frames.to_string(),
+            );
+            set_first_string_property(
+                &video,
+                &["rc-mode"],
+                match config.rate_control {
+                    RateControl::Cbr => "cbr",
+                    RateControl::Vbr => "vbr",
+                    RateControl::Cqp => "constqp",
+                },
+            );
+            set_first_string_property(
+                &video,
+                &["preset"],
+                match config.preset {
+                    EncoderPreset::Speed => "hp",
+                    EncoderPreset::Balanced => "default",
+                    EncoderPreset::Quality => "hq",
+                },
+            );
+        }
+        "vah264enc" | "vaapih264enc" => {
+            set_first_string_property(&video, &["bitrate"], &config.bitrate_kbps.to_string());
+            set_first_string_property(
+                &video,
+                &["key-int-max", "keyframe-period"],
+                &gop.to_string(),
+            );
+            set_first_string_property(&video, &["rate-control"], config.rate_control.id());
+            set_first_string_property(
+                &video,
+                &["target-usage"],
+                match config.preset {
+                    EncoderPreset::Speed => "7",
+                    EncoderPreset::Balanced => "4",
+                    EncoderPreset::Quality => "1",
+                },
+            );
+            set_first_string_property(
+                &video,
+                &["b-frames", "max-bframes"],
+                &config.b_frames.to_string(),
+            );
+        }
+        "vp8enc" => {
+            video.set_property("target-bitrate", config.bitrate_kbps.saturating_mul(1_000));
+            video.set_property("keyframe-max-dist", i32::try_from(gop).unwrap_or(i32::MAX));
+        }
+        encoder => {
+            return Err(GStreamerError::Native(format!(
+                "unsupported configured video encoder {encoder}"
+            )));
+        }
+    }
+    configure_audio_encoder(&audio, plan)?;
+    Ok(())
+}
+
+fn configure_audio_encoder(
+    audio: &gst::Element,
+    plan: &ProductionPipelinePlan,
+) -> Result<(), GStreamerError> {
+    let audio_bitrate = plan.audio_config().bitrate_kbps.saturating_mul(1_000);
+    match plan.audio_encoder() {
+        "avenc_aac" | "opusenc" => {
+            audio.set_property("bitrate", i32::try_from(audio_bitrate).unwrap_or(i32::MAX));
+        }
+        encoder => {
+            return Err(GStreamerError::Native(format!(
+                "unsupported configured audio encoder {encoder}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn set_first_string_property(element: &gst::Element, names: &[&str], value: &str) {
+    if let Some(name) = names
+        .iter()
+        .find(|name| element.find_property(name).is_some())
+    {
+        element.set_property_from_str(name, value);
     }
 }
 
@@ -505,15 +645,28 @@ fn native_error(error: impl std::fmt::Display) -> GStreamerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use obs_rs_output::{OutputProfile, OutputProfileKind};
+    use obs_rs_output::{
+        AudioEncoderConfig, EncoderImplementation, OutputProfile, OutputProfileKind,
+        VideoEncoderConfig,
+    };
 
     fn plan(profile: OutputProfile) -> ProductionPipelinePlan {
+        let video_config = VideoEncoderConfig {
+            implementation: EncoderImplementation::new("openh264enc"),
+            ..VideoEncoderConfig::default()
+        };
+        let audio_config = AudioEncoderConfig {
+            implementation: EncoderImplementation::new("avenc_aac"),
+            ..AudioEncoderConfig::default()
+        };
         ProductionPipelinePlan {
             profile,
             video_encoder: "openh264enc".to_owned(),
             audio_encoder: "avenc_aac".to_owned(),
             bounded_queue_bytes: 1_048_576,
             atomic_recording: false,
+            video_config,
+            audio_config,
         }
     }
 
@@ -578,6 +731,42 @@ mod tests {
             OutputProfile::rtmps_h264_aac().kind(),
             OutputProfileKind::RtmpsH264Aac
         );
+    }
+
+    #[test]
+    fn openh264_and_aac_tuning_reaches_native_encoder_properties() {
+        gst::init().expect("GStreamer runtime");
+        if gst::ElementFactory::find("openh264enc").is_none()
+            || gst::ElementFactory::find("avenc_aac").is_none()
+        {
+            return;
+        }
+        let mut plan = plan(OutputProfile::matroska_h264_aac());
+        plan.video_config.bitrate_kbps = 7_500;
+        plan.video_config.max_bitrate_kbps = Some(8_000);
+        plan.video_config.keyframe_interval_secs = 3;
+        plan.video_config.rate_control = RateControl::Cqp;
+        plan.video_config.preset = EncoderPreset::Quality;
+        plan.audio_config.bitrate_kbps = 192;
+        let destination = ProductionDestination::Recording(PathBuf::from("configured.mkv"));
+        let (description, _, _) = pipeline_description(&plan, &destination).expect("description");
+        let pipeline = gst::parse::launch(&description)
+            .expect("pipeline")
+            .downcast::<gst::Pipeline>()
+            .expect("pipeline type");
+        let format = VideoFormat::new(
+            320,
+            180,
+            obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+        )
+        .expect("video format");
+        configure_encoders(&pipeline, &plan, format).expect("encoder config");
+        let video = pipeline.by_name("video_encoder").expect("video encoder");
+        let audio = pipeline.by_name("audio_encoder").expect("audio encoder");
+        assert_eq!(video.property::<u32>("bitrate"), 7_500_000);
+        assert_eq!(video.property::<u32>("max-bitrate"), 8_000_000);
+        assert_eq!(video.property::<u32>("gop-size"), 90);
+        assert_eq!(audio.property::<i32>("bitrate"), 192_000);
     }
 
     #[test]

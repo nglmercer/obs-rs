@@ -10,6 +10,7 @@ use std::{
 };
 
 use obs_rs_media::{Timestamp, VideoFrame};
+use obs_rs_output::{AudioEncoderConfig, VideoEncoderConfig};
 
 use obs_rs_project::Project;
 
@@ -38,7 +39,7 @@ enum WorkerCommand {
     StartRecording(PathBuf, mpsc::Sender<Result<(), String>>),
     FinishRecording(mpsc::Sender<Result<usize, String>>),
     AbortRecording,
-    StartStreaming(String),
+    StartStreaming(String, Option<(VideoEncoderConfig, AudioEncoderConfig)>),
     FinishStreaming,
     PushFrame(VideoFrame),
     MonitorAudio(Timestamp),
@@ -204,12 +205,34 @@ impl EngineWorker {
     /// the request. Transport failures are published through
     /// [`Self::take_output_events`] and [`Self::snapshot`].
     pub fn start_streaming(&self, address: &str) -> Result<(), EngineError> {
+        self.start_streaming_with_config(address, None)
+    }
+
+    /// Enqueues a stream start with explicit production encoder tuning.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the bounded command queue rejects it.
+    pub fn start_streaming_configured(
+        &self,
+        address: &str,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        self.start_streaming_with_config(address, Some((video, audio)))
+    }
+
+    fn start_streaming_with_config(
+        &self,
+        address: &str,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
         set_streaming_lifecycle(&self.snapshot, OutputLifecycle::Starting);
         push_output_event(&self.output_events, OutputEvent::Starting);
-        match self
-            .sender
-            .try_send(WorkerCommand::StartStreaming(address.to_owned()))
-        {
+        match self.sender.try_send(WorkerCommand::StartStreaming(
+            address.to_owned(),
+            encoder_config,
+        )) {
             Ok(()) => Ok(()),
             Err(error) => {
                 let error = command_enqueue_error(&error);
@@ -408,12 +431,14 @@ fn worker_loop(
                 let _ = reply.send(result);
                 false
             }
-            WorkerCommand::AbortRecording => {
-                session.abort_recording();
-                false
-            }
-            WorkerCommand::StartStreaming(address) => {
-                start_streaming(&mut session, &address, &output_events);
+            WorkerCommand::AbortRecording => abort_recording(&mut session),
+            WorkerCommand::StartStreaming(address, encoder_config) => {
+                start_stream(
+                    &mut session,
+                    &address,
+                    encoder_config.as_ref(),
+                    &output_events,
+                );
                 false
             }
             WorkerCommand::FinishStreaming => {
@@ -513,12 +538,22 @@ fn worker_closed() -> EngineError {
     EngineError::Worker("engine worker is closed".to_owned())
 }
 
-fn start_streaming(
+fn abort_recording(session: &mut EngineSession) -> bool {
+    session.abort_recording();
+    false
+}
+
+fn start_stream(
     session: &mut EngineSession,
     address: &str,
+    encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
     output_events: &Arc<Mutex<VecDeque<OutputEvent>>>,
 ) {
-    match session.start_streaming(address) {
+    let result = match encoder_config {
+        Some((video, audio)) => session.start_streaming_configured(address, video, audio),
+        None => session.start_streaming(address),
+    };
+    match result {
         Ok(()) => push_output_event(output_events, OutputEvent::Running),
         Err(error) => push_output_event(
             output_events,

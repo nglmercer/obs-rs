@@ -25,10 +25,10 @@ use obs_rs_media::{FrameRate, LatencyMetrics, Timestamp, VideoFormat, VideoFrame
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
 use obs_rs_output::{
-    AtomicPacketFileWriter, AudioEncoder, AudioInputRequirement, EncodedPacket, OutputError,
-    PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, RleVideoEncoder, StreamMetrics,
-    StreamSession, StreamState, TcpPacketTransport, VideoEncoder, VideoInputRequirement,
-    WebSocketPacketTransport,
+    AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig, AudioInputRequirement, EncodedPacket,
+    OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, RleVideoEncoder,
+    StreamMetrics, StreamSession, StreamState, TcpPacketTransport, VideoEncoder,
+    VideoEncoderConfig, VideoInputRequirement, WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
@@ -573,9 +573,10 @@ impl StreamOutput {
         reconnect_attempts: u32,
         video_format: VideoFormat,
         audio_format: AudioFormat,
+        encoder_config: Option<(&VideoEncoderConfig, &AudioEncoderConfig)>,
     ) -> Result<Self, EngineError> {
         #[cfg(not(feature = "production-gstreamer"))]
-        let _ = (video_format, audio_format);
+        let _ = (video_format, audio_format, encoder_config);
         let address = address.trim();
         if address.is_empty() {
             return Err(EngineError::InvalidConfiguration(
@@ -587,7 +588,18 @@ impl StreamOutput {
         if production_scheme {
             let (profile, destination) = ProductionDestination::from_stream_endpoint(address)?;
             let capabilities = GStreamerCapabilitySnapshot::probe();
-            let plan = ProductionPipelinePlan::negotiate(profile, &destination, &capabilities)?;
+            let plan = encoder_config.map_or_else(
+                || ProductionPipelinePlan::negotiate(profile, &destination, &capabilities),
+                |(video, audio)| {
+                    ProductionPipelinePlan::negotiate_configured(
+                        profile,
+                        &destination,
+                        &capabilities,
+                        video,
+                        audio,
+                    )
+                },
+            )?;
             return Ok(Self::Production(
                 GStreamerOutputSession::start_with_reconnect_limit(
                     &plan,
@@ -1268,6 +1280,24 @@ impl EngineSession {
     /// distinguishes "the user never started a stream" from "the stream could
     /// not be established".
     pub fn start_streaming(&mut self, address: &str) -> Result<(), EngineError> {
+        self.start_streaming_with_config(address, None)
+    }
+
+    /// Opens a stream with explicit production encoder choices.
+    pub fn start_streaming_configured(
+        &mut self,
+        address: &str,
+        video: &VideoEncoderConfig,
+        audio: &AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        self.start_streaming_with_config(address, Some((video, audio)))
+    }
+
+    fn start_streaming_with_config(
+        &mut self,
+        address: &str,
+        encoder_config: Option<(&VideoEncoderConfig, &AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
         if self.streaming.is_some() {
             return Err(EngineError::Busy("start streaming"));
         }
@@ -1278,6 +1308,7 @@ impl EngineSession {
             self.config.reconnect_attempts,
             self.format,
             self.config.audio_format,
+            encoder_config,
         ) {
             Ok(stream) => {
                 self.streaming = Some(stream);
@@ -2230,7 +2261,7 @@ mod tests {
             "rtmps://127.0.0.1:9/live/test",
             "srt://127.0.0.1:9",
         ] {
-            let mut stream = StreamOutput::connect(endpoint, 1_048_576, 1, video, audio)
+            let mut stream = StreamOutput::connect(endpoint, 1_048_576, 1, video, audio, None)
                 .expect("native production pipeline");
             assert!(matches!(stream, StreamOutput::Production(_)));
             assert_eq!(stream.video_requirement(), VideoInputRequirement::Raw);

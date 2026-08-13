@@ -11,7 +11,9 @@ use obs_rs_engine::{
     OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle,
 };
 use obs_rs_media::{VideoFormat, VideoFrame};
-use obs_rs_output::{RtmpConfig, StreamProtocol, StreamState, StreamTarget};
+use obs_rs_output::{
+    AudioEncoderConfig, RtmpConfig, StreamProtocol, StreamState, StreamTarget, VideoEncoderConfig,
+};
 use obs_rs_project::Project;
 
 use crate::AppSettings;
@@ -39,6 +41,8 @@ pub(crate) struct OutputRuntime {
     recording_started_at: Option<Instant>,
     stream_protocol: Option<&'static str>,
     configured_stream: StreamTarget,
+    configured_video_encoder: VideoEncoderConfig,
+    configured_audio_encoder: AudioEncoderConfig,
     /// A canvas change accepted while an output was running.
     ///
     /// Rebuilding the encoders mid-recording would break the container's frame
@@ -95,6 +99,8 @@ impl OutputRuntime {
             recording_started_at: None,
             stream_protocol: None,
             configured_stream: StreamTarget::Rtmp(RtmpConfig::default()),
+            configured_video_encoder: VideoEncoderConfig::default(),
+            configured_audio_encoder: AudioEncoderConfig::default(),
             staged_video_format: None,
             capabilities: output_capabilities_snapshot(),
         })
@@ -175,6 +181,30 @@ impl OutputRuntime {
 
     pub(crate) fn configure_stream(&mut self, settings: &AppSettings) {
         self.configured_stream = settings.stream_target();
+        self.configured_video_encoder = settings.rtmp.video.clone();
+        self.configured_audio_encoder = settings.rtmp.audio.clone();
+        if self.configured_video_encoder.implementation.is_automatic() {
+            if let Some(encoder) = self
+                .capabilities
+                .video_encoders()
+                .iter()
+                .find(|encoder| encoder.codec() == self.configured_video_encoder.codec)
+            {
+                self.configured_video_encoder.implementation =
+                    obs_rs_output::EncoderImplementation::new(encoder.id());
+            }
+        }
+        if self.configured_audio_encoder.implementation.is_automatic() {
+            if let Some(encoder) = self
+                .capabilities
+                .audio_encoders()
+                .iter()
+                .find(|encoder| encoder.codec() == self.configured_audio_encoder.codec)
+            {
+                self.configured_audio_encoder.implementation =
+                    obs_rs_output::EncoderImplementation::new(encoder.id());
+            }
+        }
     }
 
     pub(crate) fn start_configured_stream(&mut self) -> Result<&'static str, Box<dyn Error>> {
@@ -185,7 +215,11 @@ impl OutputRuntime {
             )
         })?;
         let protocol = stream_protocol_name(self.configured_stream.protocol());
-        self.worker.start_streaming(&address)?;
+        self.worker.start_streaming_configured(
+            &address,
+            self.configured_video_encoder.clone(),
+            self.configured_audio_encoder.clone(),
+        )?;
         self.stream_protocol = Some(protocol);
         Ok(protocol)
     }
