@@ -18,7 +18,10 @@ use crate::{
     callbacks::monitor::MonitorController,
     callbacks::source_properties::SourcePropertiesController,
     refresh_ui,
-    settings::{AppSettings, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES, THEMES},
+    settings::{
+        AppSettings, RecordingFormat, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES,
+        THEMES,
+    },
     I18n, MainWindow, OutputRuntime, Palette, PreviewRenderer, SettingsWindow,
 };
 
@@ -180,6 +183,11 @@ fn populate_static_models(window: &SettingsWindow) {
         FRAME_RATES
             .iter()
             .map(|rate| SharedString::from(frame_rate_label(*rate))),
+    ));
+    window.set_recording_format_names(string_model(
+        RecordingFormat::ALL
+            .iter()
+            .map(|format| SharedString::from(format.display_name())),
     ));
     window.set_srt_mode_names(string_model(
         ["Caller", "Listener", "Rendezvous"]
@@ -446,6 +454,7 @@ fn load_draft(
     window.set_whip_endpoint(settings.whip_endpoint.as_str().into());
     window.set_reference_address(settings.reference_address.as_str().into());
     window.set_recording_path(settings.recording_path.as_str().into());
+    window.set_recording_format_index(index_of(&RecordingFormat::ALL, &settings.recording_format));
     window.set_project_path(settings.project_path.as_str().into());
     window.set_diagnostics_path(settings.diagnostics_path.as_str().into());
     window.set_restore_project(settings.restore_project);
@@ -476,18 +485,6 @@ fn load_draft(
             video_format.frame_rate().denominator(),
         ),
     ));
-    window.set_recording_format(
-        format!(
-            "OBSRPKT1 A/V · {}x{} @ {}",
-            resolution.0,
-            resolution.1,
-            frame_rate_label((
-                video_format.frame_rate().numerator(),
-                video_format.frame_rate().denominator()
-            ))
-        )
-        .into(),
-    );
 }
 
 /// Theme and language change the moment they are picked, because judging either
@@ -737,7 +734,7 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.program_border_color = window.get_program_border_color().to_string();
     settings.project_path = window.get_project_path().to_string();
     settings.diagnostics_path = window.get_diagnostics_path().to_string();
-    settings.recording_path = window.get_recording_path().to_string();
+    read_recording_draft(window, &mut settings);
     settings.stream_protocol = controller
         .protocol_ids
         .borrow()
@@ -809,6 +806,15 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
         locale.code().clone_into(&mut settings.locale);
     }
     settings
+}
+
+fn read_recording_draft(window: &SettingsWindow, settings: &mut AppSettings) {
+    settings.recording_format = RecordingFormat::ALL
+        .get(usize::try_from(window.get_recording_format_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or_default();
+    settings.recording_path =
+        recording_path_for_format(&window.get_recording_path(), settings.recording_format);
 }
 
 fn commit(
@@ -942,6 +948,12 @@ fn stream_display_label(settings: &AppSettings) -> String {
         StreamProtocol::Whip => format!("WHIP · {}", settings.whip_endpoint),
         StreamProtocol::Reference => format!("Reference · {}", settings.reference_address),
     }
+}
+
+fn recording_path_for_format(path: &str, format: RecordingFormat) -> String {
+    let mut path = PathBuf::from(path.trim());
+    path.set_extension(format.extension());
+    path.to_string_lossy().into_owned()
 }
 
 /// Globals are per component tree, so every window is painted explicitly.

@@ -245,7 +245,9 @@ export component StreamPage inherits VerticalLayout {
 
 export component OutputPage inherits VerticalLayout {
     in-out property <string> recording-path;
-    in property <string> recording-format;
+    in property <[string]> recording-format-names;
+    in-out property <int> recording-format-index;
+    callback select-recording-format(int);
     callback changed();
     spacing: 14px;
 
@@ -262,12 +264,10 @@ export component OutputPage inherits VerticalLayout {
         }
         SettingRow {
             label: I18n.text.settings_ui.recording_format;
-            Text {
-                text: root.recording-format;
-                color: Palette.tokens.text-muted;
-                font-size: 12px;
-                vertical-alignment: center;
-                height: 28px;
+            ComboBox {
+                model: root.recording-format-names;
+                current-index: root.recording-format-index;
+                selected(value) => { root.select-recording-format(self.current-index); }
                 horizontal-stretch: 1;
             }
         }

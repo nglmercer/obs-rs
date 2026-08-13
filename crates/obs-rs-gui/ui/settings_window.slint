@@ -76,7 +76,8 @@ export component SettingsWindow inherits Window {
     in-out property <string> whip-endpoint;
     in-out property <string> reference-address;
     in-out property <string> recording-path;
-    in property <string> recording-format;
+    in property <[string]> recording-format-names;
+    in-out property <int> recording-format-index;
     // Audio
     in property <[string]> sample-rate-names;
     in-out property <int> sample-rate-index;
@@ -282,7 +283,12 @@ export component SettingsWindow inherits Window {
                     }
                     if root.category == 3 : OutputPage {
                         recording-path <=> root.recording-path;
-                        recording-format: root.recording-format;
+                        recording-format-names: root.recording-format-names;
+                        recording-format-index: root.recording-format-index;
+                        select-recording-format(index) => {
+                            root.recording-format-index = index;
+                            root.dirty = true;
+                        }
                         changed => { root.dirty = true; }
                     }
                     if root.category == 4 : AudioPage {

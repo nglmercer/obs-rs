@@ -21,7 +21,45 @@ const SETTINGS_FILE: &str = "obs-rs-settings.toml";
 /// Default file names inside the per-user directory.
 const PROJECT_FILE: &str = "obs-rs-project.json";
 const DIAGNOSTICS_FILE: &str = "obs-rs-diagnostics.obsrdg";
-const RECORDING_FILE: &str = "obs-rs-recording.obsr";
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum RecordingFormat {
+    #[default]
+    Matroska,
+    ReferencePacket,
+}
+
+impl RecordingFormat {
+    pub(crate) const ALL: [Self; 2] = [Self::Matroska, Self::ReferencePacket];
+
+    const fn id(self) -> &'static str {
+        match self {
+            Self::Matroska => "matroska",
+            Self::ReferencePacket => "obsr-packet",
+        }
+    }
+
+    fn from_id(value: &str) -> Option<Self> {
+        match value {
+            "matroska" | "mkv" => Some(Self::Matroska),
+            "obsr-packet" | "obsr" => Some(Self::ReferencePacket),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn extension(self) -> &'static str {
+        match self {
+            Self::Matroska => "mkv",
+            Self::ReferencePacket => "obsr",
+        }
+    }
+
+    pub(crate) const fn display_name(self) -> &'static str {
+        match self {
+            Self::Matroska => "Matroska (.mkv)",
+            Self::ReferencePacket => "OBS-RS Packet (.obsr)",
+        }
+    }
+}
 
 /// Returns the per-user directory OBS-RS keeps its documents in.
 ///
@@ -201,6 +239,7 @@ pub(crate) struct AppSettings {
     pub(crate) project_path: String,
     pub(crate) diagnostics_path: String,
     pub(crate) recording_path: String,
+    pub(crate) recording_format: RecordingFormat,
     pub(crate) stream_protocol: StreamProtocol,
     pub(crate) rtmp: RtmpConfig,
     pub(crate) srt: SrtConfig,
@@ -360,7 +399,8 @@ impl Default for AppSettings {
             program_border_color: "#F87171".to_owned(),
             project_path: user_file(PROJECT_FILE),
             diagnostics_path: user_file(DIAGNOSTICS_FILE),
-            recording_path: user_file(RECORDING_FILE),
+            recording_path: user_file("obs-rs-recording.mkv"),
+            recording_format: RecordingFormat::Matroska,
             stream_protocol: StreamProtocol::Rtmp,
             rtmp: RtmpConfig::default(),
             srt: SrtConfig::default(),
@@ -523,6 +563,10 @@ impl AppSettings {
             project_path: text(config, "project_path", &defaults.project_path),
             diagnostics_path: text(config, "diagnostics_path", &defaults.diagnostics_path),
             recording_path: text(config, "recording_path", &defaults.recording_path),
+            recording_format: config
+                .get("recording_format")
+                .and_then(RecordingFormat::from_id)
+                .unwrap_or(defaults.recording_format),
             stream_protocol: config
                 .get("stream_protocol")
                 .and_then(StreamProtocol::from_id)
@@ -581,6 +625,7 @@ impl AppSettings {
             ("project_path", self.project_path.clone()),
             ("diagnostics_path", self.diagnostics_path.clone()),
             ("recording_path", self.recording_path.clone()),
+            ("recording_format", self.recording_format.id().to_owned()),
             ("audio_input_id", self.audio_input_id.clone()),
             ("restore_project", self.restore_project.to_string()),
             (
@@ -973,6 +1018,8 @@ mod tests {
             channels: 1,
             hotkey_swap: "F1".to_owned(),
             preview_border_color: "#00FF88".to_owned(),
+            recording_format: RecordingFormat::ReferencePacket,
+            recording_path: "/tmp/reference.obsr".to_owned(),
             stream_protocol: StreamProtocol::Rtmps,
             rtmp: RtmpConfig {
                 service: "Example Live".to_owned(),
@@ -1039,6 +1086,18 @@ mod tests {
         assert_eq!(
             AppSettings::default().stream_endpoint().as_deref(),
             Some("rtmp://127.0.0.1/live/stream")
+        );
+    }
+
+    #[test]
+    fn matroska_is_the_default_production_recording_format() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.recording_format, RecordingFormat::Matroska);
+        assert_eq!(
+            Path::new(&settings.recording_path)
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("mkv")
         );
     }
 

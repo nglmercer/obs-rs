@@ -22,6 +22,8 @@ use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{FrameRate, LatencyMetrics, Timestamp, VideoFormat, VideoFrame};
+#[cfg(feature = "production-gstreamer")]
+use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, AudioInputRequirement, EncodedPacket, OutputError,
     PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, RleVideoEncoder, StreamMetrics,
@@ -446,17 +448,98 @@ impl From<std::io::Error> for EngineError {
     }
 }
 
-struct RecordingOutput {
-    writer: AtomicPacketFileWriter,
+enum RecordingOutput {
+    Reference(AtomicPacketFileWriter),
+    #[cfg(feature = "production-gstreamer")]
+    Production {
+        session: GStreamerOutputSession,
+        final_path: PathBuf,
+    },
 }
 
 impl RecordingOutput {
-    const fn video_requirement() -> VideoInputRequirement {
-        VideoInputRequirement::Packetized
+    const fn video_requirement(&self) -> VideoInputRequirement {
+        match self {
+            Self::Reference(_) => VideoInputRequirement::Packetized,
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production { .. } => VideoInputRequirement::Raw,
+        }
     }
 
-    const fn audio_requirement() -> AudioInputRequirement {
-        AudioInputRequirement::Packetized
+    const fn audio_requirement(&self) -> AudioInputRequirement {
+        match self {
+            Self::Reference(_) => AudioInputRequirement::Packetized,
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production { .. } => AudioInputRequirement::Raw,
+        }
+    }
+
+    fn push_packet(&mut self, packet: EncodedPacket) -> Result<(), EngineError> {
+        match self {
+            Self::Reference(writer) => writer.push(packet).map_err(Into::into),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production { .. } => Ok(()),
+        }
+    }
+
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(clippy::unnecessary_wraps)
+    )]
+    fn push_video(&mut self, frame: &VideoFrame) -> Result<(), EngineError> {
+        #[cfg(not(feature = "production-gstreamer"))]
+        let _ = frame;
+        match self {
+            Self::Reference(_) => Ok(()),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production { session, .. } => {
+                session.push_video(frame.clone()).map_err(Into::into)
+            }
+        }
+    }
+
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(clippy::unnecessary_wraps)
+    )]
+    fn push_audio(&mut self, buffer: &AudioBuffer) -> Result<(), EngineError> {
+        #[cfg(not(feature = "production-gstreamer"))]
+        let _ = buffer;
+        match self {
+            Self::Reference(_) => Ok(()),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production { session, .. } => {
+                session.push_audio(buffer.clone()).map_err(Into::into)
+            }
+        }
+    }
+
+    fn finalize(&mut self) -> Result<usize, EngineError> {
+        match self {
+            Self::Reference(writer) => writer.finalize().map_err(Into::into),
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production {
+                session,
+                final_path,
+            } => {
+                session.close()?;
+                usize::try_from(std::fs::metadata(final_path)?.len()).map_err(|_| {
+                    EngineError::InvalidConfiguration(
+                        "recording size does not fit this platform".to_owned(),
+                    )
+                })
+            }
+        }
+    }
+
+    fn abort(&mut self) {
+        match self {
+            Self::Reference(writer) => {
+                let _ = writer.abort();
+            }
+            #[cfg(feature = "production-gstreamer")]
+            Self::Production { .. } => {}
+        }
     }
 }
 
@@ -1065,7 +1148,7 @@ impl EngineSession {
         Ok(())
     }
 
-    /// Starts an atomic `OBSRPKT1` recording at `path`.
+    /// Starts an atomic Matroska or `OBSRPKT1` recording based on `path`.
     ///
     /// The phase moves to `Starting` before any file work and settles on
     /// `Running` or `Failed`, so a caller that only sees the error still leaves
@@ -1096,11 +1179,47 @@ impl EngineSession {
             .ok_or_else(|| {
                 EngineError::InvalidConfiguration("recording path must name a file".to_owned())
             })?;
-        let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
-        self.recording = Some(RecordingOutput {
-            writer: AtomicPacketFileWriter::new(final_path, temp_path)?,
-        });
-        Ok(())
+        let extension = final_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if extension.eq_ignore_ascii_case("obsr") {
+            let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
+            self.recording = Some(RecordingOutput::Reference(AtomicPacketFileWriter::new(
+                final_path, temp_path,
+            )?));
+            return Ok(());
+        }
+        if !extension.eq_ignore_ascii_case("mkv") {
+            return Err(EngineError::InvalidConfiguration(
+                "recording extension must be .mkv or .obsr".to_owned(),
+            ));
+        }
+        #[cfg(feature = "production-gstreamer")]
+        {
+            let destination = ProductionDestination::Recording(final_path.clone());
+            let capabilities = GStreamerCapabilitySnapshot::probe();
+            let plan = ProductionPipelinePlan::negotiate(
+                OutputProfile::matroska_h264_aac(),
+                &destination,
+                &capabilities,
+            )?;
+            let session = GStreamerOutputSession::start(
+                &plan,
+                &destination,
+                self.format,
+                self.config.audio_format,
+            )?;
+            self.recording = Some(RecordingOutput::Production {
+                session,
+                final_path,
+            });
+            Ok(())
+        }
+        #[cfg(not(feature = "production-gstreamer"))]
+        Err(EngineError::InvalidConfiguration(
+            "Matroska support was not compiled into this host".to_owned(),
+        ))
     }
 
     /// Finalizes a recording and returns its committed byte count.
@@ -1115,14 +1234,14 @@ impl EngineSession {
             ));
         };
         self.recording_lifecycle = OutputLifecycle::Stopping;
-        match recording.writer.finalize() {
+        match recording.finalize() {
             Ok(bytes) => {
                 self.recording_lifecycle = OutputLifecycle::Idle;
                 Ok(bytes)
             }
             Err(error) => {
                 self.recording = Some(recording);
-                Err(self.fail_recording(error.into()))
+                Err(self.fail_recording(error))
             }
         }
     }
@@ -1136,7 +1255,7 @@ impl EngineSession {
     /// Aborts an open recording and removes its temporary path.
     pub fn abort_recording(&mut self) {
         if let Some(mut recording) = self.recording.take() {
-            let _ = recording.writer.abort();
+            recording.abort();
         }
         // An abort is a deliberate stop, so it clears a previous failure rather
         // than leaving the session permanently marked as broken.
@@ -1411,10 +1530,10 @@ impl EngineSession {
     fn emit_packet(&mut self, packet: EncodedPacket) -> Result<(), EngineError> {
         match (self.recording.as_mut(), self.streaming.as_mut()) {
             (Some(recording), Some(stream)) => {
-                recording.writer.push(packet.clone())?;
+                recording.push_packet(packet.clone())?;
                 stream.submit(packet)?;
             }
-            (Some(recording), None) => recording.writer.push(packet)?,
+            (Some(recording), None) => recording.push_packet(packet)?,
             (None, Some(stream)) => stream.submit(packet)?,
             (None, None) => {}
         }
@@ -1423,12 +1542,21 @@ impl EngineSession {
 
     fn dispatch_audio(&mut self, audio: &AudioBuffer) -> Result<(), EngineError> {
         if self.raw_audio_required() {
-            let stream = self
+            let started = Instant::now();
+            if let Some(recording) = self
+                .recording
+                .as_mut()
+                .filter(|recording| recording.audio_requirement() == AudioInputRequirement::Raw)
+            {
+                recording.push_audio(audio)?;
+            }
+            if let Some(stream) = self
                 .streaming
                 .as_mut()
-                .expect("raw audio requirement comes from an active stream");
-            let started = Instant::now();
-            stream.push_raw_audio(audio.clone())?;
+                .filter(|stream| stream.audio_requirement() == AudioInputRequirement::Raw)
+            {
+                stream.push_raw_audio(audio.clone())?;
+            }
             self.stats.output_submit_latency.record(started.elapsed());
         }
         if self.packetized_audio_required() {
@@ -1449,12 +1577,21 @@ impl EngineSession {
 
     fn dispatch_video(&mut self, frame: &VideoFrame) -> Result<(), EngineError> {
         if self.raw_video_required() {
-            let stream = self
+            let started = Instant::now();
+            if let Some(recording) = self
+                .recording
+                .as_mut()
+                .filter(|recording| recording.video_requirement() == VideoInputRequirement::Raw)
+            {
+                recording.push_video(frame)?;
+            }
+            if let Some(stream) = self
                 .streaming
                 .as_mut()
-                .expect("raw video requirement comes from an active stream");
-            let started = Instant::now();
-            stream.push_raw_video(frame.clone())?;
+                .filter(|stream| stream.video_requirement() == VideoInputRequirement::Raw)
+            {
+                stream.push_raw_video(frame.clone())?;
+            }
             self.stats.output_submit_latency.record(started.elapsed());
         }
         if self.packetized_video_required() {
@@ -1474,31 +1611,41 @@ impl EngineSession {
     }
 
     fn packetized_video_required(&self) -> bool {
-        (self.recording.is_some()
-            && RecordingOutput::video_requirement() == VideoInputRequirement::Packetized)
-            || self.streaming.as_ref().is_some_and(|stream| {
-                stream.video_requirement() == VideoInputRequirement::Packetized
-            })
+        self.recording.as_ref().is_some_and(|recording| {
+            recording.video_requirement() == VideoInputRequirement::Packetized
+        }) || self
+            .streaming
+            .as_ref()
+            .is_some_and(|stream| stream.video_requirement() == VideoInputRequirement::Packetized)
     }
 
     fn packetized_audio_required(&self) -> bool {
-        (self.recording.is_some()
-            && RecordingOutput::audio_requirement() == AudioInputRequirement::Packetized)
-            || self.streaming.as_ref().is_some_and(|stream| {
-                stream.audio_requirement() == AudioInputRequirement::Packetized
-            })
+        self.recording.as_ref().is_some_and(|recording| {
+            recording.audio_requirement() == AudioInputRequirement::Packetized
+        }) || self
+            .streaming
+            .as_ref()
+            .is_some_and(|stream| stream.audio_requirement() == AudioInputRequirement::Packetized)
     }
 
     fn raw_video_required(&self) -> bool {
-        self.streaming
+        self.recording
             .as_ref()
-            .is_some_and(|stream| stream.video_requirement() == VideoInputRequirement::Raw)
+            .is_some_and(|recording| recording.video_requirement() == VideoInputRequirement::Raw)
+            || self
+                .streaming
+                .as_ref()
+                .is_some_and(|stream| stream.video_requirement() == VideoInputRequirement::Raw)
     }
 
     fn raw_audio_required(&self) -> bool {
-        self.streaming
+        self.recording
             .as_ref()
-            .is_some_and(|stream| stream.audio_requirement() == AudioInputRequirement::Raw)
+            .is_some_and(|recording| recording.audio_requirement() == AudioInputRequirement::Raw)
+            || self
+                .streaming
+                .as_ref()
+                .is_some_and(|stream| stream.audio_requirement() == AudioInputRequirement::Raw)
     }
 }
 
@@ -1881,6 +2028,49 @@ mod tests {
         assert!(packets
             .windows(2)
             .all(|packets| packets[0].timestamp() <= packets[1].timestamp()));
+        std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[test]
+    fn recording_rejects_extensions_that_do_not_select_a_known_container() {
+        let path = std::env::temp_dir().join("obs-rs-unknown-recording.bin");
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let error = engine
+            .start_recording(path)
+            .expect_err("unknown extension must be rejected");
+        assert!(error.to_string().contains(".mkv or .obsr"));
+        assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Failed);
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn matroska_recording_uses_raw_production_media_and_publishes_atomically() {
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(obs_rs_output::OutputProfileKind::MatroskaH264Aac)
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-engine-{token}.mkv"));
+        let temp_path = path.with_extension("mkv.part");
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine.start_recording(&path).expect("Matroska recording");
+        assert!(!path.exists(), "the final path stays hidden until EOS");
+        for _ in 0..4 {
+            engine.tick(None, Some("program")).expect("media tick");
+        }
+        assert_eq!(engine.reference_video_encode_calls, 0);
+        assert_eq!(engine.reference_audio_encode_calls, 0);
+        let bytes = engine.finish_recording().expect("finalize Matroska");
+        let persisted = std::fs::read(&path).expect("read Matroska");
+        assert_eq!(persisted.len(), bytes);
+        assert!(persisted.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]));
+        assert!(!temp_path.exists());
         std::fs::remove_file(path).expect("remove recording");
     }
 
