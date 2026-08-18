@@ -1,0 +1,655 @@
+//! Controller for the standalone source Filters window.
+//!
+//! The controller owns only selection and view drafts. Every project mutation
+//! is dispatched as a validated `ProjectCommand`, so list order, names,
+//! enabled state, and settings all participate in undo/redo together with the
+//! rest of the project.
+
+use std::{cell::RefCell, error::Error, rc::Rc};
+
+use obs_rs_config::Config;
+use obs_rs_project::{ProjectCommand, SourceFilterCategory, SourceFilterSpec};
+use obs_rs_ui::{DesktopState, UiCommand};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+
+use crate::{
+    filter_properties, refresh_ui, I18n, MainWindow, Palette, PreviewRenderer, SourceFilterRow,
+    SourceFiltersWindow,
+};
+
+#[derive(Clone, Copy)]
+struct FilterDefinition {
+    kind: &'static str,
+    name: &'static str,
+    category: SourceFilterCategory,
+}
+
+const FILTER_DEFINITIONS: [FilterDefinition; 7] = [
+    FilterDefinition {
+        kind: "noise_suppression",
+        name: "Noise Suppression",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "compressor",
+        name: "Compressor",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "grayscale",
+        name: "Grayscale",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "brightness",
+        name: "Brightness",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "opacity",
+        name: "Opacity",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "crop_pad",
+        name: "Crop/Pad",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "color_correction",
+        name: "Color Correction",
+        category: SourceFilterCategory::Effect,
+    },
+];
+
+/// Owns the standalone Filters window and its selected instance ID.
+pub(crate) struct SourceFiltersController {
+    window: SourceFiltersWindow,
+    selected: RefCell<String>,
+}
+
+impl SourceFiltersController {
+    /// Repaints this window when the studio theme changes.
+    pub(crate) fn set_tokens(&self, tokens: crate::ThemeTokens) {
+        self.window.global::<Palette>().set_tokens(tokens);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn window(&self) -> &SourceFiltersWindow {
+        &self.window
+    }
+}
+
+/// Creates and wires the standalone Filters window.
+pub(crate) fn install_source_filters_window(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) -> Result<Rc<SourceFiltersController>, slint::PlatformError> {
+    let controller = Rc::new(SourceFiltersController {
+        window: SourceFiltersWindow::new()?,
+        selected: RefCell::new(String::new()),
+    });
+    install_open(ui, state, renderer, &controller);
+    install_actions(ui, state, renderer, &controller);
+    Ok(controller)
+}
+
+fn install_open(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    _renderer: &Rc<RefCell<PreviewRenderer>>,
+    controller: &Rc<SourceFiltersController>,
+) {
+    let weak = ui.as_weak();
+    let state = Rc::clone(state);
+    let controller = Rc::clone(controller);
+    ui.on_open_source_filters_window(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        controller.set_tokens(ui.global::<Palette>().get_tokens());
+        refresh_window(&state, &controller);
+        if let Err(error) = controller.window.show() {
+            ui.set_status_message(format!("Filters window: {error}").into());
+        }
+    });
+}
+
+fn install_actions(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    controller: &Rc<SourceFiltersController>,
+) {
+    let select_controller = Rc::clone(controller);
+    let select_state = Rc::clone(state);
+    controller.window.on_select_filter(move |id| {
+        id.to_string()
+            .clone_into(&mut select_controller.selected.borrow_mut());
+        refresh_window(&select_state, &select_controller);
+    });
+
+    let weak = ui.as_weak();
+    let add_state = Rc::clone(state);
+    let add_renderer = Rc::clone(renderer);
+    let add_controller = Rc::clone(controller);
+    controller.window.on_add_filter(move |kind| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let kind = kind.to_string();
+        let result = add_filter(&add_state, &add_controller, &kind);
+        report(&ui, &add_state, &add_renderer, result);
+        refresh_window(&add_state, &add_controller);
+    });
+
+    let weak = ui.as_weak();
+    let remove_state = Rc::clone(state);
+    let remove_renderer = Rc::clone(renderer);
+    let remove_controller = Rc::clone(controller);
+    controller.window.on_remove_filter(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let result = remove_filter(&remove_state, &remove_controller);
+        report(&ui, &remove_state, &remove_renderer, result);
+        refresh_window(&remove_state, &remove_controller);
+    });
+
+    let weak = ui.as_weak();
+    let toggle_state = Rc::clone(state);
+    let toggle_renderer = Rc::clone(renderer);
+    let toggle_controller = Rc::clone(controller);
+    controller.window.on_toggle_filter(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let result = toggle_filter(&toggle_state, &toggle_controller);
+        report(&ui, &toggle_state, &toggle_renderer, result);
+        refresh_window(&toggle_state, &toggle_controller);
+    });
+
+    let weak = ui.as_weak();
+    let move_state = Rc::clone(state);
+    let move_renderer = Rc::clone(renderer);
+    let move_controller = Rc::clone(controller);
+    controller.window.on_move_filter(move |delta| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let result = move_filter(&move_state, &move_controller, delta);
+        report(&ui, &move_state, &move_renderer, result);
+        refresh_window(&move_state, &move_controller);
+    });
+
+    let weak = ui.as_weak();
+    let rename_state = Rc::clone(state);
+    let rename_renderer = Rc::clone(renderer);
+    let rename_controller = Rc::clone(controller);
+    controller.window.on_rename_filter(move |name| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let result = rename_filter(&rename_state, &rename_controller, name.as_str());
+        report(&ui, &rename_state, &rename_renderer, result);
+        refresh_window(&rename_state, &rename_controller);
+    });
+
+    let weak = ui.as_weak();
+    let property_state = Rc::clone(state);
+    let property_renderer = Rc::clone(renderer);
+    let property_controller = Rc::clone(controller);
+    controller.window.on_edit_property(move |key, value| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let result = edit_property(
+            &property_state,
+            &property_controller,
+            key.as_str(),
+            value.as_str(),
+        );
+        report(&ui, &property_state, &property_renderer, result);
+        refresh_window(&property_state, &property_controller);
+    });
+
+    let close_controller = Rc::clone(controller);
+    controller.window.on_close_window(move || {
+        let _ = close_controller.window.hide();
+    });
+}
+
+fn report(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+    result: Result<(), Box<dyn Error>>,
+) {
+    match result {
+        Ok(()) => refresh_ui(ui, state, renderer),
+        Err(error) => ui.set_status_message(format!("Source filter failed: {error}").into()),
+    }
+}
+
+fn add_filter(
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
+    kind: &str,
+) -> Result<(), Box<dyn Error>> {
+    let definition =
+        definition(kind).ok_or_else(|| std::io::Error::other("unknown filter kind"))?;
+    let (profile, scene, source, locked) = source_context(state)?;
+    ensure_unlocked(locked)?;
+    let id = unique_filter_id(state, &scene, &source, kind);
+    let name = filter_instance_name(definition.name, definition.kind, &id);
+    let filter = SourceFilterSpec::with_category(
+        &id,
+        &name,
+        definition.kind,
+        definition.category,
+        filter_properties::default_settings(kind),
+    )?;
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSourceFilter {
+            profile,
+            scene,
+            source,
+            filter,
+        }))?;
+    id.clone_into(&mut controller.selected.borrow_mut());
+    Ok(())
+}
+
+fn remove_filter(
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
+) -> Result<(), Box<dyn Error>> {
+    let (profile, scene, source, locked) = source_context(state)?;
+    ensure_unlocked(locked)?;
+    let filter = selected_id(controller)?;
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSourceFilter {
+            profile,
+            scene,
+            source,
+            filter,
+        }))?;
+    controller.selected.borrow_mut().clear();
+    Ok(())
+}
+
+fn toggle_filter(
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
+) -> Result<(), Box<dyn Error>> {
+    let (profile, scene, source, locked) = source_context(state)?;
+    ensure_unlocked(locked)?;
+    let filter_id = selected_id(controller)?;
+    let enabled = filter_snapshot(state, &scene, &source, &filter_id)
+        .ok_or_else(|| std::io::Error::other("selected filter is missing"))?
+        .enabled();
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSourceFilterEnabled {
+            profile,
+            scene,
+            source,
+            filter: filter_id,
+            enabled: !enabled,
+        }))?;
+    Ok(())
+}
+
+fn move_filter(
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
+    delta: i32,
+) -> Result<(), Box<dyn Error>> {
+    let (profile, scene, source, locked) = source_context(state)?;
+    ensure_unlocked(locked)?;
+    let filter_id = selected_id(controller)?;
+    let index = filter_index(state, &scene, &source, &filter_id)
+        .ok_or_else(|| std::io::Error::other("selected filter is missing"))?;
+    let target = if delta < 0 {
+        index.checked_sub(1)
+    } else if delta > 0 {
+        Some(index.saturating_add(1))
+    } else {
+        Some(index)
+    }
+    .ok_or_else(|| std::io::Error::other("filter is already at the top"))?;
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::MoveSourceFilter {
+            profile,
+            scene,
+            source,
+            filter: filter_id,
+            target_index: target,
+        }))?;
+    Ok(())
+}
+
+fn rename_filter(
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
+    name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let (profile, scene, source, locked) = source_context(state)?;
+    ensure_unlocked(locked)?;
+    let filter = selected_id(controller)?;
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSourceFilterName {
+            profile,
+            scene,
+            source,
+            filter,
+            name: name.to_owned(),
+        }))?;
+    Ok(())
+}
+
+fn edit_property(
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
+    key: &str,
+    value: &str,
+) -> Result<(), Box<dyn Error>> {
+    let (profile, scene, source, locked) = source_context(state)?;
+    ensure_unlocked(locked)?;
+    let filter_id = selected_id(controller)?;
+    let filter = filter_snapshot(state, &scene, &source, &filter_id)
+        .ok_or_else(|| std::io::Error::other("selected filter is missing"))?;
+    let settings = filter_properties::apply(
+        filter.kind().as_str(),
+        &filter.settings().serialize(),
+        key,
+        value,
+    )
+    .ok_or_else(|| std::io::Error::other("invalid filter property"))?;
+    let settings = Config::parse(&settings)?;
+    state.borrow_mut().dispatch(UiCommand::Project(
+        ProjectCommand::SetSourceFilterSettings {
+            profile,
+            scene,
+            source,
+            filter: filter_id,
+            settings,
+        },
+    ))?;
+    Ok(())
+}
+
+fn source_context(
+    state: &Rc<RefCell<DesktopState>>,
+) -> Result<(String, String, String, bool), Box<dyn Error>> {
+    let state = state.borrow();
+    let profile = state
+        .project_session()
+        .project()
+        .active_profile()
+        .to_owned();
+    let scene = state
+        .preview_scene()
+        .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?
+        .to_owned();
+    let source = state
+        .selected_source()
+        .ok_or_else(|| std::io::Error::other("no source is selected"))?
+        .to_owned();
+    let locked = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene.as_str()))
+        .and_then(|scene| scene.source(source.as_str()))
+        .ok_or_else(|| std::io::Error::other("selected source is missing"))?
+        .locked();
+    Ok((profile.to_string(), scene, source, locked))
+}
+
+fn filter_snapshot(
+    state: &Rc<RefCell<DesktopState>>,
+    scene: &str,
+    source: &str,
+    filter: &str,
+) -> Option<SourceFilterSpec> {
+    let state = state.borrow();
+    state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene))
+        .and_then(|scene| scene.source(source))
+        .and_then(|source| {
+            source
+                .filters()
+                .iter()
+                .find(|item| item.id().as_str() == filter)
+        })
+        .cloned()
+}
+
+fn filter_index(
+    state: &Rc<RefCell<DesktopState>>,
+    scene: &str,
+    source: &str,
+    filter: &str,
+) -> Option<usize> {
+    let state = state.borrow();
+    state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene))
+        .and_then(|scene| scene.source(source))
+        .and_then(|source| {
+            source
+                .filters()
+                .iter()
+                .position(|item| item.id().as_str() == filter)
+        })
+}
+
+fn selected_id(controller: &SourceFiltersController) -> Result<String, Box<dyn Error>> {
+    let id = controller.selected.borrow().clone();
+    if id.is_empty() {
+        Err(std::io::Error::other("no filter is selected").into())
+    } else {
+        Ok(id)
+    }
+}
+
+fn ensure_unlocked(locked: bool) -> Result<(), Box<dyn Error>> {
+    if locked {
+        Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "source is locked").into())
+    } else {
+        Ok(())
+    }
+}
+
+fn unique_filter_id(
+    state: &Rc<RefCell<DesktopState>>,
+    scene: &str,
+    source: &str,
+    kind: &str,
+) -> String {
+    let state = state.borrow();
+    let existing = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene))
+        .and_then(|scene| scene.source(source));
+    let is_taken = |candidate: &str| {
+        existing.is_some_and(|source| {
+            source
+                .filters()
+                .iter()
+                .any(|filter| filter.id().as_str() == candidate)
+        })
+    };
+    if !is_taken(kind) {
+        return kind.to_owned();
+    }
+    for ordinal in 2..=10_000 {
+        let candidate = format!("{kind}_{ordinal}");
+        if !is_taken(&candidate) {
+            return candidate;
+        }
+    }
+    format!("{kind}_overflow")
+}
+
+fn definition(kind: &str) -> Option<FilterDefinition> {
+    FILTER_DEFINITIONS
+        .iter()
+        .copied()
+        .find(|definition| definition.kind == kind)
+}
+
+fn filter_instance_name(base: &str, kind: &str, id: &str) -> String {
+    id.strip_prefix(kind)
+        .and_then(|suffix| suffix.strip_prefix('_'))
+        .and_then(|ordinal| ordinal.parse::<usize>().ok())
+        .map_or_else(|| base.to_owned(), |ordinal| format!("{base} {ordinal}"))
+}
+
+fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersController) {
+    let locale = state.borrow().locale();
+    controller
+        .window
+        .global::<I18n>()
+        .set_text(crate::i18n::catalog(locale));
+
+    let (source_name, filters) = {
+        let state = state.borrow();
+        let scene_id = state.preview_scene().unwrap_or_default();
+        let source_id = state.selected_source().unwrap_or_default();
+        let source = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene(scene_id))
+            .and_then(|scene| scene.source(source_id));
+        (
+            source.map_or_else(String::new, |source| source.name().to_owned()),
+            source.map_or_else(Vec::new, |source| source.filters().to_vec()),
+        )
+    };
+    controller.window.set_source_name(source_name.into());
+
+    if !filters
+        .iter()
+        .any(|filter| filter.id().as_str() == controller.selected.borrow().as_str())
+    {
+        controller.selected.replace(
+            filters
+                .first()
+                .map_or_else(String::new, |filter| filter.id().to_string()),
+        );
+    }
+    let selected = controller.selected.borrow().clone();
+    let make_row = |filter: &SourceFilterSpec| SourceFilterRow {
+        id: filter.id().as_str().into(),
+        name: filter.name().into(),
+        kind: filter_display_name(filter.kind().as_str()).into(),
+        category: filter.category().id().into(),
+        enabled: filter.enabled(),
+        selected: filter.id().as_str() == selected,
+    };
+    let audio = filters
+        .iter()
+        .filter(|filter| filter.category() == SourceFilterCategory::AudioVideo)
+        .map(make_row)
+        .collect::<Vec<_>>();
+    let effects = filters
+        .iter()
+        .filter(|filter| filter.category() == SourceFilterCategory::Effect)
+        .map(make_row)
+        .collect::<Vec<_>>();
+    controller
+        .window
+        .set_audio_video_rows(ModelRc::new(VecModel::from(audio)));
+    controller
+        .window
+        .set_effect_rows(ModelRc::new(VecModel::from(effects)));
+
+    let selected_filter = filters
+        .iter()
+        .find(|filter| filter.id().as_str() == selected);
+    controller
+        .window
+        .set_selected_filter(selected_filter.is_some());
+    controller
+        .window
+        .set_selected_filter_id(selected.clone().into());
+    controller.window.set_selected_filter_name(
+        selected_filter
+            .map_or_else(String::new, |filter| filter.name().to_owned())
+            .into(),
+    );
+    controller.window.set_selected_filter_kind(
+        selected_filter
+            .map_or_else(String::new, |filter| {
+                filter_display_name(filter.kind().as_str()).to_owned()
+            })
+            .into(),
+    );
+    controller
+        .window
+        .set_selected_filter_enabled(selected_filter.is_some_and(SourceFilterSpec::enabled));
+    controller
+        .window
+        .set_property_rows(ModelRc::new(VecModel::from(selected_filter.map_or_else(
+            Vec::new,
+            |filter| {
+                filter_properties::rows(
+                    filter.kind().as_str(),
+                    &filter.settings().serialize(),
+                    locale,
+                )
+            },
+        ))));
+    let index = filters
+        .iter()
+        .position(|filter| filter.id().as_str() == selected);
+    controller
+        .window
+        .set_can_move_up(index.is_some_and(|index| index > 0));
+    controller
+        .window
+        .set_can_move_down(index.is_some_and(|index| index + 1 < filters.len()));
+
+    let names = FILTER_DEFINITIONS
+        .iter()
+        .map(|definition| SharedString::from(definition.name))
+        .collect::<Vec<_>>();
+    let kinds = FILTER_DEFINITIONS
+        .iter()
+        .map(|definition| SharedString::from(definition.kind))
+        .collect::<Vec<_>>();
+    controller
+        .window
+        .set_available_filter_names(ModelRc::new(VecModel::from(names)));
+    controller
+        .window
+        .set_available_filter_kinds(ModelRc::new(VecModel::from(kinds)));
+}
+
+fn filter_display_name(kind: &str) -> &str {
+    definition(kind).map_or(kind, |definition| definition.name)
+}
+
+// Keep the public test surface small while allowing headless GUI tests to
+// instantiate and inspect the standalone window.
+#[cfg(test)]
+pub(crate) fn source_filters_window(
+    controller: &Rc<SourceFiltersController>,
+) -> &SourceFiltersWindow {
+    controller.window()
+}

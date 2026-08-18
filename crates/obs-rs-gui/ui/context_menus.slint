@@ -16,6 +16,8 @@ export component SourceContextMenuArea inherits Rectangle {
 
     callback select-source(string);
     callback open-properties(string);
+    callback open-filters(string);
+    callback open-transform(string);
     callback rename-source(string);
     callback duplicate-source(string);
     callback toggle-source-visibility(string);
@@ -41,6 +43,14 @@ export component SourceContextMenuArea inherits Rectangle {
                 activated => {
                     root.select-source(root.source-id);
                     root.open-properties(root.source-id);
+                }
+            }
+            MenuItem {
+                title: I18n.text.filters;
+                enabled: root.source-id != "";
+                activated => {
+                    root.select-source(root.source-id);
+                    root.open-filters(root.source-id);
                 }
             }
             MenuItem {
@@ -126,7 +136,7 @@ export component SourceContextMenuArea inherits Rectangle {
                     title: I18n.text.edit_transform;
                     activated => {
                         root.select-source(root.source-id);
-                        root.open-properties(root.source-id);
+                        root.open-transform(root.source-id);
                     }
                 }
             }

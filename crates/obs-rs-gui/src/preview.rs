@@ -6,6 +6,7 @@ use std::{
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::Runtime;
+use obs_rs_engine::compile_filter;
 #[cfg(test)]
 use obs_rs_media::FrameTransition;
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
@@ -103,7 +104,9 @@ impl PreviewRenderer {
                 runtime.attach_source(scene_id, source_id)?;
                 runtime.set_source_transform(scene_id, source_id, source.transform())?;
                 for filter in source.filters() {
-                    runtime.add_source_filter(scene_id, source_id, *filter)?;
+                    if let Some(runtime_filter) = compile_filter(filter) {
+                        runtime.add_source_filter(scene_id, source_id, runtime_filter)?;
+                    }
                 }
             }
         }

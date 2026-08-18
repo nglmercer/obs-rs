@@ -4,8 +4,7 @@ use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::ComponentHandle;
 
 use crate::{
-    apply_source_filters_and_refresh, apply_source_name_and_refresh,
-    apply_source_settings_and_refresh, apply_source_transform_and_refresh, dispatch_and_refresh,
+    apply_source_name_and_refresh, apply_source_settings_and_refresh, dispatch_and_refresh,
     duplicate_scene_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
     move_source_and_refresh, move_source_to_and_refresh, remove_scene_and_refresh,
     remove_source_and_refresh, rename_scene_and_refresh, reset_source_transform_and_refresh,
@@ -275,27 +274,5 @@ fn install_source_property_callbacks(
         };
         let document = ui.get_source_settings().to_string();
         apply_source_settings_and_refresh(&ui, &settings_state, &settings_renderer, &document);
-    });
-
-    let weak = ui.as_weak();
-    let transform_state = Rc::clone(state);
-    let transform_renderer = Rc::clone(renderer);
-    ui.on_apply_source_transform(move || {
-        let Some(ui) = weak.upgrade() else {
-            return;
-        };
-        let document = ui.get_source_transform().to_string();
-        apply_source_transform_and_refresh(&ui, &transform_state, &transform_renderer, &document);
-    });
-
-    let weak = ui.as_weak();
-    let filters_state = Rc::clone(state);
-    let filters_renderer = Rc::clone(renderer);
-    ui.on_apply_source_filters(move || {
-        let Some(ui) = weak.upgrade() else {
-            return;
-        };
-        let document = ui.get_source_filters().to_string();
-        apply_source_filters_and_refresh(&ui, &filters_state, &filters_renderer, &document);
     });
 }

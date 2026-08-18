@@ -16,6 +16,7 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::ComponentHandle;
 
 mod callbacks;
+mod filter_properties;
 mod fixtures;
 mod i18n;
 mod output;
@@ -30,18 +31,18 @@ mod view;
 mod tests;
 
 pub(crate) use callbacks::{
-    apply_source_filters_and_refresh, apply_source_name_and_refresh,
-    apply_source_settings_and_refresh, apply_source_transform_and_refresh,
-    duplicate_scene_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
-    move_source_and_refresh, move_source_to_and_refresh, project_store, remove_scene_and_refresh,
-    remove_source_and_refresh, rename_scene_and_refresh, reset_source_transform_and_refresh,
-    source_filters_document, source_transform_document, toggle_source_locked_and_refresh,
-    toggle_source_visibility_and_refresh,
+    apply_source_name_and_refresh, apply_source_settings_and_refresh,
+    apply_source_transform_and_refresh, duplicate_scene_and_refresh, duplicate_source_and_refresh,
+    flip_source_and_refresh, move_source_and_refresh, move_source_to_and_refresh, project_store,
+    remove_scene_and_refresh, remove_source_and_refresh, rename_scene_and_refresh,
+    reset_source_transform_and_refresh, source_transform_document,
+    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
 };
 pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks, install_dock_callbacks,
     install_menu_callbacks, install_monitor_window, install_settings_window,
-    install_source_properties_window, item_rect, start_preview_timer, PeerWindows,
+    install_source_filters_window, install_source_properties_window,
+    install_source_transform_window, item_rect, start_preview_timer, PeerWindows,
     ProjectorController,
 };
 pub(crate) use fixtures::{
@@ -58,8 +59,9 @@ pub(crate) use settings::AppSettings;
 pub(crate) use view::{
     AddSourceText, AddSourceWindow, FloatingDockWindow, I18n, LocaleOption, MainWindow, MixerRow,
     MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow, ProjectorWindow, PropertyRow,
-    PropertyText, SceneRow, SettingsText, SettingsWindow, SourceCandidate, SourceKindRow,
-    SourcePropertiesWindow, SourceRow, ThemeTokens, UiText,
+    PropertyText, SceneRow, SettingsText, SettingsWindow, SourceCandidate, SourceFilterRow,
+    SourceFiltersWindow, SourceKindRow, SourcePropertiesWindow, SourceRow, SourceTransformWindow,
+    ThemeTokens, UiText,
 };
 
 /// Mixer channel backed by the engine's live capture input.
@@ -162,6 +164,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let add_source_window = install_add_source_window(&ui, &state, &renderer)?;
     let monitor_window = install_monitor_window(&ui, &state, &renderer)?;
     let properties_window = install_source_properties_window(&ui, &state, &renderer)?;
+    let filters_window = install_source_filters_window(&ui, &state, &renderer)?;
+    let transform_window = install_source_transform_window(&ui, &state, &renderer)?;
     let settings_window = install_settings_window(
         &ui,
         &state,
@@ -171,6 +175,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         &PeerWindows {
             add_source: add_source_window,
             properties: properties_window,
+            filters: filters_window,
+            transform: transform_window,
             monitor: monitor_window,
             docks: Rc::clone(&docks),
             projectors: Rc::clone(&projectors),

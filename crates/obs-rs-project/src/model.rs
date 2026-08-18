@@ -1,5 +1,5 @@
 use obs_rs_config::Config;
-use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
+use obs_rs_media::{FrameTransform, VideoFormat};
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
 use std::{
@@ -9,6 +9,156 @@ use std::{
 };
 
 use super::{error::ProjectError, validation::identifier};
+
+/// The OBS filter group a source filter belongs to.
+///
+/// The project stores this classification instead of deriving it from a
+/// renderer operation. That leaves room for audio/video filters and effect
+/// filters to coexist, including plugin-provided kinds the reference renderer
+/// does not know how to compile yet.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SourceFilterCategory {
+    /// Filters that operate on audio or on an asynchronous source stream.
+    AudioVideo,
+    /// Filters that operate on the rendered source image.
+    #[default]
+    Effect,
+}
+
+impl SourceFilterCategory {
+    /// Returns the stable serialized category ID.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::AudioVideo => "audio_video",
+            Self::Effect => "effect",
+        }
+    }
+
+    /// Parses a serialized category ID.
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "audio_video" => Some(Self::AudioVideo),
+            "effect" => Some(Self::Effect),
+            _ => None,
+        }
+    }
+}
+
+/// One named, ordered filter instance attached to a source.
+///
+/// This is deliberately a project value rather than a renderer enum. `kind`
+/// identifies the filter implementation and `settings` belongs only to that
+/// instance, so two filters of the same kind can have different names and
+/// values without relying on a comma-separated UI string.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceFilterSpec {
+    pub(crate) id: Identifier,
+    pub(crate) name: String,
+    pub(crate) kind: Identifier,
+    pub(crate) category: SourceFilterCategory,
+    pub(crate) enabled: bool,
+    pub(crate) settings: Config,
+}
+
+impl SourceFilterSpec {
+    /// Creates an enabled effect filter instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError`] when an identifier, kind, or display name is
+    /// invalid.
+    pub fn new(id: &str, name: &str, kind: &str, settings: Config) -> Result<Self, ProjectError> {
+        Self::with_category(id, name, kind, SourceFilterCategory::Effect, settings)
+    }
+
+    /// Creates an enabled filter instance with an explicit OBS filter group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError`] when an identifier, kind, or display name is
+    /// invalid.
+    pub fn with_category(
+        id: &str,
+        name: &str,
+        kind: &str,
+        category: SourceFilterCategory,
+        settings: Config,
+    ) -> Result<Self, ProjectError> {
+        if name.trim().is_empty() {
+            return Err(ProjectError::InvalidName { kind: "filter" });
+        }
+        Ok(Self {
+            id: identifier(id, "filter id")?,
+            name: name.to_owned(),
+            kind: identifier(kind, "filter kind")?,
+            category,
+            enabled: true,
+            settings,
+        })
+    }
+
+    /// Returns the stable filter-instance ID.
+    #[must_use]
+    pub fn id(&self) -> &Identifier {
+        &self.id
+    }
+
+    /// Returns the user-visible filter name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Replaces the filter display name after validating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::InvalidName`] when the name is empty.
+    pub fn set_name(&mut self, name: &str) -> Result<(), ProjectError> {
+        if name.trim().is_empty() {
+            return Err(ProjectError::InvalidName { kind: "filter" });
+        }
+        name.clone_into(&mut self.name);
+        Ok(())
+    }
+
+    /// Returns the registered filter kind.
+    #[must_use]
+    pub fn kind(&self) -> &Identifier {
+        &self.kind
+    }
+
+    /// Returns the OBS filter group.
+    #[must_use]
+    pub const fn category(&self) -> SourceFilterCategory {
+        self.category
+    }
+
+    /// Returns whether this instance participates in the runtime chain.
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Changes whether this instance participates in the runtime chain.
+    pub const fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
+    /// Returns this instance's independent settings document.
+    #[must_use]
+    pub const fn settings(&self) -> &Config {
+        &self.settings
+    }
+
+    /// Replaces this instance's settings document.
+    pub fn set_settings(&mut self, settings: Config) {
+        self.settings = settings;
+    }
+}
+
 /// A source definition stored in a scene collection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceSpec {
@@ -17,7 +167,7 @@ pub struct SourceSpec {
     pub(crate) name: String,
     pub(crate) settings: Config,
     pub(crate) transform: FrameTransform,
-    pub(crate) filters: Vec<FrameFilter>,
+    pub(crate) filters: Vec<SourceFilterSpec>,
     pub(crate) visible: bool,
     pub(crate) locked: bool,
 }
@@ -97,15 +247,72 @@ impl SourceSpec {
         self.transform = transform;
     }
 
-    /// Returns filters in application order.
+    /// Returns persistent filter instances in application order.
     #[must_use]
-    pub fn filters(&self) -> &[FrameFilter] {
+    pub fn filters(&self) -> &[SourceFilterSpec] {
         &self.filters
     }
 
-    /// Appends a filter to the source's ordered filter chain.
-    pub fn add_filter(&mut self, filter: FrameFilter) {
+    /// Appends a filter instance to the source's ordered filter chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::DuplicateFilter`] when the instance ID is
+    /// already present on this source.
+    pub fn add_filter(&mut self, filter: SourceFilterSpec) -> Result<(), ProjectError> {
+        if self
+            .filters
+            .iter()
+            .any(|existing| existing.id() == filter.id())
+        {
+            return Err(ProjectError::DuplicateFilter(filter.id().clone()));
+        }
         self.filters.push(filter);
+        Ok(())
+    }
+
+    /// Finds a filter instance by ID.
+    #[must_use]
+    pub fn filter(&self, id: &Identifier) -> Option<&SourceFilterSpec> {
+        self.filters.iter().find(|filter| filter.id() == id)
+    }
+
+    /// Finds a mutable filter instance by ID.
+    pub fn filter_mut(&mut self, id: &Identifier) -> Option<&mut SourceFilterSpec> {
+        self.filters.iter_mut().find(|filter| filter.id() == id)
+    }
+
+    /// Removes a filter instance by ID.
+    pub fn remove_filter(&mut self, id: &Identifier) -> Option<SourceFilterSpec> {
+        let index = self.filters.iter().position(|filter| filter.id() == id)?;
+        Some(self.filters.remove(index))
+    }
+
+    /// Moves a filter instance to an existing order position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::UnknownFilter`] when the filter is absent or
+    /// [`ProjectError::InvalidFilterOrder`] when the destination is out of
+    /// range.
+    pub fn move_filter(
+        &mut self,
+        id: &Identifier,
+        target_index: usize,
+    ) -> Result<(), ProjectError> {
+        let current_index = self
+            .filters
+            .iter()
+            .position(|filter| filter.id() == id)
+            .ok_or_else(|| ProjectError::UnknownFilter(id.clone()))?;
+        if target_index >= self.filters.len() {
+            return Err(ProjectError::InvalidFilterOrder {
+                index: target_index,
+            });
+        }
+        let filter = self.filters.remove(current_index);
+        self.filters.insert(target_index, filter);
+        Ok(())
     }
 
     /// Returns whether this source participates in scene composition.

@@ -22,6 +22,8 @@ export component SourceDock inherits Rectangle {
     callback close-panel(int);
     callback open-modal(int);
     callback select-source(string);
+    callback open-filters(string);
+    callback open-transform(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
     callback move-source(string, int);
@@ -70,6 +72,8 @@ export component SourceDock inherits Rectangle {
                         source-count: source-rows.length;
                         select-source(id) => { root.select-source(id); }
                         open-properties(id) => { root.select-source(id); root.open-modal(6); }
+                        open-filters(id) => { root.select-source(id); root.open-modal(13); }
+                        open-transform(id) => { root.select-source(id); root.open-modal(14); }
                         rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                         duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
                         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
@@ -138,6 +142,8 @@ export component SourceDock inherits Rectangle {
                     source-count: root.source-rows.length;
                     select-source(id) => { root.select-source(id); }
                     open-properties(id) => { root.select-source(id); root.open-modal(6); }
+                    open-filters(id) => { root.select-source(id); root.open-modal(13); }
+                    open-transform(id) => { root.select-source(id); root.open-modal(14); }
                     rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                     duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
                     toggle-source-visibility(id) => { root.toggle-source-visibility(id); }

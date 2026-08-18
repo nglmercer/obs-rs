@@ -337,6 +337,8 @@ fn forward_to_studio(
         match modal {
             3 => ui.invoke_open_add_source_window(),
             6 => ui.invoke_open_source_properties_window(),
+            13 => ui.invoke_open_source_filters_window(),
+            14 => ui.invoke_open_source_transform_window(),
             8 => ui.invoke_open_monitor_window(),
             _ => {}
         }

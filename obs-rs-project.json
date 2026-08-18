@@ -19,7 +19,7 @@
               "locked": false,
               "name": "Video capture device 1",
               "settings": {
-                "device_id": "v4l2-video0",
+                "device_id": "nokhwa-camera-1",
                 "height": "360",
                 "width": "640"
               },
@@ -47,7 +47,7 @@
               "settings": {
                 "capture_cursor": "true",
                 "height": "360",
-                "restore_token": "",
+                "restore_token": "HA0XGvVqau7kEib47znYjQ",
                 "width": "640"
               },
               "transform": {
@@ -63,7 +63,7 @@
                 "translate_x": 0,
                 "translate_y": 0
               },
-              "visible": true
+              "visible": false
             }
           ]
         },

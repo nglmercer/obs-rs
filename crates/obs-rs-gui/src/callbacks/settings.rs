@@ -17,7 +17,9 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use crate::{
     callbacks::add_source::AddSourceController,
     callbacks::monitor::MonitorController,
+    callbacks::source_filters::SourceFiltersController,
     callbacks::source_properties::SourcePropertiesController,
+    callbacks::source_transform::SourceTransformController,
     refresh_ui,
     settings::{
         AppSettings, RecordingFormat, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES,
@@ -34,6 +36,8 @@ pub(crate) struct SettingsController {
     /// Repainted alongside this window so a theme change reaches every surface.
     add_source: Rc<AddSourceController>,
     properties: Rc<SourcePropertiesController>,
+    filters: Rc<SourceFiltersController>,
+    transform: Rc<SourceTransformController>,
     monitor: Rc<MonitorController>,
     docks: Rc<crate::callbacks::docks::DockController>,
     projectors: Rc<crate::ProjectorController>,
@@ -96,6 +100,8 @@ impl SettingsController {
 pub(crate) struct PeerWindows {
     pub(crate) add_source: Rc<AddSourceController>,
     pub(crate) properties: Rc<SourcePropertiesController>,
+    pub(crate) filters: Rc<SourceFiltersController>,
+    pub(crate) transform: Rc<SourceTransformController>,
     pub(crate) monitor: Rc<MonitorController>,
     pub(crate) docks: Rc<crate::callbacks::docks::DockController>,
     pub(crate) projectors: Rc<crate::ProjectorController>,
@@ -121,6 +127,8 @@ pub(crate) fn install_settings_window(
         path,
         add_source: Rc::clone(&peers.add_source),
         properties: Rc::clone(&peers.properties),
+        filters: Rc::clone(&peers.filters),
+        transform: Rc::clone(&peers.transform),
         monitor: Rc::clone(&peers.monitor),
         docks: Rc::clone(&peers.docks),
         projectors: Rc::clone(&peers.projectors),
@@ -1054,6 +1062,8 @@ fn push_palette_tokens(
         .set_tokens(tokens.clone());
     controller.add_source.set_tokens(tokens.clone());
     controller.properties.set_tokens(tokens.clone());
+    controller.filters.set_tokens(tokens.clone());
+    controller.transform.set_tokens(tokens.clone());
     controller.monitor.set_tokens(tokens.clone());
     controller.docks.set_tokens(tokens);
     controller.projectors.set_tokens(tokens);

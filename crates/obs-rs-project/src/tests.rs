@@ -24,8 +24,28 @@ fn project() -> Project {
     source.set_transform(
         FrameTransform::new(1_000, 1_000, 4, -3, true, false, 220).expect("transform"),
     );
-    source.add_filter(FrameFilter::Brightness { milli: 750 });
-    source.add_filter(FrameFilter::Opacity(200));
+    source
+        .add_filter(
+            SourceFilterSpec::new(
+                "brightness",
+                "Brightness",
+                "brightness",
+                Config::parse("milli = 750\n").expect("brightness settings"),
+            )
+            .expect("brightness filter"),
+        )
+        .expect("brightness filter attach");
+    source
+        .add_filter(
+            SourceFilterSpec::new(
+                "opacity",
+                "Opacity",
+                "opacity",
+                Config::parse("value = 200\n").expect("opacity settings"),
+            )
+            .expect("opacity filter"),
+        )
+        .expect("opacity filter attach");
     scene.add_source(source).expect("source attach");
     profile.add_scene(scene).expect("scene attach");
     project.add_profile(profile).expect("profile add");
@@ -225,6 +245,193 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
 }
 
 #[test]
+fn source_filter_commands_manage_named_ordered_instances() {
+    let mut project = project();
+    let mut second_brightness = Config::new();
+    second_brightness
+        .set("milli", "250")
+        .expect("brightness settings");
+
+    project
+        .apply(ProjectCommand::AddSourceFilter {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: SourceFilterSpec::new(
+                "brightness_2",
+                "Brightness 2",
+                "brightness",
+                second_brightness,
+            )
+            .expect("second brightness filter"),
+        })
+        .expect("same-kind filter instances are allowed");
+
+    let source = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.source("background"))
+        .expect("background source");
+    assert_eq!(
+        source
+            .filters()
+            .iter()
+            .map(|filter| filter.id().as_str())
+            .collect::<Vec<_>>(),
+        ["brightness", "opacity", "brightness_2"]
+    );
+
+    project
+        .apply(ProjectCommand::SetSourceFilterName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: "brightness_2".to_owned(),
+            name: "Warmth".to_owned(),
+        })
+        .expect("rename filter");
+    project
+        .apply(ProjectCommand::SetSourceFilterEnabled {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: "brightness_2".to_owned(),
+            enabled: false,
+        })
+        .expect("disable filter");
+    project
+        .apply(ProjectCommand::SetSourceFilterSettings {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: "brightness_2".to_owned(),
+            settings: Config::parse("milli = 500\n").expect("updated settings"),
+        })
+        .expect("update filter settings");
+    project
+        .apply(ProjectCommand::MoveSourceFilter {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: "brightness_2".to_owned(),
+            target_index: 0,
+        })
+        .expect("reorder filter");
+
+    let source = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.source("background"))
+        .expect("background source after edits");
+    let edited = source.filters().first().expect("moved filter");
+    assert_eq!(edited.id().as_str(), "brightness_2");
+    assert_eq!(edited.name(), "Warmth");
+    assert!(!edited.enabled());
+    assert_eq!(edited.settings().get("milli"), Some("500"));
+    assert_eq!(source.filters()[1].kind().as_str(), "brightness");
+
+    project
+        .apply(ProjectCommand::RemoveSourceFilter {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: "opacity".to_owned(),
+        })
+        .expect("remove filter");
+    let source = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.source("background"))
+        .expect("background source after removal");
+    assert_eq!(source.filters().len(), 2);
+
+    let duplicate = SourceFilterSpec::new("brightness_2", "Duplicate", "brightness", Config::new())
+        .expect("duplicate fixture");
+    assert_eq!(
+        project.apply(ProjectCommand::AddSourceFilter {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: duplicate,
+        }),
+        Err(ProjectError::DuplicateFilter(
+            Identifier::new("brightness_2").expect("filter id")
+        ))
+    );
+
+    let decoded = Project::parse(&project.serialize()).expect("edited filters persist");
+    assert_eq!(decoded, project);
+}
+
+#[test]
+fn source_filter_commands_participate_in_undo_and_redo() {
+    let mut session = ProjectSession::new(project());
+    session
+        .dispatch(ProjectCommand::SetSourceFilterName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: "brightness".to_owned(),
+            name: "Renamed brightness".to_owned(),
+        })
+        .expect("rename filter");
+    assert_eq!(
+        session
+            .project()
+            .profile("live")
+            .and_then(|profile| profile.scene("main"))
+            .and_then(|scene| scene.source("background"))
+            .and_then(|source| source.filter(&Identifier::new("brightness").expect("id")))
+            .expect("brightness filter")
+            .name(),
+        "Renamed brightness"
+    );
+    assert!(session.undo());
+    assert_eq!(
+        session
+            .project()
+            .profile("live")
+            .and_then(|profile| profile.scene("main"))
+            .and_then(|scene| scene.source("background"))
+            .and_then(|source| source.filter(&Identifier::new("brightness").expect("id")))
+            .expect("brightness filter")
+            .name(),
+        "Brightness"
+    );
+    assert!(session.redo());
+}
+
+#[test]
+fn audio_video_filter_categories_are_persistent_data() {
+    let mut project = project();
+    project
+        .apply(ProjectCommand::AddSourceFilter {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: "background".to_owned(),
+            filter: SourceFilterSpec::with_category(
+                "compressor",
+                "Compressor",
+                "compressor",
+                SourceFilterCategory::AudioVideo,
+                Config::new(),
+            )
+            .expect("audio/video filter"),
+        })
+        .expect("add audio/video filter");
+
+    let decoded = Project::parse(&project.serialize()).expect("parse categorized filter");
+    let filter = decoded
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.source("background"))
+        .and_then(|source| source.filter(&Identifier::new("compressor").expect("filter id")))
+        .expect("categorized filter");
+    assert_eq!(filter.category(), SourceFilterCategory::AudioVideo);
+    assert_eq!(filter.kind().as_str(), "compressor");
+}
+
+#[test]
 fn duplicate_commands_copy_definitions_and_choose_unique_ids() {
     let mut project = project();
     project
@@ -362,7 +569,7 @@ fn remove_scene_command_updates_project_without_partial_mutation() {
 }
 
 #[test]
-fn parser_rejects_duplicate_and_unknown_records() {
+fn parser_rejects_duplicate_records_and_preserves_plugin_filter_kinds() {
     // Two profile entries with the same id: the array preserves both, so the
     // duplicate is caught when the second one is attached.
     let mut duplicated = project();
@@ -392,10 +599,8 @@ fn parser_rejects_duplicate_and_unknown_records() {
     let unknown_filter = project()
         .serialize()
         .replace(r#""kind": "brightness""#, r#""kind": "sepia""#);
-    assert!(matches!(
-        Project::parse(&unknown_filter),
-        Err(ProjectError::InvalidDocument { .. })
-    ));
+    let parsed = Project::parse(&unknown_filter).expect("plugin filter kind is data");
+    assert_eq!(parsed.serialize(), unknown_filter);
 }
 
 #[test]

@@ -9,8 +9,6 @@ export component EditorPanel inherits Rectangle {
     in property <string> capture-capabilities;
     in property <string> source-settings-version;
     in-out property <string> source-settings;
-    in-out property <string> source-transform;
-    in-out property <string> source-filters;
     in-out property <string> scene-name;
     in-out property <string> new-scene-id;
     in-out property <string> new-scene-name;
@@ -18,8 +16,6 @@ export component EditorPanel inherits Rectangle {
     callback rename-scene();
     callback open-source-dialog();
     callback apply-source-settings();
-    callback apply-source-transform();
-    callback apply-source-filters();
 
     background: transparent;
     VerticalBox {
@@ -93,37 +89,6 @@ export component EditorPanel inherits Rectangle {
                 Button {
                     text: I18n.text.apply_settings;
                     clicked => apply-source-settings();
-                }
-                FieldHeading {
-                    text: I18n.text.transform;
-                }
-                HorizontalBox {
-                    spacing: 6px;
-                    LineEdit {
-                        text <=> source-transform;
-                        placeholder-text: "1000,1000,0,0,0,0,255";
-                        horizontal-stretch: 1;
-                    }
-                    Button {
-                        text: I18n.text.apply;
-                        clicked => apply-source-transform();
-                    }
-                }
-                FieldHeading {
-                    text: I18n.text.filters_prefix + source-filters;
-                    overflow: elide;
-                }
-                HorizontalBox {
-                    spacing: 6px;
-                    LineEdit {
-                        text <=> source-filters;
-                        placeholder-text: "gray,brightness:750,opacity:200";
-                        horizontal-stretch: 1;
-                    }
-                    Button {
-                        text: I18n.text.apply;
-                        clicked => apply-source-filters();
-                    }
                 }
             }
         }

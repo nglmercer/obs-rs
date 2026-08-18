@@ -471,7 +471,7 @@ fn clone_spec(
     )?;
     spec.set_transform(template.transform());
     for filter in template.filters() {
-        spec.add_filter(*filter);
+        spec.add_filter(filter.clone())?;
     }
     spec.set_locked(template.locked());
     Ok(Some(spec))

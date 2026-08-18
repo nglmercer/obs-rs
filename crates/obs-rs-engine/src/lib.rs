@@ -21,7 +21,9 @@ use obs_rs_audio::{
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
-use obs_rs_media::{FrameRate, LatencyMetrics, RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{
+    FrameFilter, FrameRate, LatencyMetrics, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
+};
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
 use obs_rs_output::{
@@ -41,7 +43,7 @@ use obs_rs_output_gstreamer::{
     ProductionDestination, ProductionPipelinePlan,
 };
 use obs_rs_plugin_api::VideoRequest;
-use obs_rs_project::{Project, ProjectError};
+use obs_rs_project::{Project, ProjectError, SourceFilterCategory, SourceFilterSpec};
 
 const DEFAULT_AUDIO_BLOCK_FRAMES: usize = 480;
 const DEFAULT_TIMELINE_TOLERANCE_NANOS: u64 = 5_000_000;
@@ -1945,11 +1947,40 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
             runtime.attach_source(scene_id, source_id)?;
             runtime.set_source_transform(scene_id, source_id, source.transform())?;
             for filter in source.filters() {
-                runtime.add_source_filter(scene_id, source_id, *filter)?;
+                if let Some(runtime_filter) = compile_filter(filter) {
+                    runtime.add_source_filter(scene_id, source_id, runtime_filter)?;
+                }
             }
         }
     }
     Ok(runtime)
+}
+
+/// Compiles a persistent source filter into the built-in runtime operation.
+///
+/// Unknown kinds, audio/video filters, disabled instances, and malformed
+/// settings remain valid project data but are omitted until a matching runtime
+/// implementation is available. The project crate therefore stays independent
+/// of this renderer-facing enum.
+#[must_use]
+pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
+    if !spec.enabled() || spec.category() != SourceFilterCategory::Effect {
+        return None;
+    }
+    match spec.kind().as_str() {
+        "grayscale" => Some(FrameFilter::Grayscale),
+        "brightness" => spec
+            .settings()
+            .get("milli")
+            .and_then(|value| value.parse().ok())
+            .map(|milli| FrameFilter::Brightness { milli }),
+        "opacity" => spec
+            .settings()
+            .get("value")
+            .and_then(|value| value.parse().ok())
+            .map(FrameFilter::Opacity),
+        _ => None,
+    }
 }
 
 fn open_audio_input(
@@ -2111,8 +2142,8 @@ mod tests {
     use super::*;
     use obs_rs_audio::AudioDeviceInfo;
     use obs_rs_config::Config;
-    use obs_rs_media::FrameRate;
-    use obs_rs_project::{Profile, SceneSpec, SourceSpec};
+    use obs_rs_media::{FrameFilter, FrameRate};
+    use obs_rs_project::{Profile, SceneSpec, SourceFilterCategory, SourceFilterSpec, SourceSpec};
 
     fn project() -> Project {
         let format =
@@ -2131,6 +2162,35 @@ mod tests {
         profile.add_scene(scene).expect("add scene");
         project.add_profile(profile).expect("add profile");
         project
+    }
+
+    #[test]
+    fn filter_compiler_keeps_renderer_details_out_of_project_values() {
+        let brightness = SourceFilterSpec::new(
+            "brightness",
+            "Brightness",
+            "brightness",
+            Config::parse("milli = 350\n").expect("settings"),
+        )
+        .expect("filter");
+        assert_eq!(
+            compile_filter(&brightness),
+            Some(FrameFilter::Brightness { milli: 350 })
+        );
+
+        let mut disabled = brightness.clone();
+        disabled.set_enabled(false);
+        assert_eq!(compile_filter(&disabled), None);
+
+        let audio = SourceFilterSpec::with_category(
+            "compressor",
+            "Compressor",
+            "compressor",
+            SourceFilterCategory::AudioVideo,
+            Config::new(),
+        )
+        .expect("audio filter");
+        assert_eq!(compile_filter(&audio), None);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use slint::Weak;
 
 use crate::{refresh_ui, MainWindow, PreviewRenderer};
 use obs_rs_config::Config;
-use obs_rs_media::{FrameFilter, FrameTransform};
+use obs_rs_media::FrameTransform;
 use obs_rs_project::ProjectCommand;
 use obs_rs_ui::{DesktopState, UiCommand};
 
@@ -438,6 +438,14 @@ pub(crate) fn apply_source_transform_and_refresh(
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let (profile, scene, source) = selected_source_context(&state.borrow())?;
+        let (_, _, _, locked) = source_display_state(&state.borrow(), &source)?;
+        if locked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "source is locked",
+            )
+            .into());
+        }
         let transform = parse_source_transform(document)?;
         state
             .borrow_mut()
@@ -451,32 +459,6 @@ pub(crate) fn apply_source_transform_and_refresh(
     })();
     if let Err(error) = result {
         ui.set_status_message(format!("Source transform failed: {error}").into());
-    } else {
-        refresh_ui(ui, state, renderer);
-    }
-}
-
-pub(crate) fn apply_source_filters_and_refresh(
-    ui: &MainWindow,
-    state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    document: &str,
-) {
-    let result: Result<(), Box<dyn Error>> = (|| {
-        let (profile, scene, source) = selected_source_context(&state.borrow())?;
-        let filters = parse_source_filters(document)?;
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSourceFilters {
-                profile,
-                scene,
-                source,
-                filters,
-            }))?;
-        Ok(())
-    })();
-    if let Err(error) = result {
-        ui.set_status_message(format!("Source filters failed: {error}").into());
     } else {
         refresh_ui(ui, state, renderer);
     }
@@ -544,35 +526,6 @@ fn parse_transform_flag(value: &str, field: &str) -> Result<bool, Box<dyn Error>
     }
 }
 
-fn parse_source_filters(document: &str) -> Result<Vec<FrameFilter>, Box<dyn Error>> {
-    let document = document.trim();
-    if document.is_empty() {
-        return Ok(Vec::new());
-    }
-    document
-        .split(',')
-        .map(str::trim)
-        .map(|filter| {
-            if filter == "gray" || filter == "grayscale" {
-                return Ok(FrameFilter::Grayscale);
-            }
-            if let Some(value) = filter.strip_prefix("brightness:") {
-                return Ok(FrameFilter::Brightness {
-                    milli: value.trim().parse()?,
-                });
-            }
-            if let Some(value) = filter.strip_prefix("opacity:") {
-                return Ok(FrameFilter::Opacity(value.trim().parse()?));
-            }
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("unknown filter: {filter}"),
-            )
-            .into())
-        })
-        .collect()
-}
-
 pub(crate) fn source_transform_document(transform: FrameTransform) -> String {
     format!(
         "{},{},{},{},{},{},{},{},{},{},{}",
@@ -588,16 +541,4 @@ pub(crate) fn source_transform_document(transform: FrameTransform) -> String {
         transform.crop_right(),
         transform.crop_bottom()
     )
-}
-
-pub(crate) fn source_filters_document(filters: &[FrameFilter]) -> String {
-    filters
-        .iter()
-        .map(|filter| match filter {
-            FrameFilter::Grayscale => "gray".to_owned(),
-            FrameFilter::Brightness { milli } => format!("brightness:{milli}"),
-            FrameFilter::Opacity(opacity) => format!("opacity:{opacity}"),
-        })
-        .collect::<Vec<_>>()
-        .join(",")
 }

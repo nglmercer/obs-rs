@@ -1,0 +1,229 @@
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, SpinBox } from "std-widgets.slint";
+import { SettingHint, SettingRow, SettingsGroup } from "settings_widgets.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+import { PropertyRow, SourceFilterRow } from "models.slint";
+
+component FilterPropertyField inherits VerticalLayout {
+    in property <PropertyRow> field;
+    callback edited(string, string);
+    spacing: 2px;
+
+    SettingRow {
+        label: root.field.label;
+        SpinBox {
+            value: root.field.number;
+            minimum: root.field.minimum;
+            maximum: root.field.maximum;
+            edited(value) => { root.edited(root.field.key, value); }
+            horizontal-stretch: 1;
+        }
+    }
+    if root.field.hint != "" : SettingHint { text: root.field.hint; }
+}
+
+// Standalone source-filter editor. The left side owns ordered persistent
+// instances; the right side rebuilds from the selected instance's settings.
+export component SourceFiltersWindow inherits Window {
+    title: I18n.text.filters + " for '" + root.source-name + "'";
+    width: 860px;
+    height: 560px;
+    background: Palette.tokens.window-bg;
+
+    in property <string> source-name;
+    in property <[SourceFilterRow]> audio-video-rows;
+    in property <[SourceFilterRow]> effect-rows;
+    in property <[PropertyRow]> property-rows;
+    in property <string> selected-filter-kind;
+    in property <bool> selected-filter-enabled;
+    in property <bool> selected-filter;
+    in property <bool> can-move-up;
+    in property <bool> can-move-down;
+    in property <[string]> available-filter-names;
+    in property <[string]> available-filter-kinds;
+    in-out property <string> selected-filter-id;
+    in-out property <string> selected-filter-name;
+    in-out property <int> add-filter-index: 0;
+
+    callback select-filter(string);
+    callback add-filter(string);
+    callback remove-filter();
+    callback toggle-filter();
+    callback move-filter(int);
+    callback rename-filter(string);
+    callback edit-property(string, string);
+    callback close-window();
+
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 12px;
+
+        VerticalLayout {
+            width: 330px;
+            spacing: 8px;
+
+            Text {
+                text: I18n.text.audio_video_filters;
+                color: Palette.tokens.text-strong;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 2px;
+                    for filter in root.audio-video-rows : Rectangle {
+                        height: 30px;
+                        background: filter.selected
+                            ? Palette.tokens.row-selected-bg
+                            : Palette.tokens.row-bg;
+                        border-width: 1px;
+                        border-color: Palette.tokens.border;
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 4px;
+                            TouchArea {
+                                clicked => root.select-filter(filter.id);
+                            }
+                            Text {
+                                text: filter.name + "  ·  " + filter.kind;
+                                color: Palette.tokens.text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            CheckBox {
+                                checked: filter.enabled;
+                                toggled => {
+                                    root.select-filter(filter.id);
+                                    root.toggle-filter();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 4px;
+                ComboBox {
+                    model: root.available-filter-names;
+                    current-index <=> root.add-filter-index;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: "+";
+                    enabled: root.available-filter-kinds.length > 0;
+                    clicked => root.add-filter(root.available-filter-kinds[root.add-filter-index]);
+                }
+            }
+
+            Text {
+                text: I18n.text.effect_filters;
+                color: Palette.tokens.text-strong;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 2px;
+                    for filter in root.effect-rows : Rectangle {
+                        height: 30px;
+                        background: filter.selected
+                            ? Palette.tokens.row-selected-bg
+                            : Palette.tokens.row-bg;
+                        border-width: 1px;
+                        border-color: Palette.tokens.border;
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 4px;
+                            TouchArea {
+                                clicked => root.select-filter(filter.id);
+                            }
+                            Text {
+                                text: filter.name + "  ·  " + filter.kind;
+                                color: Palette.tokens.text;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            CheckBox {
+                                checked: filter.enabled;
+                                toggled => {
+                                    root.select-filter(filter.id);
+                                    root.toggle-filter();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 4px;
+                Button {
+                    text: "−";
+                    enabled: root.selected-filter;
+                    clicked => root.remove-filter();
+                }
+                Button {
+                    text: "↑";
+                    enabled: root.selected-filter && root.can-move-up;
+                    clicked => root.move-filter(-1);
+                }
+                Button {
+                    text: "↓";
+                    enabled: root.selected-filter && root.can-move-down;
+                    clicked => root.move-filter(1);
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 8px;
+            Text {
+                text: root.selected-filter
+                    ? "Selected filter properties"
+                    : "Select a filter";
+                color: Palette.tokens.text-strong;
+                font-size: 14px;
+                font-weight: 700;
+            }
+            if root.selected-filter : SettingsGroup {
+                title: root.selected-filter-kind;
+                SettingRow {
+                    label: "Name";
+                    LineEdit {
+                        text <=> root.selected-filter-name;
+                        accepted => root.rename-filter(self.text);
+                        horizontal-stretch: 1;
+                    }
+                }
+                CheckBox {
+                    text: root.selected-filter-enabled ? "Enabled" : "Disabled";
+                    checked: root.selected-filter-enabled;
+                    toggled => root.toggle-filter();
+                }
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 8px;
+                    for entry in root.property-rows : FilterPropertyField {
+                        field: entry;
+                        edited(key, value) => root.edit-property(key, value);
+                    }
+                }
+            }
+            HorizontalLayout {
+                height: 32px;
+                Rectangle { horizontal-stretch: 1; }
+                Button {
+                    text: I18n.text.cancel;
+                    width: 110px;
+                    clicked => root.close-window();
+                }
+            }
+        }
+    }
+}

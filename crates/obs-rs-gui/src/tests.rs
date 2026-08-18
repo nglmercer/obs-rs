@@ -11,8 +11,8 @@ use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFram
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
-use slint::platform::PointerEventButton;
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::platform::{Key, PointerEventButton, WindowEvent};
+use slint::{ComponentHandle, LogicalPosition, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
 #[test]
@@ -556,12 +556,15 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_dock_layout(&ui, &state);
     render_every_settings_category();
     render_source_properties_window();
+    render_source_filters_window(&ui, &state, &renderer);
+    exercise_source_transform_window(&ui, &state, &renderer);
     render_monitor_window();
     exercise_add_source_window(&ui, &state, &renderer);
     exercise_capture_device_properties_window(&ui, &state, &renderer);
     exercise_monitor_selection(&ui, &state, &renderer);
     exercise_recording_controls(&ui, &state, &renderer);
     exercise_menu_actions(&ui, &state, &renderer);
+    exercise_context_menus(&ui, &state, &renderer);
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup
@@ -657,6 +660,199 @@ fn exercise_menu_actions(
     assert!(
         ui.get_collection_rows().row_count() >= 1,
         "the open document is always listed as a collection"
+    );
+}
+
+fn exercise_context_menus(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, renderer, &output);
+    ui.invoke_new_project();
+    ui.invoke_select_preview("preview".into());
+    let profile = "live".to_owned();
+    for id in ["middle", "foreground"] {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+                profile: profile.clone(),
+                scene: "preview".to_owned(),
+                source: SourceSpec::new(
+                    id,
+                    "color_source",
+                    id,
+                    source_settings("color_source").expect("source defaults"),
+                )
+                .expect("source"),
+            }))
+            .expect("add source");
+    }
+    refresh_ui(ui, state, renderer);
+
+    let rows = ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
+        .filter(|row| row.size().height > 30.0)
+        .collect::<Vec<_>>();
+    println!(
+        "source rows model={} handles={:?}",
+        ui.get_source_rows().row_count(),
+        ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
+            .map(|row| (row.size(), row.absolute_position(), row.id()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(rows.len(), 3);
+    let row_target = rows[1]
+        .query_descendants()
+        .match_inherits("TouchArea")
+        .match_predicate(|target| target.size().width > 150.0 && target.size().height > 30.0)
+        .find_first()
+        .expect("source row hit target");
+    println!(
+        "right click target={:?} id={:?} selected-before={:?}",
+        row_target.size(),
+        row_target.id(),
+        state.borrow().selected_source()
+    );
+    let position = row_target.absolute_position();
+    let size = row_target.size();
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position: LogicalPosition::new(
+            position.x + size.width / 2.0,
+            position.y + size.height / 2.0,
+        ),
+        button: PointerEventButton::Right,
+    });
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+    for _ in 0..6 {
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::UpArrow.into(),
+        });
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::UpArrow.into(),
+        });
+    }
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Return.into(),
+    });
+    println!(
+        "after keyboard duplicate sources={:?}",
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .map(|scene| scene
+                .sources()
+                .iter()
+                .map(|source| source.id().to_string())
+                .collect::<Vec<_>>())
+    );
+    println!("selected-after={:?}", state.borrow().selected_source());
+    let entries = ElementHandle::find_by_element_type_name(ui, "MenuEntry").collect::<Vec<_>>();
+    println!(
+        "source menu entries: {:?}",
+        entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.type_name().map(|value| value.to_string()),
+                    entry.id().map(|value| value.to_string()),
+                    entry.size(),
+                    entry.absolute_position(),
+                    entry.computed_opacity(),
+                    entry.accessible_label().map(|value| value.to_string()),
+                    entry.accessible_enabled(),
+                    entry.accessible_checked(),
+                )
+            })
+            .collect::<Vec<_>>()
+    );
+    for type_name in [
+        "MenuEntry",
+        "MenuItem",
+        "MenuItemBase",
+        "MenuFrame",
+        "ContextMenuInternal",
+    ] {
+        println!(
+            "{} count={}",
+            type_name,
+            ElementHandle::find_by_element_type_name(ui, type_name).count()
+        );
+    }
+    for type_name in [
+        "PopupMenuImpl",
+        "FocusScope",
+        "MenuFrameBase",
+        "Text",
+        "TouchArea",
+        "Window",
+    ] {
+        println!(
+            "{} count={}",
+            type_name,
+            ElementHandle::find_by_element_type_name(ui, type_name).count()
+        );
+    }
+    println!(
+        "context ids={:?} context types={:?}",
+        ElementHandle::find_by_element_id(ui, "SourceContextMenuArea::context-menu")
+            .map(|element| (element.type_name(), element.id(), element.size()))
+            .collect::<Vec<_>>(),
+        ElementHandle::find_by_element_type_name(ui, "ContextMenuArea")
+            .map(|element| (element.type_name(), element.id(), element.size()))
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "compact buttons={:?}",
+        ElementHandle::find_by_element_type_name(ui, "CompactButton")
+            .map(|button| (
+                button.size(),
+                button.absolute_position(),
+                button.accessible_label()
+            ))
+            .collect::<Vec<_>>()
+    );
+    let more = ElementHandle::find_by_element_type_name(ui, "CompactButton")
+        .find(|button| {
+            let position = button.absolute_position();
+            position.x > 160.0 && position.y > 840.0
+        })
+        .expect("source more button");
+    more.mock_single_click(PointerEventButton::Left);
+    println!(
+        "after more menu entries={:?}",
+        ElementHandle::find_by_element_type_name(ui, "MenuEntry")
+            .map(|entry| (
+                entry.type_name(),
+                entry.id(),
+                entry.size(),
+                entry.absolute_position()
+            ))
+            .collect::<Vec<_>>()
+    );
+    let context = ElementHandle::find_by_element_type_name(ui, "ContextMenuArea")
+        .find(|element| {
+            let position = element.absolute_position();
+            element.size().height > 30.0 && position.y > 680.0 && position.y < 720.0
+        })
+        .expect("source context area");
+    context.mock_single_click(PointerEventButton::Right);
+    println!(
+        "after context right menu entries={:?}",
+        ElementHandle::find_by_element_type_name(ui, "MenuEntry")
+            .map(|entry| (
+                entry.type_name(),
+                entry.id(),
+                entry.size(),
+                entry.absolute_position()
+            ))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -892,7 +1088,6 @@ fn render_source_properties_window() {
         "color = \"#405070FF\"\nheight = 360\nwidth = 640\n",
         UiLocale::English,
     ))));
-    window.set_source_transform("1000,1000,0,0,0,0,255".into());
     window.show().expect("properties window should show");
     for locale in UiLocale::supported() {
         window
@@ -905,6 +1100,131 @@ fn render_source_properties_window() {
         assert!(snapshot.width() > 0 && snapshot.height() > 0);
     }
     window.hide().expect("properties window should hide");
+}
+
+/// Exercises the standalone filter list through its project-command callbacks.
+fn render_source_filters_window(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: "background".to_owned(),
+        })
+        .expect("background source should be selectable");
+    refresh_ui(ui, state, renderer);
+
+    let controller = crate::install_source_filters_window(ui, state, renderer)
+        .expect("filters window should instantiate");
+    ui.invoke_open_source_filters_window();
+    let window = crate::callbacks::source_filters::source_filters_window(&controller);
+    assert_eq!(window.get_source_name(), "Background");
+    window.show().expect("filters window should show");
+    for locale in UiLocale::supported() {
+        window
+            .global::<I18n>()
+            .set_text(crate::i18n::catalog(*locale));
+        let snapshot = window
+            .window()
+            .take_snapshot()
+            .expect("filters window should render");
+        assert!(snapshot.width() > 0 && snapshot.height() > 0);
+    }
+
+    window.invoke_add_filter("brightness".into());
+    window.invoke_add_filter("grayscale".into());
+    let selected_id = window.get_selected_filter_id();
+    assert_eq!(selected_id, "grayscale");
+    window.invoke_rename_filter("Scene grayscale".into());
+    window.invoke_move_filter(-1);
+    window.invoke_select_filter("brightness".into());
+    window.invoke_toggle_filter();
+    window.invoke_edit_property("milli".into(), "450".into());
+
+    let state_ref = state.borrow();
+    let scene_id = state_ref.preview_scene().expect("preview scene");
+    let source = state_ref
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .and_then(|scene| scene.source("background"))
+        .expect("background source after filter edits");
+    assert_eq!(source.filters().len(), 2);
+    assert_eq!(source.filters()[0].id().as_str(), "grayscale");
+    assert_eq!(source.filters()[0].name(), "Scene grayscale");
+    let brightness = source
+        .filters()
+        .iter()
+        .find(|filter| filter.id().as_str() == "brightness")
+        .expect("brightness filter");
+    assert!(!brightness.enabled());
+    assert_eq!(brightness.settings().get("milli"), Some("450"));
+    drop(state_ref);
+
+    window.invoke_select_filter("grayscale".into());
+    window.invoke_remove_filter();
+    assert_eq!(window.get_effect_rows().row_count(), 1);
+    window.invoke_select_filter("brightness".into());
+    window.set_selected_filter_name("Uncommitted name".into());
+    window.invoke_close_window();
+    ui.invoke_open_source_filters_window();
+    assert_ne!(window.get_selected_filter_name(), "Uncommitted name");
+    window.invoke_close_window();
+}
+
+/// Confirms the transform dialog edits scene-item state and does not add
+/// transform fields back to source properties.
+fn exercise_source_transform_window(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    renderer: &Rc<RefCell<PreviewRenderer>>,
+) {
+    let controller = crate::install_source_transform_window(ui, state, renderer)
+        .expect("transform window should instantiate");
+    ui.invoke_open_source_transform_window();
+    let window = crate::callbacks::source_transform::source_transform_window(&controller);
+    assert_eq!(window.get_source_name(), "Background");
+    window.show().expect("transform window should show");
+    window.set_position_x(42);
+    window.set_position_y(-7);
+    window.set_item_opacity(200);
+    window.set_flip_horizontal(true);
+    window.invoke_accept_transform();
+
+    let state_ref = state.borrow();
+    let scene_id = state_ref.preview_scene().expect("preview scene");
+    let source = state_ref
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .and_then(|scene| scene.source("background"))
+        .expect("background source after transform edit");
+    assert_eq!(source.transform().translate_x(), 42);
+    assert_eq!(source.transform().translate_y(), -7);
+    assert_eq!(source.transform().opacity(), 200);
+    assert!(source.transform().flip_x());
+    drop(state_ref);
+
+    ui.invoke_open_source_transform_window();
+    window.invoke_reset_transform();
+    assert_eq!(window.get_position_x(), 0);
+    assert_eq!(window.get_position_y(), 0);
+    window.invoke_close_window();
+
+    let state_ref = state.borrow();
+    let scene_id = state_ref.preview_scene().expect("preview scene");
+    let source = state_ref
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .and_then(|scene| scene.source("background"))
+        .expect("background source after transform cancel");
+    assert_eq!(source.transform().translate_x(), 42);
 }
 
 /// Drives the Add Source window the way a user would: pick a kind, create a

@@ -1,14 +1,13 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use obs_rs_media::{FrameTransform, FrameTransition, RawVideoFrame, VideoFrame};
+use obs_rs_media::{FrameTransition, RawVideoFrame, VideoFrame};
 use obs_rs_project::{Profile, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::{
-    frame_to_image, project_store, source_filters_document, source_transform_document,
-    LocaleOption, MainWindow, MixerRow, OutputRuntime, PreviewRenderer, PreviewWorker, ProfileRow,
-    SceneRow, SourceRow,
+    frame_to_image, project_store, LocaleOption, MainWindow, MixerRow, OutputRuntime,
+    PreviewRenderer, PreviewWorker, ProfileRow, SceneRow, SourceRow,
 };
 
 thread_local! {
@@ -317,18 +316,6 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     if ui.get_source_settings_version().as_str() != selected_settings {
         ui.set_source_settings(selected_settings.into());
         ui.set_source_settings_version(ui.get_source_settings().clone());
-    }
-    let selected_transform =
-        selected_source_spec.map_or(FrameTransform::IDENTITY, SourceSpec::transform);
-    let transform_document = source_transform_document(selected_transform);
-    let filters_document = selected_source_spec.map_or_else(String::new, |source| {
-        source_filters_document(source.filters())
-    });
-    let properties_version = format!("{transform_document}\u{1f}{filters_document}");
-    if ui.get_source_properties_version().as_str() != properties_version {
-        ui.set_source_transform(transform_document.into());
-        ui.set_source_filters(filters_document.into());
-        ui.set_source_properties_version(properties_version.into());
     }
     ui.set_selected_source(selected_source.into());
     // The canvas overlay needs the item's rectangle in canvas pixels, which is

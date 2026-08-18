@@ -16,6 +16,16 @@
         last: bool,
     }
 
+    // One persistent source-filter instance in the standalone Filters window.
+    export struct SourceFilterRow {
+        id: string,
+        name: string,
+        kind: string,
+        category: string,
+        enabled: bool,
+        selected: bool,
+    }
+
     export struct ProfileRow {
         id: string,
         name: string,

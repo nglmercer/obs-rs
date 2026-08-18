@@ -8,7 +8,9 @@ mod project;
 mod scene;
 pub(crate) mod settings;
 mod source;
+pub(crate) mod source_filters;
 pub(crate) mod source_properties;
+pub(crate) mod source_transform;
 
 use std::{
     cell::RefCell,
@@ -40,14 +42,15 @@ pub(crate) use scene::install_scene_callbacks;
 pub(crate) use settings::populate_settings_models;
 pub(crate) use settings::{install_settings_window, PeerWindows};
 pub(crate) use source::{
-    apply_source_filters_and_refresh, apply_source_name_and_refresh,
-    apply_source_settings_and_refresh, apply_source_transform_and_refresh,
-    duplicate_source_and_refresh, flip_source_and_refresh, move_source_and_refresh,
-    move_source_to_and_refresh, remove_scene_and_refresh, remove_source_and_refresh,
-    reset_source_transform_and_refresh, source_filters_document, source_transform_document,
+    apply_source_name_and_refresh, apply_source_settings_and_refresh,
+    apply_source_transform_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
+    move_source_and_refresh, move_source_to_and_refresh, remove_scene_and_refresh,
+    remove_source_and_refresh, reset_source_transform_and_refresh, source_transform_document,
     toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
 };
+pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
+pub(crate) use source_transform::install_source_transform_window;
 
 pub(crate) fn start_preview_timer(
     ui: &MainWindow,

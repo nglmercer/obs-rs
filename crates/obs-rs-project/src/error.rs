@@ -37,14 +37,20 @@ pub enum ProjectError {
     DuplicateScene(Identifier),
     /// A source ID is already present in a scene.
     DuplicateSource(Identifier),
+    /// A filter ID is already present on a source.
+    DuplicateFilter(Identifier),
     /// A profile ID is not present.
     UnknownProfile(Identifier),
     /// A scene ID is not present.
     UnknownScene(Identifier),
     /// A source ID is not present.
     UnknownSource(Identifier),
+    /// A filter ID is not present on a source.
+    UnknownFilter(Identifier),
     /// A source move destination is outside the scene order.
     InvalidSourceOrder { index: usize },
+    /// A filter move destination is outside the filter order.
+    InvalidFilterOrder { index: usize },
 }
 
 impl fmt::Display for ProjectError {
@@ -65,11 +71,16 @@ impl fmt::Display for ProjectError {
             Self::DuplicateProfile(id) => write!(formatter, "profile {id} already exists"),
             Self::DuplicateScene(id) => write!(formatter, "scene {id} already exists"),
             Self::DuplicateSource(id) => write!(formatter, "source {id} already exists"),
+            Self::DuplicateFilter(id) => write!(formatter, "filter {id} already exists"),
             Self::UnknownProfile(id) => write!(formatter, "profile {id} does not exist"),
             Self::UnknownScene(id) => write!(formatter, "scene {id} does not exist"),
             Self::UnknownSource(id) => write!(formatter, "source {id} does not exist"),
+            Self::UnknownFilter(id) => write!(formatter, "filter {id} does not exist"),
             Self::InvalidSourceOrder { index } => {
                 write!(formatter, "source order index {index} is out of range")
+            }
+            Self::InvalidFilterOrder { index } => {
+                write!(formatter, "filter order index {index} is out of range")
             }
         }
     }

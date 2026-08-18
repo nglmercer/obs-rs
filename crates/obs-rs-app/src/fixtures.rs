@@ -12,9 +12,9 @@ use obs_rs_clock::{
 use obs_rs_config::Config;
 use obs_rs_core::{CompositorMetrics, Runtime};
 use obs_rs_diagnostics::DiagnosticBundle;
-use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{AtomicPacketFileWriter, MemoryMuxer, WavRecording, Y4mRecording};
-use obs_rs_project::{Profile, Project, ProjectCommand, SceneSpec, SourceSpec};
+use obs_rs_project::{Profile, Project, ProjectCommand, SceneSpec, SourceFilterSpec, SourceSpec};
 use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderMetrics};
 use obs_rs_ui::{DesktopState, UiCommand};
 use obs_rs_video::{DropPolicy, VideoMetrics, VideoPacer};
@@ -260,7 +260,7 @@ pub(crate) fn project_fixture(
         profile: "live".to_owned(),
         scene: "main".to_owned(),
         source: "foreground".to_owned(),
-        filter: FrameFilter::Grayscale,
+        filter: SourceFilterSpec::new("grayscale", "Grayscale", "grayscale", Config::new())?,
     }))?;
     let ui_snapshot = desktop.accessible_snapshot();
     let ui_snapshot_bytes = ui_snapshot.len();

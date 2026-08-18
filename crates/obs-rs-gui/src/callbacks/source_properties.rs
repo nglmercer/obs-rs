@@ -1,10 +1,7 @@
 //! Controller for the standalone source properties window.
 //!
-//! The window edits copies of the selected source's settings, transform, and
-//! filter documents; the three existing apply paths run only on OK. Editing is
-//! done through the typed form in [`crate::properties`], with the raw document
-//! kept behind the dialog's advanced section as the escape hatch for anything
-//! the form does not model.
+//! The window edits only source-specific settings. Scene-item transforms and
+//! source filters have their own standalone windows and command paths.
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -13,8 +10,7 @@ use obs_rs_ui::{DesktopState, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    apply_source_filters_and_refresh, apply_source_settings_and_refresh,
-    apply_source_transform_and_refresh, kind_selects_monitor, properties, source_settings, I18n,
+    apply_source_settings_and_refresh, kind_selects_monitor, properties, source_settings, I18n,
     MainWindow, Palette, PreviewRenderer, SourcePropertiesWindow,
 };
 
@@ -88,16 +84,13 @@ fn install_open(
             .set_text(crate::i18n::catalog(locale));
         controller.set_tokens(ui.global::<Palette>().get_tokens());
         let kind = source_kind(&state, &selected);
-        window.set_source_name(selected.as_str().into());
+        window.set_source_name(source_name(&state, &selected).into());
         window.set_source_kind(kind.as_str().into());
         window.set_source_kind_label(kind_label(&kind, locale));
         window.set_capture_capabilities(ui.get_capture_capabilities());
         // Start from what the studio last synced from the project.
         window.set_source_settings(ui.get_source_settings());
         window.set_monitor_visible(kind_selects_monitor(&kind));
-        window.set_source_transform(ui.get_source_transform());
-        sync_transform_fields(window);
-        window.set_source_filters(ui.get_source_filters());
         controller.refresh_rows(locale);
         if let Err(error) = window.show() {
             ui.set_status_message(format!("Properties window: {error}").into());
@@ -124,11 +117,6 @@ fn install_editing(
         }
     });
 
-    let transform_controller = Rc::clone(controller);
-    controller.window.on_edit_transform(move |key, value| {
-        edit_transform_draft(&transform_controller.window, key.as_str(), value.as_str());
-    });
-
     // The picker edits the project directly, so the properties window hands the
     // request to the studio and closes its own draft to avoid two writers.
     let weak = ui.as_weak();
@@ -150,78 +138,7 @@ fn install_editing(
             window.set_source_settings(defaults.serialize().into());
             defaults_controller.refresh_rows(defaults_state.borrow().locale());
         }
-        // The identity transform and an empty filter chain are the documented
-        // defaults for a freshly created source.
-        window.set_source_transform("1000,1000,0,0,0,0,255,0,0,0,0".into());
-        sync_transform_fields(window);
-        window.set_source_filters(String::new().into());
     });
-}
-
-/// Copies the serialized transform draft into the typed controls.
-fn sync_transform_fields(window: &SourcePropertiesWindow) {
-    let values = normalized_transform(window.get_source_transform().as_str());
-    let number = |index: usize| values[index].parse::<i32>().unwrap_or(0);
-    window.set_item_scale_x(number(0));
-    window.set_item_scale_y(number(1));
-    window.set_item_x(number(2));
-    window.set_item_y(number(3));
-    window.set_item_flip_x(values[4] == "1" || values[4] == "true");
-    window.set_item_flip_y(values[5] == "1" || values[5] == "true");
-    window.set_item_opacity(number(6));
-    window.set_crop_left(number(7));
-    window.set_crop_top(number(8));
-    window.set_crop_right(number(9));
-    window.set_crop_bottom(number(10));
-}
-
-/// Rewrites one typed transform field while preserving every other field.
-fn edit_transform_draft(window: &SourcePropertiesWindow, key: &str, value: &str) {
-    let mut values = normalized_transform(window.get_source_transform().as_str());
-    let index = match key {
-        "scale-x" => 0,
-        "scale-y" => 1,
-        "x" => 2,
-        "y" => 3,
-        "flip-x" => 4,
-        "flip-y" => 5,
-        "opacity" => 6,
-        "crop-left" => 7,
-        "crop-top" => 8,
-        "crop-right" => 9,
-        "crop-bottom" => 10,
-        _ => return,
-    };
-    value.trim().clone_into(&mut values[index]);
-    window.set_source_transform(values.join(",").into());
-    sync_transform_fields(window);
-}
-
-/// Expands the legacy seven-field shape with zero crop values.
-fn normalized_transform(document: &str) -> Vec<String> {
-    let mut values = document
-        .split(',')
-        .map(|value| value.trim().to_owned())
-        .collect::<Vec<_>>();
-    if values.len() == 7 {
-        values.extend(["0", "0", "0", "0"].map(str::to_owned));
-    }
-    if values.len() != 11 {
-        return vec![
-            "1000".to_owned(),
-            "1000".to_owned(),
-            "0".to_owned(),
-            "0".to_owned(),
-            "0".to_owned(),
-            "0".to_owned(),
-            "255".to_owned(),
-            "0".to_owned(),
-            "0".to_owned(),
-            "0".to_owned(),
-            "0".to_owned(),
-        ];
-    }
-    values
 }
 
 fn install_commit(
@@ -239,28 +156,13 @@ fn install_commit(
             return;
         };
         let window = &accept_controller.window;
-        // Keep the studio's copies in step, then run the same apply paths the
-        // in-window editor used.
+        // Keep the studio's draft in step, then commit only source settings.
         ui.set_source_settings(window.get_source_settings());
-        ui.set_source_transform(window.get_source_transform());
-        ui.set_source_filters(window.get_source_filters());
         apply_source_settings_and_refresh(
             &ui,
             &state,
             &renderer,
             window.get_source_settings().as_str(),
-        );
-        apply_source_transform_and_refresh(
-            &ui,
-            &state,
-            &renderer,
-            window.get_source_transform().as_str(),
-        );
-        apply_source_filters_and_refresh(
-            &ui,
-            &state,
-            &renderer,
-            window.get_source_filters().as_str(),
         );
         let _ = window.hide();
     });
@@ -306,4 +208,20 @@ fn source_kind(state: &Rc<RefCell<DesktopState>>, source_id: &str) -> String {
         .map(|source| source.kind().as_str().to_owned())
         .unwrap_or_default();
     kind
+}
+
+/// Looks up the display name separately from the stable source ID used by the
+/// selection model, so the dialog title matches what the user sees in Sources.
+fn source_name(state: &Rc<RefCell<DesktopState>>, source_id: &str) -> String {
+    let state = state.borrow();
+    let Some(scene_id) = state.preview_scene().map(str::to_owned) else {
+        return source_id.to_owned();
+    };
+    state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id.as_str()))
+        .and_then(|scene| scene.source(source_id))
+        .map_or_else(|| source_id.to_owned(), |source| source.name().to_owned())
 }

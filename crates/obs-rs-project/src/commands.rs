@@ -1,6 +1,9 @@
 use super::{
     error::ProjectError,
-    model::{Profile, Project, RenderBackendPreference, SceneSpec, SourceSpec},
+    model::{
+        Profile, Project, RenderBackendPreference, SceneSpec, SourceFilterCategory,
+        SourceFilterSpec, SourceSpec,
+    },
     validation::{identifier, source_id},
 };
 use obs_rs_config::Config;
@@ -74,12 +77,51 @@ pub enum ProjectCommand {
         source: String,
         transform: FrameTransform,
     },
-    /// Appends one source filter.
+    /// Adds one persistent source filter instance.
     AddSourceFilter {
         profile: String,
         scene: String,
         source: String,
-        filter: FrameFilter,
+        filter: SourceFilterSpec,
+    },
+    /// Removes one persistent source filter instance.
+    RemoveSourceFilter {
+        profile: String,
+        scene: String,
+        source: String,
+        filter: String,
+    },
+    /// Replaces one source filter's display name.
+    SetSourceFilterName {
+        profile: String,
+        scene: String,
+        source: String,
+        filter: String,
+        name: String,
+    },
+    /// Enables or disables one source filter instance.
+    SetSourceFilterEnabled {
+        profile: String,
+        scene: String,
+        source: String,
+        filter: String,
+        enabled: bool,
+    },
+    /// Replaces one source filter's independent settings document.
+    SetSourceFilterSettings {
+        profile: String,
+        scene: String,
+        source: String,
+        filter: String,
+        settings: Config,
+    },
+    /// Moves one source filter to an existing order position.
+    MoveSourceFilter {
+        profile: String,
+        scene: String,
+        source: String,
+        filter: String,
+        target_index: usize,
     },
     /// Reorders one source item within a scene.
     MoveSource {
@@ -212,6 +254,40 @@ impl Project {
                 source,
                 filter,
             } => add_source_filter(self, &profile, &scene, &source, filter),
+            ProjectCommand::RemoveSourceFilter {
+                profile,
+                scene,
+                source,
+                filter,
+            } => remove_source_filter(self, &profile, &scene, &source, &filter),
+            ProjectCommand::SetSourceFilterName {
+                profile,
+                scene,
+                source,
+                filter,
+                name,
+            } => set_source_filter_name(self, &profile, &scene, &source, &filter, &name),
+            ProjectCommand::SetSourceFilterEnabled {
+                profile,
+                scene,
+                source,
+                filter,
+                enabled,
+            } => set_source_filter_enabled(self, &profile, &scene, &source, &filter, enabled),
+            ProjectCommand::SetSourceFilterSettings {
+                profile,
+                scene,
+                source,
+                filter,
+                settings,
+            } => set_source_filter_settings(self, &profile, &scene, &source, &filter, settings),
+            ProjectCommand::MoveSourceFilter {
+                profile,
+                scene,
+                source,
+                filter,
+                target_index,
+            } => move_source_filter(self, &profile, &scene, &source, &filter, target_index),
             ProjectCommand::SetSourceFilters {
                 profile,
                 scene,
@@ -435,10 +511,9 @@ fn add_source_filter(
     profile: &str,
     scene: &str,
     source: &str,
-    filter: FrameFilter,
+    filter: SourceFilterSpec,
 ) -> Result<(), ProjectError> {
-    source_mut(project, profile, scene, source)?.add_filter(filter);
-    Ok(())
+    source_mut(project, profile, scene, source)?.add_filter(filter)
 }
 
 fn set_source_filters(
@@ -448,10 +523,116 @@ fn set_source_filters(
     source: &str,
     filters: Vec<FrameFilter>,
 ) -> Result<(), ProjectError> {
-    // Direct assignment: the caller already owns the complete chain, so there
-    // is nothing to gain from clearing and re-pushing element by element.
-    source_mut(project, profile, scene, source)?.filters = filters;
+    // Compatibility bridge for older frontends. New code must use the
+    // instance commands above; converting here keeps old command documents
+    // from silently reintroducing renderer values into the project model.
+    let specs = filters
+        .into_iter()
+        .enumerate()
+        .map(|(index, filter)| legacy_filter_spec(index, filter))
+        .collect::<Result<Vec<_>, _>>()?;
+    source_mut(project, profile, scene, source)?.filters = specs;
     Ok(())
+}
+
+fn remove_source_filter(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    filter: &str,
+) -> Result<(), ProjectError> {
+    let filter = identifier(filter, "filter id")?;
+    source_mut(project, profile, scene, source)?
+        .remove_filter(&filter)
+        .map(|_| ())
+        .ok_or(ProjectError::UnknownFilter(filter))
+}
+
+fn set_source_filter_name(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    filter: &str,
+    name: &str,
+) -> Result<(), ProjectError> {
+    let filter = identifier(filter, "filter id")?;
+    source_mut(project, profile, scene, source)?
+        .filter_mut(&filter)
+        .ok_or_else(|| ProjectError::UnknownFilter(filter.clone()))?
+        .set_name(name)
+}
+
+fn set_source_filter_enabled(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    filter: &str,
+    enabled: bool,
+) -> Result<(), ProjectError> {
+    let filter = identifier(filter, "filter id")?;
+    let filter = source_mut(project, profile, scene, source)?
+        .filter_mut(&filter)
+        .ok_or(ProjectError::UnknownFilter(filter))?;
+    filter.set_enabled(enabled);
+    Ok(())
+}
+
+fn set_source_filter_settings(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    filter: &str,
+    settings: Config,
+) -> Result<(), ProjectError> {
+    let filter = identifier(filter, "filter id")?;
+    let filter = source_mut(project, profile, scene, source)?
+        .filter_mut(&filter)
+        .ok_or(ProjectError::UnknownFilter(filter))?;
+    filter.set_settings(settings);
+    Ok(())
+}
+
+fn move_source_filter(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    source: &str,
+    filter: &str,
+    target_index: usize,
+) -> Result<(), ProjectError> {
+    let filter = identifier(filter, "filter id")?;
+    source_mut(project, profile, scene, source)?.move_filter(&filter, target_index)
+}
+
+fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterSpec, ProjectError> {
+    let (kind, name, settings) = match filter {
+        FrameFilter::Grayscale => ("grayscale", "Grayscale", Config::new()),
+        FrameFilter::Brightness { milli } => {
+            let mut settings = Config::new();
+            settings
+                .set("milli", &milli.to_string())
+                .map_err(ProjectError::Config)?;
+            ("brightness", "Brightness", settings)
+        }
+        FrameFilter::Opacity(value) => {
+            let mut settings = Config::new();
+            settings
+                .set("value", &value.to_string())
+                .map_err(ProjectError::Config)?;
+            ("opacity", "Opacity", settings)
+        }
+    };
+    SourceFilterSpec::with_category(
+        &format!("legacy_filter_{}", index.saturating_add(1)),
+        name,
+        kind,
+        SourceFilterCategory::Effect,
+        settings,
+    )
 }
 
 fn set_source_visibility(

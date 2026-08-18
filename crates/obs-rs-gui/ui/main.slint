@@ -25,10 +25,12 @@ export { Palette, ThemeTokens } from "palette.slint";
 export { SettingsWindow } from "settings_window.slint";
 export { AddSourceWindow } from "add_source_window.slint";
 export { SourcePropertiesWindow } from "source_properties_window.slint";
+export { SourceFiltersWindow } from "source_filters_window.slint";
+export { SourceTransformWindow } from "source_transform_window.slint";
 export { MonitorWindow } from "monitor_window.slint";
 export { ProjectorWindow } from "projector_window.slint";
 export { FloatingDockWindow } from "floating_dock.slint";
-export { MonitorRow, PropertyRow, SourceCandidate, SourceKindRow } from "models.slint";
+export { MonitorRow, PropertyRow, SourceCandidate, SourceFilterRow, SourceKindRow } from "models.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
@@ -87,10 +89,7 @@ export component MainWindow inherits Window {
         in property <bool> selected-source-first: false;
         in property <bool> selected-source-last: false;
         in property <string> source-settings-version;
-        in property <string> source-properties-version;
         in-out property <string> source-settings;
-        in-out property <string> source-transform;
-        in-out property <string> source-filters;
         in-out property <string> project-path;
         in-out property <string> diagnostics-path;
         in-out property <string> recording-path;
@@ -161,8 +160,6 @@ export component MainWindow inherits Window {
         callback duplicate-source(string);
         callback remove-source(string);
         callback apply-source-settings();
-        callback apply-source-transform();
-        callback apply-source-filters();
         callback set-mixer-gain(string, int);
         callback toggle-mixer-mute(string);
         callback toggle-meters-paused();
@@ -178,6 +175,8 @@ export component MainWindow inherits Window {
         callback open-settings-window();
         callback open-add-source-window();
         callback open-source-properties-window();
+        callback open-source-filters-window();
+        callback open-source-transform-window();
         callback open-monitor-window();
         callback undo-edit();
         callback redo-edit();
@@ -400,8 +399,10 @@ export component MainWindow inherits Window {
                         root.export-diagnostics();
                     } else if action == "settings" {
                         root.open-settings-window();
-                    } else if action == "source-properties" || action == "source-filters" {
+                    } else if action == "source-properties" {
                         root.open-source-properties-window();
+                    } else if action == "source-filters" {
+                        root.open-source-filters-window();
                     } else if action == "toggle-sources" {
                         root.show-sources = !root.show-sources;
                     } else if action == "toggle-scenes" {
@@ -437,7 +438,7 @@ export component MainWindow inherits Window {
                 item-locked: root.item-locked;
                 view-mode: root.view-mode;
                 open-source-properties() => { root.open-source-properties-window(); }
-                open-source-filters() => { root.open-source-properties-window(); }
+                open-source-filters() => { root.open-source-filters-window(); }
                 open-monitor-window() => { root.open-monitor-window(); }
                 transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
                 transform-committed() => { root.transform-committed(); }
@@ -500,6 +501,10 @@ export component MainWindow inherits Window {
                                 root.open-add-source-window();
                             } else if modal == 6 {
                                 root.open-source-properties-window();
+                            } else if modal == 13 {
+                                root.open-source-filters-window();
+                            } else if modal == 14 {
+                                root.open-source-transform-window();
                             } else if modal == 8 {
                                 root.open-monitor-window();
                             } else {
