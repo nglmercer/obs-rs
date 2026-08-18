@@ -1,8 +1,11 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use obs_rs_audio::{AudioBuffer, AudioFormat, AudioMixer, AudioSourceId};
 use obs_rs_media::{FrameTransition, Timestamp};
-use obs_rs_project::{Project, ProjectCommand, ProjectFileStore, ProjectSession};
+use obs_rs_project::{
+    Project, ProjectCommand, ProjectFileStore, ProjectSession, SceneItemDuplicateMode,
+    SceneItemSpec,
+};
 use obs_rs_util::Identifier;
 
 use super::{
@@ -17,6 +20,9 @@ pub struct DesktopState {
     pub(crate) preview_scene: Option<Identifier>,
     pub(crate) program_scene: Option<Identifier>,
     pub(crate) selected_source: Option<Identifier>,
+    /// Transient scene-item clipboard. It is intentionally outside the
+    /// persistent project and is cleared when a different project is loaded.
+    pub(crate) clipboard: Option<SceneItemSpec>,
     pub(crate) locale: UiLocale,
     pub(crate) transition: FrameTransition,
     pub(crate) recording: bool,
@@ -44,6 +50,7 @@ impl DesktopState {
             preview_scene: first_scene.clone(),
             program_scene: first_scene,
             selected_source,
+            clipboard: None,
             locale: UiLocale::English,
             transition: FrameTransition::Cut,
             recording: false,
@@ -108,6 +115,27 @@ impl DesktopState {
                 self.selected_source = Some(identifier(&id, "source")?);
                 "source selected"
             }
+            UiCommand::CopySource { id } => {
+                self.ensure_source(&id)?;
+                let preview_scene =
+                    self.preview_scene
+                        .as_ref()
+                        .ok_or_else(|| UiError::UnknownSelection {
+                            kind: "scene",
+                            id: "none".to_owned(),
+                        })?;
+                let item = self
+                    .project
+                    .project()
+                    .active_profile_spec()
+                    .and_then(|profile| profile.scene(preview_scene))
+                    .and_then(|scene| scene.item(id.as_str()))
+                    .cloned()
+                    .ok_or_else(|| UiError::UnknownSelection { kind: "source", id })?;
+                self.clipboard = Some(item);
+                "source item copied"
+            }
+            UiCommand::PasteSource { mode } => self.paste_source(mode)?,
             UiCommand::SetLocale { locale } => {
                 self.locale = locale;
                 "language selected"
@@ -240,6 +268,7 @@ impl DesktopState {
 
     fn replace_project(&mut self, project: Project) {
         self.project.replace(project);
+        self.clipboard = None;
         let first_scene = first_scene_id(self.project.project());
         self.preview_scene.clone_from(&first_scene);
         self.program_scene.clone_from(&first_scene);
@@ -298,6 +327,12 @@ impl DesktopState {
     #[must_use]
     pub fn selected_source(&self) -> Option<&str> {
         self.selected_source.as_ref().map(Identifier::as_str)
+    }
+
+    /// Returns whether a copied scene item is available to paste.
+    #[must_use]
+    pub const fn can_paste_source(&self) -> bool {
+        self.clipboard.is_some()
     }
 
     /// Returns the active presentation locale.
@@ -423,5 +458,70 @@ impl DesktopState {
     #[must_use]
     pub fn shortcut_action(&self, shortcut: &Shortcut) -> Option<UiAction> {
         self.shortcuts.get(shortcut).copied()
+    }
+}
+
+impl DesktopState {
+    fn paste_source(&mut self, mode: SceneItemDuplicateMode) -> Result<&'static str, UiError> {
+        let item = self
+            .clipboard
+            .clone()
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "clipboard",
+                id: "none".to_owned(),
+            })?;
+        let profile = self.project.project().active_profile().to_string();
+        let scene = self
+            .preview_scene
+            .as_ref()
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "scene",
+                id: "none".to_owned(),
+            })?
+            .to_string();
+        let before = self
+            .project
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene(scene.as_str()))
+            .map(|scene| {
+                scene
+                    .items()
+                    .iter()
+                    .map(|item| item.id().clone())
+                    .collect::<HashSet<_>>()
+            })
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "scene",
+                id: scene.clone(),
+            })?;
+        self.project.dispatch(ProjectCommand::PasteSceneItem {
+            profile,
+            scene: scene.clone(),
+            item,
+            mode,
+        })?;
+        let pasted_id = self
+            .project
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene(scene.as_str()))
+            .and_then(|scene| {
+                scene
+                    .items()
+                    .iter()
+                    .find(|item| !before.contains(item.id()))
+            })
+            .map(|item| item.id().clone())
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "pasted source",
+                id: scene.clone(),
+            })?;
+        self.selected_source = Some(pasted_id);
+        self.sync_selections_after_project_update();
+        Ok(match mode {
+            SceneItemDuplicateMode::Reference => "source reference pasted",
+            SceneItemDuplicateMode::DuplicateSource => "source duplicate pasted",
+        })
     }
 }

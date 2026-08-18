@@ -1,5 +1,5 @@
 use obs_rs_media::FrameTransition;
-use obs_rs_project::ProjectCommand;
+use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 
 use super::{error::UiError, MAX_SHORTCUT_KEY_BYTES};
 
@@ -187,6 +187,10 @@ pub enum UiCommand {
     SelectProgramScene { id: String },
     /// Select a source item from the current preview scene.
     SelectSource { id: String },
+    /// Copy one scene item into the transient desktop clipboard.
+    CopySource { id: String },
+    /// Paste the copied scene item into the current preview scene.
+    PasteSource { mode: SceneItemDuplicateMode },
     /// Select the labels used by accessible frontends.
     SetLocale { locale: UiLocale },
     /// Replace the current scene transition policy.

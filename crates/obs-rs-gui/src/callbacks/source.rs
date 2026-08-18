@@ -5,7 +5,7 @@ use slint::Weak;
 use crate::{refresh_ui, MainWindow, PreviewRenderer};
 use obs_rs_config::Config;
 use obs_rs_media::FrameTransform;
-use obs_rs_project::ProjectCommand;
+use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 use obs_rs_ui::{DesktopState, UiCommand};
 
 pub(crate) fn remove_scene_and_refresh(
@@ -60,9 +60,9 @@ pub(crate) fn move_source_and_refresh(
             let source_index = scene
                 .and_then(|scene| {
                     scene
-                        .sources()
+                        .items()
                         .iter()
-                        .position(|source| source.id().as_str() == source_id)
+                        .position(|item| item.id().as_str() == source_id)
                 })
                 .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
             let target = i32::try_from(source_index)
@@ -73,10 +73,10 @@ pub(crate) fn move_source_and_refresh(
         };
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::MoveSource {
+            .dispatch(UiCommand::Project(ProjectCommand::MoveSceneItem {
                 profile,
                 scene,
-                source: source_id.to_owned(),
+                item: source_id.to_owned(),
                 target_index,
             }))?;
         Ok(())
@@ -113,17 +113,17 @@ pub(crate) fn move_source_to_and_refresh(
                 .active_profile_spec()
                 .and_then(|profile| profile.scene(scene.as_str()))
                 .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
-            scene.sources().len()
+            scene.items().len()
         };
         let target_index = usize::try_from(target_index)
             .map_err(|_| std::io::Error::other("source order is invalid"))?
             .min(source_count.saturating_sub(1));
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::MoveSource {
+            .dispatch(UiCommand::Project(ProjectCommand::MoveSceneItem {
                 profile,
                 scene,
-                source: source_id.to_owned(),
+                item: source_id.to_owned(),
                 target_index,
             }))?;
         Ok(())
@@ -154,10 +154,10 @@ pub(crate) fn remove_source_and_refresh(
         }
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::RemoveSource {
+            .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItem {
                 profile,
                 scene,
-                source: source_id.to_owned(),
+                item: source_id.to_owned(),
             }))?;
         Ok(())
     })();
@@ -178,14 +178,14 @@ pub(crate) fn toggle_source_visibility_and_refresh(
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let (profile, scene, visible, _) = source_display_state(&state.borrow(), source_id)?;
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSourceVisibility {
+        state.borrow_mut().dispatch(UiCommand::Project(
+            ProjectCommand::SetSceneItemVisibility {
                 profile,
                 scene,
-                source: source_id.to_owned(),
+                item: source_id.to_owned(),
                 visible: !visible,
-            }))?;
+            },
+        ))?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -207,10 +207,10 @@ pub(crate) fn toggle_source_locked_and_refresh(
         let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSourceLocked {
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemLocked {
                 profile,
                 scene,
-                source: source_id.to_owned(),
+                item: source_id.to_owned(),
                 locked: !locked,
             }))?;
         Ok(())
@@ -292,16 +292,16 @@ fn update_source_transform_and_refresh(
             project
                 .active_profile_spec()
                 .and_then(|profile| profile.scene(scene.as_str()))
-                .and_then(|scene| scene.source(source_id))
-                .map(obs_rs_project::SourceSpec::transform)
+                .and_then(|scene| scene.item(source_id))
+                .map(obs_rs_project::SceneItemSpec::transform)
                 .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?
         };
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSourceTransform {
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
                 profile,
                 scene,
-                source: source_id.to_owned(),
+                item: source_id.to_owned(),
                 transform: update(transform)?,
             }))?;
         Ok(())
@@ -325,10 +325,11 @@ pub(crate) fn duplicate_source_and_refresh(
         let (profile, scene, _, _) = source_display_state(&state.borrow(), source_id)?;
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::DuplicateSource {
+            .dispatch(UiCommand::Project(ProjectCommand::DuplicateSceneItem {
                 profile,
                 scene,
-                source: source_id.to_owned(),
+                item: source_id.to_owned(),
+                mode: SceneItemDuplicateMode::DuplicateSource,
             }))?;
         Ok(())
     })();
@@ -348,12 +349,11 @@ pub(crate) fn apply_source_name_and_refresh(
     name: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
-        let (profile, scene, source) = selected_source_context(&state.borrow())?;
+        let (profile, _, _, source) = selected_source_context(&state.borrow())?;
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::SetSourceName {
                 profile,
-                scene,
                 source,
                 name: name.to_owned(),
             }))?;
@@ -380,14 +380,14 @@ fn source_display_state(
     let scene = profile
         .scene(scene_id)
         .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
-    let source = scene
-        .source(source_id)
+    let item = scene
+        .item(source_id)
         .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
     Ok((
         profile_id,
         scene_id.to_owned(),
-        source.visible(),
-        source.locked(),
+        item.visible(),
+        item.locked(),
     ))
 }
 
@@ -397,27 +397,13 @@ pub(crate) fn apply_source_settings_and_refresh(
     renderer: &Rc<RefCell<PreviewRenderer>>,
     document: &str,
 ) {
-    let (profile, scene, source) = {
-        let state = state.borrow();
-        (
-            state
-                .project_session()
-                .project()
-                .active_profile()
-                .to_string(),
-            state.preview_scene().map(str::to_owned),
-            state.selected_source().map(str::to_owned),
-        )
-    };
     let result: Result<(), Box<dyn Error>> = (|| {
-        let scene = scene.ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
-        let source = source.ok_or_else(|| std::io::Error::other("no source is selected"))?;
+        let (profile, _, _, source) = selected_source_context(&state.borrow())?;
         let settings = Config::parse(document)?;
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::SetSourceSettings {
                 profile,
-                scene,
                 source,
                 settings,
             }))?;
@@ -437,8 +423,8 @@ pub(crate) fn apply_source_transform_and_refresh(
     document: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
-        let (profile, scene, source) = selected_source_context(&state.borrow())?;
-        let (_, _, _, locked) = source_display_state(&state.borrow(), &source)?;
+        let (profile, scene, item, _) = selected_source_context(&state.borrow())?;
+        let (_, _, _, locked) = source_display_state(&state.borrow(), &item)?;
         if locked {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -449,10 +435,10 @@ pub(crate) fn apply_source_transform_and_refresh(
         let transform = parse_source_transform(document)?;
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSourceTransform {
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
                 profile,
                 scene,
-                source,
+                item,
                 transform,
             }))?;
         Ok(())
@@ -466,7 +452,7 @@ pub(crate) fn apply_source_transform_and_refresh(
 
 fn selected_source_context(
     state: &DesktopState,
-) -> Result<(String, String, String), Box<dyn Error>> {
+) -> Result<(String, String, String, String), Box<dyn Error>> {
     let profile = state
         .project_session()
         .project()
@@ -476,11 +462,19 @@ fn selected_source_context(
         .preview_scene()
         .map(str::to_owned)
         .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
-    let source = state
+    let item = state
         .selected_source()
         .map(str::to_owned)
         .ok_or_else(|| std::io::Error::other("no source is selected"))?;
-    Ok((profile, scene, source))
+    let source = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile_spec| profile_spec.scene(scene.as_str()))
+        .and_then(|scene_spec| scene_spec.item(item.as_str()))
+        .map(|item| item.source_id().to_string())
+        .ok_or_else(|| std::io::Error::other("selected source item is missing"))?;
+    Ok((profile, scene, item, source))
 }
 
 fn parse_source_transform(document: &str) -> Result<FrameTransform, Box<dyn Error>> {

@@ -121,18 +121,18 @@ impl Runtime {
         let mut result = Vec::with_capacity(scene_state.sources.len());
 
         for source_id in &scene_state.sources {
-            // One lookup resolves both the transform and the filter chain, and
-            // yields a plain slice with no function-pointer indirection.
-            let (transform, filters) = scene_state
+            // The scene lookup resolves item-only state. Source filters are
+            // read from the shared source instance below, so every scene item
+            // referencing that source observes the same filter chain.
+            let transform = scene_state
                 .items
                 .get(source_id)
-                .map_or((FrameTransform::IDENTITY, &[][..]), |item| {
-                    (item.transform, item.filters.as_slice())
-                });
+                .map_or(FrameTransform::IDENTITY, |item| item.transform);
             metrics.source_requests = metrics.source_requests.saturating_add(1);
             let instance = sources
                 .get_mut(source_id)
                 .ok_or(RuntimeError::UnknownSource(*source_id))?;
+            let filters = instance.filters.as_slice();
             let capture_started = Instant::now();
             let frame = instance
                 .source

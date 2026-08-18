@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use obs_rs_media::{FrameTransition, RawVideoFrame, VideoFrame};
-use obs_rs_project::{Profile, SceneSpec, SourceSpec};
+use obs_rs_project::{Profile, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
@@ -268,28 +268,39 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_scene_name_version(ui.get_scene_name().clone());
     }
 
+    // The dock selection is a scene-item ID. Source configuration is resolved
+    // through the profile registry so two rows can point at the same source.
     let selected_source = state.selected_source().unwrap_or("none");
+    let mut selected_item = None;
     let mut selected_source_spec = None;
     let source_rows = selected_scene.map_or_else(Vec::new, |scene| {
         scene
-            .sources()
+            .items()
             .iter()
             .enumerate()
-            .map(|(index, source)| {
-                let selected = source.id().as_str() == selected_source;
+            .map(|(index, item)| {
+                let selected = item.id().as_str() == selected_source;
                 if selected {
-                    selected_source_spec = Some(source);
+                    selected_item = Some(item);
+                    selected_source_spec =
+                        profile.and_then(|profile| profile.source(item.source_id()));
                 }
+                let source = profile.and_then(|profile| profile.source(item.source_id()));
                 SourceRow {
-                    id: source.id().as_str().into(),
-                    name: source.name().into(),
-                    kind: source.kind().as_str().into(),
+                    id: item.id().as_str().into(),
+                    name: source.map_or_else(
+                        || item.source_id().as_str().into(),
+                        |source| source.name().into(),
+                    ),
+                    kind: source
+                        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
+                        .into(),
                     order: (index + 1).to_string().into(),
                     selected,
-                    visible: source.visible(),
-                    locked: source.locked(),
+                    visible: item.visible(),
+                    locked: item.locked(),
                     first: index == 0,
-                    last: index + 1 == scene.sources().len(),
+                    last: index + 1 == scene.items().len(),
                 }
             })
             .collect::<Vec<_>>()
@@ -300,16 +311,19 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     }
     let selected_source_index = selected_scene.and_then(|scene| {
         scene
-            .sources()
+            .items()
             .iter()
-            .position(|source| source.id().as_str() == selected_source)
+            .position(|item| item.id().as_str() == selected_source)
     });
-    ui.set_selected_source_visible(selected_source_spec.is_some_and(SourceSpec::visible));
-    ui.set_selected_source_locked(selected_source_spec.is_some_and(SourceSpec::locked));
+    ui.set_selected_source_visible(selected_item.is_some_and(SceneItemSpec::visible));
+    ui.set_selected_source_locked(selected_item.is_some_and(SceneItemSpec::locked));
     ui.set_selected_source_first(selected_source_index == Some(0));
-    ui.set_selected_source_last(selected_source_index.is_some_and(|index| {
-        selected_scene.is_some_and(|scene| index + 1 == scene.sources().len())
-    }));
+    ui.set_selected_source_last(
+        selected_source_index.is_some_and(|index| {
+            selected_scene.is_some_and(|scene| index + 1 == scene.items().len())
+        }),
+    );
+    ui.set_can_paste(state.can_paste_source());
 
     let selected_settings =
         selected_source_spec.map_or_else(String::new, |source| source.settings().serialize());
@@ -326,9 +340,9 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .unwrap_or(1_080)
             .max(1),
     );
-    let rect = selected_source_spec.map(|source| crate::item_rect(source.transform(), canvas));
+    let rect = selected_item.map(|item| crate::item_rect(item.transform(), canvas));
     ui.set_item_active(rect.is_some());
-    ui.set_item_locked(selected_source_spec.is_some_and(SourceSpec::locked));
+    ui.set_item_locked(selected_item.is_some_and(SceneItemSpec::locked));
     if let Some(rect) = rect {
         ui.set_item_x(i32::try_from(rect.x).unwrap_or(0));
         ui.set_item_y(i32::try_from(rect.y).unwrap_or(0));

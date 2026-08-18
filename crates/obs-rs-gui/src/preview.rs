@@ -89,25 +89,34 @@ impl PreviewRenderer {
         let plugin = BUILTIN_PLUGIN.with(Rc::clone);
         runtime.register_plugin(plugin.as_ref())?;
 
+        let mut source_ids = HashMap::new();
+        for source in profile.sources() {
+            let source_id =
+                runtime.create_source(source.kind().as_str(), source.name(), source.settings())?;
+            for filter in source.filters() {
+                if let Some(runtime_filter) = compile_filter(filter) {
+                    runtime.add_source_filter(source_id, runtime_filter)?;
+                }
+            }
+            source_ids.insert(source.id().clone(), source_id);
+        }
+
         for scene in profile.scenes() {
             let scene_id = scene.id().as_str();
             runtime.create_scene(scene_id)?;
-            for source in scene.sources() {
-                if !source.visible() {
+            for item in scene.items() {
+                if !item.visible() {
                     continue;
                 }
-                let source_id = runtime.create_source(
-                    source.kind().as_str(),
-                    source.name(),
-                    source.settings(),
-                )?;
+                let source_id = source_ids.get(item.source_id()).copied().ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "scene item {} references unknown source {}",
+                        item.id(),
+                        item.source_id()
+                    ))
+                })?;
                 runtime.attach_source(scene_id, source_id)?;
-                runtime.set_source_transform(scene_id, source_id, source.transform())?;
-                for filter in source.filters() {
-                    if let Some(runtime_filter) = compile_filter(filter) {
-                        runtime.add_source_filter(scene_id, source_id, runtime_filter)?;
-                    }
-                }
+                runtime.set_source_transform(scene_id, source_id, item.transform())?;
             }
         }
 
@@ -115,14 +124,18 @@ impl PreviewRenderer {
             .scenes()
             .filter(|scene| {
                 scene
-                    .sources()
+                    .items()
                     .iter()
-                    .any(obs_rs_project::SourceSpec::visible)
+                    .any(obs_rs_project::SceneItemSpec::visible)
                     && scene
-                        .sources()
+                        .items()
                         .iter()
-                        .filter(|source| source.visible())
-                        .all(|source| source.kind().as_str() == "color_source")
+                        .filter(|item| item.visible())
+                        .all(|item| {
+                            profile
+                                .source(item.source_id())
+                                .is_some_and(|source| source.kind().as_str() == "color_source")
+                        })
             })
             .map(|scene| scene.id().as_str().to_owned())
             .collect();

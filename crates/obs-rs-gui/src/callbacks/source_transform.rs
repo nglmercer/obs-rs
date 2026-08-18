@@ -109,16 +109,12 @@ fn install_actions(
 
 fn populate_from_project(window: &SourceTransformWindow, state: &Rc<RefCell<DesktopState>>) {
     let state = state.borrow();
-    let source = state
+    let profile = state.project_session().project().active_profile_spec();
+    let item = state
         .preview_scene()
-        .and_then(|scene_id| {
-            state
-                .project_session()
-                .project()
-                .active_profile_spec()
-                .and_then(|profile| profile.scene(scene_id))
-        })
-        .and_then(|scene| state.selected_source().and_then(|id| scene.source(id)));
+        .and_then(|scene_id| profile.and_then(|profile| profile.scene(scene_id)))
+        .and_then(|scene| state.selected_source().and_then(|id| scene.item(id)));
+    let source = item.and_then(|item| profile.and_then(|profile| profile.source(item.source_id())));
     window.set_source_name(
         source
             .map_or_else(String::new, |source| source.name().to_owned())
@@ -126,9 +122,9 @@ fn populate_from_project(window: &SourceTransformWindow, state: &Rc<RefCell<Desk
     );
     set_transform(
         window,
-        source.map_or(
+        item.map_or(
             FrameTransform::IDENTITY,
-            obs_rs_project::SourceSpec::transform,
+            obs_rs_project::SceneItemSpec::transform,
         ),
     );
 }

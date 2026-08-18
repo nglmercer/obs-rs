@@ -10,19 +10,11 @@
       "scenes": [
         {
           "id": "intermission",
-          "name": "Intermission",
-          "sources": [
+          "items": [
             {
-              "filters": [],
               "id": "camera_capture",
-              "kind": "camera_capture",
               "locked": false,
-              "name": "Video capture device 1",
-              "settings": {
-                "device_id": "nokhwa-camera-1",
-                "height": "360",
-                "width": "640"
-              },
+              "source": "camera_capture",
               "transform": {
                 "crop_bottom": 0,
                 "crop_left": 0,
@@ -39,17 +31,9 @@
               "visible": true
             },
             {
-              "filters": [],
               "id": "wayland_screen_capture",
-              "kind": "wayland_screen_capture",
               "locked": false,
-              "name": "Screen capture 1",
-              "settings": {
-                "capture_cursor": "true",
-                "height": "360",
-                "restore_token": "HA0XGvVqau7kEib47znYjQ",
-                "width": "640"
-              },
+              "source": "wayland_screen_capture",
               "transform": {
                 "crop_bottom": 0,
                 "crop_left": 0,
@@ -65,23 +49,16 @@
               },
               "visible": false
             }
-          ]
+          ],
+          "name": "Intermission"
         },
         {
           "id": "preview",
-          "name": "Preview",
-          "sources": [
+          "items": [
             {
-              "filters": [],
               "id": "background",
-              "kind": "color_source",
               "locked": false,
-              "name": "Background",
-              "settings": {
-                "color": "#102030FF",
-                "height": "360",
-                "width": "640"
-              },
+              "source": "background",
               "transform": {
                 "crop_bottom": 0,
                 "crop_left": 0,
@@ -97,23 +74,16 @@
               },
               "visible": true
             }
-          ]
+          ],
+          "name": "Preview"
         },
         {
           "id": "program",
-          "name": "Program",
-          "sources": [
+          "items": [
             {
-              "filters": [],
               "id": "background",
-              "kind": "color_source",
               "locked": false,
-              "name": "Background",
-              "settings": {
-                "color": "#203040FF",
-                "height": "360",
-                "width": "640"
-              },
+              "source": "background_program",
               "transform": {
                 "crop_bottom": 0,
                 "crop_left": 0,
@@ -129,7 +99,55 @@
               },
               "visible": true
             }
-          ]
+          ],
+          "name": "Program"
+        }
+      ],
+      "sources": [
+        {
+          "filters": [],
+          "id": "background",
+          "kind": "color_source",
+          "name": "Background",
+          "settings": {
+            "color": "#102030FF",
+            "height": "360",
+            "width": "640"
+          }
+        },
+        {
+          "filters": [],
+          "id": "background_program",
+          "kind": "color_source",
+          "name": "Background",
+          "settings": {
+            "color": "#203040FF",
+            "height": "360",
+            "width": "640"
+          }
+        },
+        {
+          "filters": [],
+          "id": "camera_capture",
+          "kind": "camera_capture",
+          "name": "Video capture device 1",
+          "settings": {
+            "device_id": "nokhwa-camera-1",
+            "height": "360",
+            "width": "640"
+          }
+        },
+        {
+          "filters": [],
+          "id": "wayland_screen_capture",
+          "kind": "wayland_screen_capture",
+          "name": "Screen capture 1",
+          "settings": {
+            "capture_cursor": "true",
+            "height": "360",
+            "restore_token": "HA0XGvVqau7kEib47znYjQ",
+            "width": "640"
+          }
         }
       ],
       "video": {
@@ -143,5 +161,5 @@
     }
   ],
   "title": "OBS-RS Studio",
-  "version": 1
+  "version": 2
 }

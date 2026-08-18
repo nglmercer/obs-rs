@@ -21,7 +21,8 @@ fn project() -> Project {
     let mut scene = SceneSpec::new("main", "Main scene").expect("scene");
     let mut source =
         SourceSpec::new("background", "color_source", "Background", settings()).expect("source");
-    source.set_transform(
+    let mut item = SceneItemSpec::for_source("background").expect("scene item");
+    item.set_transform(
         FrameTransform::new(1_000, 1_000, 4, -3, true, false, 220).expect("transform"),
     );
     source
@@ -46,7 +47,8 @@ fn project() -> Project {
             .expect("opacity filter"),
         )
         .expect("opacity filter attach");
-    scene.add_source(source).expect("source attach");
+    scene.add_item(item).expect("item attach");
+    profile.add_source(source).expect("source registry");
     profile.add_scene(scene).expect("scene attach");
     project.add_profile(profile).expect("profile add");
     project
@@ -96,10 +98,10 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
         Err(ProjectError::InvalidDocument { .. })
     ));
 
-    let future = encoded.replace(r#""version": 1"#, r#""version": 2"#);
+    let future = encoded.replace(r#""version": 2"#, r#""version": 3"#);
     let error = Project::parse(&future).expect_err("a newer schema is not guessed at");
     assert!(
-        format!("{error}").contains("unsupported project schema version 2"),
+        format!("{error}").contains("unsupported project schema version 3"),
         "{error}"
     );
 }
@@ -108,7 +110,7 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
 fn parser_reports_the_line_a_syntax_error_is_on() {
     let broken = project()
         .serialize()
-        .replace(r#""version": 1"#, r#""version": ?"#);
+        .replace(r#""version": 2"#, r#""version": ?"#);
 
     let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
     match error {
@@ -164,7 +166,6 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
     session
         .dispatch(ProjectCommand::SetSourceSettings {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             settings: replacement_settings,
         })
@@ -172,40 +173,39 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
     session
         .dispatch(ProjectCommand::SetSourceFilters {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filters: vec![FrameFilter::Grayscale],
         })
         .expect("set source filters command");
     session
-        .dispatch(ProjectCommand::SetSourceVisibility {
+        .dispatch(ProjectCommand::SetSceneItemVisibility {
             profile: "live".to_owned(),
             scene: "main".to_owned(),
-            source: "background".to_owned(),
+            item: "background".to_owned(),
             visible: false,
         })
         .expect("set source visibility command");
     session
-        .dispatch(ProjectCommand::SetSourceLocked {
+        .dispatch(ProjectCommand::SetSceneItemLocked {
             profile: "live".to_owned(),
             scene: "main".to_owned(),
-            source: "background".to_owned(),
+            item: "background".to_owned(),
             locked: true,
         })
         .expect("set source locked command");
     session
-        .dispatch(ProjectCommand::MoveSource {
+        .dispatch(ProjectCommand::MoveSceneItem {
             profile: "live".to_owned(),
             scene: "main".to_owned(),
-            source: "background".to_owned(),
+            item: "background".to_owned(),
             target_index: 1,
         })
         .expect("move source command");
     session
-        .dispatch(ProjectCommand::RemoveSource {
+        .dispatch(ProjectCommand::RemoveSceneItem {
             profile: "live".to_owned(),
             scene: "main".to_owned(),
-            source: "foreground".to_owned(),
+            item: "foreground".to_owned(),
         })
         .expect("remove source command");
     assert!(session.is_dirty());
@@ -215,26 +215,25 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
         Project::parse(&saved).expect("saved project"),
         *session.project()
     );
-    let source = session
+    let _source = session
         .project()
-        .profiles()
-        .next()
-        .and_then(|profile| profile.scenes().next())
-        .and_then(|scene| {
-            scene
-                .sources()
-                .iter()
-                .find(|source| source.id().as_str() == "background")
-        })
+        .profile("live")
+        .and_then(|profile| profile.source("background"))
         .expect("background source");
-    assert!(!source.visible());
-    assert!(source.locked());
+    let item = session
+        .project()
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("background"))
+        .expect("background item");
+    assert!(!item.visible());
+    assert!(item.locked());
 
     assert_eq!(
-        session.dispatch(ProjectCommand::SetSourceTransform {
+        session.dispatch(ProjectCommand::SetSceneItemTransform {
             profile: "missing".to_owned(),
             scene: "main".to_owned(),
-            source: "background".to_owned(),
+            item: "background".to_owned(),
             transform: FrameTransform::IDENTITY,
         }),
         Err(ProjectError::UnknownProfile(
@@ -255,7 +254,6 @@ fn source_filter_commands_manage_named_ordered_instances() {
     project
         .apply(ProjectCommand::AddSourceFilter {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: SourceFilterSpec::new(
                 "brightness_2",
@@ -269,8 +267,7 @@ fn source_filter_commands_manage_named_ordered_instances() {
 
     let source = project
         .profile("live")
-        .and_then(|profile| profile.scene("main"))
-        .and_then(|scene| scene.source("background"))
+        .and_then(|profile| profile.source("background"))
         .expect("background source");
     assert_eq!(
         source
@@ -284,7 +281,6 @@ fn source_filter_commands_manage_named_ordered_instances() {
     project
         .apply(ProjectCommand::SetSourceFilterName {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: "brightness_2".to_owned(),
             name: "Warmth".to_owned(),
@@ -293,7 +289,6 @@ fn source_filter_commands_manage_named_ordered_instances() {
     project
         .apply(ProjectCommand::SetSourceFilterEnabled {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: "brightness_2".to_owned(),
             enabled: false,
@@ -302,7 +297,6 @@ fn source_filter_commands_manage_named_ordered_instances() {
     project
         .apply(ProjectCommand::SetSourceFilterSettings {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: "brightness_2".to_owned(),
             settings: Config::parse("milli = 500\n").expect("updated settings"),
@@ -311,7 +305,6 @@ fn source_filter_commands_manage_named_ordered_instances() {
     project
         .apply(ProjectCommand::MoveSourceFilter {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: "brightness_2".to_owned(),
             target_index: 0,
@@ -320,8 +313,7 @@ fn source_filter_commands_manage_named_ordered_instances() {
 
     let source = project
         .profile("live")
-        .and_then(|profile| profile.scene("main"))
-        .and_then(|scene| scene.source("background"))
+        .and_then(|profile| profile.source("background"))
         .expect("background source after edits");
     let edited = source.filters().first().expect("moved filter");
     assert_eq!(edited.id().as_str(), "brightness_2");
@@ -333,15 +325,13 @@ fn source_filter_commands_manage_named_ordered_instances() {
     project
         .apply(ProjectCommand::RemoveSourceFilter {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: "opacity".to_owned(),
         })
         .expect("remove filter");
     let source = project
         .profile("live")
-        .and_then(|profile| profile.scene("main"))
-        .and_then(|scene| scene.source("background"))
+        .and_then(|profile| profile.source("background"))
         .expect("background source after removal");
     assert_eq!(source.filters().len(), 2);
 
@@ -350,7 +340,6 @@ fn source_filter_commands_manage_named_ordered_instances() {
     assert_eq!(
         project.apply(ProjectCommand::AddSourceFilter {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: duplicate,
         }),
@@ -369,7 +358,6 @@ fn source_filter_commands_participate_in_undo_and_redo() {
     session
         .dispatch(ProjectCommand::SetSourceFilterName {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: "brightness".to_owned(),
             name: "Renamed brightness".to_owned(),
@@ -379,8 +367,7 @@ fn source_filter_commands_participate_in_undo_and_redo() {
         session
             .project()
             .profile("live")
-            .and_then(|profile| profile.scene("main"))
-            .and_then(|scene| scene.source("background"))
+            .and_then(|profile| profile.source("background"))
             .and_then(|source| source.filter(&Identifier::new("brightness").expect("id")))
             .expect("brightness filter")
             .name(),
@@ -391,8 +378,7 @@ fn source_filter_commands_participate_in_undo_and_redo() {
         session
             .project()
             .profile("live")
-            .and_then(|profile| profile.scene("main"))
-            .and_then(|scene| scene.source("background"))
+            .and_then(|profile| profile.source("background"))
             .and_then(|source| source.filter(&Identifier::new("brightness").expect("id")))
             .expect("brightness filter")
             .name(),
@@ -402,12 +388,136 @@ fn source_filter_commands_participate_in_undo_and_redo() {
 }
 
 #[test]
+fn source_registry_shares_configuration_but_not_scene_item_state() {
+    let mut project = Project::new("Shared source fixture").expect("project");
+    let mut profile = Profile::new("live", "Live", format()).expect("profile");
+    profile
+        .add_source(
+            SourceSpec::new("camera", "camera_capture", "Camera", Config::new()).expect("source"),
+        )
+        .expect("source registry");
+
+    let mut preview = SceneSpec::new("preview", "Preview").expect("scene");
+    preview
+        .add_item(SceneItemSpec::for_source("camera").expect("preview item"))
+        .expect("preview item");
+    let mut program = SceneSpec::new("program", "Program").expect("scene");
+    program
+        .add_item(SceneItemSpec::new("program_camera", "camera").expect("program item"))
+        .expect("program item");
+    profile.add_scene(preview).expect("preview scene");
+    profile.add_scene(program).expect("program scene");
+    project.add_profile(profile).expect("profile");
+
+    let transform = FrameTransform::new(1_250, 900, 24, -8, true, false, 210).expect("transform");
+    project
+        .apply(ProjectCommand::SetSceneItemTransform {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: "camera".to_owned(),
+            transform,
+        })
+        .expect("preview transform");
+    project
+        .apply(ProjectCommand::SetSourceName {
+            profile: "live".to_owned(),
+            source: "camera".to_owned(),
+            name: "Shared camera".to_owned(),
+        })
+        .expect("shared source rename");
+
+    let profile = project.profile("live").expect("profile");
+    assert_eq!(
+        profile.source("camera").expect("source").name(),
+        "Shared camera"
+    );
+    assert_eq!(
+        profile
+            .scene("preview")
+            .expect("preview")
+            .item("camera")
+            .expect("preview item")
+            .transform(),
+        transform
+    );
+    assert_eq!(
+        profile
+            .scene("program")
+            .expect("program")
+            .item("program_camera")
+            .expect("program item")
+            .transform(),
+        FrameTransform::IDENTITY,
+        "a second scene reference keeps independent item state"
+    );
+    assert_eq!(
+        profile
+            .scene("program")
+            .expect("program")
+            .item("program_camera")
+            .expect("program item")
+            .source_id()
+            .as_str(),
+        "camera"
+    );
+}
+
+#[test]
+fn scene_item_copy_modes_preserve_references_or_clone_sources() {
+    let mut project = project();
+    let empty_scene = SceneSpec::new("program", "Program").expect("scene");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: empty_scene,
+        })
+        .expect("program scene");
+
+    let item = SceneItemSpec::for_source("background").expect("item");
+    project
+        .apply(ProjectCommand::PasteSceneItem {
+            profile: "live".to_owned(),
+            scene: "program".to_owned(),
+            item,
+            mode: SceneItemDuplicateMode::Reference,
+        })
+        .expect("reference paste");
+    let profile = project.profile("live").expect("profile");
+    let reference = profile
+        .scene("program")
+        .expect("program")
+        .item("background")
+        .expect("reference item");
+    assert_eq!(reference.source_id().as_str(), "background");
+
+    project
+        .apply(ProjectCommand::DuplicateSceneWithMode {
+            profile: "live".to_owned(),
+            scene: "program".to_owned(),
+            mode: SceneItemDuplicateMode::DuplicateSource,
+        })
+        .expect("duplicate scene with cloned source");
+    let profile = project.profile("live").expect("profile");
+    let duplicate = profile
+        .scene("program_copy")
+        .expect("duplicated program")
+        .item("background")
+        .expect("duplicated item");
+    assert_ne!(duplicate.source_id().as_str(), "background");
+    assert!(profile.source(duplicate.source_id()).is_some());
+    assert_eq!(
+        profile.sources().count(),
+        2,
+        "the duplicate scene clones once"
+    );
+}
+
+#[test]
 fn audio_video_filter_categories_are_persistent_data() {
     let mut project = project();
     project
         .apply(ProjectCommand::AddSourceFilter {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             filter: SourceFilterSpec::with_category(
                 "compressor",
@@ -423,8 +533,7 @@ fn audio_video_filter_categories_are_persistent_data() {
     let decoded = Project::parse(&project.serialize()).expect("parse categorized filter");
     let filter = decoded
         .profile("live")
-        .and_then(|profile| profile.scene("main"))
-        .and_then(|scene| scene.source("background"))
+        .and_then(|profile| profile.source("background"))
         .and_then(|source| source.filter(&Identifier::new("compressor").expect("filter id")))
         .expect("categorized filter");
     assert_eq!(filter.category(), SourceFilterCategory::AudioVideo);
@@ -437,7 +546,6 @@ fn duplicate_commands_copy_definitions_and_choose_unique_ids() {
     project
         .apply(ProjectCommand::SetSourceName {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             name: "Renamed background".to_owned(),
         })
@@ -445,7 +553,6 @@ fn duplicate_commands_copy_definitions_and_choose_unique_ids() {
     assert_eq!(
         project.apply(ProjectCommand::SetSourceName {
             profile: "live".to_owned(),
-            scene: "main".to_owned(),
             source: "background".to_owned(),
             name: "  ".to_owned(),
         }),
@@ -453,33 +560,40 @@ fn duplicate_commands_copy_definitions_and_choose_unique_ids() {
     );
 
     project
-        .apply(ProjectCommand::DuplicateSource {
+        .apply(ProjectCommand::DuplicateSceneItem {
             profile: "live".to_owned(),
             scene: "main".to_owned(),
-            source: "background".to_owned(),
+            item: "background".to_owned(),
+            mode: SceneItemDuplicateMode::DuplicateSource,
         })
         .expect("duplicate source command");
     project
-        .apply(ProjectCommand::DuplicateSource {
+        .apply(ProjectCommand::DuplicateSceneItem {
             profile: "live".to_owned(),
             scene: "main".to_owned(),
-            source: "background".to_owned(),
+            item: "background".to_owned(),
+            mode: SceneItemDuplicateMode::DuplicateSource,
         })
         .expect("duplicate source command chooses a suffix");
 
-    let scene = project
-        .profile("live")
-        .and_then(|profile| profile.scene("main"))
-        .expect("main scene");
-    assert_eq!(scene.sources().len(), 3);
-    let original = scene.source("background").expect("original source");
-    let copy = scene.source("background_copy").expect("first source copy");
-    let second_copy = scene
-        .source("background_copy_2")
+    let profile = project.profile("live").expect("live profile");
+    let scene = profile.scene("main").expect("main scene");
+    assert_eq!(scene.items().len(), 3);
+    let original_item = scene.item("background").expect("original item");
+    let copy_item = scene.item("background_copy").expect("first item copy");
+    let second_copy_item = scene.item("background_copy_2").expect("second source copy");
+    let original = profile
+        .source(original_item.source_id())
+        .expect("original source");
+    let copy = profile
+        .source(copy_item.source_id())
+        .expect("first source copy");
+    let second_copy = profile
+        .source(second_copy_item.source_id())
         .expect("second source copy");
     assert_eq!(copy.name(), "Renamed background Copy");
     assert_eq!(second_copy.name(), "Renamed background Copy 2");
-    assert_eq!(copy.transform(), original.transform());
+    assert_eq!(copy_item.transform(), original_item.transform());
     assert_eq!(copy.filters(), original.filters());
     assert_eq!(copy.settings(), original.settings());
 
@@ -818,8 +932,8 @@ fn project_codec_round_trips_crop_and_accepts_legacy_transforms() {
         .expect("profile")
         .scene_mut(&scene_id)
         .expect("scene")
-        .source_mut(&source_id)
-        .expect("source")
+        .item_mut(&source_id)
+        .expect("scene item")
         .set_transform(transform);
 
     let decoded = Project::parse(&cropped.serialize()).expect("parse cropped project");
@@ -828,11 +942,153 @@ fn project_codec_round_trips_crop_and_accepts_legacy_transforms() {
         .expect("profile")
         .scene("main")
         .expect("scene")
-        .source("background")
-        .expect("source")
+        .item("background")
+        .expect("scene item")
         .transform();
     assert_eq!(decoded_transform, transform);
 
     let legacy = project().serialize().replace(",0,0,0,0|", "|");
     Project::parse(&legacy).expect("seven-field legacy transforms remain readable");
+}
+
+#[test]
+fn version_one_scene_sources_migrate_to_registry_and_items() {
+    let legacy = r##"
+{
+  "format": "obs-rs-project",
+  "version": 1,
+  "title": "Legacy project",
+  "active_profile": "live",
+  "profiles": [
+    {
+      "id": "live",
+      "name": "Live",
+      "video": {
+        "width": 640,
+        "height": 360,
+        "frame_rate": { "numerator": 30, "denominator": 1 }
+      },
+      "scenes": [
+        {
+          "id": "preview",
+          "name": "Preview",
+          "sources": [
+            {
+              "id": "camera",
+              "kind": "camera_capture",
+              "name": "Camera",
+              "settings": { "device_id": "camera-0" },
+              "transform": {
+                "scale_x_milli": 1000,
+                "scale_y_milli": 1000,
+                "translate_x": 12,
+                "translate_y": 0,
+                "flip_x": false,
+                "flip_y": false,
+                "opacity": 255,
+                "crop_left": 0,
+                "crop_top": 0,
+                "crop_right": 0,
+                "crop_bottom": 0
+              },
+              "filters": [
+                {
+                  "id": "brightness",
+                  "name": "Brightness",
+                  "kind": "brightness",
+                  "category": "effect",
+                  "enabled": true,
+                  "settings": { "milli": "750" }
+                }
+              ],
+              "visible": true,
+              "locked": false
+            }
+          ]
+        },
+        {
+          "id": "program",
+          "name": "Program",
+          "sources": [
+            {
+              "id": "camera",
+              "kind": "camera_capture",
+              "name": "Camera",
+              "settings": { "device_id": "camera-0" },
+              "transform": {
+                "scale_x_milli": 1000,
+                "scale_y_milli": 1000,
+                "translate_x": 0,
+                "translate_y": 30,
+                "flip_x": false,
+                "flip_y": false,
+                "opacity": 255,
+                "crop_left": 0,
+                "crop_top": 0,
+                "crop_right": 0,
+                "crop_bottom": 0
+              },
+              "filters": [
+                {
+                  "id": "brightness",
+                  "name": "Brightness",
+                  "kind": "brightness",
+                  "category": "effect",
+                  "enabled": true,
+                  "settings": { "milli": "750" }
+                }
+              ],
+              "visible": true,
+              "locked": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+"##;
+
+    let migrated = Project::parse(legacy).expect("legacy project migrates");
+    let profile = migrated.profile("live").expect("profile");
+    assert_eq!(
+        profile.sources().count(),
+        1,
+        "identical legacy sources are shared"
+    );
+    assert_eq!(
+        profile
+            .scene("preview")
+            .expect("preview")
+            .item("camera")
+            .expect("preview item")
+            .source_id()
+            .as_str(),
+        "camera"
+    );
+    assert_eq!(
+        profile
+            .scene("program")
+            .expect("program")
+            .item("camera")
+            .expect("program item")
+            .transform()
+            .translate_y(),
+        30
+    );
+    assert!(profile
+        .scene("program")
+        .expect("program")
+        .item("camera")
+        .expect("program item")
+        .locked());
+    assert_eq!(profile.source("camera").expect("source").filters().len(), 1);
+
+    let encoded = migrated.serialize();
+    assert!(encoded.contains(r#""version": 2"#), "{encoded}");
+    assert!(encoded.contains(r#""items""#), "{encoded}");
+    assert_eq!(
+        Project::parse(&encoded).expect("new format parses"),
+        migrated
+    );
 }

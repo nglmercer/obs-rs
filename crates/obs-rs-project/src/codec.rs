@@ -4,8 +4,8 @@
 //! diffed, and merged with the same tools as any other configuration file.
 //! Two properties are load-bearing:
 //!
-//! * **Determinism.** Profiles and scenes live in `BTreeMap`s, sources in
-//!   insertion-ordered `Vec`s, and settings serialize sorted, so saving
+//! * **Determinism.** Profiles, sources, and scenes live in `BTreeMap`s, while
+//!   scene items retain insertion order and settings serialize sorted, so saving
 //!   unchanged state twice produces byte-identical files.
 //! * **Explicit versioning.** Every document carries `format` and `version`
 //!   members, so a future schema change is a checked migration rather than a
@@ -13,7 +13,10 @@
 
 use super::{
     error::ProjectError,
-    model::{Profile, Project, SceneSpec, SourceFilterCategory, SourceFilterSpec, SourceSpec},
+    model::{
+        Profile, Project, SceneItemSpec, SceneSpec, SourceFilterCategory, SourceFilterSpec,
+        SourceSpec,
+    },
     validation::identifier,
     MAX_PROJECT_BYTES,
 };
@@ -28,7 +31,9 @@ use crate::RenderBackendPreference;
 const FORMAT_TAG: &str = "obs-rs-project";
 
 /// Schema version this build writes.
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
+/// The format before sources were moved out of scenes.
+const LEGACY_FORMAT_VERSION: u32 = 1;
 
 impl Project {
     /// Serializes the project as a deterministic JSON document.
@@ -69,21 +74,26 @@ impl Project {
                 "not an {FORMAT_TAG} document; expected a `format` member naming it"
             )));
         }
-        match root.get("version").and_then(Json::as_number::<u32>) {
-            Some(FORMAT_VERSION) => {}
+        let version = match root.get("version").and_then(Json::as_number::<u32>) {
+            Some(LEGACY_FORMAT_VERSION) => LEGACY_FORMAT_VERSION,
+            Some(FORMAT_VERSION) => FORMAT_VERSION,
             Some(version) => {
                 return Err(invalid(format!(
-                    "unsupported project schema version {version}; this build reads version {FORMAT_VERSION}"
+                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION} and {FORMAT_VERSION}"
                 )))
             }
             None => return Err(invalid("missing or invalid `version`")),
-        }
+        };
 
         let mut project = Self::new(string_member(&root, "title")?)?;
         project.active_profile = identifier(string_member(&root, "active_profile")?, "profile id")?;
 
         for profile in array_member(&root, "profiles")? {
-            decode_profile(&mut project, profile)?;
+            if version == LEGACY_FORMAT_VERSION {
+                decode_legacy_profile(&mut project, profile)?;
+            } else {
+                decode_profile(&mut project, profile)?;
+            }
         }
 
         if !project.profiles.is_empty() && !project.profiles.contains_key(&project.active_profile) {
@@ -118,6 +128,10 @@ fn encode_profile(profile: &Profile) -> Json {
         ("render_backend", Json::string(profile.render_backend.id())),
         ("output_kind", Json::string(profile.output_kind.id())),
         (
+            "sources",
+            Json::Array(profile.sources().map(encode_source).collect()),
+        ),
+        (
             "scenes",
             Json::Array(profile.scenes.values().map(encode_scene).collect()),
         ),
@@ -129,8 +143,8 @@ fn encode_scene(scene: &SceneSpec) -> Json {
         ("id", Json::string(scene.id.as_str())),
         ("name", Json::string(&scene.name)),
         (
-            "sources",
-            Json::Array(scene.sources.iter().map(encode_source).collect()),
+            "items",
+            Json::Array(scene.items.iter().map(encode_item).collect()),
         ),
     ])
 }
@@ -149,13 +163,20 @@ fn encode_source(source: &SourceSpec) -> Json {
                     .map(|(key, value)| (key, Json::string(value))),
             ),
         ),
-        ("transform", encode_transform(source.transform)),
         (
             "filters",
             Json::Array(source.filters.iter().map(encode_filter).collect()),
         ),
-        ("visible", Json::Bool(source.visible)),
-        ("locked", Json::Bool(source.locked)),
+    ])
+}
+
+fn encode_item(item: &SceneItemSpec) -> Json {
+    Json::object([
+        ("id", Json::string(item.id.as_str())),
+        ("source", Json::string(item.source_id.as_str())),
+        ("transform", encode_transform(item.transform)),
+        ("visible", Json::Bool(item.visible)),
+        ("locked", Json::Bool(item.locked)),
     ])
 }
 
@@ -194,7 +215,7 @@ fn encode_filter(filter: &SourceFilterSpec) -> Json {
     ])
 }
 
-fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectError> {
+fn decode_profile_header(value: &Json) -> Result<Profile, ProjectError> {
     let video = value
         .get("video")
         .ok_or_else(|| invalid("profile is missing `video`"))?;
@@ -236,17 +257,28 @@ fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectErro
         profile.set_output_profile(kind);
     }
 
-    for scene in array_member(value, "scenes")? {
-        profile.add_scene(decode_scene(scene)?)?;
-    }
+    Ok(profile)
+}
 
+fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectError> {
+    let mut profile = decode_profile_header(value)?;
+    for source in array_member(value, "sources")? {
+        profile.add_source(decode_source(source)?)?;
+    }
+    for scene in array_member(value, "scenes")? {
+        profile.add_scene(decode_scene(scene, &profile)?)?;
+    }
     project.add_profile(profile)
 }
 
-fn decode_scene(value: &Json) -> Result<SceneSpec, ProjectError> {
+fn decode_scene(value: &Json, profile: &Profile) -> Result<SceneSpec, ProjectError> {
     let mut scene = SceneSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
-    for source in array_member(value, "sources")? {
-        scene.add_source(decode_source(source)?)?;
+    for item in array_member(value, "items")? {
+        let item = decode_item(item)?;
+        if !profile.has_source(item.source_id()) {
+            return Err(ProjectError::UnknownSource(item.source_id().clone()));
+        }
+        scene.add_item(item)?;
     }
     Ok(scene)
 }
@@ -270,17 +302,102 @@ fn decode_source(value: &Json) -> Result<SourceSpec, ProjectError> {
         string_member(value, "name")?,
         config,
     )?;
-    source.set_transform(decode_transform(
+    for (index, filter) in array_member(value, "filters")?.iter().enumerate() {
+        source.add_filter(decode_filter(filter, index)?)?;
+    }
+    Ok(source)
+}
+
+fn decode_item(value: &Json) -> Result<SceneItemSpec, ProjectError> {
+    let mut item =
+        SceneItemSpec::new(string_member(value, "id")?, string_member(value, "source")?)?;
+    item.set_transform(decode_transform(
+        value
+            .get("transform")
+            .ok_or_else(|| invalid("scene item is missing `transform`"))?,
+    )?);
+    item.set_visible(bool_member(value, "visible")?);
+    item.set_locked(bool_member(value, "locked")?);
+    Ok(item)
+}
+
+/// Reads the version-one scene-local source representation and normalizes it
+/// into the profile registry plus scene-item references. Identical old source
+/// definitions with the same ID become shared sources; conflicting old
+/// definitions receive deterministic IDs so no data is lost.
+fn decode_legacy_profile(project: &mut Project, value: &Json) -> Result<(), ProjectError> {
+    let mut profile = decode_profile_header(value)?;
+    for scene_value in array_member(value, "scenes")? {
+        let scene = decode_legacy_scene(scene_value, &mut profile)?;
+        profile.add_scene(scene)?;
+    }
+    project.add_profile(profile)
+}
+
+fn decode_legacy_scene(value: &Json, profile: &mut Profile) -> Result<SceneSpec, ProjectError> {
+    let mut scene = SceneSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
+    for (index, source_value) in array_member(value, "sources")?.iter().enumerate() {
+        let (mut source, mut item) = decode_legacy_source(source_value, index)?;
+        let original_id = source.id().clone();
+        let source_id = if let Some(existing) = profile.source(&original_id) {
+            if existing == &source {
+                original_id
+            } else {
+                let new_id = legacy_source_id(profile, original_id.as_str(), scene.id().as_str())?;
+                source.id = new_id.clone();
+                profile.add_source(source)?;
+                new_id
+            }
+        } else {
+            profile.add_source(source)?;
+            original_id
+        };
+        item.source_id = source_id;
+        scene.add_item(item)?;
+    }
+    Ok(scene)
+}
+
+fn decode_legacy_source(
+    value: &Json,
+    index: usize,
+) -> Result<(SourceSpec, SceneItemSpec), ProjectError> {
+    let source = decode_source(value)?;
+    let mut item = SceneItemSpec::for_source(source.id().as_str())?;
+    item.set_transform(decode_transform(
         value
             .get("transform")
             .ok_or_else(|| invalid("source is missing `transform`"))?,
     )?);
-    for (index, filter) in array_member(value, "filters")?.iter().enumerate() {
-        source.add_filter(decode_filter(filter, index)?)?;
+    item.set_visible(bool_member(value, "visible")?);
+    item.set_locked(bool_member(value, "locked")?);
+    // Keep the index in the signature so adding another compatibility field is
+    // straightforward and so legacy call sites remain explicit about order.
+    let _ = index;
+    Ok((source, item))
+}
+
+fn legacy_source_id(
+    profile: &Profile,
+    base_id: &str,
+    scene_id: &str,
+) -> Result<obs_rs_util::Identifier, ProjectError> {
+    for ordinal in 1..=10_000_u32 {
+        let suffix = if ordinal == 1 {
+            format!("_{scene_id}")
+        } else {
+            format!("_{scene_id}_{ordinal}")
+        };
+        let prefix_length = obs_rs_util::MAX_IDENTIFIER_BYTES.saturating_sub(suffix.len());
+        let prefix = base_id
+            .get(..base_id.len().min(prefix_length))
+            .unwrap_or(base_id);
+        let candidate = format!("{prefix}{suffix}");
+        if !profile.has_source(candidate.as_str()) {
+            return identifier(&candidate, "migrated source id");
+        }
     }
-    source.set_visible(bool_member(value, "visible")?);
-    source.set_locked(bool_member(value, "locked")?);
-    Ok(source)
+    Err(invalid("could not allocate a migrated source identifier"))
 }
 
 fn decode_transform(value: &Json) -> Result<FrameTransform, ProjectError> {

@@ -88,6 +88,7 @@ export component MainWindow inherits Window {
         in property <bool> selected-source-locked: false;
         in property <bool> selected-source-first: false;
         in property <bool> selected-source-last: false;
+        in property <bool> can-paste: false;
         in property <string> source-settings-version;
         in-out property <string> source-settings;
         in-out property <string> project-path;
@@ -158,6 +159,9 @@ export component MainWindow inherits Window {
         callback open-source-rename(string);
         callback apply-source-name();
         callback duplicate-source(string);
+        callback copy-source(string);
+        callback paste-reference();
+        callback paste-duplicate();
         callback remove-source(string);
         callback apply-source-settings();
         callback set-mixer-gain(string, int);

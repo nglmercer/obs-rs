@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         foreground,
         FrameTransform::new(1_000, 1_000, 0, 0, true, false, 220)?,
     )?;
-    runtime.add_source_filter("benchmark", foreground, FrameFilter::Grayscale)?;
+    runtime.add_source_filter(foreground, FrameFilter::Grayscale)?;
 
     let rss_before_kib = resident_memory_kib();
     let render_latency = measure_unpaced_render_latency(&mut runtime, format)?;

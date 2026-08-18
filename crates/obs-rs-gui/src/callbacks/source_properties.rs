@@ -201,13 +201,18 @@ fn source_kind(state: &Rc<RefCell<DesktopState>>, source_id: &str) -> String {
     };
     let session = state.project_session();
     let project = session.project();
-    let kind = project
-        .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id.as_str()))
-        .and_then(|scene| scene.source(source_id))
-        .map(|source| source.kind().as_str().to_owned())
-        .unwrap_or_default();
-    kind
+    let Some(profile) = project.active_profile_spec() else {
+        return String::new();
+    };
+    let Some(item) = profile
+        .scene(scene_id.as_str())
+        .and_then(|scene| scene.item(source_id))
+    else {
+        return String::new();
+    };
+    profile
+        .source(item.source_id())
+        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
 }
 
 /// Looks up the display name separately from the stable source ID used by the
@@ -217,11 +222,16 @@ fn source_name(state: &Rc<RefCell<DesktopState>>, source_id: &str) -> String {
     let Some(scene_id) = state.preview_scene().map(str::to_owned) else {
         return source_id.to_owned();
     };
-    state
-        .project_session()
-        .project()
-        .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id.as_str()))
-        .and_then(|scene| scene.source(source_id))
+    let Some(profile) = state.project_session().project().active_profile_spec() else {
+        return source_id.to_owned();
+    };
+    let Some(item) = profile
+        .scene(scene_id.as_str())
+        .and_then(|scene| scene.item(source_id))
+    else {
+        return source_id.to_owned();
+    };
+    profile
+        .source(item.source_id())
         .map_or_else(|| source_id.to_owned(), |source| source.name().to_owned())
 }

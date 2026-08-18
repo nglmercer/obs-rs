@@ -93,7 +93,7 @@ pub(crate) fn localized_saved_state(dirty: bool, locale: UiLocale) -> &'static s
 pub(crate) fn first_scene_id(project: &Project) -> Option<Identifier> {
     project
         .active_profile_spec()
-        .and_then(|profile| profile.scenes().next())
+        .and_then(|profile| profile.scene("preview").or_else(|| profile.scenes().next()))
         .map(|scene| scene.id().clone())
 }
 
@@ -111,7 +111,7 @@ pub(crate) fn project_has_source(
     project
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene_id))
-        .is_some_and(|scene| scene.has_source(source_id))
+        .is_some_and(|scene| scene.has_item(source_id))
 }
 
 pub(crate) fn first_source_id(project: &Project, scene_id: &Identifier) -> Option<Identifier> {

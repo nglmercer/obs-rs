@@ -27,6 +27,7 @@ export component FloatingDockWindow inherits Window {
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
     in property <bool> selected-source-last;
+    in property <bool> can-paste;
     in property <string> transition;
     in property <bool> recording;
     in property <bool> streaming;
@@ -46,6 +47,9 @@ export component FloatingDockWindow inherits Window {
     callback flip-source(string, bool);
     callback open-source-rename(string);
     callback duplicate-source(string);
+    callback copy-source(string);
+    callback paste-reference();
+    callback paste-duplicate();
     callback remove-source(string);
     callback set-mixer-gain(string, int);
     callback toggle-mixer-mute(string);
@@ -75,6 +79,7 @@ export component FloatingDockWindow inherits Window {
         selected-source-locked: root.selected-source-locked;
         selected-source-first: root.selected-source-first;
         selected-source-last: root.selected-source-last;
+        can-paste: root.can-paste;
         transition: root.transition;
         recording: root.recording;
         streaming: root.streaming;
@@ -100,6 +105,9 @@ export component FloatingDockWindow inherits Window {
         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
         open-source-rename(id) => { root.open-source-rename(id); }
         duplicate-source(id) => { root.duplicate-source(id); }
+        copy-source(id) => { root.copy-source(id); }
+        paste-reference() => { root.paste-reference(); }
+        paste-duplicate() => { root.paste-duplicate(); }
         remove-source(id) => { root.remove-source(id); }
         set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }

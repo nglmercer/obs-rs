@@ -108,7 +108,7 @@ fn runtime_limits_contain_plugin_scene_source_and_filter_resources() {
         })
     );
     runtime
-        .add_source_filter("main", source, FrameFilter::Grayscale)
+        .add_source_filter(source, FrameFilter::Grayscale)
         .expect("first filter fits");
     let usage = runtime.usage();
     assert_eq!(usage.plugins(), 1);
@@ -117,9 +117,9 @@ fn runtime_limits_contain_plugin_scene_source_and_filter_resources() {
     assert_eq!(usage.sources(), 1);
     assert_eq!(usage.filters(), 1);
     assert_eq!(
-        runtime.add_source_filter("main", source, FrameFilter::Grayscale),
+        runtime.add_source_filter(source, FrameFilter::Grayscale),
         Err(RuntimeError::ResourceLimitExceeded {
-            resource: "filters per scene item",
+            resource: "filters per source",
             limit: 1
         })
     );
@@ -145,7 +145,7 @@ fn scene_item_transform_is_applied_before_composition() {
         .set_source_transform("main", source, transform)
         .expect("set transform");
     runtime
-        .add_source_filter("main", source, FrameFilter::Grayscale)
+        .add_source_filter(source, FrameFilter::Grayscale)
         .expect("add filter");
 
     let request = VideoRequest::new(Timestamp::ZERO, format());
@@ -156,7 +156,7 @@ fn scene_item_transform_is_applied_before_composition() {
 
     assert_eq!(runtime.source_transform("main", source), Some(transform));
     assert_eq!(
-        runtime.source_filters("main", source),
+        runtime.source_filters(source),
         Some(&[FrameFilter::Grayscale][..])
     );
     assert_eq!(frame.pixel(0, 0), Some([76, 76, 76, 128]));
@@ -184,7 +184,7 @@ fn compositor_metrics_report_work_and_reset() {
         )
         .expect("set transform");
     runtime
-        .add_source_filter("main", source, FrameFilter::Grayscale)
+        .add_source_filter(source, FrameFilter::Grayscale)
         .expect("add filter");
 
     let request = VideoRequest::new(Timestamp::ZERO, format());

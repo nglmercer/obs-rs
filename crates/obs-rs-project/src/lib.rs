@@ -16,11 +16,11 @@ mod validation;
 #[cfg(test)]
 mod tests;
 
-pub use commands::ProjectCommand;
+pub use commands::{ProjectCommand, SceneItemDuplicateMode};
 pub use error::ProjectError;
 pub use model::{
-    Profile, Project, RenderBackendPreference, SceneSpec, SourceFilterCategory, SourceFilterSpec,
-    SourceSpec,
+    Profile, Project, RenderBackendPreference, SceneItemSpec, SceneSpec, SourceFilterCategory,
+    SourceFilterSpec, SourceSpec,
 };
 pub use persistence::ProjectFileStore;
 pub use session::{ProjectSession, MAX_HISTORY_DEPTH};

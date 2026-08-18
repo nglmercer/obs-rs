@@ -464,10 +464,10 @@ fn preview_renderer_rebuilds_after_project_edit() {
 fn preview_renderer_honors_hidden_scene_sources() {
     let mut project = initial_project().expect("initial GUI project should validate");
     project
-        .apply(ProjectCommand::SetSourceVisibility {
+        .apply(ProjectCommand::SetSceneItemVisibility {
             profile: "live".to_owned(),
             scene: "preview".to_owned(),
-            source: "background".to_owned(),
+            item: "background".to_owned(),
             visible: false,
         })
         .expect("hide source");
@@ -1041,8 +1041,7 @@ fn exercise_monitor_selection(
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene.as_str()))
-        .and_then(|scene| scene.source("gui-screen"))
+        .and_then(|profile| profile.source("gui-screen"))
         .expect("screen source persisted");
     assert_eq!(
         source.settings().get("monitor"),
@@ -1144,13 +1143,11 @@ fn render_source_filters_window(
     window.invoke_edit_property("milli".into(), "450".into());
 
     let state_ref = state.borrow();
-    let scene_id = state_ref.preview_scene().expect("preview scene");
     let source = state_ref
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
-        .and_then(|scene| scene.source("background"))
+        .and_then(|profile| profile.source("background"))
         .expect("background source after filter edits");
     assert_eq!(source.filters().len(), 2);
     assert_eq!(source.filters()[0].id().as_str(), "grayscale");
@@ -1196,17 +1193,23 @@ fn exercise_source_transform_window(
 
     let state_ref = state.borrow();
     let scene_id = state_ref.preview_scene().expect("preview scene");
-    let source = state_ref
+    let _source = state_ref
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.source("background"))
+        .expect("background source after transform edit");
+    let item = state_ref
         .project_session()
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene_id))
-        .and_then(|scene| scene.source("background"))
-        .expect("background source after transform edit");
-    assert_eq!(source.transform().translate_x(), 42);
-    assert_eq!(source.transform().translate_y(), -7);
-    assert_eq!(source.transform().opacity(), 200);
-    assert!(source.transform().flip_x());
+        .and_then(|scene| scene.item("background"))
+        .expect("background item after transform edit");
+    assert_eq!(item.transform().translate_x(), 42);
+    assert_eq!(item.transform().translate_y(), -7);
+    assert_eq!(item.transform().opacity(), 200);
+    assert!(item.transform().flip_x());
     drop(state_ref);
 
     ui.invoke_open_source_transform_window();
@@ -1217,14 +1220,14 @@ fn exercise_source_transform_window(
 
     let state_ref = state.borrow();
     let scene_id = state_ref.preview_scene().expect("preview scene");
-    let source = state_ref
+    let item = state_ref
         .project_session()
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene_id))
-        .and_then(|scene| scene.source("background"))
-        .expect("background source after transform cancel");
-    assert_eq!(source.transform().translate_x(), 42);
+        .and_then(|scene| scene.item("background"))
+        .expect("background item after transform cancel");
+    assert_eq!(item.transform().translate_x(), 42);
 }
 
 /// Drives the Add Source window the way a user would: pick a kind, create a
@@ -1398,8 +1401,7 @@ fn exercise_capture_device_properties_window(
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene.as_str()))
-        .and_then(|scene| scene.source("gui-camera"))
+        .and_then(|profile| profile.source("gui-camera"))
         .expect("camera source persisted");
     assert_eq!(
         source.settings().get("device_id"),

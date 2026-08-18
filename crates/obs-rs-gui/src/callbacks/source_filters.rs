@@ -239,9 +239,9 @@ fn add_filter(
 ) -> Result<(), Box<dyn Error>> {
     let definition =
         definition(kind).ok_or_else(|| std::io::Error::other("unknown filter kind"))?;
-    let (profile, scene, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state)?;
     ensure_unlocked(locked)?;
-    let id = unique_filter_id(state, &scene, &source, kind);
+    let id = unique_filter_id(state, &source, kind);
     let name = filter_instance_name(definition.name, definition.kind, &id);
     let filter = SourceFilterSpec::with_category(
         &id,
@@ -254,7 +254,6 @@ fn add_filter(
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::AddSourceFilter {
             profile,
-            scene,
             source,
             filter,
         }))?;
@@ -266,14 +265,13 @@ fn remove_filter(
     state: &Rc<RefCell<DesktopState>>,
     controller: &SourceFiltersController,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, scene, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state)?;
     ensure_unlocked(locked)?;
     let filter = selected_id(controller)?;
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::RemoveSourceFilter {
             profile,
-            scene,
             source,
             filter,
         }))?;
@@ -285,17 +283,16 @@ fn toggle_filter(
     state: &Rc<RefCell<DesktopState>>,
     controller: &SourceFiltersController,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, scene, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
-    let enabled = filter_snapshot(state, &scene, &source, &filter_id)
+    let enabled = filter_snapshot(state, &source, &filter_id)
         .ok_or_else(|| std::io::Error::other("selected filter is missing"))?
         .enabled();
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::SetSourceFilterEnabled {
             profile,
-            scene,
             source,
             filter: filter_id,
             enabled: !enabled,
@@ -308,10 +305,10 @@ fn move_filter(
     controller: &SourceFiltersController,
     delta: i32,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, scene, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
-    let index = filter_index(state, &scene, &source, &filter_id)
+    let index = filter_index(state, &source, &filter_id)
         .ok_or_else(|| std::io::Error::other("selected filter is missing"))?;
     let target = if delta < 0 {
         index.checked_sub(1)
@@ -325,7 +322,6 @@ fn move_filter(
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::MoveSourceFilter {
             profile,
-            scene,
             source,
             filter: filter_id,
             target_index: target,
@@ -338,14 +334,13 @@ fn rename_filter(
     controller: &SourceFiltersController,
     name: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, scene, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state)?;
     ensure_unlocked(locked)?;
     let filter = selected_id(controller)?;
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::SetSourceFilterName {
             profile,
-            scene,
             source,
             filter,
             name: name.to_owned(),
@@ -359,10 +354,10 @@ fn edit_property(
     key: &str,
     value: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, scene, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
-    let filter = filter_snapshot(state, &scene, &source, &filter_id)
+    let filter = filter_snapshot(state, &source, &filter_id)
         .ok_or_else(|| std::io::Error::other("selected filter is missing"))?;
     let settings = filter_properties::apply(
         filter.kind().as_str(),
@@ -375,7 +370,6 @@ fn edit_property(
     state.borrow_mut().dispatch(UiCommand::Project(
         ProjectCommand::SetSourceFilterSettings {
             profile,
-            scene,
             source,
             filter: filter_id,
             settings,
@@ -386,7 +380,7 @@ fn edit_property(
 
 fn source_context(
     state: &Rc<RefCell<DesktopState>>,
-) -> Result<(String, String, String, bool), Box<dyn Error>> {
+) -> Result<(String, String, bool), Box<dyn Error>> {
     let state = state.borrow();
     let profile = state
         .project_session()
@@ -397,24 +391,28 @@ fn source_context(
         .preview_scene()
         .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?
         .to_owned();
-    let source = state
+    let item = state
         .selected_source()
         .ok_or_else(|| std::io::Error::other("no source is selected"))?
         .to_owned();
-    let locked = state
+    let profile_spec = state
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene.as_str()))
-        .and_then(|scene| scene.source(source.as_str()))
-        .ok_or_else(|| std::io::Error::other("selected source is missing"))?
-        .locked();
-    Ok((profile.to_string(), scene, source, locked))
+        .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+    let item = profile_spec
+        .scene(scene.as_str())
+        .and_then(|scene| scene.item(item.as_str()))
+        .ok_or_else(|| std::io::Error::other("selected source is missing"))?;
+    Ok((
+        profile.to_string(),
+        item.source_id().to_string(),
+        item.locked(),
+    ))
 }
 
 fn filter_snapshot(
     state: &Rc<RefCell<DesktopState>>,
-    scene: &str,
     source: &str,
     filter: &str,
 ) -> Option<SourceFilterSpec> {
@@ -423,8 +421,7 @@ fn filter_snapshot(
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene))
-        .and_then(|scene| scene.source(source))
+        .and_then(|profile| profile.source(source))
         .and_then(|source| {
             source
                 .filters()
@@ -434,19 +431,13 @@ fn filter_snapshot(
         .cloned()
 }
 
-fn filter_index(
-    state: &Rc<RefCell<DesktopState>>,
-    scene: &str,
-    source: &str,
-    filter: &str,
-) -> Option<usize> {
+fn filter_index(state: &Rc<RefCell<DesktopState>>, source: &str, filter: &str) -> Option<usize> {
     let state = state.borrow();
     state
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene))
-        .and_then(|scene| scene.source(source))
+        .and_then(|profile| profile.source(source))
         .and_then(|source| {
             source
                 .filters()
@@ -472,19 +463,13 @@ fn ensure_unlocked(locked: bool) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn unique_filter_id(
-    state: &Rc<RefCell<DesktopState>>,
-    scene: &str,
-    source: &str,
-    kind: &str,
-) -> String {
+fn unique_filter_id(state: &Rc<RefCell<DesktopState>>, source: &str, kind: &str) -> String {
     let state = state.borrow();
     let existing = state
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene))
-        .and_then(|scene| scene.source(source));
+        .and_then(|profile| profile.source(source));
     let is_taken = |candidate: &str| {
         existing.is_some_and(|source| {
             source
@@ -529,13 +514,12 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
     let (source_name, filters) = {
         let state = state.borrow();
         let scene_id = state.preview_scene().unwrap_or_default();
-        let source_id = state.selected_source().unwrap_or_default();
-        let source = state
-            .project_session()
-            .project()
-            .active_profile_spec()
+        let item_id = state.selected_source().unwrap_or_default();
+        let profile = state.project_session().project().active_profile_spec();
+        let source = profile
             .and_then(|profile| profile.scene(scene_id))
-            .and_then(|scene| scene.source(source_id));
+            .and_then(|scene| scene.item(item_id))
+            .and_then(|item| profile.and_then(|profile| profile.source(item.source_id())));
         (
             source.map_or_else(String::new, |source| source.name().to_owned()),
             source.map_or_else(Vec::new, |source| source.filters().to_vec()),

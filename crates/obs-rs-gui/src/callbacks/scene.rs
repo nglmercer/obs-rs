@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use obs_rs_project::SceneItemDuplicateMode;
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::ComponentHandle;
 
@@ -206,6 +207,46 @@ fn install_source_list_callbacks(
     });
 
     let weak = ui.as_weak();
+    let copy_state = Rc::clone(state);
+    let copy_renderer = Rc::clone(renderer);
+    ui.on_copy_source(move |id| {
+        dispatch_and_refresh(
+            &weak,
+            &copy_state,
+            &copy_renderer,
+            UiCommand::CopySource { id: id.to_string() },
+        );
+    });
+
+    let weak = ui.as_weak();
+    let paste_reference_state = Rc::clone(state);
+    let paste_reference_renderer = Rc::clone(renderer);
+    ui.on_paste_reference(move || {
+        dispatch_and_refresh(
+            &weak,
+            &paste_reference_state,
+            &paste_reference_renderer,
+            UiCommand::PasteSource {
+                mode: SceneItemDuplicateMode::Reference,
+            },
+        );
+    });
+
+    let weak = ui.as_weak();
+    let paste_duplicate_state = Rc::clone(state);
+    let paste_duplicate_renderer = Rc::clone(renderer);
+    ui.on_paste_duplicate(move || {
+        dispatch_and_refresh(
+            &weak,
+            &paste_duplicate_state,
+            &paste_duplicate_renderer,
+            UiCommand::PasteSource {
+                mode: SceneItemDuplicateMode::DuplicateSource,
+            },
+        );
+    });
+
+    let weak = ui.as_weak();
     let rename_state = Rc::clone(state);
     let rename_renderer = Rc::clone(renderer);
     ui.on_open_source_rename(move |id| {
@@ -214,16 +255,13 @@ fn install_source_list_callbacks(
         };
         let source_name = {
             let state = rename_state.borrow();
-            state
+            let project = state.project_session().project();
+            let profile = project.active_profile_spec();
+            let item = state
                 .preview_scene()
-                .and_then(|scene_id| {
-                    state
-                        .project_session()
-                        .project()
-                        .active_profile_spec()
-                        .and_then(|profile| profile.scene(scene_id))
-                })
-                .and_then(|scene| scene.source(id.as_str()))
+                .and_then(|scene_id| profile.and_then(|profile| profile.scene(scene_id)))
+                .and_then(|scene| scene.item(id.as_str()));
+            item.and_then(|item| profile.and_then(|profile| profile.source(item.source_id())))
                 .map(|source| source.name().to_owned())
         };
         match source_name {

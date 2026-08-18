@@ -15,6 +15,7 @@ export component SourceDock inherits Rectangle {
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
     in property <bool> selected-source-last;
+    in property <bool> can-paste;
     in property <int> panel-kind;
     in property <bool> floating;
     callback move-panel(int, int);
@@ -32,6 +33,9 @@ export component SourceDock inherits Rectangle {
     callback flip-source(string, bool);
     callback open-source-rename(string);
     callback duplicate-source(string);
+    callback copy-source(string);
+    callback paste-reference();
+    callback paste-duplicate();
     callback remove-source(string);
 
     background: Palette.tokens.panel-bg;
@@ -70,12 +74,16 @@ export component SourceDock inherits Rectangle {
                         can-move-top: !source.first;
                         can-move-bottom: !source.last;
                         source-count: source-rows.length;
+                        can-paste: root.can-paste;
                         select-source(id) => { root.select-source(id); }
                         open-properties(id) => { root.select-source(id); root.open-modal(6); }
                         open-filters(id) => { root.select-source(id); root.open-modal(13); }
                         open-transform(id) => { root.select-source(id); root.open-modal(14); }
                         rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                         duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
+                        copy-source(id) => { root.copy-source(id); }
+                        paste-reference() => { root.paste-reference(); }
+                        paste-duplicate() => { root.paste-duplicate(); }
                         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
                         toggle-source-locked(id) => { root.toggle-source-locked(id); }
                         move-source(id, delta) => { root.move-source(id, delta); }
@@ -140,12 +148,16 @@ export component SourceDock inherits Rectangle {
                     can-move-top: !root.selected-source-first;
                     can-move-bottom: !root.selected-source-last;
                     source-count: root.source-rows.length;
+                    can-paste: root.can-paste;
                     select-source(id) => { root.select-source(id); }
                     open-properties(id) => { root.select-source(id); root.open-modal(6); }
                     open-filters(id) => { root.select-source(id); root.open-modal(13); }
                     open-transform(id) => { root.select-source(id); root.open-modal(14); }
                     rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                     duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
+                    copy-source(id) => { root.copy-source(id); }
+                    paste-reference() => { root.paste-reference(); }
+                    paste-duplicate() => { root.paste-duplicate(); }
                     toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
                     toggle-source-locked(id) => { root.toggle-source-locked(id); }
                     move-source(id, delta) => { root.move-source(id, delta); }

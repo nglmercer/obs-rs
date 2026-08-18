@@ -10,7 +10,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_media::FrameTransform;
-use obs_rs_project::{ProjectCommand, SourceSpec};
+use obs_rs_project::{ProjectCommand, SceneItemSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::ComponentHandle;
 
@@ -235,16 +235,16 @@ fn apply_preview_transform(
     renderer: &Rc<RefCell<PreviewRenderer>>,
     transform: FrameTransform,
 ) {
-    let Some((profile, scene, source)) = selected_context(&state.borrow()) else {
+    let Some((profile, scene, item)) = selected_context(&state.borrow()) else {
         return;
     };
     let applied =
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSourceTransform {
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
                 profile,
                 scene,
-                source,
+                item,
                 transform,
             }));
     if applied.is_ok() {
@@ -262,7 +262,7 @@ fn canvas_size(ui: &MainWindow) -> (u32, u32) {
     )
 }
 
-/// Returns the profile, scene, and source the canvas edits apply to.
+/// Returns the profile, scene, and scene item the canvas edits apply to.
 fn selected_context(state: &DesktopState) -> Option<(String, String, String)> {
     let profile = state
         .project_session()
@@ -270,22 +270,22 @@ fn selected_context(state: &DesktopState) -> Option<(String, String, String)> {
         .active_profile()
         .to_string();
     let scene = state.preview_scene()?.to_owned();
-    let source = state.selected_source()?.to_owned();
-    Some((profile, scene, source))
+    let item = state.selected_source()?.to_owned();
+    Some((profile, scene, item))
 }
 
 /// Returns the selected source's current transform.
 fn selected_transform(state: &Rc<RefCell<DesktopState>>) -> Option<FrameTransform> {
     let state = state.borrow();
     let scene = state.preview_scene()?;
-    let source = state.selected_source()?;
+    let item = state.selected_source()?;
     let session = state.project_session();
     session
         .project()
         .active_profile_spec()?
         .scene(scene)?
-        .source(source)
-        .map(SourceSpec::transform)
+        .item(item)
+        .map(SceneItemSpec::transform)
 }
 
 /// Returns whether the selected source is locked against editing.
@@ -294,7 +294,7 @@ fn selected_is_locked(state: &Rc<RefCell<DesktopState>>) -> bool {
     let Some(scene) = state.preview_scene() else {
         return false;
     };
-    let Some(source) = state.selected_source() else {
+    let Some(item) = state.selected_source() else {
         return false;
     };
     let session = state.project_session();
@@ -302,8 +302,8 @@ fn selected_is_locked(state: &Rc<RefCell<DesktopState>>) -> bool {
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene))
-        .and_then(|scene| scene.source(source))
-        .is_some_and(SourceSpec::locked)
+        .and_then(|scene| scene.item(item))
+        .is_some_and(SceneItemSpec::locked)
 }
 
 /// Returns the topmost visible source covering a canvas point.
@@ -318,11 +318,11 @@ fn source_at(
     let session = state.project_session();
     let scene = session.project().active_profile_spec()?.scene(scene)?;
     scene
-        .sources()
+        .items()
         .iter()
         .rev()
-        .find(|source| source.visible() && item_rect(source.transform(), canvas).contains(x, y))
-        .map(|source| source.id().as_str().to_owned())
+        .find(|item| item.visible() && item_rect(item.transform(), canvas).contains(x, y))
+        .map(|item| item.id().as_str().to_owned())
 }
 
 #[cfg(test)]

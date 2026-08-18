@@ -231,6 +231,7 @@ impl Runtime {
                 kind,
                 name: name.to_owned(),
                 source,
+                filters: Vec::new(),
             },
         );
         Ok(id)
@@ -275,10 +276,9 @@ impl Runtime {
         let Some(scene) = self.scenes.get_mut(&name) else {
             return Err(RuntimeError::UnknownScene(name));
         };
-        let Some(removed_filters) = scene.detach(source) else {
+        let Some(()) = scene.detach(source) else {
             return Err(RuntimeError::SourceNotAttached(source));
         };
-        self.filter_count = self.filter_count.saturating_sub(removed_filters);
         release_scene_reference(&mut self.scene_references, source);
         Ok(())
     }
@@ -287,8 +287,8 @@ impl Runtime {
     ///
     /// # Errors
     ///
-    /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist or
-    /// [`RuntimeError::SourceNotAttached`] when the source is not an item in it.
+    /// The filter chain is source-owned, so it is shared by every attached
+    /// scene item that references this runtime source.
     pub fn set_source_transform(
         &mut self,
         scene: &str,
@@ -312,73 +312,54 @@ impl Runtime {
         Some(self.scenes.get(scene)?.items.get(&source)?.transform)
     }
 
-    /// Adds a CPU filter to the end of one scene item's filter chain.
+    /// Adds a CPU filter to the shared source filter chain.
     ///
     /// # Errors
     ///
-    /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist or
-    /// [`RuntimeError::SourceNotAttached`] when the source is not an item in it.
+    /// Returns [`RuntimeError::UnknownSource`] when the source does not exist.
     pub fn add_source_filter(
         &mut self,
-        scene: &str,
         source: SourceId,
         filter: FrameFilter,
     ) -> Result<(), RuntimeError> {
-        let name = identifier(scene, "scene")?;
-        let limit = self.limits.max_filters_per_item();
-        let Some(scene) = self.scenes.get_mut(&name) else {
-            return Err(RuntimeError::UnknownScene(name));
-        };
-        let Some(item) = scene.items.get_mut(&source) else {
-            return Err(RuntimeError::SourceNotAttached(source));
-        };
-        if item.filters.len() >= limit {
+        let limit = self.limits.max_filters_per_source();
+        let instance = self
+            .sources
+            .get_mut(&source)
+            .ok_or(RuntimeError::UnknownSource(source))?;
+        if instance.filters.len() >= limit {
             return Err(RuntimeError::ResourceLimitExceeded {
-                resource: "filters per scene item",
+                resource: "filters per source",
                 limit,
             });
         }
-        item.filters.push(filter);
+        instance.filters.push(filter);
         self.filter_count = self.filter_count.saturating_add(1);
         Ok(())
     }
 
-    /// Removes every CPU filter from one scene item.
+    /// Removes every CPU filter from one shared source.
     ///
     /// # Errors
     ///
     /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist or
     /// [`RuntimeError::SourceNotAttached`] when the source is not an item in it.
-    pub fn clear_source_filters(
-        &mut self,
-        scene: &str,
-        source: SourceId,
-    ) -> Result<(), RuntimeError> {
-        let name = identifier(scene, "scene")?;
-        let Some(scene) = self.scenes.get_mut(&name) else {
-            return Err(RuntimeError::UnknownScene(name));
-        };
-        let Some(item) = scene.items.get_mut(&source) else {
-            return Err(RuntimeError::SourceNotAttached(source));
-        };
-        self.filter_count = self.filter_count.saturating_sub(item.filters.len());
-        item.filters.clear();
+    pub fn clear_source_filters(&mut self, source: SourceId) -> Result<(), RuntimeError> {
+        let instance = self
+            .sources
+            .get_mut(&source)
+            .ok_or(RuntimeError::UnknownSource(source))?;
+        self.filter_count = self.filter_count.saturating_sub(instance.filters.len());
+        instance.filters.clear();
         Ok(())
     }
 
-    /// Returns one scene item's filter chain.
+    /// Returns one shared source's filter chain.
     ///
     /// Borrows the stored chain instead of cloning it for read-only access.
     #[must_use]
-    pub fn source_filters(&self, scene: &str, source: SourceId) -> Option<&[FrameFilter]> {
-        Some(
-            self.scenes
-                .get(scene)?
-                .items
-                .get(&source)?
-                .filters
-                .as_slice(),
-        )
+    pub fn source_filters(&self, source: SourceId) -> Option<&[FrameFilter]> {
+        Some(self.sources.get(&source)?.filters.as_slice())
     }
 
     /// Destroys a source that is not attached to any scene.
@@ -395,6 +376,9 @@ impl Runtime {
         if self.scene_references.contains_key(&source) {
             return Err(RuntimeError::SourceInUse(source));
         }
+        if let Some(instance) = self.sources.get(&source) {
+            self.filter_count = self.filter_count.saturating_sub(instance.filters.len());
+        }
         self.sources.remove(&source);
         Ok(())
     }
@@ -409,7 +393,6 @@ impl Runtime {
         let Some(removed) = self.scenes.remove(&name) else {
             return Err(RuntimeError::UnknownScene(name));
         };
-        self.filter_count = self.filter_count.saturating_sub(removed.filter_count());
         for source in removed.attached {
             release_scene_reference(&mut self.scene_references, source);
         }

@@ -4,7 +4,10 @@ use obs_rs_audio::AudioBuffer;
 use obs_rs_audio::AudioFormat;
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, FrameTransition, MediaError, Timestamp, VideoFormat};
-use obs_rs_project::{Profile, Project, ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
+use obs_rs_project::{
+    Profile, Project, ProjectCommand, ProjectFileStore, SceneItemDuplicateMode, SceneItemSpec,
+    SceneSpec, SourceSpec,
+};
 
 fn project() -> Project {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
@@ -18,10 +21,13 @@ fn project() -> Project {
         .expect("scene");
     let mut source_scene = SceneSpec::new("source_scene", "Source").expect("scene");
     source_scene
+        .add_item(SceneItemSpec::for_source("source").expect("scene item"))
+        .expect("item");
+    profile
         .add_source(
             SourceSpec::new("source", "color_source", "Color", Config::new()).expect("source"),
         )
-        .expect("source");
+        .expect("source registry");
     profile.add_scene(source_scene).expect("scene");
     project.add_profile(profile).expect("profile");
     project
@@ -61,6 +67,67 @@ fn desktop_state_selects_source_items_in_preview_scene() {
         })
         .expect("source selection");
     assert_eq!(state.selected_source(), Some("source"));
+}
+
+#[test]
+fn desktop_state_copy_and_paste_support_reference_and_duplicate_modes() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("source scene selection");
+    state
+        .dispatch(UiCommand::CopySource {
+            id: "source".to_owned(),
+        })
+        .expect("copy source item");
+    assert!(state.can_paste_source());
+
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "preview".to_owned(),
+        })
+        .expect("target scene selection");
+    state
+        .dispatch(UiCommand::PasteSource {
+            mode: SceneItemDuplicateMode::Reference,
+        })
+        .expect("reference paste");
+    assert_eq!(state.selected_source(), Some("source"));
+    let profile = state
+        .project_session()
+        .project()
+        .profile("live")
+        .expect("profile");
+    assert_eq!(
+        profile
+            .scene("preview")
+            .expect("preview")
+            .item("source")
+            .expect("reference item")
+            .source_id()
+            .as_str(),
+        "source"
+    );
+
+    state
+        .dispatch(UiCommand::PasteSource {
+            mode: SceneItemDuplicateMode::DuplicateSource,
+        })
+        .expect("duplicate paste");
+    let profile = state
+        .project_session()
+        .project()
+        .profile("live")
+        .expect("profile");
+    let duplicate = profile
+        .scene("preview")
+        .expect("preview")
+        .item("source_copy")
+        .expect("duplicate item");
+    assert_ne!(duplicate.source_id().as_str(), "source");
+    assert!(profile.source(duplicate.source_id()).is_some());
 }
 
 #[test]
@@ -462,10 +529,10 @@ fn undo_and_redo_reverse_project_edits_and_resync_selections() {
         })
         .expect("select the scene holding the source");
     state
-        .dispatch(UiCommand::Project(ProjectCommand::RemoveSource {
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItem {
             profile: "live".to_owned(),
             scene: "source_scene".to_owned(),
-            source: "source".to_owned(),
+            item: "source".to_owned(),
         }))
         .expect("remove source");
     assert_eq!(state.selected_source(), None);
@@ -480,7 +547,7 @@ fn undo_and_redo_reverse_project_edits_and_resync_selections() {
         .expect("profile")
         .scene("source_scene")
         .expect("scene")
-        .has_source("source"));
+        .has_item("source"));
     // The selection is reconciled against the restored project rather than
     // being left pointing at whatever the removal fell back to.
     assert_eq!(state.selected_source(), Some("source"));

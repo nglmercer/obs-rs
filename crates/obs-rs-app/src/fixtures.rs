@@ -14,7 +14,9 @@ use obs_rs_core::{CompositorMetrics, Runtime};
 use obs_rs_diagnostics::DiagnosticBundle;
 use obs_rs_media::{FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{AtomicPacketFileWriter, MemoryMuxer, WavRecording, Y4mRecording};
-use obs_rs_project::{Profile, Project, ProjectCommand, SceneSpec, SourceFilterSpec, SourceSpec};
+use obs_rs_project::{
+    Profile, Project, ProjectCommand, SceneItemSpec, SceneSpec, SourceFilterSpec, SourceSpec,
+};
 use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderMetrics};
 use obs_rs_ui::{DesktopState, UiCommand};
 use obs_rs_video::{DropPolicy, VideoMetrics, VideoPacer};
@@ -231,12 +233,14 @@ pub(crate) fn project_fixture(
     let mut project = Project::new("obs-rs demo")?;
     let mut profile = Profile::new("live", "Live profile", format)?;
     let mut scene = SceneSpec::new("main", "Main scene")?;
-    scene.add_source(SourceSpec::new(
+    let background = SourceSpec::new(
         "background",
         "color_source",
         "background",
         color_settings("640", "360", "#102030FF"),
-    )?)?;
+    )?;
+    scene.add_item(SceneItemSpec::for_source("background")?)?;
+    profile.add_source(background)?;
     profile.add_scene(scene)?;
     project.add_profile(profile)?;
     let mut desktop = DesktopState::new(project);
@@ -250,15 +254,14 @@ pub(crate) fn project_fixture(
             video_settings("640", "360"),
         )?,
     }))?;
-    desktop.dispatch(UiCommand::Project(ProjectCommand::SetSourceTransform {
+    desktop.dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
         profile: "live".to_owned(),
         scene: "main".to_owned(),
-        source: "foreground".to_owned(),
+        item: "foreground".to_owned(),
         transform: FrameTransform::new(1_000, 1_000, 0, 0, true, false, 220)?,
     }))?;
     desktop.dispatch(UiCommand::Project(ProjectCommand::AddSourceFilter {
         profile: "live".to_owned(),
-        scene: "main".to_owned(),
         source: "foreground".to_owned(),
         filter: SourceFilterSpec::new("grayscale", "Grayscale", "grayscale", Config::new())?,
     }))?;

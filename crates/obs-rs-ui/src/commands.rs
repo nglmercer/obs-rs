@@ -87,7 +87,7 @@ impl DesktopState {
                 kind: "scene",
                 id: preview_scene.to_owned(),
             })?;
-        if scene.has_source(id) {
+        if scene.has_item(id) {
             Ok(())
         } else {
             Err(UiError::UnknownSelection {

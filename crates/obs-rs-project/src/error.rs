@@ -35,8 +35,10 @@ pub enum ProjectError {
     DuplicateProfile(Identifier),
     /// A scene ID is already present.
     DuplicateScene(Identifier),
-    /// A source ID is already present in a scene.
+    /// A source ID is already present in the profile registry.
     DuplicateSource(Identifier),
+    /// A scene-item ID is already present in a scene.
+    DuplicateSceneItem(Identifier),
     /// A filter ID is already present on a source.
     DuplicateFilter(Identifier),
     /// A profile ID is not present.
@@ -45,12 +47,18 @@ pub enum ProjectError {
     UnknownScene(Identifier),
     /// A source ID is not present.
     UnknownSource(Identifier),
+    /// A scene-item ID is not present.
+    UnknownSceneItem(Identifier),
     /// A filter ID is not present on a source.
     UnknownFilter(Identifier),
-    /// A source move destination is outside the scene order.
+    /// A legacy source move destination is outside the scene order.
     InvalidSourceOrder { index: usize },
     /// A filter move destination is outside the filter order.
     InvalidFilterOrder { index: usize },
+    /// A scene-item move destination is outside the scene order.
+    InvalidSceneItemOrder { index: usize },
+    /// A source cannot be removed while a scene item references it.
+    SourceInUse(Identifier),
 }
 
 impl fmt::Display for ProjectError {
@@ -71,10 +79,12 @@ impl fmt::Display for ProjectError {
             Self::DuplicateProfile(id) => write!(formatter, "profile {id} already exists"),
             Self::DuplicateScene(id) => write!(formatter, "scene {id} already exists"),
             Self::DuplicateSource(id) => write!(formatter, "source {id} already exists"),
+            Self::DuplicateSceneItem(id) => write!(formatter, "scene item {id} already exists"),
             Self::DuplicateFilter(id) => write!(formatter, "filter {id} already exists"),
             Self::UnknownProfile(id) => write!(formatter, "profile {id} does not exist"),
             Self::UnknownScene(id) => write!(formatter, "scene {id} does not exist"),
             Self::UnknownSource(id) => write!(formatter, "source {id} does not exist"),
+            Self::UnknownSceneItem(id) => write!(formatter, "scene item {id} does not exist"),
             Self::UnknownFilter(id) => write!(formatter, "filter {id} does not exist"),
             Self::InvalidSourceOrder { index } => {
                 write!(formatter, "source order index {index} is out of range")
@@ -82,6 +92,10 @@ impl fmt::Display for ProjectError {
             Self::InvalidFilterOrder { index } => {
                 write!(formatter, "filter order index {index} is out of range")
             }
+            Self::InvalidSceneItemOrder { index } => {
+                write!(formatter, "scene item order index {index} is out of range")
+            }
+            Self::SourceInUse(id) => write!(formatter, "source {id} is still used by a scene"),
         }
     }
 }

@@ -60,6 +60,7 @@ impl DockController {
             window.set_selected_source_locked(ui.get_selected_source_locked());
             window.set_selected_source_first(ui.get_selected_source_first());
             window.set_selected_source_last(ui.get_selected_source_last());
+            window.set_can_paste(ui.get_can_paste());
             window.set_transition(ui.get_transition());
             window.set_recording(ui.get_recording());
             window.set_streaming(ui.get_streaming());
@@ -303,6 +304,9 @@ fn forward_to_studio(
     forward!(on_flip_source, invoke_flip_source, id, horizontal);
     forward!(on_open_source_rename, invoke_open_source_rename, id);
     forward!(on_duplicate_source, invoke_duplicate_source, id);
+    forward!(on_copy_source, invoke_copy_source, id);
+    forward!(on_paste_reference, invoke_paste_reference);
+    forward!(on_paste_duplicate, invoke_paste_duplicate);
     forward!(on_remove_source, invoke_remove_source, id);
     forward!(on_set_mixer_gain, invoke_set_mixer_gain, id, gain);
     forward!(on_toggle_mixer_mute, invoke_toggle_mixer_mute, id);

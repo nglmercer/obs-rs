@@ -1935,22 +1935,36 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
         .ok_or(EngineError::NoActiveProfile)?;
     let mut runtime = Runtime::new();
     runtime.register_plugin(plugin)?;
+
+    // Source definitions are profile-wide. Create each runtime source once;
+    // scenes below only attach scene-local items to that shared instance.
+    let mut source_ids = std::collections::HashMap::new();
+    for source in profile.sources() {
+        let source_id =
+            runtime.create_source(source.kind().as_str(), source.name(), source.settings())?;
+        for filter in source.filters() {
+            if let Some(runtime_filter) = compile_filter(filter) {
+                runtime.add_source_filter(source_id, runtime_filter)?;
+            }
+        }
+        source_ids.insert(source.id().clone(), source_id);
+    }
     for scene in profile.scenes() {
         let scene_id = scene.id().as_str();
         runtime.create_scene(scene_id)?;
-        for source in scene.sources() {
-            if !source.visible() {
+        for item in scene.items() {
+            if !item.visible() {
                 continue;
             }
-            let source_id =
-                runtime.create_source(source.kind().as_str(), source.name(), source.settings())?;
+            let source_id = source_ids.get(item.source_id()).copied().ok_or_else(|| {
+                EngineError::InvalidConfiguration(format!(
+                    "scene item {} references unknown source {}",
+                    item.id(),
+                    item.source_id()
+                ))
+            })?;
             runtime.attach_source(scene_id, source_id)?;
-            runtime.set_source_transform(scene_id, source_id, source.transform())?;
-            for filter in source.filters() {
-                if let Some(runtime_filter) = compile_filter(filter) {
-                    runtime.add_source_filter(scene_id, source_id, runtime_filter)?;
-                }
-            }
+            runtime.set_source_transform(scene_id, source_id, item.transform())?;
         }
     }
     Ok(runtime)
@@ -2143,7 +2157,9 @@ mod tests {
     use obs_rs_audio::AudioDeviceInfo;
     use obs_rs_config::Config;
     use obs_rs_media::{FrameFilter, FrameRate};
-    use obs_rs_project::{Profile, SceneSpec, SourceFilterCategory, SourceFilterSpec, SourceSpec};
+    use obs_rs_project::{
+        Profile, SceneItemSpec, SceneSpec, SourceFilterCategory, SourceFilterSpec, SourceSpec,
+    };
 
     fn project() -> Project {
         let format =
@@ -2155,6 +2171,9 @@ mod tests {
         settings.set("height", "360").expect("height");
         let mut scene = SceneSpec::new("program", "Program").expect("scene");
         scene
+            .add_item(SceneItemSpec::for_source("pattern").expect("scene item"))
+            .expect("add item");
+        profile
             .add_source(
                 SourceSpec::new("pattern", "test_pattern", "Pattern", settings).expect("source"),
             )

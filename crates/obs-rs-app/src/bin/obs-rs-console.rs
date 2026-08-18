@@ -10,7 +10,7 @@ use std::{
 
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, VideoFormat};
-use obs_rs_project::{Profile, Project, SceneSpec, SourceSpec};
+use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 use obs_rs_ui::{parse_console_command, ConsoleCommand, DesktopState};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -70,23 +70,28 @@ fn initial_project() -> Result<Project, Box<dyn Error>> {
     let format = VideoFormat::new(640, 360, FrameRate::new(30, 1)?)?;
     let mut project = Project::new("OBS-RS console")?;
     let mut profile = Profile::new("live", "Live profile", format)?;
-    profile.add_scene(scene("preview", "Preview", "#102030FF")?)?;
-    profile.add_scene(scene("program", "Program", "#203040FF")?)?;
+    let (preview, preview_source) = scene("preview", "Preview", "background_preview", "#102030FF")?;
+    let (program, program_source) = scene("program", "Program", "background_program", "#203040FF")?;
+    profile.add_source(preview_source)?;
+    profile.add_source(program_source)?;
+    profile.add_scene(preview)?;
+    profile.add_scene(program)?;
     project.add_profile(profile)?;
     Ok(project)
 }
 
-fn scene(id: &str, name: &str, color: &str) -> Result<SceneSpec, Box<dyn Error>> {
+fn scene(
+    id: &str,
+    name: &str,
+    source_id: &str,
+    color: &str,
+) -> Result<(SceneSpec, SourceSpec), Box<dyn Error>> {
     let mut settings = Config::new();
     settings.set("width", "640")?;
     settings.set("height", "360")?;
     settings.set("color", color)?;
     let mut scene = SceneSpec::new(id, name)?;
-    scene.add_source(SourceSpec::new(
-        "background",
-        "color_source",
-        "Background",
-        settings,
-    )?)?;
-    Ok(scene)
+    scene.add_item(SceneItemSpec::for_source(source_id)?)?;
+    let source = SourceSpec::new(source_id, "color_source", "Background", settings)?;
+    Ok((scene, source))
 }

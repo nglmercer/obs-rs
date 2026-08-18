@@ -6,7 +6,7 @@ pub struct RuntimeLimits {
     scenes: usize,
     sources: usize,
     sources_per_scene: usize,
-    filters_per_item: usize,
+    filters_per_source: usize,
 }
 
 impl RuntimeLimits {
@@ -18,7 +18,7 @@ impl RuntimeLimits {
         max_scenes: usize,
         max_sources: usize,
         max_sources_per_scene: usize,
-        max_filters_per_item: usize,
+        max_filters_per_source: usize,
     ) -> Self {
         Self {
             plugins: max_plugins,
@@ -26,7 +26,7 @@ impl RuntimeLimits {
             scenes: max_scenes,
             sources: max_sources,
             sources_per_scene: max_sources_per_scene,
-            filters_per_item: max_filters_per_item,
+            filters_per_source: max_filters_per_source,
         }
     }
 
@@ -54,16 +54,26 @@ impl RuntimeLimits {
         self.sources
     }
 
-    /// Returns the maximum source items in one scene.
+    /// Returns the maximum scene items in one scene.
     #[must_use]
     pub const fn max_sources_per_scene(self) -> usize {
         self.sources_per_scene
     }
 
-    /// Returns the maximum filters on one scene item.
+    /// Returns the maximum filters on one shared source definition.
     #[must_use]
+    pub const fn max_filters_per_source(self) -> usize {
+        self.filters_per_source
+    }
+
+    /// Returns the maximum filters on one source.
+    ///
+    /// Kept as a source-compatible alias for callers compiled against the
+    /// pre-registry runtime API.
+    #[must_use]
+    #[deprecated(note = "use max_filters_per_source")]
     pub const fn max_filters_per_item(self) -> usize {
-        self.filters_per_item
+        self.max_filters_per_source()
     }
 }
 
@@ -108,7 +118,7 @@ impl RuntimeUsage {
         self.sources
     }
 
-    /// Returns the total number of attached scene-item filters.
+    /// Returns the total number of filters across registered source definitions.
     #[must_use]
     pub const fn filters(self) -> usize {
         self.filters

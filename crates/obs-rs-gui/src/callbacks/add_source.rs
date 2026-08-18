@@ -288,42 +288,32 @@ fn collect_candidates(
         return Vec::new();
     };
     let mut candidates = Vec::new();
-    for scene in profile.scenes() {
-        if target_scene == Some(scene.id().as_str()) {
+    for source in profile.sources() {
+        if kind != RECENT_KIND && source.kind().as_str() != kind {
             continue;
         }
-        for source in scene.sources() {
-            if kind != RECENT_KIND && source.kind().as_str() != kind {
-                continue;
-            }
-            if already_in_scene(profile, target_scene, source) {
-                continue;
-            }
-            let id = candidate_id(scene.id().as_str(), source.id().as_str());
-            candidates.push(SourceCandidate {
-                selected: selected.contains(&id),
-                id: id.into(),
-                name: source.name().into(),
-                kind: source.kind().as_str().into(),
-                kind_label: kind_label(text, source.kind().as_str()),
-                scene: scene.name().into(),
-                icon: kind_icon(source.kind().as_str()).into(),
-            });
+        if already_in_scene(profile, target_scene, source) {
+            continue;
         }
+        let id = source.id().as_str().to_owned();
+        let owner_scene = profile
+            .scenes()
+            .find(|scene| scene.has_source(source.id()))
+            .map_or("Source collection", obs_rs_project::SceneSpec::name);
+        candidates.push(SourceCandidate {
+            selected: selected.contains(&id),
+            id: id.into(),
+            name: source.name().into(),
+            kind: source.kind().as_str().into(),
+            kind_label: kind_label(text, source.kind().as_str()),
+            scene: owner_scene.into(),
+            icon: kind_icon(source.kind().as_str()).into(),
+        });
     }
     candidates
 }
 
-/// A card is addressed by scene and source, since ids are only unique per scene.
-fn candidate_id(scene: &str, source: &str) -> String {
-    format!("{scene}/{source}")
-}
-
 /// Returns whether the target scene already shows this source.
-///
-/// The project owns one spec per scene, so "the same source" means one with the
-/// same kind and display name — which is exactly what the user recognizes as a
-/// duplicate row in the sources dock.
 fn already_in_scene(
     profile: &obs_rs_project::Profile,
     target_scene: Option<&str>,
@@ -331,11 +321,7 @@ fn already_in_scene(
 ) -> bool {
     target_scene
         .and_then(|scene| profile.scene(scene))
-        .is_some_and(|scene| {
-            scene.sources().iter().any(|existing| {
-                existing.kind() == source.kind() && existing.name() == source.name()
-            })
-        })
+        .is_some_and(|scene| scene.has_source(source.id()))
 }
 
 fn create_source(
@@ -380,33 +366,28 @@ fn add_existing(
     let mut added = 0_usize;
     let mut skipped = 0_usize;
     for candidate in selected {
-        let Some((source_scene, source_id)) = candidate.split_once('/') else {
-            continue;
-        };
+        let source_id = candidate.as_str();
         // The card list already excludes duplicates, but the selection can
         // outlive an edit that added the same source another way.
-        if is_duplicate(state, source_scene, source_id, &scene) {
+        if is_duplicate(state, source_id, &scene) {
             skipped += 1;
             continue;
         }
-        // The project owns source specs by value, so "add existing" copies the
-        // spec — including its settings, transform, and filter chain — under a
-        // fresh id in the target scene.
-        let Some(spec) = clone_spec(state, source_scene, source_id, &scene)? else {
+        let Some(item_id) = unique_item_id(state, &scene, source_id) else {
             continue;
         };
-        let id = spec.id().as_str().to_owned();
+        let item = obs_rs_project::SceneItemSpec::new(&item_id, source_id)?;
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
                 profile: profile.clone(),
                 scene: scene.clone(),
-                source: spec,
+                item,
             }))?;
-        set_visibility(state, &profile, &scene, &id, visible)?;
+        set_visibility(state, &profile, &scene, &item_id, visible)?;
         state
             .borrow_mut()
-            .dispatch(UiCommand::SelectSource { id })?;
+            .dispatch(UiCommand::SelectSource { id: item_id })?;
         added += 1;
     }
     if skipped > 0 {
@@ -419,77 +400,31 @@ fn add_existing(
 
 /// Returns whether copying `source_id` into `target_scene` would duplicate a
 /// source that scene already shows.
-fn is_duplicate(
-    state: &Rc<RefCell<DesktopState>>,
-    source_scene: &str,
-    source_id: &str,
-    target_scene: &str,
-) -> bool {
+fn is_duplicate(state: &Rc<RefCell<DesktopState>>, source_id: &str, target_scene: &str) -> bool {
     let state = state.borrow();
     let session = state.project_session();
     let project = session.project();
     let Some(profile) = project.active_profile_spec() else {
         return false;
     };
-    if source_scene == target_scene {
-        return true;
-    }
     profile
-        .scene(source_scene)
-        .and_then(|scene| scene.source(source_id))
+        .source(source_id)
         .is_some_and(|source| already_in_scene(profile, Some(target_scene), source))
-}
-
-/// Copies one existing source spec under an id that is free in `target_scene`.
-fn clone_spec(
-    state: &Rc<RefCell<DesktopState>>,
-    source_scene: &str,
-    source_id: &str,
-    target_scene: &str,
-) -> Result<Option<SourceSpec>, Box<dyn Error>> {
-    let template = {
-        let state = state.borrow();
-        let session = state.project_session();
-        let project = session.project();
-        let Some(profile) = project.active_profile_spec() else {
-            return Ok(None);
-        };
-        let Some(scene) = profile.scene(source_scene) else {
-            return Ok(None);
-        };
-        let Some(source) = scene.source(source_id) else {
-            return Ok(None);
-        };
-        source.clone()
-    };
-    let id = unique_source_id(state, target_scene, template.kind().as_str());
-    let mut spec = SourceSpec::new(
-        &id,
-        template.kind().as_str(),
-        template.name(),
-        template.settings().clone(),
-    )?;
-    spec.set_transform(template.transform());
-    for filter in template.filters() {
-        spec.add_filter(filter.clone())?;
-    }
-    spec.set_locked(template.locked());
-    Ok(Some(spec))
 }
 
 fn set_visibility(
     state: &Rc<RefCell<DesktopState>>,
     profile: &str,
     scene: &str,
-    source: &str,
+    item: &str,
     visible: bool,
 ) -> Result<(), Box<dyn Error>> {
     state
         .borrow_mut()
-        .dispatch(UiCommand::Project(ProjectCommand::SetSourceVisibility {
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemVisibility {
             profile: profile.to_owned(),
             scene: scene.to_owned(),
-            source: source.to_owned(),
+            item: item.to_owned(),
             visible,
         }))?;
     Ok(())
@@ -509,37 +444,48 @@ fn target(state: &Rc<RefCell<DesktopState>>) -> Result<(String, String), Box<dyn
     Ok((profile, scene))
 }
 
-/// Returns `kind`, `kind_2`, `kind_3`… — the first form free in the scene.
-fn unique_source_id(state: &Rc<RefCell<DesktopState>>, scene: &str, kind: &str) -> String {
+/// Returns `kind`, `kind_2`, `kind_3`… — the first form free in the profile registry.
+fn unique_source_id(state: &Rc<RefCell<DesktopState>>, _scene: &str, kind: &str) -> String {
+    let state = state.borrow();
+    let profile = state.project_session().project().active_profile_spec();
+    if profile.is_none_or(|profile| !profile.has_source(kind)) {
+        return kind.to_owned();
+    }
+    (2_u32..=10_000)
+        .map(|suffix| format!("{kind}_{suffix}"))
+        .find(|candidate| profile.is_none_or(|profile| !profile.has_source(candidate.as_str())))
+        .unwrap_or_else(|| kind.to_owned())
+}
+
+fn unique_item_id(
+    state: &Rc<RefCell<DesktopState>>,
+    scene_id: &str,
+    source_id: &str,
+) -> Option<String> {
     let state = state.borrow();
     let scene = state
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene));
-    if scene.is_none_or(|scene| !scene.has_source(kind)) {
-        return kind.to_owned();
+        .and_then(|profile| profile.scene(scene_id))?;
+    if !scene.has_item(source_id) {
+        return Some(source_id.to_owned());
     }
-    // A scene cannot hold more sources than the runtime's per-scene limit, so
-    // the bound is only there to keep the search obviously terminating.
     (2_u32..=10_000)
-        .map(|suffix| format!("{kind}_{suffix}"))
-        .find(|candidate| scene.is_none_or(|scene| !scene.has_source(candidate.as_str())))
-        .unwrap_or_else(|| kind.to_owned())
+        .map(|suffix| format!("{source_id}_{suffix}"))
+        .find(|candidate| !scene.has_item(candidate.as_str()))
 }
 
-/// One-based count of sources of `kind` already in the scene, used for names.
-fn next_ordinal(state: &Rc<RefCell<DesktopState>>, scene: &str, kind: &str) -> usize {
+/// One-based count of sources of `kind` already in the profile, used for names.
+fn next_ordinal(state: &Rc<RefCell<DesktopState>>, _scene: &str, kind: &str) -> usize {
     let state = state.borrow();
     let ordinal = state
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene))
-        .map_or(1, |scene| {
-            scene
+        .map_or(1, |profile| {
+            profile
                 .sources()
-                .iter()
                 .filter(|source| source.kind().as_str() == kind)
                 .count()
                 + 1

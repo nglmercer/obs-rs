@@ -4,21 +4,33 @@ use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_capture::{CameraMode, CaptureKind};
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, VideoFormat};
-use obs_rs_project::{Profile, Project, SceneSpec, SourceSpec};
+use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 
 pub(crate) fn initial_project() -> Result<Project, Box<dyn Error>> {
     let format = VideoFormat::new(640, 360, FrameRate::new(30, 1)?)?;
     let mut project = Project::new("OBS-RS Studio")?;
     let mut profile = Profile::new("live", "Live profile", format)?;
-    profile.add_scene(scene("preview", "Preview", "#102030FF")?)?;
-    profile.add_scene(scene("program", "Program", "#203040FF")?)?;
-    let mut intermission = scene("intermission", "Intermission", "#302040FF")?;
-    intermission.add_source(SourceSpec::new(
+    let (preview, preview_source) = scene("preview", "Preview", "background", "#102030FF")?;
+    let (program, program_source) = scene("program", "Program", "background_program", "#203040FF")?;
+    let (mut intermission, intermission_source) = scene(
+        "intermission",
+        "Intermission",
+        "background_intermission",
+        "#302040FF",
+    )?;
+    let pattern = SourceSpec::new(
         "pattern",
         "test_pattern",
         "Animated pattern",
         video_settings(),
-    )?)?;
+    )?;
+    intermission.add_item(SceneItemSpec::for_source("pattern")?)?;
+    profile.add_source(preview_source)?;
+    profile.add_source(program_source)?;
+    profile.add_source(intermission_source)?;
+    profile.add_source(pattern)?;
+    profile.add_scene(preview)?;
+    profile.add_scene(program)?;
     profile.add_scene(intermission)?;
     project.add_profile(profile)?;
     Ok(project)
@@ -300,17 +312,18 @@ fn camera_fps_setting(mode: CameraMode) -> String {
     }
 }
 
-fn scene(id: &str, name: &str, color: &str) -> Result<SceneSpec, Box<dyn Error>> {
+fn scene(
+    id: &str,
+    name: &str,
+    source_id: &str,
+    color: &str,
+) -> Result<(SceneSpec, SourceSpec), Box<dyn Error>> {
     let mut settings = Config::new();
     settings.set("width", "640")?;
     settings.set("height", "360")?;
     settings.set("color", color)?;
     let mut scene = SceneSpec::new(id, name)?;
-    scene.add_source(SourceSpec::new(
-        "background",
-        "color_source",
-        "Background",
-        settings,
-    )?)?;
-    Ok(scene)
+    scene.add_item(SceneItemSpec::for_source(source_id)?)?;
+    let source = SourceSpec::new(source_id, "color_source", "Background", settings)?;
+    Ok((scene, source))
 }

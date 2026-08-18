@@ -159,21 +159,18 @@ impl SourceFilterSpec {
     }
 }
 
-/// A source definition stored in a scene collection.
+/// A source definition stored in a profile-wide source registry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceSpec {
     pub(crate) id: Identifier,
     pub(crate) kind: Identifier,
     pub(crate) name: String,
     pub(crate) settings: Config,
-    pub(crate) transform: FrameTransform,
     pub(crate) filters: Vec<SourceFilterSpec>,
-    pub(crate) visible: bool,
-    pub(crate) locked: bool,
 }
 
 impl SourceSpec {
-    /// Creates a source definition with an identity transform and no filters.
+    /// Creates a source definition with no filters.
     ///
     /// # Errors
     ///
@@ -187,10 +184,7 @@ impl SourceSpec {
             kind: identifier(kind, "source kind")?,
             name: name.to_owned(),
             settings,
-            transform: FrameTransform::IDENTITY,
             filters: Vec::new(),
-            visible: true,
-            locked: false,
         })
     }
 
@@ -213,10 +207,6 @@ impl SourceSpec {
     }
 
     /// Replaces the source's display name after validating that it is non-empty.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProjectError::InvalidName`] when the new name is empty.
     pub fn set_name(&mut self, name: &str) -> Result<(), ProjectError> {
         if name.trim().is_empty() {
             return Err(ProjectError::InvalidName { kind: "source" });
@@ -236,17 +226,6 @@ impl SourceSpec {
         self.settings = settings;
     }
 
-    /// Returns the scene-item transform.
-    #[must_use]
-    pub const fn transform(&self) -> FrameTransform {
-        self.transform
-    }
-
-    /// Sets the scene-item transform.
-    pub const fn set_transform(&mut self, transform: FrameTransform) {
-        self.transform = transform;
-    }
-
     /// Returns persistent filter instances in application order.
     #[must_use]
     pub fn filters(&self) -> &[SourceFilterSpec] {
@@ -254,11 +233,6 @@ impl SourceSpec {
     }
 
     /// Appends a filter instance to the source's ordered filter chain.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProjectError::DuplicateFilter`] when the instance ID is
-    /// already present on this source.
     pub fn add_filter(&mut self, filter: SourceFilterSpec) -> Result<(), ProjectError> {
         if self
             .filters
@@ -289,12 +263,6 @@ impl SourceSpec {
     }
 
     /// Moves a filter instance to an existing order position.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProjectError::UnknownFilter`] when the filter is absent or
-    /// [`ProjectError::InvalidFilterOrder`] when the destination is out of
-    /// range.
     pub fn move_filter(
         &mut self,
         id: &Identifier,
@@ -314,47 +282,95 @@ impl SourceSpec {
         self.filters.insert(target_index, filter);
         Ok(())
     }
+}
 
-    /// Returns whether this source participates in scene composition.
+/// One scene-local reference to a source definition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SceneItemSpec {
+    pub(crate) id: Identifier,
+    pub(crate) source_id: Identifier,
+    pub(crate) transform: FrameTransform,
+    pub(crate) visible: bool,
+    pub(crate) locked: bool,
+}
+
+impl SceneItemSpec {
+    /// Creates an item reference with the default scene-item state.
+    pub fn new(id: &str, source_id: &str) -> Result<Self, ProjectError> {
+        Ok(Self {
+            id: identifier(id, "scene item id")?,
+            source_id: identifier(source_id, "source id")?,
+            transform: FrameTransform::IDENTITY,
+            visible: true,
+            locked: false,
+        })
+    }
+
+    /// Creates the conventional item whose ID starts out equal to its source ID.
+    pub fn for_source(source_id: &str) -> Result<Self, ProjectError> {
+        Self::new(source_id, source_id)
+    }
+
+    /// Returns the stable scene-item ID.
+    #[must_use]
+    pub fn id(&self) -> &Identifier {
+        &self.id
+    }
+
+    /// Returns the referenced source ID.
+    #[must_use]
+    pub fn source_id(&self) -> &Identifier {
+        &self.source_id
+    }
+
+    /// Returns the scene-item transform.
+    #[must_use]
+    pub const fn transform(&self) -> FrameTransform {
+        self.transform
+    }
+
+    /// Sets the scene-item transform.
+    pub const fn set_transform(&mut self, transform: FrameTransform) {
+        self.transform = transform;
+    }
+
+    /// Returns whether this item participates in scene composition.
     #[must_use]
     pub const fn visible(&self) -> bool {
         self.visible
     }
 
-    /// Sets whether this source participates in scene composition.
+    /// Sets whether this item participates in scene composition.
     pub const fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
     }
 
-    /// Returns whether the source is protected from editing in a desktop UI.
+    /// Returns whether this item is protected from desktop editing.
     #[must_use]
     pub const fn locked(&self) -> bool {
         self.locked
     }
 
-    /// Sets whether the source is protected from editing in a desktop UI.
+    /// Sets whether this item is protected from desktop editing.
     pub const fn set_locked(&mut self, locked: bool) {
         self.locked = locked;
     }
 }
+
 /// An ordered scene collection entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SceneSpec {
     pub(crate) id: Identifier,
     pub(crate) name: String,
     /// Composition order, which is part of the scene's meaning.
-    pub(crate) sources: Vec<SourceSpec>,
-    /// O(1) source lookup and membership mirror. Values are indices into the
-    /// ordered `sources` vector, so keyed mutations do not scan the scene.
-    pub(crate) source_ids: HashMap<Identifier, usize>,
+    pub(crate) items: Vec<SceneItemSpec>,
+    /// O(1) item lookup and membership mirror. Values are indices into the
+    /// ordered `items` vector, so keyed mutations do not scan the scene.
+    pub(crate) item_ids: HashMap<Identifier, usize>,
 }
 
 impl SceneSpec {
     /// Creates an empty scene definition.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProjectError`] when the scene ID or name is invalid.
     pub fn new(id: &str, name: &str) -> Result<Self, ProjectError> {
         if name.trim().is_empty() {
             return Err(ProjectError::InvalidName { kind: "scene" });
@@ -362,8 +378,8 @@ impl SceneSpec {
         Ok(Self {
             id: identifier(id, "scene id")?,
             name: name.to_owned(),
-            sources: Vec::new(),
-            source_ids: HashMap::new(),
+            items: Vec::new(),
+            item_ids: HashMap::new(),
         })
     }
 
@@ -379,17 +395,19 @@ impl SceneSpec {
         &self.name
     }
 
-    /// Returns sources in compositor order.
+    /// Returns scene items in compositor order.
     #[must_use]
-    pub fn sources(&self) -> &[SourceSpec] {
-        &self.sources
+    pub fn items(&self) -> &[SceneItemSpec] {
+        &self.items
+    }
+
+    /// Compatibility alias for callers that only need ordered scene rows.
+    #[must_use]
+    pub fn sources(&self) -> &[SceneItemSpec] {
+        self.items()
     }
 
     /// Replaces the scene's display name after validating that it is non-empty.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProjectError::InvalidName`] when the new name is empty.
     pub fn set_name(&mut self, name: &str) -> Result<(), ProjectError> {
         if name.trim().is_empty() {
             return Err(ProjectError::InvalidName { kind: "scene" });
@@ -398,116 +416,106 @@ impl SceneSpec {
         Ok(())
     }
 
-    /// Appends a source definition while rejecting duplicate IDs.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProjectError::DuplicateSource`] when the ID is already present.
-    pub fn add_source(&mut self, source: SourceSpec) -> Result<(), ProjectError> {
-        if self.source_ids.contains_key(source.id()) {
-            return Err(ProjectError::DuplicateSource(source.id().clone()));
+    /// Appends a scene item while rejecting duplicate item IDs.
+    pub fn add_item(&mut self, item: SceneItemSpec) -> Result<(), ProjectError> {
+        if self.item_ids.contains_key(item.id()) {
+            return Err(ProjectError::DuplicateSceneItem(item.id().clone()));
         }
-        let index = self.sources.len();
-        self.source_ids.insert(source.id().clone(), index);
-        self.sources.push(source);
+        let index = self.items.len();
+        self.item_ids.insert(item.id().clone(), index);
+        self.items.push(item);
         Ok(())
     }
 
-    /// Appends several source definitions, rejecting duplicates atomically.
-    ///
-    /// Every ID is checked before anything is inserted, so a rejected batch
-    /// leaves the scene unchanged. Adding N sources costs O(N) rather than the
-    /// O(N^2) that N separate [`SceneSpec::add_source`] calls would.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProjectError::DuplicateSource`] when an ID is already present
-    /// or is repeated within `sources`.
-    pub fn add_sources(
+    /// Appends several scene items, rejecting duplicates atomically.
+    pub fn add_items(
         &mut self,
-        sources: impl IntoIterator<Item = SourceSpec>,
+        items: impl IntoIterator<Item = SceneItemSpec>,
     ) -> Result<(), ProjectError> {
-        let incoming: Vec<SourceSpec> = sources.into_iter().collect();
+        let incoming: Vec<SceneItemSpec> = items.into_iter().collect();
         let mut candidate = HashSet::with_capacity(incoming.len());
-        for source in &incoming {
-            if self.source_ids.contains_key(source.id()) || !candidate.insert(source.id()) {
-                return Err(ProjectError::DuplicateSource(source.id().clone()));
+        for item in &incoming {
+            if self.item_ids.contains_key(item.id()) || !candidate.insert(item.id()) {
+                return Err(ProjectError::DuplicateSceneItem(item.id().clone()));
             }
         }
-        self.sources.reserve(incoming.len());
-        for source in incoming {
-            let index = self.sources.len();
-            self.source_ids.insert(source.id().clone(), index);
-            self.sources.push(source);
+        self.items.reserve(incoming.len());
+        for item in incoming {
+            let index = self.items.len();
+            self.item_ids.insert(item.id().clone(), index);
+            self.items.push(item);
         }
         Ok(())
     }
 
-    /// Returns whether this scene contains `id`, in constant time.
+    /// Returns whether this scene contains an item with `id`.
     #[must_use]
-    pub fn has_source<Q>(&self, id: &Q) -> bool
+    pub fn has_item<Q>(&self, id: &Q) -> bool
     where
         Identifier: Borrow<Q>,
         Q: std::hash::Hash + Eq + ?Sized,
     {
-        self.source_ids.contains_key(id)
+        self.item_ids.contains_key(id)
     }
 
-    /// Finds a mutable source by project-local ID.
-    pub fn source_mut(&mut self, id: &Identifier) -> Option<&mut SourceSpec> {
-        let index = *self.source_ids.get(id)?;
-        self.sources.get_mut(index)
-    }
-
-    /// Finds an immutable source by an owned or borrowed project-local ID.
+    /// Returns whether an item references the source ID.
     #[must_use]
-    pub fn source<Q>(&self, id: &Q) -> Option<&SourceSpec>
+    pub fn has_source<Q>(&self, source_id: &Q) -> bool
     where
         Identifier: Borrow<Q>,
         Q: std::hash::Hash + Eq + ?Sized,
     {
-        let index = *self.source_ids.get(id)?;
-        self.sources.get(index)
+        self.items
+            .iter()
+            .any(|item| item.source_id.borrow() == source_id)
     }
 
-    /// Removes one source item and returns its definition.
-    pub fn remove_source(&mut self, id: &Identifier) -> Option<SourceSpec> {
-        let index = self.source_ids.remove(id)?;
-        let source = self.sources.remove(index);
-        for (index, source) in self.sources.iter().enumerate().skip(index) {
-            if let Some(entry) = self.source_ids.get_mut(source.id()) {
+    /// Finds a mutable scene item by project-local ID.
+    pub fn item_mut(&mut self, id: &Identifier) -> Option<&mut SceneItemSpec> {
+        let index = *self.item_ids.get(id)?;
+        self.items.get_mut(index)
+    }
+
+    /// Finds an immutable scene item by project-local ID.
+    #[must_use]
+    pub fn item<Q>(&self, id: &Q) -> Option<&SceneItemSpec>
+    where
+        Identifier: Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        let index = *self.item_ids.get(id)?;
+        self.items.get(index)
+    }
+
+    /// Removes one scene item and returns it.
+    pub fn remove_item(&mut self, id: &Identifier) -> Option<SceneItemSpec> {
+        let index = self.item_ids.remove(id)?;
+        let item = self.items.remove(index);
+        for (index, item) in self.items.iter().enumerate().skip(index) {
+            if let Some(entry) = self.item_ids.get_mut(item.id()) {
                 *entry = index;
             }
         }
-        Some(source)
+        Some(item)
     }
 
-    /// Moves one source item to an existing scene order position.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ProjectError::UnknownSource`] when the source is absent or
-    /// [`ProjectError::InvalidSourceOrder`] when the destination is out of range.
-    pub fn move_source(
-        &mut self,
-        id: &Identifier,
-        target_index: usize,
-    ) -> Result<(), ProjectError> {
+    /// Moves one scene item to an existing order position.
+    pub fn move_item(&mut self, id: &Identifier, target_index: usize) -> Result<(), ProjectError> {
         let current_index = self
-            .source_ids
+            .item_ids
             .get(id)
             .copied()
-            .ok_or_else(|| ProjectError::UnknownSource(id.clone()))?;
-        if target_index >= self.sources.len() {
-            return Err(ProjectError::InvalidSourceOrder {
+            .ok_or_else(|| ProjectError::UnknownSceneItem(id.clone()))?;
+        if target_index >= self.items.len() {
+            return Err(ProjectError::InvalidSceneItemOrder {
                 index: target_index,
             });
         }
-        let source = self.sources.remove(current_index);
-        self.sources.insert(target_index, source);
+        let item = self.items.remove(current_index);
+        self.items.insert(target_index, item);
         let first = current_index.min(target_index);
-        for (index, source) in self.sources.iter().enumerate().skip(first) {
-            if let Some(entry) = self.source_ids.get_mut(source.id()) {
+        for (index, item) in self.items.iter().enumerate().skip(first) {
+            if let Some(entry) = self.item_ids.get_mut(item.id()) {
                 *entry = index;
             }
         }
@@ -543,7 +551,7 @@ impl RenderBackendPreference {
     }
 }
 
-/// One named profile containing video settings and ordered scenes.
+/// One named profile containing a source registry, video settings, and scenes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Profile {
     pub(crate) id: Identifier,
@@ -551,6 +559,7 @@ pub struct Profile {
     pub(crate) video_format: VideoFormat,
     pub(crate) render_backend: RenderBackendPreference,
     pub(crate) output_kind: OutputProfileKind,
+    pub(crate) sources: BTreeMap<Identifier, SourceSpec>,
     pub(crate) scenes: BTreeMap<Identifier, SceneSpec>,
 }
 
@@ -570,6 +579,7 @@ impl Profile {
             video_format,
             render_backend: RenderBackendPreference::Cpu,
             output_kind: OutputProfileKind::ReferencePacket,
+            sources: BTreeMap::new(),
             scenes: BTreeMap::new(),
         })
     }
@@ -617,6 +627,79 @@ impl Profile {
     /// Selects an exact output profile. Runtime negotiation may report it unavailable.
     pub const fn set_output_profile(&mut self, profile: OutputProfileKind) {
         self.output_kind = profile;
+    }
+
+    /// Adds a source to the profile-wide registry.
+    pub fn add_source(&mut self, source: SourceSpec) -> Result<(), ProjectError> {
+        if self.sources.contains_key(source.id()) {
+            return Err(ProjectError::DuplicateSource(source.id().clone()));
+        }
+        self.sources.insert(source.id().clone(), source);
+        Ok(())
+    }
+
+    /// Adds several sources, rejecting duplicates atomically.
+    pub fn add_sources(
+        &mut self,
+        sources: impl IntoIterator<Item = SourceSpec>,
+    ) -> Result<(), ProjectError> {
+        let incoming: Vec<SourceSpec> = sources.into_iter().collect();
+        let mut candidate = HashSet::with_capacity(incoming.len());
+        for source in &incoming {
+            if self.sources.contains_key(source.id()) || !candidate.insert(source.id()) {
+                return Err(ProjectError::DuplicateSource(source.id().clone()));
+            }
+        }
+        for source in incoming {
+            self.sources.insert(source.id().clone(), source);
+        }
+        Ok(())
+    }
+
+    /// Returns sources in deterministic ID order.
+    pub fn sources(&self) -> impl Iterator<Item = &SourceSpec> {
+        self.sources.values()
+    }
+
+    /// Returns whether the profile registry contains `id`.
+    #[must_use]
+    pub fn has_source<Q>(&self, id: &Q) -> bool
+    where
+        Identifier: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.sources.contains_key(id)
+    }
+
+    /// Returns a source by ID.
+    #[must_use]
+    pub fn source<Q>(&self, id: &Q) -> Option<&SourceSpec>
+    where
+        Identifier: Borrow<Q>,
+        Q: Ord + ?Sized,
+    {
+        self.sources.get(id)
+    }
+
+    /// Returns a mutable source by ID.
+    pub fn source_mut(&mut self, id: &Identifier) -> Option<&mut SourceSpec> {
+        self.sources.get_mut(id)
+    }
+
+    /// Returns whether any scene item references this source.
+    #[must_use]
+    pub fn source_in_use(&self, id: &Identifier) -> bool {
+        self.scenes.values().any(|scene| scene.has_source(id))
+    }
+
+    /// Removes an unreferenced source from the registry.
+    pub fn remove_source(&mut self, id: &Identifier) -> Result<SourceSpec, ProjectError> {
+        if self.source_in_use(id) {
+            return Err(ProjectError::SourceInUse(id.clone()));
+        }
+        self.sources
+            .remove(id)
+            .ok_or_else(|| ProjectError::UnknownSource(id.clone()))
     }
 
     /// Adds a scene while rejecting duplicate IDs.

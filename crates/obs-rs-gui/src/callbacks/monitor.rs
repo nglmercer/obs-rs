@@ -421,14 +421,9 @@ fn source_settings_document(state: &Rc<RefCell<DesktopState>>, source: &str) -> 
     let scene = state.preview_scene()?.to_owned();
     let session = state.project_session();
     let project = session.project();
-    Some(
-        project
-            .active_profile_spec()?
-            .scene(scene.as_str())?
-            .source(source)?
-            .settings()
-            .serialize(),
-    )
+    let profile = project.active_profile_spec()?;
+    let item = profile.scene(scene.as_str())?.item(source)?;
+    Some(profile.source(item.source_id())?.settings().serialize())
 }
 
 /// Reads the display a source is currently pointed at.
@@ -449,12 +444,18 @@ pub(crate) fn selected_source_kind(state: &Rc<RefCell<DesktopState>>, source: &s
     };
     let session = state.project_session();
     let project = session.project();
-    project
-        .active_profile_spec()
-        .and_then(|profile| profile.scene(scene.as_str()))
-        .and_then(|scene| scene.source(source))
-        .map(|source| source.kind().as_str().to_owned())
-        .unwrap_or_default()
+    let Some(profile) = project.active_profile_spec() else {
+        return String::new();
+    };
+    let Some(item) = profile
+        .scene(scene.as_str())
+        .and_then(|scene| scene.item(source))
+    else {
+        return String::new();
+    };
+    profile
+        .source(item.source_id())
+        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
 }
 
 /// Summarizes the detected displays under the list.

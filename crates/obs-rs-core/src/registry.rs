@@ -27,24 +27,21 @@ pub(crate) struct SourceInstance {
     pub(crate) kind: Identifier,
     pub(crate) name: String,
     pub(crate) source: Box<dyn Source>,
+    /// Filters belonging to the shared source definition rather than one
+    /// scene item. Every scene reference sees the same compiled chain.
+    pub(crate) filters: Vec<FrameFilter>,
 }
 
 /// The per-scene compositing state of one attached source.
-///
-/// The transform and the filter chain live together so the compositor resolves
-/// both with a single map lookup per source per frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SceneItem {
     pub(crate) transform: FrameTransform,
-    pub(crate) filters: Vec<FrameFilter>,
 }
 
 impl SceneItem {
     fn new() -> Self {
         Self {
             transform: FrameTransform::IDENTITY,
-            // `Vec::new` does not allocate; the first filter push does.
-            filters: Vec::new(),
         }
     }
 }
@@ -57,7 +54,8 @@ pub(crate) struct Scene {
     /// O(1) membership mirror of `sources`, kept in step by [`Scene::attach`]
     /// and [`Scene::detach`].
     pub(crate) attached: HashSet<super::SourceId>,
-    /// Transform and filter chain per attached source.
+    /// Scene-item transform per attached source. Filters live on the shared
+    /// source instance above and are intentionally absent here.
     pub(crate) items: HashMap<super::SourceId, SceneItem>,
 }
 
@@ -82,12 +80,12 @@ impl Scene {
         true
     }
 
-    /// Removes `source`, returning the number of filters it carried.
+    /// Removes `source` while keeping the shared source definition alive.
     ///
     /// Returns `None` when the source is not attached. The ordered `sources`
     /// vector is shifted rather than swap-removed because composition order is
     /// part of the rendering contract.
-    pub(crate) fn detach(&mut self, source: super::SourceId) -> Option<usize> {
+    pub(crate) fn detach(&mut self, source: super::SourceId) -> Option<()> {
         if !self.attached.remove(&source) {
             return None;
         }
@@ -98,17 +96,6 @@ impl Scene {
         {
             self.sources.remove(index);
         }
-        Some(
-            self.items
-                .remove(&source)
-                .map_or(0, |item| item.filters.len()),
-        )
-    }
-
-    /// Returns the total number of filters across every item in this scene.
-    pub(crate) fn filter_count(&self) -> usize {
-        self.items.values().fold(0_usize, |total, item| {
-            total.saturating_add(item.filters.len())
-        })
+        self.items.remove(&source).map(|_| ())
     }
 }
