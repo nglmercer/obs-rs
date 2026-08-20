@@ -206,6 +206,15 @@ is refused with a clear message instead of being partially parsed.
    boundary policy and evidence checklist for keeping the project Rust-native.
 7. [07-functional-todo.md](07-functional-todo.md) — the scoped Linux/X11 V1
    roadmap with dependencies, files, tests, and acceptance criteria.
+8. [PARITY-MATRIX.md](PARITY-MATRIX.md) — the verified OBS Studio 32.2.2
+   subsystem inventory. This is the current parity evidence ledger; roadmap
+   checkboxes are not authoritative.
+9. [PERFORMANCE-BASELINE.md](PERFORMANCE-BASELINE.md) — reproducible benchmark
+   commands, measurements, and the performance sign-off gate.
+10. [KNOWN-BUGS.md](KNOWN-BUGS.md) — observed failures and environment-limited
+    evidence that must be resolved or classified.
+11. [ARCHITECTURE-GAPS.md](ARCHITECTURE-GAPS.md) — dependency-aware gaps for the
+    first performance and parity work packets.
 
 ## Current status
 
