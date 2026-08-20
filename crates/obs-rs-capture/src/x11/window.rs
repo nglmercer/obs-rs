@@ -17,7 +17,7 @@ use std::{io::Write, os::unix::net::UnixStream};
 
 use super::super::CaptureError;
 use super::{
-    connection::{display_socket, handshake, read_authorization},
+    connection::{configure_stream, display_socket, handshake, read_authorization},
     error::{platform_error, protocol_error, read_exact_x11, x11_io_error},
     protocol::{read_u16_le, read_u32_le, ServerInfo},
 };
@@ -143,6 +143,7 @@ pub fn x11_windows(display: &str) -> Result<Vec<X11Window>, CaptureError> {
         UnixStream::connect(&socket_path).map_err(|error| CaptureError::PlatformUnavailable {
             message: format!("connect to {}: {error}", socket_path.display()),
         })?;
+    configure_stream(&stream)?;
     let server = handshake(&mut stream, authorization.as_ref())?;
     enumerate_windows(&mut stream, &server)
 }

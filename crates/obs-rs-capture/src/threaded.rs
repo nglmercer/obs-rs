@@ -213,37 +213,71 @@ fn capture_loop(
     request: CaptureRequest,
     opener: impl FnOnce() -> OpenResult,
 ) {
-    let started = opener().and_then(|mut device| {
-        device.start_capture(request)?;
-        Ok(device)
-    });
-    let mut device = match started {
+    let mut device = match opener() {
         Ok(device) => device,
         Err(error) => {
             finish(mailbox, Some(error));
             return;
         }
     };
+    // A source can be dropped while native opening is in progress. Do not
+    // start a device that the owner has already abandoned.
+    if mailbox.stop.load(Ordering::Acquire) {
+        device.stop();
+        finish(mailbox, None);
+        return;
+    }
+    if let Err(error) = device.start_capture(request) {
+        finish(mailbox, Some(error));
+        return;
+    }
+    if mailbox.stop.load(Ordering::Acquire) {
+        device.stop();
+        finish(mailbox, None);
+        return;
+    }
     mailbox.ready.store(true, Ordering::Release);
 
     // The worker stamps its own frames; the poller restamps to the scene clock,
-    // so this only has to advance monotonically.
-    let period = request
+    // so this only has to advance monotonically. The deadline is still
+    // important: X11 GetImage returns as soon as the server replies, and
+    // without pacing that path would run at the maximum server/CPU rate rather
+    // than at the source's configured frame rate.
+    let period_nanos = request
         .output_format()
         .frame_rate()
         .period_nanos()
-        .unwrap_or(33_333_333);
+        .unwrap_or(33_333_333)
+        .max(1);
+    let period = Duration::from_nanos(period_nanos);
+    let mut next_deadline = Instant::now();
     let mut timestamp = Timestamp::ZERO;
     while !mailbox.stop.load(Ordering::Acquire) {
+        wait_until(&mailbox.stop, next_deadline);
+        if mailbox.stop.load(Ordering::Acquire) {
+            break;
+        }
         match device.next_frame(timestamp) {
             Ok(Some(frame)) => {
                 if let Ok(mut latest) = mailbox.latest.lock() {
                     *latest = Some(frame);
                 }
                 mailbox.frames.fetch_add(1, Ordering::Relaxed);
-                timestamp = timestamp.checked_add(period).unwrap_or(Timestamp::ZERO);
+                timestamp = timestamp
+                    .checked_add(period_nanos)
+                    .unwrap_or(Timestamp::ZERO);
+                let now = Instant::now();
+                next_deadline = next_deadline
+                    .checked_add(period)
+                    .filter(|deadline| *deadline > now)
+                    .unwrap_or(now);
             }
-            Ok(None) => thread::sleep(IDLE_POLL),
+            Ok(None) => {
+                // A mailbox-backed reader can legitimately have no new frame
+                // yet. Poll it often enough to keep latency low, but do not
+                // let an empty source spin a core.
+                next_deadline = Instant::now() + IDLE_POLL;
+            }
             Err(error) => {
                 finish(mailbox, Some(error));
                 return;
@@ -252,6 +286,19 @@ fn capture_loop(
     }
     device.stop();
     finish(mailbox, None);
+}
+
+/// Sleeps in short slices so a stop request is noticed promptly even when the
+/// configured frame period is long. Native frame acquisition itself remains
+/// the only uninterruptible operation in the worker.
+fn wait_until(stop: &AtomicBool, deadline: Instant) {
+    while !stop.load(Ordering::Acquire) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        thread::sleep(remaining.min(Duration::from_millis(5)));
+    }
 }
 
 fn finish(mailbox: &Arc<Mailbox>, error: Option<CaptureError>) {

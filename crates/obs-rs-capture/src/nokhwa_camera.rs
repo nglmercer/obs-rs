@@ -32,6 +32,10 @@ pub struct NokhwaCaptureDevice {
     native_mode: Option<CameraMode>,
     output_format: Option<VideoFormat>,
     frame_index: u64,
+    /// Reused decoder scratch. The final RGBA buffer belongs to the returned
+    /// frame, but the intermediate RGB decode does not need a fresh allocation
+    /// for every camera frame.
+    rgb_scratch: Vec<u8>,
 }
 
 impl NokhwaCaptureDevice {
@@ -72,6 +76,7 @@ impl NokhwaCaptureDevice {
             native_mode: None,
             output_format: None,
             frame_index: 0,
+            rgb_scratch: Vec::new(),
         })
     }
 
@@ -175,11 +180,13 @@ impl VideoCaptureDevice for NokhwaCaptureDevice {
             .checked_mul(source_height)
             .and_then(|pixels| pixels.checked_mul(3))
             .ok_or(CaptureError::ReplyTooLarge { bytes: u64::MAX })?;
-        let mut rgb = vec![0_u8; rgb_bytes];
+        if self.rgb_scratch.len() != rgb_bytes {
+            self.rgb_scratch.resize(rgb_bytes, 0);
+        }
         buffer
-            .decode_image_to_buffer::<RgbFormat>(&mut rgb)
+            .decode_image_to_buffer::<RgbFormat>(&mut self.rgb_scratch)
             .map_err(|error| map_nokhwa_error(&error))?;
-        let rgba = rgb_to_rgba(&rgb);
+        let rgba = rgb_to_rgba(&self.rgb_scratch);
         let pixels = if source_width == usize::try_from(output_format.width()).unwrap_or(0)
             && source_height == usize::try_from(output_format.height()).unwrap_or(0)
         {
@@ -219,6 +226,43 @@ impl Drop for NokhwaCaptureDevice {
 /// unavailable. Individual devices that cannot be opened are retained with an
 /// empty mode list so one busy camera does not hide the others.
 pub fn discover_nokhwa_cameras() -> Result<Vec<CameraDevice>, CaptureError> {
+    discover_nokhwa_cameras_with_modes(true)
+}
+
+/// Discovers camera names and stable IDs without opening every camera to
+/// inspect its complete native mode table.
+///
+/// Device pickers call this lightweight form first. Opening a descriptor just
+/// to populate a list can be surprisingly slow on V4L2, and some drivers take
+/// a long time to answer the format enumeration ioctl. The selected camera's
+/// modes are queried separately by [`discover_nokhwa_camera_modes`].
+///
+/// # Errors
+///
+/// Returns a typed error when the platform camera enumeration is unavailable.
+pub fn discover_nokhwa_camera_devices() -> Result<Vec<CameraDevice>, CaptureError> {
+    discover_nokhwa_cameras_with_modes(false)
+}
+
+/// Queries native modes for one already-discovered camera.
+///
+/// This is deliberately a single-device operation so changing a camera
+/// properties dropdown never reopens or probes unrelated cameras.
+///
+/// # Errors
+///
+/// Returns a typed error when the ID is invalid, the camera is disconnected,
+/// or Nokhwa cannot query its native modes.
+pub fn discover_nokhwa_camera_modes(id: &str) -> Result<Vec<CameraMode>, CaptureError> {
+    initialize_nokhwa();
+    let index = camera_index_from_stable_id(id)?;
+    let mut camera = open_camera(index)?;
+    Ok(camera_modes(&mut camera))
+}
+
+fn discover_nokhwa_cameras_with_modes(
+    include_modes: bool,
+) -> Result<Vec<CameraDevice>, CaptureError> {
     initialize_nokhwa();
     let devices = query(ApiBackend::Auto).map_err(|error| map_nokhwa_error(&error))?;
     let mut cameras = devices
@@ -226,16 +270,20 @@ pub fn discover_nokhwa_cameras() -> Result<Vec<CameraDevice>, CaptureError> {
         .filter_map(|device| {
             let id = stable_camera_id(device.index());
             let name = non_empty_name(device.human_name(), device.description());
-            let modes = Camera::new(
-                device.index().clone(),
-                RequestedFormat::with_formats(
-                    RequestedFormatType::AbsoluteHighestFrameRate,
-                    frame_formats(),
-                ),
-            )
-            .ok()
-            .map(|mut camera| camera_modes(&mut camera))
-            .unwrap_or_default();
+            let modes = if include_modes {
+                Camera::new(
+                    device.index().clone(),
+                    RequestedFormat::with_formats(
+                        RequestedFormatType::AbsoluteHighestFrameRate,
+                        frame_formats(),
+                    ),
+                )
+                .ok()
+                .map(|mut camera| camera_modes(&mut camera))
+                .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             CameraDevice::new(&id, &name, modes).ok()
         })
         .collect::<Vec<_>>();
@@ -398,9 +446,10 @@ fn non_empty_name(name: String, description: &str) -> String {
 }
 
 fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
-    let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
-    for pixel in rgb.chunks_exact(3) {
-        rgba.extend_from_slice(&[pixel[0], pixel[1], pixel[2], u8::MAX]);
+    let pixel_count = rgb.len() / 3;
+    let mut rgba = vec![u8::MAX; pixel_count * 4];
+    for (source, destination) in rgb.chunks_exact(3).zip(rgba.chunks_exact_mut(4)) {
+        destination[..3].copy_from_slice(source);
     }
     rgba
 }

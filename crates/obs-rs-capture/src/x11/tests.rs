@@ -5,7 +5,9 @@ use obs_rs_media::{Timestamp, VideoFormat};
 use super::super::{CaptureError, VideoCaptureDevice};
 use super::{
     connection::display_socket,
-    image::{decode_pixels, packed_row_bytes, padded_row_bytes, scale_channel},
+    image::{
+        decode_pixels, decode_pixels_scaled, packed_row_bytes, padded_row_bytes, scale_channel,
+    },
     protocol::{
         parse_setup, setup_request, Authorization, ImageByteOrder, VisualMasks, X11_TRUE_COLOR,
     },
@@ -75,6 +77,43 @@ fn pixel_decoder_converts_masked_little_endian_true_color() {
     )
     .expect("decode pixels");
     assert_eq!(pixels, vec![255, 0, 0, 255, 0, 255, 0, 255]);
+}
+
+#[test]
+fn scaled_pixel_decoder_matches_letterboxed_reference() {
+    let source = [0_u8, 0, 255, 0, 0, 255, 0, 0];
+    let scaled = decode_pixels_scaled(
+        2,
+        1,
+        3,
+        3,
+        8,
+        32,
+        ImageByteOrder::LeastSignificantFirst,
+        VisualMasks {
+            red: 0x00ff_0000,
+            green: 0x0000_ff00,
+            blue: 0x0000_00ff,
+        },
+        &source,
+    )
+    .expect("scaled pixels");
+    let decoded = decode_pixels(
+        2,
+        1,
+        8,
+        32,
+        ImageByteOrder::LeastSignificantFirst,
+        VisualMasks {
+            red: 0x00ff_0000,
+            green: 0x0000_ff00,
+            blue: 0x0000_00ff,
+        },
+        &source,
+    )
+    .expect("decoded pixels");
+    let reference = resize_letterbox(&decoded, 2, 1, 3, 3).expect("reference resize");
+    assert_eq!(scaled, reference);
 }
 
 #[test]

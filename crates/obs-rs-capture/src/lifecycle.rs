@@ -34,6 +34,7 @@ pub struct AsyncCaptureDevice {
     format: VideoFormat,
     opener: Arc<OpenDevice>,
     receiver: mpsc::Receiver<OpenResult>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
     device: Option<Box<dyn VideoCaptureDevice>>,
     state: CaptureLifecycleState,
     last_error: Option<CaptureError>,
@@ -47,11 +48,13 @@ impl AsyncCaptureDevice {
         opener: impl Fn() -> OpenResult + Send + Sync + 'static,
     ) -> Self {
         let opener: Arc<OpenDevice> = Arc::new(opener);
-        let receiver = spawn_open(Arc::clone(&opener), format);
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let receiver = spawn_open(Arc::clone(&opener), format, Arc::clone(&cancelled));
         Self {
             format,
             opener,
             receiver,
+            cancelled,
             device: None,
             state: CaptureLifecycleState::Opening,
             last_error: None,
@@ -82,8 +85,15 @@ impl AsyncCaptureDevice {
         if self.state != CaptureLifecycleState::Lost {
             return Err(CaptureError::AlreadyRunning);
         }
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
         self.device = None;
-        self.receiver = spawn_open(Arc::clone(&self.opener), self.format);
+        self.cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.receiver = spawn_open(
+            Arc::clone(&self.opener),
+            self.format,
+            Arc::clone(&self.cancelled),
+        );
         self.state = CaptureLifecycleState::Retrying;
         self.last_error = None;
         Ok(())
@@ -149,13 +159,27 @@ impl AsyncCaptureDevice {
     }
 }
 
-fn spawn_open(opener: Arc<OpenDevice>, format: VideoFormat) -> mpsc::Receiver<OpenResult> {
+fn spawn_open(
+    opener: Arc<OpenDevice>,
+    format: VideoFormat,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+) -> mpsc::Receiver<OpenResult> {
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::spawn(move || {
         let result = opener().and_then(|mut device| {
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(CaptureError::NotRunning);
+            }
             device.start(format)?;
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                device.stop();
+                return Err(CaptureError::NotRunning);
+            }
             Ok(device)
         });
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return;
+        }
         let _ = sender.send(result);
     });
     receiver
@@ -166,4 +190,11 @@ const fn is_permission_denial(error: &CaptureError) -> bool {
         error,
         CaptureError::PermissionDenied | CaptureError::PermissionRequired
     )
+}
+
+impl Drop for AsyncCaptureDevice {
+    fn drop(&mut self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
 }

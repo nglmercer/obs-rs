@@ -1,4 +1,4 @@
-use std::{env, fs, io::Write, os::unix::net::UnixStream, path::PathBuf};
+use std::{env, fs, io::Write, os::unix::net::UnixStream, path::PathBuf, time::Duration};
 
 use super::super::CaptureError;
 use super::{
@@ -8,6 +8,20 @@ use super::{
         ServerInfo, X11_INTERNET_FAMILY, X11_LOCAL_FAMILY, X11_MAX_REPLY_BYTES, X11_WILD_FAMILY,
     },
 };
+
+/// Bounds a stalled X server round-trip without making normal local capture
+/// transfers fail under load. The capture worker can then report a typed loss
+/// and let the source choose its fallback instead of wedging forever.
+pub(crate) const X11_SOCKET_TIMEOUT: Duration = Duration::from_secs(1);
+
+pub(crate) fn configure_stream(stream: &UnixStream) -> Result<(), CaptureError> {
+    stream
+        .set_read_timeout(Some(X11_SOCKET_TIMEOUT))
+        .map_err(|error| x11_io_error(&error))?;
+    stream
+        .set_write_timeout(Some(X11_SOCKET_TIMEOUT))
+        .map_err(|error| x11_io_error(&error))
+}
 
 pub(crate) fn display_socket(display: &str) -> Result<(PathBuf, String), CaptureError> {
     let display = display.trim();

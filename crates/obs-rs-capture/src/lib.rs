@@ -20,7 +20,10 @@ mod x11;
 #[cfg(target_os = "linux")]
 pub use dbus::{open_screencast, CursorMode, ScreenCastSession};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub use nokhwa_camera::{discover_nokhwa_cameras, NokhwaCaptureDevice};
+pub use nokhwa_camera::{
+    discover_nokhwa_camera_devices, discover_nokhwa_camera_modes, discover_nokhwa_cameras,
+    NokhwaCaptureDevice,
+};
 #[cfg(target_os = "linux")]
 pub use raw_reader::RawFrameReader;
 #[cfg(target_os = "linux")]

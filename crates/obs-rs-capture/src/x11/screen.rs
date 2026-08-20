@@ -12,7 +12,7 @@ use super::super::{
 use super::{
     connection::{display_socket, handshake, read_authorization},
     error::{platform_error, protocol_error, read_exact_x11, x11_io_error},
-    image::{decode_pixels, packed_row_bytes, padded_row_bytes},
+    image::{decode_pixels, decode_pixels_scaled, packed_row_bytes, padded_row_bytes},
     protocol::{read_u32_le, ServerInfo, X11_GET_IMAGE, X11_MAX_REPLY_BYTES, X11_Z_PIXMAP},
     randr::{query_monitors, X11Monitor},
     window::{enumerate_windows, parse_window_id, window_root_rect, X11Window},
@@ -60,6 +60,7 @@ pub fn x11_monitors(display: &str) -> Result<Vec<X11Monitor>, CaptureError> {
         UnixStream::connect(&socket_path).map_err(|error| CaptureError::PlatformUnavailable {
             message: format!("connect to {}: {error}", socket_path.display()),
         })?;
+    super::connection::configure_stream(&stream)?;
     let server = handshake(&mut stream, authorization.as_ref())?;
     Ok(monitors_or_root(&mut stream, &server))
 }
@@ -101,6 +102,7 @@ impl X11CaptureDevice {
                 message: format!("connect to {}: {error}", socket_path.display()),
             }
         })?;
+        super::connection::configure_stream(&stream)?;
         let server = handshake(&mut stream, authorization.as_ref())?;
         let info = CaptureDeviceInfo::new(id, name, CaptureKind::Screen)?;
         Ok(Self {
@@ -425,22 +427,39 @@ impl X11CaptureDevice {
                 "GetImage payload is shorter than its scanlines",
             ));
         }
-        let pixels = decode_pixels(
-            usize::from(width),
-            usize::from(height),
-            row_stride,
-            self.server.bits_per_pixel,
-            self.server.image_byte_order,
-            self.server.masks,
-            &self.data,
-        )?;
-        let pixels = resize_letterbox(
-            &pixels,
-            usize::from(width),
-            usize::from(height),
-            usize::try_from(format.width()).unwrap_or(usize::MAX),
-            usize::try_from(format.height()).unwrap_or(usize::MAX),
-        )?;
+        let source_width = usize::from(width);
+        let source_height = usize::from(height);
+        let destination_width = usize::try_from(format.width()).unwrap_or(usize::MAX);
+        let destination_height = usize::try_from(format.height()).unwrap_or(usize::MAX);
+        let pixels = if source_width == destination_width && source_height == destination_height {
+            // Keep the exact-size path on the tight row decoder. In
+            // particular, do not allocate a second full-frame buffer just to
+            // pass through an identity resize.
+            decode_pixels(
+                source_width,
+                source_height,
+                row_stride,
+                self.server.bits_per_pixel,
+                self.server.image_byte_order,
+                self.server.masks,
+                &self.data,
+            )?
+        } else {
+            // Decode and letterbox in one pass. For a large desktop scaled to
+            // a small scene this avoids materializing the entire source RGBA
+            // image and cuts the per-frame work to the output pixel count.
+            decode_pixels_scaled(
+                source_width,
+                source_height,
+                destination_width,
+                destination_height,
+                row_stride,
+                self.server.bits_per_pixel,
+                self.server.image_byte_order,
+                self.server.masks,
+                &self.data,
+            )?
+        };
         VideoFrame::new(format, timestamp, pixels).map_err(CaptureError::Media)
     }
 }
@@ -496,6 +515,7 @@ impl VideoCaptureDevice for X11CaptureDevice {
 /// Resizes a complete root image into the output canvas while preserving its
 /// aspect ratio. The unused canvas area is opaque black, so X11 capture remains
 /// composable with ordinary scene layers and never exposes uninitialized alpha.
+#[cfg(test)]
 pub(crate) fn resize_letterbox(
     source: &[u8],
     source_width: usize,

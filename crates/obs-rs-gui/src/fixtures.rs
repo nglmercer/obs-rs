@@ -1,10 +1,49 @@
-use std::error::Error;
+use std::{
+    collections::BTreeMap,
+    error::Error,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
 use obs_rs_builtins::BuiltinPlugin;
-use obs_rs_capture::{CameraMode, CaptureKind};
+use obs_rs_capture::{CameraMode, CaptureDeviceInfo, CaptureKind};
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, VideoFormat};
 use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
+
+/// Platform discovery opens native camera descriptors and performs X11
+/// round-trips. Keep one short-lived snapshot so a camera properties dialog
+/// does not enumerate cameras once for its device list and again for its mode
+/// list, while still allowing hot-plug changes to appear promptly.
+const PLATFORM_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(1);
+const CAMERA_MODE_CACHE_TTL: Duration = Duration::from_secs(5);
+
+static PLATFORM_DISCOVERY_CACHE: OnceLock<
+    Mutex<BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>>,
+> = OnceLock::new();
+static CAMERA_MODE_CACHE: OnceLock<Mutex<BTreeMap<String, (Instant, Vec<CameraMode>)>>> =
+    OnceLock::new();
+
+fn platform_devices_for_kind(kind: CaptureKind) -> Vec<CaptureDeviceInfo> {
+    let cache = PLATFORM_DISCOVERY_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let now = Instant::now();
+    if let Ok(snapshot) = cache.lock() {
+        if let Some((fetched, devices)) = snapshot.get(&kind) {
+            if now.duration_since(*fetched) < PLATFORM_DISCOVERY_CACHE_TTL {
+                return devices.clone();
+            }
+        }
+    }
+
+    let devices = BuiltinPlugin::new()
+        .ok()
+        .and_then(|plugin| plugin.discover_platform_capture_devices_for_kind(kind).ok())
+        .unwrap_or_default();
+    if let Ok(mut snapshot) = cache.lock() {
+        snapshot.insert(kind, (Instant::now(), devices.clone()));
+    }
+    devices
+}
 
 pub(crate) fn initial_project() -> Result<Project, Box<dyn Error>> {
     let format = VideoFormat::new(640, 360, FrameRate::new(30, 1)?)?;
@@ -37,25 +76,21 @@ pub(crate) fn initial_project() -> Result<Project, Box<dyn Error>> {
 }
 
 pub(crate) fn platform_capture_summary() -> String {
-    let plugin = match BuiltinPlugin::new() {
-        Ok(plugin) => plugin,
-        Err(error) => return format!("Platform capture discovery failed: {error}"),
-    };
-    match plugin.discover_platform_capture_devices() {
-        Ok(devices) if devices.is_empty() => {
-            "Platform capture: no devices; CPU fallback sources available".to_owned()
-        }
-        Ok(devices) => {
-            let names = devices
-                .iter()
-                .map(|device| device.name().to_owned())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("Platform capture: {names}")
-        }
-        Err(error) => {
-            format!("Platform capture unavailable: {error}; CPU fallback sources available")
-        }
+    // Startup diagnostics do not need a complete catalog. The old full
+    // discovery walked every X11 window and opened every camera to enumerate
+    // its modes before the first window appeared. Screen/camera summaries are
+    // enough here; the properties picker performs kind-specific discovery.
+    let mut names = [CaptureKind::Screen, CaptureKind::Camera]
+        .into_iter()
+        .flat_map(platform_devices_for_kind)
+        .map(|device| device.name().to_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    if names.is_empty() {
+        "Platform capture: no devices; CPU fallback sources available".to_owned()
+    } else {
+        format!("Platform capture: {}", names.join(", "))
     }
 }
 
@@ -252,9 +287,7 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
         return Vec::new();
     };
     let mut devices = if matches!(kind, "x11_screen_capture" | "x11_window_capture") {
-        plugin
-            .discover_platform_capture_devices()
-            .unwrap_or_default()
+        platform_devices_for_kind(wanted)
             .into_iter()
             .filter(|device| device.kind() == wanted)
             .map(|device| (device.id().to_string(), device.name().to_owned()))
@@ -269,14 +302,12 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
             .collect::<Vec<_>>()
     };
     if kind == "camera_capture" {
-        if let Ok(platform_devices) = plugin.discover_platform_capture_devices() {
-            devices.extend(
-                platform_devices
-                    .into_iter()
-                    .filter(|device| device.kind() == wanted)
-                    .map(|device| (device.id().to_string(), device.name().to_owned())),
-            );
-        }
+        devices.extend(
+            platform_devices_for_kind(wanted)
+                .into_iter()
+                .filter(|device| device.kind() == wanted)
+                .map(|device| (device.id().to_string(), device.name().to_owned())),
+        );
     }
     devices.sort_by(|left, right| left.0.cmp(&right.0));
     devices.dedup_by(|left, right| left.0 == right.0);
@@ -290,17 +321,31 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
 /// An unavailable device produces an empty list, so the properties form omits
 /// controls it cannot honour.
 pub(crate) fn camera_modes_for_device(device_id: &str) -> Vec<CameraMode> {
-    let Ok(plugin) = BuiltinPlugin::new() else {
+    let devices = platform_devices_for_kind(CaptureKind::Camera);
+    if !devices
+        .iter()
+        .any(|device| device.kind() == CaptureKind::Camera && device.id().as_str() == device_id)
+    {
         return Vec::new();
-    };
-    plugin
-        .discover_platform_capture_devices()
-        .unwrap_or_default()
-        .into_iter()
-        .find(|device| device.kind() == CaptureKind::Camera && device.id().as_str() == device_id)
-        .map_or_else(Vec::new, |device| {
-            device.capabilities().camera_modes().to_vec()
-        })
+    }
+
+    let cache = CAMERA_MODE_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let now = Instant::now();
+    if let Ok(snapshot) = cache.lock() {
+        if let Some((fetched, modes)) = snapshot.get(device_id) {
+            if now.duration_since(*fetched) < CAMERA_MODE_CACHE_TTL {
+                return modes.clone();
+            }
+        }
+    }
+    let modes = BuiltinPlugin::new()
+        .ok()
+        .and_then(|plugin| plugin.discover_platform_camera_modes(device_id).ok())
+        .unwrap_or_default();
+    if let Ok(mut snapshot) = cache.lock() {
+        snapshot.insert(device_id.to_owned(), (Instant::now(), modes.clone()));
+    }
+    modes
 }
 
 fn camera_fps_setting(mode: CameraMode) -> String {
