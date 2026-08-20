@@ -7,12 +7,13 @@
 
 use std::{cell::RefCell, collections::BTreeSet, error::Error, rc::Rc};
 
+use obs_rs_media::FrameTransform;
 use obs_rs_project::{ProjectCommand, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    refresh_ui, source_settings, AddSourceWindow, I18n, MainWindow, Palette, PreviewRenderer,
+    refresh_ui, source_settings, AddSourceWindow, I18n, MainWindow, Palette, PreviewSurface,
     SourceCandidate, SourceKindRow,
 };
 
@@ -48,7 +49,7 @@ impl AddSourceController {
 pub(crate) fn install_add_source_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) -> Result<Rc<AddSourceController>, slint::PlatformError> {
     let controller = Rc::new(AddSourceController {
         window: AddSourceWindow::new()?,
@@ -56,21 +57,19 @@ pub(crate) fn install_add_source_window(
         selected: RefCell::new(BTreeSet::new()),
     });
 
-    install_open(ui, state, renderer, &controller);
-    install_selection(state, renderer, &controller);
-    install_actions(ui, state, renderer, &controller);
+    install_open(ui, state, &controller);
+    install_selection(state, &controller);
+    install_actions(ui, state, surface, &controller);
     Ok(controller)
 }
 
 fn install_open(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
     controller: &Rc<AddSourceController>,
 ) {
     let weak = ui.as_weak();
     let state = Rc::clone(state);
-    let renderer = Rc::clone(renderer);
     let controller = Rc::clone(controller);
     ui.on_open_add_source_window(move || {
         let Some(ui) = weak.upgrade() else {
@@ -80,31 +79,25 @@ fn install_open(
         RECENT_KIND.clone_into(&mut controller.kind.borrow_mut());
         // Mirror whatever theme and language the studio is showing right now.
         controller.sync_theme(state.borrow().locale(), ui.global::<Palette>().get_tokens());
-        refresh_window(&state, &renderer, &controller);
+        refresh_window(&state, &controller);
         if let Err(error) = controller.window.show() {
             ui.set_status_message(format!("Add source window: {error}").into());
         }
     });
 }
 
-fn install_selection(
-    state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    controller: &Rc<AddSourceController>,
-) {
+fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourceController>) {
     let kind_state = Rc::clone(state);
-    let kind_renderer = Rc::clone(renderer);
     let kind_controller = Rc::clone(controller);
     controller.window.on_select_kind(move |kind| {
         // Switching kinds drops the selection: the cards it referred to are no
         // longer on screen, so keeping it would add invisible sources.
         kind_controller.selected.borrow_mut().clear();
         *kind_controller.kind.borrow_mut() = kind.to_string();
-        refresh_window(&kind_state, &kind_renderer, &kind_controller);
+        refresh_window(&kind_state, &kind_controller);
     });
 
     let toggle_state = Rc::clone(state);
-    let toggle_renderer = Rc::clone(renderer);
     let toggle_controller = Rc::clone(controller);
     controller.window.on_toggle_candidate(move |id| {
         let id = id.to_string();
@@ -113,7 +106,7 @@ fn install_selection(
             selected.insert(id);
         }
         drop(selected);
-        refresh_window(&toggle_state, &toggle_renderer, &toggle_controller);
+        refresh_window(&toggle_state, &toggle_controller);
     });
 
     let close_controller = Rc::clone(controller);
@@ -125,12 +118,12 @@ fn install_selection(
 fn install_actions(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     controller: &Rc<AddSourceController>,
 ) {
     let weak = ui.as_weak();
     let create_state = Rc::clone(state);
-    let create_renderer = Rc::clone(renderer);
+    let create_surface = Rc::clone(surface);
     let create_controller = Rc::clone(controller);
     controller.window.on_create_source(move || {
         let Some(ui) = weak.upgrade() else {
@@ -140,8 +133,8 @@ fn install_actions(
         let visible = create_controller.window.get_make_visible();
         let result = create_source(&create_state, &kind, visible);
         let created = result.is_ok();
-        report(&ui, &create_state, &create_renderer, result);
-        refresh_window(&create_state, &create_renderer, &create_controller);
+        report(&ui, &create_state, &create_surface, result);
+        refresh_window(&create_state, &create_controller);
         // A new screen source captures every monitor until it is told which one
         // to read, so the picker is offered as part of creating it.
         if created && crate::kind_selects_monitor(&kind) {
@@ -151,7 +144,7 @@ fn install_actions(
 
     let weak = ui.as_weak();
     let add_state = Rc::clone(state);
-    let add_renderer = Rc::clone(renderer);
+    let add_surface = Rc::clone(surface);
     let add_controller = Rc::clone(controller);
     controller.window.on_add_selected(move || {
         let Some(ui) = weak.upgrade() else {
@@ -161,20 +154,20 @@ fn install_actions(
         let visible = add_controller.window.get_make_visible();
         let result = add_existing(&add_state, &selected, visible);
         add_controller.selected.borrow_mut().clear();
-        report(&ui, &add_state, &add_renderer, result);
-        refresh_window(&add_state, &add_renderer, &add_controller);
+        report(&ui, &add_state, &add_surface, result);
+        refresh_window(&add_state, &add_controller);
     });
 }
 
 fn report(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     result: Result<String, Box<dyn Error>>,
 ) {
     match result {
         Ok(message) => {
-            refresh_ui(ui, state, renderer);
+            refresh_ui(ui, state, surface);
             ui.set_status_message(message.into());
         }
         Err(error) => ui.set_status_message(format!("Add source failed: {error}").into()),
@@ -186,11 +179,10 @@ fn report(
 pub(crate) fn populate_add_source_window(
     controller: &Rc<AddSourceController>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
     kind: &str,
 ) {
     *controller.kind.borrow_mut() = kind.to_owned();
-    refresh_window(state, renderer, controller);
+    refresh_window(state, controller);
 }
 
 /// Exposes the window handle for rendering assertions.
@@ -200,11 +192,7 @@ pub(crate) fn add_source_window(controller: &Rc<AddSourceController>) -> &AddSou
 }
 
 /// Rebuilds both models plus the derived footer state.
-fn refresh_window(
-    state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    controller: &Rc<AddSourceController>,
-) {
+fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourceController>) {
     let window = &controller.window;
     let text = window.global::<I18n>().get_text().add_source_ui;
     let active_kind = controller.kind.borrow().clone();
@@ -215,10 +203,8 @@ fn refresh_window(
         icon: "source-generic".into(),
         obsolete: false,
     }];
-    let mut listed = renderer
-        .borrow()
-        .runtime
-        .source_kinds()
+    let mut listed = crate::preview::builtin_source_kinds()
+        .into_iter()
         // A screen kind that cannot work in this session is hidden rather than
         // offered: the X11 adapter under Wayland only sees Xwayland's own
         // surfaces, which is a black frame, and the portal needs a compositor.
@@ -345,6 +331,7 @@ fn create_source(
             source,
         }))?;
     set_visibility(state, &profile, &scene, &id, visible)?;
+    place_overlay(state, &profile, &scene, &id, kind)?;
     // Select the new item immediately so Properties opens on the source the
     // user just created, which is especially important for choosing a camera
     // or screen device after creation.
@@ -385,6 +372,8 @@ fn add_existing(
                 item,
             }))?;
         set_visibility(state, &profile, &scene, &item_id, visible)?;
+        let kind = source_kind(state, source_id);
+        place_overlay(state, &profile, &scene, &item_id, &kind)?;
         state
             .borrow_mut()
             .dispatch(UiCommand::SelectSource { id: item_id })?;
@@ -428,6 +417,110 @@ fn set_visibility(
             visible,
         }))?;
     Ok(())
+}
+
+/// The source kind a new camera item gets a corner placement for.
+const CAMERA_KIND: &str = "camera_capture";
+
+/// The fraction of the canvas a new camera overlay covers.
+const OVERLAY_SCALE_MILLI: u32 = 300;
+
+/// The gap between a camera overlay and the canvas edge, in canvas thousandths.
+const OVERLAY_MARGIN_MILLI: i64 = 25;
+
+/// Parks a newly added camera in the corner instead of over the whole canvas.
+///
+/// Every source renders at canvas size, so a camera added to a scene that
+/// already has a screen capture in it is an opaque rectangle covering that
+/// screen capture completely — the picture the user just set up disappears, and
+/// nothing on screen explains why. A camera is an overlay, so it is placed like
+/// one. A camera that is the only thing in its scene keeps the full canvas,
+/// because a lone webcam in the corner of a black frame is not what anyone
+/// asked for either.
+fn place_overlay(
+    state: &Rc<RefCell<DesktopState>>,
+    profile: &str,
+    scene: &str,
+    item: &str,
+    kind: &str,
+) -> Result<(), Box<dyn Error>> {
+    if kind != CAMERA_KIND || !scene_has_other_visible_item(state, scene, item) {
+        return Ok(());
+    }
+    let canvas = canvas_size(state);
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
+            profile: profile.to_owned(),
+            scene: scene.to_owned(),
+            item: item.to_owned(),
+            transform: corner_overlay(canvas),
+        }))?;
+    Ok(())
+}
+
+/// Returns the bottom-right overlay placement for a canvas of `canvas` pixels.
+fn corner_overlay(canvas: (u32, u32)) -> FrameTransform {
+    let offset = |extent: u32| {
+        let extent = i64::from(extent);
+        let free = extent - extent * i64::from(OVERLAY_SCALE_MILLI) / 1_000;
+        let inset = extent * OVERLAY_MARGIN_MILLI / 1_000;
+        i32::try_from((free - inset).max(0)).unwrap_or(0)
+    };
+    FrameTransform::new(
+        OVERLAY_SCALE_MILLI,
+        OVERLAY_SCALE_MILLI,
+        offset(canvas.0),
+        offset(canvas.1),
+        false,
+        false,
+        255,
+    )
+    .unwrap_or(FrameTransform::IDENTITY)
+}
+
+/// Returns whether the scene shows anything besides `item`.
+fn scene_has_other_visible_item(
+    state: &Rc<RefCell<DesktopState>>,
+    scene: &str,
+    item: &str,
+) -> bool {
+    let state = state.borrow();
+    let session = state.project_session();
+    session
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene))
+        .is_some_and(|scene| {
+            scene
+                .items()
+                .iter()
+                .any(|candidate| candidate.id().as_str() != item && candidate.visible())
+        })
+}
+
+/// Returns the canvas the active profile renders at.
+fn canvas_size(state: &Rc<RefCell<DesktopState>>) -> (u32, u32) {
+    let state = state.borrow();
+    let session = state.project_session();
+    session
+        .project()
+        .active_profile_spec()
+        .map_or((1_920, 1_080), |profile| {
+            let format = profile.video_format();
+            (format.width(), format.height())
+        })
+}
+
+/// Returns the kind of an existing source in the active profile.
+fn source_kind(state: &Rc<RefCell<DesktopState>>, source: &str) -> String {
+    let state = state.borrow();
+    let session = state.project_session();
+    session
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.source(source))
+        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
 }
 
 fn target(state: &Rc<RefCell<DesktopState>>) -> Result<(String, String), Box<dyn Error>> {

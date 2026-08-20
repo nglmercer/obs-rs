@@ -10,11 +10,11 @@
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_media::FrameTransform;
-use obs_rs_project::{ProjectCommand, SceneItemSpec};
+use obs_rs_project::SceneItemSpec;
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::ComponentHandle;
 
-use crate::{refresh_ui, MainWindow, PreviewRenderer};
+use crate::{preview::TransformDraft, MainWindow, PreviewSurface};
 
 /// The smallest on-canvas size a drag may leave a source at.
 ///
@@ -134,15 +134,26 @@ pub(crate) fn drag_rect(rect: ItemRect, handle: i32, dx: i64, dy: i64) -> ItemRe
 }
 
 /// Holds the transform a drag is editing before it reaches the project.
+///
+/// The preview timer reads [`CanvasController::draft`] on every tick and hands
+/// it to the compositor directly, so the picture follows the pointer without a
+/// single project revision being produced.
 pub(crate) struct CanvasController {
-    draft: RefCell<Option<FrameTransform>>,
+    draft: RefCell<Option<TransformDraft>>,
+}
+
+impl CanvasController {
+    /// Returns the drag in progress, if the pointer is down on an item.
+    pub(crate) fn draft(&self) -> Option<TransformDraft> {
+        self.draft.borrow().clone()
+    }
 }
 
 /// Installs the canvas selection and transform callbacks.
 pub(crate) fn install_canvas_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) -> Rc<CanvasController> {
     let controller = Rc::new(CanvasController {
         draft: RefCell::new(None),
@@ -150,21 +161,26 @@ pub(crate) fn install_canvas_callbacks(
 
     let weak = ui.as_weak();
     let drag_state = Rc::clone(state);
-    let drag_renderer = Rc::clone(renderer);
     let drag_controller = Rc::clone(&controller);
     ui.on_transform_dragged(move |handle, dx, dy| {
         let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        if selected_is_locked(&drag_state) {
+            return;
+        }
+        let Some((scene, item)) = dragged_item(&drag_state) else {
             return;
         };
         let canvas = canvas_size(&ui);
         let base = drag_controller
             .draft
             .borrow()
+            .as_ref()
+            .filter(|draft| draft.scene == scene && draft.item == item)
+            .map(|draft| draft.transform)
             .or_else(|| selected_transform(&drag_state))
             .unwrap_or(FrameTransform::IDENTITY);
-        if selected_is_locked(&drag_state) {
-            return;
-        }
         let rect = drag_rect(
             item_rect(base, canvas),
             handle,
@@ -172,34 +188,42 @@ pub(crate) fn install_canvas_callbacks(
             i64::from(dy),
         );
         let transform = transform_for_rect(base, rect, canvas);
-        drag_controller.draft.replace(Some(transform));
-        // The preview follows the pointer, so the edit is applied to the
-        // renderer's copy of the scene without touching the project yet.
-        apply_preview_transform(&ui, &drag_state, &drag_renderer, transform);
+        // The drag stays out of the project until the pointer is released: the
+        // preview timer feeds this straight to the compositor, and the overlay
+        // handles follow it here. A revision per mouse move would fill the undo
+        // history with a hundred entries for one gesture — and, before the
+        // runtime learned to update in place, restart every capture device in
+        // the scene along the way.
+        drag_controller.draft.replace(Some(TransformDraft {
+            scene,
+            item,
+            transform,
+        }));
+        push_item_rect(&ui, item_rect(transform, canvas));
     });
 
     let weak = ui.as_weak();
     let commit_state = Rc::clone(state);
-    let commit_renderer = Rc::clone(renderer);
+    let commit_surface = Rc::clone(surface);
     let commit_controller = Rc::clone(&controller);
     ui.on_transform_committed(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        let Some(transform) = commit_controller.draft.borrow_mut().take() else {
+        let Some(draft) = commit_controller.draft.borrow_mut().take() else {
             return;
         };
         crate::apply_source_transform_and_refresh(
             &ui,
             &commit_state,
-            &commit_renderer,
-            &crate::source_transform_document(transform),
+            &commit_surface,
+            &crate::source_transform_document(draft.transform),
         );
     });
 
     let weak = ui.as_weak();
     let click_state = Rc::clone(state);
-    let click_renderer = Rc::clone(renderer);
+    let click_surface = Rc::clone(surface);
     ui.on_canvas_clicked(move |x, y| {
         let Some(ui) = weak.upgrade() else {
             return;
@@ -216,7 +240,7 @@ pub(crate) fn install_canvas_callbacks(
         crate::dispatch_and_refresh(
             &ui.as_weak(),
             &click_state,
-            &click_renderer,
+            &click_surface,
             UiCommand::SelectSource { id },
         );
     });
@@ -224,32 +248,24 @@ pub(crate) fn install_canvas_callbacks(
     controller
 }
 
-/// Pushes a drag's transform through the project so the preview redraws.
+/// Moves the selection overlay with the pointer during a drag.
 ///
-/// The command path is the same one the properties dialog uses; it is cheap
-/// because only the scene item's transform changes, and it keeps the preview
-/// honest about what the compositor will produce.
-fn apply_preview_transform(
-    ui: &MainWindow,
-    state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
-    transform: FrameTransform,
-) {
-    let Some((profile, scene, item)) = selected_context(&state.borrow()) else {
-        return;
-    };
-    let applied =
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
-                profile,
-                scene,
-                item,
-                transform,
-            }));
-    if applied.is_ok() {
-        refresh_ui(ui, state, renderer);
-    }
+/// The dock refresh derives these from the project, which the drag has not
+/// reached yet, so the handles are placed from the draft instead.
+fn push_item_rect(ui: &MainWindow, rect: ItemRect) {
+    ui.set_item_x(i32::try_from(rect.x).unwrap_or(0));
+    ui.set_item_y(i32::try_from(rect.y).unwrap_or(0));
+    ui.set_item_width(i32::try_from(rect.width).unwrap_or(0));
+    ui.set_item_height(i32::try_from(rect.height).unwrap_or(0));
+}
+
+/// Returns the scene and scene item a drag applies to.
+fn dragged_item(state: &Rc<RefCell<DesktopState>>) -> Option<(String, String)> {
+    let state = state.borrow();
+    Some((
+        state.preview_scene()?.to_owned(),
+        state.selected_source()?.to_owned(),
+    ))
 }
 
 /// Returns the canvas size the studio is currently rendering at.
@@ -260,18 +276,6 @@ fn canvas_size(ui: &MainWindow) -> (u32, u32) {
             .unwrap_or(1_080)
             .max(1),
     )
-}
-
-/// Returns the profile, scene, and scene item the canvas edits apply to.
-fn selected_context(state: &DesktopState) -> Option<(String, String, String)> {
-    let profile = state
-        .project_session()
-        .project()
-        .active_profile()
-        .to_string();
-    let scene = state.preview_scene()?.to_owned();
-    let item = state.selected_source()?.to_owned();
-    Some((profile, scene, item))
 }
 
 /// Returns the selected source's current transform.

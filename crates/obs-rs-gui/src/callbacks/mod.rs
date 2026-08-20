@@ -22,14 +22,14 @@ use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Timer, TimerMode};
 
 use crate::{
-    refresh_output_ui, refresh_preview_frames_for_view, MainWindow, OutputRuntime, PreviewRenderer,
-    PreviewWorker,
+    preview_worker::RenderTargets, refresh_output_ui, refresh_preview_frames_for_view, MainWindow,
+    OutputRuntime, PreviewSurface, PreviewWorker,
 };
 
 pub(crate) use add_source::install_add_source_window;
 #[cfg(test)]
 pub(crate) use add_source::{add_source_window, populate_add_source_window};
-pub(crate) use canvas::{install_canvas_callbacks, item_rect};
+pub(crate) use canvas::{install_canvas_callbacks, item_rect, CanvasController};
 pub(crate) use docks::install_dock_callbacks;
 pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
@@ -42,7 +42,7 @@ pub(crate) use scene::install_scene_callbacks;
 pub(crate) use settings::populate_settings_models;
 pub(crate) use settings::{install_settings_window, PeerWindows};
 pub(crate) use source::{
-    apply_source_name_and_refresh, apply_source_settings_and_refresh,
+    apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
     apply_source_transform_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
     move_source_and_refresh, move_source_to_and_refresh, remove_scene_and_refresh,
     remove_source_and_refresh, reset_source_transform_and_refresh, source_transform_document,
@@ -59,6 +59,7 @@ pub(crate) fn start_preview_timer(
     output: &Rc<RefCell<OutputRuntime>>,
     projectors: &Rc<ProjectorController>,
     docks: &Rc<docks::DockController>,
+    canvas: &Rc<CanvasController>,
 ) -> Timer {
     let timer = Timer::default();
     let weak = ui.as_weak();
@@ -67,6 +68,7 @@ pub(crate) fn start_preview_timer(
     let output = Rc::clone(output);
     let projectors = Rc::clone(projectors);
     let docks = Rc::clone(docks);
+    let canvas = Rc::clone(canvas);
     let mut last_output_ui_refresh = Instant::now()
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
@@ -111,15 +113,26 @@ pub(crate) fn start_preview_timer(
         }
         {
             let state = state.borrow();
+            let draft = canvas.draft();
             preview_worker.request_render(
                 state.project_session().project(),
                 revision,
-                preview_scene.as_deref(),
-                program_scene.as_deref(),
-                // A program projector is a third consumer of the program canvas,
-                // so single-canvas editing has to render it again while one is up.
-                output_active || ui.get_view_mode() == 0 || projectors.wants_program(),
-                output_active,
+                RenderTargets {
+                    preview_scene: preview_scene.as_deref(),
+                    program_scene: program_scene.as_deref(),
+                    // A program projector is a third consumer of the program
+                    // canvas, so single-canvas editing has to render it again
+                    // while one is up.
+                    render_program: output_active
+                        || ui.get_view_mode() == 0
+                        || projectors.wants_program(),
+                    prepare_output: output_active,
+                    // A canvas drag reaches the compositor here rather than
+                    // through a project revision, so the picture follows the
+                    // pointer while the undo history stays at one entry per
+                    // gesture.
+                    draft: draft.as_ref(),
+                },
             );
         }
         let (preview_frame, program_frame, program_output, render_error) =
@@ -273,11 +286,11 @@ fn refresh_input_meter(
 pub(crate) fn install_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
-    install_scene_callbacks(ui, state, renderer);
-    install_output_callbacks(ui, state, renderer, output);
-    install_mixer_callbacks(ui, state, renderer, output);
-    install_project_callbacks(ui, state, renderer, output);
+    install_scene_callbacks(ui, state, surface);
+    install_output_callbacks(ui, state, surface, output);
+    install_mixer_callbacks(ui, state, surface, output);
+    install_project_callbacks(ui, state, surface, output);
 }

@@ -11,7 +11,7 @@ use std::{
 use obs_rs_media::{LatencyMetrics, RawVideoFrame, VideoFrame};
 use obs_rs_project::Project;
 
-use crate::PreviewRenderer;
+use crate::preview::{PreviewRenderer, RuntimeDiagnostics, TransformDraft};
 
 struct PreviewRequest {
     project: Option<Project>,
@@ -20,6 +20,8 @@ struct PreviewRequest {
     program_scene: Option<String>,
     render_program: bool,
     prepare_output: bool,
+    /// The canvas drag in progress, which is not a project edit yet.
+    draft: Option<TransformDraft>,
 }
 
 pub(crate) struct PreviewResult {
@@ -48,6 +50,7 @@ struct PreviewLoopShared<'a> {
     queue_depth: &'a AtomicUsize,
     dropped_requests: &'a AtomicU64,
     performance: &'a Mutex<PreviewPerformanceSnapshot>,
+    diagnostics: &'a Mutex<RuntimeDiagnostics>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -58,6 +61,19 @@ pub(crate) struct PreviewPerformanceSnapshot {
     pub(crate) frame_copy: LatencyMetrics,
     pub(crate) slint_update: LatencyMetrics,
     pub(crate) ui_callback: LatencyMetrics,
+}
+
+/// What one render request asks the worker to produce.
+#[derive(Clone, Copy)]
+pub(crate) struct RenderTargets<'a> {
+    pub(crate) preview_scene: Option<&'a str>,
+    pub(crate) program_scene: Option<&'a str>,
+    /// Whether the program canvas is wanted as well as the preview one.
+    pub(crate) render_program: bool,
+    /// Whether the program frame should also be converted for the encoder.
+    pub(crate) prepare_output: bool,
+    /// The canvas drag in progress, which is not a project edit yet.
+    pub(crate) draft: Option<&'a TransformDraft>,
 }
 
 /// Background scene compositor with capacity-one latest-request/result slots.
@@ -72,7 +88,15 @@ pub(crate) struct PreviewWorker {
 }
 
 impl PreviewWorker {
-    pub(crate) fn spawn(project: Project, revision: u64) -> Result<Self, Box<dyn Error>> {
+    /// Starts the one thread that owns live capture devices.
+    ///
+    /// `diagnostics` is the slot the studio window reads engine counters from;
+    /// it exists so the window never needs a runtime of its own.
+    pub(crate) fn spawn(
+        project: Project,
+        revision: u64,
+        diagnostics: &Arc<Mutex<RuntimeDiagnostics>>,
+    ) -> Result<Self, Box<dyn Error>> {
         let request = Arc::new(SharedRequest {
             latest: Mutex::new(None),
             ready: Condvar::new(),
@@ -89,6 +113,7 @@ impl PreviewWorker {
         let thread_depth = Arc::clone(&queue_depth);
         let thread_drops = Arc::clone(&dropped_requests);
         let thread_performance = Arc::clone(&performance);
+        let thread_diagnostics = Arc::clone(diagnostics);
         let join = thread::Builder::new()
             .name("obs-rs-preview".to_owned())
             .spawn(move || {
@@ -102,6 +127,7 @@ impl PreviewWorker {
                         queue_depth: &thread_depth,
                         dropped_requests: &thread_drops,
                         performance: &thread_performance,
+                        diagnostics: &thread_diagnostics,
                     },
                 );
             })?;
@@ -120,20 +146,18 @@ impl PreviewWorker {
         &self,
         project: &Project,
         revision: u64,
-        preview_scene: Option<&str>,
-        program_scene: Option<&str>,
-        render_program: bool,
-        prepare_output: bool,
+        targets: RenderTargets<'_>,
     ) {
         let project =
             (self.applied_revision.load(Ordering::Acquire) != revision).then(|| project.clone());
         let request = PreviewRequest {
             project,
             revision,
-            preview_scene: preview_scene.map(str::to_owned),
-            program_scene: program_scene.map(str::to_owned),
-            render_program,
-            prepare_output,
+            preview_scene: targets.preview_scene.map(str::to_owned),
+            program_scene: targets.program_scene.map(str::to_owned),
+            render_program: targets.render_program,
+            prepare_output: targets.prepare_output,
+            draft: targets.draft.cloned(),
         };
         enqueue_request(
             &self.request,
@@ -219,6 +243,12 @@ fn preview_loop(project: &Project, revision: u64, shared: PreviewLoopShared<'_>)
             }
         }
 
+        if let Ok(renderer) = &mut renderer {
+            renderer.set_transform_draft(next.draft.as_ref());
+            if let Ok(mut diagnostics) = shared.diagnostics.lock() {
+                *diagnostics = renderer.diagnostics();
+            }
+        }
         let completed = match &mut renderer {
             Ok(renderer) => render_request(renderer, next, shared.performance),
             Err(error) => PreviewResult {
@@ -388,6 +418,7 @@ mod tests {
             program_scene: None,
             render_program: false,
             prepare_output: false,
+            draft: None,
         }
     }
 
@@ -429,9 +460,24 @@ mod tests {
             .id()
             .as_str()
             .to_owned();
-        let worker = PreviewWorker::spawn(project.clone(), 0).expect("preview worker");
+        let worker = PreviewWorker::spawn(
+            project.clone(),
+            0,
+            &Arc::new(Mutex::new(RuntimeDiagnostics::default())),
+        )
+        .expect("preview worker");
         let caller = thread::current().id();
-        worker.request_render(&project, 0, Some(&scene), Some(&scene), true, false);
+        worker.request_render(
+            &project,
+            0,
+            RenderTargets {
+                preview_scene: Some(&scene),
+                program_scene: Some(&scene),
+                render_program: true,
+                prepare_output: false,
+                draft: None,
+            },
+        );
 
         let mut result = None;
         for _ in 0..100 {

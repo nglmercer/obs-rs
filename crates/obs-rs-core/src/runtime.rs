@@ -232,6 +232,8 @@ impl Runtime {
                 name: name.to_owned(),
                 source,
                 filters: Vec::new(),
+                last_frame: None,
+                failure: None,
             },
         );
         Ok(id)
@@ -414,10 +416,68 @@ impl Runtime {
             .sources
             .get_mut(&source)
             .ok_or(RuntimeError::UnknownSource(source))?;
+        // New settings can change the frame shape, so the retained frame is
+        // dropped rather than composited at the old size.
+        instance.last_frame = None;
+        instance.failure = None;
         instance
             .source
             .update(settings)
             .map_err(RuntimeError::Source)
+    }
+
+    /// Renames a source instance without recreating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::UnknownSource`] when the ID is not live or
+    /// [`RuntimeError::InvalidName`] for an empty name.
+    pub fn rename_source(&mut self, source: SourceId, name: &str) -> Result<(), RuntimeError> {
+        if name.trim().is_empty() {
+            return Err(RuntimeError::InvalidName { kind: "source" });
+        }
+        let instance = self
+            .sources
+            .get_mut(&source)
+            .ok_or(RuntimeError::UnknownSource(source))?;
+        name.clone_into(&mut instance.name);
+        Ok(())
+    }
+
+    /// Reorders one scene's composition order to exactly `order`.
+    ///
+    /// This is the incremental counterpart of tearing a scene down and
+    /// rebuilding it: reordering, showing, and hiding items are scene-graph
+    /// edits and must not restart the capture devices underneath them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist and
+    /// [`RuntimeError::UnknownSource`] when `order` names a source that is not
+    /// attached to it.
+    pub fn set_scene_order(&mut self, scene: &str, order: &[SourceId]) -> Result<(), RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        let Some(state) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        for source in order {
+            if !state.attached.contains(source) {
+                return Err(RuntimeError::SourceNotAttached(*source));
+            }
+        }
+        // A partial order would silently drop the items it omits, so the caller
+        // has to name every attached item exactly once.
+        if order.len() != state.sources.len() {
+            return Err(RuntimeError::InvalidName { kind: "scene order" });
+        }
+        state.sources = order.to_vec();
+        Ok(())
+    }
+
+    /// Returns the source IDs that exist in this runtime, in no order.
+    #[must_use]
+    pub fn source_ids(&self) -> Vec<SourceId> {
+        self.sources.keys().copied().collect()
     }
 }
 

@@ -13,7 +13,7 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    filter_properties, refresh_ui, I18n, MainWindow, Palette, PreviewRenderer, SourceFilterRow,
+    filter_properties, refresh_ui, I18n, MainWindow, Palette, PreviewSurface, SourceFilterRow,
     SourceFiltersWindow,
 };
 
@@ -84,21 +84,21 @@ impl SourceFiltersController {
 pub(crate) fn install_source_filters_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) -> Result<Rc<SourceFiltersController>, slint::PlatformError> {
     let controller = Rc::new(SourceFiltersController {
         window: SourceFiltersWindow::new()?,
         selected: RefCell::new(String::new()),
     });
-    install_open(ui, state, renderer, &controller);
-    install_actions(ui, state, renderer, &controller);
+    install_open(ui, state, surface, &controller);
+    install_actions(ui, state, surface, &controller);
     Ok(controller)
 }
 
 fn install_open(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    _renderer: &Rc<RefCell<PreviewRenderer>>,
+    _surface: &Rc<RefCell<PreviewSurface>>,
     controller: &Rc<SourceFiltersController>,
 ) {
     let weak = ui.as_weak();
@@ -119,7 +119,7 @@ fn install_open(
 fn install_actions(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     controller: &Rc<SourceFiltersController>,
 ) {
     let select_controller = Rc::clone(controller);
@@ -132,7 +132,7 @@ fn install_actions(
 
     let weak = ui.as_weak();
     let add_state = Rc::clone(state);
-    let add_renderer = Rc::clone(renderer);
+    let add_surface = Rc::clone(surface);
     let add_controller = Rc::clone(controller);
     controller.window.on_add_filter(move |kind| {
         let Some(ui) = weak.upgrade() else {
@@ -140,65 +140,65 @@ fn install_actions(
         };
         let kind = kind.to_string();
         let result = add_filter(&add_state, &add_controller, &kind);
-        report(&ui, &add_state, &add_renderer, result);
+        report(&ui, &add_state, &add_surface, result);
         refresh_window(&add_state, &add_controller);
     });
 
     let weak = ui.as_weak();
     let remove_state = Rc::clone(state);
-    let remove_renderer = Rc::clone(renderer);
+    let remove_surface = Rc::clone(surface);
     let remove_controller = Rc::clone(controller);
     controller.window.on_remove_filter(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         let result = remove_filter(&remove_state, &remove_controller);
-        report(&ui, &remove_state, &remove_renderer, result);
+        report(&ui, &remove_state, &remove_surface, result);
         refresh_window(&remove_state, &remove_controller);
     });
 
     let weak = ui.as_weak();
     let toggle_state = Rc::clone(state);
-    let toggle_renderer = Rc::clone(renderer);
+    let toggle_surface = Rc::clone(surface);
     let toggle_controller = Rc::clone(controller);
     controller.window.on_toggle_filter(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         let result = toggle_filter(&toggle_state, &toggle_controller);
-        report(&ui, &toggle_state, &toggle_renderer, result);
+        report(&ui, &toggle_state, &toggle_surface, result);
         refresh_window(&toggle_state, &toggle_controller);
     });
 
     let weak = ui.as_weak();
     let move_state = Rc::clone(state);
-    let move_renderer = Rc::clone(renderer);
+    let move_surface = Rc::clone(surface);
     let move_controller = Rc::clone(controller);
     controller.window.on_move_filter(move |delta| {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         let result = move_filter(&move_state, &move_controller, delta);
-        report(&ui, &move_state, &move_renderer, result);
+        report(&ui, &move_state, &move_surface, result);
         refresh_window(&move_state, &move_controller);
     });
 
     let weak = ui.as_weak();
     let rename_state = Rc::clone(state);
-    let rename_renderer = Rc::clone(renderer);
+    let rename_surface = Rc::clone(surface);
     let rename_controller = Rc::clone(controller);
     controller.window.on_rename_filter(move |name| {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         let result = rename_filter(&rename_state, &rename_controller, name.as_str());
-        report(&ui, &rename_state, &rename_renderer, result);
+        report(&ui, &rename_state, &rename_surface, result);
         refresh_window(&rename_state, &rename_controller);
     });
 
     let weak = ui.as_weak();
     let property_state = Rc::clone(state);
-    let property_renderer = Rc::clone(renderer);
+    let property_surface = Rc::clone(surface);
     let property_controller = Rc::clone(controller);
     controller.window.on_edit_property(move |key, value| {
         let Some(ui) = weak.upgrade() else {
@@ -210,7 +210,7 @@ fn install_actions(
             key.as_str(),
             value.as_str(),
         );
-        report(&ui, &property_state, &property_renderer, result);
+        report(&ui, &property_state, &property_surface, result);
         refresh_window(&property_state, &property_controller);
     });
 
@@ -223,11 +223,11 @@ fn install_actions(
 fn report(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     result: Result<(), Box<dyn Error>>,
 ) {
     match result {
-        Ok(()) => refresh_ui(ui, state, renderer),
+        Ok(()) => refresh_ui(ui, state, surface),
         Err(error) => ui.set_status_message(format!("Source filter failed: {error}").into()),
     }
 }

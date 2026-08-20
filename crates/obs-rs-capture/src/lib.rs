@@ -43,6 +43,7 @@ mod provider;
 mod settings;
 mod simulated;
 mod stream_device;
+mod threaded;
 mod types;
 
 #[cfg(test)]
@@ -69,6 +70,7 @@ pub use provider::LinuxCaptureAdapter;
 pub use provider::{CaptureProvider, PlatformCaptureProvider, SimulatedCaptureProvider};
 pub use simulated::{SimulatedCaptureDevice, TestPatternDevice};
 pub use stream_device::StreamCaptureDevice;
+pub use threaded::ThreadedCaptureDevice;
 pub use types::{
     CameraDevice, CameraMode, CameraPixelFormat, CaptureBackendCapabilities, CaptureCapabilities,
     CaptureCatalog, CaptureDeviceInfo, CaptureDeviceState, CaptureEvent, CaptureKind,

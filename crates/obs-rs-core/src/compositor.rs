@@ -134,22 +134,59 @@ impl Runtime {
                 .ok_or(RuntimeError::UnknownSource(*source_id))?;
             let filters = instance.filters.as_slice();
             let capture_started = Instant::now();
-            let frame = instance
-                .source
-                .render(request)
-                .map_err(RuntimeError::Source)?;
+            let rendered = instance.source.render(request);
             metrics.capture_latency.record(capture_started.elapsed());
+            // One failing source must not erase the rest of the scene. A
+            // camera that was unplugged mid-stream, a portal session the
+            // compositor closed — neither is a reason to stop compositing a
+            // perfectly healthy screen capture beside it. The failure is
+            // recorded, the layer falls back to its last good frame, and the
+            // scene keeps rendering.
+            let frame = match rendered {
+                Ok(frame) => {
+                    if frame.is_some() {
+                        instance.failure = None;
+                    }
+                    frame
+                }
+                Err(error) => {
+                    metrics.failed_sources = metrics.failed_sources.saturating_add(1);
+                    instance.failure = Some(error.to_string());
+                    None
+                }
+            };
+            let frame = match frame {
+                Some(frame) if frame.format() == request.format() => {
+                    instance.last_frame = Some(frame.clone());
+                    Some(frame)
+                }
+                // A frame in the wrong shape cannot be composited, and it is
+                // the source's contract that was broken, not the scene's.
+                Some(frame) => {
+                    metrics.failed_sources = metrics.failed_sources.saturating_add(1);
+                    instance.failure = Some(
+                        RuntimeError::Media(MediaError::FormatMismatch {
+                            expected: request.format(),
+                            actual: frame.format(),
+                        })
+                        .to_string(),
+                    );
+                    None
+                }
+                None => None,
+            };
+            let frame = frame.or_else(|| {
+                instance
+                    .last_frame
+                    .as_ref()
+                    .filter(|frame| frame.format() == request.format())
+                    .map(|frame| frame.at_timestamp(request.timestamp()))
+            });
             let Some(frame) = frame else {
                 metrics.empty_sources = metrics.empty_sources.saturating_add(1);
                 continue;
             };
             metrics.source_frames = metrics.source_frames.saturating_add(1);
-            if frame.format() != request.format() {
-                return Err(RuntimeError::Media(MediaError::FormatMismatch {
-                    expected: request.format(),
-                    actual: frame.format(),
-                }));
-            }
             if transform != FrameTransform::IDENTITY {
                 metrics.transformed_frames = metrics.transformed_frames.saturating_add(1);
             }
@@ -226,6 +263,24 @@ impl Runtime {
     /// Clears compositor counters without changing runtime-owned sources or scenes.
     pub fn reset_compositor_metrics(&mut self) {
         self.metrics = CompositorMetrics::default();
+    }
+
+    /// Returns the current failure reported by each source, in no order.
+    ///
+    /// Source failures are isolated by the compositor, so this is how a caller
+    /// learns that a layer is stale: the scene still renders, but one of its
+    /// sources is not delivering.
+    #[must_use]
+    pub fn source_failures(&self) -> Vec<(SourceId, &str)> {
+        self.sources
+            .iter()
+            .filter_map(|(id, instance)| {
+                instance
+                    .failure
+                    .as_deref()
+                    .map(|failure| (*id, failure))
+            })
+            .collect()
     }
 
     /// Returns source metadata for diagnostics.

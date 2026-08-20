@@ -2,7 +2,7 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use slint::Weak;
 
-use crate::{refresh_ui, MainWindow, PreviewRenderer};
+use crate::{refresh_ui, MainWindow, PreviewSurface};
 use obs_rs_config::Config;
 use obs_rs_media::FrameTransform;
 use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
@@ -11,7 +11,7 @@ use obs_rs_ui::{DesktopState, UiCommand};
 pub(crate) fn remove_scene_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     scene_id: &str,
 ) {
     let profile = state
@@ -30,7 +30,7 @@ pub(crate) fn remove_scene_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Remove scene failed: {error}").into()),
     }
 }
@@ -38,7 +38,7 @@ pub(crate) fn remove_scene_and_refresh(
 pub(crate) fn move_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
     delta: i32,
 ) {
@@ -85,7 +85,7 @@ pub(crate) fn move_source_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Move source failed: {error}").into()),
     }
 }
@@ -93,7 +93,7 @@ pub(crate) fn move_source_and_refresh(
 pub(crate) fn move_source_to_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
     target_index: i32,
 ) {
@@ -132,7 +132,7 @@ pub(crate) fn move_source_to_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Move source failed: {error}").into()),
     }
 }
@@ -140,7 +140,7 @@ pub(crate) fn move_source_to_and_refresh(
 pub(crate) fn remove_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -165,7 +165,7 @@ pub(crate) fn remove_source_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Remove source failed: {error}").into()),
     }
 }
@@ -173,7 +173,7 @@ pub(crate) fn remove_source_and_refresh(
 pub(crate) fn toggle_source_visibility_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -192,7 +192,7 @@ pub(crate) fn toggle_source_visibility_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Source visibility failed: {error}").into()),
     }
 }
@@ -200,7 +200,7 @@ pub(crate) fn toggle_source_visibility_and_refresh(
 pub(crate) fn toggle_source_locked_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -219,7 +219,7 @@ pub(crate) fn toggle_source_locked_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Source lock failed: {error}").into()),
     }
 }
@@ -227,10 +227,10 @@ pub(crate) fn toggle_source_locked_and_refresh(
 pub(crate) fn reset_source_transform_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
 ) {
-    update_source_transform_and_refresh(weak, state, renderer, source_id, |_: FrameTransform| {
+    update_source_transform_and_refresh(weak, state, surface, source_id, |_: FrameTransform| {
         Ok(FrameTransform::IDENTITY)
     });
 }
@@ -238,11 +238,11 @@ pub(crate) fn reset_source_transform_and_refresh(
 pub(crate) fn flip_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
     horizontal: bool,
 ) {
-    update_source_transform_and_refresh(weak, state, renderer, source_id, move |transform| {
+    update_source_transform_and_refresh(weak, state, surface, source_id, move |transform| {
         FrameTransform::new(
             transform.scale_x_milli(),
             transform.scale_y_milli(),
@@ -273,7 +273,7 @@ pub(crate) fn flip_source_and_refresh(
 fn update_source_transform_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
     update: impl FnOnce(FrameTransform) -> Result<FrameTransform, Box<dyn Error>>,
 ) {
@@ -310,7 +310,7 @@ fn update_source_transform_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Source transform failed: {error}").into()),
     }
 }
@@ -318,7 +318,7 @@ fn update_source_transform_and_refresh(
 pub(crate) fn duplicate_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     source_id: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -337,7 +337,7 @@ pub(crate) fn duplicate_source_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Duplicate source failed: {error}").into()),
     }
 }
@@ -345,7 +345,7 @@ pub(crate) fn duplicate_source_and_refresh(
 pub(crate) fn apply_source_name_and_refresh(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     name: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -360,7 +360,7 @@ pub(crate) fn apply_source_name_and_refresh(
         Ok(())
     })();
     match result {
-        Ok(()) => refresh_ui(ui, state, renderer),
+        Ok(()) => refresh_ui(ui, state, surface),
         Err(error) => ui.set_status_message(format!("Rename source failed: {error}").into()),
     }
 }
@@ -394,17 +394,40 @@ fn source_display_state(
 pub(crate) fn apply_source_settings_and_refresh(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    document: &str,
+) {
+    let target = selected_source_context(&state.borrow())
+        .map(|(profile, _, _, source)| (profile, source));
+    match target {
+        Ok((profile, source)) => {
+            apply_source_settings_to(ui, state, surface, &profile, &source, document);
+        }
+        Err(error) => ui.set_status_message(format!("Source settings failed: {error}").into()),
+    }
+}
+
+/// Writes settings to one named source, whatever is selected right now.
+///
+/// Anything that finishes asynchronously — a portal handshake, a device probe —
+/// must come through here with the source it started on. Resolving the current
+/// selection when a background answer arrives writes a screen capture's portal
+/// token onto whichever source the user happened to click in the meantime.
+pub(crate) fn apply_source_settings_to(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    profile: &str,
+    source: &str,
     document: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
-        let (profile, _, _, source) = selected_source_context(&state.borrow())?;
         let settings = Config::parse(document)?;
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::SetSourceSettings {
-                profile,
-                source,
+                profile: profile.to_owned(),
+                source: source.to_owned(),
                 settings,
             }))?;
         Ok(())
@@ -412,14 +435,14 @@ pub(crate) fn apply_source_settings_and_refresh(
     if let Err(error) = result {
         ui.set_status_message(format!("Source settings failed: {error}").into());
     } else {
-        refresh_ui(ui, state, renderer);
+        refresh_ui(ui, state, surface);
     }
 }
 
 pub(crate) fn apply_source_transform_and_refresh(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     document: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -446,7 +469,7 @@ pub(crate) fn apply_source_transform_and_refresh(
     if let Err(error) = result {
         ui.set_status_message(format!("Source transform failed: {error}").into());
     } else {
-        refresh_ui(ui, state, renderer);
+        refresh_ui(ui, state, surface);
     }
 }
 

@@ -8,7 +8,7 @@ use slint::ComponentHandle;
 
 use crate::{
     apply_source_transform_and_refresh, source_transform_document, I18n, MainWindow, Palette,
-    PreviewRenderer, SourceTransformWindow,
+    PreviewSurface, SourceTransformWindow,
 };
 
 /// Owns the scene-item transform dialog.
@@ -32,13 +32,13 @@ impl SourceTransformController {
 pub(crate) fn install_source_transform_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) -> Result<Rc<SourceTransformController>, slint::PlatformError> {
     let controller = Rc::new(SourceTransformController {
         window: SourceTransformWindow::new()?,
     });
     install_open(ui, state, &controller);
-    install_actions(ui, state, renderer, &controller);
+    install_actions(ui, state, surface, &controller);
     Ok(controller)
 }
 
@@ -70,12 +70,12 @@ fn install_open(
 fn install_actions(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     controller: &Rc<SourceTransformController>,
 ) {
     let weak = ui.as_weak();
     let accept_state = Rc::clone(state);
-    let accept_renderer = Rc::clone(renderer);
+    let accept_surface = Rc::clone(surface);
     let accept_controller = Rc::clone(controller);
     controller.window.on_accept_transform(move || {
         let Some(ui) = weak.upgrade() else {
@@ -87,7 +87,7 @@ fn install_actions(
                 apply_source_transform_and_refresh(
                     &ui,
                     &accept_state,
-                    &accept_renderer,
+                    &accept_surface,
                     &source_transform_document(transform),
                 );
                 let _ = accept_controller.window.hide();

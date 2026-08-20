@@ -10,6 +10,7 @@ pub struct CompositorMetrics {
     pub(crate) transformed_frames: u64,
     pub(crate) filtered_frames: u64,
     pub(crate) blended_layers: u64,
+    pub(crate) failed_sources: u64,
     pub(crate) capture_latency: LatencyMetrics,
 }
 
@@ -54,6 +55,15 @@ impl CompositorMetrics {
     #[must_use]
     pub const fn blended_layers(self) -> u64 {
         self.blended_layers
+    }
+
+    /// Returns the number of source renders that failed and were skipped.
+    ///
+    /// A failing source is isolated rather than fatal, so this counter is how a
+    /// broken camera in an otherwise healthy scene becomes visible.
+    #[must_use]
+    pub const fn failed_sources(self) -> u64 {
+        self.failed_sources
     }
 
     /// Distribution of source capture/render call latency.

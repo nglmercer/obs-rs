@@ -5,63 +5,63 @@ use obs_rs_project::{ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
-use crate::{refresh_ui, source_settings, MainWindow, OutputRuntime, PreviewRenderer};
+use crate::{refresh_ui, source_settings, MainWindow, OutputRuntime, PreviewSurface};
 
 pub(crate) fn install_project_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
     let weak = ui.as_weak();
     let save_state = Rc::clone(state);
-    let save_renderer = Rc::clone(renderer);
+    let save_surface = Rc::clone(surface);
     ui.on_save_project(move || {
-        save_and_refresh(&weak, &save_state, &save_renderer);
+        save_and_refresh(&weak, &save_state, &save_surface);
     });
 
     let weak = ui.as_weak();
     let load_state = Rc::clone(state);
-    let load_renderer = Rc::clone(renderer);
+    let load_surface = Rc::clone(surface);
     ui.on_load_project(move || {
-        load_and_refresh(&weak, &load_state, &load_renderer);
+        load_and_refresh(&weak, &load_state, &load_surface);
     });
 
     let weak = ui.as_weak();
     let recover_state = Rc::clone(state);
-    let recover_renderer = Rc::clone(renderer);
+    let recover_surface = Rc::clone(surface);
     ui.on_recover_project(move || {
-        recover_and_refresh(&weak, &recover_state, &recover_renderer);
+        recover_and_refresh(&weak, &recover_state, &recover_surface);
     });
 
     let weak = ui.as_weak();
     let diagnostics_state = Rc::clone(state);
-    let diagnostics_renderer = Rc::clone(renderer);
+    let diagnostics_surface = Rc::clone(surface);
     let diagnostics_output = Rc::clone(output);
     ui.on_export_diagnostics(move || {
         export_diagnostics(
             &weak,
             &diagnostics_state,
-            &diagnostics_renderer,
+            &diagnostics_surface,
             &diagnostics_output,
         );
     });
 
     let weak = ui.as_weak();
     let add_state = Rc::clone(state);
-    let add_renderer = Rc::clone(renderer);
+    let add_surface = Rc::clone(surface);
     ui.on_add_scene(move |id, name| {
-        add_scene_and_refresh(&weak, &add_state, &add_renderer, id.as_str(), name.as_str());
+        add_scene_and_refresh(&weak, &add_state, &add_surface, id.as_str(), name.as_str());
     });
 
     let weak = ui.as_weak();
     let source_state = Rc::clone(state);
-    let source_renderer = Rc::clone(renderer);
+    let source_surface = Rc::clone(surface);
     ui.on_add_source(move |id, kind, name| {
         add_source_and_refresh(
             &weak,
             &source_state,
-            &source_renderer,
+            &source_surface,
             id.as_str(),
             kind.as_str(),
             name.as_str(),
@@ -118,7 +118,7 @@ pub(crate) fn project_store(path: &str) -> Result<Rc<ProjectFileStore>, Box<dyn 
 fn save_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let Some(ui) = weak.upgrade() else {
         return;
@@ -131,7 +131,7 @@ fn save_and_refresh(
     match result {
         Ok(bytes) => {
             crate::refresh::invalidate_recovery_cache();
-            refresh_ui(&ui, state, renderer);
+            refresh_ui(&ui, state, surface);
             ui.set_status_message(format!("Saved {bytes} bytes to {path}").into());
         }
         Err(error) => ui.set_status_message(format!("Save failed: {error}").into()),
@@ -141,7 +141,7 @@ fn save_and_refresh(
 fn load_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let Some(ui) = weak.upgrade() else {
         return;
@@ -155,7 +155,7 @@ fn load_and_refresh(
     match result {
         Ok(()) => {
             crate::refresh::invalidate_recovery_cache();
-            refresh_ui(&ui, state, renderer);
+            refresh_ui(&ui, state, surface);
             ui.set_status_message(format!("Loaded project from {path}").into());
         }
         Err(error) => ui.set_status_message(format!("Load failed: {error}").into()),
@@ -165,7 +165,7 @@ fn load_and_refresh(
 fn recover_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let Some(ui) = weak.upgrade() else {
         return;
@@ -178,7 +178,7 @@ fn recover_and_refresh(
     match result {
         Ok(true) => {
             crate::refresh::invalidate_recovery_cache();
-            refresh_ui(&ui, state, renderer);
+            refresh_ui(&ui, state, surface);
             ui.set_status_message(
                 format!("Recovered interrupted project for {path}; save to publish it").into(),
             );
@@ -191,7 +191,7 @@ fn recover_and_refresh(
 fn export_diagnostics(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
     let Some(ui) = weak.upgrade() else {
@@ -201,26 +201,27 @@ fn export_diagnostics(
     let result: Result<usize, Box<dyn Error>> = (|| {
         let (final_path, temp_path) = atomic_write_paths(&path, "diagnostics")?;
         let state = state.borrow();
-        // One borrow of the renderer for all three snapshots.
-        let (metrics, usage, limits) = {
-            let renderer = renderer.borrow();
-            (
-                renderer.runtime.compositor_metrics(),
-                renderer.runtime.usage(),
-                renderer.runtime.limits(),
-            )
-        };
+        // The engine runs on the preview worker, so its counters are read from
+        // the snapshot that worker publishes rather than from a second runtime
+        // this window would otherwise have to keep alive.
+        let diagnostics = surface.borrow().diagnostics();
+        let (metrics, usage, limits) = (
+            diagnostics.metrics,
+            diagnostics.usage,
+            diagnostics.limits,
+        );
         let mut bundle = DiagnosticBundle::new();
         bundle.insert_text("project", &state.project_document())?;
         bundle.insert_text("ui", &state.accessible_snapshot())?;
         bundle.insert_text(
             "runtime",
             &format!(
-                "render_calls={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_scenes={} limit_sources={} limit_filters_per_source={}",
+                "render_calls={} source_requests={} source_frames={} empty_sources={} failed_sources={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_scenes={} limit_sources={} limit_filters_per_source={}",
                 metrics.render_calls(),
                 metrics.source_requests(),
                 metrics.source_frames(),
                 metrics.empty_sources(),
+                metrics.failed_sources(),
                 metrics.transformed_frames(),
                 metrics.filtered_frames(),
                 metrics.blended_layers(),
@@ -236,6 +237,17 @@ fn export_diagnostics(
                 limits.max_filters_per_source()
             ),
         )?;
+        // A source that is failing is the first thing anyone reading a bundle
+        // wants to know, so it gets its own entry instead of being inferred
+        // from a counter.
+        bundle.insert_text(
+            "source-failures",
+            &if diagnostics.failures.is_empty() {
+                "none".to_owned()
+            } else {
+                diagnostics.failures.join("\n")
+            },
+        )?;
         bundle.insert_text("output", &output.borrow_mut().diagnostics_document())?;
         let mut writer = AtomicDiagnosticFileWriter::new(final_path, temp_path)?;
         Ok(writer.finalize(&bundle)?)
@@ -249,7 +261,7 @@ fn export_diagnostics(
 fn add_scene_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     id: &str,
     name: &str,
 ) {
@@ -274,7 +286,7 @@ fn add_scene_and_refresh(
     };
     match result {
         Ok(()) => {
-            refresh_ui(&ui, state, renderer);
+            refresh_ui(&ui, state, surface);
             ui.set_new_scene_id("".into());
             ui.set_new_scene_name("".into());
         }
@@ -285,7 +297,7 @@ fn add_scene_and_refresh(
 pub(crate) fn rename_scene_and_refresh(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     name: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -310,7 +322,7 @@ pub(crate) fn rename_scene_and_refresh(
         Ok(())
     })();
     match result {
-        Ok(()) => refresh_ui(ui, state, renderer),
+        Ok(()) => refresh_ui(ui, state, surface),
         Err(error) => ui.set_status_message(format!("Rename scene failed: {error}").into()),
     }
 }
@@ -318,7 +330,7 @@ pub(crate) fn rename_scene_and_refresh(
 pub(crate) fn duplicate_scene_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     scene_id: &str,
 ) {
     let profile = state
@@ -337,7 +349,7 @@ pub(crate) fn duplicate_scene_and_refresh(
         return;
     };
     match result {
-        Ok(()) => refresh_ui(&ui, state, renderer),
+        Ok(()) => refresh_ui(&ui, state, surface),
         Err(error) => ui.set_status_message(format!("Duplicate scene failed: {error}").into()),
     }
 }
@@ -345,7 +357,7 @@ pub(crate) fn duplicate_scene_and_refresh(
 pub(crate) fn add_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     id: &str,
     kind: &str,
     name: &str,
@@ -383,7 +395,7 @@ pub(crate) fn add_source_and_refresh(
     };
     match result {
         Ok(()) => {
-            refresh_ui(&ui, state, renderer);
+            refresh_ui(&ui, state, surface);
             ui.set_new_source_id("".into());
             ui.set_new_source_name("".into());
         }

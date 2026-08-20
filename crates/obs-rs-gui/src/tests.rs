@@ -1,13 +1,14 @@
+use super::preview::PreviewRenderer;
 use super::i18n::catalog;
 use super::output::stream_protocol_label;
 use super::refresh::{peak_db, transition_label_for_locale};
 use super::settings::AppSettings;
 use super::{
     capture_devices, initial_project, refresh_ui, source_settings, I18n, MainWindow, OutputRuntime,
-    PreviewRenderer, SettingsWindow, SourcePropertiesWindow,
+    PreviewSurface, SettingsWindow, SourcePropertiesWindow,
 };
 use i_slint_backend_testing::ElementHandle;
-use obs_rs_media::{FrameRate, FrameTransition, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{FrameRate, FrameTransform, FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
@@ -102,7 +103,8 @@ fn gui_catalog_switches_complete_copy_between_supported_locales() {
 #[test]
 fn preview_renderer_uses_the_project_scene_sources() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer =
+        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let frame = renderer
         .render("preview")
         .expect("preview scene should render")
@@ -113,7 +115,8 @@ fn preview_renderer_uses_the_project_scene_sources() {
 #[test]
 fn preview_renderer_composes_scene_transitions() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer =
+        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let frame = renderer
         .render_transition(
             "preview",
@@ -130,7 +133,8 @@ fn preview_renderer_composes_scene_transitions() {
 #[test]
 fn preview_renderer_advances_animated_capture_sources() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer =
+        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let first = renderer
         .render("intermission")
         .expect("first pattern frame should render")
@@ -145,7 +149,8 @@ fn preview_renderer_advances_animated_capture_sources() {
 #[test]
 fn preview_renderer_reuses_static_scene_composition() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer =
+        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     renderer
         .render("preview")
         .expect("static scene should render")
@@ -438,7 +443,8 @@ fn output_runtime_switches_the_selected_audio_input_without_rebuilding_video() {
 #[test]
 fn preview_renderer_rebuilds_after_project_edit() {
     let mut project = initial_project().expect("initial GUI project should validate");
-    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer =
+        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     project
         .apply(ProjectCommand::AddScene {
             profile: "live".to_owned(),
@@ -446,17 +452,98 @@ fn preview_renderer_rebuilds_after_project_edit() {
         })
         .expect("add scene");
 
-    // A different revision is what tells the renderer to rebuild.
+    // A different revision is what tells the renderer to apply the change.
     assert!(renderer
         .sync_project(&project, 1)
-        .expect("renderer should rebuild from the edited project"));
-    // The same revision must not trigger another rebuild.
+        .expect("renderer should apply the edited project"));
+    // The same revision must not trigger another sync.
     assert!(!renderer
         .sync_project(&project, 1)
         .expect("unchanged revision is a no-op"));
     assert!(renderer
         .render("new-scene")
         .expect("empty scene should be renderable")
+        .is_none());
+}
+
+#[test]
+fn moving_a_source_does_not_recreate_the_scene_sources() {
+    let mut project = initial_project().expect("initial GUI project should validate");
+    let mut renderer =
+        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let before = {
+        let mut ids = renderer.runtime.source_ids();
+        ids.sort();
+        ids
+    };
+
+    // A canvas drag is a stream of these. Not one of them may recreate a
+    // source: for a camera or a screen cast, recreating is reopening.
+    for step in 1..=25_u64 {
+        project
+            .apply(ProjectCommand::SetSceneItemTransform {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                item: "background".to_owned(),
+                transform: FrameTransform::new(
+                    500,
+                    500,
+                    i32::try_from(step).expect("step"),
+                    0,
+                    false,
+                    false,
+                    255,
+                )
+                .expect("transform"),
+            })
+            .expect("move source");
+        assert!(renderer
+            .sync_project(&project, step)
+            .expect("renderer should apply the move"));
+    }
+
+    let after = {
+        let mut ids = renderer.runtime.source_ids();
+        ids.sort();
+        ids
+    };
+    assert_eq!(before, after, "a move must not rebuild the runtime sources");
+}
+
+#[test]
+fn hiding_a_source_keeps_the_others_running() {
+    let mut project = initial_project().expect("initial GUI project should validate");
+    let mut renderer =
+        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let before = {
+        let mut ids = renderer.runtime.source_ids();
+        ids.sort();
+        ids
+    };
+
+    project
+        .apply(ProjectCommand::SetSceneItemVisibility {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: "background".to_owned(),
+            visible: false,
+        })
+        .expect("hide source");
+    renderer
+        .sync_project(&project, 1)
+        .expect("renderer should apply the visibility change");
+
+    let after = {
+        let mut ids = renderer.runtime.source_ids();
+        ids.sort();
+        ids
+    };
+    // Hiding detaches the item from the scene; the source definition and every
+    // other device in the project stay exactly as they were.
+    assert_eq!(before, after);
+    assert!(renderer
+        .render("preview")
+        .expect("hidden scene should render")
         .is_none());
 }
 
@@ -471,7 +558,8 @@ fn preview_renderer_honors_hidden_scene_sources() {
             visible: false,
         })
         .expect("hide source");
-    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer =
+        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     assert!(renderer
         .render("preview")
         .expect("hidden scene should render")
@@ -524,11 +612,11 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui.set_recording_path("obs-rs-recording.y4m".into());
     ui.set_streaming_address("127.0.0.1:9000".into());
     let project = initial_project().expect("initial project");
-    let renderer = Rc::new(RefCell::new(
-        PreviewRenderer::new(&project, 0).expect("preview renderer"),
+    let surface = Rc::new(RefCell::new(
+        PreviewSurface::new(&project, 0).expect("preview surface"),
     ));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
-    refresh_ui(&ui, &state, &renderer);
+    refresh_ui(&ui, &state, &surface);
     ui.show().expect("testing window should show");
     exercise_navbar_popup(&ui);
     let snapshot = ui
@@ -556,15 +644,15 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_dock_layout(&ui, &state);
     render_every_settings_category();
     render_source_properties_window();
-    render_source_filters_window(&ui, &state, &renderer);
-    exercise_source_transform_window(&ui, &state, &renderer);
+    render_source_filters_window(&ui, &state, &surface);
+    exercise_source_transform_window(&ui, &state, &surface);
     render_monitor_window();
-    exercise_add_source_window(&ui, &state, &renderer);
-    exercise_capture_device_properties_window(&ui, &state, &renderer);
-    exercise_monitor_selection(&ui, &state, &renderer);
-    exercise_recording_controls(&ui, &state, &renderer);
-    exercise_menu_actions(&ui, &state, &renderer);
-    exercise_context_menus(&ui, &state, &renderer);
+    exercise_add_source_window(&ui, &state, &surface);
+    exercise_capture_device_properties_window(&ui, &state, &surface);
+    exercise_monitor_selection(&ui, &state, &surface);
+    exercise_recording_controls(&ui, &state, &surface);
+    exercise_menu_actions(&ui, &state, &surface);
+    exercise_context_menus(&ui, &state, &surface);
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup
@@ -593,9 +681,9 @@ fn exercise_navbar_popup(ui: &MainWindow) {
 fn exercise_menu_actions(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
-    let projectors = crate::install_menu_callbacks(ui, state, renderer);
+    let projectors = crate::install_menu_callbacks(ui, state, surface);
 
     // The exercises before this one have already edited the project, so the
     // history starts from a known-empty state rather than from their leftovers.
@@ -615,7 +703,7 @@ fn exercise_menu_actions(
             name: "Renamed in test".to_owned(),
         }))
         .expect("rename the preview scene");
-    refresh_ui(ui, state, renderer);
+    refresh_ui(ui, state, surface);
     assert!(ui.get_can_undo(), "an edit becomes an undoable step");
 
     ui.invoke_undo_edit();
@@ -666,10 +754,10 @@ fn exercise_menu_actions(
 fn exercise_context_menus(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
-    let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
-    crate::callbacks::install_callbacks(ui, state, renderer, &output);
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
     ui.invoke_new_project();
     ui.invoke_select_preview("preview".into());
     let profile = "live".to_owned();
@@ -689,7 +777,7 @@ fn exercise_context_menus(
             }))
             .expect("add source");
     }
-    refresh_ui(ui, state, renderer);
+    refresh_ui(ui, state, surface);
 
     let rows = ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
         .filter(|row| row.size().height > 30.0)
@@ -997,7 +1085,7 @@ fn render_monitor_window() {
 fn exercise_monitor_selection(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let scene = state
         .borrow()
@@ -1021,14 +1109,14 @@ fn exercise_monitor_selection(
             id: "gui-screen".to_owned(),
         })
         .expect("select screen source");
-    refresh_ui(ui, state, renderer);
+    refresh_ui(ui, state, surface);
     assert!(
         ui.get_selected_source_is_screen(),
         "an X11 screen source must offer the display picker"
     );
 
     let controller =
-        crate::install_monitor_window(ui, state, renderer).expect("monitor controller");
+        crate::install_monitor_window(ui, state, surface).expect("monitor controller");
     ui.invoke_open_monitor_window();
     let window = crate::callbacks::monitor::MonitorController::window(&controller);
     // The whole-desktop choice is the one available on every host, including a
@@ -1105,7 +1193,7 @@ fn render_source_properties_window() {
 fn render_source_filters_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     state
         .borrow_mut()
@@ -1113,9 +1201,9 @@ fn render_source_filters_window(
             id: "background".to_owned(),
         })
         .expect("background source should be selectable");
-    refresh_ui(ui, state, renderer);
+    refresh_ui(ui, state, surface);
 
-    let controller = crate::install_source_filters_window(ui, state, renderer)
+    let controller = crate::install_source_filters_window(ui, state, surface)
         .expect("filters window should instantiate");
     ui.invoke_open_source_filters_window();
     let window = crate::callbacks::source_filters::source_filters_window(&controller);
@@ -1177,9 +1265,9 @@ fn render_source_filters_window(
 fn exercise_source_transform_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
-    let controller = crate::install_source_transform_window(ui, state, renderer)
+    let controller = crate::install_source_transform_window(ui, state, surface)
         .expect("transform window should instantiate");
     ui.invoke_open_source_transform_window();
     let window = crate::callbacks::source_transform::source_transform_window(&controller);
@@ -1235,16 +1323,16 @@ fn exercise_source_transform_window(
 fn exercise_add_source_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
-    let controller = crate::install_add_source_window(ui, state, renderer)
+    let controller = crate::install_add_source_window(ui, state, surface)
         .expect("add source window should instantiate");
     let window = crate::callbacks::add_source_window(&controller);
     window.show().expect("add source window should show");
 
     // Every registered kind must produce a renderable page.
-    for kind in renderer.borrow().runtime.source_kinds() {
-        crate::callbacks::populate_add_source_window(&controller, state, renderer, kind.as_str());
+    for kind in crate::preview::builtin_source_kinds() {
+        crate::callbacks::populate_add_source_window(&controller, state, &kind);
         assert!(
             window
                 .window()
@@ -1261,7 +1349,7 @@ fn exercise_add_source_window(
         .preview_scene()
         .expect("a preview scene is selected")
         .to_owned();
-    crate::callbacks::populate_add_source_window(&controller, state, renderer, "color_source");
+    crate::callbacks::populate_add_source_window(&controller, state, "color_source");
 
     let before = scene_source_count(state, &scene);
     window.invoke_create_source();
@@ -1302,7 +1390,7 @@ fn exercise_add_source_window(
         }))
         .expect("plant a source in another scene");
 
-    crate::callbacks::populate_add_source_window(&controller, state, renderer, "color_source");
+    crate::callbacks::populate_add_source_window(&controller, state, "color_source");
     let candidate = window
         .get_candidates()
         .iter()
@@ -1329,7 +1417,7 @@ fn exercise_add_source_window(
     );
 
     // Once it is in the scene, the same source is no longer a candidate.
-    crate::callbacks::populate_add_source_window(&controller, state, renderer, "color_source");
+    crate::callbacks::populate_add_source_window(&controller, state, "color_source");
     assert!(
         !window
             .get_candidates()
@@ -1339,7 +1427,7 @@ fn exercise_add_source_window(
     );
 
     // "Recently added" lists existing sources only, so it offers no creation.
-    crate::callbacks::populate_add_source_window(&controller, state, renderer, "@recent");
+    crate::callbacks::populate_add_source_window(&controller, state, "@recent");
     assert!(!window.get_can_create());
 
     window.hide().expect("add source window should hide");
@@ -1351,7 +1439,7 @@ fn exercise_add_source_window(
 fn exercise_capture_device_properties_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let scene = state
         .borrow()
@@ -1378,9 +1466,9 @@ fn exercise_capture_device_properties_window(
             id: "gui-camera".to_owned(),
         })
         .expect("select camera source");
-    refresh_ui(ui, state, renderer);
+    refresh_ui(ui, state, surface);
 
-    let controller = crate::install_source_properties_window(ui, state, renderer)
+    let controller = crate::install_source_properties_window(ui, state, surface)
         .expect("properties controller");
     ui.invoke_open_source_properties_window();
     let window =
@@ -1416,7 +1504,7 @@ fn exercise_capture_device_properties_window(
 fn exercise_recording_controls(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let token = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1424,16 +1512,16 @@ fn exercise_recording_controls(
         .as_nanos();
     let path = std::env::temp_dir().join(format!("obs-rs-gui-callback-{token}.obsr"));
     ui.set_recording_path(path.to_string_lossy().into_owned().into());
-    let output = Rc::new(RefCell::new(OutputRuntime::new(renderer.borrow().format)));
-    crate::callbacks::install_callbacks(ui, state, renderer, &output);
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
 
     ui.invoke_toggle_recording();
     assert!(
         state.borrow().recording(),
         "Record button must start the state"
     );
-    let frame = renderer
-        .borrow_mut()
+    let frame = PreviewRenderer::new(state.borrow().project_session().project(), 0)
+        .expect("preview renderer")
         .render("program")
         .expect("program frame")
         .expect("program scene frame");

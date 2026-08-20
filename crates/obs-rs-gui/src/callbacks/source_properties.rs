@@ -11,7 +11,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
     apply_source_settings_and_refresh, kind_selects_monitor, properties, source_settings, I18n,
-    MainWindow, Palette, PreviewRenderer, SourcePropertiesWindow,
+    MainWindow, Palette, PreviewSurface, SourcePropertiesWindow,
 };
 
 /// Owns the properties window.
@@ -49,7 +49,7 @@ impl SourcePropertiesController {
 pub(crate) fn install_source_properties_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) -> Result<Rc<SourcePropertiesController>, slint::PlatformError> {
     let controller = Rc::new(SourcePropertiesController {
         window: SourcePropertiesWindow::new()?,
@@ -57,7 +57,7 @@ pub(crate) fn install_source_properties_window(
 
     install_open(ui, state, &controller);
     install_editing(ui, state, &controller);
-    install_commit(ui, state, renderer, &controller);
+    install_commit(ui, state, surface, &controller);
     Ok(controller)
 }
 
@@ -144,12 +144,12 @@ fn install_editing(
 fn install_commit(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     controller: &Rc<SourcePropertiesController>,
 ) {
     let weak = ui.as_weak();
     let state = Rc::clone(state);
-    let renderer = Rc::clone(renderer);
+    let surface = Rc::clone(surface);
     let accept_controller = Rc::clone(controller);
     controller.window.on_accept_properties(move || {
         let Some(ui) = weak.upgrade() else {
@@ -161,7 +161,7 @@ fn install_commit(
         apply_source_settings_and_refresh(
             &ui,
             &state,
-            &renderer,
+            &surface,
             window.get_source_settings().as_str(),
         );
         let _ = window.hide();

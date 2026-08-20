@@ -7,7 +7,7 @@ use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::{
     frame_to_image, project_store, LocaleOption, MainWindow, MixerRow, OutputRuntime,
-    PreviewRenderer, PreviewWorker, ProfileRow, SceneRow, SourceRow,
+    PreviewSurface, PreviewWorker, ProfileRow, SceneRow, SourceRow,
 };
 
 thread_local! {
@@ -26,7 +26,7 @@ thread_local! {
 pub(crate) fn dispatch_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     command: UiCommand,
 ) {
     let result = state.borrow_mut().dispatch(command);
@@ -38,14 +38,14 @@ pub(crate) fn dispatch_and_refresh(
         let prefix = crate::i18n::with_catalog(locale, |text| text.command_failed.clone());
         ui.set_status_message(format!("{prefix}{error}").into());
     } else {
-        refresh_ui(&ui, state, renderer);
+        refresh_ui(&ui, state, surface);
     }
 }
 
 pub(crate) fn refresh_ui(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let (revision, notice) = {
         let state = state.borrow();
@@ -101,24 +101,23 @@ pub(crate) fn refresh_ui(
         )
     };
 
-    // Project data is cloned only when the renderer really needs a rebuild;
-    // the state borrow is therefore never held across the renderer borrow on
+    // Project data is cloned only when the surface really needs a rebuild;
+    // the state borrow is therefore never held across the surface borrow on
     // the common refresh path.
     let needs_sync = {
-        let renderer = renderer.borrow();
-        !renderer.is_synced(revision)
+        let surface = surface.borrow();
+        !surface.is_synced(revision)
     };
     let sync_error = if needs_sync {
         let project = state.borrow().project_session().project().clone();
-        renderer.borrow_mut().sync_project(&project, revision).err()
+        surface.borrow_mut().sync_project(&project, revision).err()
     } else {
         None
     };
     let render_error = if let Some(error) = sync_error {
         ui.set_preview_image(Image::default());
         ui.set_program_image(Image::default());
-        ui.set_preview_metrics(renderer.borrow().metrics_summary().into());
-        Some(format!("Preview renderer: {error}"))
+        Some(format!("Preview surface: {error}"))
     } else {
         None
     };

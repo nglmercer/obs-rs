@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use obs_rs_media::{FrameFilter, FrameTransform};
+use obs_rs_media::{FrameFilter, FrameTransform, VideoFrame};
 use obs_rs_plugin_api::{PluginManifest, Source, SourceFactory};
 use obs_rs_util::Identifier;
 
@@ -30,6 +30,15 @@ pub(crate) struct SourceInstance {
     /// Filters belonging to the shared source definition rather than one
     /// scene item. Every scene reference sees the same compiled chain.
     pub(crate) filters: Vec<FrameFilter>,
+    /// The newest frame this source produced.
+    ///
+    /// A live device drops frames — a camera that is reconnecting, a portal
+    /// stream that stalls for a moment. Holding the last good frame lets the
+    /// compositor keep drawing the layer instead of making it disappear and
+    /// reappear. Frame storage is reference-counted, so this costs a pointer.
+    pub(crate) last_frame: Option<VideoFrame>,
+    /// Why this source's last render failed, cleared by the next good frame.
+    pub(crate) failure: Option<String>,
 }
 
 /// The per-scene compositing state of one attached source.
