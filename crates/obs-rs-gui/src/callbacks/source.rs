@@ -397,13 +397,9 @@ pub(crate) fn apply_source_settings_and_refresh(
     surface: &Rc<RefCell<PreviewSurface>>,
     document: &str,
 ) {
-    let target = selected_source_context(&state.borrow())
-        .map(|(profile, _, _, source)| (profile, source));
-    match target {
-        Ok((profile, source)) => {
-            apply_source_settings_to(ui, state, surface, &profile, &source, document);
-        }
-        Err(error) => ui.set_status_message(format!("Source settings failed: {error}").into()),
+    match selected_target(&state.borrow()) {
+        Some(target) => apply_source_settings_to(ui, state, surface, &target, document),
+        None => ui.set_status_message("Source settings failed: no source is selected".into()),
     }
 }
 
@@ -417,8 +413,7 @@ pub(crate) fn apply_source_settings_to(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
-    profile: &str,
-    source: &str,
+    target: &SourceTarget,
     document: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -426,8 +421,8 @@ pub(crate) fn apply_source_settings_to(
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::SetSourceSettings {
-                profile: profile.to_owned(),
-                source: source.to_owned(),
+                profile: target.profile.clone(),
+                source: target.source.clone(),
                 settings,
             }))?;
         Ok(())
@@ -439,16 +434,20 @@ pub(crate) fn apply_source_settings_to(
     }
 }
 
-pub(crate) fn apply_source_transform_and_refresh(
+/// Writes a transform to one named scene item, whatever is selected right now.
+///
+/// A pointer gesture and an open dialog both start on a specific item and
+/// finish some time later. Both commit through here with the item they started
+/// on, so a selection change in between moves nothing unexpected.
+pub(crate) fn apply_source_transform_to(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
+    target: &SourceTarget,
     document: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
-        let (profile, scene, item, _) = selected_source_context(&state.borrow())?;
-        let (_, _, _, locked) = source_display_state(&state.borrow(), &item)?;
-        if locked {
+        if is_locked(&state.borrow(), target) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "source is locked",
@@ -459,9 +458,9 @@ pub(crate) fn apply_source_transform_and_refresh(
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
-                profile,
-                scene,
-                item,
+                profile: target.profile.clone(),
+                scene: target.scene.clone(),
+                item: target.item.clone(),
                 transform,
             }))?;
         Ok(())
@@ -473,31 +472,86 @@ pub(crate) fn apply_source_transform_and_refresh(
     }
 }
 
+/// Returns whether a target's scene item is protected from editing.
+fn is_locked(state: &DesktopState, target: &SourceTarget) -> bool {
+    state
+        .project_session()
+        .project()
+        .profile(target.profile.as_str())
+        .and_then(|profile| profile.scene(target.scene.as_str()))
+        .and_then(|scene| scene.item(target.item.as_str()))
+        .is_some_and(obs_rs_project::SceneItemSpec::locked)
+}
+
+/// A stable reference to one scene item and the source definition it shows.
+///
+/// Anything that outlives the click that started it — a dialog the user leaves
+/// open, a portal handshake, a pointer gesture — has to carry one of these. The
+/// alternative is asking "what is selected?" when the work finishes, which is a
+/// different answer by then often enough to matter: it is how a screen
+/// capture's portal token ends up on a camera.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceTarget {
+    pub(crate) profile: String,
+    pub(crate) scene: String,
+    /// The scene item, which is what a transform and the dock selection name.
+    pub(crate) item: String,
+    /// The profile-wide source definition, which is what settings belong to.
+    pub(crate) source: String,
+}
+
+/// Resolves one scene item in the preview scene to a stable target.
+pub(crate) fn source_target(state: &DesktopState, item: &str) -> Option<SourceTarget> {
+    let project = state.project_session().project();
+    let scene = state.preview_scene()?.to_owned();
+    let source = project
+        .active_profile_spec()?
+        .scene(scene.as_str())?
+        .item(item)?
+        .source_id()
+        .to_string();
+    Some(SourceTarget {
+        profile: project.active_profile().to_string(),
+        scene,
+        item: item.to_owned(),
+        source,
+    })
+}
+
+/// Resolves the selected scene item to a stable target.
+pub(crate) fn selected_target(state: &DesktopState) -> Option<SourceTarget> {
+    source_target(state, state.selected_source()?)
+}
+
+/// Returns a target's settings document from the live project.
+pub(crate) fn target_settings_document(
+    state: &Rc<RefCell<DesktopState>>,
+    target: &SourceTarget,
+) -> Option<String> {
+    let state = state.borrow();
+    let session = state.project_session();
+    let profile = session.project().profile(target.profile.as_str())?;
+    Some(
+        profile
+            .source(target.source.as_str())?
+            .settings()
+            .serialize(),
+    )
+}
+
 fn selected_source_context(
     state: &DesktopState,
 ) -> Result<(String, String, String, String), Box<dyn Error>> {
-    let profile = state
-        .project_session()
-        .project()
-        .active_profile()
-        .to_string();
-    let scene = state
-        .preview_scene()
-        .map(str::to_owned)
-        .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
-    let item = state
-        .selected_source()
-        .map(str::to_owned)
-        .ok_or_else(|| std::io::Error::other("no source is selected"))?;
-    let source = state
-        .project_session()
-        .project()
-        .active_profile_spec()
-        .and_then(|profile_spec| profile_spec.scene(scene.as_str()))
-        .and_then(|scene_spec| scene_spec.item(item.as_str()))
-        .map(|item| item.source_id().to_string())
-        .ok_or_else(|| std::io::Error::other("selected source item is missing"))?;
-    Ok((profile, scene, item, source))
+    let target = selected_target(state).ok_or_else(|| {
+        std::io::Error::other(if state.preview_scene().is_none() {
+            "no preview scene is selected"
+        } else if state.selected_source().is_none() {
+            "no source is selected"
+        } else {
+            "selected source item is missing"
+        })
+    })?;
+    Ok((target.profile, target.scene, target.item, target.source))
 }
 
 fn parse_source_transform(document: &str) -> Result<FrameTransform, Box<dyn Error>> {

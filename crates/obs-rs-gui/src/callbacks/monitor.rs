@@ -15,9 +15,10 @@ use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    apply_source_settings_and_refresh, apply_source_settings_to,
+    apply_source_settings_to,
     fixtures::{kind_selects_monitor, screen_monitors, MonitorChoice},
-    I18n, MainWindow, MonitorRow, MonitorWindow, Palette, PreviewSurface,
+    source_target, target_settings_document, I18n, MainWindow, MonitorRow, MonitorWindow, Palette,
+    PreviewSurface, SourceTarget,
 };
 
 /// Only one compositor picker may be active at a time. A portal request is a
@@ -36,29 +37,29 @@ impl Drop for PortalRequestGuard {
     }
 }
 
-/// The source a portal handshake was started for.
-///
-/// The compositor's dialog waits for a person, and people click other things
-/// while it is open. The answer therefore has to name the source it belongs to;
-/// resolving "the selected source" when it arrives writes a screen capture's
-/// token onto whatever happens to be selected by then — a camera, most likely,
-/// which is exactly how a working camera and a working screen share turn into
-/// one of each.
-#[derive(Clone, Debug)]
-struct PortalTarget {
-    profile: String,
-    source: String,
-}
-
 /// Owns the picker window and the draft selection it edits.
+///
+/// Both display-selection paths outlive the click that opened them — the X11
+/// picker is a window the user can leave open, and the Wayland portal is the
+/// compositor's own dialog — while the studio window behind them stays
+/// clickable. Both therefore pin the source they are choosing a display for.
+/// Resolving "the selected source" on the way back writes a screen capture's
+/// display or portal token onto whatever the user clicked in the meantime,
+/// which is exactly how a working camera and a working screen share become one
+/// of each.
 pub(crate) struct MonitorController {
     window: MonitorWindow,
     monitors: RefCell<Vec<MonitorChoice>>,
     /// The display the user has highlighted; empty means none is highlighted.
     selected: RefCell<String>,
+    /// The source the open picker window is choosing a display for.
+    target: RefCell<Option<SourceTarget>>,
     /// The source whose portal handshake is in flight, if one is.
+    ///
+    /// Kept apart from `target` because a handshake can still be waiting on the
+    /// compositor when the picker is opened again for something else.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    pending_portal: RefCell<Option<PortalTarget>>,
+    pending_portal: RefCell<Option<SourceTarget>>,
 }
 
 impl MonitorController {
@@ -188,6 +189,7 @@ pub(crate) fn install_monitor_window(
         window: MonitorWindow::new()?,
         monitors: RefCell::new(Vec::new()),
         selected: RefCell::new(String::new()),
+        target: RefCell::new(None),
         pending_portal: RefCell::new(None),
     });
 
@@ -214,6 +216,9 @@ fn install_open(
         let locale = state.borrow().locale();
         let selected = ui.get_selected_source().to_string();
         let kind = selected_source_kind(&state, &selected);
+        controller
+            .target
+            .replace(source_target(&state.borrow(), &selected));
         if !kind_selects_monitor(&kind) {
             ui.set_status_message(crate::i18n::with_catalog(locale, |text| {
                 text.monitor_ui.not_a_screen_source.clone()
@@ -281,20 +286,23 @@ fn install_commit(
             return;
         };
         let window = &accept_controller.window;
-        let source = window.get_source_name().to_string();
+        let Some(target) = accept_controller.target.borrow().clone() else {
+            ui.set_status_message("Display selection failed: the source is gone".into());
+            return;
+        };
         let monitor = if window.get_capture_whole_desktop() {
             String::new()
         } else {
             accept_controller.selected.borrow().clone()
         };
-        let Some(document) = monitor_document(&state, &source, &monitor) else {
+        let Some(document) = monitor_document(&state, &target, &monitor) else {
             ui.set_status_message("Display selection failed: source settings are invalid".into());
             return;
         };
-        // The shared apply path validates the document, writes it through the
-        // project command, and rebuilds the surface, so a display change is
-        // recorded as an ordinary undoable project edit.
-        apply_source_settings_and_refresh(&ui, &state, &surface, &document);
+        // The shared apply path validates the document and writes it through the
+        // project command for the source this picker was opened for, so a
+        // display change is recorded as an ordinary undoable project edit.
+        apply_source_settings_to(&ui, &state, &surface, &target, &document);
         let applied = crate::i18n::with_catalog(state.borrow().locale(), |text| {
             text.monitor_ui.applied.clone()
         });
@@ -325,7 +333,7 @@ fn share_through_portal(
 ) {
     use obs_rs_capture::{open_screencast, CursorMode};
 
-    let Some(target) = portal_target(state, source) else {
+    let Some(target) = source_target(&state.borrow(), source) else {
         ui.set_status_message("Screen sharing failed: the source could not be resolved".into());
         return;
     };
@@ -338,7 +346,7 @@ fn share_through_portal(
     }
 
     let source = source.to_owned();
-    let cursor = source_settings_for(state, &target)
+    let cursor = target_settings_document(state, &target)
         .as_deref()
         .and_then(|document| Config::parse(document).ok())
         .and_then(|settings| settings.get("capture_cursor").map(str::to_owned))
@@ -415,12 +423,12 @@ fn install_portal_token(
             .pending_portal
             .borrow_mut()
             .take()
-            .or_else(|| portal_target(&state, source.as_str()));
+            .or_else(|| source_target(&state.borrow(), source.as_str()));
         let Some(target) = target else {
             ui.set_status_message("Screen sharing failed: the source is gone".into());
             return;
         };
-        let document = source_settings_for(&state, &target)
+        let document = target_settings_document(&state, &target)
             .as_deref()
             .and_then(|document| Config::parse(document).ok());
         let Some(mut settings) = document else {
@@ -431,43 +439,12 @@ fn install_portal_token(
             ui.set_status_message("Screen sharing failed: the token could not be stored".into());
             return;
         }
-        apply_source_settings_to(
-            &ui,
-            &state,
-            &surface,
-            &target.profile,
-            &target.source,
-            &settings.serialize(),
-        );
+        apply_source_settings_to(&ui, &state, &surface, &target, &settings.serialize());
         let applied = crate::i18n::with_catalog(state.borrow().locale(), |text| {
             text.monitor_ui.portal_applied.clone()
         });
         ui.set_status_message(applied);
     });
-}
-
-/// Resolves a scene item to the profile and source a portal answer belongs to.
-#[cfg(target_os = "linux")]
-fn portal_target(state: &Rc<RefCell<DesktopState>>, item: &str) -> Option<PortalTarget> {
-    let state = state.borrow();
-    let scene = state.preview_scene()?.to_owned();
-    let session = state.project_session();
-    let project = session.project();
-    let profile = project.active_profile_spec()?;
-    let item = profile.scene(scene.as_str())?.item(item)?;
-    Some(PortalTarget {
-        profile: project.active_profile().to_string(),
-        source: item.source_id().to_string(),
-    })
-}
-
-/// Returns a portal target's settings document from the live project.
-#[cfg(target_os = "linux")]
-fn source_settings_for(state: &Rc<RefCell<DesktopState>>, target: &PortalTarget) -> Option<String> {
-    let state = state.borrow();
-    let session = state.project_session();
-    let profile = session.project().profile(target.profile.as_str())?;
-    Some(profile.source(target.source.as_str())?.settings().serialize())
 }
 
 /// Builds the source's settings document with `monitor` set to the choice.
@@ -476,10 +453,10 @@ fn source_settings_for(state: &Rc<RefCell<DesktopState>>, target: &PortalTarget)
 /// description of what the source reads.
 fn monitor_document(
     state: &Rc<RefCell<DesktopState>>,
-    source: &str,
+    target: &SourceTarget,
     monitor: &str,
 ) -> Option<String> {
-    let mut settings = source_settings_document(state, source)
+    let mut settings = target_settings_document(state, target)
         .as_deref()
         .and_then(|document| Config::parse(document).ok())?;
     if let Ok(display) = std::env::var("DISPLAY") {

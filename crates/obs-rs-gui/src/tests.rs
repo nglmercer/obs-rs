@@ -1,6 +1,6 @@
-use super::preview::PreviewRenderer;
 use super::i18n::catalog;
 use super::output::stream_protocol_label;
+use super::preview::PreviewRenderer;
 use super::refresh::{peak_db, transition_label_for_locale};
 use super::settings::AppSettings;
 use super::{
@@ -8,7 +8,9 @@ use super::{
     PreviewSurface, SettingsWindow, SourcePropertiesWindow,
 };
 use i_slint_backend_testing::ElementHandle;
-use obs_rs_media::{FrameRate, FrameTransform, FrameTransition, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{
+    FrameRate, FrameTransform, FrameTransition, Timestamp, VideoFormat, VideoFrame,
+};
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
@@ -103,8 +105,7 @@ fn gui_catalog_switches_complete_copy_between_supported_locales() {
 #[test]
 fn preview_renderer_uses_the_project_scene_sources() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer =
-        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let frame = renderer
         .render("preview")
         .expect("preview scene should render")
@@ -115,8 +116,7 @@ fn preview_renderer_uses_the_project_scene_sources() {
 #[test]
 fn preview_renderer_composes_scene_transitions() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer =
-        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let frame = renderer
         .render_transition(
             "preview",
@@ -133,8 +133,7 @@ fn preview_renderer_composes_scene_transitions() {
 #[test]
 fn preview_renderer_advances_animated_capture_sources() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer =
-        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let first = renderer
         .render("intermission")
         .expect("first pattern frame should render")
@@ -149,8 +148,7 @@ fn preview_renderer_advances_animated_capture_sources() {
 #[test]
 fn preview_renderer_reuses_static_scene_composition() {
     let project = initial_project().expect("initial GUI project should validate");
-    let mut renderer =
-        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     renderer
         .render("preview")
         .expect("static scene should render")
@@ -443,8 +441,7 @@ fn output_runtime_switches_the_selected_audio_input_without_rebuilding_video() {
 #[test]
 fn preview_renderer_rebuilds_after_project_edit() {
     let mut project = initial_project().expect("initial GUI project should validate");
-    let mut renderer =
-        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     project
         .apply(ProjectCommand::AddScene {
             profile: "live".to_owned(),
@@ -467,10 +464,63 @@ fn preview_renderer_rebuilds_after_project_edit() {
 }
 
 #[test]
+fn a_transform_commits_to_the_item_it_started_on() {
+    let mut project = initial_project().expect("initial GUI project should validate");
+    // The preview scene needs a second item for a selection change to have
+    // anywhere to go.
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: obs_rs_project::SceneItemSpec::new("overlay", "pattern").expect("item"),
+        })
+        .expect("add a second item");
+    let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    let scene = state
+        .borrow()
+        .preview_scene()
+        .expect("a preview scene is selected")
+        .to_owned();
+    let items = {
+        let state = state.borrow();
+        let session = state.project_session();
+        session
+            .project()
+            .active_profile_spec()
+            .expect("profile")
+            .scene(scene.as_str())
+            .expect("scene")
+            .items()
+            .iter()
+            .map(|item| item.id().as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert!(items.len() > 1, "the fixture needs two items to confuse");
+
+    let target = crate::source_target(&state.borrow(), &items[0]).expect("target");
+    // The gesture started on the first item; the selection has since moved on,
+    // which is what a dock click during a drag does.
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: items[1].clone(),
+        })
+        .expect("select the other item");
+
+    assert_eq!(target.item, items[0]);
+    assert_ne!(
+        crate::selected_target(&state.borrow())
+            .expect("selection")
+            .item,
+        target.item,
+        "the pinned target must not follow the selection"
+    );
+}
+
+#[test]
 fn moving_a_source_does_not_recreate_the_scene_sources() {
     let mut project = initial_project().expect("initial GUI project should validate");
-    let mut renderer =
-        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let before = {
         let mut ids = renderer.runtime.source_ids();
         ids.sort();
@@ -513,8 +563,7 @@ fn moving_a_source_does_not_recreate_the_scene_sources() {
 #[test]
 fn hiding_a_source_keeps_the_others_running() {
     let mut project = initial_project().expect("initial GUI project should validate");
-    let mut renderer =
-        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     let before = {
         let mut ids = renderer.runtime.source_ids();
         ids.sort();
@@ -558,8 +607,7 @@ fn preview_renderer_honors_hidden_scene_sources() {
             visible: false,
         })
         .expect("hide source");
-    let mut renderer =
-        PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
     assert!(renderer
         .render("preview")
         .expect("hidden scene should render")
@@ -1115,8 +1163,7 @@ fn exercise_monitor_selection(
         "an X11 screen source must offer the display picker"
     );
 
-    let controller =
-        crate::install_monitor_window(ui, state, surface).expect("monitor controller");
+    let controller = crate::install_monitor_window(ui, state, surface).expect("monitor controller");
     ui.invoke_open_monitor_window();
     let window = crate::callbacks::monitor::MonitorController::window(&controller);
     // The whole-desktop choice is the one available on every host, including a
@@ -1468,8 +1515,8 @@ fn exercise_capture_device_properties_window(
         .expect("select camera source");
     refresh_ui(ui, state, surface);
 
-    let controller = crate::install_source_properties_window(ui, state, surface)
-        .expect("properties controller");
+    let controller =
+        crate::install_source_properties_window(ui, state, surface).expect("properties controller");
     ui.invoke_open_source_properties_window();
     let window =
         crate::callbacks::source_properties::SourcePropertiesController::window(&controller);

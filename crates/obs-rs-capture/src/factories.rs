@@ -262,14 +262,18 @@ impl NativeCameraSource {
     fn reopen(&mut self) {
         self.retry_countdown = CAMERA_RETRY_FRAMES;
         self.failure = None;
+        // The old worker is shut down before the new one is created. Assigning
+        // over `self.device` would not do it: the replacement is constructed —
+        // and its worker has already begun opening the camera — before the old
+        // value is dropped, so both would be holding the same device and the
+        // new one would very likely be told it is busy.
+        drop(self.device.take());
         let request = self.native_mode.map_or_else(
             || CaptureRequest::output(self.format),
             |mode| CaptureRequest::camera(self.format, mode),
         );
         let device_id = self.device_id.clone();
         let name = self.name.clone();
-        // The previous worker is stopped and joined by this assignment, so a
-        // reopen never leaves two workers holding the same camera.
         self.device = Some(ThreadedCaptureDevice::open(
             request,
             &self.device_id,
@@ -342,12 +346,22 @@ impl Source for NativeCameraSource {
                 }
                 Err(self.unavailable())
             }
+            // Permission was refused. Reopening would only re-prompt, and at
+            // one attempt a second that is a dialog the user cannot escape, so
+            // this state is terminal: `update` is the way out of it, because
+            // granting access is something the person has to do first.
+            Some(CaptureLifecycleState::Denied) => {
+                self.failure = self
+                    .device
+                    .as_ref()
+                    .and_then(ThreadedCaptureDevice::failure)
+                    .map(|error| error.to_string());
+                Err(self.unavailable())
+            }
             // A stopped worker keeps serving its last frame, which would freeze
             // the picture silently, so recovery is driven from the state rather
             // than from the poll result.
-            Some(CaptureLifecycleState::Lost | CaptureLifecycleState::Denied) => {
-                let denied = self.device.as_ref().map(ThreadedCaptureDevice::state)
-                    == Some(CaptureLifecycleState::Denied);
+            Some(CaptureLifecycleState::Lost) => {
                 self.failure = self
                     .device
                     .as_ref()
@@ -355,14 +369,7 @@ impl Source for NativeCameraSource {
                     .map(|error| error.to_string());
                 self.retry_countdown = self.retry_countdown.saturating_sub(1);
                 if self.retry_countdown == 0 {
-                    if denied {
-                        // Retrying a denied camera only re-prompts; the user has
-                        // to grant access before another attempt can succeed.
-                        self.device = None;
-                        self.retry_countdown = CAMERA_RETRY_FRAMES;
-                    } else {
-                        self.reopen();
-                    }
+                    self.reopen();
                 }
                 Err(self.unavailable())
             }

@@ -6,14 +6,14 @@ use std::{
 };
 
 use obs_rs_builtins::BuiltinPlugin;
-use obs_rs_plugin_api::Plugin;
 use obs_rs_core::{CompositorMetrics, Runtime, RuntimeLimits, RuntimeUsage, SourceId};
 use obs_rs_engine::compile_filter;
+use obs_rs_media::FrameTransform;
 #[cfg(test)]
 use obs_rs_media::FrameTransition;
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
+use obs_rs_plugin_api::Plugin;
 use obs_rs_plugin_api::VideoRequest;
-use obs_rs_media::FrameTransform;
 use obs_rs_project::{Profile, Project, SceneItemSpec, SourceSpec};
 use obs_rs_render::{
     GpuFrameHandle, GpuPlaneHandle, RenderBackend, SceneLayer, TextureId, VideoSurface,
@@ -306,9 +306,11 @@ impl PreviewRenderer {
         previous: Option<&SourceSpec>,
     ) -> Result<(), Box<dyn Error>> {
         let Some(&id) = self.source_ids.get(source.id().as_str()) else {
-            let id =
-                self.runtime
-                    .create_source(source.kind().as_str(), source.name(), source.settings())?;
+            let id = self.runtime.create_source(
+                source.kind().as_str(),
+                source.name(),
+                source.settings(),
+            )?;
             self.apply_filters(id, source)?;
             self.source_ids.insert(source.id().as_str().to_owned(), id);
             return Ok(());
@@ -444,7 +446,9 @@ impl PreviewRenderer {
             Some((draft.scene.clone(), *self.source_ids.get(&source)?))
         });
         if let Some((scene, source)) = self.applied_draft.clone() {
-            if target.as_ref().map(|(scene, source)| (scene.as_str(), *source))
+            if target
+                .as_ref()
+                .map(|(scene, source)| (scene.as_str(), *source))
                 != Some((scene.as_str(), source))
             {
                 let committed = self
@@ -461,9 +465,7 @@ impl PreviewRenderer {
                             .map(SceneItemSpec::transform)
                     })
                     .unwrap_or(FrameTransform::IDENTITY);
-                let _ = self
-                    .runtime
-                    .set_source_transform(&scene, source, committed);
+                let _ = self.runtime.set_source_transform(&scene, source, committed);
                 // A scene composed only of still sources caches its picture, so
                 // the cache has to go when the drag stops moving it.
                 self.static_frames.remove(&scene);
@@ -649,12 +651,13 @@ impl PreviewRenderer {
             ),
         };
         format!(
-            "Preview work: {backend} · renders={} · source requests={} · frames={} · empty={} · failed={} · transforms={} · filters={} · blends={} · capture p50/p95/p99/max={}/{}/{}/{} µs",
+            "Preview work: {backend} · renders={} · source requests={} · frames={} · empty={} · failed={} · contract={} · transforms={} · filters={} · blends={} · capture p50/p95/p99/max={}/{}/{}/{} µs",
             metrics.render_calls(),
             metrics.source_requests(),
             metrics.source_frames(),
             metrics.empty_sources(),
             metrics.failed_sources(),
+            metrics.contract_violations(),
             metrics.transformed_frames(),
             metrics.filtered_frames(),
             metrics.blended_layers(),

@@ -15,9 +15,7 @@ use std::sync::{
 use obs_rs_config::Config;
 use obs_rs_core::Runtime;
 use obs_rs_media::{FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame};
-use obs_rs_plugin_api::{
-    Plugin, PluginManifest, Source, SourceError, SourceFactory, VideoRequest,
-};
+use obs_rs_plugin_api::{Plugin, PluginManifest, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
 
 const CANVAS: (u32, u32) = (192, 108);
@@ -45,6 +43,7 @@ struct CountingFactory {
     color: [u8; 4],
     creations: Arc<AtomicU64>,
     broken: Arc<AtomicBool>,
+    misbehaving: Arc<AtomicBool>,
 }
 
 impl SourceFactory for CountingFactory {
@@ -59,6 +58,7 @@ impl SourceFactory for CountingFactory {
             name: name.to_owned(),
             color: self.color,
             broken: Arc::clone(&self.broken),
+            misbehaving: Arc::clone(&self.misbehaving),
             frames: Arc::new(AtomicU64::new(0)),
         }))
     }
@@ -69,6 +69,8 @@ struct CountingSource {
     name: String,
     color: [u8; 4],
     broken: Arc<AtomicBool>,
+    /// Makes the source break its contract rather than report a dead device.
+    misbehaving: Arc<AtomicBool>,
     frames: Arc<AtomicU64>,
 }
 
@@ -88,6 +90,9 @@ impl Source for CountingSource {
     fn render(&mut self, request: &VideoRequest) -> Result<Option<VideoFrame>, SourceError> {
         if self.broken.load(Ordering::Relaxed) {
             return Err(SourceError::Unavailable("device is gone".to_owned()));
+        }
+        if self.misbehaving.load(Ordering::Relaxed) {
+            return Err(SourceError::invalid_setting("width", "not a number"));
         }
         self.frames.fetch_add(1, Ordering::Relaxed);
         Ok(Some(VideoFrame::solid(
@@ -119,6 +124,7 @@ struct Fixture {
     screen_creations: Arc<AtomicU64>,
     camera_creations: Arc<AtomicU64>,
     camera_broken: Arc<AtomicBool>,
+    camera_misbehaving: Arc<AtomicBool>,
     screen_broken: Arc<AtomicBool>,
 }
 
@@ -129,21 +135,23 @@ fn fixture() -> Fixture {
     let camera_creations = Arc::new(AtomicU64::new(0));
     let screen_broken = Arc::new(AtomicBool::new(false));
     let camera_broken = Arc::new(AtomicBool::new(false));
+    let camera_misbehaving = Arc::new(AtomicBool::new(false));
     let plugin = TestPlugin {
-        manifest: PluginManifest::new("test_devices", "Test devices", "1.0.0")
-            .expect("manifest"),
+        manifest: PluginManifest::new("test_devices", "Test devices", "1.0.0").expect("manifest"),
         factories: vec![
             Arc::new(CountingFactory {
                 kind: Identifier::new("test_screen").expect("kind"),
                 color: [0x20, 0x40, 0x60, 0xff],
                 creations: Arc::clone(&screen_creations),
                 broken: Arc::clone(&screen_broken),
+                misbehaving: Arc::new(AtomicBool::new(false)),
             }),
             Arc::new(CountingFactory {
                 kind: Identifier::new("test_camera").expect("kind"),
                 color: [0xc0, 0x80, 0x40, 0xff],
                 creations: Arc::clone(&camera_creations),
                 broken: Arc::clone(&camera_broken),
+                misbehaving: Arc::clone(&camera_misbehaving),
             }),
         ],
     };
@@ -157,8 +165,12 @@ fn fixture() -> Fixture {
         .create_source("test_camera", "Camera", &settings())
         .expect("camera source");
     runtime.create_scene("live").expect("scene");
-    runtime.attach_source("live", screen).expect("attach screen");
-    runtime.attach_source("live", camera).expect("attach camera");
+    runtime
+        .attach_source("live", screen)
+        .expect("attach screen");
+    runtime
+        .attach_source("live", camera)
+        .expect("attach camera");
     runtime
         .set_source_transform("live", screen, FrameTransform::IDENTITY)
         .expect("screen transform");
@@ -171,6 +183,7 @@ fn fixture() -> Fixture {
         screen_creations,
         camera_creations,
         camera_broken,
+        camera_misbehaving,
         screen_broken,
     }
 }
@@ -277,4 +290,35 @@ fn a_failing_screen_capture_leaves_the_camera_composited() {
 
     fixture.screen_broken.store(false, Ordering::Relaxed);
     assert_eq!(render(&mut fixture.runtime, 1), 2);
+}
+
+#[test]
+fn a_source_that_breaks_its_contract_is_isolated_but_counted_apart() {
+    let mut fixture = fixture();
+    render(&mut fixture.runtime, 0);
+
+    // An invalid setting is the source or the engine misbehaving, not a device
+    // being absent. It still must not take the scene off the air — a live
+    // program output blanking for a bug helps nobody — but it is counted on its
+    // own so it cannot be read as an ordinary device hiccup.
+    fixture.camera_misbehaving.store(true, Ordering::Relaxed);
+    assert_eq!(render(&mut fixture.runtime, 1), 2);
+
+    let metrics = fixture.runtime.compositor_metrics();
+    assert_eq!(metrics.contract_violations(), 1);
+    assert_eq!(metrics.failed_sources(), 1);
+    assert_eq!(fixture.runtime.source_failures().len(), 1);
+}
+
+#[test]
+fn an_absent_device_is_not_counted_as_a_contract_violation() {
+    let mut fixture = fixture();
+    render(&mut fixture.runtime, 0);
+
+    fixture.camera_broken.store(true, Ordering::Relaxed);
+    render(&mut fixture.runtime, 1);
+
+    let metrics = fixture.runtime.compositor_metrics();
+    assert_eq!(metrics.failed_sources(), 1);
+    assert_eq!(metrics.contract_violations(), 0);
 }

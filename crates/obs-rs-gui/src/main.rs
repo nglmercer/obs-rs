@@ -32,11 +32,12 @@ mod tests;
 
 pub(crate) use callbacks::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
-    apply_source_transform_and_refresh, duplicate_scene_and_refresh, duplicate_source_and_refresh,
+    apply_source_transform_to, duplicate_scene_and_refresh, duplicate_source_and_refresh,
     flip_source_and_refresh, move_source_and_refresh, move_source_to_and_refresh, project_store,
     remove_scene_and_refresh, remove_source_and_refresh, rename_scene_and_refresh,
-    reset_source_transform_and_refresh, source_transform_document,
-    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
+    reset_source_transform_and_refresh, selected_target, source_target, source_transform_document,
+    target_settings_document, toggle_source_locked_and_refresh,
+    toggle_source_visibility_and_refresh, SourceTarget,
 };
 pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks, install_dock_callbacks,

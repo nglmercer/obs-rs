@@ -10,13 +10,20 @@ use obs_rs_ui::{DesktopState, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    apply_source_settings_and_refresh, kind_selects_monitor, properties, source_settings, I18n,
-    MainWindow, Palette, PreviewSurface, SourcePropertiesWindow,
+    apply_source_settings_to, kind_selects_monitor, properties, source_settings, source_target,
+    I18n, MainWindow, Palette, PreviewSurface, SourcePropertiesWindow, SourceTarget,
 };
 
 /// Owns the properties window.
 pub(crate) struct SourcePropertiesController {
     window: SourcePropertiesWindow,
+    /// The source this dialog was opened for.
+    ///
+    /// The studio window stays usable while this dialog is open, so the source
+    /// it writes to is fixed when it opens. Resolving the selection at OK would
+    /// write a camera's device ID onto a screen capture the user clicked in the
+    /// meantime.
+    target: RefCell<Option<SourceTarget>>,
 }
 
 impl SourcePropertiesController {
@@ -53,6 +60,7 @@ pub(crate) fn install_source_properties_window(
 ) -> Result<Rc<SourcePropertiesController>, slint::PlatformError> {
     let controller = Rc::new(SourcePropertiesController {
         window: SourcePropertiesWindow::new()?,
+        target: RefCell::new(None),
     });
 
     install_open(ui, state, &controller);
@@ -77,6 +85,9 @@ fn install_open(
         if selected.is_empty() {
             return;
         }
+        controller
+            .target
+            .replace(source_target(&state.borrow(), &selected));
         let locale = state.borrow().locale();
         let window = &controller.window;
         window
@@ -156,12 +167,18 @@ fn install_commit(
             return;
         };
         let window = &accept_controller.window;
+        let Some(target) = accept_controller.target.borrow().clone() else {
+            ui.set_status_message("Source settings failed: the source is gone".into());
+            let _ = window.hide();
+            return;
+        };
         // Keep the studio's draft in step, then commit only source settings.
         ui.set_source_settings(window.get_source_settings());
-        apply_source_settings_and_refresh(
+        apply_source_settings_to(
             &ui,
             &state,
             &surface,
+            &target,
             window.get_source_settings().as_str(),
         );
         let _ = window.hide();

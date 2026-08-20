@@ -7,13 +7,19 @@ use obs_rs_ui::DesktopState;
 use slint::ComponentHandle;
 
 use crate::{
-    apply_source_transform_and_refresh, source_transform_document, I18n, MainWindow, Palette,
-    PreviewSurface, SourceTransformWindow,
+    apply_source_transform_to, selected_target, source_transform_document, I18n, MainWindow,
+    Palette, PreviewSurface, SourceTarget, SourceTransformWindow,
 };
 
 /// Owns the scene-item transform dialog.
 pub(crate) struct SourceTransformController {
     window: SourceTransformWindow,
+    /// The scene item this dialog was opened for.
+    ///
+    /// A dialog is open for as long as the user wants it to be, and the studio
+    /// window behind it stays clickable, so the item it edits is fixed when it
+    /// opens rather than looked up again at OK.
+    target: RefCell<Option<SourceTarget>>,
 }
 
 impl SourceTransformController {
@@ -36,6 +42,7 @@ pub(crate) fn install_source_transform_window(
 ) -> Result<Rc<SourceTransformController>, slint::PlatformError> {
     let controller = Rc::new(SourceTransformController {
         window: SourceTransformWindow::new()?,
+        target: RefCell::new(None),
     });
     install_open(ui, state, &controller);
     install_actions(ui, state, surface, &controller);
@@ -60,6 +67,7 @@ fn install_open(
             .global::<I18n>()
             .set_text(crate::i18n::catalog(locale));
         controller.set_tokens(ui.global::<Palette>().get_tokens());
+        controller.target.replace(selected_target(&state.borrow()));
         populate_from_project(&controller.window, &state);
         if let Err(error) = controller.window.show() {
             ui.set_status_message(format!("Transform window: {error}").into());
@@ -81,13 +89,18 @@ fn install_actions(
         let Some(ui) = weak.upgrade() else {
             return;
         };
+        let Some(target) = accept_controller.target.borrow().clone() else {
+            ui.set_status_message("Transform failed: no source is selected".into());
+            return;
+        };
         let transform = read_transform(&accept_controller.window);
         match transform {
             Ok(transform) => {
-                apply_source_transform_and_refresh(
+                apply_source_transform_to(
                     &ui,
                     &accept_state,
                     &accept_surface,
+                    &target,
                     &source_transform_document(transform),
                 );
                 let _ = accept_controller.window.hide();

@@ -468,7 +468,9 @@ impl Runtime {
         // A partial order would silently drop the items it omits, so the caller
         // has to name every attached item exactly once.
         if order.len() != state.sources.len() {
-            return Err(RuntimeError::InvalidName { kind: "scene order" });
+            return Err(RuntimeError::InvalidName {
+                kind: "scene order",
+            });
         }
         state.sources = order.to_vec();
         Ok(())

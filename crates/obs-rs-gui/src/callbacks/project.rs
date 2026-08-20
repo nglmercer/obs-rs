@@ -205,23 +205,20 @@ fn export_diagnostics(
         // the snapshot that worker publishes rather than from a second runtime
         // this window would otherwise have to keep alive.
         let diagnostics = surface.borrow().diagnostics();
-        let (metrics, usage, limits) = (
-            diagnostics.metrics,
-            diagnostics.usage,
-            diagnostics.limits,
-        );
+        let (metrics, usage, limits) = (diagnostics.metrics, diagnostics.usage, diagnostics.limits);
         let mut bundle = DiagnosticBundle::new();
         bundle.insert_text("project", &state.project_document())?;
         bundle.insert_text("ui", &state.accessible_snapshot())?;
         bundle.insert_text(
             "runtime",
             &format!(
-                "render_calls={} source_requests={} source_frames={} empty_sources={} failed_sources={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_scenes={} limit_sources={} limit_filters_per_source={}",
+                "render_calls={} source_requests={} source_frames={} empty_sources={} failed_sources={} contract_violations={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_scenes={} limit_sources={} limit_filters_per_source={}",
                 metrics.render_calls(),
                 metrics.source_requests(),
                 metrics.source_frames(),
                 metrics.empty_sources(),
                 metrics.failed_sources(),
+                metrics.contract_violations(),
                 metrics.transformed_frames(),
                 metrics.filtered_frames(),
                 metrics.blended_layers(),

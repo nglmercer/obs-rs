@@ -213,10 +213,23 @@ pub(crate) fn install_canvas_callbacks(
         let Some(draft) = commit_controller.draft.borrow_mut().take() else {
             return;
         };
-        crate::apply_source_transform_and_refresh(
+        // The gesture commits to the item it started on. A drag can outlive the
+        // selection that began it — a dock click, a scene switch — and moving
+        // whatever is selected at release time instead would move the wrong
+        // source, having shown the user the right one moving the whole way.
+        let Some(target) = crate::source_target(&commit_state.borrow(), &draft.item) else {
+            ui.set_status_message("Source transform failed: the source is gone".into());
+            return;
+        };
+        if target.scene != draft.scene {
+            ui.set_status_message("Source transform failed: the scene changed".into());
+            return;
+        }
+        crate::apply_source_transform_to(
             &ui,
             &commit_state,
             &commit_surface,
+            &target,
             &crate::source_transform_document(draft.transform),
         );
     });
