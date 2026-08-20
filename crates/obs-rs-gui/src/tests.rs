@@ -9,7 +9,7 @@ use super::{
 };
 use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
-    FrameRate, FrameTransform, FrameTransition, Timestamp, VideoFormat, VideoFrame,
+    FrameRate, FrameTransform, FrameTransition, ScaleFilter, Timestamp, VideoFormat, VideoFrame,
 };
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
@@ -261,6 +261,76 @@ fn a_canvas_change_staged_during_output_applies_at_the_next_idle_tick() {
     );
     assert!(
         crate::callbacks::settings::apply_staged_video_format(&state, &output).is_none(),
+        "an idle tick with nothing staged must do no work"
+    );
+}
+
+#[test]
+fn the_encoders_receive_the_scaled_output_resolution() {
+    let canvas = VideoFormat::new(128, 72, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(canvas);
+
+    output
+        .set_output_scaling(64, 36, ScaleFilter::Bicubic)
+        .expect("an idle session rescales at once");
+
+    assert_eq!(output.encoded_output_format().width(), 64);
+    assert_eq!(output.encoded_output_format().height(), 36);
+    assert_eq!(
+        output.encoded_output_format().frame_rate().numerator(),
+        30,
+        "scaling changes geometry, never pacing"
+    );
+    assert!(
+        !output.accepts_raw_frames(),
+        "packed frames cannot be resampled, so the RGBA path has to be used"
+    );
+
+    // A canvas frame must be resampled rather than rejected: a format drop here
+    // would mean the recording silently contained nothing.
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-scaled-{token}.obsr"));
+    output
+        .start_recording(&path.to_string_lossy())
+        .expect("recording should open");
+    output.push_frame(&VideoFrame::solid(canvas, Timestamp::ZERO, [9, 9, 9, 255]));
+    let bytes = output
+        .finish_recording()
+        .expect("recording should finalize");
+
+    assert!(bytes > 0, "the scaled frame has to reach the muxer");
+    assert!(
+        !output.output_metrics().contains("format_drops=1"),
+        "a canvas frame must not be dropped while the output is scaled"
+    );
+    std::fs::remove_file(path).expect("remove scaled fixture");
+}
+
+#[test]
+fn an_output_scaling_change_staged_during_output_applies_at_the_next_idle_tick() {
+    let (_state, output) = canvas_fixture();
+    let original = output.borrow().encoded_output_format();
+
+    output
+        .borrow_mut()
+        .stage_output_scaling(32, 18, ScaleFilter::Lanczos);
+    assert_eq!(
+        output.borrow().encoded_output_format(),
+        original,
+        "staging must not touch the encoders while the output is running"
+    );
+
+    let (width, height) = crate::callbacks::settings::apply_staged_output_scaling(&output)
+        .expect("a staged change is pending")
+        .expect("the idle boundary applies it");
+
+    assert_eq!((width, height), (32, 18));
+    assert_eq!(output.borrow().encoded_output_format().width(), 32);
+    assert!(
+        crate::callbacks::settings::apply_staged_output_scaling(&output).is_none(),
         "an idle tick with nothing staged must do no work"
     );
 }
@@ -691,6 +761,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_layout_restore(&ui);
     exercise_dock_layout(&ui, &state);
     render_every_settings_category();
+    exercise_settings_commit(&ui, &state, &surface);
     render_source_properties_window();
     render_source_filters_window(&ui, &state, &surface);
     exercise_source_transform_window(&ui, &state, &surface);
@@ -1185,6 +1256,123 @@ fn exercise_monitor_selection(
     );
 }
 
+/// Drives the real settings controller through Apply, Cancel, and OK.
+///
+/// The draft semantics are the whole point of the window, so they are checked
+/// against the controller rather than against a hand-built stand-in: Apply
+/// persists and clears the dirty flag, Cancel discards every draft including
+/// the live-previewed appearance, OK persists and closes, and a field that
+/// fails validation commits nothing at all.
+fn exercise_settings_commit(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-window-{token}.toml"));
+    let format = surface.borrow().format;
+    let output = Rc::new(RefCell::new(OutputRuntime::new(format)));
+    let controller = crate::install_settings_window(
+        ui,
+        state,
+        surface,
+        &output,
+        AppSettings::default(),
+        path.clone(),
+        &crate::PeerWindows {
+            add_source: crate::install_add_source_window(ui, state, surface)
+                .expect("add source controller"),
+            properties: crate::install_source_properties_window(ui, state, surface)
+                .expect("properties controller"),
+            filters: crate::install_source_filters_window(ui, state, surface)
+                .expect("filters controller"),
+            transform: crate::install_source_transform_window(ui, state, surface)
+                .expect("transform controller"),
+            monitor: crate::install_monitor_window(ui, state, surface).expect("monitor controller"),
+            docks: crate::install_dock_callbacks(ui, state),
+            projectors: crate::install_menu_callbacks(ui, state, surface),
+        },
+    )
+    .expect("settings controller should install");
+    let window = controller.window();
+
+    // Opening the window fills the draft from the committed document, so a
+    // freshly opened window has nothing to apply.
+    ui.invoke_open_settings_window();
+    assert!(!window.get_dirty(), "a freshly loaded draft is not dirty");
+
+    // Apply: every draft is persisted and the button goes quiet again.
+    window.set_density_index(3);
+    window.set_font_size(16.0);
+    window.set_style_index(2);
+    window.invoke_edit_output_resolution("1280x720".into());
+    window.set_scale_filter_index(2);
+    window.set_recording_quality_index(2);
+    window.set_recording_filename_without_spaces(true);
+    window.set_dirty(true);
+    window.invoke_apply_settings();
+
+    assert!(
+        !window.get_dirty(),
+        "Apply clears the unapplied-changes flag"
+    );
+    let committed = controller.committed();
+    assert_eq!(
+        committed.density,
+        crate::settings_model::UiDensity::Comfortable
+    );
+    assert_eq!(committed.font_size, 16);
+    assert_eq!(committed.style, crate::settings_model::UiStyle::Contrast);
+    assert_eq!(committed.video.output_width, 1_280);
+    assert_eq!(committed.video.scale_filter, ScaleFilter::Lanczos);
+    assert!(committed.recording_filename_without_spaces);
+    assert_eq!(AppSettings::load(&path), committed, "Apply writes the file");
+
+    // A field that cannot be parsed stops the commit entirely: nothing else on
+    // the page may reach the document behind an invalid value.
+    window.invoke_edit_base_resolution("not-a-resolution".into());
+    window.set_font_size(9.0);
+    window.set_dirty(true);
+    window.invoke_apply_settings();
+
+    assert!(
+        window.get_dirty(),
+        "a rejected commit leaves the changes unapplied"
+    );
+    assert_eq!(window.get_category(), 5, "the invalid page is brought up");
+    assert!(!window.get_base_resolution_valid(), "the row stays marked");
+    assert_eq!(
+        controller.committed().font_size,
+        16,
+        "an unrelated field must not be committed behind an invalid one"
+    );
+
+    // Cancel discards every draft, including the appearance that was already
+    // previewed onto the live windows.
+    window.invoke_cancel_settings();
+    assert!(!window.get_dirty());
+    assert_eq!(controller.committed().font_size, 16);
+
+    // OK persists and closes.
+    ui.invoke_open_settings_window();
+    window.set_recording_quality_index(0);
+    window.set_dirty(true);
+    window.invoke_accept_settings();
+    assert!(!window.get_dirty(), "OK applies before it closes");
+    assert_eq!(
+        controller.committed().recording_quality,
+        crate::settings_model::RecordingQuality::SameAsStream
+    );
+    assert_eq!(
+        AppSettings::load(&path).recording_quality,
+        crate::settings_model::RecordingQuality::SameAsStream
+    );
+    std::fs::remove_file(&path).expect("remove settings fixture");
+}
+
 /// Renders each settings category so a page that fails to lay out — an empty
 /// model, a binding loop, a missing catalog field — fails the suite.
 fn render_every_settings_category() {
@@ -1205,6 +1393,34 @@ fn render_every_settings_category() {
                 snapshot.width() > 0 && snapshot.height() > 0,
                 "settings category {category} rendered an empty surface"
             );
+        }
+    }
+
+    // Density, font size, and the wider Spanish labels are the three things
+    // that can break the shared geometry, so the three redesigned pages are
+    // rendered against all of them rather than only at the default.
+    window
+        .global::<I18n>()
+        .set_text(crate::i18n::catalog(UiLocale::Spanish));
+    for density in crate::settings_model::UiDensity::ALL {
+        for font_size in [
+            *crate::settings_model::FONT_SIZE_RANGE.start(),
+            *crate::settings_model::FONT_SIZE_RANGE.end(),
+        ] {
+            window
+                .global::<crate::Metrics>()
+                .set_ui(crate::settings_model::metrics(density, font_size));
+            for category in [1, 3, 5] {
+                window.set_category(category);
+                let snapshot = window
+                    .window()
+                    .take_snapshot()
+                    .expect("settings category should render at every density");
+                assert!(
+                    snapshot.width() > 0 && snapshot.height() > 0,
+                    "category {category} rendered empty at {density:?}/{font_size}"
+                );
+            }
         }
     }
     window.hide().expect("settings window should hide");

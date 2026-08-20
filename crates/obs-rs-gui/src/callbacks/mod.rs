@@ -105,6 +105,21 @@ pub(crate) fn start_preview_timer(
                 }
                 None => {}
             }
+            // The encoded output geometry is staged the same way and applied
+            // in the same window, so one stopped output rebuilds the engine
+            // once rather than twice.
+            match settings::apply_staged_output_scaling(&output) {
+                Some(Ok((width, height))) => ui.set_status_message(
+                    format!(
+                        "Output resolution changed to {width}x{height} now that the output stopped"
+                    )
+                    .into(),
+                ),
+                Some(Err(error)) => {
+                    ui.set_status_message(format!("Staged output scaling failed: {error}").into());
+                }
+                None => {}
+            }
         }
         if !output_active && output.borrow().needs_project_sync(revision) {
             let project = state.borrow().project_session().project().clone();

@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use obs_rs_config::Config;
+use obs_rs_media::{ScaleFilter, VideoFormat};
 use obs_rs_output::{
     AudioCodec, AudioEncoderConfig, EncoderImplementation, EncoderPreset, HlsConfig, RateControl,
     RistConfig, RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol,
@@ -16,7 +17,11 @@ use obs_rs_output::{
 use obs_rs_ui::UiLocale;
 use slint::{Brush, Color, Model, ModelRc, VecModel};
 
-use crate::ThemeTokens;
+use crate::settings_model::{
+    metrics, FpsMode, OutputMode, RecordingQuality, UiDensity, UiStyle, VideoSettings,
+    DEFAULT_FONT_SIZE, FONT_SIZE_RANGE, MAX_DIMENSION,
+};
+use crate::{ThemeTokens, UiMetrics};
 
 /// File name the settings document is read from and written to.
 const SETTINGS_FILE: &str = "obs-rs-settings.toml";
@@ -225,6 +230,9 @@ pub(crate) const THEMES: [ThemePreset; 4] = [
 pub(crate) struct AppSettings {
     pub(crate) locale: String,
     pub(crate) theme: usize,
+    pub(crate) style: UiStyle,
+    pub(crate) font_size: u8,
+    pub(crate) density: UiDensity,
     pub(crate) confirm_start_stream: bool,
     pub(crate) confirm_stop_stream: bool,
     pub(crate) confirm_stop_recording: bool,
@@ -241,8 +249,18 @@ pub(crate) struct AppSettings {
     pub(crate) project_path: String,
     pub(crate) diagnostics_path: String,
     pub(crate) recording_path: String,
+    /// Directory new recordings are written into, as the Output page shows it.
+    pub(crate) recording_directory: String,
+    /// Generate recording file names with `-` instead of spaces.
+    pub(crate) recording_filename_without_spaces: bool,
+    pub(crate) recording_quality: RecordingQuality,
     pub(crate) recording_format: RecordingFormat,
     pub(crate) recording_codec: VideoCodec,
+    pub(crate) recording_audio_encoder: EncoderImplementation,
+    pub(crate) output_mode: OutputMode,
+    /// Show the detailed encoder controls inside Simple output mode.
+    pub(crate) stream_custom_encoder: bool,
+    pub(crate) video: VideoSettings,
     pub(crate) stream_protocol: StreamProtocol,
     pub(crate) rtmp: RtmpConfig,
     pub(crate) srt: SrtConfig,
@@ -389,6 +407,9 @@ impl Default for AppSettings {
         Self {
             locale: "en".to_owned(),
             theme: 0,
+            style: UiStyle::default(),
+            font_size: DEFAULT_FONT_SIZE,
+            density: UiDensity::default(),
             confirm_start_stream: false,
             confirm_stop_stream: true,
             confirm_stop_recording: true,
@@ -406,8 +427,15 @@ impl Default for AppSettings {
             project_path: user_file(PROJECT_FILE),
             diagnostics_path: user_file(DIAGNOSTICS_FILE),
             recording_path: user_file("obs-rs-recording.mkv"),
+            recording_directory: default_recording_directory(),
+            recording_filename_without_spaces: false,
+            recording_quality: RecordingQuality::default(),
             recording_format: RecordingFormat::Matroska,
             recording_codec: VideoCodec::H264,
+            recording_audio_encoder: EncoderImplementation::default(),
+            output_mode: OutputMode::default(),
+            stream_custom_encoder: false,
+            video: VideoSettings::default(),
             stream_protocol: StreamProtocol::Rtmp,
             rtmp: RtmpConfig::default(),
             srt: SrtConfig::default(),
@@ -427,6 +455,12 @@ impl Default for AppSettings {
 impl LayoutSettings {
     /// Reads the layout keys, falling back per key so one unreadable value
     /// cannot discard the rest of the stored layout.
+    /// Reads every key the settings window owns.
+    ///
+    /// The document is a flat list of independent keys and this is its
+    /// per-key fallback table, so splitting it would only scatter one
+    /// mapping across several functions.
+    #[allow(clippy::too_many_lines, reason = "one fallback arm per stored key")]
     fn from_config(config: &Config) -> Self {
         let defaults = Self::default();
         Self {
@@ -505,6 +539,12 @@ impl AppSettings {
         std::fs::write(path, self.to_config().serialize())
     }
 
+    /// Reads every key the settings window owns.
+    ///
+    /// The document is a flat list of independent keys and this is its per-key
+    /// fallback table, so splitting it would only scatter one mapping across
+    /// several functions.
+    #[allow(clippy::too_many_lines, reason = "one fallback arm per stored key")]
     fn from_config(config: &Config) -> Self {
         let defaults = Self::default();
         let (hls, rist) = extended_stream_config(config, &defaults);
@@ -517,6 +557,19 @@ impl AppSettings {
                 .get("theme")
                 .and_then(|value| THEMES.iter().position(|theme| theme.key == value))
                 .unwrap_or(defaults.theme),
+            style: config
+                .get("appearance_style")
+                .and_then(UiStyle::from_id)
+                .unwrap_or(defaults.style),
+            font_size: config
+                .get("appearance_font_size")
+                .and_then(|value| value.parse::<u8>().ok())
+                .filter(|size| FONT_SIZE_RANGE.contains(size))
+                .unwrap_or(defaults.font_size),
+            density: config
+                .get("appearance_density")
+                .and_then(UiDensity::from_id)
+                .unwrap_or(defaults.density),
             confirm_start_stream: flag(
                 config,
                 "confirm_start_stream",
@@ -577,6 +630,31 @@ impl AppSettings {
             project_path: text(config, "project_path", &defaults.project_path),
             diagnostics_path: text(config, "diagnostics_path", &defaults.diagnostics_path),
             recording_path: text(config, "recording_path", &defaults.recording_path),
+            recording_directory: text(config, "recording_directory", &defaults.recording_directory),
+            recording_filename_without_spaces: flag(
+                config,
+                "recording_filename_without_spaces",
+                defaults.recording_filename_without_spaces,
+            ),
+            recording_quality: config
+                .get("recording_quality")
+                .and_then(RecordingQuality::from_id)
+                .unwrap_or(defaults.recording_quality),
+            recording_audio_encoder: EncoderImplementation::new(text(
+                config,
+                "recording_audio_encoder",
+                defaults.recording_audio_encoder.id(),
+            )),
+            output_mode: config
+                .get("output_mode")
+                .and_then(OutputMode::from_id)
+                .unwrap_or(defaults.output_mode),
+            stream_custom_encoder: flag(
+                config,
+                "stream_custom_encoder",
+                defaults.stream_custom_encoder,
+            ),
+            video: video_from_config(config, defaults.video),
             recording_format: config
                 .get("recording_format")
                 .and_then(RecordingFormat::from_id)
@@ -607,6 +685,11 @@ impl AppSettings {
         }
     }
 
+    /// Writes every key the settings window owns.
+    ///
+    /// The inverse of [`AppSettings::from_config`], and a flat list for the
+    /// same reason.
+    #[allow(clippy::too_many_lines, reason = "one entry per stored key")]
     fn to_config(&self) -> Config {
         let mut config = Config::new();
         let entries = [
@@ -646,6 +729,38 @@ impl AppSettings {
             ("project_path", self.project_path.clone()),
             ("diagnostics_path", self.diagnostics_path.clone()),
             ("recording_path", self.recording_path.clone()),
+            ("recording_directory", self.recording_directory.clone()),
+            (
+                "recording_filename_without_spaces",
+                self.recording_filename_without_spaces.to_string(),
+            ),
+            ("recording_quality", self.recording_quality.id().to_owned()),
+            (
+                "recording_audio_encoder",
+                self.recording_audio_encoder.id().to_owned(),
+            ),
+            ("output_mode", self.output_mode.id().to_owned()),
+            (
+                "stream_custom_encoder",
+                self.stream_custom_encoder.to_string(),
+            ),
+            ("appearance_style", self.style.id().to_owned()),
+            ("appearance_font_size", self.font_size.to_string()),
+            ("appearance_density", self.density.id().to_owned()),
+            ("video_base_width", self.video.base_width.to_string()),
+            ("video_base_height", self.video.base_height.to_string()),
+            ("video_output_width", self.video.output_width.to_string()),
+            ("video_output_height", self.video.output_height.to_string()),
+            (
+                "video_scale_filter",
+                self.video.scale_filter.id().to_owned(),
+            ),
+            ("video_fps_mode", self.video.fps_mode.id().to_owned()),
+            ("video_fps_numerator", self.video.fps_numerator.to_string()),
+            (
+                "video_fps_denominator",
+                self.video.fps_denominator.to_string(),
+            ),
             ("recording_format", self.recording_format.id().to_owned()),
             ("recording_codec", self.recording_codec.id().to_owned()),
             ("audio_input_id", self.audio_input_id.clone()),
@@ -795,6 +910,60 @@ impl AppSettings {
     }
 }
 
+/// Reads the Video page's keys, falling back per key.
+///
+/// A document written before the canvas and the output were separate values
+/// contains neither key, so both fall back to the shipped defaults rather than
+/// leaving the page blank. A stored resolution outside the renderer's budget
+/// is treated the same way as an unparsable one.
+fn video_from_config(config: &Config, defaults: VideoSettings) -> VideoSettings {
+    let dimension = |key: &str, fallback: u32| {
+        config
+            .get(key)
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|value| (1..=MAX_DIMENSION).contains(value))
+            .unwrap_or(fallback)
+    };
+    let video = VideoSettings {
+        base_width: dimension("video_base_width", defaults.base_width),
+        base_height: dimension("video_base_height", defaults.base_height),
+        output_width: dimension("video_output_width", defaults.output_width),
+        output_height: dimension("video_output_height", defaults.output_height),
+        scale_filter: config
+            .get("video_scale_filter")
+            .and_then(ScaleFilter::from_id)
+            .unwrap_or(defaults.scale_filter),
+        fps_mode: config
+            .get("video_fps_mode")
+            .and_then(FpsMode::from_id)
+            .unwrap_or(defaults.fps_mode),
+        fps_numerator: number(config, "video_fps_numerator", defaults.fps_numerator),
+        fps_denominator: number(config, "video_fps_denominator", defaults.fps_denominator),
+    };
+    // A pair that cannot become a format would break the renderer on the next
+    // sync, so the whole video block falls back rather than half of it.
+    if video.base_format().is_err() || video.output_format().is_err() {
+        return defaults;
+    }
+    video
+}
+
+/// Returns the directory new recordings are written into by default.
+///
+/// `XDG_VIDEOS_DIR` is not read from `user-dirs.dirs` here — that file is a
+/// shell fragment, not a config document — so the home directory's `Videos`
+/// folder is used when it already exists and the per-user directory otherwise.
+fn default_recording_directory() -> String {
+    let videos = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Videos"))
+        .filter(|path| path.is_dir());
+    videos.or_else(user_directory).map_or_else(
+        || ".".to_owned(),
+        |path| path.to_string_lossy().into_owned(),
+    )
+}
+
 fn extended_stream_config(config: &Config, defaults: &AppSettings) -> (HlsConfig, RistConfig) {
     let hls = HlsConfig {
         directory: PathBuf::from(text(
@@ -936,6 +1105,75 @@ impl AppSettings {
         UiLocale::from_code(&self.locale).unwrap_or(UiLocale::English)
     }
 
+    /// Returns the recording format the selected quality actually writes.
+    ///
+    /// The lossless preset is the reference RLE pipeline, which only the
+    /// OBS-RS packet container carries, so choosing it changes the format
+    /// rather than silently producing a lossy file.
+    pub(crate) const fn effective_recording_format(&self) -> RecordingFormat {
+        if self.recording_quality.is_lossless() {
+            RecordingFormat::ReferencePacket
+        } else {
+            self.recording_format
+        }
+    }
+
+    /// Returns the video codec the selected quality actually encodes with.
+    pub(crate) const fn effective_recording_codec(&self) -> VideoCodec {
+        if self.recording_quality.is_lossless() {
+            VideoCodec::ReferenceRle
+        } else {
+            self.recording_codec
+        }
+    }
+
+    /// Returns the file the next recording is written to.
+    ///
+    /// OBS names recordings from the clock, so two recordings in one session
+    /// never collide and the file says when it was made. The extension always
+    /// comes from the effective format, so the container and the name agree.
+    pub(crate) fn recording_file_path(&self, stamp: &str) -> String {
+        let name = if self.recording_filename_without_spaces {
+            stamp.replace(' ', "-")
+        } else {
+            stamp.to_owned()
+        };
+        let mut path = PathBuf::from(self.recording_directory.trim());
+        path.push(format!(
+            "{name}.{}",
+            self.effective_recording_format().extension()
+        ));
+        path.to_string_lossy().into_owned()
+    }
+
+    /// Builds the encoder configuration the recording quality asks for.
+    ///
+    /// `format` is the encoded output geometry, not the canvas: a quality
+    /// preset is a bitrate target, and the same target means something
+    /// different at 720p than at 1080p.
+    pub(crate) fn recording_video_encoder(&self, format: VideoFormat) -> VideoEncoderConfig {
+        let codec = self.effective_recording_codec();
+        let mut encoder = VideoEncoderConfig {
+            codec,
+            implementation: EncoderImplementation::default(),
+            profile: (codec == VideoCodec::H264).then(|| "high".to_owned()),
+            ..self.rtmp.video.clone()
+        };
+        if let Some(bitrate) = self.recording_quality.video_bitrate_kbps(format) {
+            encoder.bitrate_kbps = bitrate;
+        }
+        encoder
+    }
+
+    /// Builds the audio encoder configuration recordings use.
+    pub(crate) fn recording_audio_encoder_config(&self) -> AudioEncoderConfig {
+        AudioEncoderConfig {
+            codec: AudioCodec::Aac,
+            implementation: self.recording_audio_encoder.clone(),
+            ..self.rtmp.audio.clone()
+        }
+    }
+
     /// Returns the selected sample rate in hertz.
     pub(crate) fn sample_rate_hz(&self) -> u32 {
         SAMPLE_RATES[self.sample_rate.min(SAMPLE_RATES.len() - 1)]
@@ -946,16 +1184,27 @@ impl AppSettings {
         CHANNEL_LAYOUTS[self.channels.min(CHANNEL_LAYOUTS.len() - 1)]
     }
 
-    /// Builds the complete token set for the selected theme, with the
-    /// accessibility colour overrides applied on top.
+    /// Builds the complete token set for the selected theme and style, with
+    /// the accessibility colour overrides applied on top.
     pub(crate) fn tokens(&self) -> ThemeTokens {
-        self.tokens_for_theme(self.theme)
+        self.tokens_for(self.theme, self.style)
     }
 
-    /// Builds a palette preview for `theme` while retaining this settings
-    /// value's accessibility colour overrides.
-    pub(crate) fn tokens_for_theme(&self, theme: usize) -> ThemeTokens {
-        let preset = &THEMES[theme.min(THEMES.len() - 1)];
+    /// Returns the geometry every settings page lays out against.
+    pub(crate) fn metrics(&self) -> UiMetrics {
+        metrics(self.density, self.font_size)
+    }
+
+    /// Returns the geometry for a density and font size that have not been
+    /// committed yet, which is what makes the Appearance page previewable.
+    pub(crate) fn metrics_for(density: UiDensity, font_size: u8) -> UiMetrics {
+        metrics(density, font_size)
+    }
+
+    /// Builds a palette preview for `theme` and `style` while retaining this
+    /// settings value's accessibility colour overrides.
+    pub(crate) fn tokens_for(&self, theme: usize, style: UiStyle) -> ThemeTokens {
+        let preset = styled(&THEMES[theme.min(THEMES.len() - 1)], style);
         ThemeTokens {
             window_bg: brush(preset.window_bg),
             panel_bg: brush(preset.panel_bg),
@@ -980,6 +1229,129 @@ impl AppSettings {
             warning: brush([0xFB, 0xBF, 0x24]),
         }
     }
+}
+
+/// Formats `now` as `YYYY-MM-DD HH-MM-SS` in UTC.
+///
+/// Recording file names are derived from the clock so two recordings in one
+/// session cannot collide. UTC is deliberate: a local-time name would jump
+/// backwards across a daylight-saving change and produce a name that already
+/// exists.
+pub(crate) fn recording_stamp(now: std::time::SystemTime) -> String {
+    let seconds = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let (days, rest) = (seconds / 86_400, seconds % 86_400);
+    let (year, month, day) = civil_from_days(days);
+    let (hour, minute, second) = (rest / 3_600, (rest % 3_600) / 60, rest % 60);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}-{minute:02}-{second:02}")
+}
+
+/// Converts days since the Unix epoch into a civil `(year, month, day)`.
+///
+/// This is Howard Hinnant's `civil_from_days`, which is exact for every date
+/// the proleptic Gregorian calendar defines and needs no lookup tables.
+fn civil_from_days(days: u64) -> (u64, u64, u64) {
+    // Shift the epoch to 0000-03-01 so leap days land at the end of the era.
+    let shifted = days + 719_468;
+    let era = shifted / 146_097;
+    let day_of_era = shifted % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// The colour scheme a theme produces once its style is applied.
+///
+/// Styles transform the preset rather than replacing it, so a new theme is
+/// automatically available in all three styles.
+struct StyledPreset {
+    window_bg: Rgb,
+    panel_bg: Rgb,
+    header_bg: Rgb,
+    header_active_bg: Rgb,
+    border: Rgb,
+    border_strong: Rgb,
+    row_bg: Rgb,
+    row_selected_bg: Rgb,
+    control_bg: Rgb,
+    text: Rgb,
+    text_strong: Rgb,
+    text_muted: Rgb,
+    accent: Rgb,
+    canvas_bg: Rgb,
+}
+
+fn styled(preset: &ThemePreset, style: UiStyle) -> StyledPreset {
+    let base = StyledPreset {
+        window_bg: preset.window_bg,
+        panel_bg: preset.panel_bg,
+        header_bg: preset.header_bg,
+        header_active_bg: preset.header_active_bg,
+        border: preset.border,
+        border_strong: preset.border_strong,
+        row_bg: preset.row_bg,
+        row_selected_bg: preset.row_selected_bg,
+        control_bg: preset.control_bg,
+        text: preset.text,
+        text_strong: preset.text_strong,
+        text_muted: preset.text_muted,
+        accent: preset.accent,
+        canvas_bg: preset.canvas_bg,
+    };
+    match style {
+        UiStyle::Default => base,
+        // Flat removes the panel/window separation and lets the borders
+        // recede, which is the look OBS's flatter themes have.
+        UiStyle::Flat => StyledPreset {
+            panel_bg: base.window_bg,
+            header_bg: mix(base.header_bg, base.window_bg, 160),
+            row_bg: mix(base.row_bg, base.window_bg, 160),
+            border: mix(base.border, base.window_bg, 180),
+            border_strong: mix(base.border_strong, base.window_bg, 100),
+            ..base
+        },
+        // Contrast pushes text and edges away from the background instead of
+        // brightening everything, so the theme's identity survives.
+        UiStyle::Contrast => StyledPreset {
+            text: lighten(base.text, 60),
+            text_strong: lighten(base.text_strong, 40),
+            text_muted: lighten(base.text_muted, 70),
+            border: lighten(base.border, 50),
+            border_strong: lighten(base.border_strong, 60),
+            accent: lighten(base.accent, 40),
+            row_selected_bg: lighten(base.row_selected_bg, 30),
+            ..base
+        },
+    }
+}
+
+/// Blends `colour` toward `other` by `amount` in 0..=255.
+fn mix(colour: Rgb, other: Rgb, amount: u8) -> Rgb {
+    let blend = |left: u8, right: u8| {
+        let left = u16::from(left) * u16::from(255 - amount);
+        let right = u16::from(right) * u16::from(amount);
+        u8::try_from((left + right) / 255).unwrap_or(u8::MAX)
+    };
+    [
+        blend(colour[0], other[0]),
+        blend(colour[1], other[1]),
+        blend(colour[2], other[2]),
+    ]
+}
+
+/// Moves `colour` toward white by `amount` in 0..=255.
+fn lighten(colour: Rgb, amount: u8) -> Rgb {
+    mix(colour, [0xFF, 0xFF, 0xFF], amount)
 }
 
 /// Reads a Slint model into a plain vector.
@@ -1215,6 +1587,104 @@ mod tests {
     }
 
     #[test]
+    fn appearance_video_and_output_round_trip_through_the_document() {
+        let settings = AppSettings {
+            style: UiStyle::Contrast,
+            font_size: 16,
+            density: UiDensity::Comfortable,
+            output_mode: OutputMode::Advanced,
+            stream_custom_encoder: true,
+            recording_quality: RecordingQuality::IndistinguishableQuality,
+            recording_directory: "/tmp/obs-rs-recordings".to_owned(),
+            recording_filename_without_spaces: true,
+            recording_audio_encoder: EncoderImplementation::new("avenc_aac"),
+            video: VideoSettings {
+                base_width: 2_560,
+                base_height: 1_440,
+                output_width: 1_600,
+                output_height: 900,
+                scale_filter: ScaleFilter::Lanczos,
+                fps_mode: FpsMode::Fractional,
+                fps_numerator: 30_000,
+                fps_denominator: 1_001,
+            },
+            ..AppSettings::default()
+        };
+
+        let decoded = AppSettings::from_config(&settings.to_config());
+
+        assert_eq!(decoded, settings);
+        assert_eq!(decoded.video.frame_rate().numerator(), 30_000);
+        assert_eq!(decoded.video.frame_rate().denominator(), 1_001);
+        assert!(!decoded.video.is_unscaled());
+    }
+
+    #[test]
+    fn the_shipped_defaults_match_the_reference_output_setup() {
+        let settings = AppSettings::default();
+
+        assert_eq!(settings.output_mode, OutputMode::Simple);
+        assert_eq!(settings.video.base_width, 1_920);
+        assert_eq!(settings.video.base_height, 1_080);
+        assert_eq!(settings.video.output_width, 1_280);
+        assert_eq!(settings.video.output_height, 720);
+        assert_eq!(settings.video.scale_filter, ScaleFilter::Bicubic);
+        assert_eq!(settings.video.fps_mode, FpsMode::Common);
+        assert_eq!(settings.video.frame_rate().numerator(), 60);
+        assert_eq!(settings.rtmp.video.bitrate_kbps, 6_000);
+        assert_eq!(settings.rtmp.audio.bitrate_kbps, 160);
+        assert_eq!(settings.density, UiDensity::Normal);
+        assert_eq!(settings.font_size, DEFAULT_FONT_SIZE);
+    }
+
+    #[test]
+    fn appearance_and_video_values_outside_their_range_fall_back() {
+        let mut config = AppSettings::default().to_config();
+        for (key, value) in [
+            ("appearance_font_size", "96"),
+            ("appearance_density", "roomy"),
+            ("appearance_style", "neon"),
+            ("video_base_width", "0"),
+            ("video_output_height", "99999"),
+            ("video_scale_filter", "nearest"),
+            ("video_fps_mode", "smpte"),
+            ("recording_quality", "perfect"),
+            ("output_mode", "expert"),
+        ] {
+            config.set(key, value).expect("settings key");
+        }
+
+        let decoded = AppSettings::from_config(&config);
+        let defaults = AppSettings::default();
+
+        assert_eq!(decoded.font_size, defaults.font_size);
+        assert_eq!(decoded.density, defaults.density);
+        assert_eq!(decoded.style, defaults.style);
+        assert_eq!(decoded.video, defaults.video);
+        assert_eq!(decoded.recording_quality, defaults.recording_quality);
+        assert_eq!(decoded.output_mode, defaults.output_mode);
+    }
+
+    #[test]
+    fn a_document_written_before_these_settings_existed_still_loads() {
+        // Everything the new pages own is absent here, which is exactly what a
+        // settings file from an older build looks like.
+        let mut config = Config::new();
+        config.set("theme", "slate").expect("theme key");
+        config.set("locale", "es").expect("locale key");
+
+        let decoded = AppSettings::from_config(&config);
+        let defaults = AppSettings::default();
+
+        assert_eq!(decoded.theme, 3);
+        assert_eq!(decoded.locale, "es");
+        assert_eq!(decoded.video, defaults.video);
+        assert_eq!(decoded.style, defaults.style);
+        assert_eq!(decoded.output_mode, defaults.output_mode);
+        assert_eq!(decoded.recording_quality, defaults.recording_quality);
+    }
+
+    #[test]
     fn unreadable_and_invalid_documents_fall_back_to_defaults() {
         let missing = std::env::temp_dir().join("obs-rs-settings-does-not-exist.toml");
         assert_eq!(AppSettings::load(&missing), AppSettings::default());
@@ -1275,6 +1745,86 @@ mod tests {
         assert!(!debug.contains("private-passphrase"));
         assert!(!debug.contains("private-whip-token"));
         assert!(!debug.contains("private-rist-secret"));
+    }
+
+    #[test]
+    fn recording_stamps_are_sortable_utc_civil_times() {
+        let epoch = recording_stamp(std::time::UNIX_EPOCH);
+        assert_eq!(epoch, "1970-01-01 00-00-00");
+
+        let leap_day = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_709_209_845);
+        assert_eq!(recording_stamp(leap_day), "2024-02-29 12-30-45");
+
+        // A name generated without spaces must still be a legal file name and
+        // must not lose any of the fields the stamp encodes.
+        let settings = AppSettings {
+            recording_directory: "/tmp".to_owned(),
+            recording_filename_without_spaces: true,
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            settings.recording_file_path("2024-02-29 12-30-45"),
+            "/tmp/2024-02-29-12-30-45.mkv"
+        );
+        let spaced = AppSettings {
+            recording_filename_without_spaces: false,
+            ..settings
+        };
+        assert_eq!(
+            spaced.recording_file_path("2024-02-29 12-30-45"),
+            "/tmp/2024-02-29 12-30-45.mkv"
+        );
+    }
+
+    #[test]
+    fn the_lossless_preset_forces_the_container_that_can_carry_it() {
+        let settings = AppSettings {
+            recording_quality: RecordingQuality::Lossless,
+            recording_format: RecordingFormat::Matroska,
+            recording_codec: VideoCodec::H264,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(
+            settings.effective_recording_format(),
+            RecordingFormat::ReferencePacket
+        );
+        assert_eq!(
+            settings.effective_recording_codec(),
+            VideoCodec::ReferenceRle
+        );
+        assert_eq!(
+            Path::new(&settings.recording_file_path("stamp"))
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("obsr")
+        );
+    }
+
+    #[test]
+    fn styles_transform_the_theme_rather_than_replacing_it() {
+        let default_style = AppSettings::default();
+        let flat = AppSettings {
+            style: UiStyle::Flat,
+            ..AppSettings::default()
+        };
+        let contrast = AppSettings {
+            style: UiStyle::Contrast,
+            ..AppSettings::default()
+        };
+
+        // Flat merges the panel into the window; the default keeps them apart.
+        assert_ne!(
+            default_style.tokens().panel_bg,
+            default_style.tokens().window_bg
+        );
+        assert_eq!(flat.tokens().panel_bg, flat.tokens().window_bg);
+        // Contrast lifts the text away from the background it sits on.
+        assert_ne!(contrast.tokens().text, default_style.tokens().text);
+        assert_eq!(
+            contrast.tokens().window_bg,
+            default_style.tokens().window_bg
+        );
     }
 
     #[test]

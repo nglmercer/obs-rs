@@ -48,3 +48,40 @@ export global Palette {
         warning: rgb(251, 191, 36),
     };
 }
+
+// Geometry for the settings window. Rust owns the density and font-size
+// settings and pushes one complete metric set, exactly like the palette, so a
+// page never branches on a density name and a new density is a new value
+// rather than new markup.
+export struct UiMetrics {
+    row-height: length,
+    control-height: length,
+    label-width: length,
+    page-spacing: length,
+    group-spacing: length,
+    sidebar-row-height: length,
+    sidebar-width: length,
+    content-margin: length,
+    font-size: length,
+    small-font-size: length,
+    title-font-size: length,
+}
+
+export global Metrics {
+    // The default matches the Normal density at the default font size in
+    // `settings_model.rs`, so the window lays out correctly before Rust pushes
+    // the stored appearance.
+    in property <UiMetrics> ui: {
+        row-height: 32px,
+        control-height: 32px,
+        label-width: 210px,
+        page-spacing: 14px,
+        group-spacing: 8px,
+        sidebar-row-height: 32px,
+        sidebar-width: 180px,
+        content-margin: 16px,
+        font-size: 12px,
+        small-font-size: 11px,
+        title-font-size: 13px,
+    };
+}

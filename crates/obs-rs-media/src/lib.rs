@@ -9,6 +9,7 @@ mod format;
 mod frame;
 mod metrics;
 mod pixel;
+mod scale;
 mod time;
 mod transform;
 mod transition;
@@ -25,6 +26,7 @@ pub use metrics::{
     thread_frame_memory_metrics, FrameMemoryMetrics, LatencyMetrics,
 };
 pub use pixel::{PixelFormat, RawVideoFrame};
+pub use scale::{FrameScaler, ScaleFilter};
 pub use time::{sleep_precise, FrameRate, Timestamp, SLEEP_SPIN_WINDOW};
 pub use transform::FrameTransform;
 pub use transition::FrameTransition;
