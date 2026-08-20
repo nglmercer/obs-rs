@@ -25,7 +25,7 @@ use crate::{
         AppSettings, RecordingFormat, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES,
         THEMES,
     },
-    I18n, MainWindow, OutputRuntime, Palette, PreviewRenderer, SettingsWindow,
+    I18n, MainWindow, OutputRuntime, Palette, PreviewSurface, SettingsWindow,
 };
 
 /// Owns the settings window and the committed settings document.
@@ -114,7 +114,7 @@ pub(crate) struct PeerWindows {
 pub(crate) fn install_settings_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     settings: AppSettings,
     peers: &PeerWindows,
@@ -148,9 +148,9 @@ pub(crate) fn install_settings_window(
     push_palette(ui, &controller, &controller.settings.borrow());
     controller.sync_theme(state.borrow().locale());
 
-    install_open(ui, state, renderer, output, &controller);
-    install_previews(ui, state, renderer, &controller);
-    install_commit(ui, state, renderer, output, &controller);
+    install_open(ui, state, surface, output, &controller);
+    install_previews(ui, state, surface, &controller);
+    install_commit(ui, state, surface, output, &controller);
     Ok(controller)
 }
 
@@ -337,20 +337,20 @@ fn show_protocol_fields(window: &SettingsWindow, protocol: StreamProtocol) {
 fn install_open(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
     let weak = ui.as_weak();
     let state = Rc::clone(state);
-    let renderer = Rc::clone(renderer);
+    let surface = Rc::clone(surface);
     let output = Rc::clone(output);
     let controller = Rc::clone(controller);
     ui.on_open_settings_window(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        load_draft(&state, &renderer, &output, &controller);
+        load_draft(&state, &surface, &output, &controller);
         controller.sync_theme(state.borrow().locale());
         if let Err(error) = controller.window.show() {
             ui.set_status_message(format!("Settings window: {error}").into());
@@ -423,7 +423,7 @@ fn populate_audio_devices(
 /// Copies committed settings plus live project state into the window's draft.
 fn load_draft(
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
@@ -508,7 +508,7 @@ fn load_draft(
     window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.channels()));
     populate_audio_devices(window, state, output, controller, &settings);
 
-    let video_format = renderer.borrow().format;
+    let video_format = surface.borrow().format;
     let resolution = (video_format.width(), video_format.height());
     window.set_base_resolution_index(index_of(&RESOLUTIONS, &resolution));
     window.set_output_resolution(format!("{}x{}", resolution.0, resolution.1).into());
@@ -526,7 +526,7 @@ fn load_draft(
 fn install_previews(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     controller: &Rc<SettingsController>,
 ) {
     let weak = ui.as_weak();
@@ -542,7 +542,7 @@ fn install_previews(
 
     let weak = ui.as_weak();
     let state = Rc::clone(state);
-    let renderer = Rc::clone(renderer);
+    let surface = Rc::clone(surface);
     let language_controller = Rc::clone(controller);
     controller.window.on_preview_language(move |index| {
         let Some(ui) = weak.upgrade() else {
@@ -559,7 +559,7 @@ fn install_previews(
             .dispatch(UiCommand::SetLocale { locale })
             .is_ok()
         {
-            refresh_ui(&ui, &state, &renderer);
+            refresh_ui(&ui, &state, &surface);
             language_controller.sync_theme(locale);
         }
     });
@@ -568,13 +568,13 @@ fn install_previews(
 fn install_commit(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
     let weak = ui.as_weak();
     let apply_state = Rc::clone(state);
-    let apply_renderer = Rc::clone(renderer);
+    let apply_surface = Rc::clone(surface);
     let apply_output = Rc::clone(output);
     let apply_controller = Rc::clone(controller);
     controller.window.on_apply_settings(move || {
@@ -584,7 +584,7 @@ fn install_commit(
         commit(
             &ui,
             &apply_state,
-            &apply_renderer,
+            &apply_surface,
             &apply_output,
             &apply_controller,
         );
@@ -616,7 +616,7 @@ fn install_commit(
 
     let weak = ui.as_weak();
     let accept_state = Rc::clone(state);
-    let accept_renderer = Rc::clone(renderer);
+    let accept_surface = Rc::clone(surface);
     let accept_output = Rc::clone(output);
     let accept_controller = Rc::clone(controller);
     controller.window.on_accept_settings(move || {
@@ -626,7 +626,7 @@ fn install_commit(
         commit(
             &ui,
             &accept_state,
-            &accept_renderer,
+            &accept_surface,
             &accept_output,
             &accept_controller,
         );
@@ -635,7 +635,7 @@ fn install_commit(
 
     let weak = ui.as_weak();
     let state = Rc::clone(state);
-    let renderer = Rc::clone(renderer);
+    let surface = Rc::clone(surface);
     let cancel_controller = Rc::clone(controller);
     controller.window.on_cancel_settings(move || {
         let Some(ui) = weak.upgrade() else {
@@ -652,7 +652,7 @@ fn install_commit(
                 .dispatch(UiCommand::SetLocale { locale })
                 .is_ok()
         {
-            refresh_ui(&ui, &state, &renderer);
+            refresh_ui(&ui, &state, &surface);
         }
         cancel_controller.sync_theme(locale);
         cancel_controller.window.set_dirty(false);
@@ -907,7 +907,7 @@ fn read_recording_draft(controller: &SettingsController, settings: &mut AppSetti
 fn commit(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
@@ -951,7 +951,7 @@ fn commit(
     }
 
     // Video: write the canvas back to the active profile so it persists with
-    // the project and the renderer rebuilds on the next sync.
+    // the project and the surface rebuilds on the next sync.
     if let Some(format) = video_format_from(window) {
         let output_active = {
             let state = state.borrow();
@@ -982,9 +982,9 @@ fn commit(
     window.set_preview_swatch(settings.tokens().preview_border);
     window.set_program_swatch(settings.tokens().program_border);
     window.set_dirty(false);
-    refresh_ui(ui, state, renderer);
-    ui.set_canvas_width(i32::try_from(renderer.borrow().format.width()).unwrap_or(1920));
-    ui.set_canvas_height(i32::try_from(renderer.borrow().format.height()).unwrap_or(1080));
+    refresh_ui(ui, state, surface);
+    ui.set_canvas_width(i32::try_from(surface.borrow().format.width()).unwrap_or(1920));
+    ui.set_canvas_height(i32::try_from(surface.borrow().format.height()).unwrap_or(1080));
 
     if !notes.is_empty() {
         ui.set_status_message(

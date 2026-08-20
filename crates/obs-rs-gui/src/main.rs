@@ -31,12 +31,13 @@ mod view;
 mod tests;
 
 pub(crate) use callbacks::{
-    apply_source_name_and_refresh, apply_source_settings_and_refresh,
-    apply_source_transform_and_refresh, duplicate_scene_and_refresh, duplicate_source_and_refresh,
+    apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
+    apply_source_transform_to, duplicate_scene_and_refresh, duplicate_source_and_refresh,
     flip_source_and_refresh, move_source_and_refresh, move_source_to_and_refresh, project_store,
     remove_scene_and_refresh, remove_source_and_refresh, rename_scene_and_refresh,
-    reset_source_transform_and_refresh, source_transform_document,
-    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
+    reset_source_transform_and_refresh, selected_target, source_target, source_transform_document,
+    target_settings_document, toggle_source_locked_and_refresh,
+    toggle_source_visibility_and_refresh, SourceTarget,
 };
 pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks, install_dock_callbacks,
@@ -50,7 +51,7 @@ pub(crate) use fixtures::{
     kind_uses_portal, platform_capture_summary, source_settings,
 };
 pub(crate) use output::OutputRuntime;
-pub(crate) use preview::{frame_to_image, PreviewRenderer};
+pub(crate) use preview::{frame_to_image, PreviewSurface};
 pub(crate) use preview_worker::PreviewWorker;
 pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames_for_view, refresh_ui,
@@ -91,11 +92,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
     // Revision 0 is the "nothing observed yet" sentinel, so the first refresh
-    // always syncs the renderer against the live session.
-    let renderer = Rc::new(RefCell::new(PreviewRenderer::new(&project, 0)?));
+    // always syncs the surface against the live session.
+    let surface = Rc::new(RefCell::new(PreviewSurface::new(&project, 0)?));
     {
         // The canvas size drives the zoom readout under the preview.
-        let format = renderer.borrow().format;
+        let format = surface.borrow().format;
         ui.set_canvas_width(i32::try_from(format.width()).unwrap_or(1920));
         ui.set_canvas_height(i32::try_from(format.height()).unwrap_or(1080));
     }
@@ -111,7 +112,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             state.project_session().revision(),
         )
     };
-    let preview_worker = Rc::new(PreviewWorker::spawn(preview_project, preview_revision)?);
+    // The worker owns the only live runtime in the process, so it is the only
+    // thing that opens a camera or a screen-cast session.
+    let preview_worker = Rc::new(PreviewWorker::spawn(
+        preview_project,
+        preview_revision,
+        &surface.borrow().diagnostics_handle(),
+    )?);
     let audio_format = AudioFormat::new(settings.sample_rate_hz(), settings.channel_count())?;
     state
         .borrow_mut()
@@ -127,7 +134,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .map_err(|error| format!("stored audio format: {error}"))?;
     let output = Rc::new(RefCell::new(OutputRuntime::with_audio_input(
-        renderer.borrow().format,
+        surface.borrow().format,
         audio_format,
         (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
     )?));
@@ -148,28 +155,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     // recovery check and the docks both see the restored session.
     ui.set_project_path(settings.project_path.as_str().into());
     settings.apply_layout(&ui);
-    refresh_ui(&ui, &state, &renderer);
+    refresh_ui(&ui, &state, &surface);
     if let Some(message) = restored {
         ui.set_status_message(message.into());
     }
     refresh_output_ui(&ui, &output);
-    install_callbacks(&ui, &state, &renderer, &output);
+    install_callbacks(&ui, &state, &surface, &output);
     // Keeps the canvas drag state and the detached docks alive for the session.
-    let _canvas = install_canvas_callbacks(&ui, &state, &renderer);
+    let canvas = install_canvas_callbacks(&ui, &state, &surface);
     let docks = install_dock_callbacks(&ui, &state);
     // Menu-bar actions and the projector windows they open.
-    let projectors = install_menu_callbacks(&ui, &state, &renderer);
+    let projectors = install_menu_callbacks(&ui, &state, &surface);
     // Keeps the settings window alive for the whole session; dropping the
     // controller would close it.
-    let add_source_window = install_add_source_window(&ui, &state, &renderer)?;
-    let monitor_window = install_monitor_window(&ui, &state, &renderer)?;
-    let properties_window = install_source_properties_window(&ui, &state, &renderer)?;
-    let filters_window = install_source_filters_window(&ui, &state, &renderer)?;
-    let transform_window = install_source_transform_window(&ui, &state, &renderer)?;
+    let add_source_window = install_add_source_window(&ui, &state, &surface)?;
+    let monitor_window = install_monitor_window(&ui, &state, &surface)?;
+    let properties_window = install_source_properties_window(&ui, &state, &surface)?;
+    let filters_window = install_source_filters_window(&ui, &state, &surface)?;
+    let transform_window = install_source_transform_window(&ui, &state, &surface)?;
     let settings_window = install_settings_window(
         &ui,
         &state,
-        &renderer,
+        &surface,
         &output,
         settings,
         &PeerWindows {
@@ -187,8 +194,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let _preview_timer =
-        start_preview_timer(&ui, &state, &preview_worker, &output, &projectors, &docks);
+    let _preview_timer = start_preview_timer(
+        &ui,
+        &state,
+        &preview_worker,
+        &output,
+        &projectors,
+        &docks,
+        &canvas,
+    );
     ui.run()?;
     // Closing the window is the ordinary way to leave OBS, so the layout and
     // the project are written back here rather than only on an explicit Save.

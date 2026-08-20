@@ -140,7 +140,7 @@ pub(crate) fn resize(weights: &[f32], order: &[i32], index: usize, delta_pixels:
 ///
 /// A detached dock forwards every action to the studio window, so this needs
 /// only the studio state the window titles are localized from — not the
-/// renderer or the output runtime.
+/// surface or the output runtime.
 pub(crate) fn install_dock_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,

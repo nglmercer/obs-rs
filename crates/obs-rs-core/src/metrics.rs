@@ -10,6 +10,8 @@ pub struct CompositorMetrics {
     pub(crate) transformed_frames: u64,
     pub(crate) filtered_frames: u64,
     pub(crate) blended_layers: u64,
+    pub(crate) failed_sources: u64,
+    pub(crate) contract_violations: u64,
     pub(crate) capture_latency: LatencyMetrics,
 }
 
@@ -54,6 +56,27 @@ impl CompositorMetrics {
     #[must_use]
     pub const fn blended_layers(self) -> u64 {
         self.blended_layers
+    }
+
+    /// Returns the number of source renders that failed and were skipped.
+    ///
+    /// A failing source is isolated rather than fatal, so this counter is how a
+    /// broken camera in an otherwise healthy scene becomes visible.
+    #[must_use]
+    pub const fn failed_sources(self) -> u64 {
+        self.failed_sources
+    }
+
+    /// Returns how many source failures were contract violations.
+    ///
+    /// A subset of [`Self::failed_sources`]. A device that is unavailable is an
+    /// ordinary fact of live capture; a source that rejects the format it was
+    /// configured for, or its own settings, is a bug in the engine or in that
+    /// source. Both are isolated so the scene keeps rendering, and this counter
+    /// is what keeps the second kind from hiding among the first.
+    #[must_use]
+    pub const fn contract_violations(self) -> u64 {
+        self.contract_violations
     }
 
     /// Distribution of source capture/render call latency.

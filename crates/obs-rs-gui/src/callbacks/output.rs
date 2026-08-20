@@ -6,29 +6,29 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
 use crate::{
-    dispatch_and_refresh, refresh_output_ui, refresh_ui, MainWindow, OutputRuntime, PreviewRenderer,
+    dispatch_and_refresh, refresh_output_ui, refresh_ui, MainWindow, OutputRuntime, PreviewSurface,
 };
 
 pub(crate) fn install_output_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
-    install_recording_callback(ui, state, renderer, output);
-    install_streaming_callback(ui, state, renderer, output);
-    install_transition_callbacks(ui, state, renderer);
+    install_recording_callback(ui, state, surface, output);
+    install_streaming_callback(ui, state, surface, output);
+    install_transition_callbacks(ui, state, surface);
 }
 
 fn install_recording_callback(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
     let weak = ui.as_weak();
     let recording_state = Rc::clone(state);
-    let recording_renderer = Rc::clone(renderer);
+    let recording_surface = Rc::clone(surface);
     let recording_output = Rc::clone(output);
     ui.on_toggle_recording(move || {
         let Some(ui) = weak.upgrade() else {
@@ -56,7 +56,7 @@ fn install_recording_callback(
         })();
         match result {
             Ok(message) => {
-                refresh_ui(&ui, &recording_state, &recording_renderer);
+                refresh_ui(&ui, &recording_state, &recording_surface);
                 ui.set_status_message(message.into());
             }
             Err(error) => ui.set_status_message(format!("Recording failed: {error}").into()),
@@ -68,12 +68,12 @@ fn install_recording_callback(
 fn install_streaming_callback(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
     let weak = ui.as_weak();
     let streaming_state = Rc::clone(state);
-    let streaming_renderer = Rc::clone(renderer);
+    let streaming_surface = Rc::clone(surface);
     let streaming_output = Rc::clone(output);
     ui.on_toggle_streaming(move || {
         let Some(ui) = weak.upgrade() else {
@@ -94,7 +94,7 @@ fn install_streaming_callback(
         })();
         match result {
             Ok(message) => {
-                refresh_ui(&ui, &streaming_state, &streaming_renderer);
+                refresh_ui(&ui, &streaming_state, &streaming_surface);
                 ui.set_status_message(message.into());
             }
             Err(error) => ui.set_status_message(format!("Streaming failed: {error}").into()),
@@ -106,23 +106,23 @@ fn install_streaming_callback(
 fn install_transition_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let weak = ui.as_weak();
     let cut_state = Rc::clone(state);
-    let cut_renderer = Rc::clone(renderer);
+    let cut_surface = Rc::clone(surface);
     ui.on_cut_transition(move || {
-        take_transition_and_refresh(&weak, &cut_state, &cut_renderer, FrameTransition::Cut);
+        take_transition_and_refresh(&weak, &cut_state, &cut_surface, FrameTransition::Cut);
     });
 
     let weak = ui.as_weak();
     let fade_state = Rc::clone(state);
-    let fade_renderer = Rc::clone(renderer);
+    let fade_surface = Rc::clone(surface);
     ui.on_fade_transition(move || {
         take_transition_and_refresh(
             &weak,
             &fade_state,
-            &fade_renderer,
+            &fade_surface,
             FrameTransition::CrossFade {
                 progress_milli: 500,
             },
@@ -133,7 +133,7 @@ fn install_transition_callbacks(
 pub(crate) fn take_transition_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     transition: FrameTransition,
 ) {
     let target = state.borrow().preview_scene().map(str::to_owned);
@@ -154,7 +154,7 @@ pub(crate) fn take_transition_and_refresh(
     };
     match result {
         Ok(()) => {
-            refresh_ui(&ui, state, renderer);
+            refresh_ui(&ui, state, surface);
         }
         Err(error) => ui.set_status_message(format!("Transition failed: {error}").into()),
     }
@@ -178,19 +178,19 @@ pub(crate) fn push_program_frame(
 pub(crate) fn install_mixer_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
     let weak = ui.as_weak();
     let gain_state = Rc::clone(state);
-    let gain_renderer = Rc::clone(renderer);
+    let gain_surface = Rc::clone(surface);
     let gain_output = Rc::clone(output);
     ui.on_set_mixer_gain(move |id, gain_milli| {
         let gain_milli = u16::try_from(gain_milli.max(0)).unwrap_or(0);
         dispatch_and_refresh(
             &weak,
             &gain_state,
-            &gain_renderer,
+            &gain_surface,
             UiCommand::SetMixerGain {
                 id: id.to_string(),
                 gain_milli,
@@ -208,13 +208,13 @@ pub(crate) fn install_mixer_callbacks(
 
     let weak = ui.as_weak();
     let mute_state = Rc::clone(state);
-    let mute_renderer = Rc::clone(renderer);
+    let mute_surface = Rc::clone(surface);
     let mute_output = Rc::clone(output);
     ui.on_toggle_mixer_mute(move |id| {
         dispatch_and_refresh(
             &weak,
             &mute_state,
-            &mute_renderer,
+            &mute_surface,
             UiCommand::ToggleMixerMute { id: id.to_string() },
         );
         let muted = mute_state

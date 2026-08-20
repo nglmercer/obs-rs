@@ -9,6 +9,8 @@ use super::{
     simulated::{SimulatedCaptureDevice, TestPatternDevice},
     types::CaptureKind,
 };
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use super::{lifecycle::CaptureLifecycleState, threaded::ThreadedCaptureDevice};
 
 pub const TEST_PATTERN_SOURCE_KIND: &str = "test_pattern";
 /// Stable source kind for a screen capture source with a portable fallback.
@@ -222,6 +224,13 @@ impl Source for SimulatedCaptureSource {
     }
 }
 
+/// A camera rendered from a worker thread rather than from the compositor.
+///
+/// Opening a camera and pulling a frame from it are both driver calls that can
+/// stall for tens of milliseconds. Doing either inline would hold up every
+/// other source in the scene — a screen capture would stutter because a webcam
+/// was slow — so the device lives on its own thread and the compositor only
+/// ever reads its newest frame.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct NativeCameraSource {
     kind: Identifier,
@@ -230,7 +239,7 @@ struct NativeCameraSource {
     device_id: String,
     native_mode: Option<super::types::CameraMode>,
     /// `None` while the camera cannot be opened; see `failure` for the reason.
-    device: Option<Box<dyn VideoCaptureDevice>>,
+    device: Option<ThreadedCaptureDevice>,
     failure: Option<String>,
     /// Renders since the last attempt to reopen a camera that was unavailable.
     retry_countdown: u32,
@@ -245,35 +254,43 @@ const CAMERA_RETRY_FRAMES: u32 = 15;
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl NativeCameraSource {
-    /// Opens the camera, recording why if it cannot be opened.
+    /// Starts a worker that opens the camera and keeps its newest frame ready.
+    ///
+    /// This returns immediately. A camera that is unplugged, busy, or missing
+    /// therefore costs the scene nothing at all: the failure surfaces on a
+    /// later render, and the retry path reopens it.
     fn reopen(&mut self) {
-        self.device = None;
         self.retry_countdown = CAMERA_RETRY_FRAMES;
-        let mut failures = Vec::new();
-        match crate::NokhwaCaptureDevice::from_device_id(&self.device_id, &self.name) {
-            Ok(mut device) => {
-                let request = self.native_mode.map_or_else(
-                    || CaptureRequest::output(self.format),
-                    |mode| CaptureRequest::camera(self.format, mode),
-                );
-                match device.start_capture(request) {
-                    Ok(()) => {
-                        self.failure = None;
-                        self.device = Some(Box::new(device));
-                        return;
-                    }
-                    Err(error) => failures.push(error.to_string()),
-                }
-            }
-            Err(error) => failures.push(error.to_string()),
-        }
-
-        self.failure = Some(
-            failures
-                .into_iter()
-                .next()
-                .unwrap_or_else(|| format!("camera {} is unavailable", self.device_id)),
+        self.failure = None;
+        // The old worker is shut down before the new one is created. Assigning
+        // over `self.device` would not do it: the replacement is constructed —
+        // and its worker has already begun opening the camera — before the old
+        // value is dropped, so both would be holding the same device and the
+        // new one would very likely be told it is busy.
+        drop(self.device.take());
+        let request = self.native_mode.map_or_else(
+            || CaptureRequest::output(self.format),
+            |mode| CaptureRequest::camera(self.format, mode),
         );
+        let device_id = self.device_id.clone();
+        let name = self.name.clone();
+        self.device = Some(ThreadedCaptureDevice::open(
+            request,
+            &self.device_id,
+            move || {
+                crate::NokhwaCaptureDevice::from_device_id(&device_id, &name)
+                    .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
+            },
+        ));
+    }
+
+    /// Returns the error to report while the camera is not delivering frames.
+    fn unavailable(&self) -> SourceError {
+        SourceError::Unavailable(
+            self.failure
+                .clone()
+                .unwrap_or_else(|| format!("camera {} is unavailable", self.device_id)),
+        )
     }
 }
 
@@ -320,26 +337,59 @@ impl Source for NativeCameraSource {
                 requested: request.format(),
             });
         }
-        let Some(device) = self.device.as_mut() else {
-            self.retry_countdown = self.retry_countdown.saturating_sub(1);
-            if self.retry_countdown == 0 {
-                self.reopen();
+        match self.device.as_ref().map(ThreadedCaptureDevice::state) {
+            // No worker at all: count down to the next attempt.
+            None => {
+                self.retry_countdown = self.retry_countdown.saturating_sub(1);
+                if self.retry_countdown == 0 {
+                    self.reopen();
+                }
+                Err(self.unavailable())
             }
-            return Err(SourceError::Unavailable(
-                self.failure
-                    .clone()
-                    .unwrap_or_else(|| format!("camera {} is unavailable", self.device_id)),
-            ));
-        };
-        match device.next_frame(request.timestamp()) {
-            Ok(frame) => Ok(frame),
-            Err(error) => {
-                // A camera that disappears mid-session becomes unavailable
-                // rather than poisoning the scene: the retry path takes over.
-                self.failure = Some(error.to_string());
-                self.device = None;
-                self.retry_countdown = CAMERA_RETRY_FRAMES;
-                Err(SourceError::Unavailable(error.to_string()))
+            // Permission was refused. Reopening would only re-prompt, and at
+            // one attempt a second that is a dialog the user cannot escape, so
+            // this state is terminal: `update` is the way out of it, because
+            // granting access is something the person has to do first.
+            Some(CaptureLifecycleState::Denied) => {
+                self.failure = self
+                    .device
+                    .as_ref()
+                    .and_then(ThreadedCaptureDevice::failure)
+                    .map(|error| error.to_string());
+                Err(self.unavailable())
+            }
+            // A stopped worker keeps serving its last frame, which would freeze
+            // the picture silently, so recovery is driven from the state rather
+            // than from the poll result.
+            Some(CaptureLifecycleState::Lost) => {
+                self.failure = self
+                    .device
+                    .as_ref()
+                    .and_then(ThreadedCaptureDevice::failure)
+                    .map(|error| error.to_string());
+                self.retry_countdown = self.retry_countdown.saturating_sub(1);
+                if self.retry_countdown == 0 {
+                    self.reopen();
+                }
+                Err(self.unavailable())
+            }
+            Some(_) => {
+                let timestamp = request.timestamp();
+                let Some(device) = self.device.as_mut() else {
+                    return Err(self.unavailable());
+                };
+                match device.poll_frame(timestamp) {
+                    Ok(frame) => {
+                        if frame.is_some() {
+                            self.failure = None;
+                        }
+                        Ok(frame)
+                    }
+                    Err(error) => {
+                        self.failure = Some(error.to_string());
+                        Err(SourceError::Unavailable(error.to_string()))
+                    }
+                }
             }
         }
     }

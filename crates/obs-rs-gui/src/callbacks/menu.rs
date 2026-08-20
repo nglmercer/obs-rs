@@ -17,7 +17,7 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    dispatch_and_refresh, initial_project, project_store, refresh_ui, MainWindow, PreviewRenderer,
+    dispatch_and_refresh, initial_project, project_store, refresh_ui, MainWindow, PreviewSurface,
     ProfileRow, ProjectorWindow,
 };
 
@@ -97,16 +97,16 @@ impl ProjectorController {
 pub(crate) fn install_menu_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) -> Rc<ProjectorController> {
     let projectors = Rc::new(ProjectorController {
         program: RefCell::new(None),
         preview: RefCell::new(None),
     });
 
-    install_history(ui, state, renderer);
-    install_session(ui, state, renderer);
-    install_collections(ui, state, renderer);
+    install_history(ui, state, surface);
+    install_session(ui, state, surface);
+    install_collections(ui, state, surface);
     install_projectors(ui, state, &projectors);
     install_information(ui);
 
@@ -137,31 +137,31 @@ pub(crate) fn refresh_menu_models(ui: &MainWindow, state: &Rc<RefCell<DesktopSta
 fn install_history(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let weak = ui.as_weak();
     let undo_state = Rc::clone(state);
-    let undo_renderer = Rc::clone(renderer);
+    let undo_surface = Rc::clone(surface);
     ui.on_undo_edit(move || {
-        dispatch_and_refresh(&weak, &undo_state, &undo_renderer, UiCommand::Undo);
+        dispatch_and_refresh(&weak, &undo_state, &undo_surface, UiCommand::Undo);
     });
 
     let weak = ui.as_weak();
     let redo_state = Rc::clone(state);
-    let redo_renderer = Rc::clone(renderer);
+    let redo_surface = Rc::clone(surface);
     ui.on_redo_edit(move || {
-        dispatch_and_refresh(&weak, &redo_state, &redo_renderer, UiCommand::Redo);
+        dispatch_and_refresh(&weak, &redo_state, &redo_surface, UiCommand::Redo);
     });
 }
 
 fn install_session(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let weak = ui.as_weak();
     let new_state = Rc::clone(state);
-    let new_renderer = Rc::clone(renderer);
+    let new_surface = Rc::clone(surface);
     ui.on_new_project(move || {
         let Some(ui) = weak.upgrade() else {
             return;
@@ -171,7 +171,7 @@ fn install_session(
                 // `DesktopState::new` also resets the history, which is what a
                 // new document should do: undo must not reach the old project.
                 *new_state.borrow_mut() = DesktopState::new(project);
-                refresh_ui(&ui, &new_state, &new_renderer);
+                refresh_ui(&ui, &new_state, &new_surface);
                 refresh_menu_models(&ui, &new_state);
                 ui.set_status_message("Started a new project".into());
             }
@@ -311,11 +311,11 @@ fn documentation_path() -> Option<PathBuf> {
 fn install_collections(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    renderer: &Rc<RefCell<PreviewRenderer>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let weak = ui.as_weak();
     let select_state = Rc::clone(state);
-    let select_renderer = Rc::clone(renderer);
+    let select_surface = Rc::clone(surface);
     ui.on_select_collection(move |id| {
         let Some(ui) = weak.upgrade() else {
             return;
@@ -330,7 +330,7 @@ fn install_collections(
             Ok(()) => {
                 ui.set_project_path(path.as_str().into());
                 crate::refresh::invalidate_recovery_cache();
-                refresh_ui(&ui, &select_state, &select_renderer);
+                refresh_ui(&ui, &select_state, &select_surface);
                 refresh_menu_models(&ui, &select_state);
                 ui.set_status_message(format!("Opened collection {path}").into());
             }
@@ -340,7 +340,7 @@ fn install_collections(
 
     let weak = ui.as_weak();
     let create_state = Rc::clone(state);
-    let create_renderer = Rc::clone(renderer);
+    let create_surface = Rc::clone(surface);
     ui.on_create_collection(move |name| {
         let Some(ui) = weak.upgrade() else {
             return;
@@ -352,7 +352,7 @@ fn install_collections(
                 ui.set_project_path(path.as_str().into());
                 ui.set_collection_name("".into());
                 crate::refresh::invalidate_recovery_cache();
-                refresh_ui(&ui, &create_state, &create_renderer);
+                refresh_ui(&ui, &create_state, &create_surface);
                 refresh_menu_models(&ui, &create_state);
                 ui.set_status_message(format!("Created collection {path}").into());
             }
