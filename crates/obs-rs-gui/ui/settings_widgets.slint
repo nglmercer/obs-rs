@@ -1,10 +1,14 @@
-import { CheckBox, ComboBox, LineEdit, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Slider, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Icon } from "theme.slint";
-import { Palette } from "palette.slint";
+import { Metrics, Palette } from "palette.slint";
+
+// Every settings page is built from the components in this file, and every one
+// of them takes its geometry from `Metrics.ui`. That is what makes the density
+// and font-size settings a single value change rather than an edit to nine
+// pages, and what keeps the two-column form aligned down the whole window.
 
 // OBS groups settings under a flat title bar with the controls in a panel
-// beneath it. These four wrappers keep every page consistent so a new setting
-// is one line, not a new layout.
+// beneath it.
 export component SettingsGroup inherits VerticalLayout {
     in property <string> title;
     spacing: 0px;
@@ -12,9 +16,9 @@ export component SettingsGroup inherits VerticalLayout {
     Text {
         text: root.title;
         color: Palette.tokens.text-strong;
-        font-size: 13px;
+        font-size: Metrics.ui.title-font-size;
         font-weight: 700;
-        height: 30px;
+        height: Metrics.ui.row-height;
         vertical-alignment: center;
     }
     Rectangle {
@@ -23,10 +27,27 @@ export component SettingsGroup inherits VerticalLayout {
         border-color: Palette.tokens.border;
         VerticalLayout {
             padding: 12px;
-            spacing: 8px;
+            spacing: Metrics.ui.group-spacing;
             @children
         }
     }
+}
+
+// A titled section with no panel of its own, for the sub-groups OBS nests
+// inside the Output page's Streaming and Recording blocks.
+export component SettingsSection inherits VerticalLayout {
+    in property <string> title;
+    spacing: Metrics.ui.group-spacing;
+
+    Text {
+        text: root.title;
+        color: Palette.tokens.text-strong;
+        font-size: Metrics.ui.font-size;
+        font-weight: 700;
+        height: Metrics.ui.row-height;
+        vertical-alignment: center;
+    }
+    @children
 }
 
 // A labelled row: the label is right-aligned in a fixed gutter, matching the
@@ -38,14 +59,67 @@ export component SettingRow inherits HorizontalLayout {
     Text {
         text: root.label;
         color: Palette.tokens.text;
-        font-size: 12px;
-        width: 190px;
-        height: 28px;
+        font-size: Metrics.ui.font-size;
+        width: Metrics.ui.label-width;
+        height: Metrics.ui.control-height;
         horizontal-alignment: right;
         vertical-alignment: center;
         overflow: elide;
     }
     @children
+}
+
+// A combo box at the shared control height, so a row using one lines up with a
+// row using a text field.
+export component SettingsCombo inherits ComboBox {
+    height: Metrics.ui.control-height;
+    horizontal-stretch: 1;
+}
+
+// A text field at the shared control height.
+export component SettingsField inherits LineEdit {
+    height: Metrics.ui.control-height;
+    horizontal-stretch: 1;
+}
+
+// A numeric field at the shared control height.
+export component SettingsSpinBox inherits SpinBox {
+    height: Metrics.ui.control-height;
+    horizontal-stretch: 1;
+}
+
+// A slider paired with the numeric field that shows its value, which is how
+// the OBS Appearance page presents the font size.
+export component SettingsSlider inherits HorizontalLayout {
+    in property <float> minimum;
+    in property <float> maximum;
+    in-out property <float> value;
+    callback edited(float);
+    spacing: 12px;
+    horizontal-stretch: 1;
+
+    SpinBox {
+        width: 88px;
+        height: Metrics.ui.control-height;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        value: root.value;
+        edited(value) => {
+            root.value = value;
+            root.edited(value);
+        }
+    }
+    Slider {
+        height: Metrics.ui.control-height;
+        minimum: root.minimum;
+        maximum: root.maximum;
+        value: root.value;
+        horizontal-stretch: 1;
+        changed(value) => {
+            root.value = Math.round(value);
+            root.edited(root.value);
+        }
+    }
 }
 
 export component CheckRow inherits HorizontalLayout {
@@ -55,7 +129,7 @@ export component CheckRow inherits HorizontalLayout {
     callback toggled(bool);
     spacing: 12px;
 
-    Rectangle { width: 190px; }
+    Rectangle { width: Metrics.ui.label-width; }
     CheckBox {
         text: root.label;
         enabled: root.enabled;
@@ -69,13 +143,158 @@ export component SettingHint inherits HorizontalLayout {
     in property <string> text;
     spacing: 12px;
 
-    Rectangle { width: 190px; }
+    Rectangle { width: Metrics.ui.label-width; }
     Text {
         text: root.text;
         color: Palette.tokens.text-muted;
-        font-size: 11px;
+        font-size: Metrics.ui.small-font-size;
         wrap: word-wrap;
         horizontal-stretch: 1;
+    }
+}
+
+// A warning the page shows only while the condition that raised it holds, in
+// the warning colour rather than the muted hint colour.
+export component SettingsWarning inherits HorizontalLayout {
+    in property <string> text;
+    spacing: 12px;
+
+    Rectangle { width: Metrics.ui.label-width; }
+    Rectangle {
+        background: Palette.tokens.panel-bg;
+        border-width: 1px;
+        border-color: Palette.tokens.warning;
+        border-radius: 3px;
+        horizontal-stretch: 1;
+        HorizontalLayout {
+            padding: 8px;
+            spacing: 8px;
+            Text {
+                text: root.text;
+                color: Palette.tokens.warning;
+                font-size: Metrics.ui.small-font-size;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+        }
+    }
+}
+
+// A row of mutually exclusive buttons, which is how the OBS Appearance page
+// presents density: all the choices are visible at once rather than hidden
+// behind a dropdown.
+export component SegmentedControl inherits HorizontalLayout {
+    in property <[string]> options;
+    in-out property <int> current-index;
+    callback selected(int);
+    spacing: 0px;
+    horizontal-stretch: 1;
+
+    for option[index] in root.options : Rectangle {
+        height: Metrics.ui.control-height;
+        horizontal-stretch: 1;
+        background: index == root.current-index
+            ? Palette.tokens.accent
+            : (touch.has-hover ? Palette.tokens.row-bg : Palette.tokens.control-bg);
+        border-width: 1px;
+        border-color: Palette.tokens.border;
+        Text {
+            text: option;
+            color: index == root.current-index ? white : Palette.tokens.text;
+            font-size: Metrics.ui.font-size;
+            font-weight: index == root.current-index ? 700 : 400;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            height: parent.height;
+            overflow: elide;
+        }
+        touch := TouchArea {
+            clicked => {
+                root.current-index = index;
+                root.selected(index);
+            }
+        }
+    }
+}
+
+// The read-only aspect ratio OBS prints beside each resolution field.
+export component AspectRatioLabel inherits Text {
+    in property <string> ratio;
+    in property <string> caption;
+    text: root.caption + " " + root.ratio;
+    color: Palette.tokens.text-muted;
+    font-size: Metrics.ui.small-font-size;
+    vertical-alignment: center;
+    height: Metrics.ui.control-height;
+    width: 132px;
+    overflow: elide;
+}
+
+// A resolution field that behaves like the OBS combo box: the list offers the
+// common sizes, and anything typed as WIDTHxHEIGHT is accepted too. Validation
+// is immediate — the field turns to the warning colour and the row reports the
+// failure upward — because the value is committed by Apply, not by the field.
+export component EditableResolutionCombo inherits HorizontalLayout {
+    in property <[string]> suggestions;
+    in-out property <string> value;
+    in property <bool> valid: true;
+    // Which suggestion the current value corresponds to, or the last one
+    // picked when the value was typed rather than chosen.
+    in property <int> suggestion-index;
+    callback edited(string);
+    callback selected(string);
+    spacing: 8px;
+    horizontal-stretch: 1;
+
+    field := LineEdit {
+        text <=> root.value;
+        height: Metrics.ui.control-height;
+        horizontal-stretch: 1;
+        placeholder-text: "1920x1080";
+        edited => { root.edited(self.text); }
+    }
+    // The picker is a separate control rather than an editable combo because
+    // Slint's ComboBox has no text entry; keeping them side by side gives the
+    // same two ways in without pretending the widget is something it is not.
+    ComboBox {
+        model: root.suggestions;
+        current-index: root.suggestion-index;
+        width: 132px;
+        height: Metrics.ui.control-height;
+        selected(value) => {
+            root.value = value;
+            root.selected(value);
+        }
+    }
+    Rectangle {
+        width: 4px;
+        background: root.valid ? transparent : Palette.tokens.warning;
+        border-radius: 2px;
+    }
+}
+
+// A path field with the button that opens the system directory chooser.
+export component BrowsePathRow inherits HorizontalLayout {
+    in-out property <string> path;
+    in property <string> browse-label;
+    in property <bool> browse-enabled: true;
+    callback edited(string);
+    callback browse();
+    spacing: 8px;
+    horizontal-stretch: 1;
+
+    LineEdit {
+        text <=> root.path;
+        height: Metrics.ui.control-height;
+        horizontal-stretch: 1;
+        edited => { root.edited(self.text); }
+    }
+    Button {
+        text: root.browse-label;
+        enabled: root.browse-enabled;
+        height: Metrics.ui.control-height;
+        clicked => { root.browse(); }
     }
 }
 
@@ -87,11 +306,11 @@ export component CategoryRow inherits Rectangle {
     in property <bool> active;
     callback clicked();
 
-    height: 32px;
+    height: Metrics.ui.sidebar-row-height;
     background: active
         ? Palette.tokens.accent
         : (touch.has-hover ? Palette.tokens.row-bg : transparent);
-    border-radius: 3px;
+    border-radius: 2px;
 
     HorizontalLayout {
         padding-left: 9px;
@@ -105,7 +324,7 @@ export component CategoryRow inherits Rectangle {
         Text {
             text: root.label;
             color: root.active ? white : Palette.tokens.text;
-            font-size: 12px;
+            font-size: Metrics.ui.font-size;
             font-weight: root.active ? 700 : 400;
             vertical-alignment: center;
             horizontal-stretch: 1;
@@ -127,4 +346,49 @@ export component ColorSwatch inherits Rectangle {
     border-width: 1px;
     border-color: Palette.tokens.border-strong;
     border-radius: 3px;
+}
+
+// The bottom strip: the unapplied-changes note on the left and the OBS button
+// order on the right. It lives outside the scrolling page area, so the buttons
+// stay put whatever the page height is.
+export component SettingsFooter inherits HorizontalLayout {
+    in property <string> note;
+    in property <string> ok-label;
+    in property <string> apply-label;
+    in property <string> cancel-label;
+    in property <bool> dirty;
+    callback accept();
+    callback apply();
+    callback cancel();
+
+    height: Metrics.ui.control-height + 8px;
+    spacing: 8px;
+
+    Text {
+        text: root.note;
+        color: Palette.tokens.warning;
+        font-size: Metrics.ui.small-font-size;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+    Button {
+        text: root.ok-label;
+        width: 96px;
+        height: Metrics.ui.control-height;
+        clicked => { root.accept(); }
+    }
+    Button {
+        text: root.apply-label;
+        width: 96px;
+        height: Metrics.ui.control-height;
+        enabled: root.dirty;
+        clicked => { root.apply(); }
+    }
+    Button {
+        text: root.cancel-label;
+        width: 96px;
+        height: Metrics.ui.control-height;
+        clicked => { root.cancel(); }
+    }
 }

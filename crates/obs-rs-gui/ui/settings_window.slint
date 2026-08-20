@@ -1,5 +1,5 @@
 import { Button, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
-import { CategoryRow } from "settings_widgets.slint";
+import { CategoryRow, SettingsFooter } from "settings_widgets.slint";
 import {
     AccessibilityPage,
     AdvancedPage,
@@ -12,18 +12,27 @@ import {
     VideoPage,
 } from "settings_pages.slint";
 import { I18n } from "i18n.slint";
-import { Palette } from "palette.slint";
+import { Metrics, Palette } from "palette.slint";
 
 // A real top-level window, not a modal inside the main one, so it can be moved,
 // resized, and left open beside the studio the way the OBS settings window is.
+//
+// The shell is three fixed regions: a category list of a fixed width, a page
+// area that scrolls, and a button strip pinned to the bottom. The strip lives
+// outside the scroll area on purpose — letting page height push the buttons
+// around was the largest visual difference from the reference.
 //
 // Every editable value here is *draft* state: the window mutates its own copy
 // and only pushes it to the application on Apply or OK, which is what makes
 // Cancel meaningful.
 export component SettingsWindow inherits Window {
     title: I18n.text.settings_ui.window_title;
-    width: 1020px;
-    height: 680px;
+    // The reference window is about 1000x740 at the default density; the
+    // minimum is the smallest size the widest page still lays out at.
+    preferred-width: 1000px;
+    preferred-height: 740px;
+    min-width: 820px;
+    min-height: 560px;
     background: Palette.tokens.window-bg;
 
     in-out property <int> category: 0;
@@ -39,7 +48,14 @@ export component SettingsWindow inherits Window {
     // Appearance
     in property <[string]> theme-names;
     in-out property <int> theme-index;
-    // Stream / Output
+    in property <[string]> style-names;
+    in-out property <int> style-index;
+    in property <[string]> density-names;
+    in-out property <int> density-index;
+    in-out property <float> font-size;
+    in property <float> font-size-minimum;
+    in property <float> font-size-maximum;
+    // Stream
     in property <[string]> protocol-names;
     in-out property <int> protocol-index;
     in property <bool> stream-show-rtmp;
@@ -51,17 +67,6 @@ export component SettingsWindow inherits Window {
     in-out property <string> rtmp-service;
     in-out property <string> rtmp-server;
     in-out property <string> rtmp-stream-key;
-    in property <[string]> video-encoder-names;
-    in-out property <int> video-encoder-index;
-    in property <[string]> audio-encoder-names;
-    in-out property <int> audio-encoder-index;
-    in-out property <int> stream-video-bitrate;
-    in-out property <int> stream-audio-bitrate;
-    in-out property <string> stream-rate-control;
-    in-out property <int> stream-keyframe-interval;
-    in-out property <string> stream-encoder-preset;
-    in-out property <string> stream-encoder-profile;
-    in-out property <int> stream-b-frames;
     in-out property <bool> stream-reconnect;
     in-out property <int> stream-maximum-retries;
     in-out property <int> stream-network-buffer;
@@ -86,11 +91,38 @@ export component SettingsWindow inherits Window {
     in-out property <int> rist-buffer;
     in-out property <string> rist-shared-secret;
     in-out property <string> reference-address;
-    in-out property <string> recording-path;
+    // Output
+    in property <[string]> output-mode-names;
+    in-out property <int> output-mode-index;
+    in property <bool> output-simple-mode: true;
+    in-out property <int> stream-video-bitrate;
+    in-out property <int> stream-audio-bitrate;
+    in property <[string]> video-encoder-names;
+    in-out property <int> video-encoder-index;
+    in property <[string]> audio-encoder-names;
+    in-out property <int> audio-encoder-index;
+    in property <[string]> encoder-preset-names;
+    in-out property <int> encoder-preset-index;
+    in-out property <bool> custom-encoder-settings;
+    in-out property <string> stream-rate-control;
+    in-out property <int> stream-keyframe-interval;
+    in-out property <string> stream-encoder-profile;
+    in-out property <int> stream-b-frames;
+    in-out property <string> recording-directory;
+    in property <bool> browse-enabled;
+    in property <string> browse-hint;
+    in-out property <bool> recording-filename-without-spaces;
+    in property <[string]> recording-quality-names;
+    in-out property <int> recording-quality-index;
     in property <[string]> recording-format-names;
     in-out property <int> recording-format-index;
+    in property <bool> recording-format-locked;
     in property <[string]> recording-codec-names;
     in-out property <int> recording-codec-index;
+    in property <[string]> recording-audio-encoder-names;
+    in-out property <int> recording-audio-encoder-index;
+    in property <string> recording-file-preview;
+    in property <bool> software-encoding-warning;
     // Audio
     in property <[string]> sample-rate-names;
     in-out property <int> sample-rate-index;
@@ -103,10 +135,26 @@ export component SettingsWindow inherits Window {
     callback refresh-audio-devices();
     // Video
     in property <[string]> resolution-names;
-    in-out property <int> base-resolution-index;
-    in property <string> output-resolution;
+    in-out property <string> base-resolution;
+    in-out property <string> output-resolution;
+    in property <bool> base-resolution-valid: true;
+    in property <bool> output-resolution-valid: true;
+    in property <int> base-suggestion-index;
+    in property <int> output-suggestion-index;
+    in property <string> base-aspect-ratio;
+    in property <string> output-aspect-ratio;
+    in property <[string]> scale-filter-names;
+    in-out property <int> scale-filter-index;
+    in property <[string]> fps-mode-names;
+    in-out property <int> fps-mode-index;
+    in property <bool> fps-common: true;
+    in property <bool> fps-integer;
+    in property <bool> fps-fractional;
     in property <[string]> frame-rate-names;
     in-out property <int> frame-rate-index;
+    in-out property <int> fps-numerator: 60;
+    in-out property <int> fps-denominator: 1;
+    in property <bool> downscale-active;
     // Hotkeys
     in-out property <string> hotkey-swap;
     in-out property <string> hotkey-start-recording;
@@ -130,20 +178,30 @@ export component SettingsWindow inherits Window {
     // Appearance and language preview live immediately so the choice is visible
     // before the user commits it.
     callback preview-theme(int);
+    callback preview-style(int);
+    callback preview-font-size(float);
+    callback preview-density(int);
     callback preview-language(int);
     callback select-stream-protocol(int);
+    callback select-output-mode(int);
+    callback select-recording-quality(int);
+    callback edit-base-resolution(string);
+    callback edit-output-resolution(string);
+    callback select-fps-mode(int);
+    callback select-frame-rate(int);
+    callback browse-recording-directory();
 
     HorizontalLayout {
-        padding: 10px;
-        spacing: 10px;
+        padding: Metrics.ui.content-margin;
+        spacing: Metrics.ui.content-margin;
 
+        // The category list is a plain column on the window background: the
+        // reference has no framed panel around it.
         Rectangle {
-            width: 208px;
+            width: Metrics.ui.sidebar-width;
             background: Palette.tokens.panel-bg;
-            border-width: 1px;
-            border-color: Palette.tokens.border;
             VerticalLayout {
-                padding: 6px;
+                padding: 4px;
                 spacing: 2px;
                 alignment: start;
                 CategoryRow {
@@ -204,7 +262,7 @@ export component SettingsWindow inherits Window {
         }
 
         VerticalLayout {
-            spacing: 10px;
+            spacing: Metrics.ui.content-margin;
             horizontal-stretch: 1;
 
             ScrollView {
@@ -229,10 +287,32 @@ export component SettingsWindow inherits Window {
                     if root.category == 1 : AppearancePage {
                         theme-names: root.theme-names;
                         theme-index: root.theme-index;
+                        style-names: root.style-names;
+                        style-index: root.style-index;
+                        density-names: root.density-names;
+                        density-index: root.density-index;
+                        font-size: root.font-size;
+                        font-size-minimum: root.font-size-minimum;
+                        font-size-maximum: root.font-size-maximum;
                         select-theme(index) => {
                             root.theme-index = index;
                             root.dirty = true;
                             root.preview-theme(index);
+                        }
+                        select-style(index) => {
+                            root.style-index = index;
+                            root.dirty = true;
+                            root.preview-style(index);
+                        }
+                        select-density(index) => {
+                            root.density-index = index;
+                            root.dirty = true;
+                            root.preview-density(index);
+                        }
+                        set-font-size(value) => {
+                            root.font-size = value;
+                            root.dirty = true;
+                            root.preview-font-size(value);
                         }
                     }
                     if root.category == 2 : StreamPage {
@@ -247,17 +327,6 @@ export component SettingsWindow inherits Window {
                         rtmp-service <=> root.rtmp-service;
                         rtmp-server <=> root.rtmp-server;
                         rtmp-stream-key <=> root.rtmp-stream-key;
-                        video-encoder-names: root.video-encoder-names;
-                        video-encoder-index: root.video-encoder-index;
-                        audio-encoder-names: root.audio-encoder-names;
-                        audio-encoder-index: root.audio-encoder-index;
-                        video-bitrate <=> root.stream-video-bitrate;
-                        audio-bitrate <=> root.stream-audio-bitrate;
-                        rate-control <=> root.stream-rate-control;
-                        keyframe-interval <=> root.stream-keyframe-interval;
-                        encoder-preset <=> root.stream-encoder-preset;
-                        encoder-profile <=> root.stream-encoder-profile;
-                        b-frames <=> root.stream-b-frames;
                         reconnect <=> root.stream-reconnect;
                         maximum-retries <=> root.stream-maximum-retries;
                         network-buffer <=> root.stream-network-buffer;
@@ -287,14 +356,6 @@ export component SettingsWindow inherits Window {
                             root.dirty = true;
                             root.select-stream-protocol(index);
                         }
-                        select-video-encoder(index) => {
-                            root.video-encoder-index = index;
-                            root.dirty = true;
-                        }
-                        select-audio-encoder(index) => {
-                            root.audio-encoder-index = index;
-                            root.dirty = true;
-                        }
                         select-srt-mode(index) => {
                             root.srt-mode-index = index;
                             root.dirty = true;
@@ -306,11 +367,59 @@ export component SettingsWindow inherits Window {
                         changed => { root.dirty = true; }
                     }
                     if root.category == 3 : OutputPage {
-                        recording-path <=> root.recording-path;
+                        output-mode-names: root.output-mode-names;
+                        output-mode-index: root.output-mode-index;
+                        simple-mode: root.output-simple-mode;
+                        stream-video-bitrate <=> root.stream-video-bitrate;
+                        stream-audio-bitrate <=> root.stream-audio-bitrate;
+                        video-encoder-names: root.video-encoder-names;
+                        video-encoder-index: root.video-encoder-index;
+                        audio-encoder-names: root.audio-encoder-names;
+                        audio-encoder-index: root.audio-encoder-index;
+                        encoder-preset-names: root.encoder-preset-names;
+                        encoder-preset-index: root.encoder-preset-index;
+                        custom-encoder-settings <=> root.custom-encoder-settings;
+                        rate-control <=> root.stream-rate-control;
+                        keyframe-interval <=> root.stream-keyframe-interval;
+                        encoder-profile <=> root.stream-encoder-profile;
+                        b-frames <=> root.stream-b-frames;
+                        recording-directory <=> root.recording-directory;
+                        browse-enabled: root.browse-enabled;
+                        browse-hint: root.browse-hint;
+                        filename-without-spaces <=> root.recording-filename-without-spaces;
+                        recording-quality-names: root.recording-quality-names;
+                        recording-quality-index: root.recording-quality-index;
                         recording-format-names: root.recording-format-names;
                         recording-format-index: root.recording-format-index;
+                        recording-format-locked: root.recording-format-locked;
                         recording-codec-names: root.recording-codec-names;
                         recording-codec-index: root.recording-codec-index;
+                        recording-audio-encoder-names: root.recording-audio-encoder-names;
+                        recording-audio-encoder-index: root.recording-audio-encoder-index;
+                        recording-file-preview: root.recording-file-preview;
+                        software-encoding-warning: root.software-encoding-warning;
+                        select-output-mode(index) => {
+                            root.output-mode-index = index;
+                            root.dirty = true;
+                            root.select-output-mode(index);
+                        }
+                        select-video-encoder(index) => {
+                            root.video-encoder-index = index;
+                            root.dirty = true;
+                        }
+                        select-audio-encoder(index) => {
+                            root.audio-encoder-index = index;
+                            root.dirty = true;
+                        }
+                        select-encoder-preset(index) => {
+                            root.encoder-preset-index = index;
+                            root.dirty = true;
+                        }
+                        select-recording-quality(index) => {
+                            root.recording-quality-index = index;
+                            root.dirty = true;
+                            root.select-recording-quality(index);
+                        }
                         select-recording-format(index) => {
                             root.recording-format-index = index;
                             root.dirty = true;
@@ -319,6 +428,11 @@ export component SettingsWindow inherits Window {
                             root.recording-codec-index = index;
                             root.dirty = true;
                         }
+                        select-recording-audio-encoder(index) => {
+                            root.recording-audio-encoder-index = index;
+                            root.dirty = true;
+                        }
+                        browse-recording-directory() => { root.browse-recording-directory(); }
                         changed => { root.dirty = true; }
                     }
                     if root.category == 4 : AudioPage {
@@ -346,18 +460,49 @@ export component SettingsWindow inherits Window {
                     }
                     if root.category == 5 : VideoPage {
                         resolution-names: root.resolution-names;
-                        base-resolution-index: root.base-resolution-index;
-                        output-resolution: root.output-resolution;
+                        base-resolution <=> root.base-resolution;
+                        output-resolution <=> root.output-resolution;
+                        base-resolution-valid: root.base-resolution-valid;
+                        output-resolution-valid: root.output-resolution-valid;
+                        base-suggestion-index: root.base-suggestion-index;
+                        output-suggestion-index: root.output-suggestion-index;
+                        base-aspect-ratio: root.base-aspect-ratio;
+                        output-aspect-ratio: root.output-aspect-ratio;
+                        scale-filter-names: root.scale-filter-names;
+                        scale-filter-index: root.scale-filter-index;
+                        fps-mode-names: root.fps-mode-names;
+                        fps-mode-index: root.fps-mode-index;
+                        fps-common: root.fps-common;
+                        fps-integer: root.fps-integer;
+                        fps-fractional: root.fps-fractional;
                         frame-rate-names: root.frame-rate-names;
                         frame-rate-index: root.frame-rate-index;
-                        select-base-resolution(index) => {
-                            root.base-resolution-index = index;
+                        fps-numerator <=> root.fps-numerator;
+                        fps-denominator <=> root.fps-denominator;
+                        downscale-active: root.downscale-active;
+                        edit-base-resolution(value) => {
                             root.dirty = true;
+                            root.edit-base-resolution(value);
+                        }
+                        edit-output-resolution(value) => {
+                            root.dirty = true;
+                            root.edit-output-resolution(value);
+                        }
+                        select-scale-filter(index) => {
+                            root.scale-filter-index = index;
+                            root.dirty = true;
+                        }
+                        select-fps-mode(index) => {
+                            root.fps-mode-index = index;
+                            root.dirty = true;
+                            root.select-fps-mode(index);
                         }
                         select-frame-rate(index) => {
                             root.frame-rate-index = index;
                             root.dirty = true;
+                            root.select-frame-rate(index);
                         }
+                        changed => { root.dirty = true; }
                     }
                     if root.category == 6 : HotkeysPage {
                         hotkey-swap <=> root.hotkey-swap;
@@ -384,32 +529,15 @@ export component SettingsWindow inherits Window {
                 }
             }
 
-            HorizontalLayout {
-                height: 32px;
-                spacing: 8px;
-                Text {
-                    text: root.dirty ? I18n.text.settings_ui.unsaved_changes : "";
-                    color: Palette.tokens.warning;
-                    font-size: 11px;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-                Button {
-                    text: I18n.text.settings_ui.ok;
-                    width: 96px;
-                    clicked => { root.accept-settings(); }
-                }
-                Button {
-                    text: I18n.text.settings_ui.apply;
-                    width: 96px;
-                    enabled: root.dirty;
-                    clicked => { root.apply-settings(); }
-                }
-                Button {
-                    text: I18n.text.settings_ui.cancel;
-                    width: 96px;
-                    clicked => { root.cancel-settings(); }
-                }
+            SettingsFooter {
+                note: root.dirty ? I18n.text.settings_ui.unsaved_changes : "";
+                ok-label: I18n.text.settings_ui.ok;
+                apply-label: I18n.text.settings_ui.apply;
+                cancel-label: I18n.text.settings_ui.cancel;
+                dirty: root.dirty;
+                accept() => { root.accept-settings(); }
+                apply() => { root.apply-settings(); }
+                cancel() => { root.cancel-settings(); }
             }
         }
     }

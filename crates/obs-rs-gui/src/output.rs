@@ -10,7 +10,7 @@ use obs_rs_engine::{
     output_capabilities_snapshot, EngineAudioChannel, EngineConfig, EngineSession, EngineWorker,
     OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle,
 };
-use obs_rs_media::{RawVideoFrame, VideoFormat, VideoFrame};
+use obs_rs_media::{FrameScaler, RawVideoFrame, ScaleFilter, VideoFormat, VideoFrame};
 use obs_rs_output::{
     AudioCodec, AudioEncoderConfig, EncoderImplementation, RtmpConfig, StreamProtocol, StreamState,
     StreamTarget, VideoCodec, VideoEncoderConfig,
@@ -52,6 +52,24 @@ pub(crate) struct OutputRuntime {
     /// geometry, so the change is held here and applied at the next idle
     /// boundary instead of being either silently dropped or forced through.
     staged_video_format: Option<VideoFormat>,
+    /// Resamples the canvas to the encoded output size.
+    ///
+    /// The engine encodes whatever it is handed, so scaling belongs on this
+    /// side of the boundary: the canvas keeps its own size for preview and
+    /// compositing, and only the frames on their way to the encoders are
+    /// resized.
+    scaler: Option<FrameScaler>,
+    /// The geometry the encoders are configured for.
+    output_format: VideoFormat,
+    scale_filter: ScaleFilter,
+    /// An output-scaling change accepted while an output was running.
+    staged_scaling: Option<(u32, u32, ScaleFilter)>,
+    /// The last project synced, kept so a scaling change can re-sync the
+    /// engine without waiting for a project edit.
+    project: Option<Project>,
+    /// Frames dropped because only an accelerated frame was available while
+    /// output scaling was active.
+    unscalable_drops: u64,
     capabilities: OutputCapabilitiesSnapshot,
 }
 
@@ -107,6 +125,12 @@ impl OutputRuntime {
             recording_video_encoder: VideoEncoderConfig::default(),
             recording_audio_encoder: AudioEncoderConfig::default(),
             staged_video_format: None,
+            scaler: None,
+            output_format: format,
+            scale_filter: ScaleFilter::default(),
+            staged_scaling: None,
+            project: None,
+            unscalable_drops: 0,
             capabilities: output_capabilities_snapshot(),
         })
     }
@@ -152,12 +176,118 @@ impl OutputRuntime {
         let next_format = project
             .active_profile_spec()
             .map(obs_rs_project::Profile::video_format);
-        self.worker.sync_project(project)?;
+        self.worker.sync_project(self.encoded_project(&project))?;
         if let Some(format) = next_format {
             self.format = format;
+            self.output_format = self.encoded_format(format);
         }
+        self.project = Some(project);
         self.last_revision = revision;
         Ok(())
+    }
+
+    /// Returns the format the encoders are configured for.
+    ///
+    /// This is the canvas format when nothing is scaled, and the scaled size
+    /// otherwise; the frame rate always comes from the canvas, because scaling
+    /// changes geometry and never pacing.
+    fn encoded_format(&self, canvas: VideoFormat) -> VideoFormat {
+        let (width, height) = (self.output_format.width(), self.output_format.height());
+        if (width, height) == (canvas.width(), canvas.height()) {
+            return canvas;
+        }
+        VideoFormat::new(width, height, canvas.frame_rate()).unwrap_or(canvas)
+    }
+
+    /// Returns the project the engine is given.
+    ///
+    /// The engine derives its encoder geometry from the active profile, so a
+    /// scaled output is expressed by handing it a profile at the encoded size.
+    /// The project the rest of the application holds is untouched: the canvas
+    /// really is 1920x1080 even when the encoders run at 1280x720.
+    fn encoded_project(&self, project: &Project) -> Project {
+        let Some(canvas) = project
+            .active_profile_spec()
+            .map(obs_rs_project::Profile::video_format)
+        else {
+            return project.clone();
+        };
+        let encoded = self.encoded_format(canvas);
+        if encoded == canvas {
+            return project.clone();
+        }
+        let mut project = project.clone();
+        let active = project.active_profile().clone();
+        if let Some(profile) = project.profile_mut(&active) {
+            profile.set_video_format(encoded);
+        }
+        project
+    }
+
+    /// Configures the geometry and filter the encoders receive.
+    ///
+    /// Returns whether the change was applied; a change that arrives while an
+    /// output is running is staged instead, exactly like a canvas change,
+    /// because rebuilding the encoders mid-recording would break the geometry
+    /// of a container whose frames are already committed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the engine error when the session could not be rebuilt at the
+    /// new geometry.
+    pub(crate) fn set_output_scaling(
+        &mut self,
+        width: u32,
+        height: u32,
+        filter: ScaleFilter,
+    ) -> Result<(), Box<dyn Error>> {
+        if (width, height) == (self.output_format.width(), self.output_format.height())
+            && filter == self.scale_filter
+        {
+            return Ok(());
+        }
+        self.scale_filter = filter;
+        self.output_format =
+            VideoFormat::new(width, height, self.format.frame_rate()).unwrap_or(self.format);
+        self.scaler = None;
+        // Before the first project sync the engine is still the output-only
+        // session the runtime was constructed with, so the rebuild uses an
+        // equivalent one-profile project rather than skipping: leaving the
+        // encoders at the canvas size while frames arrive scaled would drop
+        // every frame.
+        let project = match self.project.clone() {
+            Some(project) => self.encoded_project(&project),
+            None => output_only_project(self.encoded_format(self.format))?,
+        };
+        self.worker.sync_project(project)?;
+        Ok(())
+    }
+
+    /// Holds an output-scaling change until the running output stops.
+    pub(crate) fn stage_output_scaling(&mut self, width: u32, height: u32, filter: ScaleFilter) {
+        self.staged_scaling = Some((width, height, filter));
+    }
+
+    /// Takes the staged output-scaling change, at an idle boundary.
+    pub(crate) fn take_staged_output_scaling(&mut self) -> Option<(u32, u32, ScaleFilter)> {
+        self.staged_scaling.take()
+    }
+
+    /// Returns the geometry the encoders are currently configured for.
+    #[cfg(test)]
+    pub(crate) const fn encoded_output_format(&self) -> VideoFormat {
+        self.output_format
+    }
+
+    /// Returns whether an accelerated frame can be handed to the engine
+    /// unchanged.
+    ///
+    /// Packed and planar frames are not resampled here, so while the output is
+    /// scaled the RGBA path is the only one that can produce a frame at the
+    /// encoded geometry.
+    pub(crate) const fn accepts_raw_frames(&self) -> bool {
+        self.output_format.width() == self.format.width()
+            && self.output_format.height() == self.format.height()
     }
 
     pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
@@ -194,30 +324,34 @@ impl OutputRuntime {
 
     pub(crate) fn configure_stream(&mut self, settings: &AppSettings) {
         self.configured_stream = settings.stream_target();
+        // The recording encoder is derived from the quality preset at the
+        // encoded geometry, so a preset means the same thing to the encoder as
+        // it does on the Output page.
+        let codec = settings.effective_recording_codec();
         self.recording_video_encoder = VideoEncoderConfig {
-            codec: settings.recording_codec,
             implementation: self
                 .capabilities
                 .video_encoders()
                 .iter()
-                .find(|encoder| encoder.codec() == settings.recording_codec)
+                .find(|encoder| encoder.codec() == codec)
                 .map_or_else(EncoderImplementation::default, |encoder| {
                     EncoderImplementation::new(encoder.id())
                 }),
-            profile: (settings.recording_codec == VideoCodec::H264).then(|| "high".to_owned()),
-            ..VideoEncoderConfig::default()
+            ..settings.recording_video_encoder(self.output_format)
         };
         self.recording_audio_encoder = AudioEncoderConfig {
-            codec: AudioCodec::Aac,
-            implementation: self
-                .capabilities
-                .audio_encoders()
-                .iter()
-                .find(|encoder| encoder.codec() == AudioCodec::Aac)
-                .map_or_else(EncoderImplementation::default, |encoder| {
-                    EncoderImplementation::new(encoder.id())
-                }),
-            ..AudioEncoderConfig::default()
+            implementation: if settings.recording_audio_encoder.is_automatic() {
+                self.capabilities
+                    .audio_encoders()
+                    .iter()
+                    .find(|encoder| encoder.codec() == AudioCodec::Aac)
+                    .map_or_else(EncoderImplementation::default, |encoder| {
+                        EncoderImplementation::new(encoder.id())
+                    })
+            } else {
+                settings.recording_audio_encoder.clone()
+            },
+            ..settings.recording_audio_encoder_config()
         };
         self.configured_video_encoder = settings.rtmp.video.clone();
         self.configured_audio_encoder = settings.rtmp.audio.clone();
@@ -280,17 +414,40 @@ impl OutputRuntime {
     }
 
     /// Enqueues a program frame and its due audio without blocking the GUI.
+    ///
+    /// A frame at the canvas geometry is resampled to the encoded geometry
+    /// first, so the settings window's output resolution is what actually
+    /// reaches the encoders.
     pub(crate) fn push_frame(&mut self, frame: &VideoFrame) {
         if frame.format() != self.format {
             self.format_drops = self.format_drops.saturating_add(1);
             return;
         }
-        // Queue pressure is observable in output_metrics; dropping an animation
-        // frame is preferable to stalling scene editing or preview rendering.
-        let _ = self.worker.try_push_frame(frame.clone());
+        let encoded = self.encoded_format(self.format);
+        if encoded == self.format {
+            // Queue pressure is observable in output_metrics; dropping an
+            // animation frame is preferable to stalling scene editing or
+            // preview rendering.
+            let _ = self.worker.try_push_frame(frame.clone());
+            return;
+        }
+        let scaler = self
+            .scaler
+            .get_or_insert_with(|| FrameScaler::new(self.format, encoded, self.scale_filter));
+        scaler.reconfigure(self.format, encoded, self.scale_filter);
+        match scaler.scale(frame) {
+            Ok(resampled) => {
+                let _ = self.worker.try_push_frame(resampled);
+            }
+            Err(_) => self.format_drops = self.format_drops.saturating_add(1),
+        }
     }
 
     pub(crate) fn push_raw_frame(&mut self, frame: RawVideoFrame) {
+        if !self.accepts_raw_frames() {
+            self.unscalable_drops = self.unscalable_drops.saturating_add(1);
+            return;
+        }
         if frame.format() != self.format {
             self.format_drops = self.format_drops.saturating_add(1);
             return;
@@ -451,7 +608,7 @@ impl OutputRuntime {
             native_submit_max = metrics.max_submit_latency_nanos;
         }
         format!(
-            "frames={} · audio_blocks={} · audio_per_tick={} · submitted={} · dropped={} · queued={} B · worker_queued={} · reconnects={} · submit p50/p95/p99/max={}/{}/{}/{} µs · native_submit_max={} µs · video_encode p50/p95/p99/max={}/{}/{}/{} µs · audio_encode p95={} µs · frame_drops={} · format_drops={} · peak={}‰",
+            "frames={} · audio_blocks={} · audio_per_tick={} · submitted={} · dropped={} · queued={} B · worker_queued={} · reconnects={} · submit p50/p95/p99/max={}/{}/{}/{} µs · native_submit_max={} µs · video_encode p50/p95/p99/max={}/{}/{}/{} µs · audio_encode p95={} µs · frame_drops={} · format_drops={} · unscalable_drops={} · peak={}‰",
             engine.stats.video_frames,
             engine.stats.audio_blocks,
             engine.stats.audio_blocks_per_video_tick,
@@ -472,6 +629,7 @@ impl OutputRuntime {
             engine.stats.audio_encode_latency.percentile_nanos(95) / 1_000,
             snapshot.dropped_frames,
             self.format_drops,
+            self.unscalable_drops,
             engine.stats.audio_peak_milli
         )
     }
@@ -529,7 +687,7 @@ impl OutputRuntime {
             native_submit_max = metrics.max_submit_latency_nanos;
         }
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} frame_drops={} format_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
@@ -561,6 +719,7 @@ impl OutputRuntime {
             engine.stats.audio_blocks_per_video_tick,
             snapshot.dropped_frames,
             self.format_drops,
+            self.unscalable_drops,
             engine.stats.ticks,
             engine.stats.video_frames,
             engine.stats.audio_blocks,
@@ -694,6 +853,17 @@ impl OutputRuntime {
             (OutputLifecycle::Failed, OutputLifecycle::Failed)
         }
     }
+}
+
+/// Builds the one-profile project an output-only engine session encodes with.
+fn output_only_project(format: VideoFormat) -> Result<Project, Box<dyn Error>> {
+    let mut project = Project::new("OBS-RS output session")?;
+    project.add_profile(obs_rs_project::Profile::new(
+        "default",
+        "Default output",
+        format,
+    )?)?;
+    Ok(project)
 }
 
 const fn stream_protocol_name(protocol: StreamProtocol) -> &'static str {

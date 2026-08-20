@@ -4,10 +4,14 @@
 //! writes back, so Cancel restores the committed values — including the theme
 //! and language, which are previewed live and therefore have to be undone.
 
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use obs_rs_engine::ProductionProtocol;
-use obs_rs_media::{FrameRate, VideoFormat};
+use obs_rs_media::{FrameRate, ScaleFilter, VideoFormat};
 use obs_rs_output::{EncoderImplementation, EncoderPreset, RateControl, VideoCodec};
 use obs_rs_output::{SecretString, SrtKeyLength, SrtMode, StreamProtocol};
 use obs_rs_project::ProjectCommand;
@@ -22,10 +26,14 @@ use crate::{
     callbacks::source_transform::SourceTransformController,
     refresh_ui,
     settings::{
-        AppSettings, RecordingFormat, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES,
-        THEMES,
+        recording_stamp, AppSettings, RecordingFormat, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS,
+        SAMPLE_RATES, THEMES,
     },
-    I18n, MainWindow, OutputRuntime, Palette, PreviewSurface, SettingsWindow,
+    settings_model::{
+        aspect_ratio_text, parse_resolution, resolution_text, FpsMode, OutputMode,
+        RecordingQuality, UiDensity, UiStyle, VideoSettings, FONT_SIZE_RANGE,
+    },
+    I18n, MainWindow, Metrics, OutputRuntime, Palette, PreviewSurface, SettingsWindow, UiMetrics,
 };
 
 /// Owns the settings window and the committed settings document.
@@ -47,6 +55,53 @@ pub(crate) struct SettingsController {
     video_encoder_ids: RefCell<Vec<String>>,
     audio_encoder_ids: RefCell<Vec<String>>,
     recording_codec_ids: RefCell<Vec<VideoCodec>>,
+    recording_audio_encoder_ids: RefCell<Vec<String>>,
+    /// Whether each offered video encoder runs on dedicated hardware, which is
+    /// what decides whether the double-software-encode warning applies.
+    video_encoder_hardware: RefCell<Vec<bool>>,
+    /// The Video page's draft, kept beside the window because a half-typed
+    /// resolution must not overwrite the last usable one.
+    draft_video: RefCell<VideoSettings>,
+    /// The system directory chooser this session found, if any.
+    browse_tool: Option<&'static str>,
+}
+
+/// The directory choosers the Browse button can drive.
+///
+/// OBS-RS has no native file-dialog dependency, so Browse runs whichever
+/// chooser the desktop already ships. When neither is installed the button is
+/// disabled and the page says why, rather than presenting a control that does
+/// nothing.
+const BROWSE_TOOLS: [&str; 2] = ["zenity", "kdialog"];
+
+/// Returns the first directory chooser on `PATH`.
+fn detect_browse_tool() -> Option<&'static str> {
+    let path = std::env::var_os("PATH")?;
+    BROWSE_TOOLS
+        .into_iter()
+        .find(|tool| std::env::split_paths(&path).any(|directory| directory.join(tool).is_file()))
+}
+
+/// Runs the detected chooser and returns the directory the user picked.
+///
+/// A cancelled dialog and a missing chooser are the same answer — `None` — so
+/// the caller keeps the draft it already had.
+fn choose_directory(tool: &str, start: &str) -> Option<String> {
+    let mut command = std::process::Command::new(tool);
+    match tool {
+        "kdialog" => command.arg("--getexistingdirectory").arg(start),
+        _ => command
+            .arg("--file-selection")
+            .arg("--directory")
+            .arg(format!("--filename={start}")),
+    };
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let chosen = String::from_utf8(output.stdout).ok()?;
+    let chosen = chosen.trim();
+    (!chosen.is_empty()).then(|| chosen.to_owned())
 }
 
 impl SettingsController {
@@ -90,9 +145,95 @@ impl SettingsController {
         self.window
             .global::<I18n>()
             .set_text(crate::i18n::catalog(locale));
+        // The dropdown labels are catalog text too, so they are rebuilt with
+        // the catalog rather than staying in the language the window opened in.
+        populate_static_models(&self.window);
         self.window
             .global::<Palette>()
             .set_tokens(self.settings.borrow().tokens());
+        self.push_metrics(self.settings.borrow().metrics());
+    }
+
+    /// Returns the window this controller drives.
+    #[cfg(test)]
+    pub(crate) const fn window(&self) -> &SettingsWindow {
+        &self.window
+    }
+
+    /// Returns the committed settings document.
+    #[cfg(test)]
+    pub(crate) fn committed(&self) -> AppSettings {
+        self.settings.borrow().clone()
+    }
+
+    /// Renders one settings page to a PNG file at a fixed appearance.
+    ///
+    /// This is the visual-regression entry point: the theme, style, density,
+    /// font size, and locale are pinned before the snapshot, so the only thing
+    /// that can move between two runs is the layout under test. It renders
+    /// through whichever backend the process was started with, which is the
+    /// software renderer under `--settings-screenshot`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the page could not be rendered or written.
+    pub(crate) fn capture_page(
+        &self,
+        page: &str,
+        path: &Path,
+        locale: UiLocale,
+    ) -> Result<(), String> {
+        let category = settings_category(page).ok_or_else(|| {
+            format!(
+                "unknown settings page {page}; expected one of {}",
+                SETTINGS_PAGES.map(|(name, _)| name).join(", ")
+            )
+        })?;
+        let pinned = AppSettings {
+            theme: 0,
+            style: UiStyle::Default,
+            density: UiDensity::Normal,
+            font_size: crate::settings_model::DEFAULT_FONT_SIZE,
+            locale: locale.code().to_owned(),
+            ..self.settings.borrow().clone()
+        };
+        self.window
+            .global::<I18n>()
+            .set_text(crate::i18n::catalog(pinned.ui_locale()));
+        populate_static_models(&self.window);
+        self.window.global::<Palette>().set_tokens(pinned.tokens());
+        self.push_metrics(pinned.metrics());
+        self.window.set_category(category);
+        self.window.show().map_err(|error| error.to_string())?;
+        let snapshot = self
+            .window
+            .window()
+            .take_snapshot()
+            .map_err(|error| error.to_string())?;
+        let format = VideoFormat::new(
+            snapshot.width(),
+            snapshot.height(),
+            FrameRate::new(60, 1).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        let frame = obs_rs_media::VideoFrame::new(
+            format,
+            obs_rs_media::Timestamp::ZERO,
+            snapshot.as_bytes().to_vec(),
+        )
+        .map_err(|error| error.to_string())?;
+        let png = obs_rs_output::encode_png(&frame).map_err(|error| error.to_string())?;
+        std::fs::write(path, png).map_err(|error| error.to_string())?;
+        self.window.hide().map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// Pushes one metric set onto the settings window.
+    ///
+    /// Density and font size are previewed live like the theme, so this is
+    /// called with draft values too and Cancel puts the committed set back.
+    fn push_metrics(&self, metrics: UiMetrics) {
+        self.window.global::<Metrics>().set_ui(metrics);
     }
 }
 
@@ -117,10 +258,10 @@ pub(crate) fn install_settings_window(
     surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     settings: AppSettings,
+    path: PathBuf,
     peers: &PeerWindows,
 ) -> Result<Rc<SettingsController>, slint::PlatformError> {
     let window = SettingsWindow::new()?;
-    let path = crate::settings::settings_path();
     let controller = Rc::new(SettingsController {
         window,
         settings: Rc::new(RefCell::new(settings)),
@@ -137,6 +278,10 @@ pub(crate) fn install_settings_window(
         video_encoder_ids: RefCell::new(Vec::new()),
         audio_encoder_ids: RefCell::new(Vec::new()),
         recording_codec_ids: RefCell::new(Vec::new()),
+        recording_audio_encoder_ids: RefCell::new(Vec::new()),
+        video_encoder_hardware: RefCell::new(Vec::new()),
+        draft_video: RefCell::new(VideoSettings::default()),
+        browse_tool: detect_browse_tool(),
     });
 
     populate_static_models(&controller.window);
@@ -150,6 +295,8 @@ pub(crate) fn install_settings_window(
 
     install_open(ui, state, surface, output, &controller);
     install_previews(ui, state, surface, &controller);
+    install_video_editing(&controller);
+    install_output_page(&controller);
     install_commit(ui, state, surface, output, &controller);
     Ok(controller)
 }
@@ -174,6 +321,51 @@ fn populate_static_models(window: &SettingsWindow) {
             text.theme_darker,
             text.theme_midnight,
             text.theme_slate,
+        ]
+        .into_iter(),
+    ));
+    window.set_style_names(string_model(
+        [text.style_default, text.style_flat, text.style_contrast].into_iter(),
+    ));
+    window.set_density_names(string_model(
+        [
+            text.density_classic,
+            text.density_compact,
+            text.density_normal,
+            text.density_comfortable,
+        ]
+        .into_iter(),
+    ));
+    window.set_font_size_minimum(f32::from(*FONT_SIZE_RANGE.start()));
+    window.set_font_size_maximum(f32::from(*FONT_SIZE_RANGE.end()));
+    window.set_output_mode_names(string_model(
+        [text.mode_simple, text.mode_advanced].into_iter(),
+    ));
+    window.set_encoder_preset_names(string_model(
+        [text.preset_speed, text.preset_balanced, text.preset_quality].into_iter(),
+    ));
+    window.set_recording_quality_names(string_model(
+        [
+            text.quality_stream,
+            text.quality_high,
+            text.quality_indistinguishable,
+            text.quality_lossless,
+        ]
+        .into_iter(),
+    ));
+    window.set_scale_filter_names(string_model(
+        [
+            text.filter_bilinear,
+            text.filter_bicubic,
+            text.filter_lanczos,
+        ]
+        .into_iter(),
+    ));
+    window.set_fps_mode_names(string_model(
+        [
+            text.fps_mode_common,
+            text.fps_mode_integer,
+            text.fps_mode_fractional,
         ]
         .into_iter(),
     ));
@@ -270,6 +462,19 @@ fn populate_stream_models(
     window.set_protocol_index(i32::try_from(selected).unwrap_or(0));
     show_protocol_fields(window, selected_protocol);
 
+    populate_encoder_models(window, output, controller, settings);
+}
+
+/// Fills the encoder pickers the Output page offers.
+///
+/// Only implementations discovered at runtime are listed, so a machine without
+/// a hardware encoder never shows one it cannot use.
+fn populate_encoder_models(
+    window: &SettingsWindow,
+    output: &OutputRuntime,
+    controller: &SettingsController,
+    settings: &AppSettings,
+) {
     let video = output
         .capabilities()
         .video_encoders()
@@ -288,6 +493,8 @@ fn populate_stream_models(
         };
         SharedString::from(format!("{} ({suffix})", encoder.display_name()))
     })));
+    *controller.video_encoder_hardware.borrow_mut() =
+        video.iter().map(|encoder| encoder.hardware()).collect();
     window.set_video_encoder_index(index_of(
         &controller.video_encoder_ids.borrow(),
         &settings.rtmp.video.implementation.id().to_owned(),
@@ -319,6 +526,23 @@ fn populate_stream_models(
     window.set_audio_encoder_index(index_of(
         &controller.audio_encoder_ids.borrow(),
         &settings.rtmp.audio.implementation.id().to_owned(),
+    ));
+
+    // Recordings pick their audio encoder independently of the stream, which
+    // is what the reference Output page offers, so the list is built twice
+    // rather than shared by index.
+    *controller.recording_audio_encoder_ids.borrow_mut() = audio
+        .iter()
+        .map(|encoder| encoder.id().to_owned())
+        .collect();
+    window.set_recording_audio_encoder_names(string_model(
+        audio
+            .iter()
+            .map(|encoder| SharedString::from(encoder.display_name())),
+    ));
+    window.set_recording_audio_encoder_index(index_of(
+        &controller.recording_audio_encoder_ids.borrow(),
+        &settings.recording_audio_encoder.id().to_owned(),
     ));
 }
 
@@ -432,6 +656,9 @@ fn load_draft(
     window.set_dirty(false);
     window.set_language_index(locale_index(state.borrow().locale()));
     window.set_theme_index(i32::try_from(settings.theme).unwrap_or(0));
+    window.set_style_index(index_of(&UiStyle::ALL, &settings.style));
+    window.set_density_index(index_of(&UiDensity::ALL, &settings.density));
+    window.set_font_size(f32::from(settings.font_size));
     window.set_confirm_start_stream(settings.confirm_start_stream);
     window.set_confirm_stop_stream(settings.confirm_stop_stream);
     window.set_confirm_stop_recording(settings.confirm_stop_recording);
@@ -450,7 +677,17 @@ fn load_draft(
     window.set_stream_keyframe_interval(
         i32::try_from(settings.rtmp.video.keyframe_interval_secs).unwrap_or(i32::MAX),
     );
-    window.set_stream_encoder_preset(settings.rtmp.video.preset.id().into());
+    window.set_encoder_preset_index(index_of(
+        &[
+            EncoderPreset::Speed,
+            EncoderPreset::Balanced,
+            EncoderPreset::Quality,
+        ],
+        &settings.rtmp.video.preset,
+    ));
+    window.set_output_mode_index(index_of(&OutputMode::ALL, &settings.output_mode));
+    window.set_output_simple_mode(settings.output_mode == OutputMode::Simple);
+    window.set_custom_encoder_settings(settings.stream_custom_encoder);
     window.set_stream_encoder_profile(settings.rtmp.video.profile.as_deref().unwrap_or("").into());
     window.set_stream_b_frames(i32::from(settings.rtmp.video.b_frames));
     window.set_stream_reconnect(settings.rtmp.reconnect);
@@ -460,6 +697,88 @@ fn load_draft(
     window.set_stream_network_buffer(
         i32::try_from(settings.rtmp.network_buffer_ms).unwrap_or(i32::MAX),
     );
+    load_connection_draft(window, &settings);
+    window.set_whip_endpoint(settings.whip_endpoint.as_str().into());
+    window.set_reference_address(settings.reference_address.as_str().into());
+    window.set_recording_directory(settings.recording_directory.as_str().into());
+    window.set_recording_filename_without_spaces(settings.recording_filename_without_spaces);
+    window.set_recording_quality_index(index_of(
+        &RecordingQuality::ALL,
+        &settings.recording_quality,
+    ));
+    window.set_recording_format_index(index_of(&RecordingFormat::ALL, &settings.recording_format));
+    window.set_browse_enabled(controller.browse_tool.is_some());
+    window.set_browse_hint(
+        window
+            .global::<I18n>()
+            .get_text()
+            .settings_ui
+            .browse_unavailable_hint,
+    );
+    window.set_project_path(settings.project_path.as_str().into());
+    window.set_diagnostics_path(settings.diagnostics_path.as_str().into());
+    window.set_restore_project(settings.restore_project);
+    window.set_save_project_on_exit(settings.save_project_on_exit);
+    window.set_hotkey_swap(settings.hotkey_swap.as_str().into());
+    window.set_hotkey_start_recording(settings.hotkey_start_recording.as_str().into());
+    window.set_hotkey_stop_recording(settings.hotkey_stop_recording.as_str().into());
+    window.set_hotkey_start_streaming(settings.hotkey_start_streaming.as_str().into());
+    window.set_hotkey_stop_streaming(settings.hotkey_stop_streaming.as_str().into());
+    window.set_preview_border_color(settings.preview_border_color.as_str().into());
+    window.set_program_border_color(settings.program_border_color.as_str().into());
+    window.set_preview_swatch(settings.tokens().preview_border);
+    window.set_program_swatch(settings.tokens().program_border);
+
+    let audio_format = state.borrow().audio_format();
+    window.set_sample_rate_index(index_of(&SAMPLE_RATES, &audio_format.sample_rate()));
+    window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.channels()));
+    populate_audio_devices(window, state, output, controller, &settings);
+
+    load_video_draft(surface, controller, &settings);
+}
+
+/// Copies the Video page's values into the draft.
+///
+/// The canvas the session is actually rendering at wins over the stored one:
+/// the project owns the canvas, and a settings document that has drifted from
+/// it must not silently resize the renderer on the next Apply.
+fn load_video_draft(
+    surface: &Rc<RefCell<PreviewSurface>>,
+    controller: &Rc<SettingsController>,
+    settings: &AppSettings,
+) {
+    let window = &controller.window;
+    let video_format = surface.borrow().format;
+    let video = VideoSettings {
+        base_width: video_format.width(),
+        base_height: video_format.height(),
+        fps_numerator: video_format.frame_rate().numerator(),
+        fps_denominator: video_format.frame_rate().denominator(),
+        ..settings.video
+    };
+    *controller.draft_video.borrow_mut() = video;
+    window.set_base_resolution(resolution_text(video.base_width, video.base_height).into());
+    window.set_output_resolution(resolution_text(video.output_width, video.output_height).into());
+    window.set_base_resolution_valid(true);
+    window.set_output_resolution_valid(true);
+    window.set_scale_filter_index(index_of(&ScaleFilter::ALL, &video.scale_filter));
+    window.set_fps_mode_index(index_of(&FpsMode::ALL, &video.fps_mode));
+    window.set_fps_numerator(i32::try_from(video.fps_numerator).unwrap_or(60));
+    window.set_fps_denominator(i32::try_from(video.fps_denominator).unwrap_or(1));
+    window.set_frame_rate_index(index_of(
+        &FRAME_RATES,
+        &(video.fps_numerator, video.fps_denominator),
+    ));
+    show_fps_fields(window, video.fps_mode);
+    refresh_video_page(controller);
+    refresh_recording_page(controller, settings.recording_quality);
+}
+
+/// Copies the protocol-specific connection fields into the draft.
+///
+/// These belong to the Stream page's destination, not to encoding, so they are
+/// loaded together and kept out of the page-wide draft loader.
+fn load_connection_draft(window: &SettingsWindow, settings: &AppSettings) {
     window.set_srt_mode_index(match settings.srt.mode {
         SrtMode::Caller => 0,
         SrtMode::Listener => 1,
@@ -484,41 +803,7 @@ fn load_draft(
     });
     window.set_srt_stream_id(settings.srt.stream_id.as_deref().unwrap_or("").into());
     window.set_srt_timeout(i32::try_from(settings.srt.connect_timeout_ms).unwrap_or(i32::MAX));
-    load_extended_stream_draft(window, &settings);
-    window.set_whip_endpoint(settings.whip_endpoint.as_str().into());
-    window.set_reference_address(settings.reference_address.as_str().into());
-    window.set_recording_path(settings.recording_path.as_str().into());
-    window.set_recording_format_index(index_of(&RecordingFormat::ALL, &settings.recording_format));
-    window.set_project_path(settings.project_path.as_str().into());
-    window.set_diagnostics_path(settings.diagnostics_path.as_str().into());
-    window.set_restore_project(settings.restore_project);
-    window.set_save_project_on_exit(settings.save_project_on_exit);
-    window.set_hotkey_swap(settings.hotkey_swap.as_str().into());
-    window.set_hotkey_start_recording(settings.hotkey_start_recording.as_str().into());
-    window.set_hotkey_stop_recording(settings.hotkey_stop_recording.as_str().into());
-    window.set_hotkey_start_streaming(settings.hotkey_start_streaming.as_str().into());
-    window.set_hotkey_stop_streaming(settings.hotkey_stop_streaming.as_str().into());
-    window.set_preview_border_color(settings.preview_border_color.as_str().into());
-    window.set_program_border_color(settings.program_border_color.as_str().into());
-    window.set_preview_swatch(settings.tokens().preview_border);
-    window.set_program_swatch(settings.tokens().program_border);
-
-    let audio_format = state.borrow().audio_format();
-    window.set_sample_rate_index(index_of(&SAMPLE_RATES, &audio_format.sample_rate()));
-    window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.channels()));
-    populate_audio_devices(window, state, output, controller, &settings);
-
-    let video_format = surface.borrow().format;
-    let resolution = (video_format.width(), video_format.height());
-    window.set_base_resolution_index(index_of(&RESOLUTIONS, &resolution));
-    window.set_output_resolution(format!("{}x{}", resolution.0, resolution.1).into());
-    window.set_frame_rate_index(index_of(
-        &FRAME_RATES,
-        &(
-            video_format.frame_rate().numerator(),
-            video_format.frame_rate().denominator(),
-        ),
-    ));
+    load_extended_stream_draft(window, settings);
 }
 
 /// Theme and language change the moment they are picked, because judging either
@@ -535,9 +820,34 @@ fn install_previews(
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        let theme = usize::try_from(index).unwrap_or(0).min(THEMES.len() - 1);
-        let tokens = theme_controller.settings.borrow().tokens_for_theme(theme);
-        push_palette_tokens(&ui, &theme_controller, &tokens);
+        preview_appearance(&ui, &theme_controller);
+        let _ = index;
+    });
+
+    let weak = ui.as_weak();
+    let style_controller = Rc::clone(controller);
+    controller.window.on_preview_style(move |index| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        preview_appearance(&ui, &style_controller);
+        let _ = index;
+    });
+
+    // Density and font size change geometry rather than colour, so they push
+    // the metric set instead of the palette. Both are previewed for the same
+    // reason the theme is: a name in a dropdown does not tell you what the
+    // window will look like.
+    let density_controller = Rc::clone(controller);
+    controller.window.on_preview_density(move |index| {
+        density_controller.push_metrics(draft_metrics(&density_controller));
+        let _ = index;
+    });
+
+    let font_controller = Rc::clone(controller);
+    controller.window.on_preview_font_size(move |value| {
+        font_controller.push_metrics(draft_metrics(&font_controller));
+        let _ = value;
     });
 
     let weak = ui.as_weak();
@@ -563,6 +873,253 @@ fn install_previews(
             language_controller.sync_theme(locale);
         }
     });
+}
+
+/// Repaints every window with the theme and style the Appearance page shows.
+fn preview_appearance(ui: &MainWindow, controller: &Rc<SettingsController>) {
+    let window = &controller.window;
+    let theme = usize::try_from(window.get_theme_index())
+        .unwrap_or(0)
+        .min(THEMES.len() - 1);
+    let style = draft_style(window);
+    let tokens = controller.settings.borrow().tokens_for(theme, style);
+    push_palette_tokens(ui, controller, &tokens);
+}
+
+/// Returns the style the Appearance page currently shows.
+fn draft_style(window: &SettingsWindow) -> UiStyle {
+    UiStyle::ALL
+        .get(usize::try_from(window.get_style_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or_default()
+}
+
+/// Returns the density the Appearance page currently shows.
+fn draft_density(window: &SettingsWindow) -> UiDensity {
+    UiDensity::ALL
+        .get(usize::try_from(window.get_density_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or_default()
+}
+
+/// Returns the font size the Appearance page currently shows.
+fn draft_font_size(window: &SettingsWindow) -> u8 {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the slider is bounded to the font size range before the cast"
+    )]
+    let value = window
+        .get_font_size()
+        .clamp(
+            f32::from(*FONT_SIZE_RANGE.start()),
+            f32::from(*FONT_SIZE_RANGE.end()),
+        )
+        .round() as u8;
+    value
+}
+
+/// Builds the metric set for the appearance the window currently shows.
+fn draft_metrics(controller: &Rc<SettingsController>) -> UiMetrics {
+    AppSettings::metrics_for(
+        draft_density(&controller.window),
+        draft_font_size(&controller.window),
+    )
+}
+
+/// Wires the Video page's editable resolutions and frame-rate modes.
+///
+/// The typed value is validated on every keystroke and only a usable pair is
+/// written to the draft, so a field left half-typed cannot be committed and
+/// cannot overwrite the resolution the session is already rendering at.
+fn install_video_editing(controller: &Rc<SettingsController>) {
+    let base_controller = Rc::clone(controller);
+    controller.window.on_edit_base_resolution(move |value| {
+        let parsed = parse_resolution(&value);
+        base_controller
+            .window
+            .set_base_resolution_valid(parsed.is_some());
+        if let Some((width, height)) = parsed {
+            let mut video = base_controller.draft_video.borrow_mut();
+            video.base_width = width;
+            video.base_height = height;
+        }
+        refresh_video_page(&base_controller);
+    });
+
+    let output_controller = Rc::clone(controller);
+    controller.window.on_edit_output_resolution(move |value| {
+        let parsed = parse_resolution(&value);
+        output_controller
+            .window
+            .set_output_resolution_valid(parsed.is_some());
+        if let Some((width, height)) = parsed {
+            let mut video = output_controller.draft_video.borrow_mut();
+            video.output_width = width;
+            video.output_height = height;
+        }
+        refresh_video_page(&output_controller);
+    });
+
+    let mode_controller = Rc::clone(controller);
+    controller.window.on_select_fps_mode(move |index| {
+        let mode = FpsMode::ALL
+            .get(usize::try_from(index).unwrap_or(0))
+            .copied()
+            .unwrap_or_default();
+        mode_controller.draft_video.borrow_mut().fps_mode = mode;
+        show_fps_fields(&mode_controller.window, mode);
+        // Switching to an explicit mode starts from the rate that is already
+        // selected, so the frame rate never jumps because the presentation of
+        // it changed.
+        let (numerator, denominator) = {
+            let video = mode_controller.draft_video.borrow();
+            (video.fps_numerator, video.fps_denominator)
+        };
+        mode_controller
+            .window
+            .set_fps_numerator(i32::try_from(numerator).unwrap_or(60));
+        mode_controller
+            .window
+            .set_fps_denominator(i32::try_from(denominator).unwrap_or(1));
+    });
+
+    let rate_controller = Rc::clone(controller);
+    controller.window.on_select_frame_rate(move |index| {
+        let Some((numerator, denominator)) = FRAME_RATES
+            .get(usize::try_from(index).unwrap_or(0))
+            .copied()
+        else {
+            return;
+        };
+        let mut video = rate_controller.draft_video.borrow_mut();
+        video.fps_numerator = numerator;
+        video.fps_denominator = denominator;
+    });
+}
+
+/// Shows the frame-rate control the selected FPS mode uses.
+fn show_fps_fields(window: &SettingsWindow, mode: FpsMode) {
+    window.set_fps_common(mode == FpsMode::Common);
+    window.set_fps_integer(mode == FpsMode::Integer);
+    window.set_fps_fractional(mode == FpsMode::Fractional);
+}
+
+/// Recomputes the aspect ratios and the downscale state from the draft.
+fn refresh_video_page(controller: &Rc<SettingsController>) {
+    let video = *controller.draft_video.borrow();
+    let window = &controller.window;
+    window.set_base_aspect_ratio(aspect_ratio_text(video.base_width, video.base_height).into());
+    window
+        .set_output_aspect_ratio(aspect_ratio_text(video.output_width, video.output_height).into());
+    window.set_downscale_active(!video.is_unscaled());
+    // The picker points at the entry the value matches; a custom size leaves
+    // it where it was rather than jumping to an unrelated resolution.
+    if let Some(index) = suggestion_index(video.base_width, video.base_height) {
+        window.set_base_suggestion_index(index);
+    }
+    if let Some(index) = suggestion_index(video.output_width, video.output_height) {
+        window.set_output_suggestion_index(index);
+    }
+}
+
+/// Returns the offered resolution matching `width` and `height`, if any.
+fn suggestion_index(width: u32, height: u32) -> Option<i32> {
+    RESOLUTIONS
+        .iter()
+        .position(|entry| *entry == (width, height))
+        .and_then(|index| i32::try_from(index).ok())
+}
+
+/// Wires the Output page's mode switch, quality preset, and Browse button.
+fn install_output_page(controller: &Rc<SettingsController>) {
+    let mode_controller = Rc::clone(controller);
+    controller.window.on_select_output_mode(move |index| {
+        let mode = OutputMode::ALL
+            .get(usize::try_from(index).unwrap_or(0))
+            .copied()
+            .unwrap_or_default();
+        mode_controller
+            .window
+            .set_output_simple_mode(mode == OutputMode::Simple);
+    });
+
+    let quality_controller = Rc::clone(controller);
+    controller.window.on_select_recording_quality(move |index| {
+        let quality = RecordingQuality::ALL
+            .get(usize::try_from(index).unwrap_or(0))
+            .copied()
+            .unwrap_or_default();
+        refresh_recording_page(&quality_controller, quality);
+    });
+
+    let browse_controller = Rc::clone(controller);
+    controller.window.on_browse_recording_directory(move || {
+        let Some(tool) = browse_controller.browse_tool else {
+            return;
+        };
+        let start = browse_controller
+            .window
+            .get_recording_directory()
+            .to_string();
+        let Some(directory) = choose_directory(tool, &start) else {
+            return;
+        };
+        browse_controller
+            .window
+            .set_recording_directory(directory.as_str().into());
+        browse_controller.window.set_dirty(true);
+        refresh_recording_page(
+            &browse_controller,
+            draft_recording_quality(&browse_controller.window),
+        );
+    });
+}
+
+/// Returns the recording quality the Output page currently shows.
+fn draft_recording_quality(window: &SettingsWindow) -> RecordingQuality {
+    RecordingQuality::ALL
+        .get(usize::try_from(window.get_recording_quality_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or_default()
+}
+
+/// Recomputes everything the recording group derives from its own controls.
+fn refresh_recording_page(controller: &Rc<SettingsController>, quality: RecordingQuality) {
+    let window = &controller.window;
+    window.set_recording_format_locked(quality.is_lossless());
+    let format = if quality.is_lossless() {
+        RecordingFormat::ReferencePacket
+    } else {
+        RecordingFormat::ALL
+            .get(usize::try_from(window.get_recording_format_index()).unwrap_or(0))
+            .copied()
+            .unwrap_or_default()
+    };
+    let settings = AppSettings {
+        recording_directory: window.get_recording_directory().to_string(),
+        recording_filename_without_spaces: window.get_recording_filename_without_spaces(),
+        recording_quality: quality,
+        recording_format: format,
+        ..controller.settings.borrow().clone()
+    };
+    // Only the path is pushed; the sentence around it is composed in the page
+    // so it follows the catalog the window is currently showing.
+    window.set_recording_file_preview(
+        settings
+            .recording_file_path(&recording_stamp(std::time::SystemTime::now()))
+            .into(),
+    );
+    // Two software encodes of every frame is the one combination worth warning
+    // about, so the warning depends on the encoder actually selected.
+    let software_stream = controller
+        .video_encoder_hardware
+        .borrow()
+        .get(usize::try_from(window.get_video_encoder_index()).unwrap_or(0))
+        .is_some_and(|hardware| !hardware);
+    window.set_software_encoding_warning(
+        software_stream && quality != RecordingQuality::SameAsStream,
+    );
 }
 
 fn install_commit(
@@ -726,6 +1283,54 @@ pub(crate) fn apply_video_format(
     Err(reason)
 }
 
+/// The settings pages by name, in sidebar order.
+///
+/// The screenshot harness names pages rather than numbering them, so a
+/// reordered sidebar cannot silently change which page a golden image holds.
+pub(crate) const SETTINGS_PAGES: [(&str, i32); 9] = [
+    ("general", 0),
+    ("appearance", 1),
+    ("stream", 2),
+    ("output", 3),
+    ("audio", 4),
+    ("video", 5),
+    ("hotkeys", 6),
+    ("accessibility", 7),
+    ("advanced", 8),
+];
+
+/// Returns the sidebar index for a page name.
+pub(crate) fn settings_category(page: &str) -> Option<i32> {
+    SETTINGS_PAGES
+        .iter()
+        .find(|(name, _)| *name == page)
+        .map(|(_, index)| *index)
+}
+
+/// The Video category's index in the settings window's sidebar.
+///
+/// Validation failures switch to the page carrying the invalid field, so the
+/// user is looking at the row that stopped the commit.
+const SETTINGS_CATEGORY_VIDEO: i32 = 5;
+
+/// Applies an output-scaling change that was staged while an output was
+/// running.
+///
+/// Called from the same idle boundary as the staged canvas change, which is
+/// the first moment the encoders can safely be rebuilt.
+pub(crate) fn apply_staged_output_scaling(
+    output: &Rc<RefCell<OutputRuntime>>,
+) -> Option<Result<(u32, u32), String>> {
+    let (width, height, filter) = output.borrow_mut().take_staged_output_scaling()?;
+    Some(
+        output
+            .borrow_mut()
+            .set_output_scaling(width, height, filter)
+            .map(|()| (width, height))
+            .map_err(|error| error.to_string()),
+    )
+}
+
 /// Applies a canvas change that was staged while an output was running.
 ///
 /// Called from the idle boundary in the preview timer, which is the first
@@ -749,6 +1354,10 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.theme = usize::try_from(window.get_theme_index())
         .unwrap_or(0)
         .min(THEMES.len() - 1);
+    settings.style = draft_style(window);
+    settings.density = draft_density(window);
+    settings.font_size = draft_font_size(window);
+    settings.video = read_video_draft(controller);
     settings.confirm_start_stream = window.get_confirm_start_stream();
     settings.confirm_stop_stream = window.get_confirm_stop_stream();
     settings.confirm_stop_recording = window.get_confirm_stop_recording();
@@ -797,13 +1406,47 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.rtmp.video.rate_control =
         RateControl::from_id(&window.get_stream_rate_control()).unwrap_or(RateControl::Cbr);
     settings.rtmp.video.keyframe_interval_secs = unsigned(window.get_stream_keyframe_interval());
-    settings.rtmp.video.preset = EncoderPreset::from_id(&window.get_stream_encoder_preset())
-        .unwrap_or(EncoderPreset::Balanced);
+    settings.rtmp.video.preset = [
+        EncoderPreset::Speed,
+        EncoderPreset::Balanced,
+        EncoderPreset::Quality,
+    ]
+    .get(usize::try_from(window.get_encoder_preset_index()).unwrap_or(1))
+    .copied()
+    .unwrap_or(EncoderPreset::Balanced);
+    settings.output_mode = OutputMode::ALL
+        .get(usize::try_from(window.get_output_mode_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or_default();
+    settings.stream_custom_encoder = window.get_custom_encoder_settings();
     settings.rtmp.video.profile = nonempty(window.get_stream_encoder_profile().to_string());
     settings.rtmp.video.b_frames = u8::try_from(window.get_stream_b_frames()).unwrap_or(0);
     settings.rtmp.reconnect = window.get_stream_reconnect();
     settings.rtmp.maximum_retries = unsigned(window.get_stream_maximum_retries());
     settings.rtmp.network_buffer_ms = unsigned(window.get_stream_network_buffer());
+    read_connection_draft(window, &mut settings);
+    settings.restore_project = window.get_restore_project();
+    settings.save_project_on_exit = window.get_save_project_on_exit();
+    if let Some(device_id) = controller
+        .audio_device_ids
+        .borrow()
+        .get(usize::try_from(window.get_audio_device_index()).unwrap_or(0))
+    {
+        device_id.clone_into(&mut settings.audio_input_id);
+    } else {
+        settings.audio_input_id.clear();
+    }
+    if let Some(locale) = UiLocale::supported()
+        .get(usize::try_from(window.get_language_index()).unwrap_or(0))
+        .copied()
+    {
+        locale.code().clone_into(&mut settings.locale);
+    }
+    settings
+}
+
+/// Reads the protocol-specific connection fields out of the draft.
+fn read_connection_draft(window: &SettingsWindow, settings: &mut AppSettings) {
     settings.srt.mode = match window.get_srt_mode_index() {
         1 => SrtMode::Listener,
         2 => SrtMode::Rendezvous,
@@ -823,26 +1466,8 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.srt.stream_id = nonempty(window.get_srt_stream_id().to_string());
     settings.srt.connect_timeout_ms = unsigned(window.get_srt_timeout());
     settings.whip_endpoint = window.get_whip_endpoint().to_string();
-    read_extended_stream_draft(window, &mut settings);
+    read_extended_stream_draft(window, settings);
     settings.reference_address = window.get_reference_address().to_string();
-    settings.restore_project = window.get_restore_project();
-    settings.save_project_on_exit = window.get_save_project_on_exit();
-    if let Some(device_id) = controller
-        .audio_device_ids
-        .borrow()
-        .get(usize::try_from(window.get_audio_device_index()).unwrap_or(0))
-    {
-        device_id.clone_into(&mut settings.audio_input_id);
-    } else {
-        settings.audio_input_id.clear();
-    }
-    if let Some(locale) = UiLocale::supported()
-        .get(usize::try_from(window.get_language_index()).unwrap_or(0))
-        .copied()
-    {
-        locale.code().clone_into(&mut settings.locale);
-    }
-    settings
 }
 
 fn load_extended_stream_draft(window: &SettingsWindow, settings: &AppSettings) {
@@ -888,12 +1513,18 @@ fn read_extended_stream_draft(window: &SettingsWindow, settings: &mut AppSetting
 
 fn read_recording_draft(controller: &SettingsController, settings: &mut AppSettings) {
     let window = &controller.window;
+    settings.recording_quality = draft_recording_quality(window);
     settings.recording_format = RecordingFormat::ALL
         .get(usize::try_from(window.get_recording_format_index()).unwrap_or(0))
         .copied()
         .unwrap_or_default();
+    settings.recording_directory = window.get_recording_directory().to_string();
+    settings.recording_filename_without_spaces = window.get_recording_filename_without_spaces();
+    // The concrete file is derived here rather than typed, so the name, the
+    // extension, and the container always agree. The studio's own start-
+    // recording dialog can still edit the path afterwards.
     settings.recording_path =
-        recording_path_for_format(&window.get_recording_path(), settings.recording_format);
+        settings.recording_file_path(&recording_stamp(std::time::SystemTime::now()));
     if let Some(codec) = controller
         .recording_codec_ids
         .borrow()
@@ -902,6 +1533,40 @@ fn read_recording_draft(controller: &SettingsController, settings: &mut AppSetti
     {
         settings.recording_codec = codec;
     }
+    if let Some(encoder) = controller
+        .recording_audio_encoder_ids
+        .borrow()
+        .get(usize::try_from(window.get_recording_audio_encoder_index()).unwrap_or(0))
+    {
+        settings.recording_audio_encoder = EncoderImplementation::new(encoder.clone());
+    }
+}
+
+/// Reads the Video page's draft, taking the frame rate from whichever control
+/// the selected FPS mode shows.
+fn read_video_draft(controller: &SettingsController) -> VideoSettings {
+    let window = &controller.window;
+    let mut video = *controller.draft_video.borrow();
+    video.scale_filter = ScaleFilter::ALL
+        .get(usize::try_from(window.get_scale_filter_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or_default();
+    video.fps_mode = FpsMode::ALL
+        .get(usize::try_from(window.get_fps_mode_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or_default();
+    match video.fps_mode {
+        FpsMode::Common => {}
+        FpsMode::Integer => {
+            video.fps_numerator = unsigned(window.get_fps_numerator()).max(1);
+            video.fps_denominator = 1;
+        }
+        FpsMode::Fractional => {
+            video.fps_numerator = unsigned(window.get_fps_numerator()).max(1);
+            video.fps_denominator = unsigned(window.get_fps_denominator()).max(1);
+        }
+    }
+    video
 }
 
 fn commit(
@@ -912,6 +1577,20 @@ fn commit(
     controller: &Rc<SettingsController>,
 ) {
     let window = &controller.window;
+    // Validation runs before anything is written: a rejected field leaves the
+    // window open with the offending row marked and commits nothing at all,
+    // rather than persisting the settings that happened to be readable.
+    if !window.get_base_resolution_valid() || !window.get_output_resolution_valid() {
+        window.set_category(SETTINGS_CATEGORY_VIDEO);
+        ui.set_status_message(
+            crate::i18n::with_catalog(controller.settings.borrow().ui_locale(), |text| {
+                text.settings_ui.resolution_invalid.clone()
+            })
+            .to_string()
+            .into(),
+        );
+        return;
+    }
     let settings = read_draft(controller);
 
     let mut notes = Vec::new();
@@ -951,12 +1630,14 @@ fn commit(
     }
 
     // Video: write the canvas back to the active profile so it persists with
-    // the project and the surface rebuilds on the next sync.
-    if let Some(format) = video_format_from(window) {
-        let output_active = {
-            let state = state.borrow();
-            state.recording() || state.streaming()
-        };
+    // the project and the surface rebuilds on the next sync, and configure the
+    // encoders for the scaled output geometry beside it. Both are canvas-class
+    // changes, so both are staged together while an output is running.
+    let output_active = {
+        let state = state.borrow();
+        state.recording() || state.streaming()
+    };
+    if let Some(format) = video_format_from(settings.video) {
         if output_active {
             // Changing the canvas mid-output would rebuild the encoders under a
             // container whose frames are already committed at the old geometry,
@@ -971,6 +1652,23 @@ fn commit(
             notes.push(format!("video: {error}"));
         }
     }
+    if output_active {
+        output.borrow_mut().stage_output_scaling(
+            settings.video.output_width,
+            settings.video.output_height,
+            settings.video.scale_filter,
+        );
+        notes.push(format!(
+            "output scaling: {}x{} is staged and applies when the output stops",
+            settings.video.output_width, settings.video.output_height
+        ));
+    } else if let Err(error) = output.borrow_mut().set_output_scaling(
+        settings.video.output_width,
+        settings.video.output_height,
+        settings.video.scale_filter,
+    ) {
+        notes.push(format!("output scaling: {error}"));
+    }
 
     if let Err(error) = settings.save(&controller.path) {
         notes.push(format!("settings file: {error}"));
@@ -979,6 +1677,9 @@ fn commit(
     *controller.settings.borrow_mut() = settings.clone();
     apply_to_studio(ui, &settings);
     push_palette(ui, controller, &settings);
+    // The previewed geometry becomes the committed geometry, so a later Cancel
+    // restores what was applied rather than what the window opened with.
+    controller.push_metrics(settings.metrics());
     window.set_preview_swatch(settings.tokens().preview_border);
     window.set_program_swatch(settings.tokens().program_border);
     window.set_dirty(false);
@@ -993,13 +1694,10 @@ fn commit(
     }
 }
 
-fn video_format_from(window: &SettingsWindow) -> Option<VideoFormat> {
-    let (width, height) =
-        *RESOLUTIONS.get(usize::try_from(window.get_base_resolution_index()).ok()?)?;
-    let (numerator, denominator) =
-        *FRAME_RATES.get(usize::try_from(window.get_frame_rate_index()).ok()?)?;
-    let rate = FrameRate::new(numerator, denominator).ok()?;
-    VideoFormat::new(width, height, rate).ok()
+/// Returns the canvas format the Video page asks the renderer for.
+fn video_format_from(video: VideoSettings) -> Option<VideoFormat> {
+    let rate = FrameRate::new(video.fps_numerator, video.fps_denominator).ok()?;
+    VideoFormat::new(video.base_width, video.base_height, rate).ok()
 }
 
 /// Pushes the values the studio window reads directly.
@@ -1037,12 +1735,6 @@ fn stream_display_label(settings: &AppSettings) -> String {
         StreamProtocol::Rist => format!("RIST · {}:{}", settings.rist.host, settings.rist.port),
         StreamProtocol::Reference => format!("Reference · {}", settings.reference_address),
     }
-}
-
-fn recording_path_for_format(path: &str, format: RecordingFormat) -> String {
-    let mut path = PathBuf::from(path.trim());
-    path.set_extension(format.extension());
-    path.to_string_lossy().into_owned()
 }
 
 /// Globals are per component tree, so every window is painted explicitly.

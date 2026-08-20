@@ -25,6 +25,7 @@ mod preview_worker;
 mod properties;
 mod refresh;
 mod settings;
+mod settings_model;
 mod view;
 
 #[cfg(test)]
@@ -58,11 +59,11 @@ pub(crate) use refresh::{
 };
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
-    AddSourceText, AddSourceWindow, FloatingDockWindow, I18n, LocaleOption, MainWindow, MixerRow,
-    MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow, ProjectorWindow, PropertyRow,
-    PropertyText, SceneRow, SettingsText, SettingsWindow, SourceCandidate, SourceFilterRow,
-    SourceFiltersWindow, SourceKindRow, SourcePropertiesWindow, SourceRow, SourceTransformWindow,
-    ThemeTokens, UiText,
+    AddSourceText, AddSourceWindow, FloatingDockWindow, I18n, LocaleOption, MainWindow, Metrics,
+    MixerRow, MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow, ProjectorWindow,
+    PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow, SourceCandidate,
+    SourceFilterRow, SourceFiltersWindow, SourceKindRow, SourcePropertiesWindow, SourceRow,
+    SourceTransformWindow, ThemeTokens, UiMetrics, UiText,
 };
 
 /// Mixer channel backed by the engine's live capture input.
@@ -81,13 +82,35 @@ pub(crate) const DESKTOP_CHANNEL_ID: &str = "desktop";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let smoke = std::env::args().any(|argument| argument == "--smoke");
-    if smoke {
+    // `--settings-screenshot <page> [file]` renders one settings page through
+    // the software renderer at a pinned appearance and exits. It is the visual
+    // regression entry point: two runs of the same page differ only where the
+    // layout differs.
+    let screenshot = screenshot_request();
+    if screenshot.is_some() {
+        // The snapshot has to come from a renderer that can read its own
+        // output back, and from a clock that does not advance between runs.
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions {
+                renderer_name: Some("software".into()),
+                mock_time: true,
+                ..Default::default()
+            },
+        )))
+        .map_err(|error| format!("screenshot backend: {error}"))?;
+    } else if smoke {
         i_slint_backend_testing::init_no_event_loop();
     }
     let ui = MainWindow::new()?;
     // Stored settings own the file paths and the stream destination, so they
     // are loaded before anything reads them.
-    let settings = AppSettings::load(&settings::settings_path());
+    // A screenshot run must not depend on whatever this machine's settings
+    // file happens to contain, so it starts from the shipped defaults.
+    let settings = if screenshot.is_some() {
+        AppSettings::default()
+    } else {
+        AppSettings::load(&settings::settings_path())
+    };
     ui.set_new_source_kind("test_pattern".into());
     ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
@@ -179,6 +202,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &surface,
         &output,
         settings,
+        settings::settings_path(),
         &PeerWindows {
             add_source: add_source_window,
             properties: properties_window,
@@ -189,6 +213,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             projectors: Rc::clone(&projectors),
         },
     )?;
+
+    if let Some((page, path, locale)) = screenshot {
+        // Opening the window through its own callback is what fills the draft,
+        // so the screenshot shows the same values a user would see.
+        ui.invoke_open_settings_window();
+        settings_window.capture_page(&page, std::path::Path::new(&path), locale)?;
+        println!("obs-rs: wrote {path}");
+        return Ok(());
+    }
 
     if smoke {
         return Ok(());
@@ -210,6 +243,27 @@ fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("obs-rs: could not persist the session: {error}");
     }
     Ok(())
+}
+
+/// Parses `--settings-screenshot <page> [file] [locale]`.
+///
+/// The file defaults to `obs-rs-settings-<page>.png` in the working directory
+/// and the locale to English, so the common case is one argument.
+fn screenshot_request() -> Option<(String, String, obs_rs_ui::UiLocale)> {
+    let mut arguments = std::env::args().skip_while(|argument| argument != "--settings-screenshot");
+    arguments.next()?;
+    let page = arguments.next()?;
+    let mut rest = arguments.take_while(|value| !value.starts_with("--"));
+    let path = rest
+        .next()
+        .unwrap_or_else(|| format!("obs-rs-settings-{page}.png"));
+    // The locale is part of the fixture: Spanish labels are materially wider,
+    // so a page is worth capturing in both.
+    let locale = rest
+        .next()
+        .and_then(|code| obs_rs_ui::UiLocale::from_code(&code))
+        .unwrap_or(obs_rs_ui::UiLocale::English);
+    Some((page, path, locale))
 }
 
 /// Reopens the stored project file, returning the message to show for it.

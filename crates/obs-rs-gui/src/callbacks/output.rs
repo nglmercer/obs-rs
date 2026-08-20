@@ -166,7 +166,11 @@ pub(crate) fn push_program_frame(
     raw_frame: Option<RawVideoFrame>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
-    if let Some(frame) = raw_frame {
+    // An accelerated frame is only usable while the encoders run at the canvas
+    // geometry: packed and planar layouts are not resampled, so a scaled output
+    // takes the RGBA path instead of dropping the frame.
+    let accepts_raw = output.borrow().accepts_raw_frames();
+    if let Some(frame) = raw_frame.filter(|_| accepts_raw) {
         output.borrow_mut().push_raw_frame(frame);
     } else if let Some(frame) = frame {
         output.borrow_mut().push_frame(&frame);
