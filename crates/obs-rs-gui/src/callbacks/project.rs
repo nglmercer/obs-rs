@@ -209,6 +209,7 @@ fn export_diagnostics(
         let mut bundle = DiagnosticBundle::new();
         bundle.insert_text("project", &state.project_document())?;
         bundle.insert_text("ui", &state.accessible_snapshot())?;
+        bundle.insert_text("setup", &ui.get_setup_benchmark_summary())?;
         bundle.insert_text(
             "runtime",
             &format!(

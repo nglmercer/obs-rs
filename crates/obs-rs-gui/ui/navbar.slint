@@ -245,10 +245,11 @@ export component AppNavbar inherits Rectangle {
         x: tools-button.x;
         y: root.height;
         width: 224px;
-        height: 108px;
+        height: 136px;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
+            MenuEntry { label: I18n.text.menu_auto_setup; clicked => { root.menu-action("auto-configuration"); tools-popup.close(); } }
             MenuEntry { label: I18n.text.menu_source_properties; clicked => { root.menu-action("source-properties"); tools-popup.close(); } }
             MenuEntry { label: I18n.text.menu_source_filters; clicked => { root.menu-action("source-filters"); tools-popup.close(); } }
             MenuEntry { label: I18n.text.menu_diagnostic_log; clicked => { root.menu-action("export-diagnostics"); tools-popup.close(); } }

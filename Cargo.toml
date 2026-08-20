@@ -13,6 +13,7 @@ members = [
     "crates/obs-rs-engine",
     "crates/obs-rs-gui",
     "crates/obs-rs-audio-pipewire",
+    "crates/obs-rs-benchmark",
     "crates/obs-rs-media",
     "crates/obs-rs-output",
     "crates/obs-rs-output-gstreamer",

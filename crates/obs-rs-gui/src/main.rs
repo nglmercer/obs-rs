@@ -42,7 +42,7 @@ pub(crate) use callbacks::{
 };
 pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks, install_dock_callbacks,
-    install_menu_callbacks, install_monitor_window, install_settings_window,
+    install_menu_callbacks, install_monitor_window, install_settings_window, install_setup_window,
     install_source_filters_window, install_source_properties_window,
     install_source_transform_window, item_rect, start_preview_timer, PeerWindows,
     ProjectorController,
@@ -61,9 +61,9 @@ pub(crate) use settings::AppSettings;
 pub(crate) use view::{
     AddSourceText, AddSourceWindow, FloatingDockWindow, I18n, LocaleOption, MainWindow, Metrics,
     MixerRow, MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow, ProjectorWindow,
-    PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow, SourceCandidate,
-    SourceFilterRow, SourceFiltersWindow, SourceKindRow, SourcePropertiesWindow, SourceRow,
-    SourceTransformWindow, ThemeTokens, UiMetrics, UiText,
+    PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow, SetupWindow,
+    SourceCandidate, SourceFilterRow, SourceFiltersWindow, SourceKindRow, SourcePropertiesWindow,
+    SourceRow, SourceTransformWindow, ThemeTokens, UiMetrics, UiText,
 };
 
 /// Mixer channel backed by the engine's live capture input.
@@ -106,11 +106,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     // are loaded before anything reads them.
     // A screenshot run must not depend on whatever this machine's settings
     // file happens to contain, so it starts from the shipped defaults.
-    let settings = if screenshot.is_some() {
-        AppSettings::default()
+    let settings_load = if screenshot.is_some() {
+        settings::SettingsLoad {
+            settings: AppSettings::default(),
+            show_setup: false,
+        }
     } else {
-        AppSettings::load(&settings::settings_path())
+        settings::AppSettings::load_with_status(&settings::settings_path())
     };
+    let show_setup = settings_load.show_setup;
+    let settings = settings_load.settings;
     ui.set_new_source_kind("test_pattern".into());
     ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
@@ -177,6 +182,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Paths and the dock layout are pushed before the first refresh so the
     // recovery check and the docks both see the restored session.
     ui.set_project_path(settings.project_path.as_str().into());
+    ui.set_setup_benchmark_summary(settings.setup_benchmark_summary.as_str().into());
     settings.apply_layout(&ui);
     refresh_ui(&ui, &state, &surface);
     if let Some(message) = restored {
@@ -213,6 +219,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             projectors: Rc::clone(&projectors),
         },
     )?;
+    let setup_window = install_setup_window(&ui, &state, &surface, &output, &settings_window)?;
 
     if let Some((page, path, locale)) = screenshot {
         // Opening the window through its own callback is what fills the draft,
@@ -225,6 +232,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if smoke {
         return Ok(());
+    }
+
+    if show_setup {
+        setup_window.open();
     }
 
     let _preview_timer = start_preview_timer(

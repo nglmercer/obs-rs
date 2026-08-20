@@ -7,6 +7,7 @@ mod output;
 mod project;
 mod scene;
 pub(crate) mod settings;
+pub(crate) mod setup;
 mod source;
 pub(crate) mod source_filters;
 pub(crate) mod source_properties;
@@ -41,6 +42,7 @@ pub(crate) use scene::install_scene_callbacks;
 #[cfg(test)]
 pub(crate) use settings::populate_settings_models;
 pub(crate) use settings::{install_settings_window, PeerWindows};
+pub(crate) use setup::install_setup_window;
 pub(crate) use source::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
     apply_source_transform_to, duplicate_source_and_refresh, flip_source_and_refresh,

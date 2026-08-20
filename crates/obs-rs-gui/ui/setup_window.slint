@@ -1,0 +1,167 @@
+import { Button, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// The setup window is deliberately short and reviewable: the benchmark is
+// local, the recommendation is visible before Apply, and the user can leave
+// the flow without changing unrelated settings.
+export component SetupWindow inherits Window {
+    title: I18n.text.settings_ui.setup_title;
+    preferred-width: 760px;
+    preferred-height: 620px;
+    min-width: 620px;
+    min-height: 480px;
+    background: Palette.tokens.window-bg;
+
+    in property <int> step: 0;
+    in property <bool> running: false;
+    in property <string> status;
+    in property <string> display-device;
+    in property <string> microphone-device;
+    in property <string> recommended-format;
+    in property <[string]> result-rows;
+
+    callback run-benchmark();
+    callback apply-setup();
+    callback skip-setup();
+    callback close-requested();
+
+    VerticalBox {
+        padding: 24px;
+        spacing: 16px;
+
+        Text {
+            text: I18n.text.settings_ui.setup_title;
+            color: Palette.tokens.text-strong;
+            font-size: 22px;
+            font-weight: 700;
+        }
+        Text {
+            text: I18n.text.settings_ui.setup_subtitle;
+            color: Palette.tokens.text-muted;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+
+        HorizontalBox {
+            spacing: 8px;
+            Text {
+                text: I18n.text.settings_ui.setup_benchmark_step;
+                color: root.step == 0 ? Palette.tokens.accent : Palette.tokens.text-muted;
+                font-weight: root.step == 0 ? 700 : 400;
+            }
+            Text { text: "→"; color: Palette.tokens.text-muted; }
+            Text {
+                text: I18n.text.settings_ui.setup_review_step;
+                color: root.step == 1 ? Palette.tokens.accent : Palette.tokens.text-muted;
+                font-weight: root.step == 1 ? 700 : 400;
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Palette.tokens.panel-bg;
+            border-width: 1px;
+            border-color: Palette.tokens.border;
+            border-radius: 4px;
+
+            if root.step == 0 : VerticalBox {
+                padding: 20px;
+                spacing: 14px;
+                Text {
+                    text: I18n.text.settings_ui.setup_benchmark;
+                    color: Palette.tokens.text-strong;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: I18n.text.settings_ui.setup_benchmark_hint;
+                    color: Palette.tokens.text;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: I18n.text.settings_ui.setup_preserve_hint;
+                    color: Palette.tokens.text-muted;
+                    wrap: word-wrap;
+                }
+                Rectangle { vertical-stretch: 1; }
+                Text {
+                    text: root.running
+                        ? I18n.text.settings_ui.setup_running
+                        : root.status;
+                    color: root.running ? Palette.tokens.accent : Palette.tokens.text-muted;
+                    wrap: word-wrap;
+                }
+                Button {
+                    text: root.running
+                        ? I18n.text.settings_ui.setup_running
+                        : I18n.text.settings_ui.setup_run_benchmark;
+                    enabled: !root.running;
+                    clicked => { root.run-benchmark(); }
+                }
+            }
+
+            if root.step == 1 : VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text {
+                    text: I18n.text.settings_ui.setup_recommended + ": " + root.recommended-format;
+                    color: Palette.tokens.accent;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    for row in root.result-rows : Text {
+                        text: row;
+                        color: Palette.tokens.text;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        height: 28px;
+                    }
+                }
+                Text {
+                    text: I18n.text.settings_ui.setup_display + ": " + root.display-device;
+                    color: Palette.tokens.text;
+                    overflow: elide;
+                }
+                Text {
+                    text: I18n.text.settings_ui.setup_microphone + ": " + root.microphone-device;
+                    color: Palette.tokens.text;
+                    overflow: elide;
+                }
+                Text {
+                    text: I18n.text.settings_ui.setup_safe_scene;
+                    color: Palette.tokens.text-muted;
+                }
+            }
+        }
+
+        Text {
+            text: root.status;
+            color: Palette.tokens.text-muted;
+            wrap: word-wrap;
+            height: 32px;
+        }
+
+        HorizontalBox {
+            spacing: 8px;
+            alignment: end;
+            Button {
+                text: I18n.text.settings_ui.setup_skip;
+                enabled: !root.running;
+                clicked => { root.skip-setup(); }
+            }
+            Button {
+                text: root.step == 1
+                    ? I18n.text.settings_ui.setup_apply
+                    : I18n.text.settings_ui.setup_close;
+                enabled: !root.running && root.step == 1;
+                clicked => {
+                    if root.step == 1 { root.apply-setup(); }
+                    else { root.close-requested(); }
+                }
+            }
+        }
+    }
+}

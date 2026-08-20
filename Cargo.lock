@@ -4356,6 +4356,7 @@ version = "0.1.0"
 dependencies = [
  "obs-rs-audio",
  "obs-rs-audio-pipewire",
+ "obs-rs-benchmark",
  "obs-rs-builtins",
  "obs-rs-capture",
  "obs-rs-clock",
@@ -4387,6 +4388,18 @@ version = "0.1.0"
 dependencies = [
  "obs-rs-audio",
  "obs-rs-media",
+]
+
+[[package]]
+name = "obs-rs-benchmark"
+version = "0.1.0"
+dependencies = [
+ "obs-rs-builtins",
+ "obs-rs-config",
+ "obs-rs-core",
+ "obs-rs-media",
+ "obs-rs-plugin-api",
+ "obs-rs-video",
 ]
 
 [[package]]
@@ -4484,6 +4497,7 @@ dependencies = [
  "i-slint-backend-testing",
  "obs-rs-audio",
  "obs-rs-audio-pipewire",
+ "obs-rs-benchmark",
  "obs-rs-builtins",
  "obs-rs-capture",
  "obs-rs-config",

@@ -28,6 +28,43 @@ const SETTINGS_FILE: &str = "obs-rs-settings.toml";
 /// Default file names inside the per-user directory.
 const PROJECT_FILE: &str = "obs-rs-project.json";
 const DIAGNOSTICS_FILE: &str = "obs-rs-diagnostics.obsrdg";
+
+/// Whether the first-run setup should be shown at startup.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum SetupState {
+    /// The user has not completed or explicitly skipped setup.
+    #[default]
+    Pending,
+    /// Setup was applied successfully.
+    Completed,
+    /// The user chose to continue without setup.
+    Skipped,
+}
+
+impl SetupState {
+    const fn id(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+            Self::Skipped => "skipped",
+        }
+    }
+
+    fn from_id(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "completed" => Some(Self::Completed),
+            "skipped" => Some(Self::Skipped),
+            _ => None,
+        }
+    }
+}
+
+/// Result of loading settings with the startup-only first-run signal.
+pub(crate) struct SettingsLoad {
+    pub(crate) settings: AppSettings,
+    pub(crate) show_setup: bool,
+}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum RecordingFormat {
     #[default]
@@ -276,6 +313,10 @@ pub(crate) struct AppSettings {
     pub(crate) restore_project: bool,
     /// Write the project back to the same file when the window closes.
     pub(crate) save_project_on_exit: bool,
+    /// Controls the blocking setup wizard shown for a new installation.
+    pub(crate) setup_state: SetupState,
+    /// Bounded summary of the last local setup benchmark for diagnostics.
+    pub(crate) setup_benchmark_summary: String,
     /// The dock layout the window was last left in.
     pub(crate) layout: LayoutSettings,
 }
@@ -447,6 +488,8 @@ impl Default for AppSettings {
             audio_input_id: String::new(),
             restore_project: true,
             save_project_on_exit: true,
+            setup_state: SetupState::Pending,
+            setup_benchmark_summary: String::new(),
             layout: LayoutSettings::default(),
         }
     }
@@ -520,14 +563,42 @@ impl AppSettings {
 
     /// Reads settings from `path`, falling back to defaults for anything the
     /// document does not contain or cannot express.
+    #[allow(dead_code)]
     pub(crate) fn load(path: &Path) -> Self {
+        Self::load_with_status(path).settings
+    }
+
+    /// Reads settings and determines whether the blocking setup wizard belongs
+    /// on the first startup.
+    pub(crate) fn load_with_status(path: &Path) -> SettingsLoad {
         let Ok(document) = std::fs::read_to_string(path) else {
-            return Self::default();
+            return SettingsLoad {
+                settings: Self::default(),
+                show_setup: !path.exists(),
+            };
         };
         let Ok(config) = Config::parse(&document) else {
-            return Self::default();
+            // An existing but malformed document should not trap a user in the
+            // wizard. The regular settings loader still falls back safely.
+            let mut settings = Self::default();
+            settings.setup_state = SetupState::Completed;
+            return SettingsLoad {
+                settings,
+                show_setup: false,
+            };
         };
-        Self::from_config(&config)
+        let mut settings = Self::from_config(&config);
+        // Files from before first-run setup existed are already a configured
+        // installation. Only a newly created file or an explicit pending state
+        // can open the wizard.
+        if config.get("setup_state").is_none() {
+            settings.setup_state = SetupState::Completed;
+        }
+        let show_setup = settings.setup_state == SetupState::Pending;
+        SettingsLoad {
+            settings,
+            show_setup,
+        }
     }
 
     /// Writes the settings document, creating the file when it is missing.
@@ -536,7 +607,16 @@ impl AppSettings {
     ///
     /// Returns the underlying I/O error when the document cannot be written.
     pub(crate) fn save(&self, path: &Path) -> std::io::Result<()> {
-        std::fs::write(path, self.to_config().serialize())
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+        std::fs::write(&temporary, self.to_config().serialize())?;
+        if let Err(error) = std::fs::rename(&temporary, path) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Reads every key the settings window owns.
@@ -681,6 +761,16 @@ impl AppSettings {
                 "save_project_on_exit",
                 defaults.save_project_on_exit,
             ),
+            setup_state: config
+                .get("setup_state")
+                .and_then(SetupState::from_id)
+                .unwrap_or(defaults.setup_state),
+            setup_benchmark_summary: bounded_text(
+                config,
+                "setup_benchmark_summary",
+                &defaults.setup_benchmark_summary,
+                4_096,
+            ),
             layout: LayoutSettings::from_config(config),
         }
     }
@@ -768,6 +858,11 @@ impl AppSettings {
             (
                 "save_project_on_exit",
                 self.save_project_on_exit.to_string(),
+            ),
+            ("setup_state", self.setup_state.id().to_owned()),
+            (
+                "setup_benchmark_summary",
+                self.setup_benchmark_summary.chars().take(4_096).collect(),
             ),
             ("layout_panel_order", self.layout.panel_order_text()),
             ("layout_show_scenes", self.layout.show_scenes.to_string()),
@@ -1374,6 +1469,12 @@ fn text(config: &Config, key: &str, fallback: &str) -> String {
         .map_or_else(|| fallback.to_owned(), str::to_owned)
 }
 
+fn bounded_text(config: &Config, key: &str, fallback: &str, maximum: usize) -> String {
+    let mut value = text(config, key, fallback);
+    value.truncate(maximum);
+    value
+}
+
 fn optional_text(config: &Config, key: &str) -> Option<String> {
     config
         .get(key)
@@ -1685,9 +1786,43 @@ mod tests {
     }
 
     #[test]
+    fn setup_state_round_trips_and_legacy_documents_do_not_open_the_wizard() {
+        let mut settings = AppSettings::default();
+        settings.setup_state = SetupState::Skipped;
+        settings.setup_benchmark_summary = "recommended=720p30".to_owned();
+        let decoded = AppSettings::from_config(&settings.to_config());
+        assert_eq!(decoded.setup_state, SetupState::Skipped);
+        assert_eq!(
+            decoded.setup_benchmark_summary,
+            settings.setup_benchmark_summary
+        );
+
+        let path = std::env::temp_dir().join("obs-rs-settings-legacy-setup-test.toml");
+        let mut legacy = Config::new();
+        legacy.set("theme", "dark").expect("legacy theme");
+        std::fs::write(&path, legacy.serialize()).expect("write legacy settings");
+        let loaded = AppSettings::load_with_status(&path);
+        assert!(!loaded.show_setup);
+        assert_eq!(loaded.settings.setup_state, SetupState::Completed);
+        std::fs::remove_file(&path).expect("remove legacy settings");
+    }
+
+    #[test]
+    fn missing_settings_are_pending_first_run() {
+        let path = std::env::temp_dir().join("obs-rs-settings-first-run-test.toml");
+        let _ = std::fs::remove_file(&path);
+        let loaded = AppSettings::load_with_status(&path);
+        assert!(loaded.show_setup);
+        assert_eq!(loaded.settings.setup_state, SetupState::Pending);
+    }
+
+    #[test]
     fn unreadable_and_invalid_documents_fall_back_to_defaults() {
         let missing = std::env::temp_dir().join("obs-rs-settings-does-not-exist.toml");
-        assert_eq!(AppSettings::load(&missing), AppSettings::default());
+        assert_eq!(
+            AppSettings::load_with_status(&missing).settings,
+            AppSettings::default()
+        );
 
         let mut config = Config::new();
         config.set("theme", "not-a-theme").expect("theme key");
@@ -1862,7 +1997,7 @@ mod tests {
         };
 
         settings.save(&path).expect("settings should persist");
-        let reloaded = AppSettings::load(&path);
+        let reloaded = AppSettings::load_with_status(&path).settings;
 
         assert_eq!(reloaded, settings);
         assert_eq!(reloaded.ui_locale(), UiLocale::Spanish);

@@ -161,7 +161,6 @@ impl SettingsController {
     }
 
     /// Returns the committed settings document.
-    #[cfg(test)]
     pub(crate) fn committed(&self) -> AppSettings {
         self.settings.borrow().clone()
     }
@@ -1592,6 +1591,24 @@ fn commit(
         return;
     }
     let settings = read_draft(controller);
+    apply_settings_snapshot(ui, state, surface, output, controller, settings);
+}
+
+/// Applies a validated settings snapshot from either the settings draft or the
+/// first-run setup wizard.
+///
+/// Setup deliberately comes through the same path as the ordinary settings
+/// window so audio routing, output staging, project video geometry, palette,
+/// and persistence cannot drift into two subtly different implementations.
+pub(crate) fn apply_settings_snapshot(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+    controller: &Rc<SettingsController>,
+    settings: AppSettings,
+) {
+    let window = &controller.window;
 
     let mut notes = Vec::new();
 

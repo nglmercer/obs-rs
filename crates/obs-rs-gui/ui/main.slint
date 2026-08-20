@@ -23,6 +23,7 @@ import {
 export { AddSourceText, I18n, MonitorText, PropertyText, SettingsText, UiText } from "i18n.slint";
 export { Metrics, Palette, ThemeTokens, UiMetrics } from "palette.slint";
 export { SettingsWindow } from "settings_window.slint";
+export { SetupWindow } from "setup_window.slint";
 export { AddSourceWindow } from "add_source_window.slint";
 export { SourcePropertiesWindow } from "source_properties_window.slint";
 export { SourceFiltersWindow } from "source_filters_window.slint";
@@ -49,6 +50,7 @@ export component MainWindow inherits Window {
         in property <bool> dirty;
         in property <string> status-message;
         in property <string> recovery-status;
+        in property <string> setup-benchmark-summary;
         in property <string> output-status;
         in property <string> output-metrics;
         in property <string> recording-elapsed;
@@ -136,6 +138,10 @@ export component MainWindow inherits Window {
         property <int> pending-discard: 0;
         property <string> pending-collection;
         in-out property <length> dock-height: 248px;
+        // The first-run wizard is a separate movable window, while this scrim
+        // keeps the studio non-interactive until the wizard is applied or
+        // skipped.
+        in-out property <bool> setup-active: false;
 
         callback swap-scenes();
         callback toggle-recording();
@@ -177,6 +183,7 @@ export component MainWindow inherits Window {
         callback float-panel(int);
         callback resize-panel(int, int);
         callback open-settings-window();
+        callback open-setup-window();
         callback open-add-source-window();
         callback open-source-properties-window();
         callback open-source-filters-window();
@@ -403,6 +410,8 @@ export component MainWindow inherits Window {
                         root.export-diagnostics();
                     } else if action == "settings" {
                         root.open-settings-window();
+                    } else if action == "auto-configuration" {
+                        root.open-setup-window();
                     } else if action == "source-properties" {
                         root.open-source-properties-window();
                     } else if action == "source-filters" {
@@ -565,6 +574,25 @@ export component MainWindow inherits Window {
 
     // Modals live at the window root so their scrim covers the whole window
     // instead of being clipped to the dock that opened them.
+    if root.setup-active : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        z: 1000;
+        background: rgb(0, 0, 0, 185);
+        TouchArea { }
+        Text {
+            text: I18n.text.settings_ui.setup_title;
+            color: Palette.tokens.text-strong;
+            font-size: 18px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            y: parent.height / 2 - 18px;
+        }
+    }
     ConfirmDialog {
         open: root.pending-confirm != 0;
         locale: root.locale;
