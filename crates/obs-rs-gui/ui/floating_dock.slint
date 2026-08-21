@@ -41,6 +41,7 @@ export component FloatingDockWindow inherits Window {
     callback duplicate-scene(string);
     callback remove-scene(string);
     callback select-source(string);
+    callback open-properties(string);
     callback open-filters(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
@@ -101,6 +102,7 @@ export component FloatingDockWindow inherits Window {
         duplicate-scene(id) => { root.duplicate-scene(id); }
         remove-scene(id) => { root.remove-scene(id); }
         select-source(id) => { root.select-source(id); }
+        open-properties(id) => { root.open-properties(id); }
         open-filters(id) => { root.open-filters(id); }
         open-transform(id) => { root.select-source(id); root.open-modal(14); }
         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }

@@ -28,6 +28,7 @@ export component SourceDock inherits Rectangle {
     callback close-panel(int);
     callback open-modal(int);
     callback select-source(string);
+    callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);
     callback toggle-source-visibility(string);
@@ -76,6 +77,7 @@ export component SourceDock inherits Rectangle {
                     for source in source-rows : source-menu := SourceContextMenuArea {
                         height: 36px;
                         source-id: source.target;
+                        source-kind: source.kind;
                         nested: source.nested;
                         group: source.group;
                         source-visible: source.visible;
@@ -87,7 +89,7 @@ export component SourceDock inherits Rectangle {
                         source-count: source.count;
                         can-paste: root.can-paste;
                         select-source(id) => { root.select-source(id); }
-                        open-properties(id) => { root.select-source(id); root.open-modal(6); }
+                        open-properties(id) => { root.open-properties(id); }
                         open-filters(id) => { root.open-filters(id); }
                         open-transform(id) => { root.select-source(id); root.open-modal(14); }
                         rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
@@ -158,6 +160,7 @@ export component SourceDock inherits Rectangle {
                 selected-source-menu := SourceContextMenuArea {
                     height: 22px;
                     source-id: root.selected-source;
+                    source-kind: "";
                     nested: false;
                     group: root.selected-source-is-group;
                     source-visible: root.selected-source-visible;
@@ -169,7 +172,7 @@ export component SourceDock inherits Rectangle {
                     source-count: root.source-count;
                     can-paste: root.can-paste;
                     select-source(id) => { root.select-source(id); }
-                    open-properties(id) => { root.select-source(id); root.open-modal(6); }
+                    open-properties(id) => { root.open-properties(id); }
                     open-filters(id) => { root.open-filters(id); }
                     open-transform(id) => { root.select-source(id); root.open-modal(14); }
                     rename-source(id) => { root.select-source(id); root.open-source-rename(id); }

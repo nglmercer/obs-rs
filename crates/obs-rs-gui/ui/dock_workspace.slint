@@ -56,6 +56,7 @@ export component DockWorkspace inherits Rectangle {
     callback duplicate-scene(string);
     callback remove-scene(string);
     callback select-source(string);
+    callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);
     callback toggle-source-visibility(string);
@@ -246,6 +247,7 @@ export component DockWorkspace inherits Rectangle {
             duplicate-scene(id) => { root.duplicate-scene(id); }
             remove-scene(id) => { root.remove-scene(id); }
             select-source(id) => { root.select-source(id); }
+            open-properties(id) => { root.open-properties(id); }
             open-filters(id) => { root.open-filters(id); }
             open-transform(id) => { root.open-transform(id); }
             toggle-source-visibility(id) => { root.toggle-source-visibility(id); }

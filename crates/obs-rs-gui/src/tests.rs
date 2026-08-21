@@ -1018,6 +1018,10 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_context_menus(&ui, &state, &surface);
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one integration fixture exercises the complete nested source workflow"
+)]
 fn exercise_group_source_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -1050,6 +1054,31 @@ fn exercise_group_source_callbacks(
         .get_source_rows()
         .iter()
         .any(|row| row.target == "overlay-group/background"));
+
+    let properties = crate::install_source_properties_window(ui, state, surface)
+        .expect("nested properties window should instantiate");
+    ui.invoke_open_source_properties_for("overlay-group/background".into());
+    let properties_window =
+        crate::callbacks::source_properties::SourcePropertiesController::window(&properties);
+    assert_eq!(properties_window.get_source_name(), "Background");
+    assert_eq!(properties_window.get_source_kind(), "color_source");
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("background"),
+        "opening nested properties must not replace canvas selection"
+    );
+    properties_window.invoke_edit_property("width".into(), "800".into());
+    properties_window.invoke_accept_properties();
+    assert_eq!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.source("background"))
+            .and_then(|source| source.settings().get("width")),
+        Some("800")
+    );
 
     let filters = crate::install_source_filters_window(ui, state, surface)
         .expect("nested filters window should instantiate");

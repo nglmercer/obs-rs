@@ -6,6 +6,7 @@ import { I18n } from "i18n.slint";
 // button, so both entry points expose the identical menu.
 export component SourceContextMenuArea inherits Rectangle {
     in property <string> source-id;
+    in property <string> source-kind;
     in property <bool> nested: false;
     in property <bool> group: false;
     in property <bool> source-visible;
@@ -46,15 +47,19 @@ export component SourceContextMenuArea inherits Rectangle {
         Menu {
             MenuItem {
                 title: I18n.text.source_properties;
-                enabled: root.source-id != "" && !root.nested && !root.group;
+                enabled: root.source-id != ""
+                    && root.source-kind != "scene"
+                    && !root.group;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.open-properties(root.source-id);
                 }
             }
             MenuItem {
                 title: I18n.text.filters;
-                enabled: root.source-id != "" && !root.group;
+                enabled: root.source-id != ""
+                    && root.source-kind != "scene"
+                    && !root.group;
                 activated => {
                     if !root.nested { root.select-source(root.source-id); }
                     root.open-filters(root.source-id);
