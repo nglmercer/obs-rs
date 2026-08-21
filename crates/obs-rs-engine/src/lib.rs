@@ -32,15 +32,15 @@ use obs_rs_output::{
     StreamMetrics, StreamSession, StreamState, StreamTarget, TcpPacketTransport, VideoEncoder,
     VideoEncoderConfig, VideoInputRequirement, WebSocketPacketTransport,
 };
-#[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
     AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
     VideoEncoderCapability,
 };
+use obs_rs_output_gstreamer::GStreamerCapabilitySnapshot;
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output_gstreamer::{
-    GStreamerCapabilitySnapshot, GStreamerError, GStreamerOutputSession, NativeOutputState,
-    ProductionDestination, ProductionPipelinePlan,
+    GStreamerError, GStreamerOutputSession, NativeOutputState, ProductionDestination,
+    ProductionPipelinePlan,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Project, ProjectError, SourceFilterCategory, SourceFilterSpec};
@@ -51,7 +51,6 @@ const DEFAULT_OUTPUT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
 
 /// Probes the production backend once and returns its typed GUI-safe model.
-#[cfg(feature = "production-gstreamer")]
 #[must_use]
 pub fn output_capabilities_snapshot() -> OutputCapabilitiesSnapshot {
     GStreamerCapabilitySnapshot::probe().capabilities()

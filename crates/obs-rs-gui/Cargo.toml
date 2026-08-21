@@ -17,7 +17,7 @@ obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-capture = { path = "../obs-rs-capture" }
 obs-rs-core = { path = "../obs-rs-core" }
 obs-rs-diagnostics = { path = "../obs-rs-diagnostics" }
-obs-rs-engine = { path = "../obs-rs-engine", features = ["production-gstreamer"] }
+obs-rs-engine = { path = "../obs-rs-engine" }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-output = { path = "../obs-rs-output" }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
@@ -36,3 +36,6 @@ slint = { version = "1.17.1", default-features = false, features = [
 
 [build-dependencies]
 slint-build = "=1.17.1"
+
+[target.'cfg(not(windows))'.dependencies]
+obs-rs-engine = { path = "../obs-rs-engine", features = ["production-gstreamer"] }

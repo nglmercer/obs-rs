@@ -68,7 +68,7 @@ impl MonitorController {
         self.window.global::<Palette>().set_tokens(tokens);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn window(&self) -> &MonitorWindow {
         &self.window
     }
@@ -228,6 +228,7 @@ fn install_open(
         // On Wayland the compositor owns the picker: OBS-RS asks the portal and
         // stores the token it hands back, rather than showing a list of screens
         // it is not allowed to enumerate.
+        #[cfg(target_os = "linux")]
         if crate::kind_uses_portal(&kind) {
             share_through_portal(&ui, &state, &controller, &selected);
             return;

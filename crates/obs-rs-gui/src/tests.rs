@@ -384,8 +384,9 @@ fn a_failed_output_clears_the_claim_and_offers_guided_recovery() {
 
     // The worker publishes its snapshot after replying, so the failure can be
     // one tick behind the rejected connect. In the app that only delays the
-    // dialog by a frame; here it has to be waited for.
-    for _ in 0..100 {
+    // dialog by a frame; here it has to be waited for. A refused loopback
+    // connect can take a few seconds on Windows, so the budget allows for it.
+    for _ in 0..500 {
         if output.borrow().lifecycles().1 == obs_rs_engine::OutputLifecycle::Failed {
             break;
         }
@@ -768,6 +769,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     render_monitor_window();
     exercise_add_source_window(&ui, &state, &surface);
     exercise_capture_device_properties_window(&ui, &state, &surface);
+    #[cfg(target_os = "linux")]
     exercise_monitor_selection(&ui, &state, &surface);
     exercise_recording_controls(&ui, &state, &surface);
     exercise_menu_actions(&ui, &state, &surface);
@@ -1201,6 +1203,10 @@ fn render_monitor_window() {
 
 /// Drives the display picker end to end: opening it for an X11 screen source,
 /// accepting the whole-desktop choice, and confirming the project records it.
+///
+/// The display picker is part of the Linux/X11 vertical slice; Windows gets
+/// its own native picker with the platform capture work.
+#[cfg(target_os = "linux")]
 fn exercise_monitor_selection(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,

@@ -49,8 +49,10 @@ pub(crate) use callbacks::{
 };
 pub(crate) use fixtures::{
     capture_devices, initial_project, kind_runs_in_this_session, kind_selects_monitor,
-    kind_uses_portal, platform_capture_summary, source_settings,
+    platform_capture_summary, source_settings,
 };
+#[cfg(target_os = "linux")]
+pub(crate) use fixtures::kind_uses_portal;
 pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewSurface};
 pub(crate) use preview_worker::PreviewWorker;

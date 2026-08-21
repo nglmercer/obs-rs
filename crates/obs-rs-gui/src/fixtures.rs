@@ -184,6 +184,7 @@ pub(crate) fn kind_selects_monitor(kind: &str) -> bool {
 ///
 /// On Wayland the compositor owns the picker, so OBS-RS asks the portal
 /// instead of drawing a monitor list it has no way to enumerate.
+#[cfg(target_os = "linux")]
 pub(crate) fn kind_uses_portal(kind: &str) -> bool {
     kind.trim() == "wayland_screen_capture"
 }

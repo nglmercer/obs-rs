@@ -1897,17 +1897,25 @@ mod tests {
             recording_filename_without_spaces: true,
             ..AppSettings::default()
         };
+        let expected = std::path::Path::new("/tmp")
+            .join("2024-02-29-12-30-45.mkv")
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(
             settings.recording_file_path("2024-02-29 12-30-45"),
-            "/tmp/2024-02-29-12-30-45.mkv"
+            expected
         );
         let spaced = AppSettings {
             recording_filename_without_spaces: false,
             ..settings
         };
+        let expected_spaced = std::path::Path::new("/tmp")
+            .join("2024-02-29 12-30-45.mkv")
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(
             spaced.recording_file_path("2024-02-29 12-30-45"),
-            "/tmp/2024-02-29 12-30-45.mkv"
+            expected_spaced
         );
     }
 

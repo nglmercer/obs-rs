@@ -6,6 +6,8 @@
 use std::sync::Arc;
 
 use obs_rs_capture::CaptureKind;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use obs_rs_capture::PlatformCaptureAdapter;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use obs_rs_capture::PlatformCaptureProvider;
 #[cfg(target_os = "linux")]
