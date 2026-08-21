@@ -29,8 +29,9 @@ pub use device::{
 };
 pub use error::{AudioError, AudioWorkerError};
 pub use filters::{
-    AudioFilter, AudioFilterChain, AudioGain, MAX_AUDIO_FILTERS, MAX_GAIN_DB_MILLI,
-    MIN_GAIN_DB_MILLI,
+    AudioFilter, AudioFilterChain, AudioGain, AudioLimiter, MAX_AUDIO_FILTERS, MAX_GAIN_DB_MILLI,
+    MAX_LIMITER_RELEASE_MS, MAX_LIMITER_THRESHOLD_DB_MILLI, MIN_GAIN_DB_MILLI,
+    MIN_LIMITER_RELEASE_MS, MIN_LIMITER_THRESHOLD_DB_MILLI,
 };
 pub use mixer::AudioMixer;
 pub use monitor::AudioMonitorTap;

@@ -62,6 +62,10 @@ pub enum AudioError {
     InvalidGain,
     /// An audio gain filter is outside the bounded OBS-compatible range.
     InvalidFilterGain { milli_db: i32 },
+    /// An audio limiter threshold is outside OBS's bounded dB range.
+    InvalidLimiterThreshold { milli_db: i32 },
+    /// An audio limiter release time is outside OBS's bounded millisecond range.
+    InvalidLimiterRelease { milliseconds: u16 },
     /// An ordered audio filter chain reached its fixed capacity.
     FilterChainFull { max: usize },
     /// An audio filter would have produced a non-finite sample.
@@ -139,6 +143,14 @@ impl fmt::Display for AudioError {
             Self::InvalidFilterGain { milli_db } => write!(
                 formatter,
                 "audio filter gain {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidLimiterThreshold { milli_db } => write!(
+                formatter,
+                "audio limiter threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidLimiterRelease { milliseconds } => write!(
+                formatter,
+                "audio limiter release {milliseconds} ms is outside the supported range"
             ),
             Self::FilterChainFull { max } => {
                 write!(formatter, "audio filter chain is limited to {max} filters")

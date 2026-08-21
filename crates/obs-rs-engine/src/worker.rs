@@ -52,6 +52,12 @@ enum WorkerCommand {
     SetGain(EngineAudioChannel, u16, mpsc::Sender<Result<(), String>>),
     SetGainFilter(EngineAudioChannel, i32, mpsc::Sender<Result<(), String>>),
     SetInvertPolarity(EngineAudioChannel, mpsc::Sender<Result<(), String>>),
+    SetLimiter(
+        EngineAudioChannel,
+        i32,
+        u16,
+        mpsc::Sender<Result<(), String>>,
+    ),
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
     SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
     SyncProject(Project, mpsc::Sender<Result<(), String>>),
@@ -447,6 +453,34 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Replaces the live channel's bounded Limiter filter on the worker-owned
+    /// engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker or limiter bounds reject the
+    /// update.
+    pub fn set_channel_limiter(
+        &self,
+        channel: EngineAudioChannel,
+        threshold_db_milli: i32,
+        release_ms: u16,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetLimiter(
+                channel,
+                threshold_db_milli,
+                release_ms,
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Applies live input mute on the worker-owned mixer.
     ///
     /// # Errors
@@ -599,6 +633,13 @@ fn worker_loop(
             WorkerCommand::SetInvertPolarity(channel, reply) => {
                 let result = session
                     .set_channel_invert_polarity(channel)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::SetLimiter(channel, threshold_db_milli, release_ms, reply) => {
+                let result = session
+                    .set_channel_limiter(channel, threshold_db_milli, release_ms)
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
@@ -901,9 +942,16 @@ mod tests {
         worker
             .set_channel_invert_polarity(EngineAudioChannel::Microphone)
             .expect("valid invert polarity filter");
+        worker
+            .set_channel_limiter(EngineAudioChannel::Microphone, -6_000, 60)
+            .expect("valid limiter filter");
         let error = worker
             .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, 30_001)
             .expect_err("unbounded gain filter");
         assert!(matches!(error, EngineError::Worker(reason) if reason.contains("outside")));
+        let error = worker
+            .set_channel_limiter(EngineAudioChannel::Microphone, -60_001, 60)
+            .expect_err("unbounded limiter threshold");
+        assert!(matches!(error, EngineError::Worker(reason) if reason.contains("threshold")));
     }
 }

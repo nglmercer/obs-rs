@@ -2,7 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
-**Latest measurement:** 2026-08-21 (video Color Multiply/Add packet validation)
+**Latest measurement:** 2026-08-21 (audio Limiter packet validation)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -150,6 +150,20 @@ cargo test --release -p obs-rs-audio invert_polarity_block_timing_report -- --no
 
 The observed release result was `27.754 µs` total, or `138 ns` per
 480-frame stereo block on this host.
+
+The same release probe for the stateful Limiter processes a reusable 480-frame
+stereo block with a fixed 1 ms attack and 60 ms release. Its envelope is kept
+inside the filter instance across blocks; no per-block allocation is introduced.
+The measurement is recorded by:
+
+```text
+cargo test --release -p obs-rs-audio limiter_block_timing_report -- --nocapture
+```
+
+The observed release result was `1.236304 ms` total, or `6.181 µs` per
+480-frame stereo block on this host. This is a local primitive measurement;
+full audio-graph and device-clock performance still require the Phase 16
+matrix.
 
 ## Phase 1 render-target evidence
 

@@ -176,7 +176,7 @@ fn mixer_applies_stereo_pan_and_rejects_invalid_values() {
 fn gain_filter_chain_matches_bounded_db_semantics() {
     let gain = AudioFilter::gain_db_milli(6_000).expect("valid gain");
     let mut chain = AudioFilterChain::new();
-    chain.try_push(gain).expect("first filter");
+    chain.try_push(gain.clone()).expect("first filter");
     chain
         .try_push(AudioFilter::gain_db_milli(-6_000).expect("second gain"))
         .expect("second filter");
@@ -233,11 +233,121 @@ fn invert_polarity_preserves_magnitude_and_composes_in_order() {
 }
 
 #[test]
+fn limiter_validates_obs_threshold_and_release_bounds() {
+    assert_eq!(
+        AudioLimiter::new(MIN_LIMITER_THRESHOLD_DB_MILLI - 1, 60),
+        Err(AudioError::InvalidLimiterThreshold {
+            milli_db: MIN_LIMITER_THRESHOLD_DB_MILLI - 1
+        })
+    );
+    assert_eq!(
+        AudioLimiter::new(MAX_LIMITER_THRESHOLD_DB_MILLI + 1, 60),
+        Err(AudioError::InvalidLimiterThreshold {
+            milli_db: MAX_LIMITER_THRESHOLD_DB_MILLI + 1
+        })
+    );
+    assert_eq!(
+        AudioLimiter::new(-6_000, MIN_LIMITER_RELEASE_MS - 1),
+        Err(AudioError::InvalidLimiterRelease { milliseconds: 0 })
+    );
+    assert_eq!(
+        AudioLimiter::new(-6_000, MAX_LIMITER_RELEASE_MS + 1),
+        Err(AudioError::InvalidLimiterRelease {
+            milliseconds: MAX_LIMITER_RELEASE_MS + 1
+        })
+    );
+}
+
+#[test]
+fn limiter_applies_one_gain_to_each_channel_after_bounded_attack() {
+    let limiter = AudioFilter::limiter_db_milli(-6_000, 60).expect("valid limiter");
+    let mut chain = AudioFilterChain::new();
+    chain.try_push(limiter).expect("limiter filter");
+    let mut input =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0; 480 * 2]).expect("loud audio block");
+
+    chain.apply(&mut input).expect("limiter block");
+
+    assert!(
+        input.samples()[0] > 0.9,
+        "1 ms attack must not hard clip the first sample"
+    );
+    let final_left = input.samples()[(480 - 1) * 2];
+    let final_right = input.samples()[(480 - 1) * 2 + 1];
+    assert!(final_left < 0.9, "the sustained signal must be limited");
+    assert!((final_left - final_right).abs() < f32::EPSILON);
+}
+
+#[test]
+fn limiter_envelope_continues_across_audio_blocks_without_allocation() {
+    let mut continuing = AudioFilterChain::new();
+    continuing
+        .try_push(AudioFilter::limiter_db_milli(-6_000, 60).expect("limiter"))
+        .expect("limiter filter");
+    let mut loud =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0; 480 * 2]).expect("loud audio block");
+    continuing.apply(&mut loud).expect("loud block");
+
+    let mut continued_impulse = buffer(&[1.0, 1.0]);
+    continuing
+        .apply(&mut continued_impulse)
+        .expect("continued limiter state");
+
+    let mut fresh = AudioFilterChain::new();
+    fresh
+        .try_push(AudioFilter::limiter_db_milli(-6_000, 60).expect("limiter"))
+        .expect("limiter filter");
+    let mut fresh_impulse = buffer(&[1.0, 1.0]);
+    fresh
+        .apply(&mut fresh_impulse)
+        .expect("fresh limiter state");
+
+    assert!(
+        continued_impulse.samples()[0] < fresh_impulse.samples()[0],
+        "the envelope must survive block boundaries"
+    );
+}
+
+#[test]
+fn limiter_release_setting_controls_envelope_decay_rate() {
+    let mut short_release = AudioFilterChain::new();
+    short_release
+        .try_push(AudioFilter::limiter_db_milli(-6_000, 1).expect("short limiter"))
+        .expect("short limiter filter");
+    let mut long_release = AudioFilterChain::new();
+    long_release
+        .try_push(AudioFilter::limiter_db_milli(-6_000, 1_000).expect("long limiter"))
+        .expect("long limiter filter");
+
+    for chain in [&mut short_release, &mut long_release] {
+        let mut loud =
+            AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0; 480 * 2]).expect("loud block");
+        chain.apply(&mut loud).expect("loud limiter block");
+        let mut silence = AudioBuffer::silence(format(), Timestamp::ZERO, 48).expect("silence");
+        chain.apply(&mut silence).expect("release block");
+    }
+
+    let mut short_impulse = buffer(&[1.0, 1.0]);
+    short_release
+        .apply(&mut short_impulse)
+        .expect("short release impulse");
+    let mut long_impulse = buffer(&[1.0, 1.0]);
+    long_release
+        .apply(&mut long_impulse)
+        .expect("long release impulse");
+
+    assert!(
+        long_impulse.samples()[0] < short_impulse.samples()[0],
+        "a longer release must retain more gain reduction"
+    );
+}
+
+#[test]
 fn audio_filter_chain_has_a_fixed_capacity() {
     let mut chain = AudioFilterChain::new();
     let filter = AudioFilter::gain_db_milli(0).expect("zero gain");
     for _ in 0..MAX_AUDIO_FILTERS {
-        chain.try_push(filter).expect("capacity slot");
+        chain.try_push(filter.clone()).expect("capacity slot");
     }
     assert_eq!(
         chain.try_push(filter),
@@ -294,6 +404,32 @@ fn invert_polarity_block_timing_report() {
     std::hint::black_box(checksum);
     println!(
         "invert polarity: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
+fn limiter_block_timing_report() {
+    let mut chain = AudioFilterChain::new();
+    chain
+        .try_push(AudioFilter::limiter_db_milli(-6_000, 60).expect("limiter"))
+        .expect("filter");
+    let mut block =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.1; 480 * 2]).expect("audio block");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for _ in 0..200 {
+        block.samples_mut().fill(0.1);
+        chain.apply(&mut block).expect("limiter block");
+        checksum += block.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "limiter: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
         elapsed,
         elapsed / 200
     );

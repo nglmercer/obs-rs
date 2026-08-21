@@ -1107,6 +1107,31 @@ impl EngineSession {
         Ok(())
     }
 
+    /// Installs OBS's bounded Limiter filter on a live mixer channel.
+    ///
+    /// The limiter keeps its attack/release envelope in the engine-owned
+    /// filter instance, so captured blocks remain continuous without a
+    /// separate runtime state store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when threshold or release is outside the
+    /// supported OBS-compatible range.
+    pub fn set_channel_limiter(
+        &mut self,
+        channel: EngineAudioChannel,
+        threshold_db_milli: i32,
+        release_ms: u16,
+    ) -> Result<(), EngineError> {
+        let mut filters = AudioFilterChain::new();
+        filters.try_push(AudioFilter::limiter_db_milli(
+            threshold_db_milli,
+            release_ms,
+        )?)?;
+        self.set_channel_audio_filters(channel, filters);
+        Ok(())
+    }
+
     /// Mutes or unmutes the live input source.
     ///
     /// # Errors
@@ -2151,8 +2176,8 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
 ///
 /// Audio filters are kept separate from [`compile_filter`] because they run on
 /// captured audio blocks rather than rendered video frames. The project-facing
-/// setting is fixed-point `db_milli`, which avoids locale-dependent decimal
-/// parsing on the real-time boundary.
+/// settings use fixed-point `db_milli` plus integer milliseconds, which avoids
+/// locale-dependent decimal parsing on the real-time boundary.
 #[must_use]
 pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
     if !spec.enabled() || spec.category() != SourceFilterCategory::AudioVideo {
@@ -2165,6 +2190,17 @@ pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
             .and_then(|value| value.parse::<i32>().ok())
             .and_then(|milli_db| AudioFilter::gain_db_milli(milli_db).ok()),
         "invert_polarity" => Some(AudioFilter::InvertPolarity),
+        "limiter" => {
+            let threshold = spec
+                .settings()
+                .get("threshold_db_milli")
+                .and_then(|value| value.parse::<i32>().ok())?;
+            let release_ms = spec
+                .settings()
+                .get("release_ms")
+                .and_then(|value| value.parse::<u16>().ok())?;
+            AudioFilter::limiter_db_milli(threshold, release_ms).ok()
+        }
         _ => None,
     }
 }
@@ -2644,6 +2680,19 @@ mod tests {
             compile_audio_filter(&invert),
             Some(AudioFilter::InvertPolarity)
         );
+        let limiter = SourceFilterSpec::with_category(
+            "limiter",
+            "Limiter",
+            "limiter",
+            SourceFilterCategory::AudioVideo,
+            Config::parse("threshold_db_milli = -6000\nrelease_ms = 60\n")
+                .expect("limiter settings"),
+        )
+        .expect("limiter filter");
+        assert_eq!(
+            compile_audio_filter(&limiter),
+            Some(AudioFilter::limiter_db_milli(-6_000, 60).expect("valid limiter"))
+        );
         assert_eq!(compile_audio_filter(&brightness), None);
     }
 
@@ -2745,6 +2794,35 @@ mod tests {
             saw_signal |= original.abs() > 0.0;
         }
         assert!(saw_signal, "deterministic microphone must produce audio");
+    }
+
+    #[test]
+    fn limiter_runs_on_a_live_channel_before_metering_and_mix() {
+        let mut baseline = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        baseline.tick(None, Some("program")).expect("baseline tick");
+        let baseline_peak = baseline.stats().microphone_peak_milli;
+
+        let mut limited = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        limited
+            .set_channel_limiter(EngineAudioChannel::Microphone, -60_000, 60)
+            .expect("limiter");
+        let tick = limited.tick(None, Some("program")).expect("limited tick");
+
+        assert!(
+            baseline_peak > 0,
+            "deterministic microphone must produce audio"
+        );
+        assert!(
+            limited.stats().microphone_peak_milli < baseline_peak,
+            "the channel meter must see limiter gain reduction"
+        );
+        assert!(
+            tick.audio_blocks
+                .iter()
+                .flat_map(AudioBuffer::samples)
+                .all(|sample| sample.is_finite()),
+            "limiting must preserve the finite audio contract"
+        );
     }
 
     /// Provider exposing one playback route whose monitor is readable, which is
