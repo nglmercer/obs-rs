@@ -14,8 +14,8 @@
 use super::{
     error::ProjectError,
     model::{
-        Profile, Project, SceneItemSpec, SceneSpec, SourceFilterCategory, SourceFilterSpec,
-        SourceSpec,
+        GroupSpec, Profile, Project, SceneItemSpec, SceneSpec, SourceFilterCategory,
+        SourceFilterSpec, SourceSpec, MAX_GROUP_NESTING_DEPTH,
     },
     validation::identifier,
     MAX_PROJECT_BYTES,
@@ -32,9 +32,11 @@ use crate::RenderBackendPreference;
 const FORMAT_TAG: &str = "obs-rs-project";
 
 /// Schema version this build writes.
-const FORMAT_VERSION: u32 = 4;
+const FORMAT_VERSION: u32 = 5;
+/// The format before group targets were persisted.
+const GROUP_FORMAT_VERSION: u32 = 4;
 /// The format before nested scene-item targets were persisted.
-const PREVIOUS_FORMAT_VERSION: u32 = 3;
+const NESTED_SCENE_FORMAT_VERSION: u32 = 3;
 /// The format before scene-item rotation was persisted.
 const ROTATION_FORMAT_VERSION: u32 = 2;
 /// The format before sources were moved out of scenes.
@@ -82,11 +84,12 @@ impl Project {
         let version = match root.get("version").and_then(Json::as_number::<u32>) {
             Some(LEGACY_FORMAT_VERSION) => LEGACY_FORMAT_VERSION,
             Some(ROTATION_FORMAT_VERSION) => ROTATION_FORMAT_VERSION,
-            Some(PREVIOUS_FORMAT_VERSION) => PREVIOUS_FORMAT_VERSION,
+            Some(NESTED_SCENE_FORMAT_VERSION) => NESTED_SCENE_FORMAT_VERSION,
+            Some(GROUP_FORMAT_VERSION) => GROUP_FORMAT_VERSION,
             Some(FORMAT_VERSION) => FORMAT_VERSION,
             Some(version) => {
                 return Err(invalid(format!(
-                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, and {FORMAT_VERSION}"
+                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {NESTED_SCENE_FORMAT_VERSION}, {GROUP_FORMAT_VERSION}, and {FORMAT_VERSION}"
                 )))
             }
             None => return Err(invalid("missing or invalid `version`")),
@@ -178,16 +181,30 @@ fn encode_source(source: &SourceSpec) -> Json {
 }
 
 fn encode_item(item: &SceneItemSpec) -> Json {
-    let target = item.scene_id().map_or_else(
-        || ("source", Json::string(item.source_id().as_str())),
-        |scene| ("scene", Json::string(scene.as_str())),
-    );
+    let target = if let Some(group) = item.group() {
+        ("group", encode_group(group))
+    } else if let Some(scene) = item.scene_id() {
+        ("scene", Json::string(scene.as_str()))
+    } else {
+        ("source", Json::string(item.source_id().as_str()))
+    };
     Json::object([
         ("id", Json::string(item.id.as_str())),
         target,
         ("transform", encode_transform(item.transform)),
         ("visible", Json::Bool(item.visible)),
         ("locked", Json::Bool(item.locked)),
+    ])
+}
+
+fn encode_group(group: &GroupSpec) -> Json {
+    Json::object([
+        ("id", Json::string(group.id().as_str())),
+        ("name", Json::string(group.name())),
+        (
+            "items",
+            Json::Array(group.items().iter().map(encode_item).collect()),
+        ),
     ])
 }
 
@@ -290,13 +307,23 @@ fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectErro
 fn decode_scene(value: &Json, profile: &Profile) -> Result<SceneSpec, ProjectError> {
     let mut scene = SceneSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
     for item in array_member(value, "items")? {
-        let item = decode_item(item)?;
-        if item.is_source() && !profile.has_source(item.source_id()) {
-            return Err(ProjectError::UnknownSource(item.source_id().clone()));
-        }
+        let item = decode_item(item, 0)?;
+        validate_item_sources(profile, &item)?;
         scene.add_item(item)?;
     }
     Ok(scene)
+}
+
+fn validate_item_sources(profile: &Profile, item: &SceneItemSpec) -> Result<(), ProjectError> {
+    if item.is_source() && !profile.has_source(item.source_id()) {
+        return Err(ProjectError::UnknownSource(item.source_id().clone()));
+    }
+    if let Some(group) = item.group() {
+        for child in group.items() {
+            validate_item_sources(profile, child)?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_scene_references(profile: &Profile) -> Result<(), ProjectError> {
@@ -324,15 +351,30 @@ fn validate_scene_graph(
         .scene(scene_id)
         .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
     for item in scene.items() {
-        if let Some(target) = item.scene_id() {
-            if profile.scene(target).is_none() {
-                return Err(ProjectError::UnknownScene(target.clone()));
-            }
-            validate_scene_graph(profile, target, visiting, visited)?;
-        }
+        validate_scene_item_graph(profile, item, visiting, visited)?;
     }
     visiting.remove(scene_id);
     visited.insert(scene_id.clone());
+    Ok(())
+}
+
+fn validate_scene_item_graph(
+    profile: &Profile,
+    item: &SceneItemSpec,
+    visiting: &mut HashSet<Identifier>,
+    visited: &mut HashSet<Identifier>,
+) -> Result<(), ProjectError> {
+    if let Some(target) = item.scene_id() {
+        if profile.scene(target).is_none() {
+            return Err(ProjectError::UnknownScene(target.clone()));
+        }
+        validate_scene_graph(profile, target, visiting, visited)?;
+    }
+    if let Some(group) = item.group() {
+        for child in group.items() {
+            validate_scene_item_graph(profile, child, visiting, visited)?;
+        }
+    }
     Ok(())
 }
 
@@ -361,9 +403,17 @@ fn decode_source(value: &Json) -> Result<SourceSpec, ProjectError> {
     Ok(source)
 }
 
-fn decode_item(value: &Json) -> Result<SceneItemSpec, ProjectError> {
+fn decode_item(value: &Json, group_depth: usize) -> Result<SceneItemSpec, ProjectError> {
     let id = string_member(value, "id")?;
-    let mut item = if let Some(scene) = value.get("scene") {
+    let mut item = if let Some(group) = value.get("group") {
+        if group_depth >= MAX_GROUP_NESTING_DEPTH {
+            return Err(ProjectError::GroupNestingTooDeep(MAX_GROUP_NESTING_DEPTH));
+        }
+        if value.get("source").is_some() || value.get("scene").is_some() {
+            return Err(invalid("scene item cannot contain multiple targets"));
+        }
+        SceneItemSpec::with_group(id, decode_group(group, group_depth.saturating_add(1))?)?
+    } else if let Some(scene) = value.get("scene") {
         let scene = scene
             .as_str()
             .ok_or_else(|| invalid("scene item `scene` is not a string"))?;
@@ -384,6 +434,14 @@ fn decode_item(value: &Json) -> Result<SceneItemSpec, ProjectError> {
     item.set_visible(bool_member(value, "visible")?);
     item.set_locked(bool_member(value, "locked")?);
     Ok(item)
+}
+
+fn decode_group(value: &Json, group_depth: usize) -> Result<GroupSpec, ProjectError> {
+    let mut group = GroupSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
+    for item in array_member(value, "items")? {
+        group.add_item(decode_item(item, group_depth)?)?;
+    }
+    Ok(group)
 }
 
 /// Reads the version-one scene-local source representation and normalizes it

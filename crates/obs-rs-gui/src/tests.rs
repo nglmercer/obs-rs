@@ -767,6 +767,52 @@ fn nested_scene_references_render_without_reopening_shared_sources() {
 }
 
 #[test]
+fn group_items_render_without_reopening_shared_sources() {
+    let mut project = initial_project().expect("initial GUI project should validate");
+    let mut group = obs_rs_project::SceneItemSpec::for_group("group", "Group").expect("group");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(obs_rs_project::SceneItemSpec::for_source("background").expect("group child"))
+        .expect("group child attach");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: group,
+        })
+        .expect("add group");
+
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let source_count = renderer.runtime.source_count();
+    assert_eq!(
+        renderer
+            .runtime
+            .scene_sources("preview")
+            .expect("preview scene")
+            .len(),
+        2
+    );
+    assert_eq!(renderer.runtime.source_count(), source_count);
+    let layers = renderer
+        .runtime
+        .render_scene_layers(
+            "preview",
+            &VideoRequest::new(Timestamp::ZERO, renderer.format),
+        )
+        .expect("group should render");
+    assert_eq!(layers.len(), 2);
+    assert_eq!(
+        renderer
+            .runtime
+            .compositor_metrics()
+            .capture_latency()
+            .samples(),
+        1
+    );
+}
+
+#[test]
 fn hiding_a_source_keeps_the_others_running() {
     let mut project = initial_project().expect("initial GUI project should validate");
     let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");

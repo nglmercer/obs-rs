@@ -411,11 +411,7 @@ fn add_scene(project: &mut Project, profile: &str, scene: SceneSpec) -> Result<(
         .profile_mut(&profile_id)
         .ok_or(ProjectError::UnknownProfile(profile_id))?;
     for item in scene.items() {
-        if let Some(target) = item.scene_id() {
-            validate_scene_target(profile, scene.id(), target)?;
-        } else if !profile.has_source(item.source_id()) {
-            return Err(ProjectError::UnknownSource(item.source_id().clone()));
-        }
+        validate_scene_item(profile, scene.id(), item, 0)?;
     }
     profile.add_scene(scene)
 }
@@ -446,32 +442,7 @@ fn duplicate_scene(
         let mut source_ids: std::collections::HashMap<Identifier, Identifier> =
             std::collections::HashMap::new();
         for item in &mut duplicate.items {
-            if item.is_scene_reference() {
-                continue;
-            }
-            let original_source_id = item.source_id().clone();
-            let new_source_id = if let Some(new_id) = source_ids.get(&original_source_id) {
-                new_id.clone()
-            } else {
-                let source = profile
-                    .source(&original_source_id)
-                    .cloned()
-                    .ok_or_else(|| ProjectError::UnknownSource(original_source_id.clone()))?;
-                let (new_id, new_name) =
-                    copy_identity(source.id().as_str(), source.name(), |candidate| {
-                        profile.has_source(candidate)
-                            || cloned_sources
-                                .iter()
-                                .any(|source: &SourceSpec| source.id().as_str() == candidate)
-                    })?;
-                let mut source = source;
-                source.id = new_id.clone();
-                source.name = new_name;
-                source_ids.insert(original_source_id, new_id.clone());
-                cloned_sources.push(source);
-                new_id
-            };
-            item.set_source_id(new_source_id);
+            duplicate_item_sources(profile, item, &mut source_ids, &mut cloned_sources)?;
         }
         profile.add_sources(cloned_sources)?;
     }
@@ -527,13 +498,94 @@ fn scene_reaches(
         .scene(current)
         .ok_or_else(|| ProjectError::UnknownScene(current.clone()))?;
     for item in scene.items() {
-        if let Some(next) = item.scene_id() {
-            if scene_reaches(profile, next, target, visited)? {
+        if scene_item_reaches(profile, item, target, visited)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn scene_item_reaches(
+    profile: &Profile,
+    item: &SceneItemSpec,
+    target: &Identifier,
+    visited: &mut HashSet<Identifier>,
+) -> Result<bool, ProjectError> {
+    if let Some(next) = item.scene_id() {
+        if scene_reaches(profile, next, target, visited)? {
+            return Ok(true);
+        }
+    }
+    if let Some(group) = item.group() {
+        for child in group.items() {
+            if scene_item_reaches(profile, child, target, visited)? {
                 return Ok(true);
             }
         }
     }
     Ok(false)
+}
+
+fn validate_scene_item(
+    profile: &Profile,
+    owner: &Identifier,
+    item: &SceneItemSpec,
+    group_depth: usize,
+) -> Result<(), ProjectError> {
+    if let Some(target) = item.scene_id() {
+        validate_scene_target(profile, owner, target)?;
+    } else if item.is_source() && !profile.has_source(item.source_id()) {
+        return Err(ProjectError::UnknownSource(item.source_id().clone()));
+    }
+    if let Some(group) = item.group() {
+        if group_depth >= super::model::MAX_GROUP_NESTING_DEPTH {
+            return Err(ProjectError::GroupNestingTooDeep(
+                super::model::MAX_GROUP_NESTING_DEPTH,
+            ));
+        }
+        for child in group.items() {
+            validate_scene_item(profile, owner, child, group_depth.saturating_add(1))?;
+        }
+    }
+    Ok(())
+}
+
+fn duplicate_item_sources(
+    profile: &Profile,
+    item: &mut SceneItemSpec,
+    source_ids: &mut std::collections::HashMap<Identifier, Identifier>,
+    cloned_sources: &mut Vec<SourceSpec>,
+) -> Result<(), ProjectError> {
+    if item.is_source() {
+        let original_source_id = item.source_id().clone();
+        let new_source_id = if let Some(new_id) = source_ids.get(&original_source_id) {
+            new_id.clone()
+        } else {
+            let source = profile
+                .source(&original_source_id)
+                .cloned()
+                .ok_or_else(|| ProjectError::UnknownSource(original_source_id.clone()))?;
+            let (new_id, new_name) =
+                copy_identity(source.id().as_str(), source.name(), |candidate| {
+                    profile.has_source(candidate)
+                        || cloned_sources
+                            .iter()
+                            .any(|source: &SourceSpec| source.id().as_str() == candidate)
+                })?;
+            let mut source = source;
+            source.id = new_id.clone();
+            source.name = new_name;
+            source_ids.insert(original_source_id, new_id.clone());
+            cloned_sources.push(source);
+            new_id
+        };
+        item.set_source_id(new_source_id);
+    } else if let Some(group) = item.group_mut() {
+        for child in group.items_mut() {
+            duplicate_item_sources(profile, child, source_ids, cloned_sources)?;
+        }
+    }
+    Ok(())
 }
 
 fn add_source(
@@ -576,11 +628,7 @@ fn add_scene_item(
     let profile = project
         .profile_mut(&profile_id)
         .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-    if let Some(target) = item.scene_id() {
-        validate_scene_target(profile, &scene_id, target)?;
-    } else if !profile.has_source(item.source_id()) {
-        return Err(ProjectError::UnknownSource(item.source_id().clone()));
-    }
+    validate_scene_item(profile, &scene_id, &item, 0)?;
     profile
         .scene_mut(&scene_id)
         .ok_or(ProjectError::UnknownScene(scene_id))?
@@ -645,8 +693,14 @@ fn paste_scene_item(
         }
     };
 
-    if let Some(target) = item.scene_id() {
-        validate_scene_target(profile, &scene_id, target)?;
+    if item.scene_id().is_some() || item.is_group() {
+        validate_scene_item(profile, &scene_id, &item, 0)?;
+        if item.is_group() && mode == SceneItemDuplicateMode::DuplicateSource {
+            let mut cloned_sources = Vec::new();
+            let mut source_ids = std::collections::HashMap::new();
+            duplicate_item_sources(profile, &mut item, &mut source_ids, &mut cloned_sources)?;
+            profile.add_sources(cloned_sources)?;
+        }
         item.id = duplicate_item_id;
         return profile
             .scene_mut(&scene_id)

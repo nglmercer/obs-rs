@@ -296,12 +296,18 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
                 let nested_scene = profile.and_then(|profile| {
                     item.scene_id().and_then(|scene_id| profile.scene(scene_id))
                 });
+                let group = item.group();
                 SourceRow {
                     id: item.id().as_str().into(),
                     name: source.map_or_else(
                         || {
                             nested_scene.map_or_else(
-                                || item.source_id().as_str().into(),
+                                || {
+                                    group.map_or_else(
+                                        || item.source_id().as_str().into(),
+                                        |group| group.name().into(),
+                                    )
+                                },
                                 |scene| scene.name().into(),
                             )
                         },
@@ -309,7 +315,12 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
                     ),
                     kind: source
                         .map_or_else(
-                            || nested_scene.map_or_else(String::new, |_| "scene".to_owned()),
+                            || {
+                                nested_scene.map_or_else(
+                                    || group.map_or_else(String::new, |_| "group".to_owned()),
+                                    |_| "scene".to_owned(),
+                                )
+                            },
                             |source| source.kind().as_str().to_owned(),
                         )
                         .into(),

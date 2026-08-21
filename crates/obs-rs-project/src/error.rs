@@ -51,6 +51,8 @@ pub enum ProjectError {
     CircularSceneReference(Identifier),
     /// A nested scene transform cannot be represented by the current flattening boundary.
     UnsupportedNestedSceneTransform(Identifier),
+    /// A group graph exceeds the bounded flattening depth.
+    GroupNestingTooDeep(usize),
     /// A source ID is not present.
     UnknownSource(Identifier),
     /// A scene-item ID is not present.
@@ -98,6 +100,9 @@ impl fmt::Display for ProjectError {
                     formatter,
                     "nested scene item {id} has an unsupported transform"
                 )
+            }
+            Self::GroupNestingTooDeep(limit) => {
+                write!(formatter, "group nesting exceeds the limit of {limit}")
             }
             Self::UnknownSource(id) => write!(formatter, "source {id} does not exist"),
             Self::UnknownSceneItem(id) => write!(formatter, "scene item {id} does not exist"),

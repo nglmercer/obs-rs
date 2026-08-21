@@ -469,6 +469,12 @@ impl PreviewRenderer {
                 .scene(draft.scene.as_str())?;
             let mut targets = Vec::with_capacity(draft.items.len());
             for item in &draft.items {
+                if scene
+                    .item(item.item.as_str())
+                    .is_some_and(|item| item.is_scene_reference() || item.is_group())
+                {
+                    return None;
+                }
                 let item_index = scene
                     .items()
                     .iter()

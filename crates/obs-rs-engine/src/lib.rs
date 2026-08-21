@@ -2254,6 +2254,52 @@ mod tests {
     }
 
     #[test]
+    fn group_items_flatten_to_shared_runtime_sources() {
+        let mut project = project();
+        let mut group = SceneItemSpec::for_group("group", "Group").expect("group");
+        group
+            .group_mut()
+            .expect("group target")
+            .add_item(SceneItemSpec::for_source("pattern").expect("group child"))
+            .expect("group child attach");
+        project
+            .apply(ProjectCommand::AddSceneItem {
+                profile: "live".to_owned(),
+                scene: "program".to_owned(),
+                item: group,
+            })
+            .expect("add group");
+
+        let mut engine = EngineSession::new(project, EngineConfig::default()).expect("engine");
+        assert_eq!(engine.runtime.source_count(), 1);
+        assert_eq!(
+            engine
+                .runtime
+                .scene_sources("program")
+                .expect("program scene")
+                .len(),
+            2
+        );
+        let layers = engine
+            .runtime
+            .render_scene_layers(
+                "program",
+                &VideoRequest::new(Timestamp::ZERO, engine.format()),
+            )
+            .expect("group renders");
+        assert_eq!(layers.len(), 2);
+        assert_eq!(engine.runtime.compositor_metrics().source_requests(), 2);
+        assert_eq!(
+            engine
+                .runtime
+                .compositor_metrics()
+                .capture_latency()
+                .samples(),
+            1
+        );
+    }
+
+    #[test]
     fn filter_compiler_keeps_renderer_details_out_of_project_values() {
         let brightness = SourceFilterSpec::new(
             "brightness",

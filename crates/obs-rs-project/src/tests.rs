@@ -169,6 +169,131 @@ fn nested_scene_items_round_trip_and_reject_cycles() {
 }
 
 #[test]
+fn group_items_round_trip_flatten_and_duplicate_sources() {
+    let mut project = project();
+    let mut group = SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
+    group.set_transform(
+        FrameTransform::new(2_000, 1_500, 20, 30, false, false, 200).expect("group transform"),
+    );
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::for_source("background").expect("group child"))
+        .expect("group child attach");
+    let mut nested_group =
+        SceneItemSpec::for_group("inner-group", "Inner group").expect("nested group");
+    nested_group
+        .group_mut()
+        .expect("nested group target")
+        .add_item(SceneItemSpec::for_source("background").expect("nested group child"))
+        .expect("nested group child attach");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(nested_group)
+        .expect("nested group attach");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: group,
+        })
+        .expect("add group item");
+
+    let encoded = project.serialize();
+    assert!(encoded.contains(r#""group""#), "{encoded}");
+    let decoded = Project::parse(&encoded).expect("group project parses");
+    let group = decoded
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("group survives round trip");
+    assert_eq!(group.name(), "Overlay group");
+    assert_eq!(group.items().len(), 2);
+    assert_eq!(
+        group.items()[1].group().map(GroupSpec::name),
+        Some("Inner group")
+    );
+    let flattened = decoded
+        .profile("live")
+        .expect("profile")
+        .flatten_scene_items("main")
+        .expect("group flattens");
+    assert_eq!(flattened.len(), 3);
+    assert!(flattened
+        .iter()
+        .all(|item| item.source_id().as_str() == "background"));
+
+    project
+        .apply(ProjectCommand::DuplicateSceneWithMode {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            mode: SceneItemDuplicateMode::DuplicateSource,
+        })
+        .expect("duplicate scene with group sources");
+    let profile = project.profile("live").expect("profile");
+    assert_eq!(profile.sources().count(), 2);
+    let duplicate_group = profile
+        .scene("main_copy")
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("group copied");
+    assert_eq!(duplicate_group.items().len(), 2);
+    assert_ne!(
+        duplicate_group.items()[0].source_id().as_str(),
+        "background"
+    );
+    assert_ne!(
+        duplicate_group.items()[1]
+            .group()
+            .expect("copied nested group")
+            .items()[0]
+            .source_id()
+            .as_str(),
+        "background"
+    );
+}
+
+#[test]
+fn group_nesting_is_bounded_before_runtime_flattening() {
+    let mut project = project();
+    let mut nested = SceneItemSpec::for_source("background").expect("source item");
+    for depth in 0..=64 {
+        let mut group =
+            SceneItemSpec::for_group(&format!("group-{depth}"), "Nested group").expect("group");
+        group
+            .group_mut()
+            .expect("group target")
+            .add_item(nested)
+            .expect("group child");
+        nested = group;
+    }
+
+    let error = project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: nested,
+        })
+        .expect_err("an excessively deep group must be rejected");
+    assert_eq!(
+        error,
+        ProjectError::GroupNestingTooDeep(64),
+        "the rejected command must leave the project unchanged"
+    );
+    assert_eq!(
+        project
+            .profile("live")
+            .and_then(|profile| profile.scene("main"))
+            .expect("main scene")
+            .items()
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn parser_rejects_a_document_without_the_format_and_version_tags() {
     let encoded = project().serialize();
 
@@ -181,10 +306,10 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
         Err(ProjectError::InvalidDocument { .. })
     ));
 
-    let future = encoded.replace(r#""version": 4"#, r#""version": 5"#);
+    let future = encoded.replace(r#""version": 5"#, r#""version": 6"#);
     let error = Project::parse(&future).expect_err("a newer schema is not guessed at");
     assert!(
-        format!("{error}").contains("unsupported project schema version 5"),
+        format!("{error}").contains("unsupported project schema version 6"),
         "{error}"
     );
 }
@@ -193,7 +318,7 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
 fn parser_reports_the_line_a_syntax_error_is_on() {
     let broken = project()
         .serialize()
-        .replace(r#""version": 4"#, r#""version": ?"#);
+        .replace(r#""version": 5"#, r#""version": ?"#);
 
     let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
     match error {
@@ -1268,7 +1393,7 @@ fn version_one_scene_sources_migrate_to_registry_and_items() {
     assert_eq!(profile.source("camera").expect("source").filters().len(), 1);
 
     let encoded = migrated.serialize();
-    assert!(encoded.contains(r#""version": 4"#), "{encoded}");
+    assert!(encoded.contains(r#""version": 5"#), "{encoded}");
     assert!(encoded.contains(r#""items""#), "{encoded}");
     assert_eq!(
         Project::parse(&encoded).expect("new format parses"),

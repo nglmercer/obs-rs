@@ -10,6 +10,8 @@ use std::{
 
 use super::{error::ProjectError, validation::identifier};
 
+pub(crate) const MAX_GROUP_NESTING_DEPTH: usize = 64;
+
 /// The OBS filter group a source filter belongs to.
 ///
 /// The project stores this classification instead of deriving it from a
@@ -303,12 +305,14 @@ impl SourceSpec {
 enum SceneItemTarget {
     Source(Identifier),
     Scene(Identifier),
+    Group(Box<GroupSpec>),
 }
 
 impl SceneItemTarget {
     fn id(&self) -> &Identifier {
         match self {
             Self::Source(id) | Self::Scene(id) => id,
+            Self::Group(group) => group.id(),
         }
     }
 }
@@ -392,6 +396,30 @@ impl SceneItemSpec {
         })
     }
 
+    /// Creates a group item whose child list starts empty.
+    ///
+    /// Child sources, nested scenes, and nested groups can be appended through
+    /// [`GroupSpec::add_item`] before the group item is added to a scene.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identifier or name validation error when the group ID or
+    /// display name is invalid.
+    pub fn for_group(id: &str, name: &str) -> Result<Self, ProjectError> {
+        let group = GroupSpec::new(id, name)?;
+        Self::with_group(id, group)
+    }
+
+    pub(crate) fn with_group(id: &str, group: GroupSpec) -> Result<Self, ProjectError> {
+        Ok(Self {
+            id: identifier(id, "scene item id")?,
+            target: SceneItemTarget::Group(Box::new(group)),
+            transform: FrameTransform::IDENTITY,
+            visible: true,
+            locked: false,
+        })
+    }
+
     /// Returns the stable scene-item ID.
     #[must_use]
     pub fn id(&self) -> &Identifier {
@@ -400,8 +428,9 @@ impl SceneItemSpec {
 
     /// Returns the target ID.
     ///
-    /// For a nested-scene item this is the scene ID. Call [`Self::scene_id`]
-    /// or [`Self::is_source`] when the target kind matters.
+    /// For a source or nested-scene item this is the referenced ID; for a
+    /// group it is the group's local ID. Call [`Self::scene_id`],
+    /// [`Self::group`], or [`Self::is_source`] when the target kind matters.
     #[must_use]
     pub fn source_id(&self) -> &Identifier {
         self.target.id()
@@ -411,8 +440,25 @@ impl SceneItemSpec {
     #[must_use]
     pub fn scene_id(&self) -> Option<&Identifier> {
         match &self.target {
-            SceneItemTarget::Source(_) => None,
+            SceneItemTarget::Source(_) | SceneItemTarget::Group(_) => None,
             SceneItemTarget::Scene(id) => Some(id),
+        }
+    }
+
+    /// Returns the nested group definition, if this item is a group.
+    #[must_use]
+    pub fn group(&self) -> Option<&GroupSpec> {
+        match &self.target {
+            SceneItemTarget::Group(group) => Some(group),
+            SceneItemTarget::Source(_) | SceneItemTarget::Scene(_) => None,
+        }
+    }
+
+    /// Returns mutable access to this group's child definition.
+    pub fn group_mut(&mut self) -> Option<&mut GroupSpec> {
+        match &mut self.target {
+            SceneItemTarget::Group(group) => Some(group),
+            SceneItemTarget::Source(_) | SceneItemTarget::Scene(_) => None,
         }
     }
 
@@ -426,6 +472,12 @@ impl SceneItemSpec {
     #[must_use]
     pub const fn is_scene_reference(&self) -> bool {
         matches!(self.target, SceneItemTarget::Scene(_))
+    }
+
+    /// Returns whether this item owns a nested group.
+    #[must_use]
+    pub const fn is_group(&self) -> bool {
+        matches!(self.target, SceneItemTarget::Group(_))
     }
 
     pub(crate) fn set_source_id(&mut self, source_id: Identifier) {
@@ -464,6 +516,120 @@ impl SceneItemSpec {
     pub const fn set_locked(&mut self, locked: bool) {
         self.locked = locked;
     }
+}
+
+/// A scene-local ordered group of source, scene, or group items.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupSpec {
+    pub(crate) id: Identifier,
+    pub(crate) name: String,
+    pub(crate) items: Vec<SceneItemSpec>,
+    pub(crate) item_ids: HashMap<Identifier, usize>,
+}
+
+impl GroupSpec {
+    /// Creates an empty group.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identifier or name validation error when the group ID or
+    /// display name is invalid.
+    pub fn new(id: &str, name: &str) -> Result<Self, ProjectError> {
+        if name.trim().is_empty() {
+            return Err(ProjectError::InvalidName { kind: "group" });
+        }
+        Ok(Self {
+            id: identifier(id, "group id")?,
+            name: name.to_owned(),
+            items: Vec::new(),
+            item_ids: HashMap::new(),
+        })
+    }
+
+    /// Returns the stable group ID.
+    #[must_use]
+    pub fn id(&self) -> &Identifier {
+        &self.id
+    }
+
+    /// Returns the group display name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns child items in compositor order.
+    #[must_use]
+    pub fn items(&self) -> &[SceneItemSpec] {
+        &self.items
+    }
+
+    pub(crate) fn items_mut(&mut self) -> &mut [SceneItemSpec] {
+        &mut self.items
+    }
+
+    /// Replaces the group display name after validating that it is non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::InvalidName`] when `name` is empty or whitespace.
+    pub fn set_name(&mut self, name: &str) -> Result<(), ProjectError> {
+        if name.trim().is_empty() {
+            return Err(ProjectError::InvalidName { kind: "group" });
+        }
+        name.clone_into(&mut self.name);
+        Ok(())
+    }
+
+    /// Appends a child item while rejecting duplicate IDs within the group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::DuplicateSceneItem`] for a repeated child ID.
+    pub fn add_item(&mut self, item: SceneItemSpec) -> Result<(), ProjectError> {
+        if self.item_ids.contains_key(item.id()) {
+            return Err(ProjectError::DuplicateSceneItem(item.id().clone()));
+        }
+        let index = self.items.len();
+        self.item_ids.insert(item.id().clone(), index);
+        self.items.push(item);
+        Ok(())
+    }
+
+    /// Returns whether a child item with `id` exists.
+    #[must_use]
+    pub fn has_item<Q>(&self, id: &Q) -> bool
+    where
+        Identifier: Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        self.item_ids.contains_key(id)
+    }
+
+    /// Returns whether any descendant references the source ID.
+    #[must_use]
+    pub fn has_source<Q>(&self, source_id: &Q) -> bool
+    where
+        Identifier: Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        self.items.iter().any(|item| {
+            (item.is_source() && item.source_id().borrow() == source_id)
+                || item
+                    .group()
+                    .is_some_and(|group| group.has_source(source_id))
+        })
+    }
+}
+
+fn item_references_scene(item: &SceneItemSpec, scene_id: &Identifier) -> bool {
+    item.scene_id().is_some_and(|target| target == scene_id)
+        || item.group().is_some_and(|group| {
+            group
+                .items()
+                .iter()
+                .any(|child| item_references_scene(child, scene_id))
+        })
 }
 
 /// An ordered scene collection entry.
@@ -593,9 +759,12 @@ impl SceneSpec {
         Identifier: Borrow<Q>,
         Q: std::hash::Hash + Eq + ?Sized,
     {
-        self.items
-            .iter()
-            .any(|item| item.is_source() && item.source_id().borrow() == source_id)
+        self.items.iter().any(|item| {
+            (item.is_source() && item.source_id().borrow() == source_id)
+                || item
+                    .group()
+                    .is_some_and(|group| group.has_source(source_id))
+        })
     }
 
     /// Finds a mutable scene item by project-local ID.
@@ -873,8 +1042,9 @@ impl Profile {
     ///
     /// # Errors
     ///
-    /// Returns an unknown-scene/source, cycle, media, or unsupported nested
-    /// transform error when the graph cannot be represented safely.
+    /// Returns an unknown-scene/source, cycle, media, unsupported nested
+    /// transform, or excessive-group-depth error when the graph cannot be
+    /// represented safely.
     pub fn flatten_scene_items(
         &self,
         scene: &str,
@@ -885,6 +1055,7 @@ impl Profile {
             &scene_id,
             FrameTransform::IDENTITY,
             &mut Vec::new(),
+            0,
             &mut output,
         )?;
         Ok(output)
@@ -897,7 +1068,7 @@ impl Profile {
             scene
                 .items()
                 .iter()
-                .any(|item| item.scene_id().is_some_and(|target| target == id))
+                .any(|item| item_references_scene(item, id))
         })
     }
 
@@ -906,6 +1077,7 @@ impl Profile {
         scene_id: &Identifier,
         parent_transform: FrameTransform,
         stack: &mut Vec<Identifier>,
+        group_depth: usize,
         output: &mut Vec<FlattenedSceneItem>,
     ) -> Result<(), ProjectError> {
         if stack.iter().any(|current| current == scene_id) {
@@ -915,7 +1087,20 @@ impl Profile {
             .scene(scene_id)
             .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
         stack.push(scene_id.clone());
-        for item in scene.items().iter().filter(|item| item.visible()) {
+        self.flatten_items(scene.items(), parent_transform, stack, group_depth, output)?;
+        stack.pop();
+        Ok(())
+    }
+
+    fn flatten_items(
+        &self,
+        items: &[SceneItemSpec],
+        parent_transform: FrameTransform,
+        stack: &mut Vec<Identifier>,
+        group_depth: usize,
+        output: &mut Vec<FlattenedSceneItem>,
+    ) -> Result<(), ProjectError> {
+        for item in items.iter().filter(|item| item.visible()) {
             let transform = if parent_transform == FrameTransform::IDENTITY {
                 item.transform()
             } else {
@@ -933,7 +1118,27 @@ impl Profile {
                         item.id().clone(),
                     ));
                 }
-                self.flatten_scene_items_inner(child_scene, transform, stack, output)?;
+                self.flatten_scene_items_inner(child_scene, transform, stack, group_depth, output)?;
+            } else if let Some(group) = item.group() {
+                if transform.is_cropped()
+                    || transform.is_rotated()
+                    || transform.flip_x()
+                    || transform.flip_y()
+                {
+                    return Err(ProjectError::UnsupportedNestedSceneTransform(
+                        item.id().clone(),
+                    ));
+                }
+                if group_depth >= MAX_GROUP_NESTING_DEPTH {
+                    return Err(ProjectError::GroupNestingTooDeep(MAX_GROUP_NESTING_DEPTH));
+                }
+                self.flatten_items(
+                    group.items(),
+                    transform,
+                    stack,
+                    group_depth.saturating_add(1),
+                    output,
+                )?;
             } else {
                 if !self.has_source(item.source_id()) {
                     return Err(ProjectError::UnknownSource(item.source_id().clone()));
@@ -944,7 +1149,6 @@ impl Profile {
                 });
             }
         }
-        stack.pop();
         Ok(())
     }
 
