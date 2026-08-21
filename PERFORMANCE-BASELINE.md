@@ -305,6 +305,17 @@ compatibility. The WGPU backend proves that readback is explicit, and the GUI
 preview now requires only a viewport-sized CPU frame. A native surface presenter
 remains the next performance target.
 
+The audio gate timing probe reports 200 blocks of 480 stereo frames in the
+release build at 2026-08-21:
+
+```text
+cargo test --release -p obs-rs-audio noise_gate_block_timing_report -- --nocapture
+noise gate: 200 blocks x 480 stereo frames = 4.0 ms total (about 20 us/block)
+```
+
+This uses the same allocation-free peak detector and dB ballistics as the
+Expander; RMS and sidechain processing are not included in this measurement.
+
 The preview worker is bounded: pending requests and published results are
 capacity-one latest-value slots. The desktop timer requests at most 60 Hz while
 an output is active and 30 Hz while idle; visibility/minimized suspension is

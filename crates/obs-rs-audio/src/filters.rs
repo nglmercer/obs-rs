@@ -668,6 +668,8 @@ pub enum AudioFilter {
     Compressor(AudioCompressor),
     /// Applies a stateful OBS-compatible peak expander without a sidechain.
     Expander(AudioExpander),
+    /// Applies OBS's gate preset using the shared peak-expander state machine.
+    NoiseGate(AudioExpander),
 }
 
 impl AudioFilter {
@@ -745,6 +747,34 @@ impl AudioFilter {
         .map(Self::Expander)
     }
 
+    /// Creates OBS's peak-based Gate preset from the shared expander controls.
+    ///
+    /// OBS exposes Gate as a preset of the expander filter rather than as a
+    /// separate native processing primitive. Keeping it as a distinct enum
+    /// operation preserves the project-facing filter identity while sharing
+    /// the one stateful implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation error when a control is outside the supported
+    /// OBS-compatible range.
+    pub fn noise_gate(
+        ratio_milli: u16,
+        threshold_db_milli: i32,
+        attack_ms: u16,
+        release_ms: u16,
+        output_gain_db_milli: i32,
+    ) -> Result<Self, AudioError> {
+        AudioExpander::new(
+            ratio_milli,
+            threshold_db_milli,
+            attack_ms,
+            release_ms,
+            output_gain_db_milli,
+        )
+        .map(Self::NoiseGate)
+    }
+
     /// Applies the filter in place without allocating or changing timestamps.
     ///
     /// # Errors
@@ -765,6 +795,7 @@ impl AudioFilter {
             }
             Self::Compressor(compressor) => compressor.apply(buffer),
             Self::Expander(expander) => expander.apply(buffer),
+            Self::NoiseGate(gate) => gate.apply(buffer),
         }
     }
 }

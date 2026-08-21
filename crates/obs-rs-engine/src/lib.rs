@@ -1194,6 +1194,38 @@ impl EngineSession {
         Ok(())
     }
 
+    /// Installs OBS's peak-based Gate preset on a live mixer channel.
+    ///
+    /// Gate shares the stateful expander implementation because that is how
+    /// OBS's native filter represents the preset. RMS detection, sidechain
+    /// input, and project-source routing remain outside this control-plane
+    /// operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when one of the gate controls is outside the
+    /// supported OBS-compatible range.
+    pub fn set_channel_noise_gate(
+        &mut self,
+        channel: EngineAudioChannel,
+        ratio_milli: u16,
+        threshold_db_milli: i32,
+        attack_ms: u16,
+        release_ms: u16,
+        output_gain_db_milli: i32,
+    ) -> Result<(), EngineError> {
+        let mut filters = AudioFilterChain::new();
+        filters.try_push(AudioFilter::noise_gate(
+            ratio_milli,
+            threshold_db_milli,
+            attack_ms,
+            release_ms,
+            output_gain_db_milli,
+        )?)?;
+        self.set_channel_audio_filters(channel, filters);
+        Ok(())
+    }
+
     /// Mutes or unmutes the live input source.
     ///
     /// # Errors
@@ -2303,6 +2335,26 @@ pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
             )
             .ok()
         }
+        "gate" | "noise_gate" => {
+            let read_signed = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<i32>().ok())
+            };
+            let read_unsigned = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<u16>().ok())
+            };
+            AudioFilter::noise_gate(
+                read_unsigned("ratio_milli")?,
+                read_signed("threshold_db_milli")?,
+                read_unsigned("attack_ms")?,
+                read_unsigned("release_ms")?,
+                read_signed("output_gain_db_milli")?,
+            )
+            .ok()
+        }
         _ => None,
     }
 }
@@ -2825,6 +2877,21 @@ mod tests {
             compile_audio_filter(&expander),
             Some(AudioFilter::expander(10_000, -40_000, 10, 50, 0).expect("valid expander"))
         );
+        let gate = SourceFilterSpec::with_category(
+            "gate_runtime",
+            "Gate",
+            "gate",
+            SourceFilterCategory::AudioVideo,
+            Config::parse(
+                "ratio_milli = 10000\nthreshold_db_milli = -40000\nattack_ms = 10\nrelease_ms = 125\noutput_gain_db_milli = 0\n",
+            )
+            .expect("gate settings"),
+        )
+        .expect("gate filter");
+        assert_eq!(
+            compile_audio_filter(&gate),
+            Some(AudioFilter::noise_gate(10_000, -40_000, 10, 125, 0).expect("valid gate"))
+        );
         assert_eq!(compile_audio_filter(&brightness), None);
     }
 
@@ -3018,6 +3085,36 @@ mod tests {
                 .flat_map(AudioBuffer::samples)
                 .all(|sample| sample.is_finite()),
             "expansion must preserve the finite audio contract"
+        );
+    }
+
+    #[test]
+    fn noise_gate_runs_on_a_live_channel_before_metering_and_mix() {
+        let mut baseline = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        baseline.tick(None, Some("program")).expect("baseline tick");
+        let baseline_peak = baseline.stats().microphone_peak_milli;
+
+        let mut gated = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        gated
+            .set_channel_noise_gate(EngineAudioChannel::Microphone, 10_000, 0, 1, 125, 0)
+            .expect("noise gate");
+        gated.tick(None, Some("program")).expect("first gated tick");
+        let tick = gated.tick(None, Some("program")).expect("gated tick");
+
+        assert!(
+            baseline_peak > 0,
+            "deterministic microphone must produce audio"
+        );
+        assert!(
+            gated.stats().microphone_peak_milli < baseline_peak,
+            "the channel meter must see gate attenuation"
+        );
+        assert!(
+            tick.audio_blocks
+                .iter()
+                .flat_map(AudioBuffer::samples)
+                .all(|sample| sample.is_finite()),
+            "gating must preserve the finite audio contract"
         );
     }
 

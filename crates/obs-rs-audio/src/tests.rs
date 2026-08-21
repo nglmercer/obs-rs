@@ -536,6 +536,30 @@ fn expander_state_continues_and_overflow_is_atomic() {
 }
 
 #[test]
+fn noise_gate_uses_the_shared_expander_state_machine() {
+    assert_eq!(
+        AudioFilter::noise_gate(MIN_EXPANDER_RATIO_MILLI - 1, -40_000, 10, 125, 0),
+        Err(AudioError::InvalidExpanderRatio { milli_ratio: 999 })
+    );
+
+    let mut expander = AudioFilterChain::new();
+    expander
+        .try_push(AudioFilter::expander(10_000, -18_000, 1, 125, 0).expect("expander"))
+        .expect("expander filter");
+    let mut gate = AudioFilterChain::new();
+    gate.try_push(AudioFilter::noise_gate(10_000, -18_000, 1, 125, 0).expect("gate"))
+        .expect("gate filter");
+
+    let mut expander_block =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.01; 480 * 2]).expect("quiet block");
+    let mut gate_block = expander_block.clone();
+    expander.apply(&mut expander_block).expect("expander block");
+    gate.apply(&mut gate_block).expect("gate block");
+    assert_eq!(expander_block.samples(), gate_block.samples());
+    assert!(gate_block.samples()[0] < 0.01);
+}
+
+#[test]
 fn audio_filter_chain_has_a_fixed_capacity() {
     let mut chain = AudioFilterChain::new();
     let filter = AudioFilter::gain_db_milli(0).expect("zero gain");
@@ -675,6 +699,32 @@ fn expander_block_timing_report() {
     std::hint::black_box(checksum);
     println!(
         "expander: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
+fn noise_gate_block_timing_report() {
+    let mut chain = AudioFilterChain::new();
+    chain
+        .try_push(AudioFilter::noise_gate(10_000, -40_000, 10, 125, 0).expect("noise gate"))
+        .expect("filter");
+    let mut block =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.01; 480 * 2]).expect("audio block");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for _ in 0..200 {
+        block.samples_mut().fill(0.01);
+        chain.apply(&mut block).expect("noise gate block");
+        checksum += block.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "noise gate: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
         elapsed,
         elapsed / 200
     );
