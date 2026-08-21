@@ -319,12 +319,19 @@ fn mixer_commands_update_real_audio_controls() {
             id: "desktop".to_owned(),
         })
         .expect("mixer mute");
+    state
+        .dispatch(UiCommand::SetMixerPan {
+            id: "desktop".to_owned(),
+            pan_milli: -750,
+        })
+        .expect("mixer pan");
 
     let desktop = state
         .mixer_channels()
         .find(|channel| channel.id() == "desktop")
         .expect("desktop mixer channel");
     assert_eq!(desktop.gain_milli(), 1_500);
+    assert_eq!(desktop.pan_milli(), -750);
     assert!(desktop.muted());
     assert_eq!(desktop.peak_milli(), 0);
     assert_eq!(
@@ -333,6 +340,13 @@ fn mixer_commands_update_real_audio_controls() {
             gain_milli: 2_001,
         }),
         Err(UiError::InvalidMixerGain(2_001))
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::SetMixerPan {
+            id: "desktop".to_owned(),
+            pan_milli: 1_001,
+        }),
+        Err(UiError::InvalidMixerPan(1_001))
     );
 }
 
@@ -578,6 +592,12 @@ fn set_audio_format_rebuilds_the_mixer_and_keeps_channel_state() {
         })
         .expect("gain applies");
     state
+        .dispatch(UiCommand::SetMixerPan {
+            id: "mic".to_owned(),
+            pan_milli: 500,
+        })
+        .expect("pan applies");
+    state
         .dispatch(UiCommand::ToggleMixerMute {
             id: "desktop".to_owned(),
         })
@@ -603,6 +623,7 @@ fn set_audio_format_rebuilds_the_mixer_and_keeps_channel_state() {
         .expect("mic channel survives the rebuild");
     assert!(desktop.muted());
     assert_eq!(mic.gain_milli(), 250);
+    assert_eq!(mic.pan_milli(), 500);
 
     // The rebuilt mixer still resolves the same UI channel labels.
     state

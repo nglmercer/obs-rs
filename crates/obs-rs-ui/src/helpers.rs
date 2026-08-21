@@ -142,6 +142,7 @@ pub(crate) fn default_mixer() -> (
                 id: id.to_owned(),
                 name: name.to_owned(),
                 gain_milli: 1_000,
+                pan_milli: 0,
                 muted: false,
                 peak_milli: 0,
             },

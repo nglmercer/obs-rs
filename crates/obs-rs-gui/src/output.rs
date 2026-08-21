@@ -470,6 +470,16 @@ impl OutputRuntime {
         Ok(())
     }
 
+    pub(crate) fn set_channel_pan_milli(
+        &mut self,
+        id: &str,
+        pan_milli: i32,
+    ) -> Result<(), Box<dyn Error>> {
+        self.worker
+            .set_channel_pan_milli(engine_channel(id), pan_milli)?;
+        Ok(())
+    }
+
     pub(crate) fn set_channel_muted(
         &mut self,
         id: &str,

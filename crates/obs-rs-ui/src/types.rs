@@ -55,6 +55,7 @@ pub struct MixerChannel {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) gain_milli: u16,
+    pub(crate) pan_milli: i32,
     pub(crate) muted: bool,
     pub(crate) peak_milli: u16,
 }
@@ -76,6 +77,12 @@ impl MixerChannel {
     #[must_use]
     pub const fn gain_milli(&self) -> u16 {
         self.gain_milli
+    }
+
+    /// Returns stereo pan in thousandths of a full left/right turn.
+    #[must_use]
+    pub const fn pan_milli(&self) -> i32 {
+        self.pan_milli
     }
 
     /// Returns whether the channel is muted.
@@ -207,6 +214,8 @@ pub enum UiCommand {
     TakePreview { transition: FrameTransition },
     /// Set one mixer channel's linear gain in thousandths.
     SetMixerGain { id: String, gain_milli: u16 },
+    /// Set one mixer channel's stereo pan in thousandths (`-1000..1000`).
+    SetMixerPan { id: String, pan_milli: i32 },
     /// Rebuild the audio mixer at a new sample rate and channel count.
     SetAudioFormat { sample_rate: u32, channels: u16 },
     /// Toggle one mixer channel's mute state.

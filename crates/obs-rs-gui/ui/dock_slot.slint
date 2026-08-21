@@ -62,6 +62,7 @@ export component DockSlot inherits Rectangle {
     callback paste-duplicate(string);
     callback remove-source(string);
     callback set-mixer-gain(string, int);
+    callback set-mixer-pan(string, int);
     callback toggle-mixer-mute(string);
     callback toggle-meters-paused();
     callback cut-transition();
@@ -148,6 +149,7 @@ export component DockSlot inherits Rectangle {
         dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
         dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
+        set-mixer-pan(id, pan) => { root.set-mixer-pan(id, pan); }
         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
         toggle-meters-paused() => { root.toggle-meters-paused(); }
         open-mixer-settings() => { root.open-settings-window(); }

@@ -730,6 +730,7 @@ fn forward_to_studio(
     forward!(on_paste_duplicate, invoke_paste_duplicate, target);
     forward!(on_remove_source, invoke_remove_source, id);
     forward!(on_set_mixer_gain, invoke_set_mixer_gain, id, gain);
+    forward!(on_set_mixer_pan, invoke_set_mixer_pan, id, pan);
     forward!(on_toggle_mixer_mute, invoke_toggle_mixer_mute, id);
     forward!(on_toggle_meters_paused, invoke_toggle_meters_paused);
     forward!(on_cut_transition, invoke_cut_transition);

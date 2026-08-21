@@ -35,6 +35,8 @@ pub enum UiError {
     UnknownMixerChannel(String),
     /// A mixer gain is outside the supported 0..=2000 range.
     InvalidMixerGain(u16),
+    /// A mixer pan is outside the supported -1000..=1000 range.
+    InvalidMixerPan(i32),
     /// The notice sequence counter overflowed.
     NoticeSequenceExhausted,
 }
@@ -62,6 +64,9 @@ impl fmt::Display for UiError {
             Self::UnknownMixerChannel(id) => write!(formatter, "mixer channel {id} does not exist"),
             Self::InvalidMixerGain(gain_milli) => {
                 write!(formatter, "mixer gain {gain_milli} is outside 0..=2000")
+            }
+            Self::InvalidMixerPan(pan_milli) => {
+                write!(formatter, "mixer pan {pan_milli} is outside -1000..=1000")
             }
             Self::NoticeSequenceExhausted => formatter.write_str("UI notice sequence is exhausted"),
         }

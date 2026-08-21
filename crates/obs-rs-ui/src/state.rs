@@ -168,6 +168,10 @@ impl DesktopState {
                 self.set_mixer_gain(&id, gain_milli)?;
                 "mixer gain updated"
             }
+            UiCommand::SetMixerPan { id, pan_milli } => {
+                self.set_mixer_pan(&id, pan_milli)?;
+                "mixer pan updated"
+            }
             UiCommand::ToggleMixerMute { id } => self.toggle_mixer_mute(&id)?,
             UiCommand::SetAudioFormat {
                 sample_rate,

@@ -211,6 +211,30 @@ pub(crate) fn install_mixer_callbacks(
     });
 
     let weak = ui.as_weak();
+    let pan_state = Rc::clone(state);
+    let pan_surface = Rc::clone(surface);
+    let pan_output = Rc::clone(output);
+    ui.on_set_mixer_pan(move |id, pan_milli| {
+        dispatch_and_refresh(
+            &weak,
+            &pan_state,
+            &pan_surface,
+            UiCommand::SetMixerPan {
+                id: id.to_string(),
+                pan_milli,
+            },
+        );
+        if let Err(error) = pan_output
+            .borrow_mut()
+            .set_channel_pan_milli(id.as_str(), pan_milli)
+        {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(format!("Audio channel failed: {error}").into());
+            }
+        }
+    });
+
+    let weak = ui.as_weak();
     let mute_state = Rc::clone(state);
     let mute_surface = Rc::clone(surface);
     let mute_output = Rc::clone(output);

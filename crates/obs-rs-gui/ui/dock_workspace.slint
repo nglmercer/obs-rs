@@ -73,6 +73,7 @@ export component DockWorkspace inherits Rectangle {
     callback paste-duplicate(string);
     callback remove-source(string);
     callback set-mixer-gain(string, int);
+    callback set-mixer-pan(string, int);
     callback toggle-mixer-mute(string);
     callback toggle-meters-paused();
     callback cut-transition();
@@ -264,6 +265,7 @@ export component DockWorkspace inherits Rectangle {
             paste-duplicate(target) => { root.paste-duplicate(target); }
             remove-source(id) => { root.remove-source(id); }
             set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
+            set-mixer-pan(id, pan) => { root.set-mixer-pan(id, pan); }
             toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
             toggle-meters-paused() => { root.toggle-meters-paused(); }
             cut-transition() => { root.cut-transition(); }

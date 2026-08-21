@@ -18,6 +18,7 @@ export component MixerDock inherits Rectangle {
     callback float-panel(int);
     callback close-panel(int);
     callback set-mixer-gain(string, int);
+    callback set-mixer-pan(string, int);
     callback toggle-mixer-mute(string);
     callback toggle-meters-paused();
     callback open-mixer-settings();
@@ -52,7 +53,7 @@ export component MixerDock inherits Rectangle {
                         alignment: start;
                         spacing: 1px;
                     for channel in mixer-rows : MixerContextMenuArea {
-                        height: 78px;
+                        height: 98px;
                         channel-id: channel.id;
                         channel-muted: channel.muted;
                         channel-gain: round(channel.gain * 1000);
@@ -89,6 +90,27 @@ export component MixerDock inherits Rectangle {
                                 step: 0.01;
                                 value: channel.gain;
                                 changed => set-mixer-gain(channel.id, round(self.value * 1000));
+                            }
+                            HorizontalBox {
+                                spacing: 3px;
+                                Text {
+                                    text: "L";
+                                    color: Palette.tokens.text-muted;
+                                    font-size: 9px;
+                                }
+                                Slider {
+                                    horizontal-stretch: 1;
+                                    minimum: -1;
+                                    maximum: 1;
+                                    step: 0.01;
+                                    value: channel.pan;
+                                    changed => set-mixer-pan(channel.id, round(self.value * 1000));
+                                }
+                                Text {
+                                    text: "R";
+                                    color: Palette.tokens.text-muted;
+                                    font-size: 9px;
+                                }
                             }
                             Rectangle {
                                 width: 100%;

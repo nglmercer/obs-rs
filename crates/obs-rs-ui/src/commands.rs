@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use obs_rs_audio::{AudioFormat, AudioMixer};
+use obs_rs_audio::{MAX_PAN_MILLI, MIN_PAN_MILLI};
 use obs_rs_media::FrameTransition;
 
 use super::{
@@ -140,6 +141,23 @@ impl DesktopState {
         Ok(())
     }
 
+    pub(crate) fn set_mixer_pan(&mut self, id: &str, pan_milli: i32) -> Result<(), UiError> {
+        if !(MIN_PAN_MILLI..=MAX_PAN_MILLI).contains(&pan_milli) {
+            return Err(UiError::InvalidMixerPan(pan_milli));
+        }
+        let source = *self
+            .mixer_sources
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        self.audio_mixer.set_pan_milli(source, pan_milli)?;
+        let channel = self
+            .mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        channel.pan_milli = pan_milli;
+        Ok(())
+    }
+
     /// Rebuilds the mixer at a new format, carrying every channel's gain and
     /// mute across so changing the sample rate does not reset the desk.
     pub(crate) fn set_audio_format(
@@ -158,6 +176,9 @@ impl DesktopState {
             let source = mixer.add_source(gain).map_err(UiError::Audio)?;
             mixer
                 .set_muted(source, channel.muted)
+                .map_err(UiError::Audio)?;
+            mixer
+                .set_pan_milli(source, channel.pan_milli)
                 .map_err(UiError::Audio)?;
             sources.insert(id.clone(), source);
         }

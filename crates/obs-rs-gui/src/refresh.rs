@@ -430,6 +430,7 @@ pub(crate) fn refresh_mixer_rows(ui: &MainWindow, state: &DesktopState) {
             id: channel.id().into(),
             name: channel.name().into(),
             gain: f32::from(channel.gain_milli()) / 1_000.0,
+            pan: f32::from(i16::try_from(channel.pan_milli()).unwrap_or(0)) / 1_000.0,
             peak_db: peak_db(channel.peak_milli()),
             muted: channel.muted(),
         })
