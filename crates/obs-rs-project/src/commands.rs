@@ -1117,6 +1117,25 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
                 .map_err(ProjectError::Config)?;
             ("opacity", "Opacity", settings)
         }
+        FrameFilter::CropPad {
+            left,
+            top,
+            right,
+            bottom,
+        } => {
+            let mut settings = Config::new();
+            for (key, value) in [
+                ("left", left),
+                ("top", top),
+                ("right", right),
+                ("bottom", bottom),
+            ] {
+                settings
+                    .set(key, &value.to_string())
+                    .map_err(ProjectError::Config)?;
+            }
+            ("crop_pad", "Crop/Pad", settings)
+        }
     };
     SourceFilterSpec::with_category(
         &format!("legacy_filter_{}", index.saturating_add(1)),

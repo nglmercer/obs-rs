@@ -22,7 +22,8 @@ use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{
-    FrameFilter, FrameRate, LatencyMetrics, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
+    FrameFilter, FrameRate, FrameTransform, LatencyMetrics, RawVideoFrame, Timestamp, VideoFormat,
+    VideoFrame,
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
@@ -1997,6 +1998,20 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
             .get("value")
             .and_then(|value| value.parse().ok())
             .map(FrameFilter::Opacity),
+        "crop_pad" => {
+            let read_edge = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .filter(|value| *value <= FrameTransform::MAX_CROP)
+            };
+            Some(FrameFilter::CropPad {
+                left: read_edge("left")?,
+                top: read_edge("top")?,
+                right: read_edge("right")?,
+                bottom: read_edge("bottom")?,
+            })
+        }
         _ => None,
     }
 }
@@ -2317,6 +2332,23 @@ mod tests {
         assert_eq!(
             compile_filter(&brightness),
             Some(FrameFilter::Brightness { milli: 350 })
+        );
+
+        let crop = SourceFilterSpec::new(
+            "crop",
+            "Crop/Pad",
+            "crop_pad",
+            Config::parse("bottom = 1\nleft = 2\nright = 3\ntop = 4\n").expect("crop settings"),
+        )
+        .expect("crop filter");
+        assert_eq!(
+            compile_filter(&crop),
+            Some(FrameFilter::CropPad {
+                left: 2,
+                top: 4,
+                right: 3,
+                bottom: 1,
+            })
         );
 
         let mut disabled = brightness.clone();

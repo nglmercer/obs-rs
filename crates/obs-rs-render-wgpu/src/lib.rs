@@ -64,6 +64,12 @@ mod tests {
             FrameFilter::Grayscale,
             FrameFilter::Brightness { milli: -250 },
             FrameFilter::Opacity(200),
+            FrameFilter::CropPad {
+                left: 1,
+                top: 1,
+                right: 1,
+                bottom: 1,
+            },
         ];
         let transform = FrameTransform::new(1_500, 750, -1, 2, true, false, 210)
             .expect("transform")

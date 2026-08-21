@@ -985,8 +985,9 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
     var filter_index = 0;
     loop {
         if (filter_index >= filter_count) { break; }
-        let kind = parameters.values[17 + filter_index * 2];
-        let value = parameters.values[18 + filter_index * 2];
+        let filter_offset = 17 + filter_index * 5;
+        let kind = parameters.values[filter_offset];
+        let value = parameters.values[filter_offset + 1];
         if (kind == 0) {
             let luma = (pixel.r * 77 + pixel.g * 150 + pixel.b * 29) / 256;
             pixel.r = luma;
@@ -997,8 +998,19 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
             pixel.r = clamp(pixel.r * multiplier / 1000, 0, 255);
             pixel.g = clamp(pixel.g * multiplier / 1000, 0, 255);
             pixel.b = clamp(pixel.b * multiplier / 1000, 0, 255);
-        } else {
+        } else if (kind == 2) {
             pixel.a = pixel.a * value / 255;
+        } else if (kind == 3) {
+            let crop_left = parameters.values[filter_offset + 1];
+            let crop_top = parameters.values[filter_offset + 2];
+            let crop_right = parameters.values[filter_offset + 3];
+            let crop_bottom = parameters.values[filter_offset + 4];
+            let width = parameters.values[0];
+            let height = parameters.values[1];
+            if (position.x < crop_left || position.x >= width - crop_right ||
+                position.y < crop_top || position.y >= height - crop_bottom) {
+                pixel = vec4<i32>(0);
+            }
         }
         filter_index = filter_index + 1;
     }
@@ -1095,7 +1107,7 @@ fn layer_parameters(
     transform: FrameTransform,
     filters: &[FrameFilter],
 ) -> Vec<u8> {
-    let mut values = Vec::with_capacity(17 + filters.len() * 2);
+    let mut values = Vec::with_capacity(17 + filters.len() * 5);
     values.extend([
         i32::try_from(target_format.width()).unwrap_or(i32::MAX),
         i32::try_from(target_format.height()).unwrap_or(i32::MAX),
@@ -1117,9 +1129,25 @@ fn layer_parameters(
     ]);
     for filter in filters {
         match *filter {
-            FrameFilter::Grayscale => values.extend([0, 0]),
-            FrameFilter::Brightness { milli } => values.extend([1, i32::from(milli)]),
-            FrameFilter::Opacity(opacity) => values.extend([2, i32::from(opacity)]),
+            FrameFilter::Grayscale => values.extend([0, 0, 0, 0, 0]),
+            FrameFilter::Brightness { milli } => {
+                values.extend([1, i32::from(milli), 0, 0, 0]);
+            }
+            FrameFilter::Opacity(opacity) => {
+                values.extend([2, i32::from(opacity), 0, 0, 0]);
+            }
+            FrameFilter::CropPad {
+                left,
+                top,
+                right,
+                bottom,
+            } => values.extend([
+                3,
+                i32::try_from(left).unwrap_or(i32::MAX),
+                i32::try_from(top).unwrap_or(i32::MAX),
+                i32::try_from(right).unwrap_or(i32::MAX),
+                i32::try_from(bottom).unwrap_or(i32::MAX),
+            ]),
         }
     }
     values.into_iter().flat_map(i32::to_le_bytes).collect()

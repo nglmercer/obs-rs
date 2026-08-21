@@ -92,6 +92,24 @@ requests a 1048x590 preview for a 1920x1080 canvas (and a proportionally bounded
 target for 4K), so its Slint copy is separated and counted as `frame_copy_bytes`
 in the live metrics string.
 
+## Crop/Pad filter evidence
+
+The Crop/Pad packet keeps the effect in-place and bounded: it clears edge pixels
+without changing frame geometry, and the WGPU path carries every filter in a
+fixed five-word record so the shader does not parse variable-length data.
+
+```text
+cargo test --release -p obs-rs-media -- --ignored --nocapture composition_primitives_timing_report
+```
+
+The ignored timing report now includes `clone + crop-pad` beside the existing
+transform, blend, grayscale, and solid-frame measurements. CPU and WGPU
+correctness are covered separately by the media filter test and the WGPU
+CPU-oracle/readback test; this is evidence for repeatable local measurement,
+not a 60 FPS acceptance result. On 2026-08-21 in this workspace's release
+profile, the 640x360 `clone + crop-pad` sample averaged `210.651 µs` over 200
+runs.
+
 ## Phase 1 render-target evidence
 
 The first performance architecture packet is implemented and independently

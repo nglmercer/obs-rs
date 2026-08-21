@@ -820,6 +820,30 @@ impl VideoFrame {
         if filters.is_empty() {
             return;
         }
+        // Crop/Pad is coordinate-dependent rather than a per-pixel colour
+        // operation. Apply it as its own bounded pass while retaining the
+        // ordered semantics of filters around it.
+        if filters
+            .iter()
+            .any(|filter| matches!(filter, FrameFilter::CropPad { .. }))
+        {
+            for filter in filters {
+                match *filter {
+                    FrameFilter::CropPad {
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    } => self.apply_crop_pad(left, top, right, bottom),
+                    _ => self.apply_pixel_filters(std::slice::from_ref(filter)),
+                }
+            }
+            return;
+        }
+        self.apply_pixel_filters(filters);
+    }
+
+    fn apply_pixel_filters(&mut self, filters: &[FrameFilter]) {
         // A single filter is the common case, and matching on it once per block
         // rather than once per pixel is what lets the inner loop stay a tight
         // arithmetic pass the compiler can vectorize.
@@ -842,6 +866,9 @@ impl VideoFrame {
                         apply_opacity(pixel, u32::from(opacity));
                     }
                 }
+                FrameFilter::CropPad { .. } => unreachable!(
+                    "coordinate-dependent crop filters are handled before pixel filters"
+                ),
             });
             return;
         }
@@ -856,10 +883,34 @@ impl VideoFrame {
                         FrameFilter::Opacity(opacity) => {
                             apply_opacity(pixel, u32::from(opacity));
                         }
+                        FrameFilter::CropPad { .. } => unreachable!(
+                            "coordinate-dependent crop filters are handled before pixel filters"
+                        ),
                     }
                 }
             }
         });
+    }
+
+    fn apply_crop_pad(&mut self, left: u32, top: u32, right: u32, bottom: u32) {
+        let width = self.format.width_index();
+        let height = self.format.height_index();
+        let left = usize::try_from(left).unwrap_or(usize::MAX).min(width);
+        let top = usize::try_from(top).unwrap_or(usize::MAX).min(height);
+        let right = usize::try_from(right).unwrap_or(usize::MAX).min(width);
+        let bottom = usize::try_from(bottom).unwrap_or(usize::MAX).min(height);
+        let row_bytes = width * 4;
+        self.pixels_mut()
+            .par_chunks_exact_mut(row_bytes)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let outside_vertical = y < top || y >= height.saturating_sub(bottom);
+                for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
+                    if outside_vertical || x < left || x >= width.saturating_sub(right) {
+                        pixel.copy_from_slice(&[0, 0, 0, 0]);
+                    }
+                }
+            });
     }
 
     /// Clears RGB values on fully transparent pixels for canonical composition.
