@@ -56,6 +56,11 @@ impl ProjectorController {
         self.program.borrow().is_some()
     }
 
+    /// Returns whether a preview projector needs the preview feed rendered.
+    pub(crate) fn wants_preview(&self) -> bool {
+        self.preview.borrow().is_some()
+    }
+
     /// Pushes the studio's current images into any open projector.
     pub(crate) fn sync(&self, ui: &MainWindow) {
         if let Some(window) = self.program.borrow().as_ref() {

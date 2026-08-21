@@ -77,7 +77,7 @@ pub(crate) struct RenderTargets<'a> {
     pub(crate) preview_format: VideoFormat,
     pub(crate) program_scene: Option<&'a str>,
     pub(crate) program_preview_format: VideoFormat,
-    /// Whether the program canvas is wanted as well as the preview one.
+    /// Whether the bounded program view is wanted as well as the preview one.
     pub(crate) render_program: bool,
     /// Whether the program frame should also be converted for the encoder.
     pub(crate) prepare_output: bool,

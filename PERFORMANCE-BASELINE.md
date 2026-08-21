@@ -393,9 +393,12 @@ peak, peak-hold, and clip-indicator bookkeeping. Monitor taps are intentionally
 not registered in this probe because they retain shared snapshots by contract.
 
 The preview worker is bounded: pending requests and published results are
-capacity-one latest-value slots. The desktop timer requests at most 60 Hz while
-an output is active and 30 Hz while idle; visibility/minimized suspension is
-still a follow-up demand-state packet.
+capacity-one latest-value slots. Demand-aware scheduling now requests up to
+60 Hz for visible GUI/projector consumers, 5 Hz for a minimized idle window,
+and no render work for a hidden idle window. An active output remains at 60 Hz
+but does not request unused GUI preview/program-view frames. The demand policy
+has pure state tests; live multi-monitor/projector cadence measurement remains
+part of the final performance matrix.
 
 ## Acceptance measurements to add
 

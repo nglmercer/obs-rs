@@ -61,6 +61,80 @@ pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
 pub(crate) use source_transform::install_source_transform_window;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RenderDemand {
+    request_preview: bool,
+    request_program_view: bool,
+    interval: Option<Duration>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowRenderState {
+    Hidden,
+    Minimized,
+    Visible,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutputRenderState {
+    Idle,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProjectorRenderDemand {
+    None,
+    Preview,
+    Program,
+    Both,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StudioView {
+    Single,
+    Studio,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RenderDemandInput {
+    window: WindowRenderState,
+    output: OutputRenderState,
+    projectors: ProjectorRenderDemand,
+    view: StudioView,
+}
+
+/// Chooses which consumers need a new GUI render and how often to service
+/// them. Output cadence is independent: an active output keeps the worker
+/// ticking even when the studio window is hidden, but does not create unused
+/// preview/program-view frames.
+fn render_demand(input: RenderDemandInput) -> RenderDemand {
+    let main_interactive = input.window == WindowRenderState::Visible;
+    let projector_open = input.projectors != ProjectorRenderDemand::None;
+    let request_preview = main_interactive
+        || input.window == WindowRenderState::Minimized
+        || matches!(
+            input.projectors,
+            ProjectorRenderDemand::Preview | ProjectorRenderDemand::Both
+        );
+    let request_program_view = matches!(
+        input.projectors,
+        ProjectorRenderDemand::Program | ProjectorRenderDemand::Both
+    ) || (main_interactive && input.view == StudioView::Studio);
+    let interval =
+        if input.output == OutputRenderState::Active || projector_open || main_interactive {
+            Some(Duration::from_millis(16))
+        } else if input.window == WindowRenderState::Minimized {
+            Some(Duration::from_millis(200))
+        } else {
+            None
+        };
+    RenderDemand {
+        request_preview,
+        request_program_view,
+        interval,
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "the timer coordinates bounded rendering and the output lifecycle"
@@ -102,6 +176,33 @@ pub(crate) fn start_preview_timer(
                 state.recording() || state.streaming(),
             )
         };
+        let window = if ui.window().is_minimized() {
+            WindowRenderState::Minimized
+        } else if ui.window().is_visible() {
+            WindowRenderState::Visible
+        } else {
+            WindowRenderState::Hidden
+        };
+        let projector_demand = match (projectors.wants_preview(), projectors.wants_program()) {
+            (false, false) => ProjectorRenderDemand::None,
+            (true, false) => ProjectorRenderDemand::Preview,
+            (false, true) => ProjectorRenderDemand::Program,
+            (true, true) => ProjectorRenderDemand::Both,
+        };
+        let demand = render_demand(RenderDemandInput {
+            window,
+            output: if output_active {
+                OutputRenderState::Active
+            } else {
+                OutputRenderState::Idle
+            },
+            projectors: projector_demand,
+            view: if ui.get_view_mode() == 0 {
+                StudioView::Studio
+            } else {
+                StudioView::Single
+            },
+        });
         // A canvas change held back while recording is applied here, at the
         // first tick after the output stopped, and before the ordinary project
         // sync so both reach the engine in one rebuild.
@@ -142,12 +243,9 @@ pub(crate) fn start_preview_timer(
                 ui.set_status_message(format!("Output project sync failed: {error}").into());
             }
         }
-        let preview_due = last_preview_request.elapsed()
-            >= if output_active {
-                Duration::from_millis(16)
-            } else {
-                Duration::from_millis(33)
-            };
+        let preview_due = demand
+            .interval
+            .is_some_and(|interval| last_preview_request.elapsed() >= interval);
         if preview_due {
             let state = state.borrow();
             let draft = canvas.draft();
@@ -156,20 +254,23 @@ pub(crate) fn start_preview_timer(
                     state.project_session().project(),
                     revision,
                     RenderTargets {
-                        preview_scene: preview_scene.as_deref(),
+                        preview_scene: demand
+                            .request_preview
+                            .then_some(preview_scene.as_deref())
+                            .flatten(),
                         preview_format: PreviewRenderer::preview_format_for_canvas(
                             profile.video_format(),
                         ),
-                        program_scene: program_scene.as_deref(),
+                        program_scene: (output_active || demand.request_program_view)
+                            .then_some(program_scene.as_deref())
+                            .flatten(),
                         program_preview_format: PreviewRenderer::preview_format_for_canvas(
                             profile.video_format(),
                         ),
                         // A program projector is a third consumer of the program
                         // canvas, so single-canvas editing has to render it again
                         // while one is up.
-                        render_program: output_active
-                            || ui.get_view_mode() == 0
-                            || projectors.wants_program(),
+                        render_program: demand.request_program_view,
                         prepare_output: output_active,
                         prepare_output_rgba: output_active && !output.borrow().accepts_raw_frames(),
                         // A canvas drag reaches the compositor here rather than
@@ -359,4 +460,77 @@ pub(crate) fn install_callbacks(
     install_output_callbacks(ui, state, surface, output);
     install_mixer_callbacks(ui, state, surface, output);
     install_project_callbacks(ui, state, surface, output);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hidden_idle_window_has_no_render_demand() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                view: StudioView::Single,
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                interval: None,
+            }
+        );
+    }
+
+    #[test]
+    fn minimized_window_keeps_a_bounded_five_fps_preview() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Minimized,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                view: StudioView::Studio,
+            }),
+            RenderDemand {
+                request_preview: true,
+                request_program_view: false,
+                interval: Some(Duration::from_millis(200)),
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_output_renders_only_the_output_consumer() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Active,
+                projectors: ProjectorRenderDemand::None,
+                view: StudioView::Studio,
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
+
+    #[test]
+    fn visible_studio_mode_requests_both_gui_feeds_at_sixty_fps() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Visible,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                view: StudioView::Studio,
+            }),
+            RenderDemand {
+                request_preview: true,
+                request_program_view: true,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
 }
