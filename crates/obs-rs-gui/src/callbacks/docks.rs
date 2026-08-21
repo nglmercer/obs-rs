@@ -1,16 +1,16 @@
-//! Dock layout: reordering, width shares, and detaching docks into windows.
+//! Dock layout: tree-backed reordering, width shares, and detached windows.
 //!
-//! The dock row is described entirely by three parallel pieces of state — the
-//! order, the width share per dock, and which docks are detached — so a layout
-//! is data the settings document can store rather than a tree the user has to
-//! rebuild each session.
+//! The legacy Slint row still consumes parallel models, but every reorder or
+//! splitter edit is mirrored into the bounded `DockNode` tree. Settings can
+//! therefore migrate to splits and tabs without making the window another
+//! source of layout truth.
 
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::{FloatingDockWindow, MainWindow};
+use crate::{dock_tree::DockNode, FloatingDockWindow, MainWindow};
 
 /// The dock kinds, in the order their IDs are numbered.
 pub(crate) const PANEL_KINDS: [i32; 5] = [0, 1, 2, 3, 4];
@@ -32,6 +32,7 @@ const PIXELS_PER_WEIGHT: f32 = 320.0;
 /// Owns the detached dock windows, one per dock kind.
 pub(crate) struct DockController {
     windows: RefCell<Vec<Option<FloatingDockWindow>>>,
+    tree: RefCell<DockNode>,
 }
 
 impl DockController {
@@ -145,22 +146,35 @@ pub(crate) fn install_dock_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
 ) -> Rc<DockController> {
+    let initial_order = read_ints(&ui.get_panel_order());
+    let initial_weights = read_floats(&ui.get_panel_weights());
+    let tree = DockNode::from_legacy(&initial_order, &initial_weights).unwrap_or_else(|| {
+        DockNode::from_legacy(&[1, 0, 2, 3, 4], &[1.0, 1.0, 1.85, 1.0, 1.4])
+            .expect("the built-in dock layout must be valid")
+    });
     let controller = Rc::new(DockController {
         windows: RefCell::new(PANEL_KINDS.map(|_| None).into_iter().collect()),
+        tree: RefCell::new(tree),
     });
 
     let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
     ui.on_move_panel(move |panel, direction| {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         let order = read_ints(&ui.get_panel_order());
         if let Some(order) = reorder(&order, panel, direction) {
-            ui.set_panel_order(ModelRc::new(VecModel::from(order)));
+            let weights = read_floats(&ui.get_panel_weights());
+            if let Some(tree) = DockNode::from_legacy(&order, &weights) {
+                *tree_controller.tree.borrow_mut() = tree.clone();
+                ui.set_panel_order(ModelRc::new(VecModel::from(tree.leaf_order())));
+            }
         }
     });
 
     let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
     ui.on_resize_panel(move |index, delta| {
         let Some(ui) = weak.upgrade() else {
             return;
@@ -171,6 +185,9 @@ pub(crate) fn install_dock_callbacks(
         let weights = read_floats(&ui.get_panel_weights());
         let order = read_ints(&ui.get_panel_order());
         let weights = resize(&weights, &order, index, delta);
+        if let Some(tree) = DockNode::from_legacy(&order, &weights) {
+            *tree_controller.tree.borrow_mut() = tree;
+        }
         ui.set_panel_weights(ModelRc::new(VecModel::from(weights)));
     });
 

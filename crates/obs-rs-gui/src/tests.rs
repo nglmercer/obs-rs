@@ -1,3 +1,4 @@
+use super::dock_tree::DockNode;
 use super::i18n::catalog;
 use super::output::stream_protocol_label;
 use super::preview::PreviewRenderer;
@@ -458,6 +459,9 @@ fn app_settings_round_trip_the_window_layout() {
     settings.layout.view_mode = 0;
     settings.layout.dock_height = 320;
     settings.layout.panel_weights = vec![1.5, 0.8, 2.0, 1.0, 1.2];
+    settings.layout.dock_tree =
+        DockNode::from_legacy(&settings.layout.panel_order, &settings.layout.panel_weights)
+            .expect("test layout should have a valid dock tree");
     settings.layout.floating_panels = vec![2, 3];
     settings.restore_project = false;
     settings.save_project_on_exit = false;
@@ -1128,6 +1132,9 @@ fn exercise_context_menus(
 fn exercise_layout_restore(ui: &MainWindow) {
     let mut stored = AppSettings::default();
     stored.layout.panel_order = vec![2, 4, 0, 1, 3];
+    stored.layout.dock_tree =
+        DockNode::from_legacy(&stored.layout.panel_order, &stored.layout.panel_weights)
+            .expect("test layout should have a valid dock tree");
     stored.layout.show_transitions = false;
     stored.layout.view_mode = 0;
     stored.layout.dock_height = 300;

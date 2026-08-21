@@ -17,6 +17,7 @@ use obs_rs_output::{
 use obs_rs_ui::UiLocale;
 use slint::{Brush, Color, Model, ModelRc, VecModel};
 
+use crate::dock_tree::{DockNode, DOCK_IDS};
 use crate::settings_model::{
     metrics, FpsMode, OutputMode, RecordingQuality, UiDensity, UiStyle, VideoSettings,
     DEFAULT_FONT_SIZE, FONT_SIZE_RANGE, MAX_DIMENSION,
@@ -329,8 +330,9 @@ pub(crate) struct AppSettings {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutSettings {
-    /// Dock IDs in display order: 0 scenes, 1 sources, 2 mixer, 3 transitions,
-    /// 4 controls.
+    /// Legacy projection of the tree's dock IDs: 0 scenes, 1 sources, 2 mixer,
+    /// 3 transitions, 4 controls. New layout code must mutate `dock_tree` and
+    /// refresh this projection at the toolkit boundary.
     pub(crate) panel_order: Vec<i32>,
     pub(crate) show_scenes: bool,
     pub(crate) show_sources: bool,
@@ -341,10 +343,13 @@ pub(crate) struct LayoutSettings {
     pub(crate) view_mode: i32,
     /// Height of the dock row in logical pixels.
     pub(crate) dock_height: u32,
-    /// Width share per dock kind, as adjusted by the splitters.
+    /// Legacy width shares per dock kind, as adjusted by the row splitter
+    /// adapter. Tree-native layouts retain this for old settings readers.
     pub(crate) panel_weights: Vec<f32>,
     /// Dock kinds that were left detached in their own windows.
     pub(crate) floating_panels: Vec<i32>,
+    /// Versioned tree representation of the dock arrangement.
+    pub(crate) dock_tree: DockNode,
 }
 
 /// The dock IDs a layout must contain, in the order OBS ships them.
@@ -359,8 +364,12 @@ const WEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.2..=8.0;
 
 impl Default for LayoutSettings {
     fn default() -> Self {
+        let panel_order = DEFAULT_PANEL_ORDER.to_vec();
+        let panel_weights = DEFAULT_PANEL_WEIGHTS.to_vec();
+        let dock_tree = DockNode::from_legacy(&panel_order, &panel_weights)
+            .expect("the built-in dock layout must be valid");
         Self {
-            panel_order: DEFAULT_PANEL_ORDER.to_vec(),
+            panel_order,
             show_scenes: true,
             show_sources: true,
             show_mixer: true,
@@ -368,8 +377,9 @@ impl Default for LayoutSettings {
             show_controls: true,
             view_mode: 1,
             dock_height: 248,
-            panel_weights: DEFAULT_PANEL_WEIGHTS.to_vec(),
+            panel_weights,
             floating_panels: Vec::new(),
+            dock_tree,
         }
     }
 }
@@ -435,7 +445,8 @@ impl LayoutSettings {
     }
 
     fn panel_order_text(&self) -> String {
-        self.panel_order
+        self.dock_tree
+            .leaf_order()
             .iter()
             .map(i32::to_string)
             .collect::<Vec<_>>()
@@ -506,11 +517,22 @@ impl LayoutSettings {
     #[allow(clippy::too_many_lines, reason = "one fallback arm per stored key")]
     fn from_config(config: &Config) -> Self {
         let defaults = Self::default();
+        let legacy_order = config
+            .get("layout_panel_order")
+            .and_then(LayoutSettings::parse_panel_order)
+            .unwrap_or_else(|| defaults.panel_order.clone());
+        let legacy_weights = config
+            .get("layout_panel_weights")
+            .and_then(Self::parse_panel_weights)
+            .unwrap_or_else(|| defaults.panel_weights.clone());
+        let dock_tree = config
+            .get("layout_dock_tree")
+            .and_then(DockNode::decode)
+            .filter(|tree| tree.leaf_order().len() == DOCK_IDS.len())
+            .or_else(|| DockNode::from_legacy(&legacy_order, &legacy_weights))
+            .unwrap_or_else(|| defaults.dock_tree.clone());
         Self {
-            panel_order: config
-                .get("layout_panel_order")
-                .and_then(LayoutSettings::parse_panel_order)
-                .unwrap_or(defaults.panel_order),
+            panel_order: dock_tree.leaf_order(),
             show_scenes: flag(config, "layout_show_scenes", defaults.show_scenes),
             show_sources: flag(config, "layout_show_sources", defaults.show_sources),
             show_mixer: flag(config, "layout_show_mixer", defaults.show_mixer),
@@ -526,14 +548,12 @@ impl LayoutSettings {
                 .and_then(|value| value.parse::<u32>().ok())
                 .filter(|height| (120..=1_200).contains(height))
                 .unwrap_or(defaults.dock_height),
-            panel_weights: config
-                .get("layout_panel_weights")
-                .and_then(Self::parse_panel_weights)
-                .unwrap_or(defaults.panel_weights),
+            panel_weights: legacy_weights,
             floating_panels: config
                 .get("layout_floating_panels")
                 .map(Self::parse_floating)
                 .unwrap_or(defaults.floating_panels),
+            dock_tree,
         }
     }
 }
@@ -882,6 +902,13 @@ impl AppSettings {
             ("layout_dock_height", self.layout.dock_height.to_string()),
             ("layout_panel_weights", self.layout.panel_weights_text()),
             ("layout_floating_panels", self.layout.floating_text()),
+            (
+                "layout_dock_tree",
+                self.layout
+                    .dock_tree
+                    .encode()
+                    .unwrap_or_else(|| LayoutSettings::default().dock_tree.encode().unwrap()),
+            ),
         ];
         for (key, value) in entries {
             // Every key here is a literal identifier and every value is bounded
@@ -1130,7 +1157,7 @@ pub(crate) fn apply_default_layout(ui: &crate::MainWindow) {
 impl LayoutSettings {
     fn apply(&self, ui: &crate::MainWindow) {
         let layout = self;
-        ui.set_panel_order(ModelRc::new(VecModel::from(layout.panel_order.clone())));
+        ui.set_panel_order(ModelRc::new(VecModel::from(layout.dock_tree.leaf_order())));
         ui.set_show_scenes(layout.show_scenes);
         ui.set_show_sources(layout.show_sources);
         ui.set_show_mixer(layout.show_mixer);
@@ -1180,6 +1207,9 @@ impl AppSettings {
         if weights.len() == DEFAULT_PANEL_WEIGHTS.len() {
             self.layout.panel_weights = weights;
         }
+        self.layout.dock_tree =
+            DockNode::from_legacy(&self.layout.panel_order, &self.layout.panel_weights)
+                .unwrap_or_else(|| LayoutSettings::default().dock_tree);
         self.layout.floating_panels = read_model(&ui.get_panel_floating())
             .into_iter()
             .enumerate()
@@ -1626,6 +1656,7 @@ pub(crate) fn parse_colour(value: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dock_tree::DockAxis;
 
     #[test]
     fn settings_round_trip_through_the_config_document() {
@@ -1687,6 +1718,35 @@ mod tests {
         assert_eq!(decoded, settings);
         assert_eq!(decoded.sample_rate_hz(), 96_000);
         assert_eq!(decoded.channel_count(), 1);
+    }
+
+    #[test]
+    fn dock_tree_round_trips_without_losing_legacy_order() {
+        let tree = DockNode::Split {
+            axis: DockAxis::Vertical,
+            ratio_milli: 625,
+            first: Box::new(DockNode::Tabs {
+                docks: vec![1, 0],
+                active: 0,
+            }),
+            second: Box::new(DockNode::Split {
+                axis: DockAxis::Horizontal,
+                ratio_milli: 400,
+                first: Box::new(DockNode::Dock(2)),
+                second: Box::new(DockNode::Tabs {
+                    docks: vec![3, 4],
+                    active: 1,
+                }),
+            }),
+        };
+        let mut settings = AppSettings::default();
+        settings.layout.dock_tree = tree.clone();
+        settings.layout.panel_order = tree.leaf_order();
+
+        let decoded = AppSettings::from_config(&settings.to_config());
+
+        assert_eq!(decoded.layout.dock_tree, tree);
+        assert_eq!(decoded.layout.panel_order, vec![1, 0, 2, 3, 4]);
     }
 
     #[test]

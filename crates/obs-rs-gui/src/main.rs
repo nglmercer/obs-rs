@@ -16,6 +16,7 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::ComponentHandle;
 
 mod callbacks;
+mod dock_tree;
 mod filter_properties;
 mod fixtures;
 mod i18n;
