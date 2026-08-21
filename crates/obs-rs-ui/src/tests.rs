@@ -70,6 +70,48 @@ fn desktop_state_selects_source_items_in_preview_scene() {
 }
 
 #[test]
+fn desktop_state_supports_bounded_multi_selection_and_active_item() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("source scene selection");
+    state
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: "source_scene".to_owned(),
+            source: SourceSpec::new("second", "color_source", "Second", Config::new())
+                .expect("second source"),
+        }))
+        .expect("second item");
+    state
+        .dispatch(UiCommand::SelectSources {
+            ids: vec!["source".to_owned(), "second".to_owned()],
+            additive: false,
+        })
+        .expect("multi-selection");
+    assert_eq!(
+        state.selected_sources().collect::<Vec<_>>(),
+        vec!["source", "second"]
+    );
+    assert_eq!(state.selected_source(), Some("second"));
+    state
+        .dispatch(UiCommand::ToggleSourceSelection {
+            id: "source".to_owned(),
+        })
+        .expect("toggle selection");
+    assert_eq!(state.selected_sources().collect::<Vec<_>>(), vec!["second"]);
+    state
+        .dispatch(UiCommand::SelectSources {
+            ids: Vec::new(),
+            additive: false,
+        })
+        .expect("clear selection");
+    assert_eq!(state.selected_source(), None);
+}
+
+#[test]
 fn desktop_state_copy_and_paste_support_reference_and_duplicate_modes() {
     let mut state = DesktopState::new(project());
     state

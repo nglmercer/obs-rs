@@ -14,7 +14,10 @@ use obs_rs_project::SceneItemSpec;
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::ComponentHandle;
 
-use crate::{preview::TransformDraft, MainWindow, PreviewSurface};
+use crate::{
+    preview::{TransformDraft, TransformDraftItem},
+    MainWindow, PreviewSurface,
+};
 
 /// The smallest on-canvas size a drag may leave a source at.
 ///
@@ -119,6 +122,9 @@ pub(crate) struct CanvasState {
     zoom: CanvasZoom,
     pan: (i32, i32),
     snapping: SnapSettings,
+    selection_anchor: Option<(i64, i64)>,
+    selection_box: Option<ItemRect>,
+    selection_additive: bool,
 }
 
 impl Default for CanvasState {
@@ -127,6 +133,9 @@ impl Default for CanvasState {
             zoom: CanvasZoom::FitToWindow,
             pan: (0, 0),
             snapping: SnapSettings::default(),
+            selection_anchor: None,
+            selection_box: None,
+            selection_additive: false,
         }
     }
 }
@@ -152,6 +161,14 @@ impl CanvasState {
         self.snapping
     }
 
+    pub(crate) const fn selection_box(self) -> Option<ItemRect> {
+        self.selection_box
+    }
+
+    pub(crate) const fn selection_additive(self) -> bool {
+        self.selection_additive
+    }
+
     #[allow(
         dead_code,
         reason = "the future snap-distance control will update this transient policy"
@@ -170,6 +187,46 @@ impl CanvasState {
                 .unwrap_or_else(|_| unreachable!("pan is clamped to i32 bounds"))
         };
         self.with_pan((bounded(self.pan.0, dx), bounded(self.pan.1, dy)))
+    }
+
+    fn begin_selection(self, x: i64, y: i64, additive: bool) -> Self {
+        Self {
+            selection_anchor: Some((x, y)),
+            selection_box: Some(ItemRect {
+                x,
+                y,
+                width: 0,
+                height: 0,
+            }),
+            selection_additive: additive,
+            ..self
+        }
+    }
+
+    fn update_selection(self, x: i64, y: i64) -> Self {
+        let Some((anchor_x, anchor_y)) = self.selection_anchor else {
+            return self;
+        };
+        let left = anchor_x.min(x);
+        let top = anchor_y.min(y);
+        Self {
+            selection_box: Some(ItemRect {
+                x: left,
+                y: top,
+                width: i64::try_from(x.abs_diff(anchor_x)).unwrap_or(i64::MAX),
+                height: i64::try_from(y.abs_diff(anchor_y)).unwrap_or(i64::MAX),
+            }),
+            ..self
+        }
+    }
+
+    fn clear_selection(self) -> Self {
+        Self {
+            selection_anchor: None,
+            selection_box: None,
+            selection_additive: false,
+            ..self
+        }
     }
 }
 
@@ -375,6 +432,34 @@ impl ItemRect {
     fn contains(self, x: i64, y: i64) -> bool {
         x >= self.x && y >= self.y && x < self.x + self.width && y < self.y + self.height
     }
+
+    /// Returns the axis-aligned bounds covering both rectangles.
+    pub(crate) fn union(self, other: Self) -> Self {
+        let left = self.x.min(other.x);
+        let top = self.y.min(other.y);
+        let right = self
+            .x
+            .saturating_add(self.width)
+            .max(other.x.saturating_add(other.width));
+        let bottom = self
+            .y
+            .saturating_add(self.height)
+            .max(other.y.saturating_add(other.height));
+        Self {
+            x: left,
+            y: top,
+            width: right.saturating_sub(left).max(1),
+            height: bottom.saturating_sub(top).max(1),
+        }
+    }
+
+    /// Returns whether two rectangles overlap with positive area.
+    pub(crate) fn intersects(self, other: Self) -> bool {
+        self.x < other.x.saturating_add(other.width)
+            && other.x < self.x.saturating_add(self.width)
+            && self.y < other.y.saturating_add(other.height)
+            && other.y < self.y.saturating_add(self.height)
+    }
 }
 
 /// Returns the visible source extent after crop, in source pixels.
@@ -441,6 +526,22 @@ pub(crate) fn item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRe
             height,
         }
     }
+}
+
+/// Returns the single or multi-item selection bounds used by the overlay.
+pub(crate) fn selection_rect(state: &DesktopState, canvas: (u32, u32)) -> Option<ItemRect> {
+    let scene_id = state.preview_scene()?;
+    let scene = state
+        .project_session()
+        .project()
+        .active_profile_spec()?
+        .scene(scene_id)?;
+    scene
+        .items()
+        .iter()
+        .filter(|item| state.is_source_selected(item.id().as_str()))
+        .map(|item| item_rect(item.transform(), canvas))
+        .reduce(ItemRect::union)
 }
 
 /// Rebuilds a transform from an edited rectangle, keeping flips, opacity,
@@ -663,6 +764,41 @@ impl CanvasController {
         self.state.replace(state);
         state
     }
+
+    fn begin_selection(&self, x: i64, y: i64, additive: bool) -> CanvasState {
+        let state = self.canvas_state().begin_selection(x, y, additive);
+        self.state.replace(state);
+        state
+    }
+
+    fn update_selection(&self, x: i64, y: i64) -> CanvasState {
+        let state = self.canvas_state().update_selection(x, y);
+        self.state.replace(state);
+        state
+    }
+
+    fn finish_selection(&self) -> (CanvasState, Option<ItemRect>, bool) {
+        let state = self.canvas_state();
+        let result = (state, state.selection_box(), state.selection_additive());
+        self.state.replace(state.clear_selection());
+        result
+    }
+}
+
+fn set_selection_box_properties(ui: &MainWindow, selection: Option<ItemRect>) {
+    if let Some(selection) = selection {
+        ui.set_selection_box_active(true);
+        ui.set_selection_box_x(i32::try_from(selection.x).unwrap_or(0));
+        ui.set_selection_box_y(i32::try_from(selection.y).unwrap_or(0));
+        ui.set_selection_box_width(i32::try_from(selection.width).unwrap_or(0));
+        ui.set_selection_box_height(i32::try_from(selection.height).unwrap_or(0));
+    } else {
+        ui.set_selection_box_active(false);
+        ui.set_selection_box_x(0);
+        ui.set_selection_box_y(0);
+        ui.set_selection_box_width(0);
+        ui.set_selection_box_height(0);
+    }
 }
 
 /// Connects the UI's transient zoom controls to the one canvas state owner.
@@ -726,6 +862,75 @@ pub(crate) fn install_canvas_callbacks(
     install_zoom_callbacks(ui, &controller);
 
     let weak = ui.as_weak();
+    let pointer_state = Rc::clone(state);
+    let pointer_surface = Rc::clone(surface);
+    let pointer_controller = Rc::clone(&controller);
+    ui.on_canvas_pointer_pressed(move |x, y, additive| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        pointer_controller.draft.borrow_mut().take();
+        let canvas = canvas_size(&ui);
+        let hit = source_at(&pointer_state, canvas, i64::from(x), i64::from(y));
+        if let Some(id) = hit {
+            let command = if additive {
+                UiCommand::ToggleSourceSelection { id }
+            } else {
+                UiCommand::SelectSource { id }
+            };
+            crate::dispatch_and_refresh(&ui.as_weak(), &pointer_state, &pointer_surface, command);
+            ui.set_canvas_pointer_mode(1);
+            set_selection_box_properties(&ui, None);
+        } else {
+            if !additive {
+                crate::dispatch_and_refresh(
+                    &ui.as_weak(),
+                    &pointer_state,
+                    &pointer_surface,
+                    UiCommand::SelectSources {
+                        ids: Vec::new(),
+                        additive: false,
+                    },
+                );
+            }
+            let state = pointer_controller.begin_selection(i64::from(x), i64::from(y), additive);
+            ui.set_canvas_pointer_mode(2);
+            set_selection_box_properties(&ui, state.selection_box());
+        }
+    });
+
+    let weak = ui.as_weak();
+    let selection_controller = Rc::clone(&controller);
+    ui.on_canvas_selection_dragged(move |x, y| {
+        let state = selection_controller.update_selection(i64::from(x), i64::from(y));
+        if let Some(ui) = weak.upgrade() {
+            set_selection_box_properties(&ui, state.selection_box());
+        }
+    });
+
+    let weak = ui.as_weak();
+    let selection_state = Rc::clone(state);
+    let selection_surface = Rc::clone(surface);
+    let selection_controller = Rc::clone(&controller);
+    ui.on_canvas_selection_committed(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let (_, selection, additive) = selection_controller.finish_selection();
+        ui.set_canvas_pointer_mode(0);
+        set_selection_box_properties(&ui, None);
+        let ids = selection
+            .map(|selection| source_ids_in_rect(&selection_state, canvas_size(&ui), selection))
+            .unwrap_or_default();
+        crate::dispatch_and_refresh(
+            &ui.as_weak(),
+            &selection_state,
+            &selection_surface,
+            UiCommand::SelectSources { ids, additive },
+        );
+    });
+
+    let weak = ui.as_weak();
     let drag_state = Rc::clone(state);
     let drag_controller = Rc::clone(&controller);
     ui.on_transform_dragged(move |handle, dx, dy| {
@@ -735,47 +940,69 @@ pub(crate) fn install_canvas_callbacks(
         if selected_is_locked(&drag_state) {
             return;
         }
-        let Some((scene, item)) = dragged_item(&drag_state) else {
+        let Some(scene) = drag_state.borrow().preview_scene().map(str::to_owned) else {
             return;
         };
         let canvas = canvas_size(&ui);
-        let base = drag_controller
-            .draft
-            .borrow()
-            .as_ref()
-            .filter(|draft| draft.scene == scene && draft.item == item)
-            .map(|draft| draft.transform)
-            .or_else(|| selected_transform(&drag_state))
-            .unwrap_or(FrameTransform::IDENTITY);
-        let transform = if (9..=16).contains(&handle) {
-            crop_transform(base, handle - 8, i64::from(dx), i64::from(dy), canvas)
-        } else {
-            let rect = drag_rect(
-                item_rect(base, canvas),
-                handle,
+        let mut draft_slot = drag_controller.draft.borrow_mut();
+        let needs_new_draft = draft_slot.as_ref().is_none_or(|draft| draft.scene != scene);
+        if needs_new_draft {
+            let items = selected_transforms(&drag_state, &scene);
+            if items.is_empty() {
+                return;
+            }
+            *draft_slot = Some(TransformDraft { scene, items });
+        }
+        let Some(draft) = draft_slot.as_mut() else {
+            return;
+        };
+        let Some(group) = draft_rect(draft, canvas) else {
+            return;
+        };
+        if (9..=16).contains(&handle) {
+            if draft.items.len() != 1 {
+                return;
+            }
+            let item = &mut draft.items[0];
+            item.transform = crop_transform(
+                item.transform,
+                handle - 8,
                 i64::from(dx),
                 i64::from(dy),
+                canvas,
             );
+        } else {
             let rect = snap_rect(
-                rect,
+                drag_rect(group, handle, i64::from(dx), i64::from(dy)),
                 handle,
-                &scene_snap_guides(&drag_state, &scene, &item, canvas),
+                &scene_snap_guides(&drag_state, &draft.scene, &draft.items, canvas),
                 drag_controller.canvas_state().snapping(),
             );
-            transform_for_rect(base, rect, canvas)
-        };
+            for item in &mut draft.items {
+                let old_rect = item_rect(item.transform, canvas);
+                let next_rect = if handle == 0 {
+                    ItemRect {
+                        x: old_rect.x.saturating_add(rect.x.saturating_sub(group.x)),
+                        y: old_rect.y.saturating_add(rect.y.saturating_sub(group.y)),
+                        ..old_rect
+                    }
+                } else {
+                    map_rect_into_group(old_rect, group, rect)
+                };
+                item.transform = transform_for_rect(item.transform, next_rect, canvas);
+            }
+        }
+        let overlay = draft_rect(draft, canvas);
+        drop(draft_slot);
         // The drag stays out of the project until the pointer is released: the
         // preview timer feeds this straight to the compositor, and the overlay
         // handles follow it here. A revision per mouse move would fill the undo
         // history with a hundred entries for one gesture — and, before the
         // runtime learned to update in place, restart every capture device in
         // the scene along the way.
-        drag_controller.draft.replace(Some(TransformDraft {
-            scene,
-            item,
-            transform,
-        }));
-        push_item_rect(&ui, item_rect(transform, canvas));
+        if let Some(overlay) = overlay {
+            push_item_rect(&ui, overlay);
+        }
     });
 
     let weak = ui.as_weak();
@@ -789,48 +1016,28 @@ pub(crate) fn install_canvas_callbacks(
         let Some(draft) = commit_controller.draft.borrow_mut().take() else {
             return;
         };
-        // The gesture commits to the item it started on. A drag can outlive the
-        // selection that began it — a dock click, a scene switch — and moving
-        // whatever is selected at release time instead would move the wrong
-        // source, having shown the user the right one moving the whole way.
-        let Some(target) = crate::source_target(&commit_state.borrow(), &draft.item) else {
-            ui.set_status_message("Source transform failed: the source is gone".into());
-            return;
-        };
-        if target.scene != draft.scene {
-            ui.set_status_message("Source transform failed: the scene changed".into());
+        let profile = commit_state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile()
+            .to_string();
+        let transforms = draft
+            .items
+            .into_iter()
+            .map(|item| (item.item, item.transform))
+            .collect::<Vec<_>>();
+        ui.set_canvas_pointer_mode(0);
+        if transforms.is_empty() {
             return;
         }
-        crate::apply_source_transform_to(
+        crate::apply_source_transforms_to(
             &ui,
             &commit_state,
             &commit_surface,
-            &target,
-            &crate::source_transform_document(draft.transform),
-        );
-    });
-
-    let weak = ui.as_weak();
-    let click_state = Rc::clone(state);
-    let click_surface = Rc::clone(surface);
-    ui.on_canvas_clicked(move |x, y| {
-        let Some(ui) = weak.upgrade() else {
-            return;
-        };
-        let canvas = canvas_size(&ui);
-        // Clicking selects the topmost item under the pointer, which is the
-        // last one in the scene's draw order.
-        let Some(id) = source_at(&click_state, canvas, i64::from(x), i64::from(y)) else {
-            return;
-        };
-        if click_state.borrow().selected_source() == Some(id.as_str()) {
-            return;
-        }
-        crate::dispatch_and_refresh(
-            &ui.as_weak(),
-            &click_state,
-            &click_surface,
-            UiCommand::SelectSource { id },
+            &profile,
+            &draft.scene,
+            transforms,
         );
     });
 
@@ -848,13 +1055,115 @@ fn push_item_rect(ui: &MainWindow, rect: ItemRect) {
     ui.set_item_height(i32::try_from(rect.height).unwrap_or(0));
 }
 
-/// Returns the scene and scene item a drag applies to.
-fn dragged_item(state: &Rc<RefCell<DesktopState>>) -> Option<(String, String)> {
+/// Copies the selected scene-item transforms once, at the start of a gesture.
+/// Subsequent pointer samples mutate this bounded draft in place rather than
+/// rebuilding the selection from project state.
+fn selected_transforms(
+    state: &Rc<RefCell<DesktopState>>,
+    scene_id: &str,
+) -> Vec<TransformDraftItem> {
     let state = state.borrow();
-    Some((
-        state.preview_scene()?.to_owned(),
-        state.selected_source()?.to_owned(),
-    ))
+    let Some(scene) = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+    else {
+        return Vec::new();
+    };
+    state
+        .selected_sources()
+        .filter_map(|id| {
+            scene.item(id).map(|item| TransformDraftItem {
+                item: id.to_owned(),
+                transform: item.transform(),
+            })
+        })
+        .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
+        .collect()
+}
+
+fn draft_rect(draft: &TransformDraft, canvas: (u32, u32)) -> Option<ItemRect> {
+    draft
+        .items
+        .iter()
+        .map(|item| item_rect(item.transform, canvas))
+        .reduce(ItemRect::union)
+}
+
+/// Maps one item rectangle from the old group bounds into the new bounds.
+fn map_rect_into_group(rect: ItemRect, old_group: ItemRect, new_group: ItemRect) -> ItemRect {
+    let map = |value: i64, old_start: i64, old_extent: i64, new_start: i64, new_extent: i64| {
+        let offset = i128::from(value.saturating_sub(old_start));
+        let scaled = offset * i128::from(new_extent) / i128::from(old_extent.max(1));
+        i64::try_from(i128::from(new_start) + scaled).unwrap_or_else(|_| {
+            if scaled.is_negative() {
+                i64::MIN
+            } else {
+                i64::MAX
+            }
+        })
+    };
+    let x = map(
+        rect.x,
+        old_group.x,
+        old_group.width,
+        new_group.x,
+        new_group.width,
+    );
+    let y = map(
+        rect.y,
+        old_group.y,
+        old_group.height,
+        new_group.y,
+        new_group.height,
+    );
+    let right = map(
+        rect.x.saturating_add(rect.width),
+        old_group.x,
+        old_group.width,
+        new_group.x,
+        new_group.width,
+    );
+    let bottom = map(
+        rect.y.saturating_add(rect.height),
+        old_group.y,
+        old_group.height,
+        new_group.y,
+        new_group.height,
+    );
+    ItemRect {
+        x,
+        y,
+        width: right.saturating_sub(x).max(MINIMUM_ITEM_PIXELS),
+        height: bottom.saturating_sub(y).max(MINIMUM_ITEM_PIXELS),
+    }
+}
+
+fn source_ids_in_rect(
+    state: &Rc<RefCell<DesktopState>>,
+    canvas: (u32, u32),
+    selection: ItemRect,
+) -> Vec<String> {
+    let state = state.borrow();
+    let Some(scene_id) = state.preview_scene() else {
+        return Vec::new();
+    };
+    let Some(scene) = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+    else {
+        return Vec::new();
+    };
+    scene
+        .items()
+        .iter()
+        .filter(|item| item.visible() && item_rect(item.transform(), canvas).intersects(selection))
+        .map(|item| item.id().as_str().to_owned())
+        .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
+        .collect()
 }
 
 /// Returns the canvas size the studio is currently rendering at.
@@ -867,27 +1176,10 @@ fn canvas_size(ui: &MainWindow) -> (u32, u32) {
     )
 }
 
-/// Returns the selected source's current transform.
-fn selected_transform(state: &Rc<RefCell<DesktopState>>) -> Option<FrameTransform> {
-    let state = state.borrow();
-    let scene = state.preview_scene()?;
-    let item = state.selected_source()?;
-    let session = state.project_session();
-    session
-        .project()
-        .active_profile_spec()?
-        .scene(scene)?
-        .item(item)
-        .map(SceneItemSpec::transform)
-}
-
 /// Returns whether the selected source is locked against editing.
 fn selected_is_locked(state: &Rc<RefCell<DesktopState>>) -> bool {
     let state = state.borrow();
     let Some(scene) = state.preview_scene() else {
-        return false;
-    };
-    let Some(item) = state.selected_source() else {
         return false;
     };
     let session = state.project_session();
@@ -895,8 +1187,13 @@ fn selected_is_locked(state: &Rc<RefCell<DesktopState>>) -> bool {
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene))
-        .and_then(|scene| scene.item(item))
-        .is_some_and(SceneItemSpec::locked)
+        .is_some_and(|scene| {
+            scene
+                .items()
+                .iter()
+                .filter(|item| state.is_source_selected(item.id().as_str()))
+                .any(SceneItemSpec::locked)
+        })
 }
 
 /// Returns the topmost visible source covering a canvas point.
@@ -922,7 +1219,7 @@ fn source_at(
 fn scene_snap_guides(
     state: &Rc<RefCell<DesktopState>>,
     scene_id: &str,
-    item_id: &str,
+    excluded: &[TransformDraftItem],
     canvas: (u32, u32),
 ) -> SnapGuides {
     let mut guides = SnapGuides::with_canvas(canvas);
@@ -936,7 +1233,11 @@ fn scene_snap_guides(
         return guides;
     };
     for item in scene.items() {
-        if item.id().as_str() == item_id || !item.visible() {
+        if excluded
+            .iter()
+            .any(|selected| selected.item == item.id().as_str())
+            || !item.visible()
+        {
             continue;
         }
         guides.push_rect(item_rect(item.transform(), canvas));
@@ -1190,6 +1491,62 @@ mod tests {
     }
 
     #[test]
+    fn selection_box_normalizes_reverse_drag_and_group_mapping() {
+        let state = CanvasState::default().begin_selection(400, 300, true);
+        let state = state.update_selection(100, 50);
+        assert_eq!(
+            state.selection_box(),
+            Some(ItemRect {
+                x: 100,
+                y: 50,
+                width: 300,
+                height: 250,
+            })
+        );
+        let mapped = map_rect_into_group(
+            ItemRect {
+                x: 200,
+                y: 150,
+                width: 100,
+                height: 100,
+            },
+            ItemRect {
+                x: 100,
+                y: 50,
+                width: 400,
+                height: 300,
+            },
+            ItemRect {
+                x: 200,
+                y: 100,
+                width: 800,
+                height: 600,
+            },
+        );
+        assert_eq!(
+            mapped,
+            ItemRect {
+                x: 400,
+                y: 300,
+                width: 200,
+                height: 200,
+            }
+        );
+        assert!(ItemRect {
+            x: 400,
+            y: 300,
+            width: 10,
+            height: 10,
+        }
+        .intersects(ItemRect {
+            x: 405,
+            y: 305,
+            width: 10,
+            height: 10,
+        }));
+    }
+
+    #[test]
     fn hit_testing_uses_the_item_rectangle() {
         let rect = rect();
 
@@ -1197,5 +1554,57 @@ mod tests {
         assert!(rect.contains(499, 349));
         assert!(!rect.contains(99, 50));
         assert!(!rect.contains(500, 350));
+    }
+
+    /// Measures the bounded group-geometry work used for every multi-select
+    /// pointer sample. The report is ignored so it can be run on release
+    /// builds without becoming a machine-dependent pass/fail gate.
+    #[test]
+    #[ignore = "timing report, not a pass/fail assertion"]
+    fn multi_selection_geometry_timing_report() {
+        use std::time::Instant;
+
+        let mut items = (0..16)
+            .map(|index| TransformDraftItem {
+                item: format!("item_{index}"),
+                transform: FrameTransform::new(
+                    400 + index * 20,
+                    350 + index * 15,
+                    i32::try_from(index * 73).expect("translation"),
+                    i32::try_from(index * 41).expect("translation"),
+                    false,
+                    false,
+                    255,
+                )
+                .expect("transform"),
+            })
+            .collect::<Vec<_>>();
+        let runs = 200;
+        let started = Instant::now();
+        let mut checksum = 0_i64;
+        for _ in 0..runs {
+            let group = items
+                .iter()
+                .map(|item| item_rect(item.transform, CANVAS))
+                .reduce(ItemRect::union)
+                .expect("group");
+            let moved = drag_rect(group, 0, 12, -7);
+            for item in &mut items {
+                let old = item_rect(item.transform, CANVAS);
+                let next = ItemRect {
+                    x: old.x.saturating_add(moved.x.saturating_sub(group.x)),
+                    y: old.y.saturating_add(moved.y.saturating_sub(group.y)),
+                    ..old
+                };
+                item.transform = transform_for_rect(item.transform, next, CANVAS);
+                checksum = checksum.saturating_add(i64::from(item.transform.translate_x()));
+            }
+        }
+        println!(
+            "multi-selection: items={} runs={} per_sample={:?} checksum={checksum}",
+            items.len(),
+            runs,
+            started.elapsed() / runs
+        );
     }
 }

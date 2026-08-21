@@ -6,8 +6,8 @@ use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::{
-    frame_to_image, project_store, LocaleOption, MainWindow, MixerRow, OutputRuntime,
-    PreviewSurface, PreviewWorker, ProfileRow, SceneRow, SourceRow,
+    frame_to_image, project_store, selection_rect, LocaleOption, MainWindow, MixerRow,
+    OutputRuntime, PreviewSurface, PreviewWorker, ProfileRow, SceneRow, SourceRow,
 };
 
 thread_local! {
@@ -279,7 +279,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .iter()
             .enumerate()
             .map(|(index, item)| {
-                let selected = item.id().as_str() == selected_source;
+                let selected = state.is_source_selected(item.id().as_str());
                 if selected {
                     selected_item = Some(item);
                     selected_source_spec =
@@ -340,9 +340,15 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .unwrap_or(1_080)
             .max(1),
     );
-    let rect = selected_item.map(|item| crate::item_rect(item.transform(), canvas));
+    let rect = selection_rect(state, canvas);
     ui.set_item_active(rect.is_some());
-    ui.set_item_locked(selected_item.is_some_and(SceneItemSpec::locked));
+    ui.set_item_locked(selected_scene.is_some_and(|scene| {
+        scene
+            .items()
+            .iter()
+            .filter(|item| state.is_source_selected(item.id().as_str()))
+            .any(SceneItemSpec::locked)
+    }));
     if let Some(rect) = rect {
         ui.set_item_x(i32::try_from(rect.x).unwrap_or(0));
         ui.set_item_y(i32::try_from(rect.y).unwrap_or(0));

@@ -353,6 +353,77 @@ fn source_filter_commands_manage_named_ordered_instances() {
 }
 
 #[test]
+fn batched_scene_item_transforms_are_atomic_and_one_undo_step() {
+    let mut project = project();
+    project
+        .apply(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            source: SourceSpec::new("foreground", "color_source", "Foreground", settings())
+                .expect("foreground source"),
+        })
+        .expect("second item");
+    let mut session = ProjectSession::new(project);
+    let first =
+        FrameTransform::new(1_000, 1_000, 40, 50, false, false, 255).expect("first transform");
+    let second =
+        FrameTransform::new(1_200, 800, -20, 30, true, false, 220).expect("second transform");
+    session
+        .dispatch(ProjectCommand::SetSceneItemTransforms {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec![
+                ("background".to_owned(), first),
+                ("foreground".to_owned(), second),
+            ],
+        })
+        .expect("batch transform");
+    let scene = session
+        .project()
+        .profile("live")
+        .expect("profile")
+        .scene("main")
+        .expect("scene");
+    assert_eq!(
+        scene.item("background").expect("background").transform(),
+        first
+    );
+    assert_eq!(
+        scene.item("foreground").expect("foreground").transform(),
+        second
+    );
+    assert!(session.can_undo());
+    session.undo();
+    assert_eq!(
+        session
+            .project()
+            .profile("live")
+            .expect("profile")
+            .scene("main")
+            .expect("scene")
+            .item("background")
+            .expect("background")
+            .transform()
+            .translate_x(),
+        4
+    );
+
+    let mut invalid = session.project().clone();
+    let before = invalid.clone();
+    assert!(invalid
+        .apply(ProjectCommand::SetSceneItemTransforms {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec![
+                ("background".to_owned(), first),
+                ("missing".to_owned(), second),
+            ],
+        })
+        .is_err());
+    assert_eq!(invalid, before);
+}
+
+#[test]
 fn source_filter_commands_participate_in_undo_and_redo() {
     let mut session = ProjectSession::new(project());
     session

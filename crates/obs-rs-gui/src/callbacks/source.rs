@@ -473,6 +473,33 @@ pub(crate) fn apply_source_transform_to(
     }
 }
 
+/// Writes a bounded set of scene-item transforms as one undoable project edit.
+///
+/// Canvas group gestures carry their original item IDs so a selection change
+/// while the pointer is down cannot redirect the commit to a different source.
+pub(crate) fn apply_source_transforms_to(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    profile: &str,
+    scene: &str,
+    transforms: Vec<(String, FrameTransform)>,
+) {
+    let result =
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransforms {
+                profile: profile.to_owned(),
+                scene: scene.to_owned(),
+                items: transforms,
+            }));
+    if let Err(error) = result {
+        ui.set_status_message(format!("Source transform failed: {error}").into());
+    } else {
+        refresh_ui(ui, state, surface);
+    }
+}
+
 /// Returns whether a target's scene item is protected from editing.
 fn is_locked(state: &DesktopState, target: &SourceTarget) -> bool {
     state

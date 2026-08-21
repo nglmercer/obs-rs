@@ -32,7 +32,7 @@ impl DesktopState {
     }
 
     pub(crate) fn sync_selections_after_project_update(&mut self) {
-        let (preview_valid, program_valid, selected_valid) = {
+        let (preview_valid, program_valid, selected_sources) = {
             let project = self.project.project();
             let preview_valid = self
                 .preview_scene
@@ -42,11 +42,18 @@ impl DesktopState {
                 .program_scene
                 .as_ref()
                 .is_some_and(|scene| project_has_scene(project, scene));
-            let selected_valid = match (&self.preview_scene, &self.selected_source) {
-                (Some(scene), Some(source)) => project_has_source(project, scene, source),
-                _ => false,
-            };
-            (preview_valid, program_valid, selected_valid)
+            let selected_sources = self
+                .preview_scene
+                .as_ref()
+                .map(|scene| {
+                    self.selected_sources
+                        .iter()
+                        .filter(|source| project_has_source(project, scene, source))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            (preview_valid, program_valid, selected_sources)
         };
         // `first_scene_id` is the same answer for preview and program, so it is
         // resolved at most once instead of per invalid selection.
@@ -59,11 +66,14 @@ impl DesktopState {
                 self.program_scene = fallback;
             }
         }
-        if !selected_valid {
-            self.selected_source = self
+        self.selected_sources = selected_sources;
+        if self.selected_sources.is_empty() {
+            self.selected_sources = self
                 .preview_scene
                 .as_ref()
-                .and_then(|scene| first_source_id(self.project.project(), scene));
+                .and_then(|scene| first_source_id(self.project.project(), scene))
+                .into_iter()
+                .collect();
         }
     }
 

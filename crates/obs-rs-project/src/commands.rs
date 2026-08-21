@@ -10,6 +10,7 @@ use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::{Identifier, MAX_IDENTIFIER_BYTES};
+use std::collections::HashSet;
 
 /// How a scene item is copied when a reference is pasted or duplicated.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,6 +114,15 @@ pub enum ProjectCommand {
         scene: String,
         item: String,
         transform: FrameTransform,
+    },
+    /// Replaces several scene-item transforms as one atomic undoable edit.
+    ///
+    /// Canvas multi-selection uses this command so moving a group never
+    /// creates one history entry per item.
+    SetSceneItemTransforms {
+        profile: String,
+        scene: String,
+        items: Vec<(String, FrameTransform)>,
     },
     /// Adds one persistent source filter instance.
     AddSourceFilter {
@@ -287,6 +297,11 @@ impl Project {
                 item,
                 transform,
             } => set_scene_item_transform(self, &profile, &scene, &item, transform),
+            ProjectCommand::SetSceneItemTransforms {
+                profile,
+                scene,
+                items,
+            } => set_scene_item_transforms(self, &profile, &scene, items),
             ProjectCommand::AddSourceFilter {
                 profile,
                 source,
@@ -723,6 +738,36 @@ fn set_scene_item_transform(
     transform: FrameTransform,
 ) -> Result<(), ProjectError> {
     item_mut(project, profile, scene, item)?.set_transform(transform);
+    Ok(())
+}
+
+fn set_scene_item_transforms(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    items: Vec<(String, FrameTransform)>,
+) -> Result<(), ProjectError> {
+    let scene = scene_mut(project, profile, scene)?;
+    let mut updates = Vec::with_capacity(items.len());
+    let mut seen = HashSet::with_capacity(items.len());
+    for (item, transform) in items {
+        let item = identifier(&item, "scene item id")?;
+        if !seen.insert(item.clone()) {
+            return Err(ProjectError::UnknownSceneItem(item));
+        }
+        if !scene.has_item(&item) {
+            return Err(ProjectError::UnknownSceneItem(item));
+        }
+        updates.push((item, transform));
+    }
+    for (item, transform) in updates {
+        // Every item was validated before any mutation, so this lookup cannot
+        // fail and the command remains atomic from the caller's perspective.
+        scene
+            .item_mut(&item)
+            .expect("validated scene item exists")
+            .set_transform(transform);
+    }
     Ok(())
 }
 

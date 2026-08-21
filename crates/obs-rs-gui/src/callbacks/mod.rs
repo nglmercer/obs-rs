@@ -30,7 +30,7 @@ use crate::{
 pub(crate) use add_source::install_add_source_window;
 #[cfg(test)]
 pub(crate) use add_source::{add_source_window, populate_add_source_window};
-pub(crate) use canvas::{install_canvas_callbacks, item_rect, CanvasController};
+pub(crate) use canvas::{install_canvas_callbacks, selection_rect, CanvasController};
 pub(crate) use docks::install_dock_callbacks;
 pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
@@ -45,11 +45,11 @@ pub(crate) use settings::{install_settings_window, PeerWindows};
 pub(crate) use setup::install_setup_window;
 pub(crate) use source::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
-    apply_source_transform_to, duplicate_source_and_refresh, flip_source_and_refresh,
-    move_source_and_refresh, move_source_to_and_refresh, remove_scene_and_refresh,
-    remove_source_and_refresh, reset_source_transform_and_refresh, selected_target, source_target,
-    source_transform_document, target_settings_document, toggle_source_locked_and_refresh,
-    toggle_source_visibility_and_refresh, SourceTarget,
+    apply_source_transform_to, apply_source_transforms_to, duplicate_source_and_refresh,
+    flip_source_and_refresh, move_source_and_refresh, move_source_to_and_refresh,
+    remove_scene_and_refresh, remove_source_and_refresh, reset_source_transform_and_refresh,
+    selected_target, source_target, source_transform_document, target_settings_document,
+    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh, SourceTarget,
 };
 pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;

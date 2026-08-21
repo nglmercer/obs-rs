@@ -187,6 +187,10 @@ pub enum UiCommand {
     SelectProgramScene { id: String },
     /// Select a source item from the current preview scene.
     SelectSource { id: String },
+    /// Toggle one source item without disturbing the other selected items.
+    ToggleSourceSelection { id: String },
+    /// Replace or extend the current selection with scene-item IDs.
+    SelectSources { ids: Vec<String>, additive: bool },
     /// Copy one scene item into the transient desktop clipboard.
     CopySource { id: String },
     /// Paste the copied scene item into the current preview scene.

@@ -50,10 +50,17 @@ pub(crate) struct PreviewRenderer {
     gpu_program_scene: Option<String>,
     preview_scaler: Option<FrameScaler>,
     /// The canvas drag currently applied to the runtime, if any.
-    applied_draft: Option<(String, SourceId)>,
+    applied_draft: Option<(String, Vec<(SourceId, FrameTransform)>)>,
 }
 
-/// A scene-item transform being dragged on the canvas.
+/// One scene-item transform being dragged on the canvas.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TransformDraftItem {
+    pub(crate) item: String,
+    pub(crate) transform: FrameTransform,
+}
+
+/// Scene-item transforms being dragged on the canvas.
 ///
 /// A drag is not a project edit until the pointer is released, so it reaches
 /// the compositor through this side channel instead of through a project
@@ -63,8 +70,7 @@ pub(crate) struct PreviewRenderer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TransformDraft {
     pub(crate) scene: String,
-    pub(crate) item: String,
-    pub(crate) transform: FrameTransform,
+    pub(crate) items: Vec<TransformDraftItem>,
 }
 
 /// A snapshot of engine state the studio window can read without a runtime.
@@ -455,53 +461,52 @@ impl PreviewRenderer {
     /// committed drag or the untouched original if the drag was abandoned.
     pub(crate) fn set_transform_draft(&mut self, draft: Option<&TransformDraft>) {
         let target = draft.and_then(|draft| {
-            let source = self
+            let scene = self
                 .applied
                 .active_profile_spec()?
-                .scene(draft.scene.as_str())?
-                .item(draft.item.as_str())?
-                .source_id()
-                .as_str()
-                .to_owned();
-            Some((draft.scene.clone(), *self.source_ids.get(&source)?))
+                .scene(draft.scene.as_str())?;
+            let mut targets = Vec::with_capacity(draft.items.len());
+            for item in &draft.items {
+                let source = scene.item(item.item.as_str())?.source_id().as_str();
+                targets.push((*self.source_ids.get(source)?, item.transform));
+            }
+            Some((draft.scene.clone(), targets))
         });
-        if let Some((scene, source)) = self.applied_draft.clone() {
-            if target
-                .as_ref()
-                .map(|(scene, source)| (scene.as_str(), *source))
-                != Some((scene.as_str(), source))
-            {
-                let committed = self
-                    .applied
-                    .active_profile_spec()
-                    .and_then(|profile| profile.scene(scene.as_str()))
-                    .and_then(|scene| {
-                        scene
-                            .items()
-                            .iter()
-                            .find(|item| {
-                                self.source_ids.get(item.source_id().as_str()) == Some(&source)
-                            })
-                            .map(SceneItemSpec::transform)
-                    })
-                    .unwrap_or(FrameTransform::IDENTITY);
-                let _ = self.runtime.set_source_transform(&scene, source, committed);
+        if let Some((scene, sources)) = self.applied_draft.clone() {
+            let same_targets = target.as_ref().is_some_and(|(next_scene, next)| {
+                next_scene == &scene
+                    && next
+                        .iter()
+                        .map(|(source, _)| *source)
+                        .eq(sources.iter().map(|(source, _)| *source))
+            });
+            if !same_targets {
+                for (source, committed) in sources {
+                    let _ = self.runtime.set_source_transform(&scene, source, committed);
+                }
                 // A scene composed only of still sources caches its picture, so
                 // the cache has to go when the drag stops moving it.
                 self.invalidate_static_scene_cache(&scene);
                 self.applied_draft = None;
             }
         }
-        let (Some(draft), Some((scene, source))) = (draft, target) else {
+        let (Some(_draft), Some((scene, targets))) = (draft, target) else {
             return;
         };
-        if self
-            .runtime
-            .set_source_transform(&scene, source, draft.transform)
-            .is_ok()
-        {
+        let mut applied = Vec::with_capacity(targets.len());
+        for (source, transform) in targets {
+            if self
+                .runtime
+                .set_source_transform(&scene, source, transform)
+                .is_err()
+            {
+                return;
+            }
+            applied.push((source, transform));
+        }
+        if !applied.is_empty() {
             self.invalidate_static_scene_cache(&scene);
-            self.applied_draft = Some((scene, source));
+            self.applied_draft = Some((scene, applied));
         }
     }
 

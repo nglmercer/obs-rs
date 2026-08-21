@@ -19,7 +19,9 @@ pub struct DesktopState {
     pub(crate) project: ProjectSession,
     pub(crate) preview_scene: Option<Identifier>,
     pub(crate) program_scene: Option<Identifier>,
-    pub(crate) selected_source: Option<Identifier>,
+    /// Ordered transient canvas selection. The last item is the active item
+    /// used by property dialogs and single-row source actions.
+    pub(crate) selected_sources: Vec<Identifier>,
     /// Transient scene-item clipboard. It is intentionally outside the
     /// persistent project and is cleared when a different project is loaded.
     pub(crate) clipboard: Option<SceneItemSpec>,
@@ -41,7 +43,7 @@ impl DesktopState {
     pub fn new(project: Project) -> Self {
         let session = ProjectSession::new(project);
         let first_scene = first_scene_id(session.project());
-        let selected_source = first_scene
+        let selected_sources = first_scene
             .as_ref()
             .and_then(|scene| first_source_id(session.project(), scene));
         let (audio_mixer, mixer_sources, mixer_channels) = default_mixer();
@@ -49,7 +51,7 @@ impl DesktopState {
             project: session,
             preview_scene: first_scene.clone(),
             program_scene: first_scene,
-            selected_source,
+            selected_sources: selected_sources.into_iter().collect(),
             clipboard: None,
             locale: UiLocale::English,
             transition: FrameTransition::Cut,
@@ -94,19 +96,23 @@ impl DesktopState {
                     .dispatch(ProjectCommand::SetActiveProfile { id })?;
                 self.preview_scene = first_scene_id(self.project.project());
                 self.program_scene = self.preview_scene.clone();
-                self.selected_source = self
+                self.selected_sources = self
                     .preview_scene
                     .as_ref()
-                    .and_then(|scene| first_source_id(self.project.project(), scene));
+                    .and_then(|scene| first_source_id(self.project.project(), scene))
+                    .into_iter()
+                    .collect();
                 "profile selected"
             }
             UiCommand::SelectPreviewScene { id } => {
                 self.ensure_scene(&id)?;
                 self.preview_scene = Some(identifier(&id, "scene")?);
-                self.selected_source = self
+                self.selected_sources = self
                     .preview_scene
                     .as_ref()
-                    .and_then(|scene| first_source_id(self.project.project(), scene));
+                    .and_then(|scene| first_source_id(self.project.project(), scene))
+                    .into_iter()
+                    .collect();
                 "preview scene selected"
             }
             UiCommand::SelectProgramScene { id } => {
@@ -115,9 +121,16 @@ impl DesktopState {
                 "program scene selected"
             }
             UiCommand::SelectSource { id } => {
-                self.ensure_source(&id)?;
-                self.selected_source = Some(identifier(&id, "source")?);
+                self.select_one_source(&id)?;
                 "source selected"
+            }
+            UiCommand::ToggleSourceSelection { id } => {
+                self.toggle_source_selection(&id)?;
+                "source selection toggled"
+            }
+            UiCommand::SelectSources { ids, additive } => {
+                self.select_sources(ids, additive)?;
+                "source selection updated"
             }
             UiCommand::CopySource { id } => {
                 self.ensure_source(&id)?;
@@ -276,10 +289,12 @@ impl DesktopState {
         let first_scene = first_scene_id(self.project.project());
         self.preview_scene.clone_from(&first_scene);
         self.program_scene.clone_from(&first_scene);
-        self.selected_source = self
+        self.selected_sources = self
             .preview_scene
             .as_ref()
-            .and_then(|scene| first_source_id(self.project.project(), scene));
+            .and_then(|scene| first_source_id(self.project.project(), scene))
+            .into_iter()
+            .collect();
     }
 
     /// Returns the project session used by persistence and rendering adapters.
@@ -330,7 +345,20 @@ impl DesktopState {
     /// Returns the source selected in the current preview scene.
     #[must_use]
     pub fn selected_source(&self) -> Option<&str> {
-        self.selected_source.as_ref().map(Identifier::as_str)
+        self.selected_sources.last().map(Identifier::as_str)
+    }
+
+    /// Returns the current ordered canvas selection.
+    pub fn selected_sources(&self) -> impl Iterator<Item = &str> {
+        self.selected_sources.iter().map(Identifier::as_str)
+    }
+
+    /// Returns whether a scene item belongs to the current canvas selection.
+    #[must_use]
+    pub fn is_source_selected(&self, id: &str) -> bool {
+        self.selected_sources
+            .iter()
+            .any(|selected| selected.as_str() == id)
     }
 
     /// Returns whether a copied scene item is available to paste.
@@ -521,11 +549,56 @@ impl DesktopState {
                 kind: "pasted source",
                 id: scene.clone(),
             })?;
-        self.selected_source = Some(pasted_id);
+        self.selected_sources.clear();
+        self.selected_sources.push(pasted_id);
         self.sync_selections_after_project_update();
         Ok(match mode {
             SceneItemDuplicateMode::Reference => "source reference pasted",
             SceneItemDuplicateMode::DuplicateSource => "source duplicate pasted",
         })
+    }
+
+    fn select_one_source(&mut self, id: &str) -> Result<(), UiError> {
+        self.ensure_source(id)?;
+        self.selected_sources.clear();
+        self.selected_sources.push(identifier(id, "source")?);
+        Ok(())
+    }
+
+    fn toggle_source_selection(&mut self, id: &str) -> Result<(), UiError> {
+        self.ensure_source(id)?;
+        if let Some(index) = self
+            .selected_sources
+            .iter()
+            .position(|selected| selected.as_str() == id)
+        {
+            self.selected_sources.remove(index);
+        } else if self.selected_sources.len() < crate::MAX_CANVAS_SELECTIONS {
+            self.selected_sources.push(identifier(id, "source")?);
+        }
+        Ok(())
+    }
+
+    fn select_sources(&mut self, ids: Vec<String>, additive: bool) -> Result<(), UiError> {
+        let mut validated = Vec::with_capacity(ids.len().min(crate::MAX_CANVAS_SELECTIONS));
+        for id in ids.into_iter().take(crate::MAX_CANVAS_SELECTIONS) {
+            self.ensure_source(&id)?;
+            let id = identifier(&id, "source")?;
+            if !validated.contains(&id) {
+                validated.push(id);
+            }
+        }
+        let mut next = if additive {
+            self.selected_sources.clone()
+        } else {
+            Vec::with_capacity(validated.len())
+        };
+        for id in validated {
+            if !next.contains(&id) && next.len() < crate::MAX_CANVAS_SELECTIONS {
+                next.push(id);
+            }
+        }
+        self.selected_sources = next;
+        Ok(())
     }
 }

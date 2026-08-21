@@ -20,6 +20,12 @@ component StageCanvas inherits Rectangle {
     in property <int> canvas-pan-x: 0;
     in property <int> canvas-pan-y: 0;
     in property <bool> space-held: false;
+    in property <int> pointer-mode: 0;
+    in property <bool> selection-box-active: false;
+    in property <int> selection-box-x;
+    in property <int> selection-box-y;
+    in property <int> selection-box-width;
+    in property <int> selection-box-height;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
     in property <int> item-x;
@@ -30,7 +36,9 @@ component StageCanvas inherits Rectangle {
     in property <bool> item-locked;
     callback transform-dragged(int, int, int);
     callback transform-committed();
-    callback canvas-clicked(int, int);
+    callback canvas-pointer-pressed(int, int, bool);
+    callback canvas-selection-dragged(int, int);
+    callback canvas-selection-committed();
     callback canvas-pan-dragged(int, int);
     callback canvas-zoom-step(int);
 
@@ -75,11 +83,21 @@ component StageCanvas inherits Rectangle {
         view-y: root.view-y;
         view-scale: root.view-scale;
         space-held: root.space-held;
+        pointer-mode: root.pointer-mode;
+        selection-box-active: root.selection-box-active;
+        selection-box-x: root.selection-box-x;
+        selection-box-y: root.selection-box-y;
+        selection-box-width: root.selection-box-width;
+        selection-box-height: root.selection-box-height;
         canvas-width: root.canvas-width;
         canvas-height: root.canvas-height;
         transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
         transform-committed() => { root.transform-committed(); }
-        canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+        canvas-pointer-pressed(x, y, additive) => {
+            root.canvas-pointer-pressed(x, y, additive);
+        }
+        canvas-selection-dragged(x, y) => { root.canvas-selection-dragged(x, y); }
+        canvas-selection-committed() => { root.canvas-selection-committed(); }
         canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
         canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
     }
@@ -114,6 +132,12 @@ export component StagePanel inherits Rectangle {
     in property <int> canvas-pan-x: 0;
     in property <int> canvas-pan-y: 0;
     in property <bool> space-held: false;
+    in property <int> pointer-mode: 0;
+    in property <bool> selection-box-active: false;
+    in property <int> selection-box-x;
+    in property <int> selection-box-y;
+    in property <int> selection-box-width;
+    in property <int> selection-box-height;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
     in property <string> selected-source;
@@ -129,7 +153,9 @@ export component StagePanel inherits Rectangle {
     callback open-monitor-window();
     callback transform-dragged(int, int, int);
     callback transform-committed();
-    callback canvas-clicked(int, int);
+    callback canvas-pointer-pressed(int, int, bool);
+    callback canvas-selection-dragged(int, int);
+    callback canvas-selection-committed();
     callback canvas-zoom-changed(int);
     callback canvas-zoom-step(int);
     callback canvas-pan-dragged(int, int);
@@ -165,6 +191,12 @@ export component StagePanel inherits Rectangle {
                     canvas-pan-x: root.canvas-pan-x;
                     canvas-pan-y: root.canvas-pan-y;
                     space-held: root.space-held;
+                    pointer-mode: root.pointer-mode;
+                    selection-box-active: root.selection-box-active;
+                    selection-box-x: root.selection-box-x;
+                    selection-box-y: root.selection-box-y;
+                    selection-box-width: root.selection-box-width;
+                    selection-box-height: root.selection-box-height;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
                     editable: true;
@@ -176,7 +208,11 @@ export component StagePanel inherits Rectangle {
                     item-locked: root.item-locked;
                     transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
                     transform-committed() => { root.transform-committed(); }
-                    canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+                    canvas-pointer-pressed(x, y, additive) => {
+                        root.canvas-pointer-pressed(x, y, additive);
+                    }
+                    canvas-selection-dragged(x, y) => { root.canvas-selection-dragged(x, y); }
+                    canvas-selection-committed() => { root.canvas-selection-committed(); }
                     canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
                     canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
                 }
@@ -195,6 +231,12 @@ export component StagePanel inherits Rectangle {
                     canvas-pan-x: root.canvas-pan-x;
                     canvas-pan-y: root.canvas-pan-y;
                     space-held: root.space-held;
+                    pointer-mode: root.pointer-mode;
+                    selection-box-active: root.selection-box-active;
+                    selection-box-x: root.selection-box-x;
+                    selection-box-y: root.selection-box-y;
+                    selection-box-width: root.selection-box-width;
+                    selection-box-height: root.selection-box-height;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
                     editable: true;
@@ -206,7 +248,11 @@ export component StagePanel inherits Rectangle {
                     item-locked: root.item-locked;
                     transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
                     transform-committed() => { root.transform-committed(); }
-                    canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+                    canvas-pointer-pressed(x, y, additive) => {
+                        root.canvas-pointer-pressed(x, y, additive);
+                    }
+                    canvas-selection-dragged(x, y) => { root.canvas-selection-dragged(x, y); }
+                    canvas-selection-committed() => { root.canvas-selection-committed(); }
                     canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
                     canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
                 }
