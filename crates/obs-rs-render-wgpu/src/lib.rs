@@ -47,8 +47,8 @@ mod tests {
     #[test]
     fn gpu_upload_layer_submission_readback_and_recovery_are_explicit() {
         use obs_rs_media::{
-            ChromaKey, ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LumaKey,
-            Timestamp, VideoFormat, VideoFrame,
+            ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameRate,
+            FrameTransform, LumaKey, Timestamp, VideoFormat, VideoFrame,
         };
         use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderError, SceneLayer};
 
@@ -224,6 +224,34 @@ mod tests {
             );
         }
         assert_eq!(backend.metrics().readbacks(), 6);
+
+        let color_wash =
+            FrameFilter::ColorMultiplyAdd(ColorMultiplyAdd::new([220, 240, 255], [4, 8, 12]));
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[color_wash],
+                )],
+            )
+            .expect("GPU color multiply/add");
+        let gpu_color_wash = backend.readback(target).expect("color wash readback");
+        let mut cpu_color_wash = frame.clone();
+        cpu_color_wash.apply_filter(color_wash);
+        for (index, (actual, expected)) in gpu_color_wash
+            .pixels()
+            .iter()
+            .zip(cpu_color_wash.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "color wash channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 7);
 
         let rotated_transform = FrameTransform::IDENTITY
             .with_rotation_degrees(90)

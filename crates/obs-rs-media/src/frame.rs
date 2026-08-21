@@ -1,6 +1,6 @@
 use super::{
     error::MediaError,
-    filters::{ChromaKey, ColorCorrection, ColorKey, FrameFilter, LumaKey},
+    filters::{ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, LumaKey},
     format::VideoFormat,
     time::Timestamp,
     transform::FrameTransform,
@@ -833,6 +833,7 @@ impl VideoFrame {
                 filter,
                 FrameFilter::CropPad { .. }
                     | FrameFilter::ColorCorrection(_)
+                    | FrameFilter::ColorMultiplyAdd(_)
                     | FrameFilter::LumaKey(_)
                     | FrameFilter::ColorKey(_)
                     | FrameFilter::ChromaKey(_)
@@ -881,6 +882,9 @@ impl VideoFrame {
                         FrameFilter::ColorCorrection(_) => unreachable!(
                             "derived color correction filters are handled before pixel filters"
                         ),
+                        FrameFilter::ColorMultiplyAdd(_) => unreachable!(
+                            "color multiply/add filters are handled with their channel values"
+                        ),
                         FrameFilter::LumaKey(_) => unreachable!(
                             "derived luma key filters are handled before pixel filters"
                         ),
@@ -906,6 +910,14 @@ impl VideoFrame {
             for_each_block(self.pixels_mut(), move |block| {
                 for pixel in block.chunks_exact_mut(4) {
                     apply_color_correction(pixel, parameters, &gamma_lut);
+                }
+            });
+            return;
+        }
+        if let FrameFilter::ColorMultiplyAdd(color_wash) = filter {
+            for_each_block(self.pixels_mut(), move |block| {
+                for pixel in block.chunks_exact_mut(4) {
+                    apply_color_multiply_add(pixel, color_wash);
                 }
             });
             return;
@@ -959,6 +971,9 @@ impl VideoFrame {
             }
             FrameFilter::ColorCorrection(_) => {
                 unreachable!("color correction filters are handled with their gamma lookup table")
+            }
+            FrameFilter::ColorMultiplyAdd(_) => {
+                unreachable!("color multiply/add filters are handled with their channel values")
             }
             FrameFilter::LumaKey(_) => {
                 unreachable!("luma key filters are handled with derived parameters")
@@ -1288,6 +1303,22 @@ fn apply_color_correction(
     pixel[1] = float_to_byte(green_hue);
     pixel[2] = float_to_byte(blue_hue);
     pixel[3] = float_to_byte(f32::from(pixel[3]) / 255.0 * parameters.opacity);
+}
+
+/// Applies OBS's RGB color wash in normalized straight-alpha space.
+///
+/// The multiply color is normalized by 255 and the add color is normalized by
+/// 255 before the result is clamped and rounded back to RGBA8. This is the
+/// same operation represented by OBS's color matrix and leaves alpha alone.
+fn apply_color_multiply_add(pixel: &mut [u8], color_wash: ColorMultiplyAdd) {
+    let multiply = color_wash.multiply();
+    let add = color_wash.add();
+    for ((channel, multiplier), additive) in pixel[..3].iter_mut().zip(multiply).zip(add) {
+        let value = u32::from(*channel) * u32::from(multiplier)
+            + u32::from(additive) * u32::from(u8::MAX)
+            + 127;
+        *channel = to_byte(value / u32::from(u8::MAX));
+    }
 }
 
 #[derive(Clone, Copy)]

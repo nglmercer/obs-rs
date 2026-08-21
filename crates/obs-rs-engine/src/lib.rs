@@ -23,8 +23,8 @@ use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{
-    ChromaKey, ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LatencyMetrics,
-    LumaKey, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
+    ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameRate, FrameTransform,
+    LatencyMetrics, LumaKey, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
@@ -2037,6 +2037,10 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
 /// implementation is available. The project crate therefore stays independent
 /// of this renderer-facing enum.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the project-to-renderer boundary keeps every supported effect mapping explicit"
+)]
 pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
     if !spec.enabled() || spec.category() != SourceFilterCategory::Effect {
         return None;
@@ -2081,6 +2085,21 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
                 read_value("hue_shift")?,
                 read_value("opacity")?,
             )?))
+        }
+        "color_multiply_add" => {
+            let read_channel = |key| spec.settings().get(key)?.parse::<u8>().ok();
+            Some(FrameFilter::ColorMultiplyAdd(ColorMultiplyAdd::new(
+                [
+                    read_channel("multiply_red")?,
+                    read_channel("multiply_green")?,
+                    read_channel("multiply_blue")?,
+                ],
+                [
+                    read_channel("add_red")?,
+                    read_channel("add_green")?,
+                    read_channel("add_blue")?,
+                ],
+            )))
         }
         "luma_key" => {
             let read_value = |key| {
@@ -2504,6 +2523,24 @@ mod tests {
             Some(FrameFilter::ColorCorrection(
                 ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("valid color correction"),
             ))
+        );
+
+        let color_multiply_add = SourceFilterSpec::new(
+            "color_wash",
+            "Color Multiply/Add",
+            "color_multiply_add",
+            Config::parse(
+                "add_blue = 12\nadd_green = 8\nadd_red = 4\nmultiply_blue = 255\nmultiply_green = 240\nmultiply_red = 220\n",
+            )
+            .expect("color wash settings"),
+        )
+        .expect("color multiply/add filter");
+        assert_eq!(
+            compile_filter(&color_multiply_add),
+            Some(FrameFilter::ColorMultiplyAdd(ColorMultiplyAdd::new(
+                [220, 240, 255],
+                [4, 8, 12],
+            )))
         );
 
         let luma_key = SourceFilterSpec::new(

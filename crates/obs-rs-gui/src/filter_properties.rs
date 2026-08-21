@@ -128,6 +128,57 @@ const COLOR_CORRECTION: [Field; 6] = [
     },
 ];
 
+const COLOR_MULTIPLY_ADD: [Field; 6] = [
+    Field {
+        key: "multiply_red",
+        english: "Multiply red",
+        spanish: "Multiplicar rojo",
+        minimum: 0,
+        maximum: 255,
+        default: "255",
+    },
+    Field {
+        key: "multiply_green",
+        english: "Multiply green",
+        spanish: "Multiplicar verde",
+        minimum: 0,
+        maximum: 255,
+        default: "255",
+    },
+    Field {
+        key: "multiply_blue",
+        english: "Multiply blue",
+        spanish: "Multiplicar azul",
+        minimum: 0,
+        maximum: 255,
+        default: "255",
+    },
+    Field {
+        key: "add_red",
+        english: "Add red",
+        spanish: "Añadir rojo",
+        minimum: 0,
+        maximum: 255,
+        default: "0",
+    },
+    Field {
+        key: "add_green",
+        english: "Add green",
+        spanish: "Añadir verde",
+        minimum: 0,
+        maximum: 255,
+        default: "0",
+    },
+    Field {
+        key: "add_blue",
+        english: "Add blue",
+        spanish: "Añadir azul",
+        minimum: 0,
+        maximum: 255,
+        default: "0",
+    },
+];
+
 const LUMA_KEY: [Field; 4] = [
     Field {
         key: "luma_max",
@@ -272,6 +323,7 @@ fn fields(kind: &str) -> &'static [Field] {
         "opacity" => &OPACITY,
         "crop_pad" => &CROP_PAD,
         "color_correction" => &COLOR_CORRECTION,
+        "color_multiply_add" => &COLOR_MULTIPLY_ADD,
         "luma_key" => &LUMA_KEY,
         "color_key" => &COLOR_KEY,
         "chroma_key" => &CHROMA_KEY,
@@ -355,6 +407,16 @@ mod tests {
         assert_eq!(rows[1].number, 255);
         assert_eq!(rows[3].maximum, ColorKey::MAX_SIMILARITY_MILLI);
         assert_eq!(rows[4].text, "80");
+    }
+
+    #[test]
+    fn color_multiply_add_schema_defaults_to_identity_wash() {
+        let rows = rows("color_multiply_add", "", UiLocale::English);
+        assert_eq!(rows.len(), 6);
+        assert_eq!(rows[0].number, 255);
+        assert_eq!(rows[2].number, 255);
+        assert_eq!(rows[3].number, 0);
+        assert_eq!(rows[5].maximum, 255);
     }
 
     #[test]

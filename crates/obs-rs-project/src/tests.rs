@@ -1,8 +1,8 @@
 use super::*;
 use obs_rs_config::Config;
 use obs_rs_media::{
-    ChromaKey, ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LumaKey,
-    VideoFormat,
+    ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameRate, FrameTransform,
+    LumaKey, VideoFormat,
 };
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
@@ -767,6 +767,7 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
                     ChromaKey::new(0, 255, 0, 400, 80, 100).expect("chroma key"),
                 ),
                 FrameFilter::Sharpen { milli: 80 },
+                FrameFilter::ColorMultiplyAdd(ColorMultiplyAdd::new([220, 240, 255], [4, 8, 12])),
             ],
         })
         .expect("set source filters command");

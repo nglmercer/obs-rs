@@ -230,6 +230,31 @@ fn color_correction_uses_fixed_point_obs_ranges_and_preserves_noop_frames() {
 }
 
 #[test]
+fn color_multiply_add_matches_obs_color_wash_and_preserves_alpha() {
+    let format =
+        VideoFormat::new(2, 1, FrameRate::new(30, 1).expect("valid rate")).expect("valid format");
+    let frame = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![100, 150, 200, 77, 255, 255, 255, 12],
+    )
+    .expect("frame");
+    let color_wash = ColorMultiplyAdd::new([128, 255, 0], [10, 20, 30]);
+    let washed = frame.filtered(FrameFilter::ColorMultiplyAdd(color_wash));
+
+    assert_eq!(washed.pixel(0, 0), Some([60, 170, 30, 77]));
+    assert_eq!(washed.pixel(1, 0), Some([138, 255, 30, 12]));
+    assert_eq!(
+        frame.filtered(FrameFilter::ColorMultiplyAdd(ColorMultiplyAdd::new(
+            [255, 255, 255],
+            [0, 0, 0],
+        ))),
+        frame,
+        "OBS's default multiply/add colors are a bit-exact no-op"
+    );
+}
+
+#[test]
 fn color_key_clears_matching_pixels_and_feathers_the_edge() {
     let format =
         VideoFormat::new(3, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
@@ -671,6 +696,8 @@ fn composition_primitives_timing_report() {
     let luma_key = LumaKey::new(900, 100, 40, 60).expect("luma key");
     let chroma_key = ChromaKey::new(0, 255, 0, 400, 80, 100).expect("chroma key");
     let sharpen = FrameFilter::Sharpen { milli: 80 };
+    let color_wash =
+        FrameFilter::ColorMultiplyAdd(ColorMultiplyAdd::new([220, 240, 255], [4, 8, 12]));
     let runs = 200;
 
     let measure = |label: &str, mut work: Box<dyn FnMut()>| {
@@ -776,6 +803,15 @@ fn composition_primitives_timing_report() {
         Box::new(move || {
             let mut target = frame.clone();
             target.apply_filter(sharpen);
+            std::hint::black_box(target);
+        }),
+    );
+    let frame = background.clone();
+    measure(
+        "clone + color-multiply-add",
+        Box::new(move || {
+            let mut target = frame.clone();
+            target.apply_filter(color_wash);
             std::hint::black_box(target);
         }),
     );

@@ -15,6 +15,39 @@ pub struct ColorCorrection {
     opacity_milli: i32,
 }
 
+/// Fixed-point RGB color wash parameters from OBS's Color Correction filter.
+///
+/// OBS stores these as two color properties (`color_multiply` and
+/// `color_add`). The portable RGBA8 contract keeps their RGB channels
+/// explicit so validation and project serialization never depend on a packed
+/// platform color integer. Alpha remains owned by the source and by the
+/// separate opacity control.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ColorMultiplyAdd {
+    multiply: [u8; 3],
+    add: [u8; 3],
+}
+
+impl ColorMultiplyAdd {
+    /// Creates a bounded RGB multiply/add operation.
+    #[must_use]
+    pub const fn new(multiply: [u8; 3], add: [u8; 3]) -> Self {
+        Self { multiply, add }
+    }
+
+    /// Returns the per-channel multiplier, where 255 is identity.
+    #[must_use]
+    pub const fn multiply(self) -> [u8; 3] {
+        self.multiply
+    }
+
+    /// Returns the per-channel additive color component.
+    #[must_use]
+    pub const fn add(self) -> [u8; 3] {
+        self.add
+    }
+}
+
 impl ColorCorrection {
     /// Smallest gamma value, in thousandths.
     pub const MIN_GAMMA_MILLI: i32 = -3_000;
@@ -379,6 +412,8 @@ pub enum FrameFilter {
     },
     /// Applies the portable six-control Color Correction effect.
     ColorCorrection(ColorCorrection),
+    /// Applies OBS Color Correction's RGB multiply/add color wash controls.
+    ColorMultiplyAdd(ColorMultiplyAdd),
     /// Makes pixels outside a bounded luminance interval transparent.
     LumaKey(LumaKey),
     /// Makes pixels within a bounded RGB distance transparent.

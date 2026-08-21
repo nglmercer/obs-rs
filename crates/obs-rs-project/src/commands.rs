@@ -1156,6 +1156,24 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
             }
             ("color_correction", "Color Correction", settings)
         }
+        FrameFilter::ColorMultiplyAdd(color_wash) => {
+            let mut settings = Config::new();
+            let multiply = color_wash.multiply();
+            let add = color_wash.add();
+            for (key, value) in [
+                ("multiply_red", multiply[0]),
+                ("multiply_green", multiply[1]),
+                ("multiply_blue", multiply[2]),
+                ("add_red", add[0]),
+                ("add_green", add[1]),
+                ("add_blue", add[2]),
+            ] {
+                settings
+                    .set(key, &value.to_string())
+                    .map_err(ProjectError::Config)?;
+            }
+            ("color_multiply_add", "Color Multiply/Add", settings)
+        }
         FrameFilter::LumaKey(luma_key) => {
             let mut settings = Config::new();
             for (key, value) in [

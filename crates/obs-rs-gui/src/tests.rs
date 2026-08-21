@@ -1984,6 +1984,9 @@ fn render_source_filters_window(
     window.invoke_add_filter("color_correction".into());
     window.invoke_edit_property("gamma".into(), "1000".into());
     window.invoke_edit_property("opacity".into(), "900".into());
+    window.invoke_add_filter("color_multiply_add".into());
+    window.invoke_edit_property("multiply_red".into(), "220".into());
+    window.invoke_edit_property("add_blue".into(), "12".into());
     window.invoke_add_filter("luma_key".into());
     window.invoke_edit_property("luma_min".into(), "250".into());
     window.invoke_add_filter("color_key".into());
@@ -2000,7 +2003,7 @@ fn render_source_filters_window(
         .active_profile_spec()
         .and_then(|profile| profile.source("background"))
         .expect("background source after filter edits");
-    assert_eq!(source.filters().len(), 7);
+    assert_eq!(source.filters().len(), 8);
     assert_eq!(source.filters()[0].id().as_str(), "grayscale");
     assert_eq!(source.filters()[0].name(), "Scene grayscale");
     let brightness = source
@@ -2017,6 +2020,16 @@ fn render_source_filters_window(
         .expect("color correction filter");
     assert_eq!(color_correction.settings().get("gamma"), Some("1000"));
     assert_eq!(color_correction.settings().get("opacity"), Some("900"));
+    let color_multiply_add = source
+        .filters()
+        .iter()
+        .find(|filter| filter.kind().as_str() == "color_multiply_add")
+        .expect("color multiply/add filter");
+    assert_eq!(
+        color_multiply_add.settings().get("multiply_red"),
+        Some("220")
+    );
+    assert_eq!(color_multiply_add.settings().get("add_blue"), Some("12"));
     let luma_key = source
         .filters()
         .iter()
@@ -2055,6 +2068,8 @@ fn render_source_filters_window(
     window.invoke_select_filter("luma_key".into());
     window.invoke_remove_filter();
     window.invoke_select_filter("color_correction".into());
+    window.invoke_remove_filter();
+    window.invoke_select_filter("color_multiply_add".into());
     window.invoke_remove_filter();
     window.invoke_select_filter("grayscale".into());
     window.invoke_remove_filter();

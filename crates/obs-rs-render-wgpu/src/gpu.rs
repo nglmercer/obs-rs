@@ -1225,6 +1225,25 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
                 );
                 pixel = vec4<i32>(floor(sharpened * 255.0 + vec4<f32>(0.5)));
             }
+        } else if (kind == 9) {
+            let multiply = vec3<f32>(
+                f32(parameters.values[filter_offset + 1]),
+                f32(parameters.values[filter_offset + 2]),
+                f32(parameters.values[filter_offset + 3]),
+            ) / 255.0;
+            let add = vec3<f32>(
+                f32(parameters.values[filter_offset + 4]),
+                f32(parameters.values[filter_offset + 5]),
+                f32(parameters.values[filter_offset + 6]),
+            ) / 255.0;
+            let color = clamp(
+                vec3<f32>(f32(pixel.r), f32(pixel.g), f32(pixel.b)) / 255.0 * multiply + add,
+                vec3<f32>(0.0),
+                vec3<f32>(1.0),
+            );
+            pixel.r = i32(floor(color.r * 255.0 + 0.5));
+            pixel.g = i32(floor(color.g * 255.0 + 0.5));
+            pixel.b = i32(floor(color.b * 255.0 + 0.5));
         }
         filter_index = filter_index + 1;
     }
@@ -1401,6 +1420,19 @@ fn layer_parameters(
                 chroma_key.spill_milli(),
             ]),
             FrameFilter::Sharpen { milli } => values.extend([8, i32::from(milli), 0, 0, 0, 0, 0]),
+            FrameFilter::ColorMultiplyAdd(color_wash) => {
+                let multiply = color_wash.multiply();
+                let add = color_wash.add();
+                values.extend([
+                    9,
+                    i32::from(multiply[0]),
+                    i32::from(multiply[1]),
+                    i32::from(multiply[2]),
+                    i32::from(add[0]),
+                    i32::from(add[1]),
+                    i32::from(add[2]),
+                ]);
+            }
         }
     }
     values.into_iter().flat_map(i32::to_le_bytes).collect()
