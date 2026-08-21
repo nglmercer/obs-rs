@@ -203,9 +203,9 @@ export component SourceContextMenuArea inherits Rectangle {
             MenuSeparator {}
             MenuItem {
                 title: I18n.text.remove_source;
-                enabled: root.source-id != "" && !root.source-locked && !root.nested;
+                enabled: root.source-id != "" && !root.source-locked;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.remove-source(root.source-id);
                 }
             }

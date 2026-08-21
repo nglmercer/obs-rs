@@ -415,6 +415,54 @@ fn group_child_commands_are_path_addressed_and_atomic() {
 }
 
 #[test]
+fn group_child_removal_is_path_addressed_and_retains_the_source_registry() {
+    let mut project = project_with_nested_group();
+    project
+        .apply(ProjectCommand::RemoveGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: "first".to_owned(),
+        })
+        .expect("remove group child");
+
+    let group = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("group after child removal");
+    assert_eq!(
+        group
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["second", "inner-group"]
+    );
+    assert!(project
+        .profile("live")
+        .expect("profile")
+        .has_source("background"));
+
+    let before_invalid = project.clone();
+    let error = project
+        .apply(ProjectCommand::RemoveGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned(), "inner-group".to_owned()],
+            item: "missing".to_owned(),
+        })
+        .expect_err("unknown group child must fail");
+    assert_eq!(
+        error,
+        ProjectError::UnknownSceneItem(Identifier::new("missing").expect("id"))
+    );
+    assert_eq!(project, before_invalid);
+}
+
+#[test]
 fn parser_rejects_a_document_without_the_format_and_version_tags() {
     let encoded = project().serialize();
 

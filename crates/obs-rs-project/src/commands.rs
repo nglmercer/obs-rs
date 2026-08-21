@@ -220,6 +220,15 @@ pub enum ProjectCommand {
         item: String,
         target_index: usize,
     },
+    /// Removes a child item from its enclosing group while retaining any
+    /// profile-wide source definition.
+    RemoveGroupItem {
+        profile: String,
+        scene: String,
+        /// Outermost-to-innermost group scene-item IDs.
+        group_path: Vec<String>,
+        item: String,
+    },
 }
 
 impl Project {
@@ -407,6 +416,12 @@ impl Project {
                 item,
                 target_index,
             } => move_group_item(self, &profile, &scene, &group_path, &item, target_index),
+            ProjectCommand::RemoveGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+            } => remove_group_item(self, &profile, &scene, &group_path, &item),
             ProjectCommand::RemoveSource { profile, source } => {
                 remove_source(self, &profile, &source)
             }
@@ -1149,6 +1164,20 @@ fn move_group_item(
 ) -> Result<(), ProjectError> {
     let item_id = identifier(item, "scene item id")?;
     group_mut(project, profile, scene, group_path)?.move_item(&item_id, target_index)
+}
+
+fn remove_group_item(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    group_path: &[String],
+    item: &str,
+) -> Result<(), ProjectError> {
+    let item_id = identifier(item, "scene item id")?;
+    group_mut(project, profile, scene, group_path)?
+        .remove_item(&item_id)
+        .map(|_| ())
+        .ok_or(ProjectError::UnknownSceneItem(item_id))
 }
 
 fn move_scene_item(
