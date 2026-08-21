@@ -82,11 +82,11 @@ enum WorkerCommand {
     ),
     SetNoiseGate(
         EngineAudioChannel,
-        u16,
+        i32,
         i32,
         u16,
         u16,
-        i32,
+        u16,
         mpsc::Sender<Result<(), String>>,
     ),
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
@@ -628,8 +628,8 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
-    /// Replaces the live channel's bounded peak-based Gate preset on the
-    /// worker-owned engine.
+    /// Replaces the live channel's bounded peak Noise Gate on the worker-owned
+    /// engine.
     ///
     /// # Errors
     ///
@@ -638,21 +638,21 @@ impl EngineWorker {
     pub fn set_channel_noise_gate(
         &self,
         channel: EngineAudioChannel,
-        ratio_milli: u16,
-        threshold_db_milli: i32,
+        open_threshold_db_milli: i32,
+        close_threshold_db_milli: i32,
         attack_ms: u16,
+        hold_ms: u16,
         release_ms: u16,
-        output_gain_db_milli: i32,
     ) -> Result<(), EngineError> {
         let (reply, receive) = mpsc::channel();
         self.sender
             .send(WorkerCommand::SetNoiseGate(
                 channel,
-                ratio_milli,
-                threshold_db_milli,
+                open_threshold_db_milli,
+                close_threshold_db_milli,
                 attack_ms,
+                hold_ms,
                 release_ms,
-                output_gain_db_milli,
                 reply,
             ))
             .map_err(|_| worker_closed())?;
@@ -889,21 +889,21 @@ fn worker_loop(
             }
             WorkerCommand::SetNoiseGate(
                 channel,
-                ratio_milli,
-                threshold_db_milli,
+                open_threshold_db_milli,
+                close_threshold_db_milli,
                 attack_ms,
+                hold_ms,
                 release_ms,
-                output_gain_db_milli,
                 reply,
             ) => {
                 let result = session
                     .set_channel_noise_gate(
                         channel,
-                        ratio_milli,
-                        threshold_db_milli,
+                        open_threshold_db_milli,
+                        close_threshold_db_milli,
                         attack_ms,
+                        hold_ms,
                         release_ms,
-                        output_gain_db_milli,
                     )
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
@@ -1217,7 +1217,14 @@ mod tests {
             .set_channel_expander(EngineAudioChannel::Microphone, 10_000, -40_000, 10, 50, 0)
             .expect("valid expander filter");
         worker
-            .set_channel_noise_gate(EngineAudioChannel::Microphone, 10_000, -40_000, 10, 125, 0)
+            .set_channel_noise_gate(
+                EngineAudioChannel::Microphone,
+                -26_000,
+                -32_000,
+                10,
+                125,
+                150,
+            )
             .expect("valid noise gate filter");
         let error = worker
             .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, 30_001)
@@ -1236,9 +1243,16 @@ mod tests {
             .expect_err("unbounded expander ratio");
         assert!(matches!(error, EngineError::Worker(reason) if reason.contains("ratio")));
         let error = worker
-            .set_channel_noise_gate(EngineAudioChannel::Microphone, 20_001, -40_000, 10, 125, 0)
-            .expect_err("unbounded noise gate ratio");
-        assert!(matches!(error, EngineError::Worker(reason) if reason.contains("ratio")));
+            .set_channel_noise_gate(
+                EngineAudioChannel::Microphone,
+                -97_000,
+                -32_000,
+                10,
+                125,
+                150,
+            )
+            .expect_err("unbounded noise gate open threshold");
+        assert!(matches!(error, EngineError::Worker(reason) if reason.contains("open threshold")));
     }
 
     #[test]

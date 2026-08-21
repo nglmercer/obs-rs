@@ -57,9 +57,18 @@ pub const MAX_EXPANDER_RELEASE_MS: u16 = 1_000;
 pub const MIN_EXPANDER_OUTPUT_GAIN_DB_MILLI: i32 = -32_000;
 /// Upper bound of the OBS Expander output gain in thousandths of a decibel.
 pub const MAX_EXPANDER_OUTPUT_GAIN_DB_MILLI: i32 = 32_000;
+/// Lower bound of an OBS Noise Gate threshold in thousandths of a decibel.
+pub const MIN_NOISE_GATE_THRESHOLD_DB_MILLI: i32 = -96_000;
+/// Upper bound of an OBS Noise Gate threshold in thousandths of a decibel.
+pub const MAX_NOISE_GATE_THRESHOLD_DB_MILLI: i32 = 0;
+/// Smallest safe attack/release time for the bounded Noise Gate core.
+pub const MIN_NOISE_GATE_TIME_MS: u16 = 1;
+/// Largest OBS Noise Gate attack/hold/release time in milliseconds.
+pub const MAX_NOISE_GATE_TIME_MS: u16 = 10_000;
 
 const LIMITER_ATTACK_TIME_SECONDS: f32 = 0.001;
 const LIMITER_SILENCE_DB: f32 = -120.0;
+const NOISE_GATE_MIN_DECAY_HZ: f32 = 75.0;
 
 /// A validated OBS-compatible audio gain value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -424,6 +433,199 @@ fn compressor_gain(envelope: f32, threshold_db: f32, slope: f32, output_gain: f3
     10.0_f32.powf(gain_db / 20.0) * output_gain
 }
 
+/// A validated, stateful OBS-compatible Noise Gate.
+///
+/// The detector and envelope follow OBS's native peak gate: the maximum
+/// absolute sample across channels opens the gate above the open threshold,
+/// the decaying level closes it below the close threshold, and attack/hold /
+/// release shape the linear attenuation. The state lives in this filter value,
+/// so adjacent audio blocks remain continuous without a second runtime store.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioNoiseGate {
+    open_threshold_db_milli: i32,
+    close_threshold_db_milli: i32,
+    attack_ms: u16,
+    hold_ms: u16,
+    release_ms: u16,
+    open_threshold: f32,
+    close_threshold: f32,
+    decay_rate: f32,
+    attack_rate: f32,
+    release_rate: f32,
+    hold_time: f32,
+    sample_rate: u32,
+    sample_rate_i: f32,
+    is_open: bool,
+    attenuation: f32,
+    level: f32,
+    held_time: f32,
+}
+
+impl AudioNoiseGate {
+    /// Creates a Noise Gate with OBS's bounded threshold and timing controls.
+    ///
+    /// OBS exposes zero as the slider minimum for timing controls, but its
+    /// native rate calculation divides by that value. The safe Rust boundary
+    /// therefore starts at one millisecond and keeps the real-time path finite.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed validation error when a control is outside the bounded
+    /// range or when the close threshold is above the open threshold.
+    pub fn new(
+        open_threshold_db_milli: i32,
+        close_threshold_db_milli: i32,
+        attack_ms: u16,
+        hold_ms: u16,
+        release_ms: u16,
+    ) -> Result<Self, AudioError> {
+        if !(MIN_NOISE_GATE_THRESHOLD_DB_MILLI..=MAX_NOISE_GATE_THRESHOLD_DB_MILLI)
+            .contains(&open_threshold_db_milli)
+        {
+            return Err(AudioError::InvalidNoiseGateOpenThreshold {
+                milli_db: open_threshold_db_milli,
+            });
+        }
+        if !(MIN_NOISE_GATE_THRESHOLD_DB_MILLI..=MAX_NOISE_GATE_THRESHOLD_DB_MILLI)
+            .contains(&close_threshold_db_milli)
+        {
+            return Err(AudioError::InvalidNoiseGateCloseThreshold {
+                milli_db: close_threshold_db_milli,
+            });
+        }
+        if close_threshold_db_milli > open_threshold_db_milli {
+            return Err(AudioError::InvalidNoiseGateThresholdOrder {
+                open_milli_db: open_threshold_db_milli,
+                close_milli_db: close_threshold_db_milli,
+            });
+        }
+        if !(MIN_NOISE_GATE_TIME_MS..=MAX_NOISE_GATE_TIME_MS).contains(&attack_ms) {
+            return Err(AudioError::InvalidNoiseGateAttack {
+                milliseconds: attack_ms,
+            });
+        }
+        if hold_ms > MAX_NOISE_GATE_TIME_MS {
+            return Err(AudioError::InvalidNoiseGateHold {
+                milliseconds: hold_ms,
+            });
+        }
+        if !(MIN_NOISE_GATE_TIME_MS..=MAX_NOISE_GATE_TIME_MS).contains(&release_ms) {
+            return Err(AudioError::InvalidNoiseGateRelease {
+                milliseconds: release_ms,
+            });
+        }
+
+        Ok(Self {
+            open_threshold_db_milli,
+            close_threshold_db_milli,
+            attack_ms,
+            hold_ms,
+            release_ms,
+            open_threshold: db_to_multiplier(open_threshold_db_milli),
+            close_threshold: db_to_multiplier(close_threshold_db_milli),
+            decay_rate: 0.0,
+            attack_rate: 0.0,
+            release_rate: 0.0,
+            hold_time: f32::from(hold_ms) / 1_000.0,
+            sample_rate: 0,
+            sample_rate_i: 0.0,
+            is_open: false,
+            attenuation: 0.0,
+            level: 0.0,
+            held_time: 0.0,
+        })
+    }
+
+    /// Returns the open threshold in thousandths of a decibel.
+    #[must_use]
+    pub const fn open_threshold_db_milli(&self) -> i32 {
+        self.open_threshold_db_milli
+    }
+
+    /// Returns the close threshold in thousandths of a decibel.
+    #[must_use]
+    pub const fn close_threshold_db_milli(&self) -> i32 {
+        self.close_threshold_db_milli
+    }
+
+    /// Returns the attack time in milliseconds.
+    #[must_use]
+    pub const fn attack_ms(&self) -> u16 {
+        self.attack_ms
+    }
+
+    /// Returns the hold time in milliseconds.
+    #[must_use]
+    pub const fn hold_ms(&self) -> u16 {
+        self.hold_ms
+    }
+
+    /// Returns the release time in milliseconds.
+    #[must_use]
+    pub const fn release_ms(&self) -> u16 {
+        self.release_ms
+    }
+
+    /// Applies the peak gate in place without allocating or changing timestamps.
+    pub fn apply(&mut self, buffer: &mut AudioBuffer) {
+        self.configure_for_sample_rate(buffer.format().sample_rate());
+        let channels = usize::from(buffer.format().channels());
+        for frame in buffer.samples_mut().chunks_exact_mut(channels) {
+            let current_level = frame
+                .iter()
+                .fold(0.0_f32, |level, sample| level.max(sample.abs()));
+
+            if current_level > self.open_threshold && !self.is_open {
+                self.is_open = true;
+            }
+            if self.level < self.close_threshold && self.is_open {
+                self.held_time = 0.0;
+                self.is_open = false;
+            }
+
+            self.level = self.level.max(current_level) - self.decay_rate;
+            if self.is_open {
+                self.attenuation = (self.attenuation + self.attack_rate).min(1.0);
+            } else {
+                self.held_time += self.sample_rate_i;
+                if self.held_time > self.hold_time {
+                    self.attenuation = (self.attenuation - self.release_rate).max(0.0);
+                }
+            }
+
+            for sample in frame {
+                *sample *= self.attenuation;
+            }
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn configure_for_sample_rate(&mut self, sample_rate: u32) {
+        if self.sample_rate == sample_rate {
+            return;
+        }
+        let sample_rate_f32 = sample_rate as f32;
+        self.sample_rate_i = 1.0 / sample_rate_f32;
+        self.attack_rate = 1.0 / (f32::from(self.attack_ms) / 1_000.0 * sample_rate_f32);
+        self.release_rate = 1.0 / (f32::from(self.release_ms) / 1_000.0 * sample_rate_f32);
+        self.decay_rate = (self.open_threshold - self.close_threshold)
+            / (sample_rate_f32 / NOISE_GATE_MIN_DECAY_HZ);
+        self.sample_rate = sample_rate;
+        self.is_open = false;
+        self.attenuation = 0.0;
+        self.level = 0.0;
+        self.held_time = 0.0;
+    }
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "the fixed-point threshold is converted once when the filter is created"
+)]
+fn db_to_multiplier(milli_db: i32) -> f32 {
+    10.0_f32.powf(milli_db as f32 / 20_000.0)
+}
+
 /// A validated, stateful OBS-compatible peak expander without gate presets,
 /// RMS detection, knee shaping, or sidechain input.
 #[derive(Clone, Debug, PartialEq)]
@@ -668,8 +870,8 @@ pub enum AudioFilter {
     Compressor(AudioCompressor),
     /// Applies a stateful OBS-compatible peak expander without a sidechain.
     Expander(AudioExpander),
-    /// Applies OBS's gate preset using the shared peak-expander state machine.
-    NoiseGate(AudioExpander),
+    /// Applies OBS's stateful peak Noise Gate.
+    NoiseGate(AudioNoiseGate),
 }
 
 impl AudioFilter {
@@ -747,30 +949,25 @@ impl AudioFilter {
         .map(Self::Expander)
     }
 
-    /// Creates OBS's peak-based Gate preset from the shared expander controls.
-    ///
-    /// OBS exposes Gate as a preset of the expander filter rather than as a
-    /// separate native processing primitive. Keeping it as a distinct enum
-    /// operation preserves the project-facing filter identity while sharing
-    /// the one stateful implementation.
+    /// Creates OBS's stateful peak Noise Gate from threshold and timing controls.
     ///
     /// # Errors
     ///
     /// Returns a validation error when a control is outside the supported
     /// OBS-compatible range.
     pub fn noise_gate(
-        ratio_milli: u16,
-        threshold_db_milli: i32,
+        open_threshold_db_milli: i32,
+        close_threshold_db_milli: i32,
         attack_ms: u16,
+        hold_ms: u16,
         release_ms: u16,
-        output_gain_db_milli: i32,
     ) -> Result<Self, AudioError> {
-        AudioExpander::new(
-            ratio_milli,
-            threshold_db_milli,
+        AudioNoiseGate::new(
+            open_threshold_db_milli,
+            close_threshold_db_milli,
             attack_ms,
+            hold_ms,
             release_ms,
-            output_gain_db_milli,
         )
         .map(Self::NoiseGate)
     }
@@ -795,7 +992,10 @@ impl AudioFilter {
             }
             Self::Compressor(compressor) => compressor.apply(buffer),
             Self::Expander(expander) => expander.apply(buffer),
-            Self::NoiseGate(gate) => gate.apply(buffer),
+            Self::NoiseGate(gate) => {
+                gate.apply(buffer);
+                Ok(())
+            }
         }
     }
 }

@@ -5,6 +5,10 @@
 //! the schema in Rust means adding a filter kind does not require another Slint
 //! component or another comma-separated serialization format.
 
+use obs_rs_audio::{
+    MAX_NOISE_GATE_THRESHOLD_DB_MILLI, MAX_NOISE_GATE_TIME_MS, MIN_NOISE_GATE_THRESHOLD_DB_MILLI,
+    MIN_NOISE_GATE_TIME_MS,
+};
 use obs_rs_config::Config;
 use obs_rs_media::{
     ChromaKey, ColorCorrection, ColorKey, LumaKey, MAX_RENDER_DELAY_MILLISECONDS, MAX_SCROLL_SPEED,
@@ -349,6 +353,49 @@ const RENDER_DELAY: [Field; 1] = [Field {
     default: "0",
 }];
 
+const NOISE_GATE: [Field; 5] = [
+    Field {
+        key: "open_threshold_db_milli",
+        english: "Open threshold",
+        spanish: "Umbral de apertura",
+        minimum: MIN_NOISE_GATE_THRESHOLD_DB_MILLI,
+        maximum: MAX_NOISE_GATE_THRESHOLD_DB_MILLI,
+        default: "-26000",
+    },
+    Field {
+        key: "close_threshold_db_milli",
+        english: "Close threshold",
+        spanish: "Umbral de cierre",
+        minimum: MIN_NOISE_GATE_THRESHOLD_DB_MILLI,
+        maximum: MAX_NOISE_GATE_THRESHOLD_DB_MILLI,
+        default: "-32000",
+    },
+    Field {
+        key: "attack_ms",
+        english: "Attack",
+        spanish: "Ataque",
+        minimum: MIN_NOISE_GATE_TIME_MS as i32,
+        maximum: MAX_NOISE_GATE_TIME_MS as i32,
+        default: "25",
+    },
+    Field {
+        key: "hold_ms",
+        english: "Hold",
+        spanish: "Retención",
+        minimum: 0,
+        maximum: MAX_NOISE_GATE_TIME_MS as i32,
+        default: "200",
+    },
+    Field {
+        key: "release_ms",
+        english: "Release",
+        spanish: "Liberación",
+        minimum: MIN_NOISE_GATE_TIME_MS as i32,
+        maximum: MAX_NOISE_GATE_TIME_MS as i32,
+        default: "150",
+    },
+];
+
 fn fields(kind: &str) -> &'static [Field] {
     match kind {
         "brightness" => &BRIGHTNESS,
@@ -362,6 +409,7 @@ fn fields(kind: &str) -> &'static [Field] {
         "sharpen" => &SHARPEN,
         "scroll" => &SCROLL,
         "render_delay" => &RENDER_DELAY,
+        "noise_gate" => &NOISE_GATE,
         _ => &[],
     }
 }
@@ -538,5 +586,19 @@ mod tests {
             apply("render_delay", "", "milliseconds", "501"),
             Some("milliseconds = 500\n".into())
         );
+    }
+
+    #[test]
+    fn noise_gate_schema_uses_threshold_and_timing_controls() {
+        let rows = rows("noise_gate", "", UiLocale::Spanish);
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0].minimum, MIN_NOISE_GATE_THRESHOLD_DB_MILLI);
+        assert_eq!(rows[0].maximum, MAX_NOISE_GATE_THRESHOLD_DB_MILLI);
+        assert_eq!(rows[0].number, -26_000);
+        assert_eq!(rows[1].number, -32_000);
+        assert_eq!(rows[2].minimum, i32::from(MIN_NOISE_GATE_TIME_MS));
+        assert_eq!(rows[3].minimum, 0);
+        assert_eq!(rows[4].maximum, i32::from(MAX_NOISE_GATE_TIME_MS));
+        assert_eq!(rows[0].label, "Umbral de apertura");
     }
 }

@@ -26,8 +26,8 @@ struct FilterDefinition {
 
 const FILTER_DEFINITIONS: [FilterDefinition; 14] = [
     FilterDefinition {
-        kind: "noise_suppression",
-        name: "Noise Suppression",
+        kind: "noise_gate",
+        name: "Noise Gate",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {

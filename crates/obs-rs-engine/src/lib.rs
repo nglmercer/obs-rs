@@ -1204,12 +1204,11 @@ impl EngineSession {
         Ok(())
     }
 
-    /// Installs OBS's peak-based Gate preset on a live mixer channel.
+    /// Installs OBS's stateful peak Noise Gate on a live mixer channel.
     ///
-    /// Gate shares the stateful expander implementation because that is how
-    /// OBS's native filter represents the preset. RMS detection, sidechain
-    /// input, and project-source routing remain outside this control-plane
-    /// operation.
+    /// The detector uses the channel's own peak signal. RMS detection,
+    /// sidechain input, and project-source routing remain outside this
+    /// control-plane operation.
     ///
     /// # Errors
     ///
@@ -1218,19 +1217,19 @@ impl EngineSession {
     pub fn set_channel_noise_gate(
         &mut self,
         channel: EngineAudioChannel,
-        ratio_milli: u16,
-        threshold_db_milli: i32,
+        open_threshold_db_milli: i32,
+        close_threshold_db_milli: i32,
         attack_ms: u16,
+        hold_ms: u16,
         release_ms: u16,
-        output_gain_db_milli: i32,
     ) -> Result<(), EngineError> {
         let mut filters = AudioFilterChain::new();
         filters.try_push(AudioFilter::noise_gate(
-            ratio_milli,
-            threshold_db_milli,
+            open_threshold_db_milli,
+            close_threshold_db_milli,
             attack_ms,
+            hold_ms,
             release_ms,
-            output_gain_db_milli,
         )?)?;
         self.set_channel_audio_filters(channel, filters);
         Ok(())
@@ -2454,11 +2453,11 @@ pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
                     .and_then(|value| value.parse::<u16>().ok())
             };
             AudioFilter::noise_gate(
-                read_unsigned("ratio_milli")?,
-                read_signed("threshold_db_milli")?,
+                read_signed("open_threshold_db_milli")?,
+                read_signed("close_threshold_db_milli")?,
                 read_unsigned("attack_ms")?,
+                read_unsigned("hold_ms")?,
                 read_unsigned("release_ms")?,
-                read_signed("output_gain_db_milli")?,
             )
             .ok()
         }
@@ -3082,14 +3081,14 @@ mod tests {
             "gate",
             SourceFilterCategory::AudioVideo,
             Config::parse(
-                "ratio_milli = 10000\nthreshold_db_milli = -40000\nattack_ms = 10\nrelease_ms = 125\noutput_gain_db_milli = 0\n",
+                "open_threshold_db_milli = -26000\nclose_threshold_db_milli = -32000\nattack_ms = 25\nhold_ms = 200\nrelease_ms = 150\n",
             )
             .expect("gate settings"),
         )
         .expect("gate filter");
         assert_eq!(
             compile_audio_filter(&gate),
-            Some(AudioFilter::noise_gate(10_000, -40_000, 10, 125, 0).expect("valid gate"))
+            Some(AudioFilter::noise_gate(-26_000, -32_000, 25, 200, 150).expect("valid gate"))
         );
         assert_eq!(compile_audio_filter(&brightness), None);
     }
@@ -3295,7 +3294,7 @@ mod tests {
 
         let mut gated = EngineSession::new(project(), EngineConfig::default()).expect("engine");
         gated
-            .set_channel_noise_gate(EngineAudioChannel::Microphone, 10_000, 0, 1, 125, 0)
+            .set_channel_noise_gate(EngineAudioChannel::Microphone, 0, -32_000, 1, 125, 150)
             .expect("noise gate");
         gated.tick(None, Some("program")).expect("first gated tick");
         let tick = gated.tick(None, Some("program")).expect("gated tick");

@@ -367,11 +367,12 @@ release build at 2026-08-21:
 
 ```text
 cargo test --release -p obs-rs-audio noise_gate_block_timing_report -- --nocapture
-noise gate: 200 blocks x 480 stereo frames = 4.0 ms total (about 20 us/block)
+noise gate: 200 blocks x 480 stereo frames = 840.058 us total (about 4.2 us/block)
 ```
 
-This uses the same allocation-free peak detector and dB ballistics as the
-Expander; RMS and sidechain processing are not included in this measurement.
+This uses the allocation-free maximum-absolute-sample detector and stateful
+linear attack/hold/release envelope from the bounded Noise Gate core. RMS,
+sidechain, and native Speex/RNNoise suppression processing are not included.
 
 The preview worker is bounded: pending requests and published results are
 capacity-one latest-value slots. The desktop timer requests at most 60 Hz while

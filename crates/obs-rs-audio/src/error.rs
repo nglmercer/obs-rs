@@ -86,6 +86,21 @@ pub enum AudioError {
     InvalidExpanderRelease { milliseconds: u16 },
     /// An audio expander output gain is outside OBS's bounded dB range.
     InvalidExpanderOutputGain { milli_db: i32 },
+    /// An audio noise-gate open threshold is outside OBS's bounded dB range.
+    InvalidNoiseGateOpenThreshold { milli_db: i32 },
+    /// An audio noise-gate close threshold is outside OBS's bounded dB range.
+    InvalidNoiseGateCloseThreshold { milli_db: i32 },
+    /// A noise-gate close threshold is above its open threshold.
+    InvalidNoiseGateThresholdOrder {
+        open_milli_db: i32,
+        close_milli_db: i32,
+    },
+    /// An audio noise-gate attack time is outside the safe bounded range.
+    InvalidNoiseGateAttack { milliseconds: u16 },
+    /// An audio noise-gate hold time is outside OBS's bounded range.
+    InvalidNoiseGateHold { milliseconds: u16 },
+    /// An audio noise-gate release time is outside the safe bounded range.
+    InvalidNoiseGateRelease { milliseconds: u16 },
     /// An ordered audio filter chain reached its fixed capacity.
     FilterChainFull { max: usize },
     /// An audio filter would have produced a non-finite sample.
@@ -215,6 +230,33 @@ impl fmt::Display for AudioError {
             Self::InvalidExpanderOutputGain { milli_db } => write!(
                 formatter,
                 "audio expander output gain {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidNoiseGateOpenThreshold { milli_db } => write!(
+                formatter,
+                "audio noise-gate open threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidNoiseGateCloseThreshold { milli_db } => write!(
+                formatter,
+                "audio noise-gate close threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidNoiseGateThresholdOrder {
+                open_milli_db,
+                close_milli_db,
+            } => write!(
+                formatter,
+                "audio noise-gate close threshold {close_milli_db} must not exceed open threshold {open_milli_db}"
+            ),
+            Self::InvalidNoiseGateAttack { milliseconds } => write!(
+                formatter,
+                "audio noise-gate attack {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidNoiseGateHold { milliseconds } => write!(
+                formatter,
+                "audio noise-gate hold {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidNoiseGateRelease { milliseconds } => write!(
+                formatter,
+                "audio noise-gate release {milliseconds} ms is outside the supported range"
             ),
             Self::FilterChainFull { max } => {
                 write!(formatter, "audio filter chain is limited to {max} filters")

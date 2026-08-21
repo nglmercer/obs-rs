@@ -536,27 +536,72 @@ fn expander_state_continues_and_overflow_is_atomic() {
 }
 
 #[test]
-fn noise_gate_uses_the_shared_expander_state_machine() {
+fn noise_gate_matches_obs_peak_threshold_and_timing_model() {
     assert_eq!(
-        AudioFilter::noise_gate(MIN_EXPANDER_RATIO_MILLI - 1, -40_000, 10, 125, 0),
-        Err(AudioError::InvalidExpanderRatio { milli_ratio: 999 })
+        AudioFilter::noise_gate(-97_000, -32_000, 25, 200, 150),
+        Err(AudioError::InvalidNoiseGateOpenThreshold { milli_db: -97_000 })
+    );
+    assert_eq!(
+        AudioFilter::noise_gate(-26_000, 1, 25, 200, 150),
+        Err(AudioError::InvalidNoiseGateCloseThreshold { milli_db: 1 })
+    );
+    assert_eq!(
+        AudioFilter::noise_gate(-26_000, -20_000, 25, 200, 150),
+        Err(AudioError::InvalidNoiseGateThresholdOrder {
+            open_milli_db: -26_000,
+            close_milli_db: -20_000,
+        })
+    );
+    assert_eq!(
+        AudioFilter::noise_gate(-26_000, -32_000, 0, 200, 150),
+        Err(AudioError::InvalidNoiseGateAttack { milliseconds: 0 })
+    );
+    assert_eq!(
+        AudioFilter::noise_gate(-26_000, -32_000, 25, 200, 0),
+        Err(AudioError::InvalidNoiseGateRelease { milliseconds: 0 })
     );
 
-    let mut expander = AudioFilterChain::new();
-    expander
-        .try_push(AudioFilter::expander(10_000, -18_000, 1, 125, 0).expect("expander"))
-        .expect("expander filter");
     let mut gate = AudioFilterChain::new();
-    gate.try_push(AudioFilter::noise_gate(10_000, -18_000, 1, 125, 0).expect("gate"))
+    gate.try_push(AudioFilter::noise_gate(-26_000, -32_000, 25, 200, 150).expect("gate"))
         .expect("gate filter");
 
-    let mut expander_block =
+    let mut quiet_block =
         AudioBuffer::new(format(), Timestamp::ZERO, vec![0.01; 480 * 2]).expect("quiet block");
-    let mut gate_block = expander_block.clone();
-    expander.apply(&mut expander_block).expect("expander block");
-    gate.apply(&mut gate_block).expect("gate block");
-    assert_eq!(expander_block.samples(), gate_block.samples());
-    assert!(gate_block.samples()[0] < 0.01);
+    gate.apply(&mut quiet_block).expect("quiet gate block");
+    assert!(quiet_block
+        .samples()
+        .iter()
+        .all(|sample| sample.abs() < f32::EPSILON));
+
+    let mut loud_block =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0; 480 * 2]).expect("loud block");
+    gate.apply(&mut loud_block).expect("loud gate block");
+    assert!(loud_block.samples()[0].abs() < f32::EPSILON);
+    assert!(loud_block.samples()[2] > 0.0);
+    assert!(loud_block.samples()[2] < loud_block.samples()[4]);
+    assert!(loud_block.samples().last().copied().unwrap_or(1.0) < 1.0);
+}
+
+#[test]
+fn noise_gate_honors_hold_and_release_after_level_decay() {
+    let mut gate = AudioFilterChain::new();
+    gate.try_push(AudioFilter::noise_gate(-6_000, -12_000, 1, 2, 4).expect("gate"))
+        .expect("gate filter");
+
+    let mut loud =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0; 480 * 2]).expect("loud block");
+    gate.apply(&mut loud).expect("loud gate block");
+
+    let mut quiet =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.1; 2_400 * 2]).expect("quiet block");
+    gate.apply(&mut quiet).expect("quiet gate block");
+
+    let before_release = quiet.samples()[1_900 * 2];
+    let during_release = quiet.samples()[2_050 * 2];
+    let after_release = quiet.samples()[2_250 * 2];
+    assert!(before_release > during_release);
+    assert!(during_release > after_release);
+    assert!(after_release.abs() < f32::EPSILON);
 }
 
 #[test]
@@ -708,7 +753,7 @@ fn expander_block_timing_report() {
 fn noise_gate_block_timing_report() {
     let mut chain = AudioFilterChain::new();
     chain
-        .try_push(AudioFilter::noise_gate(10_000, -40_000, 10, 125, 0).expect("noise gate"))
+        .try_push(AudioFilter::noise_gate(-26_000, -32_000, 25, 200, 150).expect("noise gate"))
         .expect("filter");
     let mut block =
         AudioBuffer::new(format(), Timestamp::ZERO, vec![0.01; 480 * 2]).expect("audio block");
