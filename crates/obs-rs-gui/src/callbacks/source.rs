@@ -4,7 +4,7 @@ use slint::Weak;
 
 use obs_rs_config::Config;
 use obs_rs_media::FrameTransform;
-use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
+use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 
 use crate::{
@@ -55,34 +55,31 @@ pub(crate) fn move_source_and_refresh(
             )
             .into());
         }
-        let target_index = {
-            let state = state.borrow();
-            let project = state.project_session().project();
-            let scene = project
-                .active_profile_spec()
-                .and_then(|profile| profile.scene(scene.as_str()));
-            let source_index = scene
-                .and_then(|scene| {
-                    scene
-                        .items()
-                        .iter()
-                        .position(|item| item.id().as_str() == source_id)
-                })
-                .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
-            let target = i32::try_from(source_index)
-                .unwrap_or(i32::MAX)
-                .saturating_add(delta);
-            usize::try_from(target)
-                .map_err(|_| std::io::Error::other("source cannot move above the scene"))?
-        };
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::MoveSceneItem {
+        let (source_index, source_count) =
+            source_order_state(&state.borrow(), scene.as_str(), source_id)?;
+        let target = i32::try_from(source_index)
+            .unwrap_or(i32::MAX)
+            .saturating_add(delta);
+        let target_index = usize::try_from(target)
+            .map_err(|_| std::io::Error::other("source cannot move above the scene"))?
+            .min(source_count.saturating_sub(1));
+        let command = if let Some((group_path, item)) = group_target(source_id) {
+            ProjectCommand::MoveGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+                target_index,
+            }
+        } else {
+            ProjectCommand::MoveSceneItem {
                 profile,
                 scene,
                 item: source_id.to_owned(),
                 target_index,
-            }))?;
+            }
+        };
+        state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -110,26 +107,27 @@ pub(crate) fn move_source_to_and_refresh(
             )
             .into());
         }
-        let source_count = {
-            let state = state.borrow();
-            let project = state.project_session().project();
-            let scene = project
-                .active_profile_spec()
-                .and_then(|profile| profile.scene(scene.as_str()))
-                .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
-            scene.items().len()
-        };
+        let (_, source_count) = source_order_state(&state.borrow(), scene.as_str(), source_id)?;
         let target_index = usize::try_from(target_index)
             .map_err(|_| std::io::Error::other("source order is invalid"))?
             .min(source_count.saturating_sub(1));
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::MoveSceneItem {
+        let command = if let Some((group_path, item)) = group_target(source_id) {
+            ProjectCommand::MoveGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+                target_index,
+            }
+        } else {
+            ProjectCommand::MoveSceneItem {
                 profile,
                 scene,
                 item: source_id.to_owned(),
                 target_index,
-            }))?;
+            }
+        };
+        state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -182,14 +180,23 @@ pub(crate) fn toggle_source_visibility_and_refresh(
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let (profile, scene, visible, _) = source_display_state(&state.borrow(), source_id)?;
-        state.borrow_mut().dispatch(UiCommand::Project(
+        let command = if let Some((group_path, item)) = group_target(source_id) {
+            ProjectCommand::SetGroupItemVisibility {
+                profile,
+                scene,
+                group_path,
+                item,
+                visible: !visible,
+            }
+        } else {
             ProjectCommand::SetSceneItemVisibility {
                 profile,
                 scene,
                 item: source_id.to_owned(),
                 visible: !visible,
-            },
-        ))?;
+            }
+        };
+        state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -209,14 +216,23 @@ pub(crate) fn toggle_source_locked_and_refresh(
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemLocked {
+        let command = if let Some((group_path, item)) = group_target(source_id) {
+            ProjectCommand::SetGroupItemLocked {
+                profile,
+                scene,
+                group_path,
+                item,
+                locked: !locked,
+            }
+        } else {
+            ProjectCommand::SetSceneItemLocked {
                 profile,
                 scene,
                 item: source_id.to_owned(),
                 locked: !locked,
-            }))?;
+            }
+        };
+        state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -420,6 +436,58 @@ pub(crate) fn apply_source_name_and_refresh(
     }
 }
 
+fn group_target(target: &str) -> Option<(Vec<String>, String)> {
+    let mut parts = target.split('/').map(str::to_owned).collect::<Vec<_>>();
+    if parts.len() < 2 || parts.iter().any(String::is_empty) {
+        return None;
+    }
+    let item = parts.pop()?;
+    Some((parts, item))
+}
+
+fn group_items_for_path<'a>(scene: &'a SceneSpec, path: &[String]) -> Option<&'a [SceneItemSpec]> {
+    let mut items = scene.items();
+    for group_id in path {
+        let group_item = items.iter().find(|item| item.id().as_str() == group_id)?;
+        items = group_item.group()?.items();
+    }
+    Some(items)
+}
+
+fn item_for_target<'a>(scene: &'a SceneSpec, target: &str) -> Option<&'a SceneItemSpec> {
+    if let Some((group_path, item_id)) = group_target(target) {
+        group_items_for_path(scene, &group_path)?
+            .iter()
+            .find(|item| item.id().as_str() == item_id)
+    } else {
+        scene.item(target)
+    }
+}
+
+fn source_order_state(
+    state: &DesktopState,
+    scene_id: &str,
+    target: &str,
+) -> Result<(usize, usize), Box<dyn Error>> {
+    let scene = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
+    let (group_path, item_id) =
+        group_target(target).map_or((None, target.to_owned()), |(path, item)| (Some(path), item));
+    let items = group_path
+        .as_deref()
+        .and_then(|path| group_items_for_path(scene, path))
+        .unwrap_or_else(|| scene.items());
+    let index = items
+        .iter()
+        .position(|item| item.id().as_str() == item_id)
+        .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
+    Ok((index, items.len()))
+}
+
 fn source_display_state(
     state: &DesktopState,
     source_id: &str,
@@ -435,8 +503,7 @@ fn source_display_state(
     let scene = profile
         .scene(scene_id)
         .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
-    let item = scene
-        .item(source_id)
+    let item = item_for_target(scene, source_id)
         .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
     Ok((
         profile_id,

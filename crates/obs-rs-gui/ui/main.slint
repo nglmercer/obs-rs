@@ -109,6 +109,7 @@ export component MainWindow inherits Window {
         in property <bool> selected-source-locked: false;
         in property <bool> selected-source-first: false;
         in property <bool> selected-source-last: false;
+        in property <int> source-count: 0;
         in property <bool> can-paste: false;
         in property <string> source-settings-version;
         in-out property <string> source-settings;
@@ -258,9 +259,10 @@ export component MainWindow inherits Window {
         in property <bool> item-locked;
 
         // Only a screen capture source has a display to choose, so the
-        // affordance is derived from the selected row rather than duplicated in
-        // every dock that offers it.
+                // affordance is derived from the selected row rather than duplicated in
+                // every dock that offers it.
         in property <bool> selected-source-is-screen: false;
+        in property <bool> selected-source-is-group: false;
 
         // A mode of -1 means "toggle studio mode", which is how both the View
         // menu and the controls dock drive the canvas.
@@ -572,10 +574,12 @@ export component MainWindow inherits Window {
                 preview-scene: root.preview-scene;
                 selected-source: root.selected-source;
                 selected-source-is-screen: root.selected-source-is-screen;
+                selected-source-is-group: root.selected-source-is-group;
                 selected-source-visible: root.selected-source-visible;
                 selected-source-locked: root.selected-source-locked;
                 selected-source-first: root.selected-source-first;
                 selected-source-last: root.selected-source-last;
+                source-count: root.source-count;
                 can-paste: root.can-paste;
                 transition: root.transition;
                 recording: root.recording;

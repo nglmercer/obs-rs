@@ -11,10 +11,12 @@ export component SourceDock inherits Rectangle {
     in property <[SourceRow]> source-rows;
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
+    in property <bool> selected-source-is-group;
     in property <bool> selected-source-visible;
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
     in property <bool> selected-source-last;
+    in property <int> source-count;
     in property <bool> can-paste;
     in property <int> panel-kind;
     in property <bool> floating;
@@ -73,14 +75,16 @@ export component SourceDock inherits Rectangle {
                         spacing: 1px;
                     for source in source-rows : source-menu := SourceContextMenuArea {
                         height: 36px;
-                        source-id: source.id;
+                        source-id: source.target;
+                        nested: source.nested;
+                        group: source.group;
                         source-visible: source.visible;
                         source-locked: source.locked;
                         can-move-up: !source.first;
                         can-move-down: !source.last;
                         can-move-top: !source.first;
                         can-move-bottom: !source.last;
-                        source-count: source-rows.length;
+                        source-count: source.count;
                         can-paste: root.can-paste;
                         select-source(id) => { root.select-source(id); }
                         open-properties(id) => { root.select-source(id); root.open-modal(6); }
@@ -105,7 +109,9 @@ export component SourceDock inherits Rectangle {
                         TouchArea {
                             width: 100%;
                             height: 100%;
-                            clicked => select-source(source.id);
+                            clicked => {
+                                if !source.nested { select-source(source.id); }
+                            }
                             pointer-event(event) => {
                                 if event.kind == PointerEventKind.down
                                     && event.button == PointerEventButton.right {
@@ -149,13 +155,15 @@ export component SourceDock inherits Rectangle {
                 selected-source-menu := SourceContextMenuArea {
                     height: 22px;
                     source-id: root.selected-source;
+                    nested: false;
+                    group: root.selected-source-is-group;
                     source-visible: root.selected-source-visible;
                     source-locked: root.selected-source-locked;
                     can-move-up: !root.selected-source-first;
                     can-move-down: !root.selected-source-last;
                     can-move-top: !root.selected-source-first;
                     can-move-bottom: !root.selected-source-last;
-                    source-count: root.source-rows.length;
+                    source-count: root.source-count;
                     can-paste: root.can-paste;
                     select-source(id) => { root.select-source(id); }
                     open-properties(id) => { root.select-source(id); root.open-modal(6); }

@@ -24,10 +24,12 @@ export component DockWorkspace inherits Rectangle {
     in property <string> preview-scene;
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
+    in property <bool> selected-source-is-group;
     in property <bool> selected-source-visible;
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
     in property <bool> selected-source-last;
+    in property <int> source-count;
     in property <bool> can-paste;
     in property <string> transition;
     in property <bool> recording;
@@ -215,10 +217,12 @@ export component DockWorkspace inherits Rectangle {
             preview-scene: root.preview-scene;
             selected-source: root.selected-source;
             selected-source-is-screen: root.selected-source-is-screen;
+            selected-source-is-group: root.selected-source-is-group;
             selected-source-visible: root.selected-source-visible;
             selected-source-locked: root.selected-source-locked;
             selected-source-first: root.selected-source-first;
             selected-source-last: root.selected-source-last;
+            source-count: root.source-count;
             can-paste: root.can-paste;
             transition: root.transition;
             recording: root.recording;

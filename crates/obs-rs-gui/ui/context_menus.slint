@@ -6,6 +6,8 @@ import { I18n } from "i18n.slint";
 // button, so both entry points expose the identical menu.
 export component SourceContextMenuArea inherits Rectangle {
     in property <string> source-id;
+    in property <bool> nested: false;
+    in property <bool> group: false;
     in property <bool> source-visible;
     in property <bool> source-locked;
     in property <bool> can-move-up;
@@ -44,7 +46,7 @@ export component SourceContextMenuArea inherits Rectangle {
         Menu {
             MenuItem {
                 title: I18n.text.source_properties;
-                enabled: root.source-id != "";
+                enabled: root.source-id != "" && !root.nested && !root.group;
                 activated => {
                     root.select-source(root.source-id);
                     root.open-properties(root.source-id);
@@ -52,7 +54,7 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             MenuItem {
                 title: I18n.text.filters;
-                enabled: root.source-id != "";
+                enabled: root.source-id != "" && !root.nested && !root.group;
                 activated => {
                     root.select-source(root.source-id);
                     root.open-filters(root.source-id);
@@ -60,7 +62,7 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             MenuItem {
                 title: I18n.text.rename;
-                enabled: root.source-id != "";
+                enabled: root.source-id != "" && !root.nested && !root.group;
                 activated => {
                     root.select-source(root.source-id);
                     root.rename-source(root.source-id);
@@ -68,7 +70,7 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             MenuItem {
                 title: I18n.text.duplicate;
-                enabled: root.source-id != "";
+                enabled: root.source-id != "" && !root.nested;
                 activated => {
                     root.select-source(root.source-id);
                     root.duplicate-source(root.source-id);
@@ -77,7 +79,7 @@ export component SourceContextMenuArea inherits Rectangle {
             MenuSeparator {}
             MenuItem {
                 title: I18n.text.copy_source;
-                enabled: root.source-id != "";
+                enabled: root.source-id != "" && !root.nested && !root.group;
                 activated => root.copy-source(root.source-id);
             }
             MenuItem {
@@ -97,7 +99,7 @@ export component SourceContextMenuArea inherits Rectangle {
                 checkable: true;
                 checked: root.source-visible;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.toggle-source-visibility(root.source-id);
                 }
             }
@@ -107,7 +109,7 @@ export component SourceContextMenuArea inherits Rectangle {
                 checkable: true;
                 checked: root.source-locked;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.toggle-source-locked(root.source-id);
                 }
             }
@@ -138,7 +140,7 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             Menu {
                 title: I18n.text.transform_menu;
-                enabled: root.source-id != "" && !root.source-locked;
+                enabled: root.source-id != "" && !root.source-locked && !root.nested && !root.group;
                 MenuItem {
                     title: I18n.text.reset_transform;
                     activated => root.reset-source-transform(root.source-id);
@@ -201,7 +203,7 @@ export component SourceContextMenuArea inherits Rectangle {
             MenuSeparator {}
             MenuItem {
                 title: I18n.text.remove_source;
-                enabled: root.source-id != "" && !root.source-locked;
+                enabled: root.source-id != "" && !root.source-locked && !root.nested;
                 activated => {
                     root.select-source(root.source-id);
                     root.remove-source(root.source-id);

@@ -42,6 +42,68 @@ pub(crate) fn dispatch_and_refresh(
     }
 }
 
+const MAX_SOURCE_ROW_DEPTH: usize = 64;
+
+fn append_source_rows(
+    rows: &mut Vec<SourceRow>,
+    profile: &Profile,
+    items: &[SceneItemSpec],
+    state: &DesktopState,
+    group_path: &mut Vec<String>,
+) {
+    let count = i32::try_from(items.len()).unwrap_or(i32::MAX);
+    for (index, item) in items.iter().enumerate() {
+        let target = if group_path.is_empty() {
+            item.id().to_string()
+        } else {
+            format!("{}/{}", group_path.join("/"), item.id())
+        };
+        let (base_name, kind, is_group) = if let Some(source) = profile
+            .source(item.source_id())
+            .filter(|_| item.is_source())
+        {
+            (
+                source.name().to_owned(),
+                source.kind().as_str().to_owned(),
+                false,
+            )
+        } else if let Some(scene) = item.scene_id().and_then(|scene_id| profile.scene(scene_id)) {
+            (scene.name().to_owned(), "scene".to_owned(), false)
+        } else if let Some(group) = item.group() {
+            (group.name().to_owned(), "group".to_owned(), true)
+        } else {
+            (item.source_id().as_str().to_owned(), String::new(), false)
+        };
+        let name = if group_path.is_empty() {
+            base_name
+        } else {
+            format!("{}{}", "  ".repeat(group_path.len()), base_name)
+        };
+        rows.push(SourceRow {
+            id: target.clone().into(),
+            target: target.into(),
+            name: name.into(),
+            kind: kind.into(),
+            order: (index + 1).to_string().into(),
+            count,
+            nested: !group_path.is_empty(),
+            group: is_group,
+            selected: group_path.is_empty() && state.is_source_selected(item.id().as_str()),
+            visible: item.visible(),
+            locked: item.locked(),
+            first: index == 0,
+            last: index + 1 == items.len(),
+        });
+        if let Some(group) = item.group() {
+            if group_path.len() < MAX_SOURCE_ROW_DEPTH {
+                group_path.push(item.id().to_string());
+                append_source_rows(rows, profile, group.items(), state, group_path);
+                group_path.pop();
+            }
+        }
+    }
+}
+
 pub(crate) fn refresh_ui(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -273,68 +335,30 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     let selected_source = state.selected_source().unwrap_or("none");
     let mut selected_item = None;
     let mut selected_source_spec = None;
-    let source_rows = selected_scene.map_or_else(Vec::new, |scene| {
-        scene
-            .items()
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
-                let selected = state.is_source_selected(item.id().as_str());
-                if selected {
-                    selected_item = Some(item);
-                    selected_source_spec = profile.and_then(|profile| {
-                        item.is_source()
-                            .then(|| profile.source(item.source_id()))
-                            .flatten()
-                    });
-                }
-                let source = profile.and_then(|profile| {
+    if let Some(scene) = selected_scene {
+        for item in scene.items() {
+            if state.is_source_selected(item.id().as_str()) {
+                selected_item = Some(item);
+                selected_source_spec = profile.and_then(|profile| {
                     item.is_source()
                         .then(|| profile.source(item.source_id()))
                         .flatten()
                 });
-                let nested_scene = profile.and_then(|profile| {
-                    item.scene_id().and_then(|scene_id| profile.scene(scene_id))
-                });
-                let group = item.group();
-                SourceRow {
-                    id: item.id().as_str().into(),
-                    name: source.map_or_else(
-                        || {
-                            nested_scene.map_or_else(
-                                || {
-                                    group.map_or_else(
-                                        || item.source_id().as_str().into(),
-                                        |group| group.name().into(),
-                                    )
-                                },
-                                |scene| scene.name().into(),
-                            )
-                        },
-                        |source| source.name().into(),
-                    ),
-                    kind: source
-                        .map_or_else(
-                            || {
-                                nested_scene.map_or_else(
-                                    || group.map_or_else(String::new, |_| "group".to_owned()),
-                                    |_| "scene".to_owned(),
-                                )
-                            },
-                            |source| source.kind().as_str().to_owned(),
-                        )
-                        .into(),
-                    order: (index + 1).to_string().into(),
-                    selected,
-                    visible: item.visible(),
-                    locked: item.locked(),
-                    first: index == 0,
-                    last: index + 1 == scene.items().len(),
-                }
-            })
-            .collect::<Vec<_>>()
+            }
+        }
+    }
+    let source_rows = selected_scene.map_or_else(Vec::new, |scene| {
+        let Some(profile) = profile else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        append_source_rows(&mut rows, profile, scene.items(), state, &mut Vec::new());
+        rows
     });
     ui.set_source_scene(source_scene.into());
+    ui.set_source_count(selected_scene.map_or(0, |scene| {
+        i32::try_from(scene.items().len()).unwrap_or(i32::MAX)
+    }));
     if !model_matches(&ui.get_source_rows(), &source_rows) {
         ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
     }
@@ -390,6 +414,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         selected_source_spec
             .is_some_and(|source| crate::kind_selects_monitor(source.kind().as_str())),
     );
+    ui.set_selected_source_is_group(selected_item.is_some_and(SceneItemSpec::is_group));
 
     refresh_mixer_rows(ui, state);
 }
@@ -478,4 +503,54 @@ pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTra
             format!("{} {progress_milli}/1000", text.fade)
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use obs_rs_project::{ProjectCommand, SceneItemSpec};
+
+    #[test]
+    fn source_rows_expose_nested_group_targets_and_relative_order() {
+        let mut project = crate::initial_project().expect("initial project");
+        let mut group = SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
+        group
+            .group_mut()
+            .expect("group target")
+            .add_item(SceneItemSpec::for_source("background").expect("group child"))
+            .expect("group child attach");
+        project
+            .apply(ProjectCommand::AddSceneItem {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                item: group,
+            })
+            .expect("add group");
+        let state = DesktopState::new(project);
+        let profile = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .expect("profile");
+        let scene = profile.scene("preview").expect("preview scene");
+        let mut rows = Vec::new();
+        append_source_rows(&mut rows, profile, scene.items(), &state, &mut Vec::new());
+
+        let group_row = rows
+            .iter()
+            .find(|row| row.target == "overlay-group")
+            .expect("group row");
+        assert!(group_row.group);
+        assert!(!group_row.nested);
+        assert_eq!(group_row.count, 2);
+
+        let child_row = rows
+            .iter()
+            .find(|row| row.target == "overlay-group/background")
+            .expect("group child row");
+        assert!(!child_row.group);
+        assert!(child_row.nested);
+        assert_eq!(child_row.count, 1);
+        assert_eq!(child_row.order.as_str(), "1");
+    }
 }

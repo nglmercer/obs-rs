@@ -62,10 +62,12 @@ impl DockController {
             window.set_preview_scene(ui.get_preview_scene());
             window.set_selected_source(ui.get_selected_source());
             window.set_selected_source_is_screen(ui.get_selected_source_is_screen());
+            window.set_selected_source_is_group(ui.get_selected_source_is_group());
             window.set_selected_source_visible(ui.get_selected_source_visible());
             window.set_selected_source_locked(ui.get_selected_source_locked());
             window.set_selected_source_first(ui.get_selected_source_first());
             window.set_selected_source_last(ui.get_selected_source_last());
+            window.set_source_count(ui.get_source_count());
             window.set_can_paste(ui.get_can_paste());
             window.set_transition(ui.get_transition());
             window.set_recording(ui.get_recording());

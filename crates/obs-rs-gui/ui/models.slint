@@ -6,9 +6,15 @@
 
     export struct SourceRow {
         id: string,
+        // Stable action target: a top-level item ID or an outer-to-inner
+        // group path such as `overlay-group/child`.
+        target: string,
         name: string,
         kind: string,
         order: string,
+        count: int,
+        nested: bool,
+        group: bool,
         selected: bool,
         visible: bool,
         locked: bool,

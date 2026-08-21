@@ -1014,7 +1014,63 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_monitor_selection(&ui, &state, &surface);
     exercise_recording_controls(&ui, &state, &surface);
     exercise_menu_actions(&ui, &state, &surface, &docks);
+    exercise_group_source_callbacks(&ui, &state, &surface);
     exercise_context_menus(&ui, &state, &surface);
+}
+
+fn exercise_group_source_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
+    let mut group =
+        obs_rs_project::SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(obs_rs_project::SceneItemSpec::for_source("background").expect("first child"))
+        .expect("first child attach");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(obs_rs_project::SceneItemSpec::for_source("pattern").expect("second child"))
+        .expect("second child attach");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: group,
+        }))
+        .expect("add group to preview");
+    refresh_ui(ui, state, surface);
+    assert!(ui
+        .get_source_rows()
+        .iter()
+        .any(|row| row.target == "overlay-group/background"));
+
+    ui.invoke_toggle_source_visibility("overlay-group/background".into());
+    ui.invoke_move_source_to("overlay-group/background".into(), 1);
+    ui.invoke_toggle_source_locked("overlay-group/background".into());
+
+    let state = state.borrow();
+    let group = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(obs_rs_project::SceneItemSpec::group)
+        .expect("group after UI callbacks");
+    assert_eq!(
+        group.items()[0].source_id().as_str(),
+        "pattern",
+        "the group move callback must use the group-local order"
+    );
+    assert!(!group.items()[1].visible());
+    assert!(group.items()[1].locked());
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup
