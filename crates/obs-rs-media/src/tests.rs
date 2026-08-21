@@ -88,6 +88,49 @@ fn transforms_crop_source_edges_before_scaling_and_flipping() {
 }
 
 #[test]
+fn transforms_rotate_clockwise_around_the_visible_source_centre() {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let frame = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![
+            255, 0, 0, 255, 0, 255, 0, 255, // red, green
+            0, 0, 255, 255, 255, 255, 255, 255, // blue, white
+        ],
+    )
+    .expect("pixels");
+    let transform = FrameTransform::IDENTITY
+        .with_rotation_degrees(90)
+        .expect("rotation");
+
+    let result = frame.transformed(transform).expect("rotate");
+    assert_eq!(result.pixel(0, 0), Some([0, 0, 255, 255]));
+    assert_eq!(result.pixel(1, 0), Some([255, 0, 0, 255]));
+    assert_eq!(result.pixel(0, 1), Some([255, 255, 255, 255]));
+    assert_eq!(result.pixel(1, 1), Some([0, 255, 0, 255]));
+
+    let owned = frame
+        .clone()
+        .into_transformed(transform)
+        .expect("owned rotate");
+    assert_eq!(owned, result);
+}
+
+#[test]
+fn rotation_validation_is_bounded_and_subdegree_values_round_trip() {
+    assert_eq!(
+        FrameTransform::IDENTITY
+            .with_rotation_milli_degrees(FrameTransform::MAX_ROTATION_MILLI_DEGREES + 1),
+        Err(MediaError::InvalidTransform)
+    );
+    let transform = FrameTransform::IDENTITY
+        .with_rotation_milli_degrees(-12_500)
+        .expect("subdegree rotation");
+    assert_eq!(transform.rotation_milli_degrees(), -12_500);
+    assert_eq!(transform.rotation_degrees(), -12);
+}
+
+#[test]
 fn a_crop_that_consumes_the_frame_is_rejected_at_render_time() {
     let frame = VideoFrame::solid(format(), Timestamp::ZERO, [1, 2, 3, 255]);
     let transform = FrameTransform::IDENTITY
@@ -434,6 +477,9 @@ fn composition_primitives_timing_report() {
     let background = VideoFrame::solid(format, Timestamp::ZERO, [10, 20, 30, 255]);
     let overlay = VideoFrame::solid(format, Timestamp::ZERO, [40, 50, 60, 200]);
     let scaled = FrameTransform::new(1_500, 1_500, 10, 10, false, false, 200).expect("transform");
+    let rotated = FrameTransform::IDENTITY
+        .with_rotation_degrees(90)
+        .expect("rotation");
     let runs = 200;
 
     let measure = |label: &str, mut work: Box<dyn FnMut()>| {
@@ -460,6 +506,13 @@ fn composition_primitives_timing_report() {
         "transformed(scaled)",
         Box::new(move || {
             std::hint::black_box(frame.transformed(scaled).expect("scaled"));
+        }),
+    );
+    let frame = background.clone();
+    measure(
+        "transformed(rotated-90deg)",
+        Box::new(move || {
+            std::hint::black_box(frame.transformed(rotated).expect("rotated"));
         }),
     );
     let (frame, source) = (background.clone(), overlay.clone());

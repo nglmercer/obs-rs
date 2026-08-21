@@ -9,7 +9,7 @@ import { Palette } from "palette.slint";
 export component SourceTransformWindow inherits Window {
     title: "Scene Item Transform";
     width: 460px;
-    height: 520px;
+    height: 560px;
     background: Palette.tokens.window-bg;
 
     in property <string> source-name;
@@ -21,6 +21,7 @@ export component SourceTransformWindow inherits Window {
     in-out property <int> crop-top: 0;
     in-out property <int> crop-right: 0;
     in-out property <int> crop-bottom: 0;
+    in-out property <int> rotation-degrees: 0;
     in-out property <int> item-opacity: 255;
     in-out property <bool> flip-horizontal: false;
     in-out property <bool> flip-vertical: false;
@@ -67,6 +68,13 @@ export component SourceTransformWindow inherits Window {
                 label: "Right / Bottom";
                 SpinBox { value <=> root.crop-right; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
                 SpinBox { value <=> root.crop-bottom; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
+            }
+        }
+        SettingsGroup {
+            title: "Rotation";
+            SettingRow {
+                label: "Degrees";
+                SpinBox { value <=> root.rotation-degrees; minimum: -360; maximum: 360; horizontal-stretch: 1; }
             }
         }
         SettingsGroup {

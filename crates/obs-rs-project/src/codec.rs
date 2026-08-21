@@ -31,7 +31,9 @@ use crate::RenderBackendPreference;
 const FORMAT_TAG: &str = "obs-rs-project";
 
 /// Schema version this build writes.
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
+/// The format before scene-item rotation was persisted.
+const PREVIOUS_FORMAT_VERSION: u32 = 2;
 /// The format before sources were moved out of scenes.
 const LEGACY_FORMAT_VERSION: u32 = 1;
 
@@ -76,10 +78,11 @@ impl Project {
         }
         let version = match root.get("version").and_then(Json::as_number::<u32>) {
             Some(LEGACY_FORMAT_VERSION) => LEGACY_FORMAT_VERSION,
+            Some(PREVIOUS_FORMAT_VERSION) => PREVIOUS_FORMAT_VERSION,
             Some(FORMAT_VERSION) => FORMAT_VERSION,
             Some(version) => {
                 return Err(invalid(format!(
-                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION} and {FORMAT_VERSION}"
+                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, and {FORMAT_VERSION}"
                 )))
             }
             None => return Err(invalid("missing or invalid `version`")),
@@ -189,6 +192,10 @@ fn encode_transform(transform: FrameTransform) -> Json {
         ("flip_x", Json::Bool(transform.flip_x())),
         ("flip_y", Json::Bool(transform.flip_y())),
         ("opacity", Json::number(transform.opacity())),
+        (
+            "rotation_milli_degrees",
+            Json::number(transform.rotation_milli_degrees()),
+        ),
         ("crop_left", Json::number(transform.crop_left())),
         ("crop_top", Json::number(transform.crop_top())),
         ("crop_right", Json::number(transform.crop_right())),
@@ -411,6 +418,8 @@ fn decode_transform(value: &Json) -> Result<FrameTransform, ProjectError> {
         number_member(value, "opacity")?,
     )
     .map_err(ProjectError::Media)?
+    .with_rotation_milli_degrees(optional_number_member(value, "rotation_milli_degrees", 0)?)
+    .map_err(ProjectError::Media)?
     .with_crop(
         number_member(value, "crop_left")?,
         number_member(value, "crop_top")?,
@@ -504,6 +513,17 @@ fn number_member<T: std::str::FromStr>(value: &Json, key: &str) -> Result<T, Pro
         .get(key)
         .and_then(Json::as_number::<T>)
         .ok_or_else(|| invalid(format!("missing or out-of-range `{key}`")))
+}
+
+fn optional_number_member<T: std::str::FromStr>(
+    value: &Json,
+    key: &str,
+    default: T,
+) -> Result<T, ProjectError> {
+    match value.get(key) {
+        Some(_) => number_member(value, key),
+        None => Ok(default),
+    }
 }
 
 fn array_member<'a>(value: &'a Json, key: &str) -> Result<&'a [Json], ProjectError> {

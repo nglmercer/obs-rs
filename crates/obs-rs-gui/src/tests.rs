@@ -1556,6 +1556,7 @@ fn exercise_source_transform_window(
     window.set_position_y(-7);
     window.set_item_opacity(200);
     window.set_flip_horizontal(true);
+    window.set_rotation_degrees(90);
     window.invoke_accept_transform();
 
     let state_ref = state.borrow();
@@ -1577,6 +1578,7 @@ fn exercise_source_transform_window(
     assert_eq!(item.transform().translate_y(), -7);
     assert_eq!(item.transform().opacity(), 200);
     assert!(item.transform().flip_x());
+    assert_eq!(item.transform().rotation_degrees(), 90);
     drop(state_ref);
 
     ui.invoke_open_source_transform_window();

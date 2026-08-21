@@ -23,6 +23,7 @@
                 "flip_x": false,
                 "flip_y": false,
                 "opacity": 255,
+                "rotation_milli_degrees": 0,
                 "scale_x_milli": 400,
                 "scale_y_milli": 350,
                 "translate_x": 372,
@@ -42,6 +43,7 @@
                 "flip_x": false,
                 "flip_y": false,
                 "opacity": 255,
+                "rotation_milli_degrees": 0,
                 "scale_x_milli": 1000,
                 "scale_y_milli": 1000,
                 "translate_x": 0,
@@ -67,6 +69,7 @@
                 "flip_x": false,
                 "flip_y": false,
                 "opacity": 255,
+                "rotation_milli_degrees": 0,
                 "scale_x_milli": 1000,
                 "scale_y_milli": 1000,
                 "translate_x": 0,
@@ -92,6 +95,7 @@
                 "flip_x": false,
                 "flip_y": false,
                 "opacity": 255,
+                "rotation_milli_degrees": 0,
                 "scale_x_milli": 1000,
                 "scale_y_milli": 1000,
                 "translate_x": 0,
@@ -161,5 +165,5 @@
     }
   ],
   "title": "OBS-RS Studio",
-  "version": 2
+  "version": 3
 }

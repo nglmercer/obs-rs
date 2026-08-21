@@ -937,8 +937,37 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
     let crop_top = parameters.values[12];
     let visible_right = source_width - parameters.values[13];
     let visible_bottom = source_height - parameters.values[14];
-    var source_x = crop_left + local_x * 1000 / parameters.values[4];
-    var source_y = crop_top + local_y * 1000 / parameters.values[5];
+    var source_x: i32;
+    var source_y: i32;
+    if (parameters.values[15] == 0) {
+        source_x = crop_left + local_x * 1000 / parameters.values[4];
+        source_y = crop_top + local_y * 1000 / parameters.values[5];
+    } else {
+        // Rotation is around the centre of the visible, scaled source. The
+        // inverse matrix maps a target pixel back into source space, matching
+        // the CPU reference transform's screen-coordinate convention.
+        let visible_width = visible_right - crop_left;
+        let visible_height = visible_bottom - crop_top;
+        let scaled_width = f32(visible_width) * f32(parameters.values[4]) / 1000.0;
+        let scaled_height = f32(visible_height) * f32(parameters.values[5]) / 1000.0;
+        let center_x = f32(parameters.values[6]) + scaled_width / 2.0;
+        let center_y = f32(parameters.values[7]) + scaled_height / 2.0;
+        let angle = f32(parameters.values[15]) * 3.14159265359 / 180000.0;
+        let sine = sin(angle);
+        let cosine = cos(angle);
+        let delta_x = f32(canvas_x) + 0.5 - center_x;
+        let delta_y = f32(canvas_y) + 0.5 - center_y;
+        let transformed_x = cosine * delta_x + sine * delta_y + scaled_width / 2.0;
+        let transformed_y = -sine * delta_x + cosine * delta_y + scaled_height / 2.0;
+        if (transformed_x < 0.0 || transformed_y < 0.0 ||
+            transformed_x >= scaled_width || transformed_y >= scaled_height) {
+            return vec4<i32>(0);
+        }
+        source_x = crop_left + i32(floor(transformed_x * 1000.0 /
+            f32(parameters.values[4])));
+        source_y = crop_top + i32(floor(transformed_y * 1000.0 /
+            f32(parameters.values[5])));
+    }
     if (source_x < crop_left || source_x >= visible_right ||
         source_y < crop_top || source_y >= visible_bottom) {
         return vec4<i32>(0);
@@ -952,12 +981,12 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
     let sampled = textureLoad(layer_texture, vec2<i32>(source_x, source_y), 0);
     var pixel = vec4<i32>(floor(sampled * 255.0 + vec4<f32>(0.5)));
     pixel.a = pixel.a * parameters.values[10] / 255;
-    let filter_count = parameters.values[15];
+    let filter_count = parameters.values[16];
     var filter_index = 0;
     loop {
         if (filter_index >= filter_count) { break; }
-        let kind = parameters.values[16 + filter_index * 2];
-        let value = parameters.values[17 + filter_index * 2];
+        let kind = parameters.values[17 + filter_index * 2];
+        let value = parameters.values[18 + filter_index * 2];
         if (kind == 0) {
             let luma = (pixel.r * 77 + pixel.g * 150 + pixel.b * 29) / 256;
             pixel.r = luma;
@@ -1066,7 +1095,7 @@ fn layer_parameters(
     transform: FrameTransform,
     filters: &[FrameFilter],
 ) -> Vec<u8> {
-    let mut values = Vec::with_capacity(16 + filters.len() * 2);
+    let mut values = Vec::with_capacity(17 + filters.len() * 2);
     values.extend([
         i32::try_from(target_format.width()).unwrap_or(i32::MAX),
         i32::try_from(target_format.height()).unwrap_or(i32::MAX),
@@ -1083,6 +1112,7 @@ fn layer_parameters(
         i32::try_from(transform.crop_top()).unwrap_or(i32::MAX),
         i32::try_from(transform.crop_right()).unwrap_or(i32::MAX),
         i32::try_from(transform.crop_bottom()).unwrap_or(i32::MAX),
+        transform.rotation_milli_degrees(),
         i32::try_from(filters.len()).unwrap_or(i32::MAX),
     ]);
     for filter in filters {

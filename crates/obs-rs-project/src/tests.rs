@@ -98,10 +98,10 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
         Err(ProjectError::InvalidDocument { .. })
     ));
 
-    let future = encoded.replace(r#""version": 2"#, r#""version": 3"#);
+    let future = encoded.replace(r#""version": 3"#, r#""version": 4"#);
     let error = Project::parse(&future).expect_err("a newer schema is not guessed at");
     assert!(
-        format!("{error}").contains("unsupported project schema version 3"),
+        format!("{error}").contains("unsupported project schema version 4"),
         "{error}"
     );
 }
@@ -110,7 +110,7 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
 fn parser_reports_the_line_a_syntax_error_is_on() {
     let broken = project()
         .serialize()
-        .replace(r#""version": 2"#, r#""version": ?"#);
+        .replace(r#""version": 3"#, r#""version": ?"#);
 
     let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
     match error {
@@ -922,6 +922,8 @@ fn project_codec_round_trips_crop_and_accepts_legacy_transforms() {
     let mut cropped = project();
     let transform = FrameTransform::new(1_250, 900, 12, -8, true, false, 180)
         .expect("transform")
+        .with_rotation_milli_degrees(12_500)
+        .expect("rotation")
         .with_crop(4, 5, 6, 7)
         .expect("crop");
     let profile_id = Identifier::new("live").expect("profile id");
@@ -946,6 +948,29 @@ fn project_codec_round_trips_crop_and_accepts_legacy_transforms() {
         .expect("scene item")
         .transform();
     assert_eq!(decoded_transform, transform);
+
+    // Version two documents did not have a rotation member. They remain
+    // readable and receive the identity rotation during migration.
+    let previous = cropped
+        .serialize()
+        .replace(r#""version": 3"#, r#""version": 2"#)
+        .replace(
+            &format!(
+                "        \"rotation_milli_degrees\": {},\n",
+                transform.rotation_milli_degrees()
+            ),
+            "",
+        );
+    let previous_transform = Project::parse(&previous)
+        .expect("version two project")
+        .profile("live")
+        .expect("profile")
+        .scene("main")
+        .expect("scene")
+        .item("background")
+        .expect("item")
+        .transform();
+    assert_eq!(previous_transform.rotation_milli_degrees(), 0);
 
     let legacy = project().serialize().replace(",0,0,0,0|", "|");
     Project::parse(&legacy).expect("seven-field legacy transforms remain readable");
@@ -1089,7 +1114,7 @@ fn version_one_scene_sources_migrate_to_registry_and_items() {
     assert_eq!(profile.source("camera").expect("source").filters().len(), 1);
 
     let encoded = migrated.serialize();
-    assert!(encoded.contains(r#""version": 2"#), "{encoded}");
+    assert!(encoded.contains(r#""version": 3"#), "{encoded}");
     assert!(encoded.contains(r#""items""#), "{encoded}");
     assert_eq!(
         Project::parse(&encoded).expect("new format parses"),

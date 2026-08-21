@@ -260,6 +260,7 @@ pub(crate) fn flip_source_and_refresh(
             },
             transform.opacity(),
         )?
+        .with_rotation_milli_degrees(transform.rotation_milli_degrees())?
         .with_crop(
             transform.crop_left(),
             transform.crop_top(),
@@ -556,10 +557,10 @@ fn selected_source_context(
 
 fn parse_source_transform(document: &str) -> Result<FrameTransform, Box<dyn Error>> {
     let values = document.split(',').map(str::trim).collect::<Vec<_>>();
-    if values.len() != 7 && values.len() != 11 {
+    if values.len() != 7 && values.len() != 11 && values.len() != 12 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "transform needs 7 or 11 comma-separated values",
+            "transform needs 7, 11, or 12 comma-separated values",
         )
         .into());
     }
@@ -574,6 +575,11 @@ fn parse_source_transform(document: &str) -> Result<FrameTransform, Box<dyn Erro
         flip_y,
         values[6].parse()?,
     )?;
+    let transform = if values.len() == 12 {
+        transform.with_rotation_milli_degrees(values[11].parse()?)?
+    } else {
+        transform
+    };
     if values.len() == 7 {
         return Ok(transform);
     }
@@ -599,7 +605,7 @@ fn parse_transform_flag(value: &str, field: &str) -> Result<bool, Box<dyn Error>
 
 pub(crate) fn source_transform_document(transform: FrameTransform) -> String {
     format!(
-        "{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{}",
         transform.scale_x_milli(),
         transform.scale_y_milli(),
         transform.translate_x(),
@@ -610,6 +616,34 @@ pub(crate) fn source_transform_document(transform: FrameTransform) -> String {
         transform.crop_left(),
         transform.crop_top(),
         transform.crop_right(),
-        transform.crop_bottom()
+        transform.crop_bottom(),
+        transform.rotation_milli_degrees()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transform_document_round_trips_crop_and_rotation() {
+        let transform = FrameTransform::new(1_250, 900, 12, -8, true, false, 180)
+            .expect("transform")
+            .with_rotation_milli_degrees(-12_500)
+            .expect("rotation")
+            .with_crop(4, 5, 6, 7)
+            .expect("crop");
+
+        assert_eq!(
+            parse_source_transform(&source_transform_document(transform))
+                .expect("serialized transform"),
+            transform
+        );
+    }
+
+    #[test]
+    fn legacy_transform_documents_keep_zero_rotation() {
+        let transform = parse_source_transform("1000,1000,0,0,0,0,255").expect("legacy transform");
+        assert_eq!(transform, FrameTransform::IDENTITY);
+    }
 }

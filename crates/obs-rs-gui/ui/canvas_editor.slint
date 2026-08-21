@@ -151,7 +151,10 @@ export component CanvasEditor inherits Rectangle {
                 } else if (event.kind == PointerEventKind.down) {
                     root.last-x = self.absolute-position.x;
                     root.last-y = self.absolute-position.y;
-                    root.active-handle = handle.id;
+                    // OBS uses Alt+handle-drag to crop the source instead of
+                    // resizing its scene-item rectangle. The Rust callback
+                    // receives 9-16 for the corresponding 1-8 crop handles.
+                    root.active-handle = handle.id + (event.modifiers.alt ? 8 : 0);
                 }
                 if (event.kind == PointerEventKind.up && root.active-handle == -2) {
                     root.active-handle = -1;
@@ -167,11 +170,12 @@ export component CanvasEditor inherits Rectangle {
                         root.delta-canvas(self.absolute-position.y + self.mouse-y - root.last-y));
                     root.last-x = self.absolute-position.x + self.mouse-x;
                     root.last-y = self.absolute-position.y + self.mouse-y;
-                } else if (root.active-handle == handle.id) {
+                } else if (root.active-handle == handle.id
+                    || root.active-handle == handle.id + 8) {
                     // A grip's own coordinates move with the box it resizes, so
                     // the delta is taken from the absolute pointer position.
                     root.transform-dragged(
-                        handle.id,
+                        root.active-handle,
                         root.delta-canvas(self.absolute-position.x + self.mouse-x - root.last-x),
                         root.delta-canvas(self.absolute-position.y + self.mouse-y - root.last-y));
                     root.last-x = self.absolute-position.x + self.mouse-x;

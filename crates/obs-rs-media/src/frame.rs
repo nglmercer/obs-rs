@@ -528,6 +528,13 @@ impl VideoFrame {
         if transform == FrameTransform::IDENTITY {
             return Ok(self.clone());
         }
+        // Keep the established integer resampler byte-identical for the
+        // overwhelmingly common unrotated path. Rotation has a different
+        // inverse-mapping geometry and is isolated so it cannot perturb the
+        // existing crop/scale/flip fast paths.
+        if transform.rotation_milli_degrees() != 0 {
+            return self.transformed_rotated(transform);
+        }
 
         let mut output = Self::solid(self.format, self.timestamp, [0, 0, 0, 0]);
         let width = i64::from(self.format.width);
@@ -646,6 +653,94 @@ impl VideoFrame {
         Ok(output)
     }
 
+    /// Applies a nearest-neighbor rotation around the visible source centre.
+    ///
+    /// The integer resampler above intentionally remains the reference for
+    /// zero-degree transforms. This path computes one sine/cosine pair per
+    /// frame, then maps each output pixel back into the cropped source. It is
+    /// deterministic for a given transform and keeps the same transparent
+    /// outside-the-layer semantics as the unrotated path.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "validated coordinates are converted after bounds checks; fixed-point media values are intentionally converted to f64 for the rotation matrix"
+    )]
+    fn transformed_rotated(&self, transform: FrameTransform) -> Result<Self, MediaError> {
+        let mut output = Self::solid(self.format, self.timestamp, [0, 0, 0, 0]);
+        let width = i64::from(self.format.width);
+        let height = i64::from(self.format.height);
+        let crop_left = i64::from(transform.crop_left());
+        let crop_top = i64::from(transform.crop_top());
+        let crop_right = i64::from(transform.crop_right());
+        let crop_bottom = i64::from(transform.crop_bottom());
+        let visible_right = width - crop_right;
+        let visible_bottom = height - crop_bottom;
+        if crop_left >= visible_right || crop_top >= visible_bottom {
+            return Err(MediaError::InvalidTransform);
+        }
+
+        let visible_width = visible_right - crop_left;
+        let visible_height = visible_bottom - crop_top;
+        let scale_x = f64::from(transform.scale_x_milli());
+        let scale_y = f64::from(transform.scale_y_milli());
+        let scaled_width = visible_width as f64 * scale_x / 1_000.0;
+        let scaled_height = visible_height as f64 * scale_y / 1_000.0;
+        let center_x = f64::from(transform.translate_x()) + scaled_width / 2.0;
+        let center_y = f64::from(transform.translate_y()) + scaled_height / 2.0;
+        let angle =
+            f64::from(transform.rotation_milli_degrees()) / 180_000.0 * std::f64::consts::PI;
+        let (sin, cos) = angle.sin_cos();
+        let output_width = self.format.width_index();
+        let opacity = u32::from(transform.opacity());
+
+        let output_pixels = output.pixels_mut();
+        for y in 0..self.format.height {
+            for x in 0..self.format.width {
+                // Pixel centres make quarter-turns preserve a symmetric
+                // 2x2 source rather than introducing a half-pixel drift.
+                let dx = f64::from(x) + 0.5 - center_x;
+                let dy = f64::from(y) + 0.5 - center_y;
+                let local_x = cos * dx + sin * dy + scaled_width / 2.0;
+                let local_y = -sin * dx + cos * dy + scaled_height / 2.0;
+                if local_x < 0.0
+                    || local_y < 0.0
+                    || local_x >= scaled_width
+                    || local_y >= scaled_height
+                {
+                    continue;
+                }
+
+                let mut source_x = crop_left + (local_x * 1_000.0 / scale_x).floor() as i64;
+                let mut source_y = crop_top + (local_y * 1_000.0 / scale_y).floor() as i64;
+                if transform.flip_x() {
+                    source_x = crop_left + visible_width - 1 - (source_x - crop_left);
+                }
+                if transform.flip_y() {
+                    source_y = crop_top + visible_height - 1 - (source_y - crop_top);
+                }
+                if source_x < crop_left
+                    || source_x >= visible_right
+                    || source_y < crop_top
+                    || source_y >= visible_bottom
+                {
+                    continue;
+                }
+
+                let source_offset = (source_y as usize * output_width + source_x as usize) * 4;
+                let output_offset = (y as usize * output_width + x as usize) * 4;
+                let source_pixel = &self.pixels[source_offset..source_offset + 4];
+                let target_pixel = &mut output_pixels[output_offset..output_offset + 4];
+                target_pixel.copy_from_slice(source_pixel);
+                if opacity != u32::from(u8::MAX) {
+                    target_pixel[3] =
+                        to_byte(u32::from(target_pixel[3]) * opacity / u32::from(u8::MAX));
+                }
+            }
+        }
+        Ok(output)
+    }
+
     /// Applies a transform while reusing uniquely owned storage for the common
     /// unscaled full-frame flip/opacity path.
     ///
@@ -663,6 +758,7 @@ impl VideoFrame {
             && transform.scale_y_milli == 1_000
             && transform.translate_x == 0
             && transform.translate_y == 0
+            && transform.rotation_milli_degrees == 0
             && !transform.is_cropped();
         if !full_frame {
             return self.transformed(transform);

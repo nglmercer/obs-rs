@@ -377,39 +377,124 @@ impl ItemRect {
     }
 }
 
-/// Returns where a transform places a source of `canvas` size on the canvas.
-///
-/// Sources render at canvas size, so the transform's scale is exactly the
-/// item's size relative to the canvas and its translation is the top-left
-/// corner.
-pub(crate) fn item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRect {
-    let width = i64::from(canvas.0) * i64::from(transform.scale_x_milli()) / UNIT_SCALE_MILLI;
-    let height = i64::from(canvas.1) * i64::from(transform.scale_y_milli()) / UNIT_SCALE_MILLI;
+/// Returns the visible source extent after crop, in source pixels.
+fn visible_source_extent(transform: FrameTransform, canvas: (u32, u32)) -> (i64, i64) {
+    (
+        (i64::from(canvas.0)
+            - i64::from(transform.crop_left())
+            - i64::from(transform.crop_right()))
+        .max(1),
+        (i64::from(canvas.1)
+            - i64::from(transform.crop_top())
+            - i64::from(transform.crop_bottom()))
+        .max(1),
+    )
+}
+
+/// Returns the axis-aligned bounds of a rotated rectangle.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "canvas geometry is deliberately rounded out to cover the rotated pixel bounds"
+)]
+fn rotated_bounds(
+    transform: FrameTransform,
+    unrotated_width: i64,
+    unrotated_height: i64,
+) -> ItemRect {
+    let angle = f64::from(transform.rotation_milli_degrees()) / 180_000.0 * std::f64::consts::PI;
+    let (sin, cos) = angle.sin_cos();
+    let width = (unrotated_width as f64 * cos.abs() + unrotated_height as f64 * sin.abs() - 1e-9)
+        .ceil()
+        .max(1.0) as i64;
+    let height = (unrotated_width as f64 * sin.abs() + unrotated_height as f64 * cos.abs() - 1e-9)
+        .ceil()
+        .max(1.0) as i64;
+    let center_x = f64::from(transform.translate_x()) + unrotated_width as f64 / 2.0;
+    let center_y = f64::from(transform.translate_y()) + unrotated_height as f64 / 2.0;
     ItemRect {
-        x: i64::from(transform.translate_x()),
-        y: i64::from(transform.translate_y()),
+        x: (center_x - width as f64 / 2.0).floor() as i64,
+        y: (center_y - height as f64 / 2.0).floor() as i64,
         width,
         height,
     }
 }
 
-/// Rebuilds a transform from an edited rectangle, keeping flips and opacity.
+/// Returns where a transform places a source of `canvas` size on the canvas.
+///
+/// Sources render at canvas size, so the transform's scale is exactly the
+/// item's size relative to the canvas and its translation is the top-left
+/// corner of the unrotated visible source. Rotation expands this to the
+/// axis-aligned bounds used by hit testing and the selection overlay.
+pub(crate) fn item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRect {
+    let (source_width, source_height) = visible_source_extent(transform, canvas);
+    let width = (source_width * i64::from(transform.scale_x_milli()) / UNIT_SCALE_MILLI).max(1);
+    let height = (source_height * i64::from(transform.scale_y_milli()) / UNIT_SCALE_MILLI).max(1);
+    if transform.is_rotated() {
+        rotated_bounds(transform, width, height)
+    } else {
+        ItemRect {
+            x: i64::from(transform.translate_x()),
+            y: i64::from(transform.translate_y()),
+            width,
+            height,
+        }
+    }
+}
+
+/// Rebuilds a transform from an edited rectangle, keeping flips, opacity,
+/// crop, and rotation.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "rotated bounds are scaled through floating-point ratios and clamped before storage"
+)]
 fn transform_for_rect(base: FrameTransform, rect: ItemRect, canvas: (u32, u32)) -> FrameTransform {
-    let scale = |extent: i64, canvas: u32| {
-        let canvas = i64::from(canvas).max(1);
-        let milli = extent.saturating_mul(UNIT_SCALE_MILLI) / canvas;
+    let (source_width, source_height) = visible_source_extent(base, canvas);
+    let scale = |extent: i64, source_extent: i64| {
+        let source_extent = source_extent.max(1);
+        let milli = extent.saturating_mul(UNIT_SCALE_MILLI) / source_extent;
         u32::try_from(milli.clamp(1, i64::from(FrameTransform::MAX_SCALE_MILLI))).unwrap_or(1)
+    };
+    let (scale_x, scale_y, translate_x, translate_y) = if base.is_rotated() {
+        let old_bounds = item_rect(base, canvas);
+        let width_ratio = rect.width.max(1) as f64 / old_bounds.width.max(1) as f64;
+        let height_ratio = rect.height.max(1) as f64 / old_bounds.height.max(1) as f64;
+        let scale_x = (f64::from(base.scale_x_milli()) * width_ratio)
+            .round()
+            .clamp(1.0, f64::from(FrameTransform::MAX_SCALE_MILLI)) as i64;
+        let scale_y = (f64::from(base.scale_y_milli()) * height_ratio)
+            .round()
+            .clamp(1.0, f64::from(FrameTransform::MAX_SCALE_MILLI)) as i64;
+        let width = source_width * scale_x / UNIT_SCALE_MILLI;
+        let height = source_height * scale_y / UNIT_SCALE_MILLI;
+        (
+            u32::try_from(scale_x).unwrap_or(FrameTransform::MAX_SCALE_MILLI),
+            u32::try_from(scale_y).unwrap_or(FrameTransform::MAX_SCALE_MILLI),
+            rect.x.saturating_add(rect.width / 2) - width / 2,
+            rect.y.saturating_add(rect.height / 2) - height / 2,
+        )
+    } else {
+        (
+            scale(rect.width, source_width),
+            scale(rect.height, source_height),
+            rect.x,
+            rect.y,
+        )
     };
     let translate = |value: i64| i32::try_from(value).unwrap_or(0);
     FrameTransform::new(
-        scale(rect.width, canvas.0),
-        scale(rect.height, canvas.1),
-        translate(rect.x),
-        translate(rect.y),
+        scale_x,
+        scale_y,
+        translate(translate_x),
+        translate(translate_y),
         base.flip_x(),
         base.flip_y(),
         base.opacity(),
     )
+    .and_then(|transform| transform.with_rotation_milli_degrees(base.rotation_milli_degrees()))
     .and_then(|transform| {
         transform.with_crop(
             base.crop_left(),
@@ -419,6 +504,88 @@ fn transform_for_rect(base: FrameTransform, rect: ItemRect, canvas: (u32, u32)) 
         )
     })
     .unwrap_or(base)
+}
+
+/// Applies an Alt-drag on one of the eight transform handles as a source
+/// crop. The handle number is the ordinary 1-8 clockwise handle number.
+fn crop_transform(
+    base: FrameTransform,
+    handle: i32,
+    dx: i64,
+    dy: i64,
+    canvas: (u32, u32),
+) -> FrameTransform {
+    // Axis-aligned crop handles are unambiguous before rotation. The dialog
+    // remains the explicit editing path for a rotated item until a rotated
+    // handle overlay is added.
+    if base.is_rotated() {
+        return base;
+    }
+    let scale_source_delta = |delta: i64, scale: u32| {
+        delta
+            .saturating_mul(UNIT_SCALE_MILLI)
+            .div_euclid(i64::from(scale.max(1)))
+    };
+    let mut left = i64::from(base.crop_left());
+    let mut top = i64::from(base.crop_top());
+    let mut right = i64::from(base.crop_right());
+    let mut bottom = i64::from(base.crop_bottom());
+    let delta_x = scale_source_delta(dx, base.scale_x_milli());
+    let delta_y = scale_source_delta(dy, base.scale_y_milli());
+    let max_left = (i64::from(canvas.0) - right - 1).max(0);
+    let max_right = (i64::from(canvas.0) - left - 1).max(0);
+    let max_top = (i64::from(canvas.1) - bottom - 1).max(0);
+    let max_bottom = (i64::from(canvas.1) - top - 1).max(0);
+    let mut translate_x = i64::from(base.translate_x());
+    let mut translate_y = i64::from(base.translate_y());
+    if matches!(handle, 1 | 7 | 8) {
+        let next = (left + delta_x).clamp(0, max_left);
+        let actual = next - left;
+        left = next;
+        translate_x = translate_x.saturating_add(
+            actual
+                .saturating_mul(i64::from(base.scale_x_milli()))
+                .div_euclid(UNIT_SCALE_MILLI),
+        );
+    }
+    if matches!(handle, 1..=3) {
+        let next = (top + delta_y).clamp(0, max_top);
+        let actual = next - top;
+        top = next;
+        translate_y = translate_y.saturating_add(
+            actual
+                .saturating_mul(i64::from(base.scale_y_milli()))
+                .div_euclid(UNIT_SCALE_MILLI),
+        );
+    }
+    if matches!(handle, 3..=5) {
+        right = (right - delta_x).clamp(0, max_right);
+    }
+    if matches!(handle, 5..=7) {
+        bottom = (bottom - delta_y).clamp(0, max_bottom);
+    }
+    let Ok(transform) = FrameTransform::new(
+        base.scale_x_milli(),
+        base.scale_y_milli(),
+        i32::try_from(translate_x).unwrap_or(0),
+        i32::try_from(translate_y).unwrap_or(0),
+        base.flip_x(),
+        base.flip_y(),
+        base.opacity(),
+    ) else {
+        return base;
+    };
+    transform
+        .with_rotation_milli_degrees(base.rotation_milli_degrees())
+        .and_then(|transform| {
+            transform.with_crop(
+                u32::try_from(left).unwrap_or(u32::MAX),
+                u32::try_from(top).unwrap_or(u32::MAX),
+                u32::try_from(right).unwrap_or(u32::MAX),
+                u32::try_from(bottom).unwrap_or(u32::MAX),
+            )
+        })
+        .unwrap_or(base)
 }
 
 /// Applies one pointer drag to a rectangle.
@@ -543,6 +710,10 @@ fn install_zoom_callbacks(ui: &MainWindow, controller: &Rc<CanvasController>) {
 }
 
 /// Installs the canvas selection and transform callbacks.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the callback installation keeps draft, commit, and selection lifetimes together"
+)]
 pub(crate) fn install_canvas_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -576,19 +747,23 @@ pub(crate) fn install_canvas_callbacks(
             .map(|draft| draft.transform)
             .or_else(|| selected_transform(&drag_state))
             .unwrap_or(FrameTransform::IDENTITY);
-        let rect = drag_rect(
-            item_rect(base, canvas),
-            handle,
-            i64::from(dx),
-            i64::from(dy),
-        );
-        let rect = snap_rect(
-            rect,
-            handle,
-            &scene_snap_guides(&drag_state, &scene, &item, canvas),
-            drag_controller.canvas_state().snapping(),
-        );
-        let transform = transform_for_rect(base, rect, canvas);
+        let transform = if (9..=16).contains(&handle) {
+            crop_transform(base, handle - 8, i64::from(dx), i64::from(dy), canvas)
+        } else {
+            let rect = drag_rect(
+                item_rect(base, canvas),
+                handle,
+                i64::from(dx),
+                i64::from(dy),
+            );
+            let rect = snap_rect(
+                rect,
+                handle,
+                &scene_snap_guides(&drag_state, &scene, &item, canvas),
+                drag_controller.canvas_state().snapping(),
+            );
+            transform_for_rect(base, rect, canvas)
+        };
         // The drag stays out of the project until the pointer is released: the
         // preview timer feeds this straight to the compositor, and the overlay
         // handles follow it here. A revision per mouse move would fill the undo
@@ -975,6 +1150,43 @@ mod tests {
 
         assert!(rebuilt.flip_x() && rebuilt.flip_y());
         assert_eq!(rebuilt.opacity(), 128);
+    }
+
+    #[test]
+    fn alt_handle_crop_changes_source_edges_without_losing_the_opposite_edge() {
+        let base = FrameTransform::IDENTITY;
+        let left = crop_transform(base, 8, 100, 0, CANVAS);
+        assert_eq!(left.crop_left(), 100);
+        assert_eq!(left.crop_right(), 0);
+        assert_eq!(left.translate_x(), 100);
+        assert_eq!(
+            item_rect(left, CANVAS).x + item_rect(left, CANVAS).width,
+            1_920
+        );
+
+        let right = crop_transform(base, 4, -100, 0, CANVAS);
+        assert_eq!(right.crop_left(), 0);
+        assert_eq!(right.crop_right(), 100);
+        assert_eq!(right.translate_x(), 0);
+        assert_eq!(item_rect(right, CANVAS).width, 1_820);
+    }
+
+    #[test]
+    fn rotation_uses_the_rotated_axis_aligned_bounds_for_selection() {
+        let transform = FrameTransform::new(1_000, 1_000, 100, 50, false, false, 255)
+            .expect("transform")
+            .with_rotation_degrees(90)
+            .expect("rotation");
+
+        assert_eq!(
+            item_rect(transform, CANVAS),
+            ItemRect {
+                x: 520,
+                y: -370,
+                width: 1_080,
+                height: 1_920,
+            }
+        );
     }
 
     #[test]

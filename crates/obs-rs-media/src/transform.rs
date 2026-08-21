@@ -3,6 +3,8 @@ use super::error::MediaError;
 ///
 /// Scale values use thousandths: `1000` is 100%, `2000` is 200%. Translation is
 /// expressed in output pixels and the transform is anchored at the top-left corner.
+/// Rotation is stored in thousandths of a degree and is applied around the
+/// centre of the visible, scaled source rectangle.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct FrameTransform {
     pub(crate) scale_x_milli: u32,
@@ -12,6 +14,7 @@ pub struct FrameTransform {
     pub(crate) flip_x: bool,
     pub(crate) flip_y: bool,
     pub(crate) opacity: u8,
+    pub(crate) rotation_milli_degrees: i32,
     /// Source pixels removed from each edge before scaling.
     ///
     /// Cropping is expressed against the source rather than the output because
@@ -33,6 +36,7 @@ impl FrameTransform {
         flip_x: false,
         flip_y: false,
         opacity: u8::MAX,
+        rotation_milli_degrees: 0,
         crop_left: 0,
         crop_top: 0,
         crop_right: 0,
@@ -47,6 +51,9 @@ impl FrameTransform {
     /// A crop wider than any supported frame can only be a mistake, and
     /// bounding it here keeps the arithmetic in the resampler in range.
     pub const MAX_CROP: u32 = 32_768;
+
+    /// Largest supported absolute rotation, in thousandths of a degree.
+    pub const MAX_ROTATION_MILLI_DEGREES: i32 = 360_000;
 
     /// Creates a transform with validated non-zero scales.
     ///
@@ -77,11 +84,48 @@ impl FrameTransform {
             flip_x,
             flip_y,
             opacity,
+            rotation_milli_degrees: 0,
             crop_left: 0,
             crop_top: 0,
             crop_right: 0,
             crop_bottom: 0,
         })
+    }
+
+    /// Returns this transform with a validated rotation around the visible
+    /// source rectangle's centre.
+    ///
+    /// The fixed-point representation keeps project files deterministic while
+    /// still allowing sub-degree values from non-GUI callers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransform`] when the absolute rotation is
+    /// greater than [`Self::MAX_ROTATION_MILLI_DEGREES`].
+    pub const fn with_rotation_milli_degrees(
+        self,
+        rotation_milli_degrees: i32,
+    ) -> Result<Self, MediaError> {
+        if rotation_milli_degrees.unsigned_abs() > Self::MAX_ROTATION_MILLI_DEGREES.unsigned_abs() {
+            return Err(MediaError::InvalidTransform);
+        }
+        Ok(Self {
+            rotation_milli_degrees,
+            ..self
+        })
+    }
+
+    /// Returns this transform with an integer rotation in degrees.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransform`] when the degree value cannot
+    /// be represented in the fixed-point range.
+    pub const fn with_rotation_degrees(self, rotation_degrees: i32) -> Result<Self, MediaError> {
+        let Some(rotation_milli_degrees) = rotation_degrees.checked_mul(1_000) else {
+            return Err(MediaError::InvalidTransform);
+        };
+        self.with_rotation_milli_degrees(rotation_milli_degrees)
     }
 
     /// Returns this transform with source edges cropped away.
@@ -187,5 +231,23 @@ impl FrameTransform {
     #[must_use]
     pub const fn opacity(self) -> u8 {
         self.opacity
+    }
+
+    /// Returns the rotation in thousandths of a degree.
+    #[must_use]
+    pub const fn rotation_milli_degrees(self) -> i32 {
+        self.rotation_milli_degrees
+    }
+
+    /// Returns the rotation rounded toward zero to whole degrees.
+    #[must_use]
+    pub const fn rotation_degrees(self) -> i32 {
+        self.rotation_milli_degrees / 1_000
+    }
+
+    /// Returns whether this transform rotates the visible source.
+    #[must_use]
+    pub const fn is_rotated(self) -> bool {
+        self.rotation_milli_degrees != 0
     }
 }

@@ -40,6 +40,10 @@ mod tests {
     }
 
     #[cfg(feature = "gpu")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the GPU integration fixture keeps CPU-oracle, viewport, rotation, and recovery assertions together"
+    )]
     #[test]
     fn gpu_upload_layer_submission_readback_and_recovery_are_explicit() {
         use obs_rs_media::{
@@ -77,6 +81,20 @@ mod tests {
             expected
         );
         assert_eq!(backend.metrics().readbacks(), 1);
+
+        let rotated_transform = FrameTransform::IDENTITY
+            .with_rotation_degrees(90)
+            .expect("rotation");
+        backend
+            .submit_layers(target, &[SceneLayer::frame(&frame, rotated_transform, &[])])
+            .expect("GPU rotation");
+        let rotated_expected = frame
+            .transformed(rotated_transform)
+            .expect("CPU rotation oracle");
+        assert_eq!(
+            backend.readback(target).expect("rotated readback"),
+            rotated_expected
+        );
 
         // A desktop preview is allowed to be smaller than the program
         // canvas. The compositor must scale the canvas-space layer into the

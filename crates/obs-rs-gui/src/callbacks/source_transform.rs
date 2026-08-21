@@ -151,13 +151,14 @@ fn set_transform(window: &SourceTransformWindow, transform: FrameTransform) {
     window.set_crop_top(i32::try_from(transform.crop_top()).unwrap_or(i32::MAX));
     window.set_crop_right(i32::try_from(transform.crop_right()).unwrap_or(i32::MAX));
     window.set_crop_bottom(i32::try_from(transform.crop_bottom()).unwrap_or(i32::MAX));
+    window.set_rotation_degrees(transform.rotation_degrees());
     window.set_item_opacity(i32::from(transform.opacity()));
     window.set_flip_horizontal(transform.flip_x());
     window.set_flip_vertical(transform.flip_y());
 }
 
 fn read_transform(window: &SourceTransformWindow) -> Result<FrameTransform, Box<dyn Error>> {
-    FrameTransform::new(
+    let transform = FrameTransform::new(
         nonnegative(window.get_scale_x(), "scale-x")?,
         nonnegative(window.get_scale_y(), "scale-y")?,
         window.get_position_x(),
@@ -166,13 +167,15 @@ fn read_transform(window: &SourceTransformWindow) -> Result<FrameTransform, Box<
         window.get_flip_vertical(),
         u8::try_from(window.get_item_opacity())?,
     )?
-    .with_crop(
-        nonnegative(window.get_crop_left(), "crop-left")?,
-        nonnegative(window.get_crop_top(), "crop-top")?,
-        nonnegative(window.get_crop_right(), "crop-right")?,
-        nonnegative(window.get_crop_bottom(), "crop-bottom")?,
-    )
-    .map_err(Into::into)
+    .with_rotation_degrees(window.get_rotation_degrees())?;
+    transform
+        .with_crop(
+            nonnegative(window.get_crop_left(), "crop-left")?,
+            nonnegative(window.get_crop_top(), "crop-top")?,
+            nonnegative(window.get_crop_right(), "crop-right")?,
+            nonnegative(window.get_crop_bottom(), "crop-bottom")?,
+        )
+        .map_err(Into::into)
 }
 
 fn nonnegative(value: i32, field: &str) -> Result<u32, Box<dyn Error>> {
