@@ -22,6 +22,7 @@ use crate::{preview::TransformDraft, MainWindow, PreviewSurface};
 /// stops here rather than letting the item become unrecoverable.
 const MINIMUM_ITEM_PIXELS: i64 = 16;
 const MAX_PAN_PIXELS: i32 = 16_384;
+const MAX_SNAP_GUIDES: usize = 64;
 
 /// The scale a transform stores for a source that fills the canvas.
 const UNIT_SCALE_MILLI: i64 = 1_000;
@@ -90,6 +91,22 @@ impl CanvasZoom {
     }
 }
 
+/// Bounded snapping policy for the interactive canvas.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SnapSettings {
+    enabled: bool,
+    distance: i64,
+}
+
+impl Default for SnapSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            distance: 10,
+        }
+    }
+}
+
 /// Transient canvas viewport state owned by the canvas controller.
 ///
 /// Zoom and pan are presentation state, not project data. Keeping them beside
@@ -101,6 +118,7 @@ impl CanvasZoom {
 pub(crate) struct CanvasState {
     zoom: CanvasZoom,
     pan: (i32, i32),
+    snapping: SnapSettings,
 }
 
 impl Default for CanvasState {
@@ -108,6 +126,7 @@ impl Default for CanvasState {
         Self {
             zoom: CanvasZoom::FitToWindow,
             pan: (0, 0),
+            snapping: SnapSettings::default(),
         }
     }
 }
@@ -129,6 +148,18 @@ impl CanvasState {
         Self { pan, ..self }
     }
 
+    pub(crate) const fn snapping(self) -> SnapSettings {
+        self.snapping
+    }
+
+    #[allow(
+        dead_code,
+        reason = "the future snap-distance control will update this transient policy"
+    )]
+    pub(crate) const fn with_snapping(self, snapping: SnapSettings) -> Self {
+        Self { snapping, ..self }
+    }
+
     /// Applies a bounded pointer delta in canvas pixels.
     pub(crate) fn panned(self, dx: i32, dy: i32) -> Self {
         let bounded = |current: i32, delta: i32| {
@@ -140,6 +171,194 @@ impl CanvasState {
         };
         self.with_pan((bounded(self.pan.0, dx), bounded(self.pan.1, dy)))
     }
+}
+
+/// Fixed-capacity guide storage used while a pointer gesture is active.
+///
+/// The scene can contain more items than fit in the guide budget. The first
+/// visible items are retained deterministically; skipping the rest is safer
+/// than allocating on every pointer sample.
+#[derive(Clone, Copy, Debug)]
+struct SnapGuides {
+    x: [i64; MAX_SNAP_GUIDES],
+    y: [i64; MAX_SNAP_GUIDES],
+    x_len: usize,
+    y_len: usize,
+}
+
+impl Default for SnapGuides {
+    fn default() -> Self {
+        Self {
+            x: [0; MAX_SNAP_GUIDES],
+            y: [0; MAX_SNAP_GUIDES],
+            x_len: 0,
+            y_len: 0,
+        }
+    }
+}
+
+impl SnapGuides {
+    fn with_canvas(canvas: (u32, u32)) -> Self {
+        let mut guides = Self::default();
+        guides.push_x(0);
+        guides.push_x(i64::from(canvas.0) / 2);
+        guides.push_x(i64::from(canvas.0));
+        guides.push_y(0);
+        guides.push_y(i64::from(canvas.1) / 2);
+        guides.push_y(i64::from(canvas.1));
+        guides
+    }
+
+    fn push_x(&mut self, value: i64) {
+        if self.x_len < MAX_SNAP_GUIDES {
+            self.x[self.x_len] = value;
+            self.x_len += 1;
+        }
+    }
+
+    fn push_y(&mut self, value: i64) {
+        if self.y_len < MAX_SNAP_GUIDES {
+            self.y[self.y_len] = value;
+            self.y_len += 1;
+        }
+    }
+
+    fn push_rect(&mut self, rect: ItemRect) {
+        self.push_x(rect.x);
+        self.push_x(rect.x.saturating_add(rect.width));
+        self.push_x(rect.x.saturating_add(rect.width / 2));
+        self.push_y(rect.y);
+        self.push_y(rect.y.saturating_add(rect.height));
+        self.push_y(rect.y.saturating_add(rect.height / 2));
+    }
+}
+
+/// Returns the closest guide delta for the supplied moving edges.
+fn snap_delta(values: [i64; 3], guides: &[i64], distance: i64) -> i64 {
+    let mut best_delta = 0;
+    let max_distance = u64::try_from(distance).unwrap_or(0);
+    let mut best_distance = max_distance.saturating_add(1);
+    for value in values {
+        for guide in guides {
+            let delta = guide.saturating_sub(value);
+            let candidate_distance = delta.unsigned_abs();
+            if candidate_distance <= max_distance && candidate_distance < best_distance {
+                best_delta = delta;
+                best_distance = candidate_distance;
+            }
+        }
+    }
+    best_delta
+}
+
+/// Applies the active snap guides to one transient rectangle.
+#[allow(
+    clippy::too_many_lines,
+    reason = "snap geometry keeps all handle cases in one tested operation"
+)]
+fn snap_rect(rect: ItemRect, handle: i32, guides: &SnapGuides, settings: SnapSettings) -> ItemRect {
+    if !settings.enabled || settings.distance <= 0 {
+        return rect;
+    }
+    let (left, _top, right, _bottom) = match handle {
+        1 => (true, true, false, false),
+        2 => (false, true, false, false),
+        3 => (false, true, true, false),
+        4 => (false, false, true, false),
+        5 => (false, false, true, true),
+        6 => (false, false, false, true),
+        7 => (true, false, false, true),
+        8 => (true, false, false, false),
+        0 => (false, false, false, false),
+        _ => return rect,
+    };
+    let x_delta = if handle == 0 {
+        snap_delta(
+            [
+                rect.x,
+                rect.x.saturating_add(rect.width),
+                rect.x.saturating_add(rect.width / 2),
+            ],
+            &guides.x[..guides.x_len],
+            settings.distance,
+        )
+    } else if left {
+        snap_delta(
+            [rect.x, rect.x, rect.x],
+            &guides.x[..guides.x_len],
+            settings.distance,
+        )
+    } else if right {
+        let right = rect.x.saturating_add(rect.width);
+        snap_delta(
+            [right, right, right],
+            &guides.x[..guides.x_len],
+            settings.distance,
+        )
+    } else {
+        0
+    };
+    let y_delta = if handle == 0 {
+        snap_delta(
+            [
+                rect.y,
+                rect.y.saturating_add(rect.height),
+                rect.y.saturating_add(rect.height / 2),
+            ],
+            &guides.y[..guides.y_len],
+            settings.distance,
+        )
+    } else {
+        let top = matches!(handle, 1..=3 | 8);
+        let bottom = matches!(handle, 5..=7);
+        if top {
+            snap_delta(
+                [rect.y, rect.y, rect.y],
+                &guides.y[..guides.y_len],
+                settings.distance,
+            )
+        } else if bottom {
+            let bottom = rect.y.saturating_add(rect.height);
+            snap_delta(
+                [bottom, bottom, bottom],
+                &guides.y[..guides.y_len],
+                settings.distance,
+            )
+        } else {
+            0
+        }
+    };
+    let mut snapped = rect;
+    if handle == 0 {
+        snapped.x = snapped.x.saturating_add(x_delta);
+        snapped.y = snapped.y.saturating_add(y_delta);
+    } else {
+        if left {
+            snapped.x = snapped.x.saturating_add(x_delta);
+            snapped.width = snapped
+                .width
+                .saturating_sub(x_delta)
+                .max(MINIMUM_ITEM_PIXELS);
+        } else if right {
+            snapped.width = snapped
+                .width
+                .saturating_add(x_delta)
+                .max(MINIMUM_ITEM_PIXELS);
+        }
+        if matches!(handle, 1 | 2 | 3 | 8) {
+            snapped.y = snapped.y.saturating_add(y_delta);
+            snapped.height = snapped
+                .height
+                .saturating_sub(y_delta)
+                .max(MINIMUM_ITEM_PIXELS);
+        } else if matches!(handle, 5..=7) {
+            snapped.height = snapped
+                .height
+                .saturating_add(y_delta)
+                .max(MINIMUM_ITEM_PIXELS);
+        }
+    }
+    snapped
 }
 
 /// A scene item's rectangle in canvas pixels.
@@ -363,6 +582,12 @@ pub(crate) fn install_canvas_callbacks(
             i64::from(dx),
             i64::from(dy),
         );
+        let rect = snap_rect(
+            rect,
+            handle,
+            &scene_snap_guides(&drag_state, &scene, &item, canvas),
+            drag_controller.canvas_state().snapping(),
+        );
         let transform = transform_for_rect(base, rect, canvas);
         // The drag stays out of the project until the pointer is released: the
         // preview timer feeds this straight to the compositor, and the overlay
@@ -518,6 +743,35 @@ fn source_at(
         .map(|item| item.id().as_str().to_owned())
 }
 
+/// Builds the bounded canvas and source guides for one transform gesture.
+fn scene_snap_guides(
+    state: &Rc<RefCell<DesktopState>>,
+    scene_id: &str,
+    item_id: &str,
+    canvas: (u32, u32),
+) -> SnapGuides {
+    let mut guides = SnapGuides::with_canvas(canvas);
+    let state = state.borrow();
+    let Some(scene) = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+    else {
+        return guides;
+    };
+    for item in scene.items() {
+        if item.id().as_str() == item_id || !item.visible() {
+            continue;
+        }
+        guides.push_rect(item_rect(item.transform(), canvas));
+        if guides.x_len == MAX_SNAP_GUIDES && guides.y_len == MAX_SNAP_GUIDES {
+            break;
+        }
+    }
+    guides
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,13 +822,78 @@ mod tests {
     fn canvas_state_keeps_viewport_state_outside_the_project_transform() {
         let state = CanvasState::default()
             .with_zoom(CanvasZoom::Percent(100))
+            .with_snapping(SnapSettings {
+                enabled: false,
+                distance: 4,
+            })
             .panned(24, -12);
 
         assert_eq!(state.zoom().ui_value(), 100);
         assert_eq!(state.pan(), (24, -12));
+        assert_eq!(state.snapping().distance, 4);
 
         let bounded = state.panned(i32::MAX, i32::MIN);
         assert_eq!(bounded.pan(), (MAX_PAN_PIXELS, -MAX_PAN_PIXELS));
+    }
+
+    #[test]
+    fn snapping_aligns_moves_and_resizes_to_bounded_guides() {
+        let mut guides = SnapGuides::with_canvas(CANVAS);
+        guides.push_rect(ItemRect {
+            x: 700,
+            y: 200,
+            width: 100,
+            height: 100,
+        });
+        let settings = SnapSettings::default();
+
+        let near_edge = snap_rect(
+            ItemRect {
+                x: 6,
+                y: 50,
+                width: 400,
+                height: 300,
+            },
+            0,
+            &guides,
+            settings,
+        );
+        assert_eq!(near_edge.x, 0, "the left edge should snap to the canvas");
+
+        let near_other = snap_rect(
+            ItemRect {
+                x: 296,
+                y: 50,
+                width: 400,
+                height: 300,
+            },
+            0,
+            &guides,
+            settings,
+        );
+        assert_eq!(
+            near_other.x, 300,
+            "the right edge should snap to another source"
+        );
+
+        let resized = snap_rect(drag_rect(rect(), 8, -96, 0), 8, &guides, settings);
+        assert_eq!((resized.x, resized.width), (0, 500));
+
+        let unchanged = snap_rect(
+            ItemRect {
+                x: 6,
+                y: 50,
+                width: 400,
+                height: 300,
+            },
+            0,
+            &guides,
+            SnapSettings {
+                enabled: false,
+                distance: 10,
+            },
+        );
+        assert_eq!(unchanged.x, 6);
     }
 
     #[test]

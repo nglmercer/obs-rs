@@ -539,7 +539,10 @@ mod tests {
         );
 
         let mut result = None;
-        for _ in 0..100 {
+        // The workspace runs many GUI/runtime tests in parallel. Keep the
+        // wait bounded, but leave enough scheduler slack for a loaded managed
+        // runner before declaring the worker missing its result.
+        for _ in 0..500 {
             result = worker.try_take_latest();
             if result.is_some() {
                 break;
