@@ -710,6 +710,7 @@ fn forward_to_studio(
     forward!(on_duplicate_scene, invoke_duplicate_scene, id);
     forward!(on_remove_scene, invoke_remove_scene, id);
     forward!(on_select_source, invoke_select_source, id);
+    forward!(on_open_filters, invoke_open_source_filters_for, id);
     forward!(
         on_toggle_source_visibility,
         invoke_toggle_source_visibility,

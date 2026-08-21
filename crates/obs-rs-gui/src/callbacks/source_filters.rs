@@ -1,9 +1,9 @@
 //! Controller for the standalone source Filters window.
 //!
-//! The controller owns only selection and view drafts. Every project mutation
-//! is dispatched as a validated `ProjectCommand`, so list order, names,
-//! enabled state, and settings all participate in undo/redo together with the
-//! rest of the project.
+//! The controller owns the open source target, filter selection, and view
+//! drafts. Every project mutation is dispatched as a validated
+//! `ProjectCommand`, so list order, names, enabled state, and settings all
+//! participate in undo/redo together with the rest of the project.
 
 use std::{cell::RefCell, error::Error, rc::Rc};
 
@@ -13,8 +13,8 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    filter_properties, refresh_ui, I18n, MainWindow, Palette, PreviewSurface, SourceFilterRow,
-    SourceFiltersWindow,
+    filter_properties, refresh_ui, source_target, source_target_is_locked, I18n, MainWindow,
+    Palette, PreviewSurface, SourceFilterRow, SourceFiltersWindow, SourceTarget,
 };
 
 #[derive(Clone, Copy)]
@@ -66,6 +66,7 @@ const FILTER_DEFINITIONS: [FilterDefinition; 7] = [
 pub(crate) struct SourceFiltersController {
     window: SourceFiltersWindow,
     selected: RefCell<String>,
+    target: RefCell<Option<SourceTarget>>,
 }
 
 impl SourceFiltersController {
@@ -89,6 +90,7 @@ pub(crate) fn install_source_filters_window(
     let controller = Rc::new(SourceFiltersController {
         window: SourceFiltersWindow::new()?,
         selected: RefCell::new(String::new()),
+        target: RefCell::new(None),
     });
     install_open(ui, state, surface, &controller);
     install_actions(ui, state, surface, &controller);
@@ -102,18 +104,43 @@ fn install_open(
     controller: &Rc<SourceFiltersController>,
 ) {
     let weak = ui.as_weak();
-    let state = Rc::clone(state);
-    let controller = Rc::clone(controller);
+    let window_state = Rc::clone(state);
+    let window_controller = Rc::clone(controller);
     ui.on_open_source_filters_window(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        controller.set_tokens(ui.global::<Palette>().get_tokens());
-        refresh_window(&state, &controller);
-        if let Err(error) = controller.window.show() {
-            ui.set_status_message(format!("Filters window: {error}").into());
-        }
+        let target = ui.get_selected_source().to_string();
+        open_for_target(&ui, &window_state, &window_controller, &target);
     });
+
+    let weak = ui.as_weak();
+    let state = Rc::clone(state);
+    let controller = Rc::clone(controller);
+    ui.on_open_source_filters_for(move |target| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        open_for_target(&ui, &state, &controller, target.as_str());
+    });
+}
+
+fn open_for_target(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
+    item: &str,
+) {
+    let Some(target) = source_target(&state.borrow(), item) else {
+        ui.set_status_message("Source filter failed: the target is not a source".into());
+        return;
+    };
+    controller.target.replace(Some(target));
+    controller.set_tokens(ui.global::<Palette>().get_tokens());
+    refresh_window(state, controller);
+    if let Err(error) = controller.window.show() {
+        ui.set_status_message(format!("Filters window: {error}").into());
+    }
 }
 
 fn install_actions(
@@ -239,7 +266,7 @@ fn add_filter(
 ) -> Result<(), Box<dyn Error>> {
     let definition =
         definition(kind).ok_or_else(|| std::io::Error::other("unknown filter kind"))?;
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let id = unique_filter_id(state, &source, kind);
     let name = filter_instance_name(definition.name, definition.kind, &id);
@@ -265,7 +292,7 @@ fn remove_filter(
     state: &Rc<RefCell<DesktopState>>,
     controller: &SourceFiltersController,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter = selected_id(controller)?;
     state
@@ -283,7 +310,7 @@ fn toggle_filter(
     state: &Rc<RefCell<DesktopState>>,
     controller: &SourceFiltersController,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
     let enabled = filter_snapshot(state, &source, &filter_id)
@@ -305,7 +332,7 @@ fn move_filter(
     controller: &SourceFiltersController,
     delta: i32,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
     let index = filter_index(state, &source, &filter_id)
@@ -332,7 +359,7 @@ fn rename_filter(
     controller: &SourceFiltersController,
     name: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter = selected_id(controller)?;
     state
@@ -352,7 +379,7 @@ fn edit_property(
     key: &str,
     value: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
     let filter = filter_snapshot(state, &source, &filter_id)
@@ -378,38 +405,26 @@ fn edit_property(
 
 fn source_context(
     state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
 ) -> Result<(String, String, bool), Box<dyn Error>> {
+    let target = controller
+        .target
+        .borrow()
+        .clone()
+        .ok_or_else(|| std::io::Error::other("no source target is open"))?;
     let state = state.borrow();
     let profile = state
         .project_session()
         .project()
-        .active_profile()
-        .to_owned();
-    let scene = state
-        .preview_scene()
-        .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?
-        .to_owned();
-    let item = state
-        .selected_source()
-        .ok_or_else(|| std::io::Error::other("no source is selected"))?
-        .to_owned();
-    let profile_spec = state
-        .project_session()
-        .project()
-        .active_profile_spec()
-        .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
-    let item = profile_spec
-        .scene(scene.as_str())
-        .and_then(|scene| scene.item(item.as_str()))
-        .ok_or_else(|| std::io::Error::other("selected source is missing"))?;
-    if !item.is_source() {
-        return Err(std::io::Error::other("selected item is a nested scene").into());
+        .profile(target.profile.as_str());
+    if profile
+        .and_then(|profile| profile.source(target.source.as_str()))
+        .is_none()
+    {
+        return Err(std::io::Error::other("source definition is missing").into());
     }
-    Ok((
-        profile.to_string(),
-        item.source_id().to_string(),
-        item.locked(),
-    ))
+    let locked = source_target_is_locked(&state, &target);
+    Ok((target.profile, target.source, locked))
 }
 
 fn filter_snapshot(
@@ -516,15 +531,16 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
         .global::<I18n>()
         .set_text(crate::i18n::catalog(locale));
 
+    let target = controller.target.borrow().clone();
     let (source_name, filters) = {
         let state = state.borrow();
-        let scene_id = state.preview_scene().unwrap_or_default();
-        let item_id = state.selected_source().unwrap_or_default();
-        let profile = state.project_session().project().active_profile_spec();
-        let source = profile
-            .and_then(|profile| profile.scene(scene_id))
-            .and_then(|scene| scene.item(item_id))
-            .and_then(|item| profile.and_then(|profile| profile.source(item.source_id())));
+        let source = target.as_ref().and_then(|target| {
+            state
+                .project_session()
+                .project()
+                .profile(target.profile.as_str())
+                .and_then(|profile| profile.source(target.source.as_str()))
+        });
         (
             source.map_or_else(String::new, |source| source.name().to_owned()),
             source.map_or_else(Vec::new, |source| source.filters().to_vec()),

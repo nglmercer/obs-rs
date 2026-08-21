@@ -660,13 +660,7 @@ pub(crate) fn apply_source_transforms_to(
 
 /// Returns whether a target's scene item is protected from editing.
 fn is_locked(state: &DesktopState, target: &SourceTarget) -> bool {
-    state
-        .project_session()
-        .project()
-        .profile(target.profile.as_str())
-        .and_then(|profile| profile.scene(target.scene.as_str()))
-        .and_then(|scene| scene.item(target.item.as_str()))
-        .is_some_and(obs_rs_project::SceneItemSpec::locked)
+    source_target_is_locked(state, target)
 }
 
 /// A stable reference to one scene item and the source definition it shows.
@@ -692,8 +686,8 @@ pub(crate) fn source_target(state: &DesktopState, item: &str) -> Option<SourceTa
     let scene = state.preview_scene()?.to_owned();
     let source = project
         .active_profile_spec()?
-        .scene(scene.as_str())?
-        .item(item)?;
+        .scene(scene.as_str())
+        .and_then(|scene| item_for_target(scene, item))?;
     let source = source.is_source().then(|| source.source_id().to_string())?;
     Some(SourceTarget {
         profile: project.active_profile().to_string(),
@@ -706,6 +700,17 @@ pub(crate) fn source_target(state: &DesktopState, item: &str) -> Option<SourceTa
 /// Resolves the selected scene item to a stable target.
 pub(crate) fn selected_target(state: &DesktopState) -> Option<SourceTarget> {
     source_target(state, state.selected_source()?)
+}
+
+/// Returns the lock state for a target that may be a nested group path.
+pub(crate) fn source_target_is_locked(state: &DesktopState, target: &SourceTarget) -> bool {
+    state
+        .project_session()
+        .project()
+        .profile(target.profile.as_str())
+        .and_then(|profile| profile.scene(target.scene.as_str()))
+        .and_then(|scene| item_for_target(scene, target.item.as_str()))
+        .is_some_and(obs_rs_project::SceneItemSpec::locked)
 }
 
 /// Returns a target's settings document from the live project.

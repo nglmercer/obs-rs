@@ -1051,6 +1051,31 @@ fn exercise_group_source_callbacks(
         .iter()
         .any(|row| row.target == "overlay-group/background"));
 
+    let filters = crate::install_source_filters_window(ui, state, surface)
+        .expect("nested filters window should instantiate");
+    ui.invoke_open_source_filters_for("overlay-group/background".into());
+    let filters_window = crate::callbacks::source_filters::source_filters_window(&filters);
+    assert_eq!(filters_window.get_source_name(), "Background");
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("background"),
+        "opening a nested filter target must not replace canvas selection"
+    );
+    filters_window.invoke_add_filter("opacity".into());
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.source("background"))
+        .is_some_and(|source| {
+            source
+                .filters()
+                .iter()
+                .any(|filter| filter.kind().as_str() == "opacity")
+        }));
+    filters_window.invoke_close_window();
+
     ui.invoke_toggle_source_visibility("overlay-group/background".into());
     ui.invoke_move_source_to("overlay-group/background".into(), 1);
     ui.invoke_flip_source("overlay-group/background".into(), true);

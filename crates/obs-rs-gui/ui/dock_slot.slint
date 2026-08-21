@@ -117,7 +117,7 @@ export component DockSlot inherits Rectangle {
         dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         open-modal(modal) => { root.open-modal(modal); }
         select-source(id) => { root.select-source(id); }
-        open-filters(id) => { root.select-source(id); root.open-modal(13); }
+        open-filters(id) => { root.open-filters(id); }
         open-transform(id) => { root.select-source(id); root.open-modal(14); }
         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
         toggle-source-locked(id) => { root.toggle-source-locked(id); }

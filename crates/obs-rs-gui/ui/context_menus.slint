@@ -54,9 +54,9 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             MenuItem {
                 title: I18n.text.filters;
-                enabled: root.source-id != "" && !root.nested && !root.group;
+                enabled: root.source-id != "" && !root.group;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.open-filters(root.source-id);
                 }
             }

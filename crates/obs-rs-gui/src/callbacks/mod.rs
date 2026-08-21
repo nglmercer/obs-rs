@@ -50,9 +50,9 @@ pub(crate) use source::{
     apply_source_transform_to, apply_source_transforms_to, duplicate_source_and_refresh,
     flip_source_and_refresh, move_source_and_refresh, move_source_to_and_refresh,
     remove_scene_and_refresh, remove_source_and_refresh, reset_source_transform_and_refresh,
-    selected_target, source_target, source_transform_document, target_settings_document,
-    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
-    transform_source_and_refresh, SourceTarget,
+    selected_target, source_target, source_target_is_locked, source_transform_document,
+    target_settings_document, toggle_source_locked_and_refresh,
+    toggle_source_visibility_and_refresh, transform_source_and_refresh, SourceTarget,
 };
 pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
