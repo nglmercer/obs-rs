@@ -1,8 +1,8 @@
 use super::{
     error::ProjectError,
     model::{
-        group_mut_at, Profile, Project, RenderBackendPreference, SceneItemSpec, SceneSpec,
-        SourceFilterCategory, SourceFilterSpec, SourceSpec, MAX_GROUP_NESTING_DEPTH,
+        group_at, group_mut_at, Profile, Project, RenderBackendPreference, SceneItemSpec,
+        SceneSpec, SourceFilterCategory, SourceFilterSpec, SourceSpec, MAX_GROUP_NESTING_DEPTH,
     },
     validation::{identifier, source_id},
 };
@@ -229,6 +229,16 @@ pub enum ProjectCommand {
         group_path: Vec<String>,
         item: String,
     },
+    /// Duplicates a child item inside its enclosing group as a reference or
+    /// with a cloned profile source definition.
+    DuplicateGroupItem {
+        profile: String,
+        scene: String,
+        /// Outermost-to-innermost group scene-item IDs.
+        group_path: Vec<String>,
+        item: String,
+        mode: SceneItemDuplicateMode,
+    },
 }
 
 impl Project {
@@ -422,6 +432,13 @@ impl Project {
                 group_path,
                 item,
             } => remove_group_item(self, &profile, &scene, &group_path, &item),
+            ProjectCommand::DuplicateGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+                mode,
+            } => duplicate_group_item(self, &profile, &scene, &group_path, &item, mode),
             ProjectCommand::RemoveSource { profile, source } => {
                 remove_source(self, &profile, &source)
             }
@@ -1178,6 +1195,93 @@ fn remove_group_item(
         .remove_item(&item_id)
         .map(|_| ())
         .ok_or(ProjectError::UnknownSceneItem(item_id))
+}
+
+fn duplicate_group_item(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    group_path: &[String],
+    item: &str,
+    mode: SceneItemDuplicateMode,
+) -> Result<(), ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let item_id = identifier(item, "scene item id")?;
+    let path = parse_group_path(group_path)?;
+
+    let (mut duplicate, duplicate_item_id, mut cloned_sources) = {
+        let profile = project
+            .profile(&profile_id)
+            .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+        let scene = profile
+            .scene(&scene_id)
+            .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+        let group = group_at(scene.items(), &path).ok_or(ProjectError::InvalidGroupPath)?;
+        let original = group
+            .items()
+            .iter()
+            .find(|candidate| candidate.id() == &item_id)
+            .cloned()
+            .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?;
+        let mut duplicate = original.clone();
+        let duplicate_item_id = copy_identity(
+            original.id().as_str(),
+            original.source_id().as_str(),
+            |candidate| group.has_item(candidate),
+        )?
+        .0;
+        let mut cloned_sources = Vec::new();
+
+        if original.scene_id().is_some() || original.is_group() {
+            validate_scene_item(profile, &scene_id, &original, 0)?;
+            if original.is_group() && mode == SceneItemDuplicateMode::DuplicateSource {
+                let mut source_ids = std::collections::HashMap::new();
+                duplicate_item_sources(
+                    profile,
+                    &mut duplicate,
+                    &mut source_ids,
+                    &mut cloned_sources,
+                )?;
+            }
+        } else if original.is_source() && mode == SceneItemDuplicateMode::DuplicateSource {
+            let source_id = original.source_id().clone();
+            let source = profile
+                .source(&source_id)
+                .cloned()
+                .ok_or_else(|| ProjectError::UnknownSource(source_id.clone()))?;
+            let (new_id, new_name) =
+                copy_identity(source.id().as_str(), source.name(), |candidate| {
+                    profile.has_source(candidate)
+                        || cloned_sources
+                            .iter()
+                            .any(|source: &SourceSpec| source.id().as_str() == candidate)
+                })?;
+            let mut duplicate_source = source;
+            duplicate_source.id = new_id.clone();
+            duplicate_source.name = new_name;
+            cloned_sources.push(duplicate_source);
+            duplicate.set_source_id(new_id);
+        } else if original.is_source() {
+            let source_id = original.source_id();
+            if !profile.has_source(source_id) {
+                return Err(ProjectError::UnknownSource(source_id.clone()));
+            }
+        }
+
+        (duplicate, duplicate_item_id, cloned_sources)
+    };
+
+    duplicate.id = duplicate_item_id;
+    let profile = project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    profile.add_sources(std::mem::take(&mut cloned_sources))?;
+    let scene = profile
+        .scene_mut(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    let group = group_mut_at(&mut scene.items, &path).ok_or(ProjectError::InvalidGroupPath)?;
+    group.add_item(duplicate)
 }
 
 fn move_scene_item(

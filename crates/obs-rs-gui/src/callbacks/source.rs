@@ -402,14 +402,23 @@ pub(crate) fn duplicate_source_and_refresh(
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let (profile, scene, _, _) = source_display_state(&state.borrow(), source_id)?;
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::DuplicateSceneItem {
+        let command = if let Some((group_path, item)) = group_target(source_id) {
+            ProjectCommand::DuplicateGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+                mode: SceneItemDuplicateMode::DuplicateSource,
+            }
+        } else {
+            ProjectCommand::DuplicateSceneItem {
                 profile,
                 scene,
                 item: source_id.to_owned(),
                 mode: SceneItemDuplicateMode::DuplicateSource,
-            }))?;
+            }
+        };
+        state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {

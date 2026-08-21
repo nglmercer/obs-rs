@@ -70,9 +70,9 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             MenuItem {
                 title: I18n.text.duplicate;
-                enabled: root.source-id != "" && !root.nested;
+                enabled: root.source-id != "";
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.duplicate-source(root.source-id);
                 }
             }

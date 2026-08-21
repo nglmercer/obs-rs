@@ -463,6 +463,70 @@ fn group_child_removal_is_path_addressed_and_retains_the_source_registry() {
 }
 
 #[test]
+fn group_child_duplicate_supports_reference_and_source_clone_modes() {
+    let mut project = project_with_nested_group();
+    project
+        .apply(ProjectCommand::DuplicateGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: "first".to_owned(),
+            mode: SceneItemDuplicateMode::Reference,
+        })
+        .expect("duplicate group child by reference");
+    project
+        .apply(ProjectCommand::DuplicateGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: "second".to_owned(),
+            mode: SceneItemDuplicateMode::DuplicateSource,
+        })
+        .expect("duplicate group child with source clone");
+
+    let group = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("group after duplicate");
+    assert_eq!(
+        group
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec![
+            "first",
+            "second",
+            "inner-group",
+            "first_copy",
+            "second_copy"
+        ]
+    );
+    assert_eq!(group.items()[3].source_id().as_str(), "background");
+    assert_eq!(group.items()[4].source_id().as_str(), "background_copy");
+    assert!(project
+        .profile("live")
+        .expect("profile")
+        .has_source("background_copy"));
+
+    let before_invalid = project.clone();
+    let error = project
+        .apply(ProjectCommand::DuplicateGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["missing-group".to_owned()],
+            item: "first".to_owned(),
+            mode: SceneItemDuplicateMode::Reference,
+        })
+        .expect_err("unknown group path must fail");
+    assert_eq!(error, ProjectError::InvalidGroupPath);
+    assert_eq!(project, before_invalid);
+}
+
+#[test]
 fn parser_rejects_a_document_without_the_format_and_version_tags() {
     let encoded = project().serialize();
 

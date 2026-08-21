@@ -682,6 +682,20 @@ pub(crate) fn group_mut_at<'a>(
     }
 }
 
+pub(crate) fn group_at<'a>(
+    items: &'a [SceneItemSpec],
+    path: &[Identifier],
+) -> Option<&'a GroupSpec> {
+    let (head, tail) = path.split_first()?;
+    let item = items.iter().find(|item| item.id() == head)?;
+    let group = item.group()?;
+    if tail.is_empty() {
+        Some(group)
+    } else {
+        group_at(group.items(), tail)
+    }
+}
+
 fn item_references_scene(item: &SceneItemSpec, scene_id: &Identifier) -> bool {
     item.scene_id().is_some_and(|target| target == scene_id)
         || item.group().is_some_and(|group| {

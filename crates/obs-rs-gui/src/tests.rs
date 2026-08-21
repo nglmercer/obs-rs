@@ -1053,6 +1053,7 @@ fn exercise_group_source_callbacks(
 
     ui.invoke_toggle_source_visibility("overlay-group/background".into());
     ui.invoke_move_source_to("overlay-group/background".into(), 1);
+    ui.invoke_duplicate_source("overlay-group/background".into());
     ui.invoke_toggle_source_locked("overlay-group/background".into());
     ui.invoke_remove_source("overlay-group/pattern".into());
 
@@ -1067,8 +1068,8 @@ fn exercise_group_source_callbacks(
         .expect("group after UI callbacks");
     assert_eq!(
         group.items().len(),
-        1,
-        "the nested remove callback removes one child"
+        2,
+        "the nested remove callback removes one child after duplication"
     );
     assert_eq!(
         group.items()[0].source_id().as_str(),
@@ -1077,6 +1078,7 @@ fn exercise_group_source_callbacks(
     );
     assert!(!group.items()[0].visible());
     assert!(group.items()[0].locked());
+    assert_eq!(group.items()[1].source_id().as_str(), "background_copy");
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup
