@@ -117,6 +117,7 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
         settings.set("paths", "")?;
         settings.set("slide_time_ms", "8000")?;
         settings.set("loop", "true")?;
+        settings.set("randomize", "false")?;
     }
     if kind.trim() == "text_source" {
         settings.set("text", "OBS-RS")?;

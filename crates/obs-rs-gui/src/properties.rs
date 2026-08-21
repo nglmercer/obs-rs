@@ -116,6 +116,12 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         hint: |text| text.property_ui.loop_hint.clone(),
         kind: FieldKind::Toggle,
     };
+    static RANDOMIZE: Field = Field {
+        key: "randomize",
+        label: |text| text.property_ui.randomize.clone(),
+        hint: |text| text.property_ui.randomize_hint.clone(),
+        kind: FieldKind::Toggle,
+    };
     static FONT_SIZE: Field = Field {
         key: "font_size",
         label: |text| text.property_ui.font_size.clone(),
@@ -179,7 +185,7 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
     let mut fields = match kind.trim() {
         "color_source" => vec![&COLOR],
         "image_source" => vec![&PATH],
-        "image_slideshow" => vec![&PATHS, &SLIDE_TIME, &LOOP],
+        "image_slideshow" => vec![&PATHS, &SLIDE_TIME, &LOOP, &RANDOMIZE],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         "screen_capture" | "window_capture" => vec![&DEVICE],
         "camera_capture" => {
@@ -563,7 +569,7 @@ mod tests {
     #[test]
     fn image_slideshows_expose_paths_interval_loop_and_video_size() {
         let document =
-            "height = 360\nloop = true\npaths = \"/tmp/a.png\\n/tmp/b.png\"\nslide_time_ms = 8000\nwidth = 640\n";
+            "height = 360\nloop = true\npaths = \"/tmp/a.png\\n/tmp/b.png\"\nrandomize = false\nslide_time_ms = 8000\nwidth = 640\n";
 
         let rows = rows("image_slideshow", document, UiLocale::English);
 
@@ -571,7 +577,17 @@ mod tests {
             .iter()
             .map(|row| row.key.to_string())
             .collect::<Vec<_>>();
-        assert_eq!(keys, ["paths", "slide_time_ms", "loop", "width", "height"]);
+        assert_eq!(
+            keys,
+            [
+                "paths",
+                "slide_time_ms",
+                "loop",
+                "randomize",
+                "width",
+                "height"
+            ]
+        );
         assert_eq!(rows[1].kind, KIND_NUMBER);
         assert_eq!(rows[1].number, 8_000);
         assert!(rows[2].toggle);

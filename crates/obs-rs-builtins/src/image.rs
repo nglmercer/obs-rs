@@ -1,6 +1,7 @@
 use std::{
     fs::File,
     io::{Cursor, Read},
+    path::{Path, PathBuf},
 };
 
 use crate::{portable::parse_format, IMAGE_SOURCE_KIND};
@@ -18,6 +19,8 @@ const MAX_IMAGE_DIMENSION: u32 = 16_384;
 const MAX_IMAGE_DECODE_BYTES: u64 = 128 * 1024 * 1024;
 /// Maximum number of entries held by the portable slideshow source.
 const MAX_SLIDESHOW_FILES: usize = 64;
+/// Maximum directory entries inspected while expanding one slideshow path.
+const MAX_SLIDESHOW_DIRECTORY_ENTRIES: usize = 4_096;
 /// Maximum resident RGBA storage retained by one slideshow source.
 const MAX_SLIDESHOW_MEMORY_BYTES: usize = 256 * 1024 * 1024;
 /// OBS's lower and upper automatic slideshow interval bounds.
@@ -223,21 +226,21 @@ fn load_slideshow(
         .unwrap_or("true")
         .parse::<bool>()
         .map_err(|error| SourceError::invalid_setting("loop", error.to_string()))?;
-    let paths = settings.get("paths").or_else(|| settings.get("path"));
+    let randomize = settings
+        .get("randomize")
+        .unwrap_or("false")
+        .parse::<bool>()
+        .map_err(|error| SourceError::invalid_setting("randomize", error.to_string()))?;
+    let mut paths = expand_slideshow_paths(settings)?;
+    if randomize {
+        shuffle_slideshow_paths(&mut paths);
+    }
     let mut frames = Vec::new();
     let mut resident_bytes = 0_usize;
-    for path in paths
-        .into_iter()
-        .flat_map(str::lines)
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-    {
-        if frames.len() >= MAX_SLIDESHOW_FILES {
-            return Err(SourceError::invalid_setting(
-                "paths",
-                format!("slideshow is limited to {MAX_SLIDESHOW_FILES} files"),
-            ));
-        }
+    for path in paths {
+        let path = path.to_str().ok_or_else(|| {
+            SourceError::invalid_setting("paths", "slideshow paths must be valid UTF-8")
+        })?;
         let frame = load_frame(format, path)?.ok_or_else(|| {
             SourceError::invalid_setting("paths", "slideshow entries must name an image file")
         })?;
@@ -254,6 +257,111 @@ fn load_slideshow(
     }
     let slide_time_nanos = slide_time_ms.saturating_mul(1_000_000);
     Ok((frames, slide_time_nanos, loop_slides))
+}
+
+fn expand_slideshow_paths(settings: &Config) -> Result<Vec<PathBuf>, SourceError> {
+    let mut paths = Vec::new();
+    for configured in settings
+        .get("paths")
+        .or_else(|| settings.get("path"))
+        .into_iter()
+        .flat_map(str::lines)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        let path = PathBuf::from(configured);
+        if !path.is_dir() {
+            if paths.len() >= MAX_SLIDESHOW_FILES {
+                return Err(SourceError::invalid_setting(
+                    "paths",
+                    format!("slideshow is limited to {MAX_SLIDESHOW_FILES} files"),
+                ));
+            }
+            paths.push(path);
+            continue;
+        }
+
+        let entries = std::fs::read_dir(&path).map_err(|error| {
+            SourceError::invalid_setting("paths", format!("cannot read directory: {error}"))
+        })?;
+        let mut directory_paths = Vec::new();
+        for (index, entry) in entries.enumerate() {
+            if index >= MAX_SLIDESHOW_DIRECTORY_ENTRIES {
+                return Err(SourceError::invalid_setting(
+                    "paths",
+                    format!(
+                        "directory expansion is limited to {MAX_SLIDESHOW_DIRECTORY_ENTRIES} entries"
+                    ),
+                ));
+            }
+            let entry = entry.map_err(|error| {
+                SourceError::invalid_setting("paths", format!("cannot inspect directory: {error}"))
+            })?;
+            let candidate = entry.path();
+            let is_file = entry
+                .file_type()
+                .map_err(|error| {
+                    SourceError::invalid_setting(
+                        "paths",
+                        format!("cannot inspect slideshow entry: {error}"),
+                    )
+                })?
+                .is_file();
+            if !is_file || !is_supported_image_path(&candidate) {
+                continue;
+            }
+            if paths.len().saturating_add(directory_paths.len()) >= MAX_SLIDESHOW_FILES {
+                return Err(SourceError::invalid_setting(
+                    "paths",
+                    format!("slideshow is limited to {MAX_SLIDESHOW_FILES} files"),
+                ));
+            }
+            directory_paths.push(candidate);
+        }
+        directory_paths
+            .sort_unstable_by(|left, right| left.to_string_lossy().cmp(&right.to_string_lossy()));
+        paths.extend(directory_paths);
+    }
+    Ok(paths)
+}
+
+fn is_supported_image_path(path: &Path) -> bool {
+    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+        return false;
+    };
+    [
+        "gif", "jpeg", "jpg", "pam", "pbm", "pgm", "png", "pnm", "ppm", "webp",
+    ]
+    .iter()
+    .any(|supported| extension.eq_ignore_ascii_case(supported))
+}
+
+fn shuffle_slideshow_paths(paths: &mut [PathBuf]) {
+    if paths.len() < 2 {
+        return;
+    }
+    let original = paths.to_vec();
+    let mut state = paths.iter().fold(0xcbf2_9ce4_8422_2325_u64, |state, path| {
+        path.to_string_lossy().bytes().fold(state, |state, byte| {
+            state
+                .wrapping_mul(0x0000_0100_0000_01b3)
+                .wrapping_add(u64::from(byte))
+        })
+    });
+    if state == 0 {
+        state = 0x9e37_79b9_7f4a_7c15;
+    }
+    for index in (1..paths.len()).rev() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let bound = u64::try_from(index + 1).unwrap_or(u64::MAX);
+        let swap = usize::try_from(state % bound).unwrap_or(0);
+        paths.swap(index, swap);
+    }
+    if paths == original.as_slice() {
+        paths.swap(0, 1);
+    }
 }
 
 fn load_frame(format: VideoFormat, path: &str) -> Result<Option<VideoFrame>, SourceError> {

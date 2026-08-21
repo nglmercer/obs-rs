@@ -24,6 +24,9 @@ fn slideshow_settings(paths: &str, width: &str, height: &str, slide_time_ms: &st
         .expect("valid slideshow interval");
     config.set("loop", "true").expect("valid slideshow loop");
     config
+        .set("randomize", "false")
+        .expect("valid slideshow randomization");
+    config
 }
 
 fn settings(color: &str) -> Config {
@@ -265,6 +268,82 @@ fn image_slideshow_advances_by_timestamp_and_updates_atomically() {
 
     std::fs::remove_file(red_path).expect("remove red fixture");
     std::fs::remove_file(blue_path).expect("remove blue fixture");
+}
+
+#[test]
+fn image_slideshow_expands_directories_and_randomizes_bounded_order() {
+    let directory = std::env::temp_dir().join(format!(
+        "obs-rs-image-slideshow-directory-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&directory).expect("create slideshow directory");
+    std::fs::write(directory.join("a.ppm"), b"P6\n1 1\n255\n\xFF\x00\x00")
+        .expect("write first directory fixture");
+    std::fs::write(directory.join("b.ppm"), b"P6\n1 1\n255\n\x00\xFF\x00")
+        .expect("write second directory fixture");
+    std::fs::write(directory.join("c.ppm"), b"P6\n1 1\n255\n\x00\x00\xFF")
+        .expect("write third directory fixture");
+    std::fs::write(directory.join("ignored.txt"), b"not an image")
+        .expect("write ignored directory fixture");
+
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == IMAGE_SLIDESHOW_SOURCE_KIND)
+        .expect("slideshow factory");
+    let path = directory.to_str().expect("slideshow directory is UTF-8");
+    let format =
+        VideoFormat::new(1, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let mut sequential = factory
+        .create("sequential", &slideshow_settings(path, "1", "1", "100"))
+        .expect("directory slideshow source");
+    let sequential_order = (0_u64..3)
+        .map(|index| {
+            sequential
+                .render(&VideoRequest::new(
+                    Timestamp::from_millis(index * 100),
+                    format,
+                ))
+                .expect("sequential render")
+                .expect("sequential frame")
+                .pixel(0, 0)
+                .expect("sequential pixel")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sequential_order,
+        vec![[0xFF, 0, 0, 0xFF], [0, 0xFF, 0, 0xFF], [0, 0, 0xFF, 0xFF]]
+    );
+
+    let mut random_settings = slideshow_settings(path, "1", "1", "100");
+    random_settings
+        .set("randomize", "true")
+        .expect("enable slideshow randomization");
+    let mut randomized = factory
+        .create("randomized", &random_settings)
+        .expect("randomized directory slideshow source");
+    let randomized_order = (0_u64..3)
+        .map(|index| {
+            randomized
+                .render(&VideoRequest::new(
+                    Timestamp::from_millis(index * 100),
+                    format,
+                ))
+                .expect("randomized render")
+                .expect("randomized frame")
+                .pixel(0, 0)
+                .expect("randomized pixel")
+        })
+        .collect::<Vec<_>>();
+    let mut expected_permutation = sequential_order.clone();
+    let mut observed_permutation = randomized_order.clone();
+    expected_permutation.sort_unstable();
+    observed_permutation.sort_unstable();
+    assert_eq!(observed_permutation, expected_permutation);
+    assert_ne!(randomized_order, sequential_order);
+
+    std::fs::remove_dir_all(directory).expect("remove slideshow directory fixture");
 }
 
 #[test]
