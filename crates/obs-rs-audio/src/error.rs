@@ -60,6 +60,12 @@ pub enum AudioError {
     DuplicateInput(AudioSourceId),
     /// A source gain is not finite.
     InvalidGain,
+    /// An audio gain filter is outside the bounded OBS-compatible range.
+    InvalidFilterGain { milli_db: i32 },
+    /// An ordered audio filter chain reached its fixed capacity.
+    FilterChainFull { max: usize },
+    /// An audio filter would have produced a non-finite sample.
+    FilterOverflow,
     /// A source pan is not finite or is outside `[-1.0, 1.0]`.
     InvalidPan,
     /// A mix sum overflowed the finite `f32` range.
@@ -130,6 +136,16 @@ impl fmt::Display for AudioError {
                 )
             }
             Self::InvalidGain => formatter.write_str("audio gain must be finite"),
+            Self::InvalidFilterGain { milli_db } => write!(
+                formatter,
+                "audio filter gain {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::FilterChainFull { max } => {
+                write!(formatter, "audio filter chain is limited to {max} filters")
+            }
+            Self::FilterOverflow => {
+                formatter.write_str("audio filter produced a non-finite sample")
+            }
             Self::InvalidPan => {
                 formatter.write_str("audio pan must be finite and between -1 and 1")
             }

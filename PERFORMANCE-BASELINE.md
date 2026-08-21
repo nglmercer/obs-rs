@@ -2,7 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
-**Latest measurement:** 2026-08-21 (Sharpen packet validation)
+**Latest measurement:** 2026-08-21 (audio Gain packet validation)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -125,6 +125,19 @@ snapshot is also a deliberate allocation/copy point that the performance agent
 must replace with bounded reusable scratch storage before high-resolution use.
 These are local samples rather than acceptance thresholds; full-resolution CPU
 filter performance still requires the Phase 16 comparison suite.
+
+The audio Gain timing probe processes 200 reusable 480-frame stereo blocks
+through one fixed-capacity chain without allocating per block. Its release
+measurement is recorded by:
+
+```text
+cargo test --release -p obs-rs-audio gain_filter_block_timing_report -- --nocapture
+```
+
+The observed release result was `112.129 µs` total, or `560 ns` per
+480-frame stereo block on this host. This is a local primitive measurement;
+full audio-graph and device-clock performance still require the Phase 16
+matrix.
 
 ## Phase 1 render-target evidence
 

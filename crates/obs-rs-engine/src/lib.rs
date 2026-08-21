@@ -15,8 +15,9 @@ pub use worker::{EngineWorker, EngineWorkerSnapshot};
 use std::{error::Error, fmt, path::PathBuf, sync::Arc, time::Instant};
 
 use obs_rs_audio::{
-    AudioBuffer, AudioDeviceError, AudioDeviceKind, AudioFormat, AudioInput, AudioInputProvider,
-    AudioInputState, AudioMixer, AudioResampler, AudioSourceId, SimulatedAudioProvider,
+    AudioBuffer, AudioDeviceError, AudioDeviceKind, AudioFilter, AudioFilterChain, AudioFormat,
+    AudioInput, AudioInputProvider, AudioInputState, AudioMixer, AudioResampler, AudioSourceId,
+    SimulatedAudioProvider,
 };
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
@@ -860,6 +861,8 @@ pub struct EngineSession {
     mixer: AudioMixer,
     desktop_audio_source: AudioSourceId,
     microphone_audio_source: AudioSourceId,
+    desktop_audio_filters: AudioFilterChain,
+    microphone_audio_filters: AudioFilterChain,
     audio_input: Box<dyn AudioInput>,
     audio_backend: String,
     audio_fallback: bool,
@@ -959,6 +962,8 @@ impl EngineSession {
             mixer,
             desktop_audio_source,
             microphone_audio_source,
+            desktop_audio_filters: AudioFilterChain::new(),
+            microphone_audio_filters: AudioFilterChain::new(),
             audio_input,
             audio_backend,
             audio_fallback,
@@ -1051,6 +1056,39 @@ impl EngineSession {
         };
         self.mixer
             .set_gain(source, f32::from(gain_milli) / 1_000.0)?;
+        Ok(())
+    }
+
+    /// Replaces the ordered audio-filter chain on one live mixer channel.
+    ///
+    /// The chain is owned by the engine and applied to each captured block
+    /// before metering and mixing. Replacing it is a control-plane operation;
+    /// applying it remains allocation-free on the audio path.
+    pub fn set_channel_audio_filters(
+        &mut self,
+        channel: EngineAudioChannel,
+        filters: AudioFilterChain,
+    ) {
+        match channel {
+            EngineAudioChannel::Desktop => self.desktop_audio_filters = filters,
+            EngineAudioChannel::Microphone => self.microphone_audio_filters = filters,
+        }
+    }
+
+    /// Installs one OBS-compatible Gain filter on a live mixer channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the dB value is outside the bounded Gain
+    /// filter range.
+    pub fn set_channel_gain_filter_db_milli(
+        &mut self,
+        channel: EngineAudioChannel,
+        milli_db: i32,
+    ) -> Result<(), EngineError> {
+        let mut filters = AudioFilterChain::new();
+        filters.try_push(AudioFilter::gain_db_milli(milli_db)?)?;
+        self.set_channel_audio_filters(channel, filters);
         Ok(())
     }
 
@@ -1731,8 +1769,10 @@ impl EngineSession {
                 },
                 Ok,
             )?;
-            let input = self.read_audio_block(deadline.timestamp())?;
-            let desktop = self.read_desktop_block(deadline.timestamp())?;
+            let mut input = self.read_audio_block(deadline.timestamp())?;
+            let mut desktop = self.read_desktop_block(deadline.timestamp())?;
+            self.microphone_audio_filters.apply(&mut input)?;
+            self.desktop_audio_filters.apply(&mut desktop)?;
             self.stats.desktop_peak_milli = audio_peak_milli(&desktop);
             self.stats.microphone_peak_milli = audio_peak_milli(&input);
             let mixed = self.mixer.mix(
@@ -2069,6 +2109,27 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
             .and_then(|value| value.parse::<u16>().ok())
             .filter(|value| *value <= 1_000)
             .map(|milli| FrameFilter::Sharpen { milli }),
+        _ => None,
+    }
+}
+
+/// Compiles a persistent audio/video filter into an ordered audio operation.
+///
+/// Audio filters are kept separate from [`compile_filter`] because they run on
+/// captured audio blocks rather than rendered video frames. The project-facing
+/// setting is fixed-point `db_milli`, which avoids locale-dependent decimal
+/// parsing on the real-time boundary.
+#[must_use]
+pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
+    if !spec.enabled() || spec.category() != SourceFilterCategory::AudioVideo {
+        return None;
+    }
+    match spec.kind().as_str() {
+        "gain" => spec
+            .settings()
+            .get("db_milli")
+            .and_then(|value| value.parse::<i32>().ok())
+            .and_then(|milli_db| AudioFilter::gain_db_milli(milli_db).ok()),
         _ => None,
     }
 }
@@ -2505,6 +2566,20 @@ mod tests {
         )
         .expect("audio filter");
         assert_eq!(compile_filter(&audio), None);
+
+        let gain = SourceFilterSpec::with_category(
+            "gain",
+            "Gain",
+            "gain",
+            SourceFilterCategory::AudioVideo,
+            Config::parse("db_milli = -6000\n").expect("gain settings"),
+        )
+        .expect("gain filter");
+        assert_eq!(
+            compile_audio_filter(&gain),
+            Some(AudioFilter::gain_db_milli(-6_000).expect("valid gain"))
+        );
+        assert_eq!(compile_audio_filter(&brightness), None);
     }
 
     #[test]
@@ -2548,6 +2623,35 @@ mod tests {
         assert!(
             stats.microphone_peak_milli > 0,
             "the deterministic input drives only the microphone node"
+        );
+    }
+
+    #[test]
+    fn gain_filter_runs_on_a_live_channel_before_metering_and_mix() {
+        let mut baseline = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        baseline.tick(None, Some("program")).expect("baseline tick");
+        let baseline_peak = baseline.stats().microphone_peak_milli;
+
+        let mut filtered = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        filtered
+            .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, -6_000)
+            .expect("gain filter");
+        let tick = filtered.tick(None, Some("program")).expect("filtered tick");
+
+        assert!(
+            baseline_peak > 0,
+            "deterministic microphone must produce audio"
+        );
+        assert!(
+            filtered.stats().microphone_peak_milli < baseline_peak,
+            "the filtered channel meter must see gain-filtered audio"
+        );
+        assert!(
+            tick.audio_blocks
+                .iter()
+                .flat_map(AudioBuffer::samples)
+                .any(|sample| sample.abs() > 0.0),
+            "the filter must preserve a non-silent live channel"
         );
     }
 

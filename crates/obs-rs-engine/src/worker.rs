@@ -50,6 +50,7 @@ enum WorkerCommand {
     PushRawFrame(RawVideoFrame),
     MonitorAudio(Timestamp),
     SetGain(EngineAudioChannel, u16, mpsc::Sender<Result<(), String>>),
+    SetGainFilter(EngineAudioChannel, i32, mpsc::Sender<Result<(), String>>),
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
     SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
     SyncProject(Project, mpsc::Sender<Result<(), String>>),
@@ -404,6 +405,27 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Replaces the live channel's Gain filter on the worker-owned engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker or bounded Gain range rejects
+    /// the update.
+    pub fn set_channel_gain_filter_db_milli(
+        &self,
+        channel: EngineAudioChannel,
+        milli_db: i32,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetGainFilter(channel, milli_db, reply))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Applies live input mute on the worker-owned mixer.
     ///
     /// # Errors
@@ -542,6 +564,13 @@ fn worker_loop(
             WorkerCommand::SetGain(channel, gain, reply) => {
                 let result = session
                     .set_channel_gain_milli(channel, gain)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::SetGainFilter(channel, milli_db, reply) => {
+                let result = session
+                    .set_channel_gain_filter_db_milli(channel, milli_db)
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
@@ -833,5 +862,17 @@ mod tests {
             events.front(),
             Some(&OutputEvent::Reconnecting { attempt: 10 })
         );
+    }
+
+    #[test]
+    fn gain_filter_updates_stay_on_the_worker_and_validate_bounds() {
+        let worker = worker(1);
+        worker
+            .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, -6_000)
+            .expect("valid gain filter");
+        let error = worker
+            .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, 30_001)
+            .expect_err("unbounded gain filter");
+        assert!(matches!(error, EngineError::Worker(reason) if reason.contains("outside")));
     }
 }

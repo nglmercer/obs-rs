@@ -1,5 +1,6 @@
 use super::*;
 use obs_rs_media::Timestamp;
+use std::time::Instant;
 
 struct FakeClock {
     now: Timestamp,
@@ -169,6 +170,91 @@ fn mixer_applies_stereo_pan_and_rejects_invalid_values() {
         .mix(Timestamp::ZERO, 1, &[(source, &buffer(&[0.75, 0.5]))])
         .expect("mix succeeds");
     assert_eq!(output.samples(), &[0.0, 0.5]);
+}
+
+#[test]
+fn gain_filter_chain_matches_bounded_db_semantics() {
+    let gain = AudioFilter::gain_db_milli(6_000).expect("valid gain");
+    let mut chain = AudioFilterChain::new();
+    chain.try_push(gain).expect("first filter");
+    chain
+        .try_push(AudioFilter::gain_db_milli(-6_000).expect("second gain"))
+        .expect("second filter");
+    assert_eq!(chain.len(), 2);
+    assert_eq!(
+        chain.filters(),
+        &[gain, AudioFilter::gain_db_milli(-6_000).unwrap()]
+    );
+
+    let mut input = buffer(&[0.5, -0.5]);
+    chain.apply(&mut input).expect("gain chain");
+    assert!((input.samples()[0] - 0.5).abs() < 0.0001);
+    assert!((input.samples()[1] + 0.5).abs() < 0.0001);
+    assert_eq!(input.timestamp(), Timestamp::ZERO);
+}
+
+#[test]
+fn gain_filter_rejects_unbounded_values_and_overflow_without_partial_write() {
+    assert_eq!(
+        AudioFilter::gain_db_milli(MIN_GAIN_DB_MILLI - 1),
+        Err(AudioError::InvalidFilterGain {
+            milli_db: MIN_GAIN_DB_MILLI - 1
+        })
+    );
+    assert_eq!(
+        AudioFilter::gain_db_milli(MAX_GAIN_DB_MILLI + 1),
+        Err(AudioError::InvalidFilterGain {
+            milli_db: MAX_GAIN_DB_MILLI + 1
+        })
+    );
+
+    let mut input =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![f32::MAX, 0.25]).expect("finite input");
+    let result =
+        AudioFilter::Gain(AudioGain::new(MAX_GAIN_DB_MILLI).expect("max gain")).apply(&mut input);
+    assert_eq!(result, Err(AudioError::FilterOverflow));
+    assert_eq!(input.samples(), &[f32::MAX, 0.25]);
+}
+
+#[test]
+fn audio_filter_chain_has_a_fixed_capacity() {
+    let mut chain = AudioFilterChain::new();
+    let filter = AudioFilter::gain_db_milli(0).expect("zero gain");
+    for _ in 0..MAX_AUDIO_FILTERS {
+        chain.try_push(filter).expect("capacity slot");
+    }
+    assert_eq!(
+        chain.try_push(filter),
+        Err(AudioError::FilterChainFull {
+            max: MAX_AUDIO_FILTERS
+        })
+    );
+}
+
+#[test]
+fn gain_filter_block_timing_report() {
+    let mut chain = AudioFilterChain::new();
+    chain
+        .try_push(AudioFilter::gain_db_milli(6_000).expect("gain"))
+        .expect("filter");
+    let mut block =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.1; 480 * 2]).expect("audio block");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for _ in 0..200 {
+        block.samples_mut().fill(0.1);
+        chain.apply(&mut block).expect("gain block");
+        checksum += block.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "gain filter: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
 }
 
 #[test]

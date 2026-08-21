@@ -7,6 +7,7 @@ mod buffer;
 mod callback_clock;
 mod device;
 mod error;
+mod filters;
 mod mixer;
 mod monitor;
 mod pacing;
@@ -27,6 +28,10 @@ pub use device::{
     SharedAudioOutputProvider, SimulatedAudioInput, SimulatedAudioOutput, SimulatedAudioProvider,
 };
 pub use error::{AudioError, AudioWorkerError};
+pub use filters::{
+    AudioFilter, AudioFilterChain, AudioGain, MAX_AUDIO_FILTERS, MAX_GAIN_DB_MILLI,
+    MIN_GAIN_DB_MILLI,
+};
 pub use mixer::AudioMixer;
 pub use monitor::AudioMonitorTap;
 pub use pacing::{
