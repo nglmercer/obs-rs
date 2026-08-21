@@ -21,7 +21,7 @@ pub struct Runtime {
     /// Keyed lookup only. Deterministic rendering comes from each scene's
     /// ordered source vector, not from scene-map iteration order.
     pub(crate) scenes: HashMap<Identifier, Scene>,
-    /// How many scenes currently reference each source.
+    /// How many scene items currently reference each source.
     ///
     /// Lets `destroy_source` answer "is this source still in use?" in constant
     /// time instead of scanning every scene's item list.
@@ -267,6 +267,39 @@ impl Runtime {
         Ok(())
     }
 
+    /// Appends a scene-item reference to a source, including when the source is
+    /// already present in that scene. The underlying capture device remains a
+    /// single shared source instance; the returned index identifies the new
+    /// scene-local transform slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when the scene or source is unknown, or when
+    /// the scene-item limit has been reached.
+    pub fn attach_source_instance(
+        &mut self,
+        scene: &str,
+        source: SourceId,
+    ) -> Result<usize, RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        if !self.sources.contains_key(&source) {
+            return Err(RuntimeError::UnknownSource(source));
+        }
+        let limit = self.limits.max_sources_per_scene();
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        if scene.sources.len() >= limit {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "sources per scene",
+                limit,
+            });
+        }
+        let index = scene.attach_instance(source);
+        *self.scene_references.entry(source).or_insert(0) += 1;
+        Ok(index)
+    }
+
     /// Removes a source from a scene while keeping the source instance alive.
     ///
     /// # Errors
@@ -282,6 +315,29 @@ impl Runtime {
             return Err(RuntimeError::SourceNotAttached(source));
         };
         release_scene_reference(&mut self.scene_references, source);
+        Ok(())
+    }
+
+    /// Removes every scene-item reference while keeping the scene and all
+    /// shared source instances alive.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist.
+    pub fn clear_scene_sources(&mut self, scene: &str) -> Result<(), RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        let sources = {
+            let Some(scene) = self.scenes.get_mut(&name) else {
+                return Err(RuntimeError::UnknownScene(name));
+            };
+            let sources = std::mem::take(&mut scene.sources);
+            scene.items.clear();
+            scene.attached.clear();
+            sources
+        };
+        for source in sources {
+            release_scene_reference(&mut self.scene_references, source);
+        }
         Ok(())
     }
 
@@ -301,7 +357,7 @@ impl Runtime {
         let Some(scene) = self.scenes.get_mut(&name) else {
             return Err(RuntimeError::UnknownScene(name));
         };
-        let Some(item) = scene.items.get_mut(&source) else {
+        let Some(item) = scene.items.iter_mut().find(|item| item.source == source) else {
             return Err(RuntimeError::SourceNotAttached(source));
         };
         item.transform = transform;
@@ -311,7 +367,45 @@ impl Runtime {
     /// Returns a scene item's current transform.
     #[must_use]
     pub fn source_transform(&self, scene: &str, source: SourceId) -> Option<FrameTransform> {
-        Some(self.scenes.get(scene)?.items.get(&source)?.transform)
+        self.scenes
+            .get(scene)?
+            .items
+            .iter()
+            .find(|item| item.source == source)
+            .map(|item| item.transform)
+    }
+
+    /// Sets the transform for one ordered scene-item reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist or
+    /// [`RuntimeError::SceneItemOutOfBounds`] for an invalid item index.
+    pub fn set_scene_item_transform(
+        &mut self,
+        scene: &str,
+        item_index: usize,
+        transform: FrameTransform,
+    ) -> Result<(), RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        let Some(item) = scene.items.get_mut(item_index) else {
+            return Err(RuntimeError::SceneItemOutOfBounds { index: item_index });
+        };
+        item.transform = transform;
+        Ok(())
+    }
+
+    /// Returns the transform for one ordered scene-item reference.
+    #[must_use]
+    pub fn scene_item_transform(&self, scene: &str, item_index: usize) -> Option<FrameTransform> {
+        self.scenes
+            .get(scene)?
+            .items
+            .get(item_index)
+            .map(|item| item.transform)
     }
 
     /// Adds a CPU filter to the shared source filter chain.
@@ -395,7 +489,7 @@ impl Runtime {
         let Some(removed) = self.scenes.remove(&name) else {
             return Err(RuntimeError::UnknownScene(name));
         };
-        for source in removed.attached {
+        for source in removed.sources {
             release_scene_reference(&mut self.scene_references, source);
         }
         Ok(())
@@ -472,7 +566,31 @@ impl Runtime {
                 kind: "scene order",
             });
         }
+        let mut expected = HashMap::new();
+        for source in &state.sources {
+            *expected.entry(*source).or_insert(0usize) += 1;
+        }
+        let mut requested = HashMap::new();
+        for source in order {
+            *requested.entry(*source).or_insert(0usize) += 1;
+        }
+        if expected != requested {
+            return Err(RuntimeError::InvalidName {
+                kind: "scene order",
+            });
+        }
+        let mut remaining = state.items.clone();
+        let mut next_items = Vec::with_capacity(order.len());
+        for source in order {
+            let Some(index) = remaining.iter().position(|item| item.source == *source) else {
+                return Err(RuntimeError::InvalidName {
+                    kind: "scene order",
+                });
+            };
+            next_items.push(remaining.remove(index));
+        }
         state.sources = order.to_vec();
+        state.items = next_items;
         Ok(())
     }
 

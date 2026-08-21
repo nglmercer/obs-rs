@@ -13,6 +13,7 @@ use obs_rs_media::{
     FrameRate, FrameTransform, FrameTransition, ScaleFilter, Timestamp, VideoFormat, VideoFrame,
 };
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
+use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
@@ -633,6 +634,63 @@ fn moving_a_source_does_not_recreate_the_scene_sources() {
         ids
     };
     assert_eq!(before, after, "a move must not rebuild the runtime sources");
+}
+
+#[test]
+fn repeated_scene_item_references_share_the_runtime_source() {
+    let mut project = initial_project().expect("initial GUI project should validate");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let source_count = renderer.runtime.source_count();
+    let transform = FrameTransform::new(500, 500, 120, 40, false, false, 128).expect("transform");
+
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: obs_rs_project::SceneItemSpec::new("background-copy", "background")
+                .expect("reference item"),
+        })
+        .expect("add reference item");
+    project
+        .apply(ProjectCommand::SetSceneItemTransform {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: "background-copy".to_owned(),
+            transform,
+        })
+        .expect("transform reference item");
+    renderer
+        .sync_project(&project, 1)
+        .expect("renderer should apply the duplicate reference");
+
+    assert_eq!(renderer.runtime.source_count(), source_count);
+    let scene_sources = renderer
+        .runtime
+        .scene_sources("preview")
+        .expect("preview scene is live");
+    assert_eq!(scene_sources.len(), 2);
+    assert_eq!(scene_sources[0], scene_sources[1]);
+    assert_eq!(
+        renderer.runtime.scene_item_transform("preview", 1),
+        Some(transform)
+    );
+
+    let layers = renderer
+        .runtime
+        .render_scene_layers(
+            "preview",
+            &VideoRequest::new(Timestamp::ZERO, renderer.format),
+        )
+        .expect("duplicate scene should render");
+    assert_eq!(layers.len(), 2);
+    assert_eq!(
+        renderer
+            .runtime
+            .compositor_metrics()
+            .capture_latency()
+            .samples(),
+        1
+    );
 }
 
 #[test]

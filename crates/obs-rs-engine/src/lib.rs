@@ -1965,8 +1965,8 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
                     item.source_id()
                 ))
             })?;
-            runtime.attach_source(scene_id, source_id)?;
-            runtime.set_source_transform(scene_id, source_id, item.transform())?;
+            let item_index = runtime.attach_source_instance(scene_id, source_id)?;
+            runtime.set_scene_item_transform(scene_id, item_index, item.transform())?;
         }
     }
     Ok(runtime)

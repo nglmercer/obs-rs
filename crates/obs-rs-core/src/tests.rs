@@ -163,6 +163,52 @@ fn scene_item_transform_is_applied_before_composition() {
 }
 
 #[test]
+fn duplicate_scene_items_share_capture_but_keep_transforms() {
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let mut runtime = Runtime::new();
+    runtime
+        .register_plugin(&plugin)
+        .expect("registration succeeds");
+    runtime.create_scene("main").expect("scene is new");
+    let source = runtime
+        .create_source("color_source", "shared", &settings(2, 2, "#204060FF"))
+        .expect("source is valid");
+
+    let first = runtime
+        .attach_source_instance("main", source)
+        .expect("first item attaches");
+    let second = runtime
+        .attach_source_instance("main", source)
+        .expect("second item attaches");
+    assert_eq!((first, second), (0, 1));
+    let second_transform =
+        FrameTransform::new(500, 500, 100, 50, false, false, 128).expect("transform");
+    runtime
+        .set_scene_item_transform("main", first, FrameTransform::IDENTITY)
+        .expect("first transform");
+    runtime
+        .set_scene_item_transform("main", second, second_transform)
+        .expect("second transform");
+
+    let layers = runtime
+        .render_scene_layers("main", &VideoRequest::new(Timestamp::ZERO, format()))
+        .expect("scene renders");
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0].transform(), FrameTransform::IDENTITY);
+    assert_eq!(layers[1].transform(), second_transform);
+    assert_eq!(runtime.scene_sources("main"), Some(&[source, source][..]));
+    assert_eq!(runtime.source_count(), 1);
+    assert_eq!(runtime.compositor_metrics().capture_latency().samples(), 1);
+
+    runtime
+        .clear_scene_sources("main")
+        .expect("scene references clear");
+    runtime
+        .destroy_source(source)
+        .expect("shared source can be destroyed after clear");
+}
+
+#[test]
 fn compositor_metrics_report_work_and_reset() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
     let mut runtime = Runtime::new();

@@ -7,6 +7,7 @@ use super::{
     error::{identifier, RuntimeError},
     ids::SourceId,
     metrics::CompositorMetrics,
+    registry::SourceInstance,
     runtime::Runtime,
 };
 
@@ -18,6 +19,71 @@ const fn is_contract_violation(error: &SourceError) -> bool {
     )
 }
 
+/// Captures one shared source and resolves its last-good-frame fallback.
+///
+/// Source failures are deliberately isolated here rather than returned to the
+/// scene loop: one disconnected device must not blank healthy layers. The
+/// caller owns the scene-item metrics because a cached frame can serve several
+/// items while this function records one actual source render.
+fn render_source_frame(
+    instance: &mut SourceInstance,
+    request: &VideoRequest,
+    metrics: &mut CompositorMetrics,
+) -> (Option<VideoFrame>, Vec<FrameFilter>) {
+    let filters = instance.filters.clone();
+    let capture_started = Instant::now();
+    let rendered = instance.source.render(request);
+    metrics.capture_latency.record(capture_started.elapsed());
+    // One failing source must not erase the rest of the scene. A camera that
+    // was unplugged mid-stream, a portal session the compositor closed —
+    // neither is a reason to stop compositing a healthy layer beside it.
+    let frame = match rendered {
+        Ok(frame) => {
+            if frame.is_some() {
+                instance.failure = None;
+            }
+            frame
+        }
+        Err(error) => {
+            metrics.failed_sources = metrics.failed_sources.saturating_add(1);
+            if is_contract_violation(&error) {
+                metrics.contract_violations = metrics.contract_violations.saturating_add(1);
+            }
+            instance.failure = Some(error.to_string());
+            None
+        }
+    };
+    let frame = match frame {
+        Some(frame) if frame.format() == request.format() => {
+            instance.last_frame = Some(frame.clone());
+            Some(frame)
+        }
+        // A frame in the wrong shape cannot be composited, and it is the
+        // source's contract that was broken, not the scene's.
+        Some(frame) => {
+            metrics.failed_sources = metrics.failed_sources.saturating_add(1);
+            metrics.contract_violations = metrics.contract_violations.saturating_add(1);
+            instance.failure = Some(
+                RuntimeError::Media(MediaError::FormatMismatch {
+                    expected: request.format(),
+                    actual: frame.format(),
+                })
+                .to_string(),
+            );
+            None
+        }
+        None => None,
+    };
+    let frame = frame.or_else(|| {
+        instance
+            .last_frame
+            .as_ref()
+            .filter(|frame| frame.format() == request.format())
+            .map(|frame| frame.at_timestamp(request.timestamp()))
+    });
+    (frame, filters)
+}
+
 /// One captured scene layer before compositor-specific pixel processing.
 ///
 /// This is the portable handoff used by accelerated compositors: sources stay
@@ -25,6 +91,7 @@ const fn is_contract_violation(error: &SourceError) -> bool {
 /// can be uploaded without first performing CPU transforms, filters, or blends.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderedSceneLayer {
+    source: SourceId,
     frame: VideoFrame,
     transform: FrameTransform,
     filters: Vec<FrameFilter>,
@@ -139,84 +206,50 @@ impl Runtime {
         let scene_state = scenes
             .get(&scene)
             .ok_or_else(|| RuntimeError::UnknownScene(scene.clone()))?;
-        let mut result = Vec::with_capacity(scene_state.sources.len());
+        let mut result: Vec<RenderedSceneLayer> = Vec::with_capacity(scene_state.sources.len());
+        // A successful layer is also the per-render cache for later scene
+        // items that reference the same source. This reuses the existing
+        // bounded result storage and avoids a second hot-path allocation.
+        // Empty sources are tracked only when a failure actually occurs.
+        let mut empty_sources = Vec::new();
 
-        for source_id in &scene_state.sources {
+        for (item_index, source_id) in scene_state.sources.iter().enumerate() {
             // The scene lookup resolves item-only state. Source filters are
             // read from the shared source instance below, so every scene item
             // referencing that source observes the same filter chain.
             let transform = scene_state
                 .items
-                .get(source_id)
+                .get(item_index)
                 .map_or(FrameTransform::IDENTITY, |item| item.transform);
             metrics.source_requests = metrics.source_requests.saturating_add(1);
+            if let Some(previous) = result.iter().find(|layer| layer.source == *source_id) {
+                let frame = previous.frame.clone();
+                let filters = previous.filters.clone();
+                metrics.source_frames = metrics.source_frames.saturating_add(1);
+                if transform != FrameTransform::IDENTITY {
+                    metrics.transformed_frames = metrics.transformed_frames.saturating_add(1);
+                }
+                metrics.filtered_frames = metrics
+                    .filtered_frames
+                    .saturating_add(u64::try_from(filters.len()).unwrap_or(u64::MAX));
+                result.push(RenderedSceneLayer {
+                    source: *source_id,
+                    frame,
+                    transform,
+                    filters,
+                });
+                continue;
+            }
+            if empty_sources.contains(source_id) {
+                metrics.empty_sources = metrics.empty_sources.saturating_add(1);
+                continue;
+            }
             let instance = sources
                 .get_mut(source_id)
                 .ok_or(RuntimeError::UnknownSource(*source_id))?;
-            let filters = instance.filters.as_slice();
-            let capture_started = Instant::now();
-            let rendered = instance.source.render(request);
-            metrics.capture_latency.record(capture_started.elapsed());
-            // One failing source must not erase the rest of the scene. A
-            // camera that was unplugged mid-stream, a portal session the
-            // compositor closed — neither is a reason to stop compositing a
-            // perfectly healthy screen capture beside it. The failure is
-            // recorded, the layer falls back to its last good frame, and the
-            // scene keeps rendering.
-            //
-            // This holds for every `SourceError`, including the two that mean a
-            // source or the engine is misbehaving rather than a device being
-            // absent. Making those fatal would blank a live program output for
-            // a bug the viewer cannot do anything about — and the window where
-            // a source's format legitimately lags the canvas is exactly a
-            // canvas change mid-stream. They are counted separately instead, so
-            // a contract violation is loud in the metrics and the diagnostics
-            // bundle without being loud on air.
-            let frame = match rendered {
-                Ok(frame) => {
-                    if frame.is_some() {
-                        instance.failure = None;
-                    }
-                    frame
-                }
-                Err(error) => {
-                    metrics.failed_sources = metrics.failed_sources.saturating_add(1);
-                    if is_contract_violation(&error) {
-                        metrics.contract_violations = metrics.contract_violations.saturating_add(1);
-                    }
-                    instance.failure = Some(error.to_string());
-                    None
-                }
-            };
-            let frame = match frame {
-                Some(frame) if frame.format() == request.format() => {
-                    instance.last_frame = Some(frame.clone());
-                    Some(frame)
-                }
-                // A frame in the wrong shape cannot be composited, and it is
-                // the source's contract that was broken, not the scene's.
-                Some(frame) => {
-                    metrics.failed_sources = metrics.failed_sources.saturating_add(1);
-                    metrics.contract_violations = metrics.contract_violations.saturating_add(1);
-                    instance.failure = Some(
-                        RuntimeError::Media(MediaError::FormatMismatch {
-                            expected: request.format(),
-                            actual: frame.format(),
-                        })
-                        .to_string(),
-                    );
-                    None
-                }
-                None => None,
-            };
-            let frame = frame.or_else(|| {
-                instance
-                    .last_frame
-                    .as_ref()
-                    .filter(|frame| frame.format() == request.format())
-                    .map(|frame| frame.at_timestamp(request.timestamp()))
-            });
+            let (frame, filters) = render_source_frame(instance, request, metrics);
             let Some(frame) = frame else {
+                empty_sources.push(*source_id);
                 metrics.empty_sources = metrics.empty_sources.saturating_add(1);
                 continue;
             };
@@ -228,9 +261,10 @@ impl Runtime {
                 .filtered_frames
                 .saturating_add(u64::try_from(filters.len()).unwrap_or(u64::MAX));
             result.push(RenderedSceneLayer {
+                source: *source_id,
                 frame,
                 transform,
-                filters: filters.to_vec(),
+                filters,
             });
         }
 

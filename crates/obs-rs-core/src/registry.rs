@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     sync::Arc,
 };
 
@@ -44,12 +44,14 @@ pub(crate) struct SourceInstance {
 /// The per-scene compositing state of one attached source.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SceneItem {
+    pub(crate) source: super::SourceId,
     pub(crate) transform: FrameTransform,
 }
 
 impl SceneItem {
-    fn new() -> Self {
+    fn new(source: super::SourceId) -> Self {
         Self {
+            source,
             transform: FrameTransform::IDENTITY,
         }
     }
@@ -63,9 +65,11 @@ pub(crate) struct Scene {
     /// O(1) membership mirror of `sources`, kept in step by [`Scene::attach`]
     /// and [`Scene::detach`].
     pub(crate) attached: HashSet<super::SourceId>,
-    /// Scene-item transform per attached source. Filters live on the shared
-    /// source instance above and are intentionally absent here.
-    pub(crate) items: HashMap<super::SourceId, SceneItem>,
+    /// Scene-item transform in the same order as `sources`. Filters live on
+    /// the shared source instance above and are intentionally absent here.
+    /// Keeping this as an ordered vector allows two items to reference one
+    /// capture source while retaining independent transforms.
+    pub(crate) items: Vec<SceneItem>,
 }
 
 impl Scene {
@@ -73,7 +77,7 @@ impl Scene {
         Self {
             sources: Vec::new(),
             attached: HashSet::new(),
-            items: HashMap::new(),
+            items: Vec::new(),
         }
     }
 
@@ -85,8 +89,17 @@ impl Scene {
             return false;
         }
         self.sources.push(source);
-        self.items.insert(source, SceneItem::new());
+        self.items.push(SceneItem::new(source));
         true
+    }
+
+    /// Appends a source reference even when that source is already present.
+    /// The source device remains shared; only the scene-item transform is new.
+    pub(crate) fn attach_instance(&mut self, source: super::SourceId) -> usize {
+        self.attached.insert(source);
+        self.sources.push(source);
+        self.items.push(SceneItem::new(source));
+        self.sources.len() - 1
     }
 
     /// Removes `source` while keeping the shared source definition alive.
@@ -95,16 +108,15 @@ impl Scene {
     /// vector is shifted rather than swap-removed because composition order is
     /// part of the rendering contract.
     pub(crate) fn detach(&mut self, source: super::SourceId) -> Option<()> {
-        if !self.attached.remove(&source) {
-            return None;
-        }
-        if let Some(index) = self
+        let index = self
             .sources
             .iter()
-            .position(|candidate| *candidate == source)
-        {
-            self.sources.remove(index);
+            .position(|candidate| *candidate == source)?;
+        self.sources.remove(index);
+        self.items.remove(index);
+        if !self.sources.contains(&source) {
+            self.attached.remove(&source);
         }
-        self.items.remove(&source).map(|_| ())
+        Some(())
     }
 }

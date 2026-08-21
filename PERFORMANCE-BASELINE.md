@@ -19,7 +19,7 @@ scenes and capture devices.
 | `cargo check --workspace --all-targets --all-features` | Pass | Completed in 45.75 s in the warm workspace. |
 | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Pass | Baseline lint drift was cleaned up while preserving behavior; this is now a required phase gate. |
 | `cargo test --workspace --all-targets` | Pass with explicit environment ignores | Native production-sink tests and one native-window GUI test are explicitly ignored because this managed session has neither dependency; the remaining workspace tests pass. |
-| `cargo test -p obs-rs-gui --bin obs-rs-gui -- --test-threads=1` | Pass with explicit ignores | 103 pass; one compositor-dependent GUI test and one timing probe are ignored. |
+| `cargo test -p obs-rs-gui --bin obs-rs-gui -- --test-threads=1` | Pass with explicit ignores | 104 pass; one compositor-dependent GUI test and one timing probe are ignored. |
 | `cargo run -p obs-rs-gui -- --smoke` | Pass | Constructs the window and render path without entering the event loop. |
 | `cargo run -p obs-rs-app --bin obs-rs-linux-check` | Mixed | A/V soak passes; X11/window/camera/PipeWire checks skip due session capabilities. |
 | `cargo run -p obs-rs-app --bin obs-rs-benchmark --release` | Pass as a measurement | The harness completes, but its deadline metrics do not meet the future acceptance gate. |
@@ -37,16 +37,16 @@ Observed report:
 
 ```text
 render_samples=120
-render_p50_ns=831798
-render_p95_ns=1203533
-render_max_ns=1691590
+render_p50_ns=1133473
+render_p95_ns=2939488
+render_max_ns=5518458
 frame_owned_buffers=0
 frame_owned_bytes=0
 frame_shared_clones=480
 frame_cow_buffers=120
 frame_copied_bytes=110592000
-rss_before_kib=5820
-rss_after_kib=9340
+rss_before_kib=6104
+rss_after_kib=9568
 requested=120
 processed=120
 cancelled=false
@@ -54,10 +54,10 @@ empty=0
 dropped_oldest=0
 dropped_newest=0
 missed=120
-lateness_ns=146789986
-max_lateness_ns=1959319
-wait_ns=3820858614
-paced_render_ns=146632308
+lateness_ns=229861735
+max_lateness_ns=5159715
+wait_ns=3740561341
+paced_render_ns=227871593
 produced_bytes=110592000
 peak_queued_bytes=921600
 remaining=0
@@ -68,19 +68,19 @@ empty_sources=0
 transformed=250
 filtered=250
 blends=250
-elapsed_ms=3967
+elapsed_ms=3968
 multi_workers=2
 multi_requested=60
 multi_processed=60
 multi_missed=60
-multi_lateness_ns=7654986
+multi_lateness_ns=7679258
 multi_produced_bytes=55296000
 multi_peak_queued_bytes=921600
-multi_elapsed_ns=967007923
+multi_elapsed_ns=966976307
 ```
 
-The fixture is the historical 640x360@30 workload. Its measured render p95 is
-1.204 ms, but the current wall-clock deadline accounting reports a miss for all
+The fixture is the historical 640x360@30 workload. The latest measured render
+p95 is 2.939 ms, but the current wall-clock deadline accounting reports a miss for all
 120 single-worker frames and all 60 multi-worker frames in this session. That
 is a baseline finding, not evidence that a 60 FPS production path is accepted.
 The bounded queue footprint is one 921,600-byte RGBA frame in this fixture.
