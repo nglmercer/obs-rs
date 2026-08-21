@@ -76,6 +76,16 @@ pub enum AudioError {
     InvalidCompressorRelease { milliseconds: u16 },
     /// An audio compressor output gain is outside OBS's bounded dB range.
     InvalidCompressorOutputGain { milli_db: i32 },
+    /// An audio expander ratio is outside OBS's bounded ratio range.
+    InvalidExpanderRatio { milli_ratio: u16 },
+    /// An audio expander threshold is outside OBS's bounded dB range.
+    InvalidExpanderThreshold { milli_db: i32 },
+    /// An audio expander attack time is outside OBS's bounded range.
+    InvalidExpanderAttack { milliseconds: u16 },
+    /// An audio expander release time is outside OBS's bounded range.
+    InvalidExpanderRelease { milliseconds: u16 },
+    /// An audio expander output gain is outside OBS's bounded dB range.
+    InvalidExpanderOutputGain { milli_db: i32 },
     /// An ordered audio filter chain reached its fixed capacity.
     FilterChainFull { max: usize },
     /// An audio filter would have produced a non-finite sample.
@@ -185,6 +195,26 @@ impl fmt::Display for AudioError {
             Self::InvalidCompressorOutputGain { milli_db } => write!(
                 formatter,
                 "audio compressor output gain {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidExpanderRatio { milli_ratio } => write!(
+                formatter,
+                "audio expander ratio {milli_ratio} milli-ratio is outside the supported range"
+            ),
+            Self::InvalidExpanderThreshold { milli_db } => write!(
+                formatter,
+                "audio expander threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidExpanderAttack { milliseconds } => write!(
+                formatter,
+                "audio expander attack {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidExpanderRelease { milliseconds } => write!(
+                formatter,
+                "audio expander release {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidExpanderOutputGain { milli_db } => write!(
+                formatter,
+                "audio expander output gain {milli_db} milli-dB is outside the supported range"
             ),
             Self::FilterChainFull { max } => {
                 write!(formatter, "audio filter chain is limited to {max} filters")

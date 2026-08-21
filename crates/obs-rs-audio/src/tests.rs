@@ -437,6 +437,105 @@ fn compressor_state_continues_across_blocks_and_preserves_overflow_atomicity() {
 }
 
 #[test]
+fn expander_validates_obs_control_bounds() {
+    assert_eq!(
+        AudioExpander::new(MIN_EXPANDER_RATIO_MILLI - 1, -40_000, 10, 50, 0),
+        Err(AudioError::InvalidExpanderRatio { milli_ratio: 999 })
+    );
+    assert_eq!(
+        AudioExpander::new(MAX_EXPANDER_RATIO_MILLI + 1, -40_000, 10, 50, 0),
+        Err(AudioError::InvalidExpanderRatio {
+            milli_ratio: MAX_EXPANDER_RATIO_MILLI + 1
+        })
+    );
+    assert_eq!(
+        AudioExpander::new(10_000, MIN_EXPANDER_THRESHOLD_DB_MILLI - 1, 10, 50, 0),
+        Err(AudioError::InvalidExpanderThreshold {
+            milli_db: MIN_EXPANDER_THRESHOLD_DB_MILLI - 1
+        })
+    );
+    assert_eq!(
+        AudioExpander::new(10_000, -40_000, MIN_EXPANDER_ATTACK_MS - 1, 50, 0),
+        Err(AudioError::InvalidExpanderAttack { milliseconds: 0 })
+    );
+    assert_eq!(
+        AudioExpander::new(10_000, -40_000, 10, MIN_EXPANDER_RELEASE_MS - 1, 0),
+        Err(AudioError::InvalidExpanderRelease { milliseconds: 0 })
+    );
+    assert_eq!(
+        AudioExpander::new(
+            10_000,
+            -40_000,
+            10,
+            50,
+            MAX_EXPANDER_OUTPUT_GAIN_DB_MILLI + 1
+        ),
+        Err(AudioError::InvalidExpanderOutputGain {
+            milli_db: MAX_EXPANDER_OUTPUT_GAIN_DB_MILLI + 1
+        })
+    );
+}
+
+#[test]
+fn expander_attenuates_below_threshold_and_preserves_above_threshold_signal() {
+    let mut quiet_chain = AudioFilterChain::new();
+    quiet_chain
+        .try_push(AudioFilter::expander(10_000, -18_000, 1, 60, 0).expect("expander"))
+        .expect("expander filter");
+    let mut quiet =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.01; 480 * 2]).expect("quiet block");
+    quiet_chain.apply(&mut quiet).expect("quiet expander block");
+    let final_quiet = quiet.samples()[(480 - 1) * 2];
+    assert!(
+        final_quiet < 0.005,
+        "the quiet signal must be expanded downward"
+    );
+
+    let mut loud_chain = AudioFilterChain::new();
+    loud_chain
+        .try_push(AudioFilter::expander(10_000, -18_000, 1, 60, 0).expect("expander"))
+        .expect("expander filter");
+    let mut loud =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0; 480 * 2]).expect("loud block");
+    loud_chain.apply(&mut loud).expect("loud expander block");
+    assert!((loud.samples()[0] - 1.0).abs() < f32::EPSILON);
+    assert!((loud.samples()[(480 - 1) * 2] - 1.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn expander_state_continues_and_overflow_is_atomic() {
+    let mut continuing = AudioFilterChain::new();
+    continuing
+        .try_push(AudioFilter::expander(10_000, -18_000, 1, 60, 0).expect("expander"))
+        .expect("expander filter");
+    let mut quiet =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.01; 480 * 2]).expect("quiet block");
+    continuing.apply(&mut quiet).expect("quiet expander block");
+    let mut continued_impulse = buffer(&[1.0, 1.0]);
+    continuing
+        .apply(&mut continued_impulse)
+        .expect("continued expander state");
+
+    let mut fresh = AudioFilterChain::new();
+    fresh
+        .try_push(AudioFilter::expander(10_000, -18_000, 1, 60, 0).expect("expander"))
+        .expect("expander filter");
+    let mut fresh_impulse = buffer(&[1.0, 1.0]);
+    fresh
+        .apply(&mut fresh_impulse)
+        .expect("fresh expander state");
+    assert!(continued_impulse.samples()[0] < fresh_impulse.samples()[0]);
+
+    let mut overflow =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![f32::MAX, 0.25]).expect("finite input");
+    let result = AudioFilter::expander(1_000, 0, 1, 60, 32_000)
+        .expect("valid expander")
+        .apply(&mut overflow);
+    assert_eq!(result, Err(AudioError::FilterOverflow));
+    assert_eq!(overflow.samples(), &[f32::MAX, 0.25]);
+}
+
+#[test]
 fn audio_filter_chain_has_a_fixed_capacity() {
     let mut chain = AudioFilterChain::new();
     let filter = AudioFilter::gain_db_milli(0).expect("zero gain");
@@ -550,6 +649,32 @@ fn compressor_block_timing_report() {
     std::hint::black_box(checksum);
     println!(
         "compressor: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
+fn expander_block_timing_report() {
+    let mut chain = AudioFilterChain::new();
+    chain
+        .try_push(AudioFilter::expander(2_000, -40_000, 10, 50, 0).expect("expander"))
+        .expect("filter");
+    let mut block =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.01; 480 * 2]).expect("audio block");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for _ in 0..200 {
+        block.samples_mut().fill(0.01);
+        chain.apply(&mut block).expect("expander block");
+        checksum += block.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "expander: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
         elapsed,
         elapsed / 200
     );

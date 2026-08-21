@@ -1163,6 +1163,37 @@ impl EngineSession {
         Ok(())
     }
 
+    /// Installs OBS's bounded peak Expander filter on a live mixer channel.
+    ///
+    /// This slice uses peak detection on the channel's own signal. RMS/gate,
+    /// knee, sidechain, and project-source routing require a broader audio
+    /// graph and remain outside this control-plane operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when one of the expander controls is outside
+    /// the supported OBS-compatible range.
+    pub fn set_channel_expander(
+        &mut self,
+        channel: EngineAudioChannel,
+        ratio_milli: u16,
+        threshold_db_milli: i32,
+        attack_ms: u16,
+        release_ms: u16,
+        output_gain_db_milli: i32,
+    ) -> Result<(), EngineError> {
+        let mut filters = AudioFilterChain::new();
+        filters.try_push(AudioFilter::expander(
+            ratio_milli,
+            threshold_db_milli,
+            attack_ms,
+            release_ms,
+            output_gain_db_milli,
+        )?)?;
+        self.set_channel_audio_filters(channel, filters);
+        Ok(())
+    }
+
     /// Mutes or unmutes the live input source.
     ///
     /// # Errors
@@ -2252,6 +2283,26 @@ pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
             )
             .ok()
         }
+        "expander" => {
+            let read_signed = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<i32>().ok())
+            };
+            let read_unsigned = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<u16>().ok())
+            };
+            AudioFilter::expander(
+                read_unsigned("ratio_milli")?,
+                read_signed("threshold_db_milli")?,
+                read_unsigned("attack_ms")?,
+                read_unsigned("release_ms")?,
+                read_signed("output_gain_db_milli")?,
+            )
+            .ok()
+        }
         _ => None,
     }
 }
@@ -2759,6 +2810,21 @@ mod tests {
             compile_audio_filter(&compressor),
             Some(AudioFilter::compressor(10_000, -18_000, 6, 60, 0).expect("valid compressor"))
         );
+        let expander = SourceFilterSpec::with_category(
+            "expander_runtime",
+            "Expander",
+            "expander",
+            SourceFilterCategory::AudioVideo,
+            Config::parse(
+                "ratio_milli = 10000\nthreshold_db_milli = -40000\nattack_ms = 10\nrelease_ms = 50\noutput_gain_db_milli = 0\n",
+            )
+            .expect("expander settings"),
+        )
+        .expect("expander filter");
+        assert_eq!(
+            compile_audio_filter(&expander),
+            Some(AudioFilter::expander(10_000, -40_000, 10, 50, 0).expect("valid expander"))
+        );
         assert_eq!(compile_audio_filter(&brightness), None);
     }
 
@@ -2920,6 +2986,38 @@ mod tests {
                 .flat_map(AudioBuffer::samples)
                 .all(|sample| sample.is_finite()),
             "compression must preserve the finite audio contract"
+        );
+    }
+
+    #[test]
+    fn expander_runs_on_a_live_channel_before_metering_and_mix() {
+        let mut baseline = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        baseline.tick(None, Some("program")).expect("baseline tick");
+        let baseline_peak = baseline.stats().microphone_peak_milli;
+
+        let mut expanded = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        expanded
+            .set_channel_expander(EngineAudioChannel::Microphone, 10_000, 0, 1, 60, 0)
+            .expect("expander");
+        expanded
+            .tick(None, Some("program"))
+            .expect("first expanded tick");
+        let tick = expanded.tick(None, Some("program")).expect("expanded tick");
+
+        assert!(
+            baseline_peak > 0,
+            "deterministic microphone must produce audio"
+        );
+        assert!(
+            expanded.stats().microphone_peak_milli < baseline_peak,
+            "the channel meter must see expander attenuation"
+        );
+        assert!(
+            tick.audio_blocks
+                .iter()
+                .flat_map(AudioBuffer::samples)
+                .all(|sample| sample.is_finite()),
+            "expansion must preserve the finite audio contract"
         );
     }
 

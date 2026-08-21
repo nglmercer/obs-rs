@@ -67,6 +67,15 @@ enum WorkerCommand {
         i32,
         mpsc::Sender<Result<(), String>>,
     ),
+    SetExpander(
+        EngineAudioChannel,
+        u16,
+        i32,
+        u16,
+        u16,
+        i32,
+        mpsc::Sender<Result<(), String>>,
+    ),
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
     SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
     SyncProject(Project, mpsc::Sender<Result<(), String>>),
@@ -524,6 +533,40 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Replaces the live channel's bounded peak Expander filter on the
+    /// worker-owned engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker or expander bounds reject the
+    /// update.
+    pub fn set_channel_expander(
+        &self,
+        channel: EngineAudioChannel,
+        ratio_milli: u16,
+        threshold_db_milli: i32,
+        attack_ms: u16,
+        release_ms: u16,
+        output_gain_db_milli: i32,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetExpander(
+                channel,
+                ratio_milli,
+                threshold_db_milli,
+                attack_ms,
+                release_ms,
+                output_gain_db_milli,
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Applies live input mute on the worker-owned mixer.
     ///
     /// # Errors
@@ -698,6 +741,28 @@ fn worker_loop(
             ) => {
                 let result = session
                     .set_channel_compressor(
+                        channel,
+                        ratio_milli,
+                        threshold_db_milli,
+                        attack_ms,
+                        release_ms,
+                        output_gain_db_milli,
+                    )
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::SetExpander(
+                channel,
+                ratio_milli,
+                threshold_db_milli,
+                attack_ms,
+                release_ms,
+                output_gain_db_milli,
+                reply,
+            ) => {
+                let result = session
+                    .set_channel_expander(
                         channel,
                         ratio_milli,
                         threshold_db_milli,
@@ -1013,6 +1078,9 @@ mod tests {
         worker
             .set_channel_compressor(EngineAudioChannel::Microphone, 10_000, -18_000, 6, 60, 0)
             .expect("valid compressor filter");
+        worker
+            .set_channel_expander(EngineAudioChannel::Microphone, 10_000, -40_000, 10, 50, 0)
+            .expect("valid expander filter");
         let error = worker
             .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, 30_001)
             .expect_err("unbounded gain filter");
@@ -1024,6 +1092,10 @@ mod tests {
         let error = worker
             .set_channel_compressor(EngineAudioChannel::Microphone, 32_001, -18_000, 6, 60, 0)
             .expect_err("unbounded compressor ratio");
+        assert!(matches!(error, EngineError::Worker(reason) if reason.contains("ratio")));
+        let error = worker
+            .set_channel_expander(EngineAudioChannel::Microphone, 20_001, -40_000, 10, 50, 0)
+            .expect_err("unbounded expander ratio");
         assert!(matches!(error, EngineError::Worker(reason) if reason.contains("ratio")));
     }
 }
