@@ -41,6 +41,10 @@ pub enum RuntimeError {
     SourceAlreadyAttached(SourceId),
     /// A source was not present in a scene.
     SourceNotAttached(SourceId),
+    /// A stable scene-item identity is already present in a scene.
+    DuplicateSceneItem(String),
+    /// A stable scene-item identity was not present in a scene.
+    SceneItemNotAttached(String),
     /// A scene-item index was outside the ordered item list.
     SceneItemOutOfBounds { index: usize },
     /// A source cannot be destroyed while a scene references it.
@@ -91,6 +95,12 @@ impl fmt::Display for RuntimeError {
             }
             Self::SourceNotAttached(source) => {
                 write!(formatter, "source {} is not attached", source.value())
+            }
+            Self::DuplicateSceneItem(item) => {
+                write!(formatter, "scene item {item} is already attached")
+            }
+            Self::SceneItemNotAttached(item) => {
+                write!(formatter, "scene item {item} is not attached")
             }
             Self::SceneItemOutOfBounds { index } => {
                 write!(formatter, "scene item index {index} is out of bounds")

@@ -671,6 +671,10 @@ fn repeated_scene_item_references_share_the_runtime_source() {
     assert_eq!(scene_sources.len(), 2);
     assert_eq!(scene_sources[0], scene_sources[1]);
     assert_eq!(
+        renderer.runtime.scene_item_ids("preview"),
+        Some(vec!["background".to_owned(), "background-copy".to_owned()])
+    );
+    assert_eq!(
         renderer.runtime.scene_item_transform("preview", 1),
         Some(transform)
     );
@@ -756,6 +760,7 @@ fn nested_scene_references_render_without_reopening_shared_sources() {
         )
         .expect("nested scene should render");
     assert_eq!(layers.len(), 1);
+    assert_eq!(layers[0].item_id(), "child-item/background");
     assert_eq!(
         renderer
             .runtime
@@ -802,6 +807,8 @@ fn group_items_render_without_reopening_shared_sources() {
         )
         .expect("group should render");
     assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0].item_id(), "background");
+    assert_eq!(layers[1].item_id(), "group/background");
     assert_eq!(
         renderer
             .runtime

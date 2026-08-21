@@ -13,6 +13,8 @@ use super::{
     registry::{Registry, Scene, SourceInstance},
 };
 
+const MAX_RUNTIME_SCENE_ITEM_ID_BYTES: usize = 4_096;
+
 pub struct Runtime {
     pub(crate) registry: Registry,
     /// Keyed lookup only; never iterated in key order, so hashing is safe here
@@ -282,6 +284,30 @@ impl Runtime {
         source: SourceId,
     ) -> Result<usize, RuntimeError> {
         let name = identifier(scene, "scene")?;
+        let item_id = self.scenes.get(&name).map_or_else(
+            || "item-0".to_owned(),
+            |scene| format!("item-{}", scene.sources.len()),
+        );
+        self.attach_source_instance_with_id(scene, source, &item_id)
+    }
+
+    /// Appends a scene-item reference with a stable project-derived identity.
+    /// The identity is independent of the scene's current draw order, so a
+    /// reorder does not redirect a transient transform draft to another item.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::DuplicateSceneItem`] when the identity already
+    /// exists in the scene, or [`RuntimeError::InvalidName`] when it is empty
+    /// or exceeds the bounded path length.
+    pub fn attach_source_instance_with_id(
+        &mut self,
+        scene: &str,
+        source: SourceId,
+        item_id: &str,
+    ) -> Result<usize, RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        validate_scene_item_id(item_id)?;
         if !self.sources.contains_key(&source) {
             return Err(RuntimeError::UnknownSource(source));
         }
@@ -295,7 +321,16 @@ impl Runtime {
                 limit,
             });
         }
-        let index = scene.attach_instance(source);
+        if scene
+            .item_ids
+            .iter()
+            .any(|existing| existing.as_ref() == item_id)
+        {
+            return Err(RuntimeError::DuplicateSceneItem(item_id.to_owned()));
+        }
+        let Some(index) = scene.attach_instance_with_id(source, item_id) else {
+            return Err(RuntimeError::DuplicateSceneItem(item_id.to_owned()));
+        };
         *self.scene_references.entry(source).or_insert(0) += 1;
         Ok(index)
     }
@@ -333,6 +368,7 @@ impl Runtime {
             let sources = std::mem::take(&mut scene.sources);
             scene.items.clear();
             scene.attached.clear();
+            scene.item_ids.clear();
             sources
         };
         for source in sources {
@@ -405,6 +441,57 @@ impl Runtime {
             .get(scene)?
             .items
             .get(item_index)
+            .map(|item| item.transform)
+    }
+
+    /// Returns stable scene-item identities in current draw order.
+    #[must_use]
+    pub fn scene_item_ids(&self, scene: &str) -> Option<Vec<String>> {
+        Some(
+            self.scenes
+                .get(scene)?
+                .items
+                .iter()
+                .map(|item| item.item_id.as_ref().to_owned())
+                .collect(),
+        )
+    }
+
+    /// Sets a transform by stable scene-item identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::SceneItemNotAttached`] when the identity is not
+    /// present in the requested scene.
+    pub fn set_scene_item_transform_by_id(
+        &mut self,
+        scene: &str,
+        item_id: &str,
+        transform: FrameTransform,
+    ) -> Result<(), RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        let Some(item) = scene
+            .items
+            .iter_mut()
+            .find(|item| item.item_id.as_ref() == item_id)
+        else {
+            return Err(RuntimeError::SceneItemNotAttached(item_id.to_owned()));
+        };
+        item.transform = transform;
+        Ok(())
+    }
+
+    /// Returns a stable scene-item transform by identity.
+    #[must_use]
+    pub fn scene_item_transform_by_id(&self, scene: &str, item_id: &str) -> Option<FrameTransform> {
+        self.scenes
+            .get(scene)?
+            .items
+            .iter()
+            .find(|item| item.item_id.as_ref() == item_id)
             .map(|item| item.transform)
     }
 
@@ -609,6 +696,15 @@ fn release_scene_reference(references: &mut HashMap<SourceId, usize>, source: So
             references.remove(&source);
         }
     }
+}
+
+fn validate_scene_item_id(item_id: &str) -> Result<(), RuntimeError> {
+    if item_id.is_empty() || item_id.len() > MAX_RUNTIME_SCENE_ITEM_ID_BYTES {
+        return Err(RuntimeError::InvalidName {
+            kind: "scene item id",
+        });
+    }
+    Ok(())
 }
 
 impl Default for Runtime {

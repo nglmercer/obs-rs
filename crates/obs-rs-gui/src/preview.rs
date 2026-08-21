@@ -50,8 +50,10 @@ pub(crate) struct PreviewRenderer {
     gpu_program_scene: Option<String>,
     preview_scaler: Option<FrameScaler>,
     /// The canvas drag currently applied to the runtime, if any.
-    applied_draft: Option<(String, Vec<(usize, FrameTransform)>)>,
+    applied_draft: Option<(String, Vec<(String, FrameTransform)>)>,
 }
+
+type VisibleItem = (String, SourceId, FrameTransform);
 
 /// One scene-item transform being dragged on the canvas.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -388,25 +390,31 @@ impl PreviewRenderer {
             let flattened = self.visible_items(profile, name)?;
             let order = flattened
                 .iter()
-                .map(|(source, _)| *source)
+                .map(|(_, source, _)| *source)
+                .collect::<Vec<_>>();
+            let item_ids = flattened
+                .iter()
+                .map(|(item_id, _, _)| item_id.clone())
                 .collect::<Vec<_>>();
             let attached = self
                 .runtime
                 .scene_sources(name)
                 .map(<[SourceId]>::to_vec)
                 .unwrap_or_default();
-            if attached != order {
+            let attached_item_ids = self.runtime.scene_item_ids(name).unwrap_or_default();
+            if attached != order || attached_item_ids != item_ids {
                 // Rebuild only the scene-item references. The shared runtime
                 // source instances stay alive, so changing visibility/order or
                 // adding a second reference never reopens a capture device.
                 self.runtime.clear_scene_sources(name)?;
-                for source in &order {
-                    self.runtime.attach_source_instance(name, *source)?;
+                for (item_id, source, _) in &flattened {
+                    self.runtime
+                        .attach_source_instance_with_id(name, *source, item_id)?;
                 }
             }
-            for (item_index, (_, transform)) in flattened.iter().enumerate() {
+            for (item_id, _, transform) in &flattened {
                 self.runtime
-                    .set_scene_item_transform(name, item_index, *transform)?;
+                    .set_scene_item_transform_by_id(name, item_id, *transform)?;
             }
         }
         Ok(())
@@ -421,7 +429,7 @@ impl PreviewRenderer {
         &self,
         profile: &Profile,
         scene_id: &str,
-    ) -> Result<Vec<(SourceId, FrameTransform)>, Box<dyn Error>> {
+    ) -> Result<Vec<VisibleItem>, Box<dyn Error>> {
         profile
             .flatten_scene_items(scene_id)?
             .into_iter()
@@ -436,7 +444,7 @@ impl PreviewRenderer {
                             item.source_id()
                         ))
                     })?;
-                Ok((source, item.transform()))
+                Ok((item.item_id().to_owned(), source, item.transform()))
             })
             .collect()
     }
@@ -475,12 +483,15 @@ impl PreviewRenderer {
                 {
                     return None;
                 }
-                let item_index = scene
+                let is_visible = scene
                     .items()
                     .iter()
-                    .filter(|candidate| candidate.visible())
-                    .position(|candidate| candidate.id().as_str() == item.item)?;
-                targets.push((item_index, item.transform));
+                    .find(|candidate| candidate.id().as_str() == item.item)
+                    .is_some_and(SceneItemSpec::visible);
+                if !is_visible {
+                    return None;
+                }
+                targets.push((item.item.clone(), item.transform));
             }
             Some((draft.scene.clone(), targets))
         });
@@ -489,14 +500,14 @@ impl PreviewRenderer {
                 next_scene == &scene
                     && next
                         .iter()
-                        .map(|(item_index, _)| *item_index)
-                        .eq(sources.iter().map(|(item_index, _)| *item_index))
+                        .map(|(item_id, _)| item_id)
+                        .eq(sources.iter().map(|(item_id, _)| item_id))
             });
             if !same_targets {
-                for (item_index, committed) in sources {
+                for (item_id, committed) in sources {
                     let _ = self
                         .runtime
-                        .set_scene_item_transform(&scene, item_index, committed);
+                        .set_scene_item_transform_by_id(&scene, &item_id, committed);
                 }
                 // A scene composed only of still sources caches its picture, so
                 // the cache has to go when the drag stops moving it.
@@ -508,15 +519,15 @@ impl PreviewRenderer {
             return;
         };
         let mut applied = Vec::with_capacity(targets.len());
-        for (item_index, transform) in targets {
+        for (item_id, transform) in targets {
             if self
                 .runtime
-                .set_scene_item_transform(&scene, item_index, transform)
+                .set_scene_item_transform_by_id(&scene, &item_id, transform)
                 .is_err()
             {
                 return;
             }
-            applied.push((item_index, transform));
+            applied.push((item_id, transform));
         }
         if !applied.is_empty() {
             self.invalidate_static_scene_cache(&scene);

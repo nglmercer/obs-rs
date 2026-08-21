@@ -45,13 +45,15 @@ pub(crate) struct SourceInstance {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SceneItem {
     pub(crate) source: super::SourceId,
+    pub(crate) item_id: Arc<str>,
     pub(crate) transform: FrameTransform,
 }
 
 impl SceneItem {
-    fn new(source: super::SourceId) -> Self {
+    fn new(source: super::SourceId, item_id: Arc<str>) -> Self {
         Self {
             source,
+            item_id,
             transform: FrameTransform::IDENTITY,
         }
     }
@@ -65,6 +67,8 @@ pub(crate) struct Scene {
     /// O(1) membership mirror of `sources`, kept in step by [`Scene::attach`]
     /// and [`Scene::detach`].
     pub(crate) attached: HashSet<super::SourceId>,
+    /// Stable scene-item paths, kept in step with [`Scene::items`].
+    pub(crate) item_ids: HashSet<Arc<str>>,
     /// Scene-item transform in the same order as `sources`. Filters live on
     /// the shared source instance above and are intentionally absent here.
     /// Keeping this as an ordered vector allows two items to reference one
@@ -77,6 +81,7 @@ impl Scene {
         Self {
             sources: Vec::new(),
             attached: HashSet::new(),
+            item_ids: HashSet::new(),
             items: Vec::new(),
         }
     }
@@ -88,18 +93,27 @@ impl Scene {
         if !self.attached.insert(source) {
             return false;
         }
+        let item_id = Arc::<str>::from(format!("source-{}", source.value()));
+        self.item_ids.insert(Arc::clone(&item_id));
         self.sources.push(source);
-        self.items.push(SceneItem::new(source));
+        self.items.push(SceneItem::new(source, item_id));
         true
     }
 
-    /// Appends a source reference even when that source is already present.
-    /// The source device remains shared; only the scene-item transform is new.
-    pub(crate) fn attach_instance(&mut self, source: super::SourceId) -> usize {
+    /// Appends a source reference with a project-derived stable identity.
+    pub(crate) fn attach_instance_with_id(
+        &mut self,
+        source: super::SourceId,
+        item_id: &str,
+    ) -> Option<usize> {
+        let item_id: Arc<str> = Arc::from(item_id);
+        if !self.item_ids.insert(Arc::clone(&item_id)) {
+            return None;
+        }
         self.attached.insert(source);
         self.sources.push(source);
-        self.items.push(SceneItem::new(source));
-        self.sources.len() - 1
+        self.items.push(SceneItem::new(source, item_id));
+        Some(self.sources.len() - 1)
     }
 
     /// Removes `source` while keeping the shared source definition alive.
@@ -113,7 +127,8 @@ impl Scene {
             .iter()
             .position(|candidate| *candidate == source)?;
         self.sources.remove(index);
-        self.items.remove(index);
+        let item = self.items.remove(index);
+        self.item_ids.remove(&item.item_id);
         if !self.sources.contains(&source) {
             self.attached.remove(&source);
         }

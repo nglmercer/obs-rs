@@ -333,11 +333,19 @@ pub struct SceneItemSpec {
 /// source ID to their own live source handle without rebuilding this state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FlattenedSceneItem {
+    item_id: String,
     source_id: Identifier,
     transform: FrameTransform,
 }
 
 impl FlattenedSceneItem {
+    /// Returns the stable path of the scene item that produced this runtime
+    /// layer. Nested group and scene references use an outer-to-inner path.
+    #[must_use]
+    pub fn item_id(&self) -> &str {
+        &self.item_id
+    }
+
     /// Returns the profile-wide source definition ID.
     #[must_use]
     pub fn source_id(&self) -> &Identifier {
@@ -1129,6 +1137,7 @@ impl Profile {
             &scene_id,
             FrameTransform::IDENTITY,
             &mut Vec::new(),
+            &mut Vec::new(),
             0,
             &mut output,
         )?;
@@ -1151,6 +1160,7 @@ impl Profile {
         scene_id: &Identifier,
         parent_transform: FrameTransform,
         stack: &mut Vec<Identifier>,
+        path: &mut Vec<Identifier>,
         group_depth: usize,
         output: &mut Vec<FlattenedSceneItem>,
     ) -> Result<(), ProjectError> {
@@ -1161,7 +1171,14 @@ impl Profile {
             .scene(scene_id)
             .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
         stack.push(scene_id.clone());
-        self.flatten_items(scene.items(), parent_transform, stack, group_depth, output)?;
+        self.flatten_items(
+            scene.items(),
+            parent_transform,
+            stack,
+            path,
+            group_depth,
+            output,
+        )?;
         stack.pop();
         Ok(())
     }
@@ -1171,6 +1188,7 @@ impl Profile {
         items: &[SceneItemSpec],
         parent_transform: FrameTransform,
         stack: &mut Vec<Identifier>,
+        path: &mut Vec<Identifier>,
         group_depth: usize,
         output: &mut Vec<FlattenedSceneItem>,
     ) -> Result<(), ProjectError> {
@@ -1182,7 +1200,8 @@ impl Profile {
                     .compose_simple(parent_transform)
                     .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(item.id().clone()))?
             };
-            if let Some(child_scene) = item.scene_id() {
+            path.push(item.id().clone());
+            let result = if let Some(child_scene) = item.scene_id() {
                 if transform.is_cropped()
                     || transform.is_rotated()
                     || transform.flip_x()
@@ -1192,7 +1211,14 @@ impl Profile {
                         item.id().clone(),
                     ));
                 }
-                self.flatten_scene_items_inner(child_scene, transform, stack, group_depth, output)?;
+                self.flatten_scene_items_inner(
+                    child_scene,
+                    transform,
+                    stack,
+                    path,
+                    group_depth,
+                    output,
+                )
             } else if let Some(group) = item.group() {
                 if transform.is_cropped()
                     || transform.is_rotated()
@@ -1210,18 +1236,28 @@ impl Profile {
                     group.items(),
                     transform,
                     stack,
+                    path,
                     group_depth.saturating_add(1),
                     output,
-                )?;
+                )
             } else {
                 if !self.has_source(item.source_id()) {
+                    path.pop();
                     return Err(ProjectError::UnknownSource(item.source_id().clone()));
                 }
                 output.push(FlattenedSceneItem {
+                    item_id: path
+                        .iter()
+                        .map(Identifier::as_str)
+                        .collect::<Vec<_>>()
+                        .join("/"),
                     source_id: item.source_id().clone(),
                     transform,
                 });
-            }
+                Ok(())
+            };
+            path.pop();
+            result?;
         }
         Ok(())
     }

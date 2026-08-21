@@ -91,6 +91,7 @@ fn render_source_frame(
 /// can be uploaded without first performing CPU transforms, filters, or blends.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderedSceneLayer {
+    item_id: std::sync::Arc<str>,
     source: SourceId,
     frame: VideoFrame,
     transform: FrameTransform,
@@ -98,6 +99,12 @@ pub struct RenderedSceneLayer {
 }
 
 impl RenderedSceneLayer {
+    /// Returns the stable scene-item path that produced this layer.
+    #[must_use]
+    pub fn item_id(&self) -> &str {
+        &self.item_id
+    }
+
     /// Returns the captured source frame.
     #[must_use]
     pub const fn frame(&self) -> &VideoFrame {
@@ -217,10 +224,10 @@ impl Runtime {
             // The scene lookup resolves item-only state. Source filters are
             // read from the shared source instance below, so every scene item
             // referencing that source observes the same filter chain.
-            let transform = scene_state
-                .items
-                .get(item_index)
-                .map_or(FrameTransform::IDENTITY, |item| item.transform);
+            let Some(item) = scene_state.items.get(item_index) else {
+                continue;
+            };
+            let transform = item.transform;
             metrics.source_requests = metrics.source_requests.saturating_add(1);
             if let Some(previous) = result.iter().find(|layer| layer.source == *source_id) {
                 let frame = previous.frame.clone();
@@ -233,6 +240,7 @@ impl Runtime {
                     .filtered_frames
                     .saturating_add(u64::try_from(filters.len()).unwrap_or(u64::MAX));
                 result.push(RenderedSceneLayer {
+                    item_id: std::sync::Arc::clone(&item.item_id),
                     source: *source_id,
                     frame,
                     transform,
@@ -261,6 +269,7 @@ impl Runtime {
                 .filtered_frames
                 .saturating_add(u64::try_from(filters.len()).unwrap_or(u64::MAX));
             result.push(RenderedSceneLayer {
+                item_id: std::sync::Arc::clone(&item.item_id),
                 source: *source_id,
                 frame,
                 transform,

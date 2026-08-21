@@ -128,6 +128,7 @@ fn nested_scene_items_round_trip_and_reject_cycles() {
         .flatten_scene_items("parent")
         .expect("nested scene flattens");
     assert_eq!(flattened.len(), 1);
+    assert_eq!(flattened[0].item_id(), "child-item/background");
     assert_eq!(flattened[0].source_id().as_str(), "background");
 
     let error = project
@@ -221,6 +222,17 @@ fn group_items_round_trip_flatten_and_duplicate_sources() {
         .flatten_scene_items("main")
         .expect("group flattens");
     assert_eq!(flattened.len(), 3);
+    assert_eq!(
+        flattened
+            .iter()
+            .map(FlattenedSceneItem::item_id)
+            .collect::<Vec<_>>(),
+        vec![
+            "background",
+            "overlay-group/background",
+            "overlay-group/inner-group/background"
+        ]
+    );
     assert!(flattened
         .iter()
         .all(|item| item.source_id().as_str() == "background"));

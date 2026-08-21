@@ -181,6 +181,10 @@ fn duplicate_scene_items_share_capture_but_keep_transforms() {
         .attach_source_instance("main", source)
         .expect("second item attaches");
     assert_eq!((first, second), (0, 1));
+    assert_eq!(
+        runtime.scene_item_ids("main"),
+        Some(vec!["item-0".to_owned(), "item-1".to_owned()])
+    );
     let second_transform =
         FrameTransform::new(500, 500, 100, 50, false, false, 128).expect("transform");
     runtime
@@ -194,6 +198,8 @@ fn duplicate_scene_items_share_capture_but_keep_transforms() {
         .render_scene_layers("main", &VideoRequest::new(Timestamp::ZERO, format()))
         .expect("scene renders");
     assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0].item_id(), "item-0");
+    assert_eq!(layers[1].item_id(), "item-1");
     assert_eq!(layers[0].transform(), FrameTransform::IDENTITY);
     assert_eq!(layers[1].transform(), second_transform);
     assert_eq!(runtime.scene_sources("main"), Some(&[source, source][..]));
@@ -206,6 +212,52 @@ fn duplicate_scene_items_share_capture_but_keep_transforms() {
     runtime
         .destroy_source(source)
         .expect("shared source can be destroyed after clear");
+}
+
+#[test]
+fn stable_scene_item_ids_address_transforms_without_order_indices() {
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let mut runtime = Runtime::new();
+    runtime
+        .register_plugin(&plugin)
+        .expect("registration succeeds");
+    runtime.create_scene("main").expect("scene is new");
+    let source = runtime
+        .create_source("color_source", "shared", &settings(2, 2, "#204060FF"))
+        .expect("source is valid");
+
+    runtime
+        .attach_source_instance_with_id("main", source, "group/foreground")
+        .expect("first item attaches");
+    runtime
+        .attach_source_instance_with_id("main", source, "group/background")
+        .expect("second item attaches");
+    assert_eq!(
+        runtime.scene_item_ids("main"),
+        Some(vec![
+            "group/foreground".to_owned(),
+            "group/background".to_owned()
+        ])
+    );
+
+    let transform = FrameTransform::new(750, 600, 32, -12, false, false, 192).expect("transform");
+    runtime
+        .set_scene_item_transform_by_id("main", "group/background", transform)
+        .expect("stable identity addresses the second item");
+    assert_eq!(
+        runtime.scene_item_transform_by_id("main", "group/background"),
+        Some(transform)
+    );
+    assert_eq!(
+        runtime.attach_source_instance_with_id("main", source, "group/background"),
+        Err(RuntimeError::DuplicateSceneItem(
+            "group/background".to_owned()
+        ))
+    );
+    assert_eq!(
+        runtime.set_scene_item_transform_by_id("main", "missing", transform),
+        Err(RuntimeError::SceneItemNotAttached("missing".to_owned()))
+    );
 }
 
 #[test]

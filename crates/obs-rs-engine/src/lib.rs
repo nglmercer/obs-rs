@@ -1967,8 +1967,8 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
                         item.source_id()
                     ))
                 })?;
-            let item_index = runtime.attach_source_instance(scene_id, source_id)?;
-            runtime.set_scene_item_transform(scene_id, item_index, item.transform())?;
+            runtime.attach_source_instance_with_id(scene_id, source_id, item.item_id())?;
+            runtime.set_scene_item_transform_by_id(scene_id, item.item_id(), item.transform())?;
         }
     }
     Ok(runtime)
@@ -2237,6 +2237,10 @@ mod tests {
             Some(1)
         );
         assert_eq!(
+            engine.runtime.scene_item_ids("parent"),
+            Some(vec!["child-item/pattern".to_owned()])
+        );
+        assert_eq!(
             engine.runtime.scene_item_transform("parent", 0),
             Some(
                 child_transform
@@ -2288,6 +2292,8 @@ mod tests {
             )
             .expect("group renders");
         assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0].item_id(), "pattern");
+        assert_eq!(layers[1].item_id(), "group/pattern");
         assert_eq!(engine.runtime.compositor_metrics().source_requests(), 2);
         assert_eq!(
             engine
