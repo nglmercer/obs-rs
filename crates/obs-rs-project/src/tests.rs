@@ -130,6 +130,21 @@ fn nested_scene_items_round_trip_and_reject_cycles() {
     assert_eq!(flattened.len(), 1);
     assert_eq!(flattened[0].source_id().as_str(), "background");
 
+    let error = project
+        .apply(ProjectCommand::RemoveScene {
+            profile: "live".to_owned(),
+            scene: "child".to_owned(),
+        })
+        .expect_err("a referenced scene cannot be removed");
+    assert_eq!(
+        error,
+        ProjectError::SceneInUse(Identifier::new("child").expect("scene id"))
+    );
+    assert!(project
+        .profile("live")
+        .and_then(|profile| profile.scene("child"))
+        .is_some());
+
     project
         .apply(ProjectCommand::AddSceneItem {
             profile: "live".to_owned(),
@@ -137,6 +152,20 @@ fn nested_scene_items_round_trip_and_reject_cycles() {
             item: SceneItemSpec::for_scene("parent-item", "parent").expect("cycle item"),
         })
         .expect_err("cycle is rejected atomically");
+
+    project
+        .apply(ProjectCommand::RemoveSceneItem {
+            profile: "live".to_owned(),
+            scene: "parent".to_owned(),
+            item: "child-item".to_owned(),
+        })
+        .expect("remove nested reference");
+    project
+        .apply(ProjectCommand::RemoveScene {
+            profile: "live".to_owned(),
+            scene: "child".to_owned(),
+        })
+        .expect("unreferenced scene can be removed");
 }
 
 #[test]

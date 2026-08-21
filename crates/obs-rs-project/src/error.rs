@@ -45,6 +45,8 @@ pub enum ProjectError {
     UnknownProfile(Identifier),
     /// A scene ID is not present.
     UnknownScene(Identifier),
+    /// A scene is still referenced by another scene item.
+    SceneInUse(Identifier),
     /// A scene graph would recurse forever through nested scene references.
     CircularSceneReference(Identifier),
     /// A nested scene transform cannot be represented by the current flattening boundary.
@@ -87,6 +89,7 @@ impl fmt::Display for ProjectError {
             Self::DuplicateFilter(id) => write!(formatter, "filter {id} already exists"),
             Self::UnknownProfile(id) => write!(formatter, "profile {id} does not exist"),
             Self::UnknownScene(id) => write!(formatter, "scene {id} does not exist"),
+            Self::SceneInUse(id) => write!(formatter, "scene {id} is still used by a scene"),
             Self::CircularSceneReference(id) => {
                 write!(formatter, "scene graph contains a cycle at {id}")
             }

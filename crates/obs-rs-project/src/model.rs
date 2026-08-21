@@ -890,6 +890,17 @@ impl Profile {
         Ok(output)
     }
 
+    /// Returns whether another scene item references this scene.
+    #[must_use]
+    pub fn scene_in_use(&self, id: &Identifier) -> bool {
+        self.scenes.values().any(|scene| {
+            scene
+                .items()
+                .iter()
+                .any(|item| item.scene_id().is_some_and(|target| target == id))
+        })
+    }
+
     fn flatten_scene_items_inner(
         &self,
         scene_id: &Identifier,
@@ -943,6 +954,9 @@ impl Profile {
     ///
     /// Returns [`ProjectError::UnknownScene`] when the scene is absent.
     pub fn remove_scene(&mut self, id: &Identifier) -> Result<SceneSpec, ProjectError> {
+        if self.scene_in_use(id) {
+            return Err(ProjectError::SceneInUse(id.clone()));
+        }
         self.scenes
             .remove(id)
             .ok_or_else(|| ProjectError::UnknownScene(id.clone()))
