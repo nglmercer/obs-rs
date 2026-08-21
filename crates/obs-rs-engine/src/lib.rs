@@ -1132,6 +1132,37 @@ impl EngineSession {
         Ok(())
     }
 
+    /// Installs OBS's bounded Compressor filter on a live mixer channel.
+    ///
+    /// This live-channel slice detects the channel's own signal. Sidechain
+    /// compression remains unavailable until the engine has a canonical,
+    /// synchronized source-to-source audio route.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when one of the compressor controls is outside
+    /// the supported OBS-compatible range.
+    pub fn set_channel_compressor(
+        &mut self,
+        channel: EngineAudioChannel,
+        ratio_milli: u16,
+        threshold_db_milli: i32,
+        attack_ms: u16,
+        release_ms: u16,
+        output_gain_db_milli: i32,
+    ) -> Result<(), EngineError> {
+        let mut filters = AudioFilterChain::new();
+        filters.try_push(AudioFilter::compressor(
+            ratio_milli,
+            threshold_db_milli,
+            attack_ms,
+            release_ms,
+            output_gain_db_milli,
+        )?)?;
+        self.set_channel_audio_filters(channel, filters);
+        Ok(())
+    }
+
     /// Mutes or unmutes the live input source.
     ///
     /// # Errors
@@ -2201,6 +2232,26 @@ pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
                 .and_then(|value| value.parse::<u16>().ok())?;
             AudioFilter::limiter_db_milli(threshold, release_ms).ok()
         }
+        "compressor" => {
+            let read_signed = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<i32>().ok())
+            };
+            let read_unsigned = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<u16>().ok())
+            };
+            AudioFilter::compressor(
+                read_unsigned("ratio_milli")?,
+                read_signed("threshold_db_milli")?,
+                read_unsigned("attack_ms")?,
+                read_unsigned("release_ms")?,
+                read_signed("output_gain_db_milli")?,
+            )
+            .ok()
+        }
         _ => None,
     }
 }
@@ -2693,6 +2744,21 @@ mod tests {
             compile_audio_filter(&limiter),
             Some(AudioFilter::limiter_db_milli(-6_000, 60).expect("valid limiter"))
         );
+        let compressor = SourceFilterSpec::with_category(
+            "compressor_runtime",
+            "Compressor",
+            "compressor",
+            SourceFilterCategory::AudioVideo,
+            Config::parse(
+                "ratio_milli = 10000\nthreshold_db_milli = -18000\nattack_ms = 6\nrelease_ms = 60\noutput_gain_db_milli = 0\n",
+            )
+            .expect("compressor settings"),
+        )
+        .expect("compressor filter");
+        assert_eq!(
+            compile_audio_filter(&compressor),
+            Some(AudioFilter::compressor(10_000, -18_000, 6, 60, 0).expect("valid compressor"))
+        );
         assert_eq!(compile_audio_filter(&brightness), None);
     }
 
@@ -2822,6 +2888,38 @@ mod tests {
                 .flat_map(AudioBuffer::samples)
                 .all(|sample| sample.is_finite()),
             "limiting must preserve the finite audio contract"
+        );
+    }
+
+    #[test]
+    fn compressor_runs_on_a_live_channel_before_metering_and_mix() {
+        let mut baseline = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        baseline.tick(None, Some("program")).expect("baseline tick");
+        let baseline_peak = baseline.stats().microphone_peak_milli;
+
+        let mut compressed =
+            EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        compressed
+            .set_channel_compressor(EngineAudioChannel::Microphone, 32_000, -60_000, 1, 60, 0)
+            .expect("compressor");
+        let tick = compressed
+            .tick(None, Some("program"))
+            .expect("compressed tick");
+
+        assert!(
+            baseline_peak > 0,
+            "deterministic microphone must produce audio"
+        );
+        assert!(
+            compressed.stats().microphone_peak_milli < baseline_peak,
+            "the channel meter must see compressor gain reduction"
+        );
+        assert!(
+            tick.audio_blocks
+                .iter()
+                .flat_map(AudioBuffer::samples)
+                .all(|sample| sample.is_finite()),
+            "compression must preserve the finite audio contract"
         );
     }
 

@@ -343,6 +343,100 @@ fn limiter_release_setting_controls_envelope_decay_rate() {
 }
 
 #[test]
+fn compressor_validates_obs_control_bounds() {
+    assert_eq!(
+        AudioCompressor::new(MIN_COMPRESSOR_RATIO_MILLI - 1, -18_000, 6, 60, 0),
+        Err(AudioError::InvalidCompressorRatio { milli_ratio: 999 })
+    );
+    assert_eq!(
+        AudioCompressor::new(MAX_COMPRESSOR_RATIO_MILLI + 1, -18_000, 6, 60, 0),
+        Err(AudioError::InvalidCompressorRatio {
+            milli_ratio: MAX_COMPRESSOR_RATIO_MILLI + 1
+        })
+    );
+    assert_eq!(
+        AudioCompressor::new(10_000, MIN_COMPRESSOR_THRESHOLD_DB_MILLI - 1, 6, 60, 0),
+        Err(AudioError::InvalidCompressorThreshold {
+            milli_db: MIN_COMPRESSOR_THRESHOLD_DB_MILLI - 1
+        })
+    );
+    assert_eq!(
+        AudioCompressor::new(10_000, -18_000, MIN_COMPRESSOR_ATTACK_MS - 1, 60, 0),
+        Err(AudioError::InvalidCompressorAttack { milliseconds: 0 })
+    );
+    assert_eq!(
+        AudioCompressor::new(10_000, -18_000, 6, MIN_COMPRESSOR_RELEASE_MS - 1, 0),
+        Err(AudioError::InvalidCompressorRelease { milliseconds: 0 })
+    );
+    assert_eq!(
+        AudioCompressor::new(
+            10_000,
+            -18_000,
+            6,
+            60,
+            MAX_COMPRESSOR_OUTPUT_GAIN_DB_MILLI + 1
+        ),
+        Err(AudioError::InvalidCompressorOutputGain {
+            milli_db: MAX_COMPRESSOR_OUTPUT_GAIN_DB_MILLI + 1
+        })
+    );
+}
+
+#[test]
+fn compressor_tracks_interleaved_peak_with_attack_and_ratio() {
+    let mut chain = AudioFilterChain::new();
+    chain
+        .try_push(AudioFilter::compressor(10_000, -18_000, 1, 60, 0).expect("compressor"))
+        .expect("compressor filter");
+    let mut input =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0; 480 * 2]).expect("loud block");
+
+    chain.apply(&mut input).expect("compressor block");
+
+    assert!(
+        input.samples()[0] > 0.99,
+        "attack must not compress the first sample"
+    );
+    let final_left = input.samples()[(480 - 1) * 2];
+    let final_right = input.samples()[(480 - 1) * 2 + 1];
+    assert!(final_left < 0.9, "the sustained signal must be compressed");
+    assert!((final_left - final_right).abs() < f32::EPSILON);
+}
+
+#[test]
+fn compressor_state_continues_across_blocks_and_preserves_overflow_atomicity() {
+    let mut continuing = AudioFilterChain::new();
+    continuing
+        .try_push(AudioFilter::compressor(10_000, -18_000, 1, 60, 0).expect("compressor"))
+        .expect("compressor filter");
+    let mut loud =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0; 480 * 2]).expect("loud block");
+    continuing.apply(&mut loud).expect("loud compressor block");
+    let mut continued_impulse = buffer(&[1.0, 1.0]);
+    continuing
+        .apply(&mut continued_impulse)
+        .expect("continued compressor state");
+
+    let mut fresh = AudioFilterChain::new();
+    fresh
+        .try_push(AudioFilter::compressor(10_000, -18_000, 1, 60, 0).expect("compressor"))
+        .expect("compressor filter");
+    let mut fresh_impulse = buffer(&[1.0, 1.0]);
+    fresh
+        .apply(&mut fresh_impulse)
+        .expect("fresh compressor state");
+    assert!(continued_impulse.samples()[0] < fresh_impulse.samples()[0]);
+
+    let mut overflow =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![f32::MAX, 0.25]).expect("finite input");
+    let result = AudioFilter::compressor(1_000, 0, 1, 60, 32_000)
+        .expect("valid compressor")
+        .apply(&mut overflow);
+    assert_eq!(result, Err(AudioError::FilterOverflow));
+    assert_eq!(overflow.samples(), &[f32::MAX, 0.25]);
+}
+
+#[test]
 fn audio_filter_chain_has_a_fixed_capacity() {
     let mut chain = AudioFilterChain::new();
     let filter = AudioFilter::gain_db_milli(0).expect("zero gain");
@@ -430,6 +524,32 @@ fn limiter_block_timing_report() {
     std::hint::black_box(checksum);
     println!(
         "limiter: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
+fn compressor_block_timing_report() {
+    let mut chain = AudioFilterChain::new();
+    chain
+        .try_push(AudioFilter::compressor(10_000, -18_000, 6, 60, 0).expect("compressor"))
+        .expect("filter");
+    let mut block =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.1; 480 * 2]).expect("audio block");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for _ in 0..200 {
+        block.samples_mut().fill(0.1);
+        chain.apply(&mut block).expect("compressor block");
+        checksum += block.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "compressor: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
         elapsed,
         elapsed / 200
     );

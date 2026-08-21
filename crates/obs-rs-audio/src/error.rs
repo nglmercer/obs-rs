@@ -66,6 +66,16 @@ pub enum AudioError {
     InvalidLimiterThreshold { milli_db: i32 },
     /// An audio limiter release time is outside OBS's bounded millisecond range.
     InvalidLimiterRelease { milliseconds: u16 },
+    /// An audio compressor ratio is outside OBS's bounded ratio range.
+    InvalidCompressorRatio { milli_ratio: u16 },
+    /// An audio compressor threshold is outside OBS's bounded dB range.
+    InvalidCompressorThreshold { milli_db: i32 },
+    /// An audio compressor attack time is outside OBS's bounded range.
+    InvalidCompressorAttack { milliseconds: u16 },
+    /// An audio compressor release time is outside OBS's bounded range.
+    InvalidCompressorRelease { milliseconds: u16 },
+    /// An audio compressor output gain is outside OBS's bounded dB range.
+    InvalidCompressorOutputGain { milli_db: i32 },
     /// An ordered audio filter chain reached its fixed capacity.
     FilterChainFull { max: usize },
     /// An audio filter would have produced a non-finite sample.
@@ -98,6 +108,10 @@ pub enum AudioError {
 }
 
 impl fmt::Display for AudioError {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the public audio error catalog keeps every bounded contract message together"
+    )]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidFormat => formatter.write_str("audio format values must be non-zero"),
@@ -151,6 +165,26 @@ impl fmt::Display for AudioError {
             Self::InvalidLimiterRelease { milliseconds } => write!(
                 formatter,
                 "audio limiter release {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidCompressorRatio { milli_ratio } => write!(
+                formatter,
+                "audio compressor ratio {milli_ratio} milli-ratio is outside the supported range"
+            ),
+            Self::InvalidCompressorThreshold { milli_db } => write!(
+                formatter,
+                "audio compressor threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidCompressorAttack { milliseconds } => write!(
+                formatter,
+                "audio compressor attack {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidCompressorRelease { milliseconds } => write!(
+                formatter,
+                "audio compressor release {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidCompressorOutputGain { milli_db } => write!(
+                formatter,
+                "audio compressor output gain {milli_db} milli-dB is outside the supported range"
             ),
             Self::FilterChainFull { max } => {
                 write!(formatter, "audio filter chain is limited to {max} filters")

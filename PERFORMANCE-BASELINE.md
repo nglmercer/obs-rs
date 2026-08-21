@@ -2,7 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
-**Latest measurement:** 2026-08-21 (audio Limiter packet validation)
+**Latest measurement:** 2026-08-21 (audio Compressor packet validation)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -164,6 +164,21 @@ The observed release result was `1.236304 ms` total, or `6.181 µs` per
 480-frame stereo block on this host. This is a local primitive measurement;
 full audio-graph and device-clock performance still require the Phase 16
 matrix.
+
+The stateful Compressor timing probe uses the source signal as its detector,
+with a 10:1 ratio, −18 dB threshold, 6 ms attack, 60 ms release, and 0 dB
+output gain. Its two-pass finite-output preflight keeps an overflowing positive
+output-gain update atomic without allocating per block. The measurement is
+recorded by:
+
+```text
+cargo test --release -p obs-rs-audio compressor_block_timing_report -- --nocapture
+```
+
+The observed release result was `3.70458 ms` total, or `18.522 µs` per
+480-frame stereo block on this host. This is a local primitive measurement;
+sidechain synchronization and full audio-graph performance still require the
+Phase 16 matrix.
 
 ## Phase 1 render-target evidence
 
