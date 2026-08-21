@@ -1152,6 +1152,20 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
             }
             ("color_correction", "Color Correction", settings)
         }
+        FrameFilter::LumaKey(luma_key) => {
+            let mut settings = Config::new();
+            for (key, value) in [
+                ("luma_max", luma_key.luma_max_milli()),
+                ("luma_min", luma_key.luma_min_milli()),
+                ("luma_max_smooth", luma_key.luma_max_smooth_milli()),
+                ("luma_min_smooth", luma_key.luma_min_smooth_milli()),
+            ] {
+                settings
+                    .set(key, &value.to_string())
+                    .map_err(ProjectError::Config)?;
+            }
+            ("luma_key", "Luma Key", settings)
+        }
         FrameFilter::ColorKey(color_key) => {
             let mut settings = Config::new();
             for (key, value) in [

@@ -1980,6 +1980,8 @@ fn render_source_filters_window(
     window.invoke_add_filter("color_correction".into());
     window.invoke_edit_property("gamma".into(), "1000".into());
     window.invoke_edit_property("opacity".into(), "900".into());
+    window.invoke_add_filter("luma_key".into());
+    window.invoke_edit_property("luma_min".into(), "250".into());
     window.invoke_add_filter("color_key".into());
     window.invoke_edit_property("similarity".into(), "200".into());
 
@@ -1990,7 +1992,7 @@ fn render_source_filters_window(
         .active_profile_spec()
         .and_then(|profile| profile.source("background"))
         .expect("background source after filter edits");
-    assert_eq!(source.filters().len(), 4);
+    assert_eq!(source.filters().len(), 5);
     assert_eq!(source.filters()[0].id().as_str(), "grayscale");
     assert_eq!(source.filters()[0].name(), "Scene grayscale");
     let brightness = source
@@ -2007,6 +2009,13 @@ fn render_source_filters_window(
         .expect("color correction filter");
     assert_eq!(color_correction.settings().get("gamma"), Some("1000"));
     assert_eq!(color_correction.settings().get("opacity"), Some("900"));
+    let luma_key = source
+        .filters()
+        .iter()
+        .find(|filter| filter.kind().as_str() == "luma_key")
+        .expect("luma key filter");
+    assert_eq!(luma_key.settings().get("luma_max"), Some("1000"));
+    assert_eq!(luma_key.settings().get("luma_min"), Some("250"));
     let color_key = source
         .filters()
         .iter()
@@ -2017,6 +2026,8 @@ fn render_source_filters_window(
     drop(state_ref);
 
     window.invoke_select_filter("color_key".into());
+    window.invoke_remove_filter();
+    window.invoke_select_filter("luma_key".into());
     window.invoke_remove_filter();
     window.invoke_select_filter("color_correction".into());
     window.invoke_remove_filter();

@@ -47,7 +47,7 @@ mod tests {
     #[test]
     fn gpu_upload_layer_submission_readback_and_recovery_are_explicit() {
         use obs_rs_media::{
-            ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, Timestamp,
+            ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LumaKey, Timestamp,
             VideoFormat, VideoFrame,
         };
         use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderError, SceneLayer};
@@ -143,6 +143,33 @@ mod tests {
             );
         }
         assert_eq!(backend.metrics().readbacks(), 3);
+
+        let luma_key = LumaKey::new(900, 100, 40, 60).expect("valid luma key");
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[FrameFilter::LumaKey(luma_key)],
+                )],
+            )
+            .expect("GPU luma key");
+        let gpu_luma_keyed = backend.readback(target).expect("luma key readback");
+        let mut cpu_luma_keyed = frame.clone();
+        cpu_luma_keyed.apply_filter(FrameFilter::LumaKey(luma_key));
+        for (index, (actual, expected)) in gpu_luma_keyed
+            .pixels()
+            .iter()
+            .zip(cpu_luma_keyed.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "luma key channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 4);
 
         let rotated_transform = FrameTransform::IDENTITY
             .with_rotation_degrees(90)

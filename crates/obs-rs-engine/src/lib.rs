@@ -22,7 +22,7 @@ use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{
-    ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LatencyMetrics,
+    ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LatencyMetrics, LumaKey,
     RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
 };
 #[cfg(feature = "production-gstreamer")]
@@ -2027,6 +2027,19 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
                 read_value("opacity")?,
             )?))
         }
+        "luma_key" => {
+            let read_value = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<i32>().ok())
+            };
+            Some(FrameFilter::LumaKey(LumaKey::new(
+                read_value("luma_max")?,
+                read_value("luma_min")?,
+                read_value("luma_max_smooth")?,
+                read_value("luma_min_smooth")?,
+            )?))
+        }
         "color_key" => {
             let read_channel = |key| spec.settings().get(key)?.parse::<u8>().ok();
             let read_threshold = |key| spec.settings().get(key)?.parse::<i32>().ok();
@@ -2391,6 +2404,23 @@ mod tests {
             compile_filter(&color_correction),
             Some(FrameFilter::ColorCorrection(
                 ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("valid color correction"),
+            ))
+        );
+
+        let luma_key = SourceFilterSpec::new(
+            "luma",
+            "Luma Key",
+            "luma_key",
+            Config::parse(
+                "luma_max = 900\nluma_max_smooth = 40\nluma_min = 100\nluma_min_smooth = 60\n",
+            )
+            .expect("luma key settings"),
+        )
+        .expect("luma key filter");
+        assert_eq!(
+            compile_filter(&luma_key),
+            Some(FrameFilter::LumaKey(
+                LumaKey::new(900, 100, 40, 60).expect("valid luma key"),
             ))
         );
 

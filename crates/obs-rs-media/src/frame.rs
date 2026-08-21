@@ -1,6 +1,6 @@
 use super::{
     error::MediaError,
-    filters::{ColorCorrection, ColorKey, FrameFilter},
+    filters::{ColorCorrection, ColorKey, FrameFilter, LumaKey},
     format::VideoFormat,
     time::Timestamp,
     transform::FrameTransform,
@@ -824,7 +824,7 @@ impl VideoFrame {
         if filters.is_empty() {
             return;
         }
-        // Crop/Pad is coordinate-dependent, and Color Correction/Color Key
+        // Crop/Pad is coordinate-dependent, and color correction/key filters
         // have derived parameters that should be built once per frame rather
         // than once per pixel. Apply them as their own bounded passes while
         // retaining the ordered semantics of filters around them.
@@ -833,6 +833,7 @@ impl VideoFrame {
                 filter,
                 FrameFilter::CropPad { .. }
                     | FrameFilter::ColorCorrection(_)
+                    | FrameFilter::LumaKey(_)
                     | FrameFilter::ColorKey(_)
             )
         }) {
@@ -877,6 +878,9 @@ impl VideoFrame {
                         FrameFilter::ColorCorrection(_) => unreachable!(
                             "derived color correction filters are handled before pixel filters"
                         ),
+                        FrameFilter::LumaKey(_) => unreachable!(
+                            "derived luma key filters are handled before pixel filters"
+                        ),
                         FrameFilter::ColorKey(_) => unreachable!(
                             "derived color key filters are handled before pixel filters"
                         ),
@@ -906,6 +910,15 @@ impl VideoFrame {
             });
             return;
         }
+        if let FrameFilter::LumaKey(luma_key) = filter {
+            let parameters = LumaKeyParameters::new(luma_key);
+            for_each_block(self.pixels_mut(), move |block| {
+                for pixel in block.chunks_exact_mut(4) {
+                    apply_luma_key(pixel, parameters);
+                }
+            });
+            return;
+        }
         for_each_block(self.pixels_mut(), move |block| match filter {
             FrameFilter::Grayscale => {
                 for pixel in block.chunks_exact_mut(4) {
@@ -928,6 +941,9 @@ impl VideoFrame {
             }
             FrameFilter::ColorCorrection(_) => {
                 unreachable!("color correction filters are handled with their gamma lookup table")
+            }
+            FrameFilter::LumaKey(_) => {
+                unreachable!("luma key filters are handled with derived parameters")
             }
             FrameFilter::ColorKey(_) => {
                 unreachable!("color key filters are handled with derived parameters")
@@ -1195,6 +1211,30 @@ impl ColorKeyParameters {
     }
 }
 
+#[derive(Clone, Copy)]
+struct LumaKeyParameters {
+    max: f32,
+    min: f32,
+    max_smooth: f32,
+    min_smooth: f32,
+}
+
+impl LumaKeyParameters {
+    /// Precomputes normalized luma thresholds that are constant across a frame.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "all fixed-point luma controls are bounded to the UI range"
+    )]
+    fn new(luma_key: LumaKey) -> Self {
+        Self {
+            max: luma_key.luma_max_milli() as f32 / 1_000.0,
+            min: luma_key.luma_min_milli() as f32 / 1_000.0,
+            max_smooth: luma_key.luma_max_smooth_milli() as f32 / 1_000.0,
+            min_smooth: luma_key.luma_min_smooth_milli() as f32 / 1_000.0,
+        }
+    }
+}
+
 /// Applies a bounded RGB-distance key and canonicalizes fully transparent
 /// pixels so CPU and GPU compositor paths share the same straight-alpha form.
 fn apply_color_key(pixel: &mut [u8], parameters: ColorKeyParameters) {
@@ -1217,6 +1257,46 @@ fn apply_color_key(pixel: &mut [u8], parameters: ColorKeyParameters) {
         (distance - parameters.similarity) / parameters.smoothness
     };
     pixel[3] = float_to_byte(f32::from(pixel[3]) / 255.0 * alpha_factor);
+    if pixel[3] == 0 {
+        pixel[0] = 0;
+        pixel[1] = 0;
+        pixel[2] = 0;
+    }
+}
+
+/// Evaluates the rising bounded smoothstep mask used by the Luma Key effect.
+fn luma_key_smoothstep(value: f32, edge: f32, width: f32) -> f32 {
+    if width <= 0.0 {
+        if value >= edge {
+            return 1.0;
+        }
+        return 0.0;
+    }
+    let position = ((value - edge) / width).clamp(0.0, 1.0);
+    position * position * (3.0 - 2.0 * position)
+}
+
+/// Applies the bounded luma interval mask while retaining source alpha.
+fn apply_luma_key(pixel: &mut [u8], parameters: LumaKeyParameters) {
+    let red = f32::from(pixel[0]) / 255.0;
+    let green = f32::from(pixel[1]) / 255.0;
+    let blue = f32::from(pixel[2]) / 255.0;
+    let luma = red * 0.2989 + green * 0.5870 + blue * 0.1140;
+    let lower = luma_key_smoothstep(luma, parameters.min, parameters.min_smooth);
+    let upper = if parameters.max_smooth <= 0.0 {
+        if luma <= parameters.max {
+            1.0
+        } else {
+            0.0
+        }
+    } else {
+        1.0 - luma_key_smoothstep(
+            luma,
+            parameters.max - parameters.max_smooth,
+            parameters.max_smooth,
+        )
+    };
+    pixel[3] = float_to_byte(f32::from(pixel[3]) / 255.0 * lower * upper);
     if pixel[3] == 0 {
         pixel[0] = 0;
         pixel[1] = 0;

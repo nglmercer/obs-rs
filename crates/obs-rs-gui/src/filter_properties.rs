@@ -6,7 +6,7 @@
 //! component or another comma-separated serialization format.
 
 use obs_rs_config::Config;
-use obs_rs_media::{ColorCorrection, ColorKey};
+use obs_rs_media::{ColorCorrection, ColorKey, LumaKey};
 use obs_rs_ui::UiLocale;
 use slint::{Brush, ModelRc, SharedString, VecModel};
 
@@ -128,6 +128,41 @@ const COLOR_CORRECTION: [Field; 6] = [
     },
 ];
 
+const LUMA_KEY: [Field; 4] = [
+    Field {
+        key: "luma_max",
+        english: "Luma max",
+        spanish: "Luma máxima",
+        minimum: LumaKey::MIN_LUMA_MILLI,
+        maximum: LumaKey::MAX_LUMA_MILLI,
+        default: "1000",
+    },
+    Field {
+        key: "luma_min",
+        english: "Luma min",
+        spanish: "Luma mínima",
+        minimum: LumaKey::MIN_LUMA_MILLI,
+        maximum: LumaKey::MAX_LUMA_MILLI,
+        default: "0",
+    },
+    Field {
+        key: "luma_max_smooth",
+        english: "Luma max smooth",
+        spanish: "Suavidad luma máxima",
+        minimum: LumaKey::MIN_SMOOTH_MILLI,
+        maximum: LumaKey::MAX_SMOOTH_MILLI,
+        default: "0",
+    },
+    Field {
+        key: "luma_min_smooth",
+        english: "Luma min smooth",
+        spanish: "Suavidad luma mínima",
+        minimum: LumaKey::MIN_SMOOTH_MILLI,
+        maximum: LumaKey::MAX_SMOOTH_MILLI,
+        default: "0",
+    },
+];
+
 const COLOR_KEY: [Field; 5] = [
     Field {
         key: "key_red",
@@ -177,6 +212,7 @@ fn fields(kind: &str) -> &'static [Field] {
         "opacity" => &OPACITY,
         "crop_pad" => &CROP_PAD,
         "color_correction" => &COLOR_CORRECTION,
+        "luma_key" => &LUMA_KEY,
         "color_key" => &COLOR_KEY,
         _ => &[],
     }
@@ -257,5 +293,15 @@ mod tests {
         assert_eq!(rows[1].number, 255);
         assert_eq!(rows[3].maximum, ColorKey::MAX_SIMILARITY_MILLI);
         assert_eq!(rows[4].text, "80");
+    }
+
+    #[test]
+    fn luma_key_schema_has_four_bounded_threshold_fields() {
+        let rows = rows("luma_key", "", UiLocale::Spanish);
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].number, LumaKey::MAX_LUMA_MILLI);
+        assert_eq!(rows[1].number, LumaKey::MIN_LUMA_MILLI);
+        assert_eq!(rows[2].maximum, LumaKey::MAX_SMOOTH_MILLI);
+        assert_eq!(rows[3].text, "0");
     }
 }

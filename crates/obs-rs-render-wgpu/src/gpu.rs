@@ -1070,6 +1070,36 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
                 alpha_factor = (distance - similarity) / smoothness;
             }
             pixel.a = i32(floor(f32(pixel.a) * alpha_factor + 0.5));
+        } else if (kind == 6) {
+            let color = vec3<f32>(f32(pixel.r), f32(pixel.g), f32(pixel.b)) / 255.0;
+            let luma = dot(color, vec3<f32>(0.2989, 0.5870, 0.1140));
+            let luma_max = f32(parameters.values[filter_offset + 1]) / 1000.0;
+            let luma_min = f32(parameters.values[filter_offset + 2]) / 1000.0;
+            let luma_max_smooth = f32(parameters.values[filter_offset + 3]) / 1000.0;
+            let luma_min_smooth = f32(parameters.values[filter_offset + 4]) / 1000.0;
+            var lower = 0.0;
+            if (luma_min_smooth <= 0.0) {
+                if (luma >= luma_min) {
+                    lower = 1.0;
+                }
+            } else {
+                let position = clamp((luma - luma_min) / luma_min_smooth, 0.0, 1.0);
+                lower = position * position * (3.0 - 2.0 * position);
+            }
+            var upper = 0.0;
+            if (luma_max_smooth <= 0.0) {
+                if (luma <= luma_max) {
+                    upper = 1.0;
+                }
+            } else {
+                let position = clamp(
+                    (luma - (luma_max - luma_max_smooth)) / luma_max_smooth,
+                    0.0,
+                    1.0,
+                );
+                upper = 1.0 - position * position * (3.0 - 2.0 * position);
+            }
+            pixel.a = i32(floor(f32(pixel.a) * lower * upper + 0.5));
         }
         filter_index = filter_index + 1;
     }
@@ -1225,6 +1255,15 @@ fn layer_parameters(
                 i32::from(color_key.key_blue()),
                 color_key.similarity_milli(),
                 color_key.smoothness_milli(),
+                0,
+            ]),
+            FrameFilter::LumaKey(luma_key) => values.extend([
+                6,
+                luma_key.luma_max_milli(),
+                luma_key.luma_min_milli(),
+                luma_key.luma_max_smooth_milli(),
+                luma_key.luma_min_smooth_milli(),
+                0,
                 0,
             ]),
         }

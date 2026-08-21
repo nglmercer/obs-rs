@@ -113,6 +113,77 @@ impl ColorCorrection {
     }
 }
 
+/// Fixed-point parameters for the portable Luma Key filter slice.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LumaKey {
+    max: i32,
+    min: i32,
+    max_smooth: i32,
+    min_smooth: i32,
+}
+
+impl LumaKey {
+    /// Smallest luma threshold, in thousandths.
+    pub const MIN_LUMA_MILLI: i32 = 0;
+    /// Largest luma threshold, in thousandths.
+    pub const MAX_LUMA_MILLI: i32 = 1_000;
+    /// Smallest smoothness width, in thousandths.
+    pub const MIN_SMOOTH_MILLI: i32 = 0;
+    /// Largest smoothness width, in thousandths.
+    pub const MAX_SMOOTH_MILLI: i32 = 1_000;
+
+    /// Creates bounded luma thresholds and transition widths.
+    #[must_use]
+    pub const fn new(
+        luma_max_milli: i32,
+        luma_min_milli: i32,
+        luma_max_smooth_milli: i32,
+        luma_min_smooth_milli: i32,
+    ) -> Option<Self> {
+        if luma_max_milli < Self::MIN_LUMA_MILLI
+            || luma_max_milli > Self::MAX_LUMA_MILLI
+            || luma_min_milli < Self::MIN_LUMA_MILLI
+            || luma_min_milli > Self::MAX_LUMA_MILLI
+            || luma_max_smooth_milli < Self::MIN_SMOOTH_MILLI
+            || luma_max_smooth_milli > Self::MAX_SMOOTH_MILLI
+            || luma_min_smooth_milli < Self::MIN_SMOOTH_MILLI
+            || luma_min_smooth_milli > Self::MAX_SMOOTH_MILLI
+        {
+            return None;
+        }
+        Some(Self {
+            max: luma_max_milli,
+            min: luma_min_milli,
+            max_smooth: luma_max_smooth_milli,
+            min_smooth: luma_min_smooth_milli,
+        })
+    }
+
+    /// Returns the upper luma threshold in thousandths.
+    #[must_use]
+    pub const fn luma_max_milli(self) -> i32 {
+        self.max
+    }
+
+    /// Returns the lower luma threshold in thousandths.
+    #[must_use]
+    pub const fn luma_min_milli(self) -> i32 {
+        self.min
+    }
+
+    /// Returns the upper transition width in thousandths.
+    #[must_use]
+    pub const fn luma_max_smooth_milli(self) -> i32 {
+        self.max_smooth
+    }
+
+    /// Returns the lower transition width in thousandths.
+    #[must_use]
+    pub const fn luma_min_smooth_milli(self) -> i32 {
+        self.min_smooth
+    }
+}
+
 /// Fixed-point parameters for the portable RGB-distance Color Key slice.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ColorKey {
@@ -211,6 +282,8 @@ pub enum FrameFilter {
     },
     /// Applies the portable six-control Color Correction effect.
     ColorCorrection(ColorCorrection),
+    /// Makes pixels outside a bounded luminance interval transparent.
+    LumaKey(LumaKey),
     /// Makes pixels within a bounded RGB distance transparent.
     ColorKey(ColorKey),
 }

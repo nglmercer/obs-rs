@@ -18,7 +18,7 @@ mod transition;
 mod tests;
 
 pub use error::MediaError;
-pub use filters::{ColorCorrection, ColorKey, FrameFilter};
+pub use filters::{ColorCorrection, ColorKey, FrameFilter, LumaKey};
 pub use format::VideoFormat;
 pub use frame::VideoFrame;
 pub use metrics::{

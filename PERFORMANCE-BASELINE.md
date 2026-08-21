@@ -92,28 +92,30 @@ requests a 1048x590 preview for a 1920x1080 canvas (and a proportionally bounded
 target for 4K), so its Slint copy is separated and counted as `frame_copy_bytes`
 in the live metrics string.
 
-## Crop/Pad filter evidence
+## Crop/Pad and key-filter evidence
 
-The Crop/Pad and Color Key packets keep their effects in-place and bounded: Crop/Pad
-clears edge pixels without changing frame geometry, while Color Key adjusts alpha
-from a normalized RGB distance and canonicalizes fully transparent pixels. The WGPU
-path carries every filter in a fixed seven-word record so the shader does not parse
-variable-length data.
+The Crop/Pad, Color Key, and Luma Key packets keep their effects in-place and
+bounded: Crop/Pad clears edge pixels without changing frame geometry, Color Key
+adjusts alpha from a normalized RGB distance, and Luma Key applies bounded
+smooth luminance thresholds. Both key filters canonicalize fully transparent
+pixels. The WGPU path carries every filter in a fixed seven-word record so the
+shader does not parse variable-length data.
 
 ```text
 cargo test --release -p obs-rs-media -- --ignored --nocapture composition_primitives_timing_report
 ```
 
 The ignored timing report now includes `clone + crop-pad`, `clone +
-color-correction`, and `clone + color-key` beside the existing transform, blend,
-grayscale, and solid-frame measurements. CPU and WGPU correctness are covered
-separately by the media filter test and the WGPU CPU-oracle/readback test; this is
-evidence for repeatable local measurement, not a 60 FPS acceptance result. On
-2026-08-21 in this workspace's release profile, the 640x360 samples averaged
-`132.794 µs` for Crop/Pad, `618.948 µs` for Color Correction, and `847.483 µs`
-for Color Key over 200 runs. These are local samples rather than acceptance
-thresholds; full-resolution CPU filter performance still requires the Phase 16
-comparison suite.
+color-correction`, `clone + color-key`, and `clone + luma-key` beside the
+existing transform, blend, grayscale, and solid-frame measurements. CPU and
+WGPU correctness are covered separately by the media filter tests and WGPU
+CPU-oracle/readback tests; this is evidence for repeatable local measurement,
+not a 60 FPS acceptance result. On 2026-08-21 in this workspace's release
+profile, the 640x360 samples averaged `388.851 µs` for Crop/Pad, `869.539 µs`
+for Color Correction, `1.279192 ms` for Color Key, and `983.22 µs` for Luma Key
+over 200 runs. These are local samples rather than acceptance thresholds;
+full-resolution CPU filter performance still requires the Phase 16 comparison
+suite.
 
 ## Phase 1 render-target evidence
 

@@ -255,6 +255,33 @@ fn color_key_clears_matching_pixels_and_feathers_the_edge() {
 }
 
 #[test]
+fn luma_key_keeps_the_interval_and_smooths_both_edges() {
+    let format =
+        VideoFormat::new(4, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let frame = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![
+            0, 0, 0, 255, // below the lower threshold
+            64, 64, 64, 255, // inside the interval
+            217, 217, 217, 255, // inside the upper transition
+            255, 255, 255, 255, // above the upper threshold
+        ],
+    )
+    .expect("frame");
+    let key = LumaKey::new(900, 100, 100, 100).expect("luma key");
+    let keyed = frame.filtered(FrameFilter::LumaKey(key));
+
+    assert_eq!(keyed.pixel(0, 0), Some([0, 0, 0, 0]));
+    assert_eq!(keyed.pixel(1, 0), Some([64, 64, 64, 255]));
+    let transition_alpha = keyed.pixel(2, 0).expect("transition pixel")[3];
+    assert!(transition_alpha > 0 && transition_alpha < 255);
+    assert_eq!(keyed.pixel(3, 0), Some([0, 0, 0, 0]));
+    assert!(LumaKey::new(1_001, 0, 0, 0).is_none());
+    assert!(LumaKey::new(0, 0, -1, 0).is_none());
+}
+
+#[test]
 fn shared_capture_storage_clones_without_copy_and_detaches_on_mutation() {
     // Thread-scoped counters: the process-wide ones are perturbed by any other
     // test rendering concurrently in this binary.
@@ -566,6 +593,10 @@ fn solid_frames_fill_every_pixel_with_the_requested_colour() {
 /// `cargo test --release -p obs-rs-media -- --ignored --nocapture` rather than
 /// guessed at. It asserts nothing: the machine decides the numbers.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the timing report keeps all composition measurements in one comparable fixture"
+)]
 #[ignore = "timing report, not a pass/fail assertion"]
 fn composition_primitives_timing_report() {
     use std::time::Instant;
@@ -584,6 +615,7 @@ fn composition_primitives_timing_report() {
         bottom: 8,
     };
     let color_key = ColorKey::new(32, 52, 200, 100, 100).expect("color key");
+    let luma_key = LumaKey::new(900, 100, 40, 60).expect("luma key");
     let runs = 200;
 
     let measure = |label: &str, mut work: Box<dyn FnMut()>| {
@@ -662,6 +694,15 @@ fn composition_primitives_timing_report() {
         Box::new(move || {
             let mut target = frame.clone();
             target.apply_filter(FrameFilter::ColorKey(color_key));
+            std::hint::black_box(target);
+        }),
+    );
+    let frame = background.clone();
+    measure(
+        "clone + luma-key",
+        Box::new(move || {
+            let mut target = frame.clone();
+            target.apply_filter(FrameFilter::LumaKey(luma_key));
             std::hint::black_box(target);
         }),
     );
