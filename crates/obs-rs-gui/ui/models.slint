@@ -48,6 +48,27 @@
         muted: bool,
     }
 
+    // One leaf projection of the Rust-owned dock tree. Coordinates are
+    // normalized to 0..=1000 so the workspace can resize without rebuilding
+    // the layout in Slint. Tab IDs are fixed-capacity because the studio has a
+    // bounded built-in dock catalog.
+    export struct DockPane {
+        panel-kind: int,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        tab-group: int,
+        tab-index: int,
+        tab-count: int,
+        tab-a: int,
+        tab-b: int,
+        tab-c: int,
+        tab-d: int,
+        tab-e: int,
+        active: bool,
+    }
+
     // One entry in the Add Source kind list. `obsolete` groups deprecated kinds
     // under their own heading the way OBS does.
     export struct SourceKindRow {

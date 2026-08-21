@@ -121,6 +121,9 @@ impl SettingsController {
     ) -> Result<(), String> {
         let mut settings = self.settings.borrow().clone();
         settings.capture_layout(ui);
+        let dock_tree = self.docks.tree_snapshot();
+        settings.layout.panel_order = dock_tree.leaf_order();
+        settings.layout.dock_tree = dock_tree;
         let mut failures = Vec::new();
         if let Err(error) = settings.save(&self.path) {
             failures.push(format!("settings file: {error}"));

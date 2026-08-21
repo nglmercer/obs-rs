@@ -1,16 +1,19 @@
 //! Dock layout: tree-backed reordering, width shares, and detached windows.
 //!
-//! The legacy Slint row still consumes parallel models, but every reorder or
-//! splitter edit is mirrored into the bounded `DockNode` tree. Settings can
-//! therefore migrate to splits and tabs without making the window another
-//! source of layout truth.
+//! The Slint workspace consumes the tree's bounded pane projection; the
+//! parallel models remain a compatibility projection for the legacy reorder
+//! and splitter callbacks. Settings can therefore migrate to splits and tabs
+//! without making the window another source of layout truth.
 
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-use crate::{dock_tree::DockNode, FloatingDockWindow, MainWindow};
+use crate::{
+    dock_tree::{DockAxis, DockNode},
+    DockPane, FloatingDockWindow, MainWindow,
+};
 
 /// The dock kinds, in the order their IDs are numbered.
 pub(crate) const PANEL_KINDS: [i32; 5] = [0, 1, 2, 3, 4];
@@ -67,6 +70,19 @@ impl DockController {
             window.set_streaming(ui.get_streaming());
             window.set_meters_paused(ui.get_meters_paused());
         }
+    }
+
+    /// Returns the tree that must be persisted with the session settings.
+    pub(crate) fn tree_snapshot(&self) -> DockNode {
+        self.tree.borrow().clone()
+    }
+
+    /// Replaces the tree after a settings/menu action changed the visible
+    /// legacy projection outside a dock gesture.
+    pub(crate) fn replace_tree(&self, tree: &DockNode, ui: &MainWindow) {
+        *self.tree.borrow_mut() = tree.clone();
+        ui.set_panel_order(ModelRc::new(VecModel::from(tree.leaf_order())));
+        set_panes(ui, tree);
     }
 
     #[cfg(test)]
@@ -142,6 +158,10 @@ pub(crate) fn resize(weights: &[f32], order: &[i32], index: usize, delta_pixels:
 /// A detached dock forwards every action to the studio window, so this needs
 /// only the studio state the window titles are localized from — not the
 /// surface or the output runtime.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one callback installation boundary owns all dock mutations"
+)]
 pub(crate) fn install_dock_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -156,6 +176,7 @@ pub(crate) fn install_dock_callbacks(
         windows: RefCell::new(PANEL_KINDS.map(|_| None).into_iter().collect()),
         tree: RefCell::new(tree),
     });
+    set_panes(ui, &controller.tree_snapshot());
 
     let weak = ui.as_weak();
     let tree_controller = Rc::clone(&controller);
@@ -164,11 +185,15 @@ pub(crate) fn install_dock_callbacks(
             return;
         };
         let order = read_ints(&ui.get_panel_order());
+        if !tree_controller.tree.borrow().is_flat_horizontal() {
+            return;
+        }
         if let Some(order) = reorder(&order, panel, direction) {
             let weights = read_floats(&ui.get_panel_weights());
             if let Some(tree) = DockNode::from_legacy(&order, &weights) {
                 *tree_controller.tree.borrow_mut() = tree.clone();
                 ui.set_panel_order(ModelRc::new(VecModel::from(tree.leaf_order())));
+                set_panes(&ui, &tree);
             }
         }
     });
@@ -184,11 +209,63 @@ pub(crate) fn install_dock_callbacks(
         };
         let weights = read_floats(&ui.get_panel_weights());
         let order = read_ints(&ui.get_panel_order());
+        if !tree_controller.tree.borrow().is_flat_horizontal() {
+            return;
+        }
         let weights = resize(&weights, &order, index, delta);
         if let Some(tree) = DockNode::from_legacy(&order, &weights) {
-            *tree_controller.tree.borrow_mut() = tree;
+            *tree_controller.tree.borrow_mut() = tree.clone();
+            set_panes(&ui, &tree);
         }
         ui.set_panel_weights(ModelRc::new(VecModel::from(weights)));
+    });
+
+    let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
+    ui.on_select_dock_tab(move |panel| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let mut tree = tree_controller.tree.borrow_mut();
+        if tree.activate_tab(panel) {
+            set_panes(&ui, &tree);
+        }
+    });
+
+    let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
+    ui.on_tab_dock_with(move |panel, target| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let mut tree = tree_controller.tree.borrow_mut();
+        if tree.tab_dock_with(panel, target) {
+            ui.set_panel_order(ModelRc::new(VecModel::from(tree.leaf_order())));
+            set_panes(&ui, &tree);
+        }
+    });
+
+    let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
+    ui.on_split_dock_with(move |panel, target, axis, ratio| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let Ok(ratio_milli) = u16::try_from(ratio) else {
+            return;
+        };
+        let axis = if axis == 0 {
+            DockAxis::Horizontal
+        } else if axis == 1 {
+            DockAxis::Vertical
+        } else {
+            return;
+        };
+        let mut tree = tree_controller.tree.borrow_mut();
+        if tree.split_dock_with(panel, target, axis, ratio_milli) {
+            ui.set_panel_order(ModelRc::new(VecModel::from(tree.leaf_order())));
+            set_panes(&ui, &tree);
+        }
     });
 
     let weak = ui.as_weak();
@@ -200,6 +277,30 @@ pub(crate) fn install_dock_callbacks(
 
     install_float(ui, state, &controller);
     controller
+}
+
+fn set_panes(ui: &MainWindow, tree: &DockNode) {
+    let panes = tree
+        .pane_layout()
+        .into_iter()
+        .map(|pane| DockPane {
+            panel_kind: pane.panel,
+            x: f32::from(pane.x_milli) / 1_000.0,
+            y: f32::from(pane.y_milli) / 1_000.0,
+            width: f32::from(pane.width_milli) / 1_000.0,
+            height: f32::from(pane.height_milli) / 1_000.0,
+            tab_group: i32::from(pane.tab_group),
+            tab_index: i32::from(pane.tab_index),
+            tab_count: i32::from(pane.tab_count),
+            tab_a: pane.tab_ids[0],
+            tab_b: pane.tab_ids[1],
+            tab_c: pane.tab_ids[2],
+            tab_d: pane.tab_ids[3],
+            tab_e: pane.tab_ids[4],
+            active: pane.active,
+        })
+        .collect::<Vec<_>>();
+    ui.set_dock_panes(ModelRc::new(VecModel::from(panes)));
 }
 
 fn install_float(

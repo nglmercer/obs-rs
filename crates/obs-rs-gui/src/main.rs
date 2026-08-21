@@ -60,11 +60,11 @@ pub(crate) use refresh::{
 };
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
-    AddSourceText, AddSourceWindow, FloatingDockWindow, I18n, LocaleOption, MainWindow, Metrics,
-    MixerRow, MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow, ProjectorWindow,
-    PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow, SetupWindow,
-    SourceCandidate, SourceFilterRow, SourceFiltersWindow, SourceKindRow, SourcePropertiesWindow,
-    SourceRow, SourceTransformWindow, ThemeTokens, UiMetrics, UiText,
+    AddSourceText, AddSourceWindow, DockPane, FloatingDockWindow, I18n, LocaleOption, MainWindow,
+    Metrics, MixerRow, MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow,
+    ProjectorWindow, PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow,
+    SetupWindow, SourceCandidate, SourceFilterRow, SourceFiltersWindow, SourceKindRow,
+    SourcePropertiesWindow, SourceRow, SourceTransformWindow, ThemeTokens, UiMetrics, UiText,
 };
 
 /// Mixer channel backed by the engine's live capture input.
@@ -189,6 +189,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.set_project_path(settings.project_path.as_str().into());
     ui.set_setup_benchmark_summary(settings.setup_benchmark_summary.as_str().into());
     settings.apply_layout(&ui);
+    // Build the pane projection before the first refresh so the initial frame
+    // and headless snapshots render the same tree as the running window.
+    let docks = install_dock_callbacks(&ui, &state);
     refresh_ui(&ui, &state, &surface);
     if let Some(message) = restored {
         ui.set_status_message(message.into());
@@ -197,9 +200,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     install_callbacks(&ui, &state, &surface, &output);
     // Keeps the canvas drag state and the detached docks alive for the session.
     let canvas = install_canvas_callbacks(&ui, &state, &surface);
-    let docks = install_dock_callbacks(&ui, &state);
     // Menu-bar actions and the projector windows they open.
-    let projectors = install_menu_callbacks(&ui, &state, &surface);
+    let projectors = install_menu_callbacks(&ui, &state, &surface, &docks);
     // Keeps the settings window alive for the whole session; dropping the
     // controller would close it.
     let add_source_window = install_add_source_window(&ui, &state, &surface)?;

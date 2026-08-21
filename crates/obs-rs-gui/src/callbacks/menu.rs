@@ -17,8 +17,8 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    dispatch_and_refresh, initial_project, project_store, refresh_ui, MainWindow, PreviewSurface,
-    ProfileRow, ProjectorWindow,
+    callbacks::docks::DockController, dispatch_and_refresh, initial_project, project_store,
+    refresh_ui, MainWindow, PreviewSurface, ProfileRow, ProjectorWindow,
 };
 
 /// Extension every scene-collection document uses.
@@ -98,6 +98,7 @@ pub(crate) fn install_menu_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
+    docks: &Rc<DockController>,
 ) -> Rc<ProjectorController> {
     let projectors = Rc::new(ProjectorController {
         program: RefCell::new(None),
@@ -105,7 +106,7 @@ pub(crate) fn install_menu_callbacks(
     });
 
     install_history(ui, state, surface);
-    install_session(ui, state, surface);
+    install_session(ui, state, surface, docks);
     install_collections(ui, state, surface);
     install_projectors(ui, state, &projectors);
     install_information(ui);
@@ -158,6 +159,7 @@ fn install_session(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
+    docks: &Rc<DockController>,
 ) {
     let weak = ui.as_weak();
     let new_state = Rc::clone(state);
@@ -186,11 +188,16 @@ fn install_session(
     });
 
     let weak = ui.as_weak();
+    let docks = Rc::clone(docks);
     ui.on_reset_dock_layout(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         crate::settings::apply_default_layout(&ui);
+        let tree =
+            crate::dock_tree::DockNode::from_legacy(&[1, 0, 2, 3, 4], &[1.0, 1.0, 1.85, 1.0, 1.4])
+                .expect("the built-in dock layout must be valid");
+        docks.replace_tree(&tree, &ui);
         ui.set_status_message("Dock layout reset".into());
     });
 }

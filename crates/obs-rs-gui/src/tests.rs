@@ -739,6 +739,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
         PreviewSurface::new(&project, 0).expect("preview surface"),
     ));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    let docks = crate::install_dock_callbacks(&ui, &state);
     let canvas = install_canvas_callbacks(&ui, &state, &surface);
     ui.invoke_canvas_zoom_changed(100);
     assert_eq!(canvas.canvas_state().zoom().ui_value(), 100);
@@ -796,7 +797,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     // it is exercised here rather than in its own test: only one test may own
     // the platform backend.
     exercise_layout_restore(&ui);
-    exercise_dock_layout(&ui, &state);
+    exercise_dock_layout(&ui, &docks);
     render_every_settings_category();
     exercise_settings_commit(&ui, &state, &surface);
     render_source_properties_window();
@@ -807,7 +808,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_capture_device_properties_window(&ui, &state, &surface);
     exercise_monitor_selection(&ui, &state, &surface);
     exercise_recording_controls(&ui, &state, &surface);
-    exercise_menu_actions(&ui, &state, &surface);
+    exercise_menu_actions(&ui, &state, &surface, &docks);
     exercise_context_menus(&ui, &state, &surface);
 }
 
@@ -838,8 +839,9 @@ fn exercise_menu_actions(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
+    docks: &Rc<crate::callbacks::docks::DockController>,
 ) {
-    let projectors = crate::install_menu_callbacks(ui, state, surface);
+    let projectors = crate::install_menu_callbacks(ui, state, surface, docks);
 
     // The exercises before this one have already edited the project, so the
     // history starts from a known-empty state rather than from their leftovers.
@@ -1092,7 +1094,7 @@ fn exercise_context_menus(
     let more = ElementHandle::find_by_element_type_name(ui, "CompactButton")
         .find(|button| {
             let position = button.absolute_position();
-            position.x > 160.0 && position.y > 840.0
+            position.x > 180.0 && position.x < 320.0 && position.y > 800.0
         })
         .expect("source more button");
     more.mock_single_click(PointerEventButton::Left);
@@ -1162,9 +1164,7 @@ fn exercise_layout_restore(ui: &MainWindow) {
 
 /// Drives dock reordering, splitter resizing, and detaching a dock into its
 /// own window through the real callbacks.
-fn exercise_dock_layout(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
-    let controller = crate::install_dock_callbacks(ui, state);
-
+fn exercise_dock_layout(ui: &MainWindow, controller: &Rc<crate::callbacks::docks::DockController>) {
     assert!(!ui.get_meters_paused());
     ui.invoke_toggle_meters_paused();
     assert!(ui.get_meters_paused(), "the mixer monitor pauses");
@@ -1199,6 +1199,19 @@ fn exercise_dock_layout(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     ui.invoke_float_panel(2);
     assert!(!controller.is_floating(2), "the mixer re-docked");
     assert!(!read_floating(ui)[2]);
+
+    // The tree callbacks drive the same pane projection used by the visible
+    // workspace: tabbing keeps one region, selecting a tab changes its active
+    // leaf, and a split creates a second bounded region.
+    ui.invoke_tab_dock_with(4, 3);
+    let panes = read_dock_panes(ui);
+    assert!(panes.iter().any(|pane| pane.tab_count == 2));
+    ui.invoke_select_dock_tab(4);
+    assert!(read_dock_panes(ui)
+        .iter()
+        .any(|pane| pane.panel_kind == 4 && pane.active));
+    ui.invoke_split_dock_with(2, 4, 1, 500);
+    assert_eq!(read_dock_panes(ui).len(), 5);
 }
 
 fn read_order(ui: &MainWindow) -> Vec<i32> {
@@ -1217,6 +1230,13 @@ fn read_weights(ui: &MainWindow) -> Vec<f32> {
 
 fn read_floating(ui: &MainWindow) -> Vec<bool> {
     let model = ui.get_panel_floating();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+fn read_dock_panes(ui: &MainWindow) -> Vec<crate::DockPane> {
+    let model = ui.get_dock_panes();
     (0..model.row_count())
         .filter_map(|row| model.row_data(row))
         .collect()
@@ -1342,6 +1362,8 @@ fn exercise_settings_commit(
     let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-window-{token}.toml"));
     let format = surface.borrow().format;
     let output = Rc::new(RefCell::new(OutputRuntime::new(format)));
+    let docks = crate::install_dock_callbacks(ui, state);
+    let projectors = crate::install_menu_callbacks(ui, state, surface, &docks);
     let controller = crate::install_settings_window(
         ui,
         state,
@@ -1359,8 +1381,8 @@ fn exercise_settings_commit(
             transform: crate::install_source_transform_window(ui, state, surface)
                 .expect("transform controller"),
             monitor: crate::install_monitor_window(ui, state, surface).expect("monitor controller"),
-            docks: crate::install_dock_callbacks(ui, state),
-            projectors: crate::install_menu_callbacks(ui, state, surface),
+            docks,
+            projectors,
         },
     )
     .expect("settings controller should install");

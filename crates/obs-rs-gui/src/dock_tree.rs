@@ -1,16 +1,16 @@
 //! Bounded, toolkit-neutral docking layout state.
 //!
-//! The Slint window currently consumes legacy parallel models while the dock
-//! interaction packets are migrated. This module is the single tree model
-//! those adapters serialize and validate, so future split/tab operations do
-//! not grow another layout representation in the UI.
+//! The Slint window consumes a bounded pane projection from this tree. Legacy
+//! order/weight arrays remain only as a compatibility boundary, so split/tab
+//! operations do not grow another layout representation in the UI.
 
-use std::fmt::Write as _;
+use std::{cmp::Ordering, fmt::Write as _};
 
 pub(crate) type DockId = i32;
 
 pub(crate) const DOCK_IDS: [DockId; 5] = [0, 1, 2, 3, 4];
 pub(crate) const MAX_DOCK_LAYOUT_BYTES: usize = 4_096;
+const DOCK_LAYOUT_VERSION: &str = "v1:";
 const MAX_DOCK_NODES: usize = 31;
 const MAX_DOCK_DEPTH: usize = 8;
 const MIN_RATIO_MILLI: u16 = 50;
@@ -37,6 +37,26 @@ pub(crate) enum DockNode {
     Tabs { docks: Vec<DockId>, active: usize },
     /// One leaf dock: 0 scenes, 1 sources, 2 mixer, 3 transitions, 4 controls.
     Dock(DockId),
+}
+
+/// A leaf's normalized rectangle and tab metadata for the toolkit adapter.
+///
+/// The Rust geometry uses a 0..=1000 fixed-point desktop, then the Slint
+/// adapter converts it to normalized 0..=1 fractions. This keeps layout
+/// updates deterministic and avoids making the Slint layer responsible for
+/// tree traversal or ratio arithmetic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockPaneLayout {
+    pub(crate) panel: DockId,
+    pub(crate) x_milli: u16,
+    pub(crate) y_milli: u16,
+    pub(crate) width_milli: u16,
+    pub(crate) height_milli: u16,
+    pub(crate) tab_group: u8,
+    pub(crate) tab_index: u8,
+    pub(crate) tab_count: u8,
+    pub(crate) tab_ids: [DockId; DOCK_IDS.len()],
+    pub(crate) active: bool,
 }
 
 impl DockNode {
@@ -78,6 +98,100 @@ impl DockNode {
         order
     }
 
+    /// Computes the bounded pane projection consumed by the UI renderer.
+    pub(crate) fn pane_layout(&self) -> Vec<DockPaneLayout> {
+        let mut panes = Vec::with_capacity(DOCK_IDS.len());
+        let mut next_group = 0;
+        self.collect_panes(
+            LayoutRect {
+                x: 0,
+                y: 0,
+                width: 1_000,
+                height: 1_000,
+            },
+            &mut next_group,
+            &mut panes,
+        );
+        panes
+    }
+
+    /// Activates a dock within its tab group, if it belongs to one.
+    pub(crate) fn activate_tab(&mut self, panel: DockId) -> bool {
+        match self {
+            Self::Split { first, second, .. } => {
+                first.activate_tab(panel) || second.activate_tab(panel)
+            }
+            Self::Tabs { docks, active } => {
+                let Some(index) = docks.iter().position(|dock| *dock == panel) else {
+                    return false;
+                };
+                *active = index;
+                true
+            }
+            Self::Dock(_) => false,
+        }
+    }
+
+    /// Reports whether the current tree is the legacy horizontal row adapter.
+    pub(crate) fn is_flat_horizontal(&self) -> bool {
+        match self {
+            Self::Split {
+                axis: DockAxis::Horizontal,
+                first,
+                second,
+                ..
+            } => first.is_flat_horizontal() && second.is_flat_horizontal(),
+            Self::Dock(_) => true,
+            Self::Split {
+                axis: DockAxis::Vertical,
+                ..
+            }
+            | Self::Tabs { .. } => false,
+        }
+    }
+
+    /// Moves `panel` into the tab group containing `target`.
+    pub(crate) fn tab_dock_with(&mut self, panel: DockId, target: DockId) -> bool {
+        self.move_dock(panel, |tree, moved| insert_tab(tree, target, moved))
+    }
+
+    /// Splits the region containing `target` and places `panel` in the new
+    /// region. The operation is atomic from the caller's perspective: an
+    /// unsuccessful target or invalid result leaves the original tree intact.
+    pub(crate) fn split_dock_with(
+        &mut self,
+        panel: DockId,
+        target: DockId,
+        axis: DockAxis,
+        ratio_milli: u16,
+    ) -> bool {
+        if !(MIN_RATIO_MILLI..=MAX_RATIO_MILLI).contains(&ratio_milli) || panel == target {
+            return false;
+        }
+        self.move_dock(panel, |tree, moved| {
+            insert_split(tree, target, axis, ratio_milli, moved)
+        })
+    }
+
+    fn move_dock<F>(&mut self, panel: DockId, insert: F) -> bool
+    where
+        F: FnOnce(&mut Self, DockNode) -> bool,
+    {
+        if !DOCK_IDS.contains(&panel) || !self.is_valid() {
+            return false;
+        }
+        let original = self.clone();
+        let (Some(mut remaining), Some(moved)) = take_dock(original, panel) else {
+            return false;
+        };
+        if insert(&mut remaining, moved) && remaining.is_valid() {
+            *self = remaining;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Validates IDs, tab state, ratios, depth, and total node count.
     pub(crate) fn is_valid(&self) -> bool {
         let mut seen = [false; DOCK_IDS.len()];
@@ -94,7 +208,7 @@ impl DockNode {
         if !self.is_valid() {
             return None;
         }
-        let mut encoded = String::new();
+        let mut encoded = String::from(DOCK_LAYOUT_VERSION);
         encode_inner(self, &mut encoded);
         (encoded.len() <= MAX_DOCK_LAYOUT_BYTES).then_some(encoded)
     }
@@ -105,6 +219,7 @@ impl DockNode {
         if encoded.is_empty() || encoded.len() > MAX_DOCK_LAYOUT_BYTES {
             return None;
         }
+        let encoded = encoded.strip_prefix(DOCK_LAYOUT_VERSION)?;
         let mut parser = Parser::new(encoded);
         let node = parser.node(0)?;
         if !parser.at_end() || !node.is_valid() {
@@ -155,6 +270,107 @@ impl DockNode {
             Self::Dock(id) => mark_dock(*id, seen, leaves),
         }
     }
+
+    fn collect_panes(
+        &self,
+        rect: LayoutRect,
+        next_group: &mut u8,
+        panes: &mut Vec<DockPaneLayout>,
+    ) {
+        match self {
+            Self::Split {
+                axis,
+                ratio_milli,
+                first,
+                second,
+            } => {
+                let (first_rect, second_rect) = match axis {
+                    DockAxis::Horizontal => rect.split_horizontal(*ratio_milli),
+                    DockAxis::Vertical => rect.split_vertical(*ratio_milli),
+                };
+                first.collect_panes(first_rect, next_group, panes);
+                second.collect_panes(second_rect, next_group, panes);
+            }
+            Self::Tabs { docks, active } => {
+                let group = *next_group;
+                *next_group = next_group.saturating_add(1);
+                let mut tab_ids = [0; DOCK_IDS.len()];
+                for (index, dock) in docks.iter().enumerate() {
+                    tab_ids[index] = *dock;
+                }
+                for (index, dock) in docks.iter().enumerate() {
+                    panes.push(DockPaneLayout {
+                        panel: *dock,
+                        x_milli: fixed(rect.x),
+                        y_milli: fixed(rect.y),
+                        width_milli: fixed(rect.width),
+                        height_milli: fixed(rect.height),
+                        tab_group: group,
+                        tab_index: u8::try_from(index).unwrap_or(u8::MAX),
+                        tab_count: u8::try_from(docks.len()).unwrap_or(u8::MAX),
+                        tab_ids,
+                        active: index == *active,
+                    });
+                }
+            }
+            Self::Dock(dock_id) => panes.push(DockPaneLayout {
+                panel: *dock_id,
+                x_milli: fixed(rect.x),
+                y_milli: fixed(rect.y),
+                width_milli: fixed(rect.width),
+                height_milli: fixed(rect.height),
+                tab_group: u8::MAX,
+                tab_index: 0,
+                tab_count: 1,
+                tab_ids: [*dock_id, 0, 0, 0, 0],
+                active: true,
+            }),
+        }
+    }
+}
+
+fn fixed(value: u32) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+#[derive(Clone, Copy)]
+struct LayoutRect {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+impl LayoutRect {
+    fn split_horizontal(self, ratio_milli: u16) -> (Self, Self) {
+        let first_width = self.width * u32::from(ratio_milli) / 1_000;
+        (
+            Self {
+                width: first_width,
+                ..self
+            },
+            Self {
+                x: self.x + first_width,
+                width: self.width - first_width,
+                ..self
+            },
+        )
+    }
+
+    fn split_vertical(self, ratio_milli: u16) -> (Self, Self) {
+        let first_height = self.height * u32::from(ratio_milli) / 1_000;
+        (
+            Self {
+                height: first_height,
+                ..self
+            },
+            Self {
+                y: self.y + first_height,
+                height: self.height - first_height,
+                ..self
+            },
+        )
+    }
 }
 
 fn mark_dock(id: DockId, seen: &mut [bool; DOCK_IDS.len()], leaves: &mut usize) -> bool {
@@ -194,6 +410,147 @@ fn build_balanced(order: &[DockId], weights: &[f32]) -> Option<DockNode> {
         first: Box::new(build_balanced(&order[..split], &weights[..split])?),
         second: Box::new(build_balanced(&order[split..], &weights[split..])?),
     })
+}
+
+fn take_dock(node: DockNode, panel: DockId) -> (Option<DockNode>, Option<DockNode>) {
+    match node {
+        DockNode::Dock(id) if id == panel => (None, Some(DockNode::Dock(id))),
+        DockNode::Dock(_) => (Some(node), None),
+        DockNode::Tabs { mut docks, active } => {
+            let Some(index) = docks.iter().position(|dock| *dock == panel) else {
+                return (Some(DockNode::Tabs { docks, active }), None);
+            };
+            docks.remove(index);
+            let moved = Some(DockNode::Dock(panel));
+            match docks.len() {
+                0 => (None, moved),
+                1 => (Some(DockNode::Dock(docks[0])), moved),
+                _ => {
+                    let active = match active.cmp(&index) {
+                        Ordering::Equal => active.min(docks.len() - 1),
+                        Ordering::Greater => active - 1,
+                        Ordering::Less => active,
+                    };
+                    (Some(DockNode::Tabs { docks, active }), moved)
+                }
+            }
+        }
+        DockNode::Split {
+            axis,
+            ratio_milli,
+            first,
+            second,
+        } => {
+            let (first, moved) = take_dock(*first, panel);
+            if moved.is_some() {
+                return (
+                    Some(match first {
+                        Some(first) => DockNode::Split {
+                            axis,
+                            ratio_milli,
+                            first: Box::new(first),
+                            second,
+                        },
+                        None => *second,
+                    }),
+                    moved,
+                );
+            }
+            let (second, moved) = take_dock(*second, panel);
+            if moved.is_some() {
+                let remaining = match (first, second) {
+                    (Some(first), Some(second)) => DockNode::Split {
+                        axis,
+                        ratio_milli,
+                        first: Box::new(first),
+                        second: Box::new(second),
+                    },
+                    (Some(first), None) | (None, Some(first)) => first,
+                    (None, None) => return (None, moved),
+                };
+                return (Some(remaining), moved);
+            }
+            let remaining = match (first, second) {
+                (Some(first), Some(second)) => DockNode::Split {
+                    axis,
+                    ratio_milli,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                },
+                (Some(first), None) | (None, Some(first)) => first,
+                (None, None) => return (None, None),
+            };
+            (Some(remaining), None)
+        }
+    }
+}
+
+fn insert_tab(node: &mut DockNode, target: DockId, moved: DockNode) -> bool {
+    let moved_id = moved_dock_id(&moved);
+    match node {
+        DockNode::Dock(id) if *id == target => {
+            *node = DockNode::Tabs {
+                docks: vec![target, moved_id],
+                active: 1,
+            };
+            true
+        }
+        DockNode::Dock(_) => false,
+        DockNode::Tabs { docks, active } => {
+            if !docks.contains(&target) {
+                return false;
+            }
+            docks.push(moved_id);
+            *active = docks.len() - 1;
+            true
+        }
+        DockNode::Split { first, second, .. } => {
+            insert_tab(first, target, moved.clone()) || insert_tab(second, target, moved)
+        }
+    }
+}
+
+fn insert_split(
+    node: &mut DockNode,
+    target: DockId,
+    axis: DockAxis,
+    ratio_milli: u16,
+    moved: DockNode,
+) -> bool {
+    match node {
+        DockNode::Dock(id) if *id == target => {
+            let current = std::mem::replace(node, DockNode::Dock(target));
+            *node = DockNode::Split {
+                axis,
+                ratio_milli,
+                first: Box::new(current),
+                second: Box::new(moved),
+            };
+            true
+        }
+        DockNode::Tabs { docks, .. } if docks.contains(&target) => {
+            let current = std::mem::replace(node, DockNode::Dock(target));
+            *node = DockNode::Split {
+                axis,
+                ratio_milli,
+                first: Box::new(current),
+                second: Box::new(moved),
+            };
+            true
+        }
+        DockNode::Dock(_) | DockNode::Tabs { .. } => false,
+        DockNode::Split { first, second, .. } => {
+            insert_split(first, target, axis, ratio_milli, moved.clone())
+                || insert_split(second, target, axis, ratio_milli, moved)
+        }
+    }
+}
+
+fn moved_dock_id(node: &DockNode) -> DockId {
+    match node {
+        DockNode::Dock(id) => *id,
+        _ => unreachable!("dock moves always detach one leaf"),
+    }
 }
 
 fn encode_inner(node: &DockNode, output: &mut String) {
@@ -336,7 +693,7 @@ mod tests {
         let tree = DockNode::from_legacy(&ORDER, &WEIGHTS).expect("tree");
         assert!(tree.is_valid());
         assert_eq!(tree.leaf_order(), ORDER);
-        assert!(tree.encode().expect("encoding").starts_with("S(H,"));
+        assert!(tree.encode().expect("encoding").starts_with("v1:S(H,"));
     }
 
     #[test]
@@ -364,9 +721,61 @@ mod tests {
 
     #[test]
     fn invalid_or_oversized_layouts_are_rejected_before_use() {
+        assert!(DockNode::decode("S(H,500,D0,D1)").is_none());
         assert!(DockNode::decode("D9").is_none());
         assert!(DockNode::decode("S(H,1,D0,D1)").is_none());
         assert!(DockNode::decode("T(2;0,1)").is_none());
         assert!(DockNode::decode(&"D0".repeat(MAX_DOCK_LAYOUT_BYTES)).is_none());
+    }
+
+    #[test]
+    fn pane_layout_keeps_split_rectangles_and_tab_metadata_bounded() {
+        let tree = DockNode::Split {
+            axis: DockAxis::Vertical,
+            ratio_milli: 600,
+            first: Box::new(DockNode::Tabs {
+                docks: vec![1, 0],
+                active: 1,
+            }),
+            second: Box::new(DockNode::Split {
+                axis: DockAxis::Horizontal,
+                ratio_milli: 400,
+                first: Box::new(DockNode::Dock(2)),
+                second: Box::new(DockNode::Tabs {
+                    docks: vec![3, 4],
+                    active: 0,
+                }),
+            }),
+        };
+
+        let panes = tree.pane_layout();
+
+        assert_eq!(panes.len(), DOCK_IDS.len());
+        assert_eq!((panes[0].x_milli, panes[0].y_milli), (0, 0));
+        assert_eq!((panes[0].width_milli, panes[0].height_milli), (1_000, 600));
+        assert!(!panes[0].active);
+        assert!(panes[1].active);
+        assert_eq!(panes[1].tab_ids, [1, 0, 0, 0, 0]);
+        assert_eq!((panes[2].x_milli, panes[2].y_milli), (0, 600));
+        assert_eq!((panes[2].width_milli, panes[2].height_milli), (400, 400));
+        assert_eq!((panes[3].x_milli, panes[3].y_milli), (400, 600));
+        assert_eq!((panes[3].width_milli, panes[3].height_milli), (600, 400));
+    }
+
+    #[test]
+    fn tab_and_split_mutations_are_atomic_and_preserve_all_docks() {
+        let mut tree = DockNode::from_legacy(&ORDER, &WEIGHTS).expect("tree");
+        let original = tree.clone();
+
+        assert!(!tree.tab_dock_with(1, 1));
+        assert_eq!(tree, original);
+        assert!(tree.tab_dock_with(4, 3));
+        assert!(tree.is_valid());
+        assert!(tree.activate_tab(3));
+        assert!(tree.split_dock_with(2, 3, DockAxis::Vertical, 500));
+        assert!(tree.is_valid());
+        assert_eq!(tree.leaf_order(), [1, 0, 3, 4, 2]);
+        assert!(!tree.split_dock_with(0, 1, DockAxis::Horizontal, 10));
+        assert!(tree.is_valid());
     }
 }

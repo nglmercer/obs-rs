@@ -1,0 +1,216 @@
+import { HorizontalBox } from "std-widgets.slint";
+import { DockPane, MixerRow, SceneRow, SourceRow } from "models.slint";
+import { DockSlot } from "dock_slot.slint";
+import { Palette } from "palette.slint";
+import { TabButton } from "theme.slint";
+import { I18n } from "i18n.slint";
+
+// Renders the bounded pane projection emitted by DockNode::pane_layout(). The
+// tree traversal, split ratios, tab activation, and persistence stay in Rust;
+// this component only maps normalized rectangles to the current window.
+export component DockWorkspace inherits Rectangle {
+    in property <[DockPane]> panes;
+    in property <[bool]> panel-floating;
+    in property <string> locale;
+    in property <[SceneRow]> scene-rows;
+    in property <[SourceRow]> source-rows;
+    in property <[MixerRow]> mixer-rows;
+    in property <string> source-scene;
+    in property <string> preview-scene;
+    in property <string> selected-source;
+    in property <bool> selected-source-is-screen;
+    in property <bool> selected-source-visible;
+    in property <bool> selected-source-locked;
+    in property <bool> selected-source-first;
+    in property <bool> selected-source-last;
+    in property <bool> can-paste;
+    in property <string> transition;
+    in property <bool> recording;
+    in property <bool> streaming;
+    in property <bool> meters-paused;
+    in property <bool> show-scenes;
+    in property <bool> show-sources;
+    in property <bool> show-mixer;
+    in property <bool> show-transitions;
+    in property <bool> show-controls;
+
+    callback move-panel(int, int);
+    callback resize-panel(int, int);
+    callback select-dock-tab(int);
+    callback float-panel(int);
+    callback close-panel(int);
+    callback open-modal(int);
+    callback select-preview(string);
+    callback select-program(string);
+    callback duplicate-scene(string);
+    callback remove-scene(string);
+    callback select-source(string);
+    callback open-filters(string);
+    callback open-transform(string);
+    callback toggle-source-visibility(string);
+    callback toggle-source-locked(string);
+    callback move-source(string, int);
+    callback move-source-to(string, int);
+    callback reset-source-transform(string);
+    callback flip-source(string, bool);
+    callback transform-source(string, string);
+    callback open-source-rename(string);
+    callback duplicate-source(string);
+    callback copy-source(string);
+    callback paste-reference();
+    callback paste-duplicate();
+    callback remove-source(string);
+    callback set-mixer-gain(string, int);
+    callback toggle-mixer-mute(string);
+    callback toggle-meters-paused();
+    callback cut-transition();
+    callback fade-transition();
+    callback set-view-mode(int);
+    callback toggle-recording();
+    callback toggle-streaming();
+    callback open-settings-window();
+
+    background: Palette.tokens.window-bg;
+    clip: true;
+
+    function panel-visible(kind: int) -> bool {
+        (kind == 0 && root.show-scenes)
+            || (kind == 1 && root.show-sources)
+            || (kind == 2 && root.show-mixer)
+            || (kind == 3 && root.show-transitions)
+            || (kind == 4 && root.show-controls)
+    }
+
+    function panel-floating-now(kind: int) -> bool {
+        (kind == 0 && root.panel-floating[0])
+            || (kind == 1 && root.panel-floating[1])
+            || (kind == 2 && root.panel-floating[2])
+            || (kind == 3 && root.panel-floating[3])
+            || (kind == 4 && root.panel-floating[4])
+    }
+
+    function panel-label(kind: int) -> string {
+        kind == 0 ? I18n.text.scenes_title
+            : kind == 1 ? I18n.text.sources_title
+            : kind == 2 ? I18n.text.mixer_title
+            : kind == 3 ? I18n.text.transition_title
+            : I18n.text.controls_title
+    }
+
+    for pane in root.panes : Rectangle {
+        x: pane.x * root.width;
+        y: pane.y * root.height;
+        width: pane.width * root.width;
+        height: pane.height * root.height;
+        visible: pane.active
+            && root.panel-visible(pane.panel-kind)
+            && !root.panel-floating-now(pane.panel-kind);
+        clip: true;
+        border-width: 1px;
+        border-color: Palette.tokens.border;
+
+        if pane.tab-count > 1 : Rectangle {
+            x: 1px;
+            y: 1px;
+            width: parent.width - 2px;
+            height: 30px;
+            background: Palette.tokens.header-bg;
+            z: 2;
+            HorizontalBox {
+                padding-left: 2px;
+                padding-right: 2px;
+                spacing: 1px;
+                if pane.tab-count > 0 : TabButton {
+                    label: root.panel-label(pane.tab-a);
+                    active: pane.tab-index == 0;
+                    horizontal-stretch: 1;
+                    clicked => { root.select-dock-tab(pane.tab-a); }
+                }
+                if pane.tab-count > 1 : TabButton {
+                    label: root.panel-label(pane.tab-b);
+                    active: pane.tab-index == 1;
+                    horizontal-stretch: 1;
+                    clicked => { root.select-dock-tab(pane.tab-b); }
+                }
+                if pane.tab-count > 2 : TabButton {
+                    label: root.panel-label(pane.tab-c);
+                    active: pane.tab-index == 2;
+                    horizontal-stretch: 1;
+                    clicked => { root.select-dock-tab(pane.tab-c); }
+                }
+                if pane.tab-count > 3 : TabButton {
+                    label: root.panel-label(pane.tab-d);
+                    active: pane.tab-index == 3;
+                    horizontal-stretch: 1;
+                    clicked => { root.select-dock-tab(pane.tab-d); }
+                }
+                if pane.tab-count > 4 : TabButton {
+                    label: root.panel-label(pane.tab-e);
+                    active: pane.tab-index == 4;
+                    horizontal-stretch: 1;
+                    clicked => { root.select-dock-tab(pane.tab-e); }
+                }
+            }
+        }
+
+        DockSlot {
+            x: 0px;
+            y: pane.tab-count > 1 ? 31px : 0px;
+            width: parent.width;
+            height: parent.height - (pane.tab-count > 1 ? 31px : 0px);
+            panel-kind: pane.panel-kind;
+            floating: false;
+            weight: 1.0;
+            locale: root.locale;
+            scene-rows: root.scene-rows;
+            source-rows: root.source-rows;
+            mixer-rows: root.mixer-rows;
+            source-scene: root.source-scene;
+            preview-scene: root.preview-scene;
+            selected-source: root.selected-source;
+            selected-source-is-screen: root.selected-source-is-screen;
+            selected-source-visible: root.selected-source-visible;
+            selected-source-locked: root.selected-source-locked;
+            selected-source-first: root.selected-source-first;
+            selected-source-last: root.selected-source-last;
+            can-paste: root.can-paste;
+            transition: root.transition;
+            recording: root.recording;
+            streaming: root.streaming;
+            meters-paused: root.meters-paused;
+            move-panel(kind, delta) => { root.move-panel(kind, delta); }
+            float-panel(kind) => { root.float-panel(kind); }
+            close-panel(kind) => { root.close-panel(kind); }
+            open-modal(modal) => { root.open-modal(modal); }
+            select-preview(id) => { root.select-preview(id); }
+            select-program(id) => { root.select-program(id); }
+            duplicate-scene(id) => { root.duplicate-scene(id); }
+            remove-scene(id) => { root.remove-scene(id); }
+            select-source(id) => { root.select-source(id); }
+            open-filters(id) => { root.open-filters(id); }
+            open-transform(id) => { root.open-transform(id); }
+            toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
+            toggle-source-locked(id) => { root.toggle-source-locked(id); }
+            move-source(id, delta) => { root.move-source(id, delta); }
+            move-source-to(id, index) => { root.move-source-to(id, index); }
+            reset-source-transform(id) => { root.reset-source-transform(id); }
+            flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+            transform-source(id, action) => { root.transform-source(id, action); }
+            open-source-rename(id) => { root.open-source-rename(id); }
+            duplicate-source(id) => { root.duplicate-source(id); }
+            copy-source(id) => { root.copy-source(id); }
+            paste-reference() => { root.paste-reference(); }
+            paste-duplicate() => { root.paste-duplicate(); }
+            remove-source(id) => { root.remove-source(id); }
+            set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
+            toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+            toggle-meters-paused() => { root.toggle-meters-paused(); }
+            cut-transition() => { root.cut-transition(); }
+            fade-transition() => { root.fade-transition(); }
+            set-view-mode(mode) => { root.set-view-mode(mode); }
+            toggle-recording() => { root.toggle-recording(); }
+            toggle-streaming() => { root.toggle-streaming(); }
+            open-settings-window() => { root.open-settings-window(); }
+        }
+    }
+}
