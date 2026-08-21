@@ -5,7 +5,10 @@ use std::{
 };
 
 use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
+#[cfg(not(target_os = "windows"))]
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
+#[cfg(target_os = "windows")]
+use obs_rs_audio_wasapi::WasapiAudioProvider;
 use obs_rs_engine::{
     output_capabilities_snapshot, EngineAudioChannel, EngineConfig, EngineSession, EngineWorker,
     OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle,
@@ -18,6 +21,11 @@ use obs_rs_output::{
 use obs_rs_project::Project;
 
 use crate::AppSettings;
+
+#[cfg(target_os = "windows")]
+const AUDIO_BACKEND_LABEL: &str = "WASAPI";
+#[cfg(not(target_os = "windows"))]
+const AUDIO_BACKEND_LABEL: &str = "PipeWire";
 
 /// One entry in the settings window's audio-input picker.
 ///
@@ -33,7 +41,7 @@ pub(crate) struct AudioInputEntry {
 /// GUI-owned handle over the portable engine output boundary.
 pub(crate) struct OutputRuntime {
     worker: EngineWorker,
-    audio_provider: Arc<PipeWireAudioProvider>,
+    audio_provider: Arc<dyn AudioInputProvider>,
     format: VideoFormat,
     last_revision: u64,
     format_drops: u64,
@@ -99,8 +107,11 @@ impl OutputRuntime {
         audio_format: AudioFormat,
         audio_input_id: Option<&str>,
     ) -> Result<Self, Box<dyn Error>> {
-        let audio_provider = Arc::new(PipeWireAudioProvider::new());
-        let provider_for_engine: Arc<dyn AudioInputProvider> = audio_provider.clone();
+        #[cfg(target_os = "windows")]
+        let audio_provider: Arc<dyn AudioInputProvider> = Arc::new(WasapiAudioProvider::new());
+        #[cfg(not(target_os = "windows"))]
+        let audio_provider: Arc<dyn AudioInputProvider> = Arc::new(PipeWireAudioProvider::new());
+        let provider_for_engine = Arc::clone(&audio_provider);
         let mut config = EngineConfig::new(audio_format).with_audio_provider(provider_for_engine);
         if let Some(audio_input_id) = audio_input_id {
             config = config.with_audio_input_id(audio_input_id);
@@ -732,7 +743,7 @@ impl OutputRuntime {
     pub(crate) fn audio_devices_summary(&mut self) -> String {
         match self.discover_audio_devices() {
             Ok(devices) if devices.is_empty() => {
-                "PipeWire: no audio devices; deterministic fallback available".to_owned()
+                format!("{AUDIO_BACKEND_LABEL}: no audio devices; deterministic fallback available")
             }
             Ok(devices) => devices
                 .iter()
@@ -755,12 +766,14 @@ impl OutputRuntime {
                 .collect::<Vec<_>>()
                 .join(" · "),
             Err(error) => {
-                format!("PipeWire unavailable: {error}; deterministic fallback available")
+                format!(
+                    "{AUDIO_BACKEND_LABEL} unavailable: {error}; deterministic fallback available"
+                )
             }
         }
     }
 
-    /// Returns discoverable `PipeWire` input devices as `(stable_id, label)`.
+    /// Returns discoverable platform input devices as stable ID/label pairs.
     ///
     /// Discovery is cached briefly because opening Settings should not invoke
     /// `pw-dump` repeatedly while the user moves between fields.
@@ -803,7 +816,7 @@ impl OutputRuntime {
         entries
     }
 
-    /// Discards the discovery cache so the next read re-runs `pw-dump`.
+    /// Discards the discovery cache so the next read re-queries the platform.
     ///
     /// This is what makes a hot-plug visible without waiting for the cache to
     /// expire, and it is why the refresh action is explicit rather than a poll.

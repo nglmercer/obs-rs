@@ -769,7 +769,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     render_monitor_window();
     exercise_add_source_window(&ui, &state, &surface);
     exercise_capture_device_properties_window(&ui, &state, &surface);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     exercise_monitor_selection(&ui, &state, &surface);
     exercise_recording_controls(&ui, &state, &surface);
     exercise_menu_actions(&ui, &state, &surface);
@@ -872,6 +872,7 @@ fn exercise_menu_actions(
     );
 }
 
+#[allow(clippy::too_many_lines)]
 fn exercise_context_menus(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -1201,12 +1202,9 @@ fn render_monitor_window() {
     window.hide().expect("monitor window should hide");
 }
 
-/// Drives the display picker end to end: opening it for an X11 screen source,
+/// Drives the display picker end to end: opening it for a native screen source,
 /// accepting the whole-desktop choice, and confirming the project records it.
-///
-/// The display picker is part of the Linux/X11 vertical slice; Windows gets
-/// its own native picker with the platform capture work.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn exercise_monitor_selection(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -1217,9 +1215,14 @@ fn exercise_monitor_selection(
         .preview_scene()
         .expect("preview scene")
         .to_owned();
-    let settings = source_settings("x11_screen_capture").expect("x11 defaults");
-    let source = SourceSpec::new("gui-screen", "x11_screen_capture", "GUI screen", settings)
-        .expect("screen source");
+    let kind = if cfg!(target_os = "windows") {
+        "screen_capture"
+    } else {
+        "x11_screen_capture"
+    };
+    let settings = source_settings(kind).expect("screen defaults");
+    let source =
+        SourceSpec::new("gui-screen", kind, "GUI screen", settings).expect("screen source");
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::AddSource {
@@ -1237,7 +1240,7 @@ fn exercise_monitor_selection(
     refresh_ui(ui, state, surface);
     assert!(
         ui.get_selected_source_is_screen(),
-        "an X11 screen source must offer the display picker"
+        "a screen source must offer the display picker"
     );
 
     let controller = crate::install_monitor_window(ui, state, surface).expect("monitor controller");

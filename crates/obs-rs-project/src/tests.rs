@@ -952,6 +952,7 @@ fn project_codec_round_trips_crop_and_accepts_legacy_transforms() {
 }
 
 #[test]
+#[allow(clippy::needless_raw_string_hashes, clippy::too_many_lines)]
 fn version_one_scene_sources_migrate_to_registry_and_items() {
     let legacy = r##"
 {

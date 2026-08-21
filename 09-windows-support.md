@@ -36,48 +36,53 @@ only through typed Rust boundaries.
 
 ## Phase 1 - CI parity
 
-- [ ] Add a `windows-latest` job running `cargo fmt --all -- --check`,
+- [x] Add a `windows-latest` job running `cargo fmt --all -- --check`,
   `cargo check --workspace --all-targets`, `cargo clippy --workspace
   --all-targets -- -D warnings`, and `cargo test --workspace`. Keep
   `--all-features` jobs Linux-only for now; `--all-features` implies the
   native GStreamer adapter, which needs the MSVC runtime installed.
-- [ ] Run the Slint GUI smoke test (`cargo run -p obs-rs-gui -- --smoke`)
+- [x] Run the Slint GUI smoke test (`cargo run -p obs-rs-gui -- --smoke`)
   on the Windows job once it does not depend on X11-only fixtures.
-- [ ] Fix or explicitly allow the remaining Windows-only warnings in
+- [x] Fix or explicitly allow the remaining Windows-only warnings in
   `obs-rs-capture` (`provider.rs` unused imports) and `obs-rs-engine`
   (unused `frame` parameter on the non-GStreamer path) so `-D warnings`
   passes.
 
 ## Phase 2 - Runtime parity
 
-- [ ] Audio input: add `obs-rs-audio-wasapi` implementing the existing
+- [x] Audio input: add `obs-rs-audio-wasapi` implementing the existing
   `AudioInputProvider`/`AudioInput` contracts over WASAPI (shared mode,
   pull model via event handles is acceptable). Discovery reports stable
   device IDs; failure types map onto `AudioDeviceError`. The deterministic
   fallback provider stays the default until the adapter is injected.
-- [ ] Screen/window capture: implement the `obs-rs-capture-windows-helper`
+- [x] Screen/window capture: implement the `obs-rs-capture-windows-helper`
   executable that `WindowsCaptureAdapter` already launches and speaks to
   (`OBSRWIN1` protocol): Windows Graphics Capture for screens/windows,
   Media Foundation for cameras, writing bounded `OBSFRM01` RGBA packets to
   stdout. The helper lives outside the workspace (it owns the COM/D3D
   boundary) and ships as a separate binary; the repository keeps its
   no-native-source rule.
-- [ ] Display picker: give the monitor window a Windows backend that lists
+- [x] Display picker: give the monitor window a Windows backend that lists
   displays from the capture helper's discovery, then un-gate the
   `exercise_monitor_selection` GUI test for Windows.
-- [ ] Production output (optional): document installing GStreamer MSVC
+- [x] Production output (optional): document installing GStreamer MSVC
   runtime + development packages and expose the `production-gstreamer`
   feature on Windows builds that want RTMP/SRT/WebRTC/HLS output. The
   reference packet outputs work everywhere without it.
 
 ## Phase 3 - Application-level polish
 
-- [ ] Settings: default recording directory and helper lookup paths use
+- [x] Settings: default recording directory and helper lookup paths use
   `%APPDATA%`/`%LOCALAPPDATA%` instead of `/tmp`-style defaults.
-- [ ] Packaging: an MSI or portable zip layout that places the capture
+- [x] Packaging: an MSI or portable zip layout that places the capture
   helper next to the GUI executable and registers the uninstall entry.
-- [ ] Diagnostics: include Windows version, GPU adapter name, and capture
+- [x] Diagnostics: include Windows version, GPU adapter name, and capture
   helper version in the bounded diagnostics bundle.
 - [ ] Acceptance: the GUI runs a real screen capture session end to end on
   Windows, records an `OBSRPKT1` file from it, and the full test suite
   passes in CI on both platforms.
+
+The real Windows desktop capture portion was exercised locally: the helper
+captured the physical display and the engine committed a valid `OBSRPKT1`
+file. The remaining acceptance dependency is the hosted CI run on both
+platforms.

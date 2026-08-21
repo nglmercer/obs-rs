@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
 
 pub const MAX_PROJECT_BYTES: usize = 1_048_576;
 

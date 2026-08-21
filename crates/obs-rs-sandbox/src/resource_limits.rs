@@ -24,6 +24,7 @@ impl Default for SandboxResourceLimits {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 pub(crate) fn limited_command(
     executable: &Path,
     arguments: &[String],

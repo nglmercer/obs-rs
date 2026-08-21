@@ -111,7 +111,14 @@ impl RecordingFormat {
 /// another directory looked like it had lost every setting, so the default is
 /// the XDG config directory. A file that already exists in the working
 /// directory still wins, which keeps existing installs working unchanged.
+/// Windows uses `%APPDATA%` and falls back to `%LOCALAPPDATA%`.
 pub(crate) fn user_directory() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("APPDATA")
+        .or_else(|| std::env::var_os("LOCALAPPDATA"))
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())?;
+    #[cfg(not(target_os = "windows"))]
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
@@ -306,7 +313,7 @@ pub(crate) struct AppSettings {
     pub(crate) hls: HlsConfig,
     pub(crate) rist: RistConfig,
     pub(crate) reference_address: String,
-    /// Provider-stable `PipeWire` input ID; empty selects the first available
+    /// Provider-stable platform input ID; empty selects the first available
     /// input and keeps the deterministic fallback as a safe last resort.
     pub(crate) audio_input_id: String,
     /// Reopen the project file from [`AppSettings::project_path`] at startup.
@@ -580,8 +587,10 @@ impl AppSettings {
         let Ok(config) = Config::parse(&document) else {
             // An existing but malformed document should not trap a user in the
             // wizard. The regular settings loader still falls back safely.
-            let mut settings = Self::default();
-            settings.setup_state = SetupState::Completed;
+            let settings = Self {
+                setup_state: SetupState::Completed,
+                ..Self::default()
+            };
             return SettingsLoad {
                 settings,
                 show_setup: false,
@@ -1049,11 +1058,21 @@ fn video_from_config(config: &Config, defaults: VideoSettings) -> VideoSettings 
 /// shell fragment, not a config document — so the home directory's `Videos`
 /// folder is used when it already exists and the per-user directory otherwise.
 fn default_recording_directory() -> String {
+    #[cfg(target_os = "windows")]
+    let videos = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|home| home.join("Videos"))
+        .filter(|path| path.is_dir());
+    #[cfg(not(target_os = "windows"))]
     let videos = std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| home.join("Videos"))
         .filter(|path| path.is_dir());
-    videos.or_else(user_directory).map_or_else(
+    #[cfg(target_os = "windows")]
+    let fallback = || user_directory().map(|path| path.join("recordings"));
+    #[cfg(not(target_os = "windows"))]
+    let fallback = user_directory;
+    videos.or_else(fallback).map_or_else(
         || ".".to_owned(),
         |path| path.to_string_lossy().into_owned(),
     )
@@ -1787,9 +1806,11 @@ mod tests {
 
     #[test]
     fn setup_state_round_trips_and_legacy_documents_do_not_open_the_wizard() {
-        let mut settings = AppSettings::default();
-        settings.setup_state = SetupState::Skipped;
-        settings.setup_benchmark_summary = "recommended=720p30".to_owned();
+        let settings = AppSettings {
+            setup_state: SetupState::Skipped,
+            setup_benchmark_summary: "recommended=720p30".to_owned(),
+            ..AppSettings::default()
+        };
         let decoded = AppSettings::from_config(&settings.to_config());
         assert_eq!(decoded.setup_state, SetupState::Skipped);
         assert_eq!(

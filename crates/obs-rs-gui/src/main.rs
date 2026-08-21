@@ -47,14 +47,14 @@ pub(crate) use callbacks::{
     install_source_transform_window, item_rect, start_preview_timer, PeerWindows,
     ProjectorController,
 };
+#[cfg(target_os = "linux")]
+pub(crate) use fixtures::kind_uses_portal;
 pub(crate) use fixtures::{
     capture_devices, initial_project, kind_runs_in_this_session, kind_selects_monitor,
     platform_capture_summary, source_settings,
 };
-#[cfg(target_os = "linux")]
-pub(crate) use fixtures::kind_uses_portal;
 pub(crate) use output::OutputRuntime;
-pub(crate) use preview::{frame_to_image, PreviewSurface};
+pub(crate) use preview::{frame_to_image, PreviewSurface, RuntimeDiagnostics};
 pub(crate) use preview_worker::PreviewWorker;
 pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames_for_view, refresh_ui,
@@ -82,6 +82,7 @@ pub(crate) const MIC_CHANNEL_ID: &str = "mic";
 /// it is capturing so a silent meter is never mistaken for a broken one.
 pub(crate) const DESKTOP_CHANNEL_ID: &str = "desktop";
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<(), Box<dyn Error>> {
     let smoke = std::env::args().any(|argument| argument == "--smoke");
     // `--settings-screenshot <page> [file]` renders one settings page through

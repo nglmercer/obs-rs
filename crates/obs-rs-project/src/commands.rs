@@ -566,13 +566,13 @@ fn paste_scene_item(
         let scene = profile
             .scene(&scene_id)
             .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
-        if !scene.has_item(item.id()) {
-            item.id().clone()
-        } else {
+        if scene.has_item(item.id()) {
             copy_identity(item.id().as_str(), item.id().as_str(), |candidate| {
                 scene.has_item(candidate)
             })?
             .0
+        } else {
+            item.id().clone()
         }
     };
 

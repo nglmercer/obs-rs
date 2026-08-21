@@ -5,6 +5,10 @@ edition.workspace = true
 publish.workspace = true
 version.workspace = true
 
+[features]
+default = []
+production-gstreamer = ["obs-rs-engine/production-gstreamer"]
+
 [dependencies]
 i-slint-backend-testing = { version = "=1.17.1", default-features = false, features = [
     "renderer-software",
@@ -37,5 +41,6 @@ slint = { version = "1.17.1", default-features = false, features = [
 [build-dependencies]
 slint-build = "=1.17.1"
 
-[target.'cfg(not(windows))'.dependencies]
-obs-rs-engine = { path = "../obs-rs-engine", features = ["production-gstreamer"] }
+[target.'cfg(target_os = "windows")'.dependencies]
+obs-rs-audio-wasapi = { path = "../obs-rs-audio-wasapi" }
+obs-rs-capture-windows = { path = "../obs-rs-capture-windows" }

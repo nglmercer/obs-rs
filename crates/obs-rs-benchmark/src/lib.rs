@@ -6,8 +6,9 @@
 
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
 
-use std::{fmt::Display, fs, time::Instant};
+use std::{fmt::Display, fmt::Write as _, fs, time::Instant};
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_config::Config;
@@ -104,10 +105,11 @@ impl SetupBenchmarkReport {
                     metrics.dropped_frames,
                 )
             });
-            summary.push_str(&format!(
+            let _ = write!(
+                summary,
                 " | {}:tier={},score={},p95_ns={},missed={},dropped={}",
                 candidate.label, candidate.tier, candidate.score, p95, missed, dropped
-            ));
+            );
         }
         summary.truncate(4_096);
         summary
@@ -419,13 +421,7 @@ fn rank_candidate(format: VideoFormat, metrics: SetupCandidateMetrics) -> (u8, u
         && metrics.dropped_frames == 0
         && metrics.render_p95_nanos <= frame_budget;
     let usable = metrics.render_p95_nanos <= frame_budget.saturating_mul(3) / 2;
-    let tier = if stable {
-        2
-    } else if usable {
-        1
-    } else {
-        0
-    };
+    let tier = if stable { 2 } else { u8::from(usable) };
     let pixels = u64::from(format.width()).saturating_mul(u64::from(format.height()));
     let score = pixels
         .saturating_mul(u64::from(format.frame_rate().numerator()))

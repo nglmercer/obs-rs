@@ -7,6 +7,8 @@ use std::{
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_capture::{CameraMode, CaptureDeviceInfo, CaptureKind};
+#[cfg(target_os = "windows")]
+use obs_rs_capture_windows::WindowsCaptureAdapter;
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, VideoFormat};
 use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
@@ -18,11 +20,11 @@ use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 const PLATFORM_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(1);
 const CAMERA_MODE_CACHE_TTL: Duration = Duration::from_secs(5);
 
-static PLATFORM_DISCOVERY_CACHE: OnceLock<
-    Mutex<BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>>,
-> = OnceLock::new();
-static CAMERA_MODE_CACHE: OnceLock<Mutex<BTreeMap<String, (Instant, Vec<CameraMode>)>>> =
-    OnceLock::new();
+type PlatformDiscoveryCache = Mutex<BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>>;
+type CameraModeCache = Mutex<BTreeMap<String, (Instant, Vec<CameraMode>)>>;
+
+static PLATFORM_DISCOVERY_CACHE: OnceLock<PlatformDiscoveryCache> = OnceLock::new();
+static CAMERA_MODE_CACHE: OnceLock<CameraModeCache> = OnceLock::new();
 
 fn platform_devices_for_kind(kind: CaptureKind) -> Vec<CaptureDeviceInfo> {
     let cache = PLATFORM_DISCOVERY_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
@@ -113,7 +115,13 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
     let kind = kind.trim();
     if matches!(kind, "screen_capture" | "window_capture" | "camera_capture") {
         let fallback = match kind {
+            #[cfg(target_os = "windows")]
+            "screen_capture" => "wgc-screen-picker",
+            #[cfg(not(target_os = "windows"))]
             "screen_capture" => "screen-0",
+            #[cfg(target_os = "windows")]
+            "window_capture" => "wgc-window-picker",
+            #[cfg(not(target_os = "windows"))]
             "window_capture" => "window-0",
             "camera_capture" => "camera-0",
             _ => unreachable!("kind was checked above"),
@@ -129,6 +137,10 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
             devices.first().map_or(fallback, |(id, _)| id.as_str())
         };
         settings.set("device_id", device_id)?;
+        #[cfg(target_os = "windows")]
+        if kind == "screen_capture" {
+            settings.set("monitor", "")?;
+        }
         if kind == "camera_capture" {
             if let Some(mode) = camera_modes_for_device(device_id).first().copied() {
                 settings.set("capture_width", &mode.width().to_string())?;
@@ -173,7 +185,12 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
 }
 
 /// Source kinds whose frames come from one selectable display.
+#[cfg(target_os = "linux")]
 pub(crate) const MONITOR_SOURCE_KINDS: [&str; 2] = ["x11_screen_capture", "wayland_screen_capture"];
+#[cfg(target_os = "windows")]
+pub(crate) const MONITOR_SOURCE_KINDS: [&str; 1] = ["screen_capture"];
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub(crate) const MONITOR_SOURCE_KINDS: [&str; 0] = [];
 
 /// Returns whether `kind` reads a display the user can choose.
 pub(crate) fn kind_selects_monitor(kind: &str) -> bool {
@@ -266,7 +283,27 @@ pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
 
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
-    Vec::new()
+    #[cfg(target_os = "windows")]
+    {
+        WindowsCaptureAdapter::default()
+            .discover_displays()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|display| MonitorChoice {
+                id: display.id,
+                name: display.name,
+                x: display.x,
+                y: display.y,
+                width: display.width,
+                height: display.height,
+                primary: display.primary,
+            })
+            .collect()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
 }
 
 /// Returns the devices that a source-properties editor can select.
@@ -287,21 +324,32 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let Ok(plugin) = BuiltinPlugin::new() else {
         return Vec::new();
     };
-    let mut devices = if matches!(kind, "x11_screen_capture" | "x11_window_capture") {
-        platform_devices_for_kind(wanted)
-            .into_iter()
-            .filter(|device| device.kind() == wanted)
-            .map(|device| (device.id().to_string(), device.name().to_owned()))
-            .collect::<Vec<_>>()
-    } else {
-        plugin
-            .discover_capture_devices()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|device| device.kind() == wanted)
-            .map(|device| (device.id().to_string(), device.name().to_owned()))
-            .collect::<Vec<_>>()
+    let native_generic = {
+        #[cfg(target_os = "windows")]
+        {
+            matches!(kind, "screen_capture" | "window_capture")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
     };
+    let mut devices =
+        if native_generic || matches!(kind, "x11_screen_capture" | "x11_window_capture") {
+            platform_devices_for_kind(wanted)
+                .into_iter()
+                .filter(|device| device.kind() == wanted)
+                .map(|device| (device.id().to_string(), device.name().to_owned()))
+                .collect::<Vec<_>>()
+        } else {
+            plugin
+                .discover_capture_devices()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|device| device.kind() == wanted)
+                .map(|device| (device.id().to_string(), device.name().to_owned()))
+                .collect::<Vec<_>>()
+        };
     if kind == "camera_capture" {
         devices.extend(
             platform_devices_for_kind(wanted)

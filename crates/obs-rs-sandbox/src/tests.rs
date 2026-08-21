@@ -1,15 +1,19 @@
-use std::{
-    fmt::Write,
-    path::Path,
-    time::{SystemTime, UNIX_EPOCH},
-};
+#[cfg(unix)]
+use std::fmt::Write;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
 use ed25519_dalek::SigningKey;
+#[cfg(unix)]
 use obs_rs_capture::encode_frame_packet;
+#[cfg(unix)]
 use obs_rs_config::Config;
+#[cfg(unix)]
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
-use obs_rs_plugin_api::{Plugin, PluginManifest, VideoRequest};
+#[cfg(unix)]
+use obs_rs_plugin_api::VideoRequest;
+use obs_rs_plugin_api::{Plugin, PluginManifest};
 use obs_rs_util::Identifier;
 
 fn manifest() -> SandboxedPluginManifest {

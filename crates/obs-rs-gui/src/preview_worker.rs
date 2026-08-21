@@ -480,7 +480,10 @@ mod tests {
         );
 
         let mut result = None;
-        for _ in 0..100 {
+        // Parallel GUI tests may initialize several WGPU adapters at once;
+        // keep the wait bounded while allowing a cold Windows renderer to
+        // finish startup under that contention.
+        for _ in 0..500 {
             result = worker.try_take_latest();
             if result.is_some() {
                 break;

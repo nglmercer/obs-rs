@@ -73,6 +73,10 @@ pub(crate) struct RuntimeDiagnostics {
     pub(crate) metrics: CompositorMetrics,
     pub(crate) usage: RuntimeUsage,
     pub(crate) limits: RuntimeLimits,
+    /// GPU adapter selected by the compositor, or the CPU fallback label.
+    pub(crate) gpu_adapter: String,
+    /// WGPU backend name, or the CPU fallback reason.
+    pub(crate) gpu_backend: String,
     /// One line per source that is currently failing.
     pub(crate) failures: Vec<String>,
 }
@@ -168,6 +172,21 @@ impl PreviewCompositor {
             Err(error) => Self::Cpu {
                 reason: Some(error.to_string()),
             },
+        }
+    }
+
+    fn diagnostics(&self) -> (String, String) {
+        match self {
+            Self::Wgpu { backend, .. } => (
+                backend.adapter_capabilities().name().to_owned(),
+                backend.adapter_capabilities().backend().to_owned(),
+            ),
+            Self::Cpu { reason } => (
+                "CPU fallback".to_owned(),
+                reason
+                    .clone()
+                    .unwrap_or_else(|| "CPU compositor".to_owned()),
+            ),
         }
     }
 }
@@ -487,10 +506,13 @@ impl PreviewRenderer {
 
     /// Returns the engine snapshot the studio window shows.
     pub(crate) fn diagnostics(&self) -> RuntimeDiagnostics {
+        let (gpu_adapter, gpu_backend) = self.compositor.diagnostics();
         RuntimeDiagnostics {
             metrics: self.runtime.compositor_metrics(),
             usage: self.runtime.usage(),
             limits: self.runtime.limits(),
+            gpu_adapter,
+            gpu_backend,
             failures: self
                 .runtime
                 .source_failures()

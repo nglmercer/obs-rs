@@ -68,7 +68,7 @@ impl MonitorController {
         self.window.global::<Palette>().set_tokens(tokens);
     }
 
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(crate) fn window(&self) -> &MonitorWindow {
         &self.window
     }
@@ -464,6 +464,17 @@ fn monitor_document(
         let _ = settings.set("display", &display);
     }
     settings.set("monitor", monitor).ok()?;
+    #[cfg(target_os = "windows")]
+    settings
+        .set(
+            "device_id",
+            if monitor.trim().is_empty() {
+                "wgc-screen-picker"
+            } else {
+                monitor
+            },
+        )
+        .ok()?;
     Some(settings.serialize())
 }
 

@@ -1,0 +1,13 @@
+[package]
+name = "obs-rs-capture-windows-helper"
+description = "Native Windows Graphics Capture and Media Foundation helper for OBS-RS"
+edition = "2021"
+publish = false
+version = "0.1.0"
+
+[workspace]
+
+[dependencies]
+obs-rs-capture = { path = "../../../crates/obs-rs-capture" }
+obs-rs-media = { path = "../../../crates/obs-rs-media" }
+windows-capture = "2.0.1"

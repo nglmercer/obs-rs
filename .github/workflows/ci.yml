@@ -3,6 +3,7 @@ name: obs-rs quality
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,3 +44,38 @@ jobs:
 
       - name: Build release artifacts
         run: cargo build --workspace --release
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Run the Slint GUI wiring smoke test
+        run: cargo run -p obs-rs-gui -- --smoke
+
+      - name: Build the Windows capture helper
+        run: cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --release
+
+      - name: Check capture helper formatting
+        run: cargo fmt --manifest-path packaging/windows/capture-helper/Cargo.toml -- --check
+
+      - name: Run capture helper Clippy
+        run: cargo clippy --manifest-path packaging/windows/capture-helper/Cargo.toml -- -D warnings

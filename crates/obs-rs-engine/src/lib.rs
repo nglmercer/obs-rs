@@ -32,11 +32,11 @@ use obs_rs_output::{
     StreamMetrics, StreamSession, StreamState, StreamTarget, TcpPacketTransport, VideoEncoder,
     VideoEncoderConfig, VideoInputRequirement, WebSocketPacketTransport,
 };
+use obs_rs_output_gstreamer::GStreamerCapabilitySnapshot;
 pub use obs_rs_output_gstreamer::{
     AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
     VideoEncoderCapability,
 };
-use obs_rs_output_gstreamer::GStreamerCapabilitySnapshot;
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output_gstreamer::{
     GStreamerError, GStreamerOutputSession, NativeOutputState, ProductionDestination,
@@ -499,7 +499,13 @@ impl RecordingOutput {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(clippy::unnecessary_wraps)
+    )]
     fn push_raw_video(&mut self, frame: &RawVideoFrame) -> Result<(), EngineError> {
+        #[cfg(not(feature = "production-gstreamer"))]
+        let _ = frame;
         match self {
             Self::Reference(_) => Ok(()),
             #[cfg(feature = "production-gstreamer")]
