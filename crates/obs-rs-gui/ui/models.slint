@@ -52,7 +52,10 @@
         pan: float,
         // Logarithmic full-scale value used by the operator-facing VU meter.
         peak-db: float,
+        // Held peak indicator follows the bounded Rust-owned meter ballistics.
+        peak-hold-db: float,
         muted: bool,
+        clipped: bool,
     }
 
     // One leaf projection of the Rust-owned dock tree. Coordinates are

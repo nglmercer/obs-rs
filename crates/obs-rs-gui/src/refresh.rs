@@ -432,7 +432,9 @@ pub(crate) fn refresh_mixer_rows(ui: &MainWindow, state: &DesktopState) {
             gain: f32::from(channel.gain_milli()) / 1_000.0,
             pan: f32::from(i16::try_from(channel.pan_milli()).unwrap_or(0)) / 1_000.0,
             peak_db: peak_db(channel.peak_milli()),
+            peak_hold_db: peak_db(channel.peak_hold_milli()),
             muted: channel.muted(),
+            clipped: channel.clipped(),
         })
         .collect::<Vec<_>>();
     if !model_matches(&ui.get_mixer_rows(), &mixer_rows) {

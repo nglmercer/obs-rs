@@ -145,6 +145,8 @@ pub(crate) fn default_mixer() -> (
                 pan_milli: 0,
                 muted: false,
                 peak_milli: 0,
+                peak_hold_milli: 0,
+                clipped: false,
             },
         );
     }

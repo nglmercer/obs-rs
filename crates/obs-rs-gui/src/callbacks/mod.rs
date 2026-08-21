@@ -307,18 +307,31 @@ fn refresh_input_meter(
     }
     // A fallback generator is not the user's microphone, so its level must not
     // be shown as if the input were live.
-    let peak = if output.borrow().audio_is_fallback() {
-        0
-    } else {
-        output.borrow().input_peak_milli()
+    let (input_meter, desktop_meter) = {
+        let output = output.borrow();
+        let input_meter = if output.audio_is_fallback() {
+            (0, 0, false)
+        } else {
+            output.input_meter()
+        };
+        (input_meter, output.desktop_meter())
     };
-    let desktop_peak = output.borrow().desktop_peak_milli();
     let mut state_guard = state.borrow_mut();
     let changed = state_guard
-        .set_channel_peak_milli(crate::MIC_CHANNEL_ID, peak)
+        .set_channel_meter(
+            crate::MIC_CHANNEL_ID,
+            input_meter.0,
+            input_meter.1,
+            input_meter.2,
+        )
         .is_ok()
         | state_guard
-            .set_channel_peak_milli(crate::DESKTOP_CHANNEL_ID, desktop_peak)
+            .set_channel_meter(
+                crate::DESKTOP_CHANNEL_ID,
+                desktop_meter.0,
+                desktop_meter.1,
+                desktop_meter.2,
+            )
             .is_ok();
     drop(state_guard);
     if changed {

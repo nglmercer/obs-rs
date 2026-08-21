@@ -233,6 +233,10 @@ pub struct EngineStats {
     pub audio_peak_milli: u16,
     pub desktop_peak_milli: u16,
     pub microphone_peak_milli: u16,
+    pub desktop_peak_hold_milli: u16,
+    pub microphone_peak_hold_milli: u16,
+    pub desktop_clipped: bool,
+    pub microphone_clipped: bool,
     pub video_encode_latency: LatencyMetrics,
     pub audio_encode_latency: LatencyMetrics,
     pub output_submit_latency: LatencyMetrics,
@@ -2002,8 +2006,6 @@ impl EngineSession {
             let mut desktop = self.read_desktop_block(deadline.timestamp())?;
             self.microphone_audio_filters.apply(&mut input)?;
             self.desktop_audio_filters.apply(&mut desktop)?;
-            self.stats.desktop_peak_milli = audio_peak_milli(&desktop);
-            self.stats.microphone_peak_milli = audio_peak_milli(&input);
             let mixed = self.mixer.mix(
                 deadline.timestamp(),
                 self.config.audio_block_frames,
@@ -2012,6 +2014,19 @@ impl EngineSession {
                     (self.microphone_audio_source, &input),
                 ],
             )?;
+            self.stats.desktop_peak_milli =
+                self.mixer.source_peak_milli(self.desktop_audio_source)?;
+            self.stats.microphone_peak_milli =
+                self.mixer.source_peak_milli(self.microphone_audio_source)?;
+            self.stats.desktop_peak_hold_milli = self
+                .mixer
+                .source_peak_hold_milli(self.desktop_audio_source)?;
+            self.stats.microphone_peak_hold_milli = self
+                .mixer
+                .source_peak_hold_milli(self.microphone_audio_source)?;
+            self.stats.desktop_clipped = self.mixer.source_clipped(self.desktop_audio_source)?;
+            self.stats.microphone_clipped =
+                self.mixer.source_clipped(self.microphone_audio_source)?;
             self.stats.audio_blocks = self.stats.audio_blocks.saturating_add(1);
             if self.audio_fallback {
                 self.stats.audio_fallback_blocks =
@@ -3155,6 +3170,11 @@ mod tests {
             stats.microphone_peak_milli > 0,
             "the deterministic input drives only the microphone node"
         );
+        assert_eq!(
+            stats.microphone_peak_hold_milli, stats.microphone_peak_milli,
+            "the live meter publishes its held peak from the same mixer source"
+        );
+        assert!(!stats.microphone_clipped);
     }
 
     #[test]

@@ -75,12 +75,16 @@ export component MixerDock inherits Rectangle {
                                     overflow: elide;
                                 }
                                 Text {
-                                    text: channel.muted
-                                        ? "MUTE"
-                                        : round(channel.peak-db * 10) / 10 + " dB";
-                                    color: channel.peak-db > -6
-                                        ? #ef4444
-                                        : (channel.peak-db > -18 ? #eab308 : Palette.tokens.text-muted);
+                                    text: channel.clipped
+                                        ? "CLIP"
+                                        : (channel.muted
+                                            ? "MUTE"
+                                            : round(channel.peak-db * 10) / 10 + " dB");
+                                    color: channel.clipped
+                                        ? #ffffff
+                                        : (channel.peak-db > -6
+                                            ? #ef4444
+                                            : (channel.peak-db > -18 ? #eab308 : Palette.tokens.text-muted));
                                     font-size: 9px;
                                 }
                             }
@@ -127,6 +131,12 @@ export component MixerDock inherits Rectangle {
                                         : (channel.peak-db > -6
                                             ? #ef4444
                                             : (channel.peak-db > -18 ? #eab308 : Palette.tokens.meter));
+                                }
+                                Rectangle {
+                                    x: Math.clamp((channel.peak-hold-db + 60) / 60, 0, 1) * parent.width - 1px;
+                                    width: 2px;
+                                    height: 100%;
+                                    background: channel.clipped ? #ffffff : Palette.tokens.text;
                                 }
                                 Rectangle { x: parent.width * 0.7; width: 1px; height: 100%; background: Palette.tokens.border-strong; }
                                 Rectangle { x: parent.width * 0.9; width: 1px; height: 100%; background: Palette.tokens.border-strong; }

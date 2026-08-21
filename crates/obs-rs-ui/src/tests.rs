@@ -367,6 +367,56 @@ fn mixer_updates_visible_peak_meters_from_real_audio() {
             .peak_milli(),
         750
     );
+    assert_eq!(
+        state
+            .mixer_channels()
+            .find(|channel| channel.id() == "desktop")
+            .expect("desktop channel")
+            .peak_hold_milli(),
+        750
+    );
+    assert!(!state
+        .mixer_channels()
+        .find(|channel| channel.id() == "desktop")
+        .expect("desktop channel")
+        .clipped());
+}
+
+#[test]
+fn mixer_meter_state_exposes_clip_flash_and_peak_hold() {
+    let mut state = DesktopState::new(project());
+    let loud = AudioBuffer::new(
+        AudioFormat::new(48_000, 2).expect("audio format"),
+        Timestamp::ZERO,
+        vec![1.5; 8],
+    )
+    .expect("loud input");
+    state
+        .mix_audio(Timestamp::ZERO, 4, &[("desktop", &loud)])
+        .expect("loud mix");
+    let desktop = state
+        .mixer_channels()
+        .find(|channel| channel.id() == "desktop")
+        .expect("desktop channel");
+    assert_eq!(desktop.peak_milli(), 1_000);
+    assert_eq!(desktop.peak_hold_milli(), 1_000);
+    assert!(desktop.clipped());
+
+    let quiet = AudioBuffer::new(
+        AudioFormat::new(48_000, 2).expect("audio format"),
+        Timestamp::from_millis(500),
+        vec![0.1; 8],
+    )
+    .expect("quiet input");
+    state
+        .mix_audio(Timestamp::from_millis(500), 4, &[("desktop", &quiet)])
+        .expect("quiet mix");
+    let desktop = state
+        .mixer_channels()
+        .find(|channel| channel.id() == "desktop")
+        .expect("desktop channel");
+    assert_eq!(desktop.peak_hold_milli(), 1_000);
+    assert!(desktop.clipped());
 }
 
 #[test]

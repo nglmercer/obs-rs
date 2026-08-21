@@ -12,11 +12,18 @@ pub const MIN_PAN_MILLI: i32 = -1_000;
 /// Upper bound of the fixed-point stereo pan control (`1.0`, full right).
 pub const MAX_PAN_MILLI: i32 = 1_000;
 
+const CLIP_FLASH_DURATION_NANOS: u64 = 1_000_000_000;
+const PEAK_HOLD_DURATION_NANOS: u64 = 20_000_000_000;
+
 struct SourceControl {
     gain: f32,
     muted: bool,
     pan: f32,
     peak_milli: u16,
+    peak_hold_milli: u16,
+    peak_hold_at: Timestamp,
+    clipped: bool,
+    clipped_at: Timestamp,
 }
 
 /// A deterministic mixer for registered audio sources.
@@ -63,6 +70,10 @@ impl AudioMixer {
                 muted: false,
                 pan: 0.0,
                 peak_milli: 0,
+                peak_hold_milli: 0,
+                peak_hold_at: Timestamp::ZERO,
+                clipped: false,
+                clipped_at: Timestamp::ZERO,
             },
         );
         Ok(id)
@@ -343,6 +354,8 @@ impl AudioMixer {
             }
         }
 
+        self.reset_meter_state(timestamp);
+
         let mixed = output.samples_mut();
         mixed.fill(0.0);
 
@@ -352,9 +365,6 @@ impl AudioMixer {
             };
             let (gain, muted, pan) = (control.gain, control.muted, control.pan);
             if muted {
-                if let Some(control) = self.sources.get_mut(source) {
-                    control.peak_milli = 0;
-                }
                 continue;
             }
 
@@ -397,9 +407,7 @@ impl AudioMixer {
                     })
                 })
                 .fold(0.0_f32, f32::max);
-            if let Some(control) = self.sources.get_mut(source) {
-                control.peak_milli = peak_to_milli(peak);
-            }
+            self.update_source_meter(*source, timestamp, peak);
         }
 
         for sample in mixed.iter_mut() {
@@ -410,6 +418,44 @@ impl AudioMixer {
         }
         output.set_timestamp(timestamp);
         Ok(())
+    }
+
+    // Meter ballistics live with the source state, not in the GUI. This keeps
+    // every consumer on the same bounded telemetry and lets a quiet block
+    // expire old indicators.
+    fn reset_meter_state(&mut self, timestamp: Timestamp) {
+        for control in self.sources.values_mut() {
+            control.peak_milli = 0;
+            let elapsed = timestamp
+                .as_nanos()
+                .saturating_sub(control.peak_hold_at.as_nanos());
+            if elapsed > PEAK_HOLD_DURATION_NANOS {
+                control.peak_hold_milli = 0;
+                control.peak_hold_at = timestamp;
+            }
+            let clip_elapsed = timestamp
+                .as_nanos()
+                .saturating_sub(control.clipped_at.as_nanos());
+            if clip_elapsed >= CLIP_FLASH_DURATION_NANOS {
+                control.clipped = false;
+            }
+        }
+    }
+
+    fn update_source_meter(&mut self, source: AudioSourceId, timestamp: Timestamp, peak: f32) {
+        let Some(control) = self.sources.get_mut(&source) else {
+            return;
+        };
+        let peak_milli = peak_to_milli(peak);
+        control.peak_milli = peak_milli;
+        if peak_milli >= control.peak_hold_milli {
+            control.peak_hold_milli = peak_milli;
+            control.peak_hold_at = timestamp;
+        }
+        if peak >= 1.0 {
+            control.clipped = true;
+            control.clipped_at = timestamp;
+        }
     }
 
     /// Returns the mixer format.
@@ -433,6 +479,34 @@ impl AudioMixer {
         self.sources
             .get(&source)
             .map(|control| control.peak_milli)
+            .ok_or(AudioError::UnknownSource(source))
+    }
+
+    /// Returns the latest held peak for one source.
+    ///
+    /// The hold is updated immediately by a higher peak and expires after a
+    /// bounded quiet interval. The duration follows the OBS 32.2.2 desktop
+    /// meter's peak-hold profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::UnknownSource`] for an unknown source.
+    pub fn source_peak_hold_milli(&self, source: AudioSourceId) -> Result<u16, AudioError> {
+        self.sources
+            .get(&source)
+            .map(|control| control.peak_hold_milli)
+            .ok_or(AudioError::UnknownSource(source))
+    }
+
+    /// Returns whether one source is within its bounded clip indication flash.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::UnknownSource`] for an unknown source.
+    pub fn source_clipped(&self, source: AudioSourceId) -> Result<bool, AudioError> {
+        self.sources
+            .get(&source)
+            .map(|control| control.clipped)
             .ok_or(AudioError::UnknownSource(source))
     }
 }

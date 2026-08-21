@@ -374,6 +374,18 @@ This uses the allocation-free maximum-absolute-sample detector and stateful
 linear attack/hold/release envelope from the bounded Noise Gate core. RMS,
 sidechain, and native Speex/RNNoise suppression processing are not included.
 
+The mixer telemetry timing probe reports 200 blocks of 480 stereo frames in
+the release build at 2026-08-21:
+
+```text
+cargo test --release -p obs-rs-audio mixer_block_timing_report -- --nocapture
+mixer: 200 blocks x 480 stereo frames = 1.245127 ms (6.225 us/block)
+```
+
+This uses the allocation-free caller-owned output path and includes bounded
+peak, peak-hold, and clip-indicator bookkeeping. Monitor taps are intentionally
+not registered in this probe because they retain shared snapshots by contract.
+
 The preview worker is bounded: pending requests and published results are
 capacity-one latest-value slots. The desktop timer requests at most 60 Hz while
 an output is active and 30 Hz while idle; visibility/minimized suspension is

@@ -508,16 +508,26 @@ impl OutputRuntime {
         self.audio_input_id.as_deref()
     }
 
-    /// Returns the live input peak in thousandths of full scale.
-    ///
-    /// This is what the mixer meter shows: the engine measures it on the block
-    /// it actually captured, so the meter moves with the real microphone.
-    pub(crate) fn input_peak_milli(&self) -> u16 {
-        self.worker.snapshot().engine.stats.microphone_peak_milli
+    /// Returns the live microphone meter tuple: current peak, held peak, and
+    /// the bounded clip indication.
+    pub(crate) fn input_meter(&self) -> (u16, u16, bool) {
+        let stats = self.worker.snapshot().engine.stats;
+        (
+            stats.microphone_peak_milli,
+            stats.microphone_peak_hold_milli,
+            stats.microphone_clipped,
+        )
     }
 
-    pub(crate) fn desktop_peak_milli(&self) -> u16 {
-        self.worker.snapshot().engine.stats.desktop_peak_milli
+    /// Returns the live desktop-audio meter tuple: current peak, held peak,
+    /// and the bounded clip indication.
+    pub(crate) fn desktop_meter(&self) -> (u16, u16, bool) {
+        let stats = self.worker.snapshot().engine.stats;
+        (
+            stats.desktop_peak_milli,
+            stats.desktop_peak_hold_milli,
+            stats.desktop_clipped,
+        )
     }
 
     /// Returns whether the engine is running on the deterministic fallback

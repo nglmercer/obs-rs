@@ -58,6 +58,8 @@ pub struct MixerChannel {
     pub(crate) pan_milli: i32,
     pub(crate) muted: bool,
     pub(crate) peak_milli: u16,
+    pub(crate) peak_hold_milli: u16,
+    pub(crate) clipped: bool,
 }
 
 impl MixerChannel {
@@ -95,6 +97,18 @@ impl MixerChannel {
     #[must_use]
     pub const fn peak_milli(&self) -> u16 {
         self.peak_milli
+    }
+
+    /// Returns the latest bounded held peak meter value in thousandths.
+    #[must_use]
+    pub const fn peak_hold_milli(&self) -> u16 {
+        self.peak_hold_milli
+    }
+
+    /// Returns whether the channel is within its bounded clip indication.
+    #[must_use]
+    pub const fn clipped(&self) -> bool {
+        self.clipped
     }
 }
 

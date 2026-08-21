@@ -156,6 +156,11 @@ fn mixer_applies_gain_mute_and_clamp() {
         .expect("mix succeeds");
     assert_eq!(output.timestamp(), Timestamp::from_millis(10));
     assert_eq!(output.samples(), &[1.0, -1.0]);
+    assert_eq!(mixer.source_peak_milli(loud), Ok(1_000));
+    assert_eq!(mixer.source_peak_hold_milli(loud), Ok(1_000));
+    assert_eq!(mixer.source_clipped(loud), Ok(true));
+    assert_eq!(mixer.source_peak_milli(muted), Ok(0));
+    assert_eq!(mixer.source_clipped(muted), Ok(false));
 }
 
 #[test]
@@ -176,6 +181,72 @@ fn mixer_applies_stereo_pan_and_rejects_invalid_values() {
         .mix(Timestamp::ZERO, 1, &[(source, &buffer(&[0.75, 0.5]))])
         .expect("mix succeeds");
     assert_eq!(output.samples(), &[0.0, 0.5]);
+}
+
+#[test]
+fn mixer_block_timing_report() {
+    let mut mixer = AudioMixer::new(format());
+    let source = mixer.add_source(1.0).expect("source");
+    let input =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.1; 480 * 2]).expect("audio input");
+    let mut output = AudioBuffer::silence(format(), Timestamp::ZERO, 480).expect("audio output");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for block in 0_u64..200 {
+        mixer
+            .mix_into(
+                Timestamp::from_millis(block * 10),
+                &mut output,
+                &[(source, &input)],
+            )
+            .expect("mix block");
+        checksum += output.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "mixer: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
+fn mixer_meter_hold_and_clip_indicators_expire_on_bounded_timers() {
+    let mut mixer = AudioMixer::new(format());
+    let source = mixer.add_source(2.0).expect("source");
+    let loud = buffer(&[0.75, 0.75]);
+    let quiet = buffer(&[0.1, 0.1]);
+
+    mixer
+        .mix(Timestamp::ZERO, 1, &[(source, &loud)])
+        .expect("loud mix");
+    assert_eq!(mixer.source_peak_hold_milli(source), Ok(1_000));
+    assert_eq!(mixer.source_clipped(source), Ok(true));
+
+    mixer
+        .mix(Timestamp::from_millis(500), 1, &[(source, &quiet)])
+        .expect("quiet mix");
+    assert_eq!(mixer.source_peak_milli(source), Ok(200));
+    assert_eq!(mixer.source_peak_hold_milli(source), Ok(1_000));
+    assert_eq!(mixer.source_clipped(source), Ok(true));
+
+    mixer
+        .mix(Timestamp::from_millis(1_500), 1, &[(source, &quiet)])
+        .expect("clip timeout mix");
+    assert_eq!(mixer.source_clipped(source), Ok(false));
+    assert_eq!(mixer.source_peak_hold_milli(source), Ok(1_000));
+
+    mixer
+        .mix(
+            Timestamp::from_nanos(20_000_000_001),
+            1,
+            &[(source, &quiet)],
+        )
+        .expect("hold timeout mix");
+    assert_eq!(mixer.source_peak_hold_milli(source), Ok(200));
 }
 
 #[test]

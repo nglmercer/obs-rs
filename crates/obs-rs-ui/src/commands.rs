@@ -184,6 +184,11 @@ impl DesktopState {
         }
         self.audio_mixer = mixer;
         self.mixer_sources = sources;
+        for channel in self.mixer_channels.values_mut() {
+            channel.peak_milli = 0;
+            channel.peak_hold_milli = 0;
+            channel.clipped = false;
+        }
         Ok(())
     }
 

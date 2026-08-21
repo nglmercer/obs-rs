@@ -419,6 +419,31 @@ impl DesktopState {
         Ok(())
     }
 
+    /// Publishes the complete bounded meter state for one live channel.
+    ///
+    /// Capture and engine adapters call this with telemetry already measured
+    /// on their real-time path; the UI only stores and presents the values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::UnknownMixerChannel`] for an unknown channel ID.
+    pub fn set_channel_meter(
+        &mut self,
+        id: &str,
+        peak_milli: u16,
+        peak_hold_milli: u16,
+        clipped: bool,
+    ) -> Result<(), UiError> {
+        let channel = self
+            .mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        channel.peak_milli = peak_milli.min(1_000);
+        channel.peak_hold_milli = peak_hold_milli.min(1_000);
+        channel.clipped = clipped;
+        Ok(())
+    }
+
     /// Renames a mixer channel so it can show the device it is capturing.
     ///
     /// # Errors
@@ -471,17 +496,14 @@ impl DesktopState {
             })
             .collect::<Result<Vec<_>, UiError>>()?;
         let output = self.audio_mixer.mix(timestamp, frames, &resolved)?;
-        for channel in self.mixer_channels.values_mut() {
-            channel.peak_milli = 0;
-        }
-        for (id, _) in inputs {
-            let source = self
-                .mixer_sources
-                .get(*id)
-                .ok_or_else(|| UiError::UnknownMixerChannel((*id).to_owned()))?;
+        for (id, source) in &self.mixer_sources {
             let peak = self.audio_mixer.source_peak_milli(*source)?;
-            if let Some(channel) = self.mixer_channels.get_mut(*id) {
-                channel.peak_milli = peak;
+            let peak_hold = self.audio_mixer.source_peak_hold_milli(*source)?;
+            let clipped = self.audio_mixer.source_clipped(*source)?;
+            if let Some(channel) = self.mixer_channels.get_mut(id) {
+                channel.peak_milli = peak.min(1_000);
+                channel.peak_hold_milli = peak_hold.min(1_000);
+                channel.clipped = clipped;
             }
         }
         Ok(output)
