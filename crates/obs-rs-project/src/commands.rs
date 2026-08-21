@@ -1226,6 +1226,21 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
                 .map_err(ProjectError::Config)?;
             ("sharpen", "Sharpen", settings)
         }
+        FrameFilter::Scroll {
+            speed_x,
+            speed_y,
+            looped,
+        } => {
+            let mut settings = Config::new();
+            for (key, value) in [
+                ("speed_x", speed_x.to_string()),
+                ("speed_y", speed_y.to_string()),
+                ("loop", looped.to_string()),
+            ] {
+                settings.set(key, &value).map_err(ProjectError::Config)?;
+            }
+            ("scroll", "Scroll", settings)
+        }
     };
     SourceFilterSpec::with_category(
         &format!("legacy_filter_{}", index.saturating_add(1)),

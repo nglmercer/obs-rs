@@ -210,6 +210,41 @@ fn crop_pad_filter_clears_edges_without_changing_frame_geometry() {
 }
 
 #[test]
+fn scroll_filter_uses_timestamped_pixel_offsets_and_bounded_edges() {
+    let format = VideoFormat::new(4, 1, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let frame = VideoFrame::new(
+        format,
+        Timestamp::from_nanos(1_000_000_000),
+        vec![10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255],
+    )
+    .expect("frame");
+
+    let looped = frame.filtered(FrameFilter::Scroll {
+        speed_x: 1,
+        speed_y: 0,
+        looped: true,
+    });
+    assert_eq!(looped.pixel(0, 0), Some([20, 0, 0, 255]));
+    assert_eq!(looped.pixel(3, 0), Some([10, 0, 0, 255]));
+
+    let bounded = frame.filtered(FrameFilter::Scroll {
+        speed_x: 1,
+        speed_y: 0,
+        looped: false,
+    });
+    assert_eq!(bounded.pixel(2, 0), Some([40, 0, 0, 255]));
+    assert_eq!(bounded.pixel(3, 0), Some([0, 0, 0, 0]));
+    assert_eq!(
+        VideoFrame::solid(format, Timestamp::ZERO, [9, 8, 7, 255]).filtered(FrameFilter::Scroll {
+            speed_x: 500,
+            speed_y: -500,
+            looped: true,
+        },),
+        VideoFrame::solid(format, Timestamp::ZERO, [9, 8, 7, 255])
+    );
+}
+
+#[test]
 fn color_correction_uses_fixed_point_obs_ranges_and_preserves_noop_frames() {
     let format =
         VideoFormat::new(1, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
@@ -820,5 +855,38 @@ fn composition_primitives_timing_report() {
         Box::new(move || {
             std::hint::black_box(VideoFrame::solid(format, Timestamp::ZERO, [1, 2, 3, 4]));
         }),
+    );
+}
+
+/// Reports the bounded CPU Scroll path, whose source snapshot makes the
+/// reference implementation correct but allocates/copies once per active
+/// frame. The GPU compositor is the production path for desktop preview.
+#[test]
+#[ignore = "timing report, not a pass/fail assertion"]
+fn scroll_filter_timing_report() {
+    use std::time::Instant;
+
+    let format = VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let source = VideoFrame::solid(format, Timestamp::ZERO, [32, 96, 160, 255]);
+    let scroll = FrameFilter::Scroll {
+        speed_x: 30,
+        speed_y: -15,
+        looped: true,
+    };
+    let runs = 120_u64;
+    let start = Instant::now();
+    let mut checksum = 0_u64;
+    for index in 0..runs {
+        let mut frame = source.at_timestamp(Timestamp::from_nanos(
+            (index + 1).saturating_mul(33_333_333),
+        ));
+        frame.apply_filter(scroll);
+        checksum = checksum.wrapping_add(u64::from(frame.pixels()[0]));
+        std::hint::black_box(&frame);
+    }
+    let elapsed = start.elapsed();
+    println!(
+        "scroll filter: {runs} frames x 640x360 = {elapsed:?} total (about {:?}/frame), checksum={checksum}",
+        elapsed / u32::try_from(runs).expect("runs fit")
     );
 }

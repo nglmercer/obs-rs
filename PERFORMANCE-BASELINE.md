@@ -2,7 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
-**Latest measurement:** 2026-08-21 (audio Expander packet validation)
+**Latest measurement:** 2026-08-21 (timestamp-driven Scroll filter packet)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -92,16 +92,19 @@ requests a 1048x590 preview for a 1920x1080 canvas (and a proportionally bounded
 target for 4K), so its Slint copy is separated and counted as `frame_copy_bytes`
 in the live metrics string.
 
-## Crop/Pad and key-filter evidence
+## Crop/Pad, key, color, and Scroll-filter evidence
 
-The Crop/Pad, Color Key, Luma Key, Chroma Key, Sharpen, and Color Multiply/Add packets keep their effects
+The Crop/Pad, Color Key, Luma Key, Chroma Key, Sharpen, Color Multiply/Add, and
+Scroll packets keep their effects
 in-place and bounded: Crop/Pad clears edge pixels without changing frame
 geometry, Color Key adjusts alpha from a normalized RGB distance, Luma Key
 applies bounded smooth luminance thresholds, and Chroma Key applies a
 current-pixel YCbCr distance with feathering and spill reduction, and Sharpen
 uses a clamped 3x3 neighbour kernel, and Color Multiply/Add applies bounded RGB
-multiply/add matrix values while preserving alpha. Key filters canonicalize fully transparent
-pixels. The WGPU path carries every filter in a fixed seven-word record so the
+multiply/add matrix values while preserving alpha. Scroll uses a timestamp-derived
+integer source offset and either wraps or clears out-of-range pixels. Key filters
+canonicalize fully transparent pixels. The WGPU path carries every filter in a fixed
+seven-word record so the
 shader does not parse variable-length data.
 
 ```text
@@ -127,6 +130,21 @@ snapshot is also a deliberate allocation/copy point that the performance agent
 must replace with bounded reusable scratch storage before high-resolution use.
 These are local samples rather than acceptance thresholds; full-resolution CPU
 filter performance still requires the Phase 16 comparison suite.
+
+The Scroll-specific release probe is:
+
+```text
+cargo test --release -p obs-rs-media scroll_filter_timing_report -- --ignored --nocapture
+scroll filter: 120 frames x 640x360 = 64.63851ms total (about 538.654µs/frame), checksum=3840
+```
+
+The CPU reference path copies a source snapshot once per active frame so an
+ordered filter pass cannot read pixels it has already overwritten. The WGPU
+path carries the timestamp-derived offset in its bounded record and the
+integration test verifies it against that CPU oracle; the readback in that test
+is explicit test instrumentation, not the preview path. Reusable CPU scratch
+storage or GPU-only routing is still required before treating CPU Scroll as a
+high-resolution real-time implementation.
 
 The audio Gain timing probe processes 200 reusable 480-frame stereo blocks
 through one fixed-capacity chain without allocating per block. Its release

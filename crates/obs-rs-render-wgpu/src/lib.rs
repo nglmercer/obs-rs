@@ -253,6 +253,28 @@ mod tests {
         }
         assert_eq!(backend.metrics().readbacks(), 7);
 
+        let scroll = FrameFilter::Scroll {
+            speed_x: 1,
+            speed_y: -1,
+            looped: true,
+        };
+        let scroll_frame = frame.at_timestamp(Timestamp::from_nanos(1_000_000_000));
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &scroll_frame,
+                    FrameTransform::IDENTITY,
+                    &[scroll],
+                )],
+            )
+            .expect("GPU scroll");
+        let gpu_scrolled = backend.readback(target).expect("scroll readback");
+        let mut cpu_scrolled = scroll_frame.clone();
+        cpu_scrolled.apply_filter(scroll);
+        assert_eq!(gpu_scrolled, cpu_scrolled);
+        assert_eq!(backend.metrics().readbacks(), 8);
+
         let rotated_transform = FrameTransform::IDENTITY
             .with_rotation_degrees(90)
             .expect("rotation");

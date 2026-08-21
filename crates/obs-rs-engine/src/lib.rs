@@ -30,7 +30,8 @@ use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{
     ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameRate, FrameTransform,
-    LatencyMetrics, LumaKey, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
+    LatencyMetrics, LumaKey, RawVideoFrame, Timestamp, VideoFormat, VideoFrame, MAX_SCROLL_SPEED,
+    MIN_SCROLL_SPEED,
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
@@ -2341,6 +2342,24 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
             .and_then(|value| value.parse::<u16>().ok())
             .filter(|value| *value <= 1_000)
             .map(|milli| FrameFilter::Sharpen { milli }),
+        "scroll" => {
+            let read_speed = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<i16>().ok())
+                    .filter(|value| (MIN_SCROLL_SPEED..=MAX_SCROLL_SPEED).contains(value))
+            };
+            let looped = match spec.settings().get("loop") {
+                None | Some("true") => true,
+                Some("false") => false,
+                Some(_) => return None,
+            };
+            Some(FrameFilter::Scroll {
+                speed_x: read_speed("speed_x")?,
+                speed_y: read_speed("speed_y")?,
+                looped,
+            })
+        }
         _ => None,
     }
 }
@@ -2912,6 +2931,40 @@ mod tests {
             compile_filter(&sharpen),
             Some(FrameFilter::Sharpen { milli: 80 })
         );
+
+        let scroll = SourceFilterSpec::new(
+            "scroll",
+            "Scroll",
+            "scroll",
+            Config::parse("loop = false\nspeed_x = 120\nspeed_y = -80\n").expect("scroll settings"),
+        )
+        .expect("scroll filter");
+        assert_eq!(
+            compile_filter(&scroll),
+            Some(FrameFilter::Scroll {
+                speed_x: 120,
+                speed_y: -80,
+                looped: false,
+            })
+        );
+        let mut invalid_scroll_settings = Config::new();
+        invalid_scroll_settings
+            .set("loop", "maybe")
+            .expect("invalid boolean can be stored as an explicit string");
+        invalid_scroll_settings
+            .set("speed_x", "501")
+            .expect("out-of-range speed can be stored");
+        invalid_scroll_settings
+            .set("speed_y", "0")
+            .expect("valid vertical speed can be stored");
+        let invalid_scroll = SourceFilterSpec::new(
+            "invalid-scroll",
+            "Invalid Scroll",
+            "scroll",
+            invalid_scroll_settings,
+        )
+        .expect("invalid scroll filter");
+        assert_eq!(compile_filter(&invalid_scroll), None);
 
         let mut disabled = brightness.clone();
         disabled.set_enabled(false);

@@ -6,13 +6,16 @@
 //! component or another comma-separated serialization format.
 
 use obs_rs_config::Config;
-use obs_rs_media::{ChromaKey, ColorCorrection, ColorKey, LumaKey};
+use obs_rs_media::{
+    ChromaKey, ColorCorrection, ColorKey, LumaKey, MAX_SCROLL_SPEED, MIN_SCROLL_SPEED,
+};
 use obs_rs_ui::UiLocale;
 use slint::{Brush, ModelRc, SharedString, VecModel};
 
 use crate::PropertyRow;
 
 const KIND_NUMBER: i32 = 1;
+const KIND_TOGGLE: i32 = 2;
 
 #[derive(Clone, Copy)]
 struct Field {
@@ -317,6 +320,25 @@ const SHARPEN: [Field; 1] = [Field {
     default: "80",
 }];
 
+const SCROLL: [Field; 2] = [
+    Field {
+        key: "speed_x",
+        english: "Horizontal speed",
+        spanish: "Velocidad horizontal",
+        minimum: MIN_SCROLL_SPEED as i32,
+        maximum: MAX_SCROLL_SPEED as i32,
+        default: "0",
+    },
+    Field {
+        key: "speed_y",
+        english: "Vertical speed",
+        spanish: "Velocidad vertical",
+        minimum: MIN_SCROLL_SPEED as i32,
+        maximum: MAX_SCROLL_SPEED as i32,
+        default: "0",
+    },
+];
+
 fn fields(kind: &str) -> &'static [Field] {
     match kind {
         "brightness" => &BRIGHTNESS,
@@ -328,6 +350,7 @@ fn fields(kind: &str) -> &'static [Field] {
         "color_key" => &COLOR_KEY,
         "chroma_key" => &CHROMA_KEY,
         "sharpen" => &SHARPEN,
+        "scroll" => &SCROLL,
         _ => &[],
     }
 }
@@ -345,7 +368,7 @@ pub(crate) fn default_settings(kind: &str) -> Config {
 /// Builds typed property rows for a selected filter instance.
 pub(crate) fn rows(kind: &str, document: &str, locale: UiLocale) -> Vec<PropertyRow> {
     let settings = Config::parse(document).unwrap_or_else(|_| default_settings(kind));
-    fields(kind)
+    let mut rows = fields(kind)
         .iter()
         .map(|field| {
             let value = settings.get(field.key).unwrap_or(field.default);
@@ -370,11 +393,42 @@ pub(crate) fn rows(kind: &str, document: &str, locale: UiLocale) -> Vec<Property
                 swatch: Brush::default(),
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if kind == "scroll" {
+        rows.push(PropertyRow {
+            key: "loop".into(),
+            label: match locale {
+                UiLocale::English => "Loop".into(),
+                UiLocale::Spanish => "Bucle".into(),
+            },
+            hint: "Wrap at the source edge".into(),
+            kind: KIND_TOGGLE,
+            text: settings.get("loop").unwrap_or("true").into(),
+            number: 0,
+            minimum: 0,
+            maximum: 0,
+            toggle: settings
+                .get("loop")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(true),
+            choices: ModelRc::new(VecModel::from(Vec::<SharedString>::new())),
+            choice_index: 0,
+            swatch: Brush::default(),
+        });
+    }
+    rows
 }
 
 /// Writes one typed property into a filter settings document.
 pub(crate) fn apply(kind: &str, document: &str, key: &str, value: &str) -> Option<String> {
+    if kind == "scroll" && key == "loop" {
+        if !matches!(value, "true" | "false") {
+            return None;
+        }
+        let mut settings = Config::parse(document).unwrap_or_else(|_| default_settings(kind));
+        settings.set(key, value).ok()?;
+        return Some(settings.serialize());
+    }
     let field = fields(kind).iter().find(|field| field.key == key)?;
     let number = value
         .parse::<i32>()
@@ -446,5 +500,19 @@ mod tests {
         assert_eq!(rows[0].number, 80);
         assert_eq!(rows[0].maximum, 1_000);
         assert_eq!(rows[0].label, "Nitidez");
+    }
+
+    #[test]
+    fn scroll_schema_has_bounded_horizontal_and_vertical_speeds() {
+        let rows = rows("scroll", "", UiLocale::English);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].minimum, i32::from(MIN_SCROLL_SPEED));
+        assert_eq!(rows[0].maximum, i32::from(MAX_SCROLL_SPEED));
+        assert_eq!(rows[1].text, "0");
+        assert_eq!(rows[2].kind, KIND_TOGGLE);
+        assert!(rows[2].toggle);
+        let settings =
+            apply("scroll", "speed_x = 0\nspeed_y = 0\n", "loop", "false").expect("loop setting");
+        assert!(settings.contains("loop = false"));
     }
 }

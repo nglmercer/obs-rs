@@ -9,13 +9,21 @@ component FilterPropertyField inherits VerticalLayout {
     callback edited(string, string);
     spacing: 2px;
 
-    SettingRow {
+    if root.field.kind == 1 : SettingRow {
         label: root.field.label;
         SpinBox {
             value: root.field.number;
             minimum: root.field.minimum;
             maximum: root.field.maximum;
             edited(value) => { root.edited(root.field.key, value); }
+            horizontal-stretch: 1;
+        }
+    }
+    if root.field.kind == 2 : SettingRow {
+        label: root.field.label;
+        CheckBox {
+            checked: root.field.toggle;
+            toggled => { root.edited(root.field.key, self.checked ? "true" : "false"); }
             horizontal-stretch: 1;
         }
     }

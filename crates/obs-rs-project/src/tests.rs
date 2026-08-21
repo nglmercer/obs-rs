@@ -768,6 +768,11 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
                 ),
                 FrameFilter::Sharpen { milli: 80 },
                 FrameFilter::ColorMultiplyAdd(ColorMultiplyAdd::new([220, 240, 255], [4, 8, 12])),
+                FrameFilter::Scroll {
+                    speed_x: 120,
+                    speed_y: -80,
+                    looped: false,
+                },
             ],
         })
         .expect("set source filters command");

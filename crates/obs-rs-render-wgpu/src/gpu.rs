@@ -416,7 +416,13 @@ impl WgpuRenderBackend {
     fn composite_textures(
         &self,
         target: TextureId,
-        sources: &[(&wgpu::Texture, VideoFormat, FrameTransform, &[FrameFilter])],
+        sources: &[(
+            &wgpu::Texture,
+            VideoFormat,
+            Timestamp,
+            FrameTransform,
+            &[FrameFilter],
+        )],
     ) -> Result<(), RenderError> {
         if sources.is_empty() {
             return Err(RenderError::EmptyComposition);
@@ -432,7 +438,9 @@ impl WgpuRenderBackend {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("obs-rs-gpu-composite"),
             });
-        for (index, (source, source_format, transform, filters)) in sources.iter().enumerate() {
+        for (index, (source, source_format, timestamp, transform, filters)) in
+            sources.iter().enumerate()
+        {
             let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
             let background = if index.is_multiple_of(2) {
                 if index == 0 {
@@ -450,8 +458,13 @@ impl WgpuRenderBackend {
                 &scratch_b
             };
             let destination_view = destination.create_view(&wgpu::TextureViewDescriptor::default());
-            let parameters =
-                layer_parameters(*source_format, target_texture.format, *transform, filters);
+            let parameters = layer_parameters(
+                *source_format,
+                target_texture.format,
+                *timestamp,
+                *transform,
+                filters,
+            );
             let parameter_buffer =
                 self.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -585,17 +598,23 @@ impl RenderBackend for WgpuRenderBackend {
             let source_format = frame.format();
             let texture = self.acquire_texture(source_format);
             write_texture(&self.queue, &texture, frame);
-            prepared.push((texture, source_format, layer.transform(), layer.filters()));
+            prepared.push((
+                texture,
+                source_format,
+                frame.timestamp(),
+                layer.transform(),
+                layer.filters(),
+            ));
         }
         let sources = prepared
             .iter()
-            .map(|(texture, source_format, transform, filters)| {
-                (texture, *source_format, *transform, *filters)
+            .map(|(texture, source_format, timestamp, transform, filters)| {
+                (texture, *source_format, *timestamp, *transform, *filters)
             })
             .collect::<Vec<_>>();
         self.composite_textures(target, &sources)?;
         drop(sources);
-        for (texture, source_format, _, _) in prepared {
+        for (texture, source_format, _, _, _) in prepared {
             self.recycle_texture(source_format, texture);
         }
         let target = self
@@ -701,6 +720,7 @@ impl RenderBackend for WgpuRenderBackend {
                 (
                     &texture.texture,
                     texture.format,
+                    texture.timestamp,
                     FrameTransform::IDENTITY,
                     &[] as &[FrameFilter],
                 )
@@ -1244,6 +1264,28 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
             pixel.r = i32(floor(color.r * 255.0 + 0.5));
             pixel.g = i32(floor(color.g * 255.0 + 0.5));
             pixel.b = i32(floor(color.b * 255.0 + 0.5));
+        } else if (kind == 10) {
+            let offset_x = parameters.values[filter_offset + 1];
+            let offset_y = parameters.values[filter_offset + 2];
+            let sample_x = source_x + offset_x;
+            let sample_y = source_y + offset_y;
+            let looped = parameters.values[filter_offset + 3] != 0;
+            if (looped) {
+                var wrapped_x = sample_x % source_width;
+                var wrapped_y = sample_y % source_height;
+                if (wrapped_x < 0) { wrapped_x = wrapped_x + source_width; }
+                if (wrapped_y < 0) { wrapped_y = wrapped_y + source_height; }
+                let scrolled = textureLoad(layer_texture, vec2<i32>(wrapped_x, wrapped_y), 0);
+                pixel = vec4<i32>(floor(scrolled * 255.0 + vec4<f32>(0.5)));
+                pixel.a = pixel.a * parameters.values[10] / 255;
+            } else if (sample_x < 0 || sample_x >= source_width ||
+                       sample_y < 0 || sample_y >= source_height) {
+                pixel = vec4<i32>(0);
+            } else {
+                let scrolled = textureLoad(layer_texture, vec2<i32>(sample_x, sample_y), 0);
+                pixel = vec4<i32>(floor(scrolled * 255.0 + vec4<f32>(0.5)));
+                pixel.a = pixel.a * parameters.values[10] / 255;
+            }
         }
         filter_index = filter_index + 1;
     }
@@ -1334,9 +1376,14 @@ fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
     (layout, replace, composite)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the fixed-size shader ABI keeps every supported filter record explicit"
+)]
 fn layer_parameters(
     source_format: VideoFormat,
     target_format: VideoFormat,
+    timestamp: Timestamp,
     transform: FrameTransform,
     filters: &[FrameFilter],
 ) -> Vec<u8> {
@@ -1433,9 +1480,36 @@ fn layer_parameters(
                     i32::from(add[2]),
                 ]);
             }
+            FrameFilter::Scroll {
+                speed_x,
+                speed_y,
+                looped,
+            } => values.extend([
+                10,
+                scroll_offset_pixels(timestamp, speed_x),
+                scroll_offset_pixels(timestamp, speed_y),
+                i32::from(looped),
+                0,
+                0,
+                0,
+            ]),
         }
     }
     values.into_iter().flat_map(i32::to_le_bytes).collect()
+}
+
+/// Converts the media filter's pixel-per-second value to the same bounded
+/// integer frame offset as the CPU reference path.
+fn scroll_offset_pixels(timestamp: Timestamp, speed: i16) -> i32 {
+    let numerator = i128::from(speed) * i128::from(timestamp.as_nanos());
+    let pixels = numerator.div_euclid(1_000_000_000);
+    i32::try_from(pixels).unwrap_or_else(|_| {
+        if pixels.is_negative() {
+            i32::MIN
+        } else {
+            i32::MAX
+        }
+    })
 }
 
 fn read_texture(

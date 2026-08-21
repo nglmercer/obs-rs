@@ -390,6 +390,11 @@ impl ChromaKey {
     }
 }
 
+/// Smallest supported horizontal or vertical Scroll speed, in pixels/second.
+pub const MIN_SCROLL_SPEED: i16 = -500;
+/// Largest supported horizontal or vertical Scroll speed, in pixels/second.
+pub const MAX_SCROLL_SPEED: i16 = 500;
+
 /// A deterministic CPU filter applied after a scene-item transform.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrameFilter {
@@ -422,4 +427,13 @@ pub enum FrameFilter {
     ChromaKey(ChromaKey),
     /// Applies the bounded OBS 3x3 sharpen kernel in thousandths.
     Sharpen { milli: u16 },
+    /// Scrolls a source in pixels per second, wrapping when `looped` is true.
+    ///
+    /// The filter keeps the frame geometry unchanged. Width/height limiting
+    /// from OBS's full Scroll filter remains a separate capability.
+    Scroll {
+        speed_x: i16,
+        speed_y: i16,
+        looped: bool,
+    },
 }

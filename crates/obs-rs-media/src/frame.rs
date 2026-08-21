@@ -838,6 +838,7 @@ impl VideoFrame {
                     | FrameFilter::ColorKey(_)
                     | FrameFilter::ChromaKey(_)
                     | FrameFilter::Sharpen { .. }
+                    | FrameFilter::Scroll { .. }
             )
         }) {
             for filter in filters {
@@ -849,6 +850,11 @@ impl VideoFrame {
                         bottom,
                     } => self.apply_crop_pad(left, top, right, bottom),
                     FrameFilter::Sharpen { milli } => self.apply_sharpen(milli),
+                    FrameFilter::Scroll {
+                        speed_x,
+                        speed_y,
+                        looped,
+                    } => self.apply_scroll(speed_x, speed_y, looped),
                     _ => self.apply_single_pixel_filter(*filter),
                 }
             }
@@ -896,6 +902,9 @@ impl VideoFrame {
                         ),
                         FrameFilter::Sharpen { .. } => unreachable!(
                             "neighbour-based sharpen filters are handled before pixel filters"
+                        ),
+                        FrameFilter::Scroll { .. } => unreachable!(
+                            "coordinate-dependent scroll filters are handled before pixel filters"
                         ),
                     }
                 }
@@ -984,6 +993,9 @@ impl VideoFrame {
             FrameFilter::ChromaKey(_) => {
                 unreachable!("chroma key filters are handled with derived parameters")
             }
+            FrameFilter::Scroll { .. } => {
+                unreachable!("scroll filters are handled with the source snapshot")
+            }
             FrameFilter::Sharpen { .. } => {
                 unreachable!("sharpen filters are handled with the source snapshot")
             }
@@ -1007,6 +1019,53 @@ impl VideoFrame {
                     if outside_vertical || x < left || x >= width.saturating_sub(right) {
                         pixel.copy_from_slice(&[0, 0, 0, 0]);
                     }
+                }
+            });
+    }
+
+    /// Applies a timestamp-driven source scroll using a copy-on-write source
+    /// snapshot. Positive speed moves the image left/up, matching OBS's
+    /// increasing texture offset; non-looping edges become transparent.
+    fn apply_scroll(&mut self, speed_x: i16, speed_y: i16, looped: bool) {
+        let width = self.format.width_index();
+        let height = self.format.height_index();
+        let offset_x = scroll_offset_pixels(self.timestamp, speed_x);
+        let offset_y = scroll_offset_pixels(self.timestamp, speed_y);
+        if offset_x == 0 && offset_y == 0 {
+            return;
+        }
+        let source = Arc::clone(&self.pixels);
+        let pixels = self.pixels_mut();
+        pixels
+            .par_chunks_exact_mut(width * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                for x in 0..width {
+                    let source_x = i64::try_from(x).unwrap_or(i64::MAX) + offset_x;
+                    let source_y = i64::try_from(y).unwrap_or(i64::MAX) + offset_y;
+                    let (source_x, source_y) = if looped {
+                        (
+                            source_x.rem_euclid(i64::try_from(width).unwrap_or(i64::MAX)),
+                            source_y.rem_euclid(i64::try_from(height).unwrap_or(i64::MAX)),
+                        )
+                    } else if source_x < 0
+                        || source_y < 0
+                        || source_x >= i64::try_from(width).unwrap_or(i64::MAX)
+                        || source_y >= i64::try_from(height).unwrap_or(i64::MAX)
+                    {
+                        row[x * 4..x * 4 + 4].fill(0);
+                        continue;
+                    } else {
+                        (source_x, source_y)
+                    };
+                    let pixel = source_pixel(
+                        &source,
+                        width,
+                        height,
+                        usize::try_from(source_x).unwrap_or(0),
+                        usize::try_from(source_y).unwrap_or(0),
+                    );
+                    row[x * 4..x * 4 + 4].copy_from_slice(&pixel);
                 }
             });
     }
@@ -1537,6 +1596,20 @@ fn source_pixel(source: &[u8], width: usize, height: usize, x: usize, y: usize) 
         source[offset + 2],
         source[offset + 3],
     ]
+}
+
+/// Converts an OBS-style pixel-per-second scroll speed to a deterministic
+/// integer offset at a frame timestamp.
+fn scroll_offset_pixels(timestamp: Timestamp, speed: i16) -> i64 {
+    let numerator = i128::from(speed) * i128::from(timestamp.as_nanos());
+    let pixels = numerator.div_euclid(1_000_000_000);
+    i64::try_from(pixels).unwrap_or_else(|_| {
+        if pixels.is_negative() {
+            i64::MIN
+        } else {
+            i64::MAX
+        }
+    })
 }
 
 #[allow(
