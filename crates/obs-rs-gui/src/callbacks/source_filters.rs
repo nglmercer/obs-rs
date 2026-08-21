@@ -24,7 +24,7 @@ struct FilterDefinition {
     category: SourceFilterCategory,
 }
 
-const FILTER_DEFINITIONS: [FilterDefinition; 9] = [
+const FILTER_DEFINITIONS: [FilterDefinition; 10] = [
     FilterDefinition {
         kind: "noise_suppression",
         name: "Noise Suppression",
@@ -68,6 +68,11 @@ const FILTER_DEFINITIONS: [FilterDefinition; 9] = [
     FilterDefinition {
         kind: "color_key",
         name: "Color Key",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "chroma_key",
+        name: "Chroma Key",
         category: SourceFilterCategory::Effect,
     },
 ];

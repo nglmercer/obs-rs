@@ -917,6 +917,30 @@ fn vs_main(@builtin(vertex_index) vertex: u32) -> VertexOutput {
     return output;
 }
 
+fn chroma_nonlinear_channel(value: f32) -> f32 {
+    if (value <= 0.0031308) {
+        return 12.92 * value;
+    }
+    return 1.055 * pow(value, 1.0 / 2.4) - 0.055;
+}
+
+fn chroma_components(color: vec3<f32>) -> vec2<f32> {
+    return vec2<f32>(
+        -0.100644 * color.r - 0.338572 * color.g + 0.439216 * color.b + 0.501961,
+        0.439216 * color.r - 0.398942 * color.g - 0.040274 * color.b + 0.501961,
+    );
+}
+
+fn chroma_key_mask(base: f32, width: f32) -> f32 {
+    if (width <= 0.0) {
+        if (base > 0.0) {
+            return 1.0;
+        }
+        return 0.0;
+    }
+    return pow(clamp(base / width, 0.0, 1.0), 1.5);
+}
+
 fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
     let x = position.x;
     let y = position.y;
@@ -1100,6 +1124,39 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
                 upper = 1.0 - position * position * (3.0 - 2.0 * position);
             }
             pixel.a = i32(floor(f32(pixel.a) * lower * upper + 0.5));
+        } else if (kind == 7) {
+            let color = vec3<f32>(f32(pixel.r), f32(pixel.g), f32(pixel.b)) / 255.0;
+            let nonlinear = vec3<f32>(
+                chroma_nonlinear_channel(color.r),
+                chroma_nonlinear_channel(color.g),
+                chroma_nonlinear_channel(color.b),
+            );
+            let key_color = vec3<f32>(
+                f32(parameters.values[filter_offset + 1]),
+                f32(parameters.values[filter_offset + 2]),
+                f32(parameters.values[filter_offset + 3]),
+            ) / 255.0;
+            let key_nonlinear = vec3<f32>(
+                chroma_nonlinear_channel(key_color.r),
+                chroma_nonlinear_channel(key_color.g),
+                chroma_nonlinear_channel(key_color.b),
+            );
+            let chroma = chroma_components(nonlinear);
+            let key_chroma = chroma_components(key_nonlinear);
+            let distance = length(chroma - key_chroma);
+            let similarity = f32(parameters.values[filter_offset + 4]) / 1000.0;
+            let smoothness = f32(parameters.values[filter_offset + 5]) / 1000.0;
+            let spill = f32(parameters.values[filter_offset + 6]) / 1000.0;
+            let base_mask = max(distance - similarity, 0.0);
+            let full_mask = chroma_key_mask(base_mask, smoothness);
+            let spill_mask = chroma_key_mask(base_mask, spill);
+            let desaturated = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let spill_color = vec3<f32>(desaturated) +
+                (color - vec3<f32>(desaturated)) * spill_mask;
+            pixel.r = i32(floor(clamp(spill_color.r, 0.0, 1.0) * 255.0 + 0.5));
+            pixel.g = i32(floor(clamp(spill_color.g, 0.0, 1.0) * 255.0 + 0.5));
+            pixel.b = i32(floor(clamp(spill_color.b, 0.0, 1.0) * 255.0 + 0.5));
+            pixel.a = i32(floor(f32(pixel.a) * full_mask + 0.5));
         }
         filter_index = filter_index + 1;
     }
@@ -1265,6 +1322,15 @@ fn layer_parameters(
                 luma_key.luma_min_smooth_milli(),
                 0,
                 0,
+            ]),
+            FrameFilter::ChromaKey(chroma_key) => values.extend([
+                7,
+                i32::from(chroma_key.key_red()),
+                i32::from(chroma_key.key_green()),
+                i32::from(chroma_key.key_blue()),
+                chroma_key.similarity_milli(),
+                chroma_key.smoothness_milli(),
+                chroma_key.spill_milli(),
             ]),
         }
     }

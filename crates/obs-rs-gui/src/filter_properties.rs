@@ -6,7 +6,7 @@
 //! component or another comma-separated serialization format.
 
 use obs_rs_config::Config;
-use obs_rs_media::{ColorCorrection, ColorKey, LumaKey};
+use obs_rs_media::{ChromaKey, ColorCorrection, ColorKey, LumaKey};
 use obs_rs_ui::UiLocale;
 use slint::{Brush, ModelRc, SharedString, VecModel};
 
@@ -206,6 +206,57 @@ const COLOR_KEY: [Field; 5] = [
     },
 ];
 
+const CHROMA_KEY: [Field; 6] = [
+    Field {
+        key: "key_red",
+        english: "Key red",
+        spanish: "Rojo clave",
+        minimum: 0,
+        maximum: 255,
+        default: "0",
+    },
+    Field {
+        key: "key_green",
+        english: "Key green",
+        spanish: "Verde clave",
+        minimum: 0,
+        maximum: 255,
+        default: "255",
+    },
+    Field {
+        key: "key_blue",
+        english: "Key blue",
+        spanish: "Azul clave",
+        minimum: 0,
+        maximum: 255,
+        default: "0",
+    },
+    Field {
+        key: "similarity",
+        english: "Similarity",
+        spanish: "Similitud",
+        minimum: ChromaKey::MIN_SIMILARITY_MILLI,
+        maximum: ChromaKey::MAX_SIMILARITY_MILLI,
+        default: "400",
+    },
+    Field {
+        key: "smoothness",
+        english: "Smoothness",
+        spanish: "Suavidad",
+        minimum: ChromaKey::MIN_SMOOTHNESS_MILLI,
+        maximum: ChromaKey::MAX_SMOOTHNESS_MILLI,
+        default: "80",
+    },
+    Field {
+        key: "spill",
+        english: "Spill reduction",
+        spanish: "Reducción de derrame",
+        minimum: ChromaKey::MIN_SPILL_MILLI,
+        maximum: ChromaKey::MAX_SPILL_MILLI,
+        default: "100",
+    },
+];
+
 fn fields(kind: &str) -> &'static [Field] {
     match kind {
         "brightness" => &BRIGHTNESS,
@@ -214,6 +265,7 @@ fn fields(kind: &str) -> &'static [Field] {
         "color_correction" => &COLOR_CORRECTION,
         "luma_key" => &LUMA_KEY,
         "color_key" => &COLOR_KEY,
+        "chroma_key" => &CHROMA_KEY,
         _ => &[],
     }
 }
@@ -303,5 +355,15 @@ mod tests {
         assert_eq!(rows[1].number, LumaKey::MIN_LUMA_MILLI);
         assert_eq!(rows[2].maximum, LumaKey::MAX_SMOOTH_MILLI);
         assert_eq!(rows[3].text, "0");
+    }
+
+    #[test]
+    fn chroma_key_schema_has_rgb_distance_and_spill_fields() {
+        let rows = rows("chroma_key", "", UiLocale::English);
+        assert_eq!(rows.len(), 6);
+        assert_eq!(rows[1].number, 255);
+        assert_eq!(rows[3].number, 400);
+        assert_eq!(rows[4].minimum, ChromaKey::MIN_SMOOTHNESS_MILLI);
+        assert_eq!(rows[5].text, "100");
     }
 }

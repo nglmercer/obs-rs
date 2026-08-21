@@ -260,6 +260,103 @@ impl ColorKey {
     }
 }
 
+/// Fixed-point parameters for the portable YCbCr-distance Chroma Key slice.
+///
+/// OBS's production filter also owns color-space negotiation, four-neighbour
+/// box filtering, opacity/contrast/brightness/gamma controls, and selectable
+/// named key colors. This value type deliberately covers the bounded key,
+/// feather, and spill controls that the current RGBA reference compositor can
+/// represent without adding a second color-management state machine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ChromaKey {
+    key_red: u8,
+    key_green: u8,
+    key_blue: u8,
+    similarity_milli: i32,
+    smoothness_milli: i32,
+    spill_milli: i32,
+}
+
+impl ChromaKey {
+    /// Smallest similarity threshold, in thousandths.
+    pub const MIN_SIMILARITY_MILLI: i32 = 1;
+    /// Largest similarity threshold, in thousandths.
+    pub const MAX_SIMILARITY_MILLI: i32 = 1_000;
+    /// Smallest feather threshold, in thousandths.
+    pub const MIN_SMOOTHNESS_MILLI: i32 = 1;
+    /// Largest feather threshold, in thousandths.
+    pub const MAX_SMOOTHNESS_MILLI: i32 = 1_000;
+    /// Smallest spill-reduction threshold, in thousandths.
+    pub const MIN_SPILL_MILLI: i32 = 1;
+    /// Largest spill-reduction threshold, in thousandths.
+    pub const MAX_SPILL_MILLI: i32 = 1_000;
+
+    /// Creates bounded YCbCr key, feather, and spill parameters.
+    #[must_use]
+    pub const fn new(
+        key_red: u8,
+        key_green: u8,
+        key_blue: u8,
+        similarity_milli: i32,
+        smoothness_milli: i32,
+        spill_milli: i32,
+    ) -> Option<Self> {
+        if similarity_milli < Self::MIN_SIMILARITY_MILLI
+            || similarity_milli > Self::MAX_SIMILARITY_MILLI
+            || smoothness_milli < Self::MIN_SMOOTHNESS_MILLI
+            || smoothness_milli > Self::MAX_SMOOTHNESS_MILLI
+            || spill_milli < Self::MIN_SPILL_MILLI
+            || spill_milli > Self::MAX_SPILL_MILLI
+        {
+            return None;
+        }
+        Some(Self {
+            key_red,
+            key_green,
+            key_blue,
+            similarity_milli,
+            smoothness_milli,
+            spill_milli,
+        })
+    }
+
+    /// Returns the red component of the key color.
+    #[must_use]
+    pub const fn key_red(self) -> u8 {
+        self.key_red
+    }
+
+    /// Returns the green component of the key color.
+    #[must_use]
+    pub const fn key_green(self) -> u8 {
+        self.key_green
+    }
+
+    /// Returns the blue component of the key color.
+    #[must_use]
+    pub const fn key_blue(self) -> u8 {
+        self.key_blue
+    }
+
+    /// Returns the similarity threshold in thousandths.
+    #[must_use]
+    pub const fn similarity_milli(self) -> i32 {
+        self.similarity_milli
+    }
+
+    /// Returns the feather threshold in thousandths.
+    #[must_use]
+    pub const fn smoothness_milli(self) -> i32 {
+        self.smoothness_milli
+    }
+
+    /// Returns the spill-reduction threshold in thousandths.
+    #[must_use]
+    pub const fn spill_milli(self) -> i32 {
+        self.spill_milli
+    }
+}
+
 /// A deterministic CPU filter applied after a scene-item transform.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrameFilter {
@@ -286,4 +383,6 @@ pub enum FrameFilter {
     LumaKey(LumaKey),
     /// Makes pixels within a bounded RGB distance transparent.
     ColorKey(ColorKey),
+    /// Makes pixels near a bounded YCbCr chroma distance transparent.
+    ChromaKey(ChromaKey),
 }

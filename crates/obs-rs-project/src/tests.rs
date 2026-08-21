@@ -1,7 +1,8 @@
 use super::*;
 use obs_rs_config::Config;
 use obs_rs_media::{
-    ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LumaKey, VideoFormat,
+    ChromaKey, ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LumaKey,
+    VideoFormat,
 };
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
@@ -724,6 +725,10 @@ fn optional_backend_and_output_settings_round_trip_without_changing_legacy_defau
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the session test exercises one atomic history workflow across all filter variants"
+)]
 fn command_session_tracks_dirty_state_and_rejects_bad_references() {
     let mut session = ProjectSession::new(project());
     assert!(!session.is_dirty());
@@ -758,6 +763,9 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
                 ),
                 FrameFilter::LumaKey(LumaKey::new(900, 100, 40, 60).expect("luma key")),
                 FrameFilter::ColorKey(ColorKey::new(0, 255, 0, 120, 80).expect("color key")),
+                FrameFilter::ChromaKey(
+                    ChromaKey::new(0, 255, 0, 400, 80, 100).expect("chroma key"),
+                ),
             ],
         })
         .expect("set source filters command");

@@ -47,8 +47,8 @@ mod tests {
     #[test]
     fn gpu_upload_layer_submission_readback_and_recovery_are_explicit() {
         use obs_rs_media::{
-            ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LumaKey, Timestamp,
-            VideoFormat, VideoFrame,
+            ChromaKey, ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LumaKey,
+            Timestamp, VideoFormat, VideoFrame,
         };
         use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderError, SceneLayer};
 
@@ -170,6 +170,33 @@ mod tests {
             );
         }
         assert_eq!(backend.metrics().readbacks(), 4);
+
+        let chroma_key = ChromaKey::new(0, 255, 0, 400, 80, 100).expect("valid chroma key");
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[FrameFilter::ChromaKey(chroma_key)],
+                )],
+            )
+            .expect("GPU chroma key");
+        let gpu_chroma_keyed = backend.readback(target).expect("chroma key readback");
+        let mut cpu_chroma_keyed = frame.clone();
+        cpu_chroma_keyed.apply_filter(FrameFilter::ChromaKey(chroma_key));
+        for (index, (actual, expected)) in gpu_chroma_keyed
+            .pixels()
+            .iter()
+            .zip(cpu_chroma_keyed.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "chroma key channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 5);
 
         let rotated_transform = FrameTransform::IDENTITY
             .with_rotation_degrees(90)

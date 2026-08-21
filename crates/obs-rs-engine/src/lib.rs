@@ -22,8 +22,8 @@ use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{
-    ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LatencyMetrics, LumaKey,
-    RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
+    ChromaKey, ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LatencyMetrics,
+    LumaKey, RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
@@ -2051,6 +2051,18 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
                 read_threshold("smoothness")?,
             )?))
         }
+        "chroma_key" => {
+            let read_channel = |key| spec.settings().get(key)?.parse::<u8>().ok();
+            let read_threshold = |key| spec.settings().get(key)?.parse::<i32>().ok();
+            Some(FrameFilter::ChromaKey(ChromaKey::new(
+                read_channel("key_red")?,
+                read_channel("key_green")?,
+                read_channel("key_blue")?,
+                read_threshold("similarity")?,
+                read_threshold("smoothness")?,
+                read_threshold("spill")?,
+            )?))
+        }
         _ => None,
     }
 }
@@ -2360,6 +2372,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the compiler fixture covers each supported filter mapping at one project boundary"
+    )]
     fn filter_compiler_keeps_renderer_details_out_of_project_values() {
         let brightness = SourceFilterSpec::new(
             "brightness",
@@ -2438,6 +2454,23 @@ mod tests {
             compile_filter(&color_key),
             Some(FrameFilter::ColorKey(
                 ColorKey::new(0, 255, 0, 120, 80).expect("valid color key"),
+            ))
+        );
+
+        let chroma_key = SourceFilterSpec::new(
+            "chroma",
+            "Chroma Key",
+            "chroma_key",
+            Config::parse(
+                "key_blue = 0\nkey_green = 255\nkey_red = 0\nsimilarity = 400\nsmoothness = 80\nspill = 100\n",
+            )
+            .expect("chroma key settings"),
+        )
+        .expect("chroma key filter");
+        assert_eq!(
+            compile_filter(&chroma_key),
+            Some(FrameFilter::ChromaKey(
+                ChromaKey::new(0, 255, 0, 400, 80, 100).expect("valid chroma key"),
             ))
         );
 

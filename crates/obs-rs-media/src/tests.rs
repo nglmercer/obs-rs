@@ -255,6 +255,41 @@ fn color_key_clears_matching_pixels_and_feathers_the_edge() {
 }
 
 #[test]
+fn chroma_key_uses_ycbcr_distance_and_reduces_spill() {
+    let format =
+        VideoFormat::new(3, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let frame = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![
+            0, 255, 0, 255, // exact green key
+            0, 128, 0, 255, // green spill, outside the key threshold
+            255, 0, 0, 255, // a distant chroma value
+        ],
+    )
+    .expect("frame");
+    let key = ChromaKey::new(0, 255, 0, 1, 80, 1_000).expect("chroma key");
+    let keyed = frame.filtered(FrameFilter::ChromaKey(key));
+
+    assert_eq!(keyed.pixel(0, 0), Some([0, 0, 0, 0]));
+    let spill = keyed.pixel(1, 0).expect("spill pixel");
+    assert!(spill[3] > 0);
+    assert!(
+        spill[0] > 0 && spill[2] > 0,
+        "spill should desaturate green"
+    );
+    assert!(
+        spill[1] < 128,
+        "spill reduction should lower green dominance"
+    );
+    let distant = keyed.pixel(2, 0).expect("distant chroma pixel");
+    assert_eq!(distant[3], 255);
+    assert!(distant[0] > 200 && distant[1] < 20 && distant[2] < 20);
+    assert!(ChromaKey::new(0, 255, 0, 0, 80, 100).is_none());
+    assert!(ChromaKey::new(0, 255, 0, 400, 80, 1_001).is_none());
+}
+
+#[test]
 fn luma_key_keeps_the_interval_and_smooths_both_edges() {
     let format =
         VideoFormat::new(4, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
@@ -616,6 +651,7 @@ fn composition_primitives_timing_report() {
     };
     let color_key = ColorKey::new(32, 52, 200, 100, 100).expect("color key");
     let luma_key = LumaKey::new(900, 100, 40, 60).expect("luma key");
+    let chroma_key = ChromaKey::new(0, 255, 0, 400, 80, 100).expect("chroma key");
     let runs = 200;
 
     let measure = |label: &str, mut work: Box<dyn FnMut()>| {
@@ -703,6 +739,15 @@ fn composition_primitives_timing_report() {
         Box::new(move || {
             let mut target = frame.clone();
             target.apply_filter(FrameFilter::LumaKey(luma_key));
+            std::hint::black_box(target);
+        }),
+    );
+    let frame = background.clone();
+    measure(
+        "clone + chroma-key",
+        Box::new(move || {
+            let mut target = frame.clone();
+            target.apply_filter(FrameFilter::ChromaKey(chroma_key));
             std::hint::black_box(target);
         }),
     );

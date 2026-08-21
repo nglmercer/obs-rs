@@ -1,6 +1,6 @@
 use super::{
     error::MediaError,
-    filters::{ColorCorrection, ColorKey, FrameFilter, LumaKey},
+    filters::{ChromaKey, ColorCorrection, ColorKey, FrameFilter, LumaKey},
     format::VideoFormat,
     time::Timestamp,
     transform::FrameTransform,
@@ -835,6 +835,7 @@ impl VideoFrame {
                     | FrameFilter::ColorCorrection(_)
                     | FrameFilter::LumaKey(_)
                     | FrameFilter::ColorKey(_)
+                    | FrameFilter::ChromaKey(_)
             )
         }) {
             for filter in filters {
@@ -884,6 +885,9 @@ impl VideoFrame {
                         FrameFilter::ColorKey(_) => unreachable!(
                             "derived color key filters are handled before pixel filters"
                         ),
+                        FrameFilter::ChromaKey(_) => unreachable!(
+                            "derived chroma key filters are handled before pixel filters"
+                        ),
                     }
                 }
             }
@@ -919,6 +923,15 @@ impl VideoFrame {
             });
             return;
         }
+        if let FrameFilter::ChromaKey(chroma_key) = filter {
+            let parameters = ChromaKeyParameters::new(chroma_key);
+            for_each_block(self.pixels_mut(), move |block| {
+                for pixel in block.chunks_exact_mut(4) {
+                    apply_chroma_key(pixel, parameters);
+                }
+            });
+            return;
+        }
         for_each_block(self.pixels_mut(), move |block| match filter {
             FrameFilter::Grayscale => {
                 for pixel in block.chunks_exact_mut(4) {
@@ -947,6 +960,9 @@ impl VideoFrame {
             }
             FrameFilter::ColorKey(_) => {
                 unreachable!("color key filters are handled with derived parameters")
+            }
+            FrameFilter::ChromaKey(_) => {
+                unreachable!("chroma key filters are handled with derived parameters")
             }
         });
     }
@@ -1235,6 +1251,37 @@ impl LumaKeyParameters {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ChromaKeyParameters {
+    key_cb: f32,
+    key_cr: f32,
+    similarity: f32,
+    smoothness: f32,
+    spill: f32,
+}
+
+impl ChromaKeyParameters {
+    /// Precomputes the key chroma and normalized thresholds that are constant
+    /// across a frame.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "key channels and fixed-point thresholds are bounded to UI ranges"
+    )]
+    fn new(chroma_key: ChromaKey) -> Self {
+        let key_red = nonlinear_channel(f32::from(chroma_key.key_red()) / 255.0);
+        let key_green = nonlinear_channel(f32::from(chroma_key.key_green()) / 255.0);
+        let key_blue = nonlinear_channel(f32::from(chroma_key.key_blue()) / 255.0);
+        let key_chroma = chroma_components(key_red, key_green, key_blue);
+        Self {
+            key_cb: key_chroma.0,
+            key_cr: key_chroma.1,
+            similarity: chroma_key.similarity_milli() as f32 / 1_000.0,
+            smoothness: chroma_key.smoothness_milli() as f32 / 1_000.0,
+            spill: chroma_key.spill_milli() as f32 / 1_000.0,
+        }
+    }
+}
+
 /// Applies a bounded RGB-distance key and canonicalizes fully transparent
 /// pixels so CPU and GPU compositor paths share the same straight-alpha form.
 fn apply_color_key(pixel: &mut [u8], parameters: ColorKeyParameters) {
@@ -1297,6 +1344,61 @@ fn apply_luma_key(pixel: &mut [u8], parameters: LumaKeyParameters) {
         )
     };
     pixel[3] = float_to_byte(f32::from(pixel[3]) / 255.0 * lower * upper);
+    if pixel[3] == 0 {
+        pixel[0] = 0;
+        pixel[1] = 0;
+        pixel[2] = 0;
+    }
+}
+
+/// Converts one linear-light channel to the nonlinear sRGB value used by the
+/// OBS 32.2.2 Chroma Key shader's YCbCr distance calculation.
+fn nonlinear_channel(value: f32) -> f32 {
+    if value <= 0.003_130_8 {
+        12.92 * value
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Computes the fixed Rec. 709-style chroma coordinates used by OBS's
+/// production Chroma Key effect.
+fn chroma_components(red: f32, green: f32, blue: f32) -> (f32, f32) {
+    (
+        -0.100_644 * red - 0.338_572 * green + 0.439_216 * blue + 0.501_961,
+        0.439_216 * red - 0.398_942 * green - 0.040_274 * blue + 0.501_961,
+    )
+}
+
+/// Evaluates OBS's bounded `pow(saturate(base / width), 1.5)` mask.
+fn chroma_key_mask(base: f32, width: f32) -> f32 {
+    if width <= 0.0 {
+        return f32::from(base > 0.0);
+    }
+    (base / width).clamp(0.0, 1.0).powf(1.5)
+}
+
+/// Applies the current-pixel Chroma Key core: YCbCr distance, feathered alpha,
+/// and spill desaturation. Spatial box filtering, color-space negotiation,
+/// and the optional color controls remain separate capabilities.
+fn apply_chroma_key(pixel: &mut [u8], parameters: ChromaKeyParameters) {
+    let red = f32::from(pixel[0]) / 255.0;
+    let green = f32::from(pixel[1]) / 255.0;
+    let blue = f32::from(pixel[2]) / 255.0;
+    let nonlinear_red = nonlinear_channel(red);
+    let nonlinear_green = nonlinear_channel(green);
+    let nonlinear_blue = nonlinear_channel(blue);
+    let (cb, cr) = chroma_components(nonlinear_red, nonlinear_green, nonlinear_blue);
+    let chroma_distance =
+        ((cb - parameters.key_cb).powi(2) + (cr - parameters.key_cr).powi(2)).sqrt();
+    let base_mask = (chroma_distance - parameters.similarity).max(0.0);
+    let full_mask = chroma_key_mask(base_mask, parameters.smoothness);
+    let spill_mask = chroma_key_mask(base_mask, parameters.spill);
+    let desaturated = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    pixel[0] = float_to_byte(desaturated + (red - desaturated) * spill_mask);
+    pixel[1] = float_to_byte(desaturated + (green - desaturated) * spill_mask);
+    pixel[2] = float_to_byte(desaturated + (blue - desaturated) * spill_mask);
+    pixel[3] = float_to_byte(f32::from(pixel[3]) / 255.0 * full_mask);
     if pixel[3] == 0 {
         pixel[0] = 0;
         pixel[1] = 0;

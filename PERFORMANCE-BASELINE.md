@@ -2,7 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
-**Latest measurement:** 2026-08-21 (group packet validation)
+**Latest measurement:** 2026-08-21 (Chroma Key packet validation)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -94,28 +94,33 @@ in the live metrics string.
 
 ## Crop/Pad and key-filter evidence
 
-The Crop/Pad, Color Key, and Luma Key packets keep their effects in-place and
-bounded: Crop/Pad clears edge pixels without changing frame geometry, Color Key
-adjusts alpha from a normalized RGB distance, and Luma Key applies bounded
-smooth luminance thresholds. Both key filters canonicalize fully transparent
-pixels. The WGPU path carries every filter in a fixed seven-word record so the
-shader does not parse variable-length data.
+The Crop/Pad, Color Key, Luma Key, and Chroma Key packets keep their effects
+in-place and bounded: Crop/Pad clears edge pixels without changing frame
+geometry, Color Key adjusts alpha from a normalized RGB distance, Luma Key
+applies bounded smooth luminance thresholds, and Chroma Key applies a
+current-pixel YCbCr distance with feathering and spill reduction. Key filters
+canonicalize fully transparent pixels. The WGPU path carries every filter in a
+fixed seven-word record so the shader does not parse variable-length data.
 
 ```text
 cargo test --release -p obs-rs-media -- --ignored --nocapture composition_primitives_timing_report
 ```
 
 The ignored timing report now includes `clone + crop-pad`, `clone +
-color-correction`, `clone + color-key`, and `clone + luma-key` beside the
-existing transform, blend, grayscale, and solid-frame measurements. CPU and
+color-correction`, `clone + color-key`, `clone + luma-key`, and `clone +
+chroma-key` beside the existing transform, blend, grayscale, and solid-frame
+measurements. CPU and
 WGPU correctness are covered separately by the media filter tests and WGPU
 CPU-oracle/readback tests; this is evidence for repeatable local measurement,
 not a 60 FPS acceptance result. On 2026-08-21 in this workspace's release
-profile, the 640x360 samples averaged `388.851 µs` for Crop/Pad, `869.539 µs`
-for Color Correction, `1.279192 ms` for Color Key, and `983.22 µs` for Luma Key
-over 200 runs. These are local samples rather than acceptance thresholds;
-full-resolution CPU filter performance still requires the Phase 16 comparison
-suite.
+profile, the 640x360 samples averaged `140.99 µs` for Crop/Pad, `567.059 µs`
+for Color Correction, `925.706 µs` for Color Key, `963.252 µs` for Luma Key,
+and `3.625674 ms` for Chroma Key over 200 runs. Chroma Key is materially more
+expensive in this reference implementation because each pixel performs the
+nonlinear sRGB and YCbCr distance math; the later performance phase must decide
+whether a bounded lookup-table/vectorized path is needed. These are local
+samples rather than acceptance thresholds; full-resolution CPU filter
+performance still requires the Phase 16 comparison suite.
 
 ## Phase 1 render-target evidence
 

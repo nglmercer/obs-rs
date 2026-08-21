@@ -1100,6 +1100,10 @@ fn move_source_filter(
     source_mut(project, profile, source)?.move_filter(&filter, target_index)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the legacy conversion keeps every portable filter mapping in one exhaustive boundary"
+)]
 fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterSpec, ProjectError> {
     let (kind, name, settings) = match filter {
         FrameFilter::Grayscale => ("grayscale", "Grayscale", Config::new()),
@@ -1180,6 +1184,22 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
                     .map_err(ProjectError::Config)?;
             }
             ("color_key", "Color Key", settings)
+        }
+        FrameFilter::ChromaKey(chroma_key) => {
+            let mut settings = Config::new();
+            for (key, value) in [
+                ("key_red", i32::from(chroma_key.key_red())),
+                ("key_green", i32::from(chroma_key.key_green())),
+                ("key_blue", i32::from(chroma_key.key_blue())),
+                ("similarity", chroma_key.similarity_milli()),
+                ("smoothness", chroma_key.smoothness_milli()),
+                ("spill", chroma_key.spill_milli()),
+            ] {
+                settings
+                    .set(key, &value.to_string())
+                    .map_err(ProjectError::Config)?;
+            }
+            ("chroma_key", "Chroma Key", settings)
         }
     };
     SourceFilterSpec::with_category(
