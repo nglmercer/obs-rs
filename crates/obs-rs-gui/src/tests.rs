@@ -742,6 +742,10 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(canvas.canvas_state().zoom().ui_value(), 200);
     ui.invoke_canvas_zoom_changed(0);
     assert_eq!(canvas.canvas_state().zoom().ui_value(), 0);
+    ui.invoke_canvas_pan_dragged(24, -12);
+    assert_eq!(canvas.canvas_state().pan(), (24, -12));
+    assert_eq!(ui.get_canvas_pan_x(), 24);
+    assert_eq!(ui.get_canvas_pan_y(), -12);
     refresh_ui(&ui, &state, &surface);
     ui.show().expect("testing window should show");
     exercise_navbar_popup(&ui);

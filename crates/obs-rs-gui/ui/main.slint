@@ -61,6 +61,8 @@ export component MainWindow inherits Window {
         // Transient canvas viewport state is owned by the Rust canvas
         // controller; this property only presents its current zoom choice.
         in property <int> canvas-zoom: 0;
+        in property <int> canvas-pan-x: 0;
+        in property <int> canvas-pan-y: 0;
         in property <int> canvas-width: 1920;
         in property <int> canvas-height: 1080;
         in property <[SceneRow]> scene-rows;
@@ -120,6 +122,9 @@ export component MainWindow inherits Window {
 
         // 0 = studio mode (preview + program), 1 = the single-canvas default.
         in-out property <int> view-mode: 1;
+        // Held while the spacebar temporarily turns the preview into a pan
+        // surface, matching OBS's Space+drag navigation.
+        in-out property <bool> space-held: false;
         // Dock visibility is restored from the settings document, so these are
         // readable and writable from Rust rather than window-private.
         in-out property <bool> show-sources: true;
@@ -215,6 +220,7 @@ export component MainWindow inherits Window {
         callback canvas-clicked(int, int);
         callback canvas-zoom-changed(int);
         callback canvas-zoom-step(int);
+        callback canvas-pan-dragged(int, int);
 
         // The selected scene item's rectangle in canvas pixels.
         in property <int> item-x;
@@ -343,6 +349,18 @@ export component MainWindow inherits Window {
                 root.request-streaming();
                 return accept;
             }
+            if (event.text == " ") {
+                root.space-held = true;
+                return accept;
+            }
+            reject
+        }
+
+        key-released(event) => {
+            if (event.text == " ") {
+                root.space-held = false;
+                return accept;
+            }
             reject
         }
 
@@ -445,6 +463,9 @@ export component MainWindow inherits Window {
                 preview-image: root.preview-image;
                 program-image: root.program-image;
                 canvas-zoom: root.canvas-zoom;
+                canvas-pan-x: root.canvas-pan-x;
+                canvas-pan-y: root.canvas-pan-y;
+                space-held: root.space-held;
                 canvas-width: root.canvas-width;
                 canvas-height: root.canvas-height;
                 selected-source: root.selected-source;
@@ -464,6 +485,7 @@ export component MainWindow inherits Window {
                 canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
                 canvas-zoom-changed(value) => { root.canvas-zoom-changed(value); }
                 canvas-zoom-step(direction) => { root.canvas-zoom-step(direction); }
+                canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
             }
 
             HorizontalSplitter {

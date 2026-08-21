@@ -21,6 +21,7 @@ use crate::{preview::TransformDraft, MainWindow, PreviewSurface};
 /// A scene item shrunk to nothing has no handles left to grab, so resizing
 /// stops here rather than letting the item become unrecoverable.
 const MINIMUM_ITEM_PIXELS: i64 = 16;
+const MAX_PAN_PIXELS: i32 = 16_384;
 
 /// The scale a transform stores for a source that fills the canvas.
 const UNIT_SCALE_MILLI: i64 = 1_000;
@@ -116,10 +117,6 @@ impl CanvasState {
         self.zoom
     }
 
-    #[allow(
-        dead_code,
-        reason = "pan is consumed by the next canvas interaction packet"
-    )]
     pub(crate) const fn pan(self) -> (i32, i32) {
         self.pan
     }
@@ -128,12 +125,20 @@ impl CanvasState {
         Self { zoom, ..self }
     }
 
-    #[allow(
-        dead_code,
-        reason = "pan is written by the next canvas interaction packet"
-    )]
     pub(crate) const fn with_pan(self, pan: (i32, i32)) -> Self {
         Self { pan, ..self }
+    }
+
+    /// Applies a bounded pointer delta in canvas pixels.
+    pub(crate) fn panned(self, dx: i32, dy: i32) -> Self {
+        let bounded = |current: i32, delta: i32| {
+            i64::from(current)
+                .saturating_add(i64::from(delta))
+                .clamp(-i64::from(MAX_PAN_PIXELS), i64::from(MAX_PAN_PIXELS))
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("pan is clamped to i32 bounds"))
+        };
+        self.with_pan((bounded(self.pan.0, dx), bounded(self.pan.1, dy)))
     }
 }
 
@@ -265,11 +270,21 @@ impl CanvasController {
     pub(crate) fn canvas_state(&self) -> CanvasState {
         *self.state.borrow()
     }
+
+    /// Applies one pointer delta and returns the new viewport state.
+    pub(crate) fn pan_by(&self, dx: i32, dy: i32) -> CanvasState {
+        let state = self.canvas_state().panned(dx, dy);
+        self.state.replace(state);
+        state
+    }
 }
 
 /// Connects the UI's transient zoom controls to the one canvas state owner.
 fn install_zoom_callbacks(ui: &MainWindow, controller: &Rc<CanvasController>) {
-    ui.set_canvas_zoom(controller.canvas_state().zoom().ui_value());
+    let state = controller.canvas_state();
+    ui.set_canvas_zoom(state.zoom().ui_value());
+    ui.set_canvas_pan_x(state.pan().0);
+    ui.set_canvas_pan_y(state.pan().1);
 
     let weak = ui.as_weak();
     let zoom_controller = Rc::clone(controller);
@@ -294,6 +309,16 @@ fn install_zoom_callbacks(ui: &MainWindow, controller: &Rc<CanvasController>) {
             .replace(zoom_controller.canvas_state().with_zoom(zoom));
         if let Some(ui) = weak.upgrade() {
             ui.set_canvas_zoom(zoom.ui_value());
+        }
+    });
+
+    let weak = ui.as_weak();
+    let pan_controller = Rc::clone(controller);
+    ui.on_canvas_pan_dragged(move |dx, dy| {
+        let state = pan_controller.pan_by(dx, dy);
+        if let Some(ui) = weak.upgrade() {
+            ui.set_canvas_pan_x(state.pan().0);
+            ui.set_canvas_pan_y(state.pan().1);
         }
     });
 }
@@ -543,10 +568,13 @@ mod tests {
     fn canvas_state_keeps_viewport_state_outside_the_project_transform() {
         let state = CanvasState::default()
             .with_zoom(CanvasZoom::Percent(100))
-            .with_pan((24, -12));
+            .panned(24, -12);
 
         assert_eq!(state.zoom().ui_value(), 100);
         assert_eq!(state.pan(), (24, -12));
+
+        let bounded = state.panned(i32::MAX, i32::MIN);
+        assert_eq!(bounded.pan(), (MAX_PAN_PIXELS, -MAX_PAN_PIXELS));
     }
 
     #[test]

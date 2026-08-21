@@ -17,6 +17,9 @@ component StageCanvas inherits Rectangle {
     // Zero means fit-to-window. Fixed values are canvas pixels per device
     // pixel, matching OBS's 25/50/100/200 percent presets.
     in property <int> canvas-zoom: 0;
+    in property <int> canvas-pan-x: 0;
+    in property <int> canvas-pan-y: 0;
+    in property <bool> space-held: false;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
     in property <int> item-x;
@@ -28,6 +31,8 @@ component StageCanvas inherits Rectangle {
     callback transform-dragged(int, int, int);
     callback transform-committed();
     callback canvas-clicked(int, int);
+    callback canvas-pan-dragged(int, int);
+    callback canvas-zoom-step(int);
 
     // `image-fit: contain` centres the frame and scales it by the smaller of the
     // two ratios. Reproducing that here is what lets pointer positions be
@@ -38,8 +43,10 @@ component StageCanvas inherits Rectangle {
     property <float> view-scale: root.canvas-zoom == 0
         ? root.fit-scale
         : root.canvas-zoom * 0.01;
-    property <length> view-x: (self.width - root.canvas-width * view-scale * 1px) / 2;
-    property <length> view-y: (self.height - root.canvas-height * view-scale * 1px) / 2;
+    property <length> view-x: (self.width - root.canvas-width * view-scale * 1px) / 2
+        + root.canvas-pan-x * view-scale * 1px;
+    property <length> view-y: (self.height - root.canvas-height * view-scale * 1px) / 2
+        + root.canvas-pan-y * view-scale * 1px;
 
     background: Palette.tokens.canvas-bg;
     clip: true;
@@ -67,11 +74,14 @@ component StageCanvas inherits Rectangle {
         view-x: root.view-x;
         view-y: root.view-y;
         view-scale: root.view-scale;
+        space-held: root.space-held;
         canvas-width: root.canvas-width;
         canvas-height: root.canvas-height;
         transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
         transform-committed() => { root.transform-committed(); }
         canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+        canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+        canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
     }
     if labelled : Rectangle {
         x: 0;
@@ -101,6 +111,9 @@ export component StagePanel inherits Rectangle {
     in property <image> program-image;
     in property <int> view-mode;
     in property <int> canvas-zoom: 0;
+    in property <int> canvas-pan-x: 0;
+    in property <int> canvas-pan-y: 0;
+    in property <bool> space-held: false;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
     in property <string> selected-source;
@@ -119,6 +132,7 @@ export component StagePanel inherits Rectangle {
     callback canvas-clicked(int, int);
     callback canvas-zoom-changed(int);
     callback canvas-zoom-step(int);
+    callback canvas-pan-dragged(int, int);
 
     property <length> canvas-area-width: canvas-area.width - 24px;
     property <length> canvas-area-height: canvas-area.height - 24px;
@@ -148,6 +162,9 @@ export component StagePanel inherits Rectangle {
                     program: false;
                     labelled: true;
                     canvas-zoom: root.canvas-zoom;
+                    canvas-pan-x: root.canvas-pan-x;
+                    canvas-pan-y: root.canvas-pan-y;
+                    space-held: root.space-held;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
                     editable: true;
@@ -160,6 +177,8 @@ export component StagePanel inherits Rectangle {
                     transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
                     transform-committed() => { root.transform-committed(); }
                     canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+                    canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+                    canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
                 }
                 if view-mode == 0 : StageCanvas {
                     frame: program-image;
@@ -173,6 +192,9 @@ export component StagePanel inherits Rectangle {
                     program: false;
                     labelled: false;
                     canvas-zoom: root.canvas-zoom;
+                    canvas-pan-x: root.canvas-pan-x;
+                    canvas-pan-y: root.canvas-pan-y;
+                    space-held: root.space-held;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
                     editable: true;
@@ -185,6 +207,8 @@ export component StagePanel inherits Rectangle {
                     transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
                     transform-committed() => { root.transform-committed(); }
                     canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+                    canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+                    canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
                 }
             }
         }
