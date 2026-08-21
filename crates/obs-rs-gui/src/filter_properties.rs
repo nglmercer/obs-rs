@@ -7,7 +7,8 @@
 
 use obs_rs_config::Config;
 use obs_rs_media::{
-    ChromaKey, ColorCorrection, ColorKey, LumaKey, MAX_SCROLL_SPEED, MIN_SCROLL_SPEED,
+    ChromaKey, ColorCorrection, ColorKey, LumaKey, MAX_RENDER_DELAY_MILLISECONDS, MAX_SCROLL_SPEED,
+    MIN_RENDER_DELAY_MILLISECONDS, MIN_SCROLL_SPEED,
 };
 use obs_rs_ui::UiLocale;
 use slint::{Brush, ModelRc, SharedString, VecModel};
@@ -339,6 +340,15 @@ const SCROLL: [Field; 2] = [
     },
 ];
 
+const RENDER_DELAY: [Field; 1] = [Field {
+    key: "milliseconds",
+    english: "Delay",
+    spanish: "Retardo",
+    minimum: MIN_RENDER_DELAY_MILLISECONDS.cast_signed(),
+    maximum: MAX_RENDER_DELAY_MILLISECONDS.cast_signed(),
+    default: "0",
+}];
+
 fn fields(kind: &str) -> &'static [Field] {
     match kind {
         "brightness" => &BRIGHTNESS,
@@ -351,6 +361,7 @@ fn fields(kind: &str) -> &'static [Field] {
         "chroma_key" => &CHROMA_KEY,
         "sharpen" => &SHARPEN,
         "scroll" => &SCROLL,
+        "render_delay" => &RENDER_DELAY,
         _ => &[],
     }
 }
@@ -514,5 +525,18 @@ mod tests {
         let settings =
             apply("scroll", "speed_x = 0\nspeed_y = 0\n", "loop", "false").expect("loop setting");
         assert!(settings.contains("loop = false"));
+    }
+
+    #[test]
+    fn render_delay_schema_uses_the_obs_bounded_millisecond_range() {
+        let rows = rows("render_delay", "", UiLocale::English);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].minimum, MIN_RENDER_DELAY_MILLISECONDS.cast_signed());
+        assert_eq!(rows[0].maximum, MAX_RENDER_DELAY_MILLISECONDS.cast_signed());
+        assert_eq!(rows[0].number, 0);
+        assert_eq!(
+            apply("render_delay", "", "milliseconds", "501"),
+            Some("milliseconds = 500\n".into())
+        );
     }
 }

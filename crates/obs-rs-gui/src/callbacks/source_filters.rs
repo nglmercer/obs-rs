@@ -24,7 +24,7 @@ struct FilterDefinition {
     category: SourceFilterCategory,
 }
 
-const FILTER_DEFINITIONS: [FilterDefinition; 13] = [
+const FILTER_DEFINITIONS: [FilterDefinition; 14] = [
     FilterDefinition {
         kind: "noise_suppression",
         name: "Noise Suppression",
@@ -88,6 +88,11 @@ const FILTER_DEFINITIONS: [FilterDefinition; 13] = [
     FilterDefinition {
         kind: "scroll",
         name: "Scroll",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "render_delay",
+        name: "Render Delay",
         category: SourceFilterCategory::Effect,
     },
 ];

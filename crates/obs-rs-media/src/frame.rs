@@ -839,6 +839,7 @@ impl VideoFrame {
                     | FrameFilter::ChromaKey(_)
                     | FrameFilter::Sharpen { .. }
                     | FrameFilter::Scroll { .. }
+                    | FrameFilter::RenderDelay(_)
             )
         }) {
             for filter in filters {
@@ -855,6 +856,9 @@ impl VideoFrame {
                         speed_y,
                         looped,
                     } => self.apply_scroll(speed_x, speed_y, looped),
+                    FrameFilter::RenderDelay(_) => {
+                        unreachable!("source-level render delay is resolved by the runtime")
+                    }
                     _ => self.apply_single_pixel_filter(*filter),
                 }
             }
@@ -906,6 +910,9 @@ impl VideoFrame {
                         FrameFilter::Scroll { .. } => unreachable!(
                             "coordinate-dependent scroll filters are handled before pixel filters"
                         ),
+                        FrameFilter::RenderDelay(_) => {
+                            unreachable!("source-level render delay is resolved by the runtime")
+                        }
                     }
                 }
             }
@@ -998,6 +1005,9 @@ impl VideoFrame {
             }
             FrameFilter::Sharpen { .. } => {
                 unreachable!("sharpen filters are handled with the source snapshot")
+            }
+            FrameFilter::RenderDelay(_) => {
+                unreachable!("source-level render delay is resolved by the runtime")
             }
         });
     }

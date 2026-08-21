@@ -1241,6 +1241,13 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
             }
             ("scroll", "Scroll", settings)
         }
+        FrameFilter::RenderDelay(delay) => {
+            let mut settings = Config::new();
+            settings
+                .set("milliseconds", &delay.milliseconds.to_string())
+                .map_err(ProjectError::Config)?;
+            ("render_delay", "Render Delay", settings)
+        }
     };
     SourceFilterSpec::with_category(
         &format!("legacy_filter_{}", index.saturating_add(1)),

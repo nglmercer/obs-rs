@@ -1493,6 +1493,9 @@ fn layer_parameters(
                 0,
                 0,
             ]),
+            FrameFilter::RenderDelay(_) => unreachable!(
+                "source-level render delay must be resolved by the runtime before WGPU"
+            ),
         }
     }
     values.into_iter().flat_map(i32::to_le_bytes).collect()

@@ -2,7 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
-**Latest measurement:** 2026-08-21 (timestamp-driven Scroll filter packet)
+**Latest measurement:** 2026-08-21 (bounded Render Delay filter packet)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -92,7 +92,7 @@ requests a 1048x590 preview for a 1920x1080 canvas (and a proportionally bounded
 target for 4K), so its Slint copy is separated and counted as `frame_copy_bytes`
 in the live metrics string.
 
-## Crop/Pad, key, color, and Scroll-filter evidence
+## Crop/Pad, key, color, Scroll, and Render Delay evidence
 
 The Crop/Pad, Color Key, Luma Key, Chroma Key, Sharpen, Color Multiply/Add, and
 Scroll packets keep their effects
@@ -145,6 +145,22 @@ integration test verifies it against that CPU oracle; the readback in that test
 is explicit test instrumentation, not the preview path. Reusable CPU scratch
 storage or GPU-only routing is still required before treating CPU Scroll as a
 high-resolution real-time implementation.
+
+The Render Delay queue is bounded by 32 retained frame slots and 256 MiB of
+RGBA storage per source. It owns timestamps in the source runtime, returns no
+frame during warm-up, and shares the delayed frame with every scene item that
+references that source. The queue-only release probe is:
+
+```text
+cargo test --release -p obs-rs-media render_delay_buffer_timing_report -- --ignored --nocapture
+render delay buffer: 120 timestamped 640x360 pushes = 6.313µs total (about 52ns/push), buffered=6, checksum=3648
+```
+
+This probe uses shared pixel storage to isolate queue/state cost; capture
+allocation, high-resolution memory pressure, GPU texture history, and the
+ordered temporal/pixel filter graph are not included. A history that exceeds
+the CPU budget reports a bounded runtime failure and does not silently shorten
+the requested delay.
 
 The audio Gain timing probe processes 200 reusable 480-frame stereo blocks
 through one fixed-capacity chain without allocating per block. Its release

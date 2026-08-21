@@ -1999,6 +1999,8 @@ fn render_source_filters_window(
     window.invoke_edit_property("speed_x".into(), "120".into());
     window.invoke_edit_property("speed_y".into(), "-80".into());
     window.invoke_edit_property("loop".into(), "false".into());
+    window.invoke_add_filter("render_delay".into());
+    window.invoke_edit_property("milliseconds".into(), "100".into());
 
     let state_ref = state.borrow();
     let source = state_ref
@@ -2007,7 +2009,7 @@ fn render_source_filters_window(
         .active_profile_spec()
         .and_then(|profile| profile.source("background"))
         .expect("background source after filter edits");
-    assert_eq!(source.filters().len(), 9);
+    assert_eq!(source.filters().len(), 10);
     assert_eq!(source.filters()[0].id().as_str(), "grayscale");
     assert_eq!(source.filters()[0].name(), "Scene grayscale");
     let brightness = source
@@ -2069,6 +2071,12 @@ fn render_source_filters_window(
     assert_eq!(scroll.settings().get("speed_x"), Some("120"));
     assert_eq!(scroll.settings().get("speed_y"), Some("-80"));
     assert_eq!(scroll.settings().get("loop"), Some("false"));
+    let render_delay = source
+        .filters()
+        .iter()
+        .find(|filter| filter.kind().as_str() == "render_delay")
+        .expect("render delay filter");
+    assert_eq!(render_delay.settings().get("milliseconds"), Some("100"));
     drop(state_ref);
 
     window.invoke_select_filter("color_key".into());
@@ -2078,6 +2086,8 @@ fn render_source_filters_window(
     window.invoke_select_filter("sharpen".into());
     window.invoke_remove_filter();
     window.invoke_select_filter("scroll".into());
+    window.invoke_remove_filter();
+    window.invoke_select_filter("render_delay".into());
     window.invoke_remove_filter();
     window.invoke_select_filter("luma_key".into());
     window.invoke_remove_filter();

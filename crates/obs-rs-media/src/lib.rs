@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
+mod delay;
 mod error;
 mod filters;
 mod format;
@@ -17,10 +18,14 @@ mod transition;
 #[cfg(test)]
 mod tests;
 
+pub use delay::{
+    RenderDelayBuffer, RenderDelayError, MAX_RENDER_DELAY_HISTORY_BYTES,
+    MAX_RENDER_DELAY_HISTORY_FRAMES, MAX_RENDER_DELAY_MILLISECONDS, MIN_RENDER_DELAY_MILLISECONDS,
+};
 pub use error::MediaError;
 pub use filters::{
-    ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, LumaKey, MAX_SCROLL_SPEED,
-    MIN_SCROLL_SPEED,
+    ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, LumaKey, RenderDelay,
+    MAX_SCROLL_SPEED, MIN_SCROLL_SPEED,
 };
 pub use format::VideoFormat;
 pub use frame::VideoFrame;

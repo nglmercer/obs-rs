@@ -30,7 +30,30 @@ fn render_source_frame(
     request: &VideoRequest,
     metrics: &mut CompositorMetrics,
 ) -> (Option<VideoFrame>, Vec<FrameFilter>) {
-    let filters = instance.filters.clone();
+    let configured_filters = instance.filters.clone();
+    let mut filters = Vec::with_capacity(configured_filters.len());
+    let mut render_delay = None;
+    for filter in configured_filters {
+        match filter {
+            FrameFilter::RenderDelay(delay) => {
+                if render_delay.is_some() {
+                    instance.failure = Some(
+                        "multiple Render Delay filters on one source are not supported".into(),
+                    );
+                    metrics.failed_sources = metrics.failed_sources.saturating_add(1);
+                    return (None, filters);
+                }
+                render_delay = Some(delay.milliseconds);
+            }
+            filter => filters.push(filter),
+        }
+    }
+    let render_delay = render_delay.unwrap_or_default();
+    if let Err(error) = instance.render_delay.set_milliseconds(render_delay) {
+        instance.failure = Some(format!("Render Delay: {error}"));
+        metrics.failed_sources = metrics.failed_sources.saturating_add(1);
+        return (None, filters);
+    }
     let capture_started = Instant::now();
     let rendered = instance.source.render(request);
     metrics.capture_latency.record(capture_started.elapsed());
@@ -81,7 +104,20 @@ fn render_source_frame(
             .filter(|frame| frame.format() == request.format())
             .map(|frame| frame.at_timestamp(request.timestamp()))
     });
-    (frame, filters)
+    let Some(frame) = frame else {
+        return (None, filters);
+    };
+    if render_delay == 0 {
+        return (Some(frame), filters);
+    }
+    match instance.render_delay.push(frame) {
+        Ok(frame) => (frame, filters),
+        Err(error) => {
+            instance.failure = Some(format!("Render Delay: {error}"));
+            metrics.failed_sources = metrics.failed_sources.saturating_add(1);
+            (None, filters)
+        }
+    }
 }
 
 /// One captured scene layer before compositor-specific pixel processing.

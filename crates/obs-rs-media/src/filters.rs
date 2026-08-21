@@ -395,6 +395,14 @@ pub const MIN_SCROLL_SPEED: i16 = -500;
 /// Largest supported horizontal or vertical Scroll speed, in pixels/second.
 pub const MAX_SCROLL_SPEED: i16 = 500;
 
+/// A bounded source-level Render Delay. The runtime owns its timestamp history
+/// before handing the resulting frame to CPU or WGPU pixel filters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RenderDelay {
+    /// Delay in milliseconds, bounded by the portable OBS Render Delay range.
+    pub milliseconds: u32,
+}
+
 /// A deterministic CPU filter applied after a scene-item transform.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrameFilter {
@@ -436,4 +444,9 @@ pub enum FrameFilter {
         speed_y: i16,
         looped: bool,
     },
+    /// Delays a source frame in the runtime-owned timestamp history.
+    ///
+    /// This is intentionally not a pixel operation; the compositor resolves it
+    /// before exposing the remaining ordered chain to CPU or WGPU composition.
+    RenderDelay(RenderDelay),
 }

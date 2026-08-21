@@ -773,6 +773,7 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
                     speed_y: -80,
                     looped: false,
                 },
+                FrameFilter::RenderDelay(obs_rs_media::RenderDelay { milliseconds: 100 }),
             ],
         })
         .expect("set source filters command");

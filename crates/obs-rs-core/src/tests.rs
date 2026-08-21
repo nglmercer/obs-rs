@@ -164,6 +164,56 @@ fn scene_item_transform_is_applied_before_composition() {
 }
 
 #[test]
+fn render_delay_is_bounded_and_warms_up_before_emitting_old_frames() {
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let mut runtime = Runtime::new();
+    runtime
+        .register_plugin(&plugin)
+        .expect("registration succeeds");
+    runtime.create_scene("main").expect("scene is new");
+    let source = runtime
+        .create_source("test_pattern", "pattern", &settings(2, 2, "#000000FF"))
+        .expect("test pattern is valid");
+    runtime
+        .attach_source("main", source)
+        .expect("attach source");
+    runtime
+        .add_source_filter(
+            source,
+            FrameFilter::RenderDelay(obs_rs_media::RenderDelay { milliseconds: 100 }),
+        )
+        .expect("render delay fits the source filter limit");
+
+    for timestamp in [0, 33, 66] {
+        assert!(runtime
+            .render_scene(
+                "main",
+                &VideoRequest::new(Timestamp::from_millis(timestamp), format()),
+            )
+            .expect("warm-up render succeeds")
+            .is_none());
+    }
+    let first_delayed = runtime
+        .render_scene(
+            "main",
+            &VideoRequest::new(Timestamp::from_millis(100), format()),
+        )
+        .expect("delayed render succeeds")
+        .expect("first delayed frame is ready");
+    assert_eq!(first_delayed.pixel(0, 0), Some([32, 0, 0, 255]));
+    assert_eq!(first_delayed.timestamp(), Timestamp::from_millis(100));
+
+    let second_delayed = runtime
+        .render_scene(
+            "main",
+            &VideoRequest::new(Timestamp::from_millis(133), format()),
+        )
+        .expect("second delayed render succeeds")
+        .expect("second delayed frame is ready");
+    assert_eq!(second_delayed.pixel(0, 0), Some([224, 0, 0, 255]));
+}
+
+#[test]
 fn duplicate_scene_items_share_capture_but_keep_transforms() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
     let mut runtime = Runtime::new();

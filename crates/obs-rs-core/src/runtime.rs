@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use obs_rs_config::Config;
-use obs_rs_media::{FrameFilter, FrameTransform};
+use obs_rs_media::{FrameFilter, FrameTransform, RenderDelayBuffer};
 use obs_rs_plugin_api::{Plugin, PluginApiVersion, PluginManifest};
 use obs_rs_util::Identifier;
 
@@ -234,6 +234,7 @@ impl Runtime {
                 name: name.to_owned(),
                 source,
                 filters: Vec::new(),
+                render_delay: RenderDelayBuffer::new(),
                 last_frame: None,
                 failure: None,
             },
@@ -534,6 +535,7 @@ impl Runtime {
             .ok_or(RuntimeError::UnknownSource(source))?;
         self.filter_count = self.filter_count.saturating_sub(instance.filters.len());
         instance.filters.clear();
+        instance.render_delay.clear();
         Ok(())
     }
 
@@ -601,6 +603,7 @@ impl Runtime {
         // dropped rather than composited at the old size.
         instance.last_frame = None;
         instance.failure = None;
+        instance.render_delay.clear();
         instance
             .source
             .update(settings)

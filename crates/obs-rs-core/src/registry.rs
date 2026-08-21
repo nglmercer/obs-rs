@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use obs_rs_media::{FrameFilter, FrameTransform, VideoFrame};
+use obs_rs_media::{FrameFilter, FrameTransform, RenderDelayBuffer, VideoFrame};
 use obs_rs_plugin_api::{PluginManifest, Source, SourceFactory};
 use obs_rs_util::Identifier;
 
@@ -30,6 +30,9 @@ pub(crate) struct SourceInstance {
     /// Filters belonging to the shared source definition rather than one
     /// scene item. Every scene reference sees the same compiled chain.
     pub(crate) filters: Vec<FrameFilter>,
+    /// Timestamp history for the source-level Render Delay filter. It is
+    /// shared by every scene item that references this source.
+    pub(crate) render_delay: RenderDelayBuffer,
     /// The newest frame this source produced.
     ///
     /// A live device drops frames — a camera that is reconnecting, a portal

@@ -245,6 +245,146 @@ fn scroll_filter_uses_timestamped_pixel_offsets_and_bounded_edges() {
 }
 
 #[test]
+fn render_delay_buffer_warms_up_and_preserves_timestamped_pixels() {
+    let format = VideoFormat::new(2, 1, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut history = RenderDelayBuffer::new();
+    history
+        .set_milliseconds(100)
+        .expect("100 ms is in the OBS range");
+
+    assert!(history
+        .push(VideoFrame::solid(format, Timestamp::ZERO, [10, 0, 0, 255]))
+        .expect("first frame")
+        .is_none());
+    assert!(history
+        .push(VideoFrame::solid(
+            format,
+            Timestamp::from_millis(33),
+            [20, 0, 0, 255],
+        ))
+        .expect("second frame")
+        .is_none());
+    assert!(history
+        .push(VideoFrame::solid(
+            format,
+            Timestamp::from_millis(66),
+            [30, 0, 0, 255],
+        ))
+        .expect("third frame")
+        .is_none());
+
+    let delayed = history
+        .push(VideoFrame::solid(
+            format,
+            Timestamp::from_millis(100),
+            [40, 0, 0, 255],
+        ))
+        .expect("warm-up completes")
+        .expect("oldest frame is ready");
+    assert_eq!(delayed.pixel(0, 0), Some([10, 0, 0, 255]));
+    assert_eq!(delayed.timestamp(), Timestamp::from_millis(100));
+
+    let next = history
+        .push(VideoFrame::solid(
+            format,
+            Timestamp::from_millis(133),
+            [50, 0, 0, 255],
+        ))
+        .expect("next frame")
+        .expect("second delayed frame");
+    assert_eq!(next.pixel(0, 0), Some([20, 0, 0, 255]));
+}
+
+#[test]
+fn render_delay_buffer_resets_on_timeline_jumps_and_rejects_unbounded_history() {
+    let format = VideoFormat::new(2, 1, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut history = RenderDelayBuffer::new();
+    history
+        .set_milliseconds(100)
+        .expect("100 ms is in the OBS range");
+    history
+        .push(VideoFrame::solid(format, Timestamp::ZERO, [1, 0, 0, 255]))
+        .expect("first frame");
+    history
+        .push(VideoFrame::solid(
+            format,
+            Timestamp::from_millis(1_500),
+            [2, 0, 0, 255],
+        ))
+        .expect("timeline reset frame");
+    assert_eq!(history.buffered_frames(), 1);
+
+    let high_rate =
+        VideoFormat::new(1, 1, FrameRate::new(1_000, 1).expect("rate")).expect("format");
+    let mut bounded = RenderDelayBuffer::new();
+    bounded
+        .set_milliseconds(MAX_RENDER_DELAY_MILLISECONDS)
+        .expect("maximum delay is valid");
+    assert_eq!(
+        bounded.push(VideoFrame::solid(
+            high_rate,
+            Timestamp::ZERO,
+            [0, 0, 0, 255]
+        )),
+        Err(RenderDelayError::FrameCapacity {
+            required: 501,
+            maximum: MAX_RENDER_DELAY_HISTORY_FRAMES,
+        })
+    );
+
+    let mut stagnant = RenderDelayBuffer::new();
+    stagnant
+        .set_milliseconds(100)
+        .expect("100 ms is in the OBS range");
+    for _ in 0..MAX_RENDER_DELAY_HISTORY_FRAMES {
+        stagnant
+            .push(VideoFrame::solid(format, Timestamp::ZERO, [3, 0, 0, 255]))
+            .expect("duplicate timestamps remain bounded until the cap");
+    }
+    assert_eq!(
+        stagnant.push(VideoFrame::solid(format, Timestamp::ZERO, [4, 0, 0, 255])),
+        Err(RenderDelayError::FrameCapacity {
+            required: MAX_RENDER_DELAY_HISTORY_FRAMES + 1,
+            maximum: MAX_RENDER_DELAY_HISTORY_FRAMES,
+        })
+    );
+}
+
+/// Reports the bounded timestamp queue overhead for the CPU Render Delay
+/// oracle. Pixel storage is intentionally shared here so the measurement
+/// isolates queue/state work from capture allocation.
+#[test]
+#[ignore = "timing report, not a pass/fail assertion"]
+fn render_delay_buffer_timing_report() {
+    use std::time::Instant;
+
+    let format = VideoFormat::new(640, 360, FrameRate::new(60, 1).expect("rate")).expect("format");
+    let source = VideoFrame::solid(format, Timestamp::ZERO, [32, 96, 160, 255]);
+    let mut history = RenderDelayBuffer::new();
+    history
+        .set_milliseconds(100)
+        .expect("100 ms is in the OBS range");
+    let runs = 120_u64;
+    let start = Instant::now();
+    let mut checksum = 0_u64;
+    for index in 0..runs {
+        let frame = source.at_timestamp(Timestamp::from_nanos(
+            (index + 1).saturating_mul(16_666_667),
+        ));
+        if let Some(delayed) = history.push(frame).expect("bounded history") {
+            checksum = checksum.wrapping_add(u64::from(delayed.pixels()[0]));
+            std::hint::black_box(&delayed);
+        }
+    }
+    let elapsed = start.elapsed();
+    println!(
+        "render delay buffer: {runs} timestamped 640x360 pushes = {elapsed:?} total (about {:?}/push), buffered={}, checksum={checksum}",
+        elapsed / u32::try_from(runs).expect("runs fit"),
+        history.buffered_frames(),
+    );
+}
+
+#[test]
 fn color_correction_uses_fixed_point_obs_ranges_and_preserves_noop_frames() {
     let format =
         VideoFormat::new(1, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");

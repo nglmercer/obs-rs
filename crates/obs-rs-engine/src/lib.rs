@@ -30,7 +30,8 @@ use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{
     ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameRate, FrameTransform,
-    LatencyMetrics, LumaKey, RawVideoFrame, Timestamp, VideoFormat, VideoFrame, MAX_SCROLL_SPEED,
+    LatencyMetrics, LumaKey, RawVideoFrame, RenderDelay, Timestamp, VideoFormat, VideoFrame,
+    MAX_RENDER_DELAY_MILLISECONDS, MAX_SCROLL_SPEED, MIN_RENDER_DELAY_MILLISECONDS,
     MIN_SCROLL_SPEED,
 };
 #[cfg(feature = "production-gstreamer")]
@@ -2360,6 +2361,14 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
                 looped,
             })
         }
+        "render_delay" => spec
+            .settings()
+            .get("milliseconds")
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|value| {
+                (MIN_RENDER_DELAY_MILLISECONDS..=MAX_RENDER_DELAY_MILLISECONDS).contains(value)
+            })
+            .map(|milliseconds| FrameFilter::RenderDelay(RenderDelay { milliseconds })),
         _ => None,
     }
 }
@@ -2947,6 +2956,26 @@ mod tests {
                 looped: false,
             })
         );
+
+        let render_delay = SourceFilterSpec::new(
+            "render-delay",
+            "Render Delay",
+            "render_delay",
+            Config::parse("milliseconds = 100\n").expect("render delay settings"),
+        )
+        .expect("render delay filter");
+        assert_eq!(
+            compile_filter(&render_delay),
+            Some(FrameFilter::RenderDelay(RenderDelay { milliseconds: 100 }))
+        );
+        let invalid_render_delay = SourceFilterSpec::new(
+            "invalid-render-delay",
+            "Invalid Render Delay",
+            "render_delay",
+            Config::parse("milliseconds = 501\n").expect("invalid delay settings"),
+        )
+        .expect("invalid render delay filter");
+        assert_eq!(compile_filter(&invalid_render_delay), None);
         let mut invalid_scroll_settings = Config::new();
         invalid_scroll_settings
             .set("loop", "maybe")
