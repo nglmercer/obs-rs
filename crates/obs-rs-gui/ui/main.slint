@@ -58,6 +58,9 @@ export component MainWindow inherits Window {
         in property <string> snapshot;
         in property <image> preview-image;
         in property <image> program-image;
+        // Transient canvas viewport state is owned by the Rust canvas
+        // controller; this property only presents its current zoom choice.
+        in property <int> canvas-zoom: 0;
         in property <int> canvas-width: 1920;
         in property <int> canvas-height: 1080;
         in property <[SceneRow]> scene-rows;
@@ -210,6 +213,8 @@ export component MainWindow inherits Window {
         callback transform-dragged(int, int, int);
         callback transform-committed();
         callback canvas-clicked(int, int);
+        callback canvas-zoom-changed(int);
+        callback canvas-zoom-step(int);
 
         // The selected scene item's rectangle in canvas pixels.
         in property <int> item-x;
@@ -439,6 +444,7 @@ export component MainWindow inherits Window {
                 program-scene: root.program-scene;
                 preview-image: root.preview-image;
                 program-image: root.program-image;
+                canvas-zoom: root.canvas-zoom;
                 canvas-width: root.canvas-width;
                 canvas-height: root.canvas-height;
                 selected-source: root.selected-source;
@@ -456,6 +462,8 @@ export component MainWindow inherits Window {
                 transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
                 transform-committed() => { root.transform-committed(); }
                 canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+                canvas-zoom-changed(value) => { root.canvas-zoom-changed(value); }
+                canvas-zoom-step(direction) => { root.canvas-zoom-step(direction); }
             }
 
             HorizontalSplitter {

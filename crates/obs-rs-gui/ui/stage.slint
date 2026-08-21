@@ -1,5 +1,5 @@
 import { Button, ComboBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { Icon } from "theme.slint";
+import { CompactButton } from "theme.slint";
 import { CanvasEditor } from "canvas_editor.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
@@ -14,6 +14,9 @@ component StageCanvas inherits Rectangle {
     in property <bool> labelled;
     // Set only on the editable canvas; the program view is not interactive.
     in property <bool> editable;
+    // Zero means fit-to-window. Fixed values are canvas pixels per device
+    // pixel, matching OBS's 25/50/100/200 percent presets.
+    in property <int> canvas-zoom: 0;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
     in property <int> item-x;
@@ -29,19 +32,25 @@ component StageCanvas inherits Rectangle {
     // `image-fit: contain` centres the frame and scales it by the smaller of the
     // two ratios. Reproducing that here is what lets pointer positions be
     // converted into canvas pixels exactly.
-    property <float> view-scale: Math.min(
+    property <float> fit-scale: Math.min(
         self.width / (root.canvas-width * 1px),
         self.height / (root.canvas-height * 1px));
+    property <float> view-scale: root.canvas-zoom == 0
+        ? root.fit-scale
+        : root.canvas-zoom * 0.01;
     property <length> view-x: (self.width - root.canvas-width * view-scale * 1px) / 2;
     property <length> view-y: (self.height - root.canvas-height * view-scale * 1px) / 2;
 
     background: Palette.tokens.canvas-bg;
+    clip: true;
     horizontal-stretch: 1;
     vertical-stretch: 1;
 
     Image {
-        width: 100%;
-        height: 100%;
+        x: root.view-x;
+        y: root.view-y;
+        width: root.canvas-width * root.view-scale * 1px;
+        height: root.canvas-height * root.view-scale * 1px;
         source: root.frame;
         image-fit: contain;
         image-rendering: smooth;
@@ -91,6 +100,7 @@ export component StagePanel inherits Rectangle {
     in property <image> preview-image;
     in property <image> program-image;
     in property <int> view-mode;
+    in property <int> canvas-zoom: 0;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
     in property <string> selected-source;
@@ -107,6 +117,8 @@ export component StagePanel inherits Rectangle {
     callback transform-dragged(int, int, int);
     callback transform-committed();
     callback canvas-clicked(int, int);
+    callback canvas-zoom-changed(int);
+    callback canvas-zoom-step(int);
 
     property <length> canvas-area-width: canvas-area.width - 24px;
     property <length> canvas-area-height: canvas-area.height - 24px;
@@ -135,6 +147,7 @@ export component StagePanel inherits Rectangle {
                     label: I18n.text.preview;
                     program: false;
                     labelled: true;
+                    canvas-zoom: root.canvas-zoom;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
                     editable: true;
@@ -159,6 +172,7 @@ export component StagePanel inherits Rectangle {
                     label: I18n.text.preview;
                     program: false;
                     labelled: false;
+                    canvas-zoom: root.canvas-zoom;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
                     editable: true;
@@ -182,42 +196,52 @@ export component StagePanel inherits Rectangle {
             border-color: Palette.tokens.border;
             // Laid out by hand: the zoom readout depends on the canvas height,
             // so letting its text feed a layout would close a binding loop.
-            Icon { x: 8px; y: 6px; name: "remove"; icon-size: 12px; }
+            CompactButton {
+                x: 0px;
+                y: 0px;
+                icon-name: "remove";
+                hint: "Zoom out";
+                clicked => root.canvas-zoom-step(-1);
+            }
             Text {
                 x: 26px;
                 y: 0;
                 width: 40px;
                 height: 100%;
-                text: Math.round(root.fit-scale * 100) + "%";
+                text: Math.round(root.canvas-zoom == 0
+                    ? root.fit-scale * 100
+                    : root.canvas-zoom) + "%";
                 color: Palette.tokens.text-muted;
                 font-size: 10px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
-            Icon { x: 70px; y: 6px; name: "add"; icon-size: 12px; }
-            Rectangle {
+            CompactButton {
+                x: 64px;
+                y: 0px;
+                icon-name: "add";
+                hint: "Zoom in";
+                clicked => root.canvas-zoom-step(1);
+            }
+            ComboBox {
                 x: 92px;
                 y: 2px;
                 width: 148px;
                 height: parent.height - 4px;
-                background: Palette.tokens.row-bg;
-                border-width: 1px;
-                border-color: Palette.tokens.border;
-                Text {
-                    x: 6px;
-                    width: parent.width - 20px;
-                    height: 100%;
-                    text: I18n.text.fit_to_window;
-                    color: Palette.tokens.text-muted;
-                    font-size: 10px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-                Icon {
-                    x: parent.width - 15px;
-                    y: (parent.height - 11px) / 2;
-                    name: "down";
-                    icon-size: 11px;
+                model: [I18n.text.fit_to_window, "25%", "50%", "100%", "200%"];
+                current-index: root.canvas-zoom == 0
+                    ? 0
+                    : (root.canvas-zoom == 25
+                        ? 1
+                        : (root.canvas-zoom == 50
+                            ? 2
+                            : (root.canvas-zoom == 100 ? 3 : 4)));
+                selected(index) => {
+                    root.canvas-zoom-changed(index == 0
+                        ? 0
+                        : (index == 1
+                            ? 25
+                            : (index == 2 ? 50 : (index == 3 ? 100 : 200))));
                 }
             }
         }

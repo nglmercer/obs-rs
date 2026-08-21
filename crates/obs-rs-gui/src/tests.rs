@@ -4,8 +4,8 @@ use super::preview::PreviewRenderer;
 use super::refresh::{peak_db, transition_label_for_locale};
 use super::settings::AppSettings;
 use super::{
-    capture_devices, initial_project, refresh_ui, source_settings, I18n, MainWindow, OutputRuntime,
-    PreviewSurface, SettingsWindow, SourcePropertiesWindow,
+    capture_devices, initial_project, install_canvas_callbacks, refresh_ui, source_settings, I18n,
+    MainWindow, OutputRuntime, PreviewSurface, SettingsWindow, SourcePropertiesWindow,
 };
 use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
@@ -735,6 +735,13 @@ fn ui_layout_can_render_a_reference_snapshot() {
         PreviewSurface::new(&project, 0).expect("preview surface"),
     ));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    let canvas = install_canvas_callbacks(&ui, &state, &surface);
+    ui.invoke_canvas_zoom_changed(100);
+    assert_eq!(canvas.canvas_state().zoom().ui_value(), 100);
+    ui.invoke_canvas_zoom_step(1);
+    assert_eq!(canvas.canvas_state().zoom().ui_value(), 200);
+    ui.invoke_canvas_zoom_changed(0);
+    assert_eq!(canvas.canvas_state().zoom().ui_value(), 0);
     refresh_ui(&ui, &state, &surface);
     ui.show().expect("testing window should show");
     exercise_navbar_popup(&ui);

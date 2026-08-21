@@ -19,7 +19,7 @@ scenes and capture devices.
 | `cargo check --workspace --all-targets --all-features` | Pass | Completed in 45.75 s in the warm workspace. |
 | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Pass | Baseline lint drift was cleaned up while preserving behavior; this is now a required phase gate. |
 | `cargo test --workspace --all-targets` | Pass with explicit environment ignores | Native production-sink tests and one native-window GUI test are explicitly ignored because this managed session has neither dependency; the remaining workspace tests pass. |
-| `cargo test -p obs-rs-gui --bin obs-rs-gui` | Pass with 1 explicit environment ignore | 82 pass, 1 ignored because the winit backend cannot find a Wayland/X11 compositor. |
+| `cargo test -p obs-rs-gui --bin obs-rs-gui` | Pass with 1 explicit environment ignore | 85 pass, 1 ignored because the winit backend cannot find a Wayland/X11 compositor. |
 | `cargo run -p obs-rs-gui -- --smoke` | Pass | Constructs the window and render path without entering the event loop. |
 | `cargo run -p obs-rs-app --bin obs-rs-linux-check` | Mixed | A/V soak passes; X11/window/camera/PipeWire checks skip due session capabilities. |
 | `cargo run -p obs-rs-app --bin obs-rs-benchmark --release` | Pass as a measurement | The harness completes, but its deadline metrics do not meet the future acceptance gate. |

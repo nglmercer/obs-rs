@@ -25,6 +25,118 @@ const MINIMUM_ITEM_PIXELS: i64 = 16;
 /// The scale a transform stores for a source that fills the canvas.
 const UNIT_SCALE_MILLI: i64 = 1_000;
 
+/// The zoom values exposed by the canvas control. `FitToWindow` is kept as a
+/// distinct value because the fit scale depends on the live widget geometry;
+/// it is not a project setting and must not be rounded into a fixed percent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CanvasZoom {
+    FitToWindow,
+    Percent(u16),
+}
+
+impl CanvasZoom {
+    /// Returns the compact UI representation: zero means fit-to-window.
+    pub(crate) const fn ui_value(self) -> i32 {
+        match self {
+            Self::FitToWindow => 0,
+            Self::Percent(percent) => percent as i32,
+        }
+    }
+
+    /// Parses the bounded values offered by the zoom control.
+    pub(crate) const fn from_ui_value(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(Self::FitToWindow),
+            25 => Some(Self::Percent(25)),
+            50 => Some(Self::Percent(50)),
+            100 => Some(Self::Percent(100)),
+            200 => Some(Self::Percent(200)),
+            _ => None,
+        }
+    }
+
+    /// Moves one position through the OBS-style bounded preset list.
+    pub(crate) const fn stepped(self, direction: i32) -> Self {
+        const PRESETS: [CanvasZoom; 5] = [
+            CanvasZoom::FitToWindow,
+            CanvasZoom::Percent(25),
+            CanvasZoom::Percent(50),
+            CanvasZoom::Percent(100),
+            CanvasZoom::Percent(200),
+        ];
+        let current: usize = match self {
+            Self::Percent(25) => 1,
+            Self::Percent(50) => 2,
+            Self::Percent(100) => 3,
+            Self::Percent(200) => 4,
+            // The constructor is private to this module, but keeping the
+            // fallback makes the stepping contract total if another preset is
+            // added later.
+            Self::FitToWindow | Self::Percent(_) => 0,
+        };
+        let next = if direction < 0 {
+            current.saturating_sub(1)
+        } else if direction > 0 {
+            if current + 1 >= PRESETS.len() {
+                PRESETS.len() - 1
+            } else {
+                current + 1
+            }
+        } else {
+            current
+        };
+        PRESETS[next]
+    }
+}
+
+/// Transient canvas viewport state owned by the canvas controller.
+///
+/// Zoom and pan are presentation state, not project data. Keeping them beside
+/// the transform draft gives the UI one owner while leaving scene commands and
+/// persisted documents free of widget-specific values. Pan is introduced here
+/// so the next canvas packet can extend the same state without creating a
+/// second viewport model.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CanvasState {
+    zoom: CanvasZoom,
+    pan: (i32, i32),
+}
+
+impl Default for CanvasState {
+    fn default() -> Self {
+        Self {
+            zoom: CanvasZoom::FitToWindow,
+            pan: (0, 0),
+        }
+    }
+}
+
+impl CanvasState {
+    pub(crate) const fn zoom(self) -> CanvasZoom {
+        self.zoom
+    }
+
+    #[allow(
+        dead_code,
+        reason = "pan is consumed by the next canvas interaction packet"
+    )]
+    pub(crate) const fn pan(self) -> (i32, i32) {
+        self.pan
+    }
+
+    pub(crate) const fn with_zoom(self, zoom: CanvasZoom) -> Self {
+        Self { zoom, ..self }
+    }
+
+    #[allow(
+        dead_code,
+        reason = "pan is written by the next canvas interaction packet"
+    )]
+    pub(crate) const fn with_pan(self, pan: (i32, i32)) -> Self {
+        Self { pan, ..self }
+    }
+}
+
 /// A scene item's rectangle in canvas pixels.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ItemRect {
@@ -140,6 +252,7 @@ pub(crate) fn drag_rect(rect: ItemRect, handle: i32, dx: i64, dy: i64) -> ItemRe
 /// single project revision being produced.
 pub(crate) struct CanvasController {
     draft: RefCell<Option<TransformDraft>>,
+    state: RefCell<CanvasState>,
 }
 
 impl CanvasController {
@@ -147,6 +260,42 @@ impl CanvasController {
     pub(crate) fn draft(&self) -> Option<TransformDraft> {
         self.draft.borrow().clone()
     }
+
+    /// Returns the transient viewport state used by the canvas presentation.
+    pub(crate) fn canvas_state(&self) -> CanvasState {
+        *self.state.borrow()
+    }
+}
+
+/// Connects the UI's transient zoom controls to the one canvas state owner.
+fn install_zoom_callbacks(ui: &MainWindow, controller: &Rc<CanvasController>) {
+    ui.set_canvas_zoom(controller.canvas_state().zoom().ui_value());
+
+    let weak = ui.as_weak();
+    let zoom_controller = Rc::clone(controller);
+    ui.on_canvas_zoom_changed(move |value| {
+        let Some(zoom) = CanvasZoom::from_ui_value(value) else {
+            return;
+        };
+        zoom_controller
+            .state
+            .replace(zoom_controller.canvas_state().with_zoom(zoom));
+        if let Some(ui) = weak.upgrade() {
+            ui.set_canvas_zoom(zoom.ui_value());
+        }
+    });
+
+    let weak = ui.as_weak();
+    let zoom_controller = Rc::clone(controller);
+    ui.on_canvas_zoom_step(move |direction| {
+        let zoom = zoom_controller.canvas_state().zoom().stepped(direction);
+        zoom_controller
+            .state
+            .replace(zoom_controller.canvas_state().with_zoom(zoom));
+        if let Some(ui) = weak.upgrade() {
+            ui.set_canvas_zoom(zoom.ui_value());
+        }
+    });
 }
 
 /// Installs the canvas selection and transform callbacks.
@@ -157,7 +306,9 @@ pub(crate) fn install_canvas_callbacks(
 ) -> Rc<CanvasController> {
     let controller = Rc::new(CanvasController {
         draft: RefCell::new(None),
+        state: RefCell::new(CanvasState::default()),
     });
+    install_zoom_callbacks(ui, &controller);
 
     let weak = ui.as_weak();
     let drag_state = Rc::clone(state);
@@ -355,6 +506,47 @@ mod tests {
             width: 400,
             height: 300,
         }
+    }
+
+    #[test]
+    fn canvas_zoom_accepts_only_the_bounded_reference_presets() {
+        assert_eq!(CanvasZoom::from_ui_value(0), Some(CanvasZoom::FitToWindow));
+        assert_eq!(CanvasZoom::from_ui_value(25), Some(CanvasZoom::Percent(25)));
+        assert_eq!(CanvasZoom::from_ui_value(50), Some(CanvasZoom::Percent(50)));
+        assert_eq!(
+            CanvasZoom::from_ui_value(100),
+            Some(CanvasZoom::Percent(100))
+        );
+        assert_eq!(
+            CanvasZoom::from_ui_value(200),
+            Some(CanvasZoom::Percent(200))
+        );
+        assert_eq!(CanvasZoom::from_ui_value(75), None);
+    }
+
+    #[test]
+    fn canvas_zoom_steps_stay_inside_the_preset_bounds() {
+        assert_eq!(CanvasZoom::FitToWindow.stepped(-1), CanvasZoom::FitToWindow);
+        assert_eq!(CanvasZoom::FitToWindow.stepped(1), CanvasZoom::Percent(25));
+        assert_eq!(CanvasZoom::Percent(25).stepped(-1), CanvasZoom::FitToWindow);
+        assert_eq!(
+            CanvasZoom::Percent(100).stepped(1),
+            CanvasZoom::Percent(200)
+        );
+        assert_eq!(
+            CanvasZoom::Percent(200).stepped(1),
+            CanvasZoom::Percent(200)
+        );
+    }
+
+    #[test]
+    fn canvas_state_keeps_viewport_state_outside_the_project_transform() {
+        let state = CanvasState::default()
+            .with_zoom(CanvasZoom::Percent(100))
+            .with_pan((24, -12));
+
+        assert_eq!(state.zoom().ui_value(), 100);
+        assert_eq!(state.pan(), (24, -12));
     }
 
     #[test]
