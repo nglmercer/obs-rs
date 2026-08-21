@@ -79,6 +79,21 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         hint: |text| text.property_ui.color_hint.clone(),
         kind: FieldKind::Color,
     };
+    static TEXT: Field = Field {
+        key: "text",
+        label: |text| text.property_ui.text.clone(),
+        hint: |text| text.property_ui.text_hint.clone(),
+        kind: FieldKind::Text,
+    };
+    static FONT_SIZE: Field = Field {
+        key: "font_size",
+        label: |text| text.property_ui.font_size.clone(),
+        hint: |text| text.property_ui.font_size_hint.clone(),
+        kind: FieldKind::Number {
+            minimum: 1,
+            maximum: 128,
+        },
+    };
     static DEVICE: Field = Field {
         key: "device_id",
         label: |text| text.capture_device.clone(),
@@ -132,6 +147,7 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
 
     let mut fields = match kind.trim() {
         "color_source" => vec![&COLOR],
+        "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         "screen_capture" | "window_capture" => vec![&DEVICE],
         "camera_capture" => {
             let mut camera_fields = vec![&DEVICE];
@@ -477,6 +493,23 @@ mod tests {
         assert_eq!(rows[1].number, 640);
         assert_eq!(rows[1].kind, KIND_NUMBER);
         assert_eq!(rows[0].kind, KIND_COLOR);
+    }
+
+    #[test]
+    fn text_sources_expose_text_colour_font_size_and_video_size() {
+        let document =
+            "color = \"#FFFFFFFF\"\nfont_size = 24\nheight = 360\ntext = \"OBS-RS\"\nwidth = 640\n";
+
+        let rows = rows("text_source", document, UiLocale::English);
+
+        let keys = rows
+            .iter()
+            .map(|row| row.key.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["text", "color", "font_size", "width", "height"]);
+        assert_eq!(rows[0].kind, KIND_TEXT);
+        assert_eq!(rows[2].kind, KIND_NUMBER);
+        assert_eq!(rows[2].number, 24);
     }
 
     #[test]

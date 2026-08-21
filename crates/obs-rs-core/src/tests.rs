@@ -82,7 +82,8 @@ fn registers_plugin_creates_scene_and_composites_sources() {
 #[test]
 fn runtime_limits_contain_plugin_scene_source_and_filter_resources() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
-    let mut runtime = Runtime::with_limits(RuntimeLimits::new(1, 8, 1, 1, 1, 1));
+    let source_kind_limit = plugin.source_factories().len();
+    let mut runtime = Runtime::with_limits(RuntimeLimits::new(1, source_kind_limit, 1, 1, 1, 1));
     runtime
         .register_plugin(&plugin)
         .expect("plugin fits the limits");
@@ -112,7 +113,7 @@ fn runtime_limits_contain_plugin_scene_source_and_filter_resources() {
         .expect("first filter fits");
     let usage = runtime.usage();
     assert_eq!(usage.plugins(), 1);
-    assert!(usage.source_kinds() >= 5);
+    assert_eq!(usage.source_kinds(), source_kind_limit);
     assert_eq!(usage.scenes(), 1);
     assert_eq!(usage.sources(), 1);
     assert_eq!(usage.filters(), 1);

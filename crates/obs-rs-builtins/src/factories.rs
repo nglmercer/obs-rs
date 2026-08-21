@@ -7,6 +7,7 @@ use obs_rs_capture::{
 use obs_rs_plugin_api::{PluginError, SourceFactory};
 
 use crate::portable::ColorSourceFactory;
+use crate::text::TextSourceFactory;
 #[cfg(target_os = "linux")]
 use crate::wayland::WaylandCaptureFactory;
 #[cfg(target_os = "linux")]
@@ -14,6 +15,7 @@ use crate::x11::X11CaptureFactory;
 
 pub(crate) fn build() -> Result<Vec<Arc<dyn SourceFactory>>, PluginError> {
     let color_factory = ColorSourceFactory::new()?;
+    let text_factory = TextSourceFactory::new()?;
     let test_pattern_factory = TestPatternFactory::new()?;
     let screen_factory =
         SimulatedCaptureFactory::new(SCREEN_CAPTURE_SOURCE_KIND, CaptureKind::Screen)?;
@@ -23,6 +25,7 @@ pub(crate) fn build() -> Result<Vec<Arc<dyn SourceFactory>>, PluginError> {
         SimulatedCaptureFactory::new(CAMERA_CAPTURE_SOURCE_KIND, CaptureKind::Camera)?;
     let mut factories: Vec<Arc<dyn SourceFactory>> = vec![
         Arc::new(color_factory),
+        Arc::new(text_factory),
         Arc::new(test_pattern_factory),
         Arc::new(screen_factory),
         Arc::new(window_factory),

@@ -15,6 +15,7 @@ use obs_rs_plugin_api::{Plugin, PluginError, PluginManifest, SourceFactory};
 
 mod factories;
 mod portable;
+mod text;
 #[cfg(target_os = "linux")]
 mod wayland;
 #[cfg(target_os = "linux")]
@@ -25,6 +26,8 @@ mod tests;
 
 /// Stable kind identifier for the solid color source.
 pub const COLOR_SOURCE_KIND: &str = "color_source";
+/// Stable kind identifier for the bounded portable bitmap text source.
+pub const TEXT_SOURCE_KIND: &str = "text_source";
 pub use obs_rs_capture::CAMERA_CAPTURE_SOURCE_KIND as BUILTIN_CAMERA_SOURCE_KIND;
 pub use obs_rs_capture::SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_SCREEN_SOURCE_KIND;
 pub use obs_rs_capture::TEST_PATTERN_SOURCE_KIND as BUILTIN_TEST_PATTERN_SOURCE_KIND;

@@ -11,6 +11,16 @@ fn settings(color: &str) -> Config {
     config
 }
 
+fn text_settings(text: &str, color: &str, font_size: &str) -> Config {
+    let mut config = Config::new();
+    config.set("width", "32").expect("valid width");
+    config.set("height", "16").expect("valid height");
+    config.set("color", color).expect("valid color text");
+    config.set("text", text).expect("valid text");
+    config.set("font_size", font_size).expect("valid font size");
+    config
+}
+
 #[test]
 fn builtins_register_and_render_a_color_source() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
@@ -48,6 +58,56 @@ fn invalid_color_is_rejected_at_creation() {
 }
 
 #[test]
+fn text_source_renders_and_updates_a_bounded_bitmap() {
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == TEXT_SOURCE_KIND)
+        .expect("text factory");
+    let format =
+        VideoFormat::new(32, 16, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let mut source = factory
+        .create("caption", &text_settings("A", "#102030FF", "7"))
+        .expect("valid text source");
+    let request = VideoRequest::new(Timestamp::ZERO, format);
+    let first = source
+        .render(&request)
+        .expect("render succeeds")
+        .expect("text source always has a frame");
+    assert_eq!(first.pixel(1, 0), Some([0x10, 0x20, 0x30, 0xff]));
+    assert_eq!(first.pixel(0, 0), Some([0, 0, 0, 0]));
+
+    source
+        .update(&text_settings("B", "#A0B0C0FF", "7"))
+        .expect("text update succeeds");
+    let second = source
+        .render(&request)
+        .expect("render after update succeeds")
+        .expect("updated text has a frame");
+    assert_eq!(second.pixel(0, 0), Some([0xA0, 0xB0, 0xC0, 0xff]));
+    assert_ne!(first.pixels(), second.pixels());
+}
+
+#[test]
+fn text_source_rejects_control_text_and_font_size() {
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == TEXT_SOURCE_KIND)
+        .expect("text factory");
+    assert!(matches!(
+        factory.create("caption", &text_settings("\u{1}", "#FFFFFFFF", "24")),
+        Err(SourceError::InvalidSetting { key, .. }) if key == "text"
+    ));
+    assert!(matches!(
+        factory.create("caption", &text_settings("text", "#FFFFFFFF", "129")),
+        Err(SourceError::InvalidSetting { key, .. }) if key == "font_size"
+    ));
+}
+
+#[test]
 fn builtins_expose_the_capture_source_kind() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
 
@@ -55,6 +115,10 @@ fn builtins_expose_the_capture_source_kind() {
         .source_factories()
         .iter()
         .any(|factory| factory.kind().as_str() == BUILTIN_TEST_PATTERN_SOURCE_KIND));
+    assert!(plugin
+        .source_factories()
+        .iter()
+        .any(|factory| factory.kind().as_str() == TEXT_SOURCE_KIND));
     assert_eq!(BUILTIN_TEST_PATTERN_SOURCE_KIND, "test_pattern");
 }
 
