@@ -193,8 +193,12 @@ pub enum UiCommand {
     SelectSources { ids: Vec<String>, additive: bool },
     /// Copy one scene item into the transient desktop clipboard.
     CopySource { id: String },
-    /// Paste the copied scene item into the current preview scene.
-    PasteSource { mode: SceneItemDuplicateMode },
+    /// Paste the copied scene item into the current preview scene or the
+    /// group named by `target`. An empty target means the scene root.
+    PasteSource {
+        mode: SceneItemDuplicateMode,
+        target: String,
+    },
     /// Select the labels used by accessible frontends.
     SetLocale { locale: UiLocale },
     /// Replace the current scene transition policy.

@@ -539,6 +539,75 @@ fn group_child_duplicate_supports_reference_and_source_clone_modes() {
 }
 
 #[test]
+fn group_child_paste_supports_nested_destinations_and_copy_modes() {
+    let mut project = project_with_nested_group();
+    project
+        .apply(ProjectCommand::PasteGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: SceneItemSpec::new("first", "background").expect("copied item"),
+            mode: SceneItemDuplicateMode::Reference,
+        })
+        .expect("reference paste into group");
+    project
+        .apply(ProjectCommand::PasteGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned(), "inner-group".to_owned()],
+            item: SceneItemSpec::new("nested", "background").expect("copied nested item"),
+            mode: SceneItemDuplicateMode::DuplicateSource,
+        })
+        .expect("duplicate paste into nested group");
+
+    let profile = project.profile("live").expect("profile");
+    let group = profile
+        .scene("main")
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("outer group");
+    assert_eq!(
+        group
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["first", "second", "inner-group", "first_copy"]
+    );
+    let inner = group
+        .items()
+        .iter()
+        .find(|item| item.id().as_str() == "inner-group")
+        .and_then(SceneItemSpec::group)
+        .expect("inner group");
+    assert_eq!(
+        inner
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["nested", "nested_copy"]
+    );
+    assert_eq!(inner.items()[1].source_id().as_str(), "background_copy");
+    assert!(profile.source("background_copy").is_some());
+
+    let before_invalid = project.clone();
+    let error = project
+        .apply(ProjectCommand::PasteGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["missing-group".to_owned()],
+            item: SceneItemSpec::new("copy", "background").expect("copied item"),
+            mode: SceneItemDuplicateMode::Reference,
+        })
+        .expect_err("invalid destination must fail");
+    assert_eq!(error, ProjectError::InvalidGroupPath);
+    assert_eq!(project, before_invalid);
+}
+
+#[test]
 fn group_child_transform_is_path_addressed_and_rejects_unsupported_parent_composition() {
     let mut project = project_with_nested_group();
     let child_transform =

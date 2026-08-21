@@ -234,13 +234,14 @@ fn install_source_list_callbacks(
     let weak = ui.as_weak();
     let paste_reference_state = Rc::clone(state);
     let paste_reference_surface = Rc::clone(surface);
-    ui.on_paste_reference(move || {
+    ui.on_paste_reference(move |target| {
         dispatch_and_refresh(
             &weak,
             &paste_reference_state,
             &paste_reference_surface,
             UiCommand::PasteSource {
                 mode: SceneItemDuplicateMode::Reference,
+                target: target.to_string(),
             },
         );
     });
@@ -248,13 +249,14 @@ fn install_source_list_callbacks(
     let weak = ui.as_weak();
     let paste_duplicate_state = Rc::clone(state);
     let paste_duplicate_surface = Rc::clone(surface);
-    ui.on_paste_duplicate(move || {
+    ui.on_paste_duplicate(move |target| {
         dispatch_and_refresh(
             &weak,
             &paste_duplicate_state,
             &paste_duplicate_surface,
             UiCommand::PasteSource {
                 mode: SceneItemDuplicateMode::DuplicateSource,
+                target: target.to_string(),
             },
         );
     });

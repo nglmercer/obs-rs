@@ -726,8 +726,8 @@ fn forward_to_studio(
     forward!(on_open_source_rename, invoke_open_source_rename, id);
     forward!(on_duplicate_source, invoke_duplicate_source, id);
     forward!(on_copy_source, invoke_copy_source, id);
-    forward!(on_paste_reference, invoke_paste_reference);
-    forward!(on_paste_duplicate, invoke_paste_duplicate);
+    forward!(on_paste_reference, invoke_paste_reference, target);
+    forward!(on_paste_duplicate, invoke_paste_duplicate, target);
     forward!(on_remove_source, invoke_remove_source, id);
     forward!(on_set_mixer_gain, invoke_set_mixer_gain, id, gain);
     forward!(on_toggle_mixer_mute, invoke_toggle_mixer_mute, id);

@@ -41,8 +41,8 @@ export component SourceDock inherits Rectangle {
     callback open-source-rename(string);
     callback duplicate-source(string);
     callback copy-source(string);
-    callback paste-reference();
-    callback paste-duplicate();
+    callback paste-reference(string);
+    callback paste-duplicate(string);
     callback remove-source(string);
 
     background: Palette.tokens.panel-bg;
@@ -98,8 +98,8 @@ export component SourceDock inherits Rectangle {
                             root.duplicate-source(id);
                         }
                         copy-source(id) => { root.copy-source(id); }
-                        paste-reference() => { root.paste-reference(); }
-                        paste-duplicate() => { root.paste-duplicate(); }
+                        paste-reference(target) => { root.paste-reference(target); }
+                        paste-duplicate(target) => { root.paste-duplicate(target); }
                         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
                         toggle-source-locked(id) => { root.toggle-source-locked(id); }
                         move-source(id, delta) => { root.move-source(id, delta); }
@@ -120,7 +120,7 @@ export component SourceDock inherits Rectangle {
                             pointer-event(event) => {
                                 if event.kind == PointerEventKind.down
                                     && event.button == PointerEventButton.right {
-                                    select-source(source.id);
+                                    if !source.nested { select-source(source.id); }
                                     source-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
                                 }
                             }
@@ -159,7 +159,7 @@ export component SourceDock inherits Rectangle {
                 }
                 selected-source-menu := SourceContextMenuArea {
                     height: 22px;
-                    source-id: root.selected-source;
+                    source-id: root.selected-source == "none" ? "" : root.selected-source;
                     source-kind: "";
                     nested: false;
                     group: root.selected-source-is-group;
@@ -178,8 +178,8 @@ export component SourceDock inherits Rectangle {
                     rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                     duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
                     copy-source(id) => { root.copy-source(id); }
-                    paste-reference() => { root.paste-reference(); }
-                    paste-duplicate() => { root.paste-duplicate(); }
+                    paste-reference(target) => { root.paste-reference(target); }
+                    paste-duplicate(target) => { root.paste-duplicate(target); }
                     toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
                     toggle-source-locked(id) => { root.toggle-source-locked(id); }
                     move-source(id, delta) => { root.move-source(id, delta); }

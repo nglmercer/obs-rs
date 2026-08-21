@@ -4,7 +4,7 @@ use obs_rs_audio::{AudioBuffer, AudioFormat, AudioMixer, AudioSourceId};
 use obs_rs_media::{FrameTransition, Timestamp};
 use obs_rs_project::{
     Project, ProjectCommand, ProjectFileStore, ProjectSession, SceneItemDuplicateMode,
-    SceneItemSpec,
+    SceneItemSpec, SceneSpec,
 };
 use obs_rs_util::Identifier;
 
@@ -133,7 +133,6 @@ impl DesktopState {
                 "source selection updated"
             }
             UiCommand::CopySource { id } => {
-                self.ensure_source(&id)?;
                 let preview_scene =
                     self.preview_scene
                         .as_ref()
@@ -146,13 +145,16 @@ impl DesktopState {
                     .project()
                     .active_profile_spec()
                     .and_then(|profile| profile.scene(preview_scene))
-                    .and_then(|scene| scene.item(id.as_str()))
+                    .and_then(|scene| scene_item_at_target(scene, &id))
                     .cloned()
-                    .ok_or(UiError::UnknownSelection { kind: "source", id })?;
+                    .ok_or(UiError::UnknownSelection {
+                        kind: "scene item",
+                        id,
+                    })?;
                 self.clipboard = Some(item);
                 "source item copied"
             }
-            UiCommand::PasteSource { mode } => self.paste_source(mode)?,
+            UiCommand::PasteSource { mode, target } => self.paste_source(mode, &target)?,
             UiCommand::SetLocale { locale } => {
                 self.locale = locale;
                 "language selected"
@@ -494,7 +496,11 @@ impl DesktopState {
 }
 
 impl DesktopState {
-    fn paste_source(&mut self, mode: SceneItemDuplicateMode) -> Result<&'static str, UiError> {
+    fn paste_source(
+        &mut self,
+        mode: SceneItemDuplicateMode,
+        target: &str,
+    ) -> Result<&'static str, UiError> {
         let item = self
             .clipboard
             .clone()
@@ -511,6 +517,8 @@ impl DesktopState {
                 id: "none".to_owned(),
             })?
             .to_string();
+        let group_path = self.paste_group_path(&scene, target)?;
+        let paste_at_root = group_path.is_empty();
         let before = self
             .project
             .project()
@@ -527,35 +535,79 @@ impl DesktopState {
                 kind: "scene",
                 id: scene.clone(),
             })?;
-        self.project.dispatch(ProjectCommand::PasteSceneItem {
-            profile,
-            scene: scene.clone(),
-            item,
-            mode,
-        })?;
-        let pasted_id = self
-            .project
-            .project()
-            .active_profile_spec()
-            .and_then(|profile| profile.scene(scene.as_str()))
-            .and_then(|scene| {
-                scene
-                    .items()
-                    .iter()
-                    .find(|item| !before.contains(item.id()))
-            })
-            .map(|item| item.id().clone())
-            .ok_or_else(|| UiError::UnknownSelection {
+        if paste_at_root {
+            self.project.dispatch(ProjectCommand::PasteSceneItem {
+                profile,
+                scene: scene.clone(),
+                item,
+                mode,
+            })?;
+        } else {
+            self.project.dispatch(ProjectCommand::PasteGroupItem {
+                profile,
+                scene: scene.clone(),
+                group_path,
+                item,
+                mode,
+            })?;
+        }
+        if paste_at_root {
+            // The root paste path has a stable top-level selection affordance;
+            // nested rows are deliberately not part of the canvas selection
+            // model yet, so leave that selection untouched.
+            let pasted_id = self
+                .project
+                .project()
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(scene.as_str()))
+                .and_then(|scene| {
+                    scene
+                        .items()
+                        .iter()
+                        .find(|item| !before.contains(item.id()))
+                })
+                .map(|item| item.id().clone());
+            let pasted_id = pasted_id.ok_or_else(|| UiError::UnknownSelection {
                 kind: "pasted source",
                 id: scene.clone(),
             })?;
-        self.selected_sources.clear();
-        self.selected_sources.push(pasted_id);
+            self.selected_sources.clear();
+            self.selected_sources.push(pasted_id);
+        }
         self.sync_selections_after_project_update();
         Ok(match mode {
             SceneItemDuplicateMode::Reference => "source reference pasted",
             SceneItemDuplicateMode::DuplicateSource => "source duplicate pasted",
         })
+    }
+
+    fn paste_group_path(&self, scene_id: &str, target: &str) -> Result<Vec<String>, UiError> {
+        if target.is_empty() {
+            return Ok(Vec::new());
+        }
+        let scene = self
+            .project
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene(scene_id))
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "scene",
+                id: scene_id.to_owned(),
+            })?;
+        let parts = target_parts(target).ok_or_else(|| UiError::UnknownSelection {
+            kind: "scene item",
+            id: target.to_owned(),
+        })?;
+        let item = scene_item_at_parts(scene, &parts).ok_or_else(|| UiError::UnknownSelection {
+            kind: "scene item",
+            id: target.to_owned(),
+        })?;
+        let end = if item.is_group() {
+            parts.len()
+        } else {
+            parts.len().saturating_sub(1)
+        };
+        Ok(parts[..end].iter().map(|part| (*part).to_owned()).collect())
     }
 
     fn select_one_source(&mut self, id: &str) -> Result<(), UiError> {
@@ -601,4 +653,34 @@ impl DesktopState {
         self.selected_sources = next;
         Ok(())
     }
+}
+
+const MAX_SCENE_ITEM_PATH_DEPTH: usize = 64;
+
+fn target_parts(target: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::with_capacity(4);
+    for part in target.split('/') {
+        if part.is_empty() || parts.len() >= MAX_SCENE_ITEM_PATH_DEPTH {
+            return None;
+        }
+        parts.push(part);
+    }
+    (!parts.is_empty()).then_some(parts)
+}
+
+fn scene_item_at_target<'a>(scene: &'a SceneSpec, target: &str) -> Option<&'a SceneItemSpec> {
+    let parts = target_parts(target)?;
+    scene_item_at_parts(scene, &parts)
+}
+
+fn scene_item_at_parts<'a>(scene: &'a SceneSpec, parts: &[&str]) -> Option<&'a SceneItemSpec> {
+    let mut items = scene.items();
+    for (index, part) in parts.iter().enumerate() {
+        let item = items.iter().find(|item| item.id().as_str() == *part)?;
+        if index + 1 == parts.len() {
+            return Some(item);
+        }
+        items = item.group()?.items();
+    }
+    None
 }

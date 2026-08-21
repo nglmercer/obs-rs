@@ -25,8 +25,8 @@ export component SourceContextMenuArea inherits Rectangle {
     callback rename-source(string);
     callback duplicate-source(string);
     callback copy-source(string);
-    callback paste-reference();
-    callback paste-duplicate();
+    callback paste-reference(string);
+    callback paste-duplicate(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
     callback move-source(string, int);
@@ -84,18 +84,18 @@ export component SourceContextMenuArea inherits Rectangle {
             MenuSeparator {}
             MenuItem {
                 title: I18n.text.copy_source;
-                enabled: root.source-id != "" && !root.nested && !root.group;
+                enabled: root.source-id != "";
                 activated => root.copy-source(root.source-id);
             }
             MenuItem {
                 title: I18n.text.paste_reference;
                 enabled: root.can-paste;
-                activated => root.paste-reference();
+                activated => root.paste-reference(root.source-id);
             }
             MenuItem {
                 title: I18n.text.paste_duplicate;
                 enabled: root.can-paste;
-                activated => root.paste-duplicate();
+                activated => root.paste-duplicate(root.source-id);
             }
             MenuSeparator {}
             MenuItem {

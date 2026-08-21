@@ -134,6 +134,7 @@ fn desktop_state_copy_and_paste_support_reference_and_duplicate_modes() {
     state
         .dispatch(UiCommand::PasteSource {
             mode: SceneItemDuplicateMode::Reference,
+            target: String::new(),
         })
         .expect("reference paste");
     assert_eq!(state.selected_source(), Some("source"));
@@ -156,6 +157,7 @@ fn desktop_state_copy_and_paste_support_reference_and_duplicate_modes() {
     state
         .dispatch(UiCommand::PasteSource {
             mode: SceneItemDuplicateMode::DuplicateSource,
+            target: String::new(),
         })
         .expect("duplicate paste");
     let profile = state
@@ -170,6 +172,72 @@ fn desktop_state_copy_and_paste_support_reference_and_duplicate_modes() {
         .expect("duplicate item");
     assert_ne!(duplicate.source_id().as_str(), "source");
     assert!(profile.source(duplicate.source_id()).is_some());
+}
+
+#[test]
+fn desktop_state_copies_and_pastes_nested_group_items_by_target() {
+    let mut project = project();
+    let mut group = SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::new("nested-source", "source").expect("group child"))
+        .expect("group child attach");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: group,
+        })
+        .expect("group add");
+
+    let mut state = DesktopState::new(project);
+    state
+        .dispatch(UiCommand::CopySource {
+            id: "overlay-group/nested-source".to_owned(),
+        })
+        .expect("nested copy");
+    state
+        .dispatch(UiCommand::PasteSource {
+            mode: SceneItemDuplicateMode::Reference,
+            target: "overlay-group".to_owned(),
+        })
+        .expect("nested reference paste");
+    state
+        .dispatch(UiCommand::PasteSource {
+            mode: SceneItemDuplicateMode::DuplicateSource,
+            target: "overlay-group/nested-source".to_owned(),
+        })
+        .expect("nested duplicate paste");
+
+    let profile = state
+        .project_session()
+        .project()
+        .profile("live")
+        .expect("profile");
+    let group = profile
+        .scene("preview")
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("group");
+    assert_eq!(
+        group
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(obs_rs_util::Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec![
+            "nested-source",
+            "nested-source_copy",
+            "nested-source_copy_2"
+        ]
+    );
+    assert_eq!(
+        group.items()[2].source_id().as_str(),
+        "source_copy",
+        "duplicate paste clones the profile source"
+    );
 }
 
 #[test]

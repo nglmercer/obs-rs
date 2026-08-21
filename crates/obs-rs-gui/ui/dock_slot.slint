@@ -58,8 +58,8 @@ export component DockSlot inherits Rectangle {
     callback open-source-rename(string);
     callback duplicate-source(string);
     callback copy-source(string);
-    callback paste-reference();
-    callback paste-duplicate();
+    callback paste-reference(string);
+    callback paste-duplicate(string);
     callback remove-source(string);
     callback set-mixer-gain(string, int);
     callback toggle-mixer-mute(string);
@@ -131,8 +131,8 @@ export component DockSlot inherits Rectangle {
         open-source-rename(id) => { root.open-source-rename(id); }
         duplicate-source(id) => { root.duplicate-source(id); }
         copy-source(id) => { root.copy-source(id); }
-        paste-reference() => { root.paste-reference(); }
-        paste-duplicate() => { root.paste-duplicate(); }
+        paste-reference(target) => { root.paste-reference(target); }
+        paste-duplicate(target) => { root.paste-duplicate(target); }
         remove-source(id) => { root.remove-source(id); }
     }
     if panel-kind == 2 : MixerDock {
