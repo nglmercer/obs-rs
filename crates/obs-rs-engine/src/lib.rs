@@ -12,7 +12,13 @@ mod worker;
 
 pub use worker::{EngineWorker, EngineWorkerSnapshot};
 
-use std::{error::Error, fmt, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    error::Error,
+    fmt,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use obs_rs_audio::{
     AudioBuffer, AudioDeviceError, AudioDeviceKind, AudioFilter, AudioFilterChain, AudioFormat,
@@ -30,7 +36,7 @@ use obs_rs_media::{
 use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig, AudioInputRequirement, EncodedPacket,
-    OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, RleVideoEncoder,
+    OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, ReplayBuffer, RleVideoEncoder,
     StreamMetrics, StreamSession, StreamState, StreamTarget, TcpPacketTransport, VideoEncoder,
     VideoEncoderConfig, VideoInputRequirement, WebSocketPacketTransport,
 };
@@ -875,6 +881,7 @@ pub struct EngineSession {
     video_encoder: Box<dyn VideoEncoder>,
     audio_encoder: RawAudioEncoder,
     recording: Option<RecordingOutput>,
+    replay_buffer: Option<ReplayBuffer>,
     streaming: Option<StreamOutput>,
     /// Phases the handles alone cannot express, notably a failed start.
     recording_lifecycle: OutputLifecycle,
@@ -972,6 +979,7 @@ impl EngineSession {
             next_audio_deadline: None,
             render_timestamp: Timestamp::ZERO,
             recording: None,
+            replay_buffer: None,
             streaming: None,
             recording_lifecycle: OutputLifecycle::Idle,
             streaming_lifecycle: OutputLifecycle::Idle,
@@ -1005,7 +1013,7 @@ impl EngineSession {
 
     /// Rebuilds the runtime after a project edit.
     pub fn sync_project(&mut self, project: Project) -> Result<(), EngineError> {
-        if self.recording.is_some() || self.streaming.is_some() {
+        if self.recording.is_some() || self.replay_buffer.is_some() || self.streaming.is_some() {
             return Err(EngineError::Busy("sync the project"));
         }
         let profile = project
@@ -1595,6 +1603,72 @@ impl EngineSession {
         self.recording_lifecycle = OutputLifecycle::Idle;
     }
 
+    /// Starts a bounded packetized replay history.
+    ///
+    /// Replay capture is independent of recording and streaming. It reuses the
+    /// selected packet encoders only while active, so an idle session does not
+    /// pay an encode cost just to keep an empty buffer alive.
+    pub fn start_replay_buffer(
+        &mut self,
+        capacity_bytes: usize,
+        duration: Duration,
+    ) -> Result<(), EngineError> {
+        if self.replay_buffer.is_some() {
+            return Err(EngineError::Busy("start replay buffer"));
+        }
+        self.replay_buffer = Some(ReplayBuffer::new(capacity_bytes, duration)?);
+        Ok(())
+    }
+
+    /// Stops replay capture and discards its retained packet history.
+    pub fn stop_replay_buffer(&mut self) {
+        self.replay_buffer = None;
+    }
+
+    /// Saves the retained replay packets through the atomic packet writer.
+    ///
+    /// The replay history remains active after a successful save, matching the
+    /// OBS workflow where saving a replay does not stop capture. The packet
+    /// container is the inspectable OBS-RS reference container; production
+    /// remuxing remains a separate output capability.
+    pub fn save_replay_buffer(&self, path: impl Into<PathBuf>) -> Result<usize, EngineError> {
+        let Some(buffer) = self.replay_buffer.as_ref() else {
+            return Err(EngineError::InvalidConfiguration(
+                "replay buffer is not running".to_owned(),
+            ));
+        };
+        let final_path = path.into();
+        let file_name = final_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                EngineError::InvalidConfiguration("replay path must name a file".to_owned())
+            })?;
+        let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
+        let packets = buffer.snapshot();
+        let mut writer = AtomicPacketFileWriter::new(final_path, temp_path)?;
+        if let Err(error) = packets
+            .into_iter()
+            .try_for_each(|packet| writer.push(packet))
+        {
+            let _ = writer.abort();
+            return Err(error.into());
+        }
+        writer.finalize().map_err(Into::into)
+    }
+
+    /// Returns whether replay capture is currently active.
+    #[must_use]
+    pub const fn is_replay_buffer_active(&self) -> bool {
+        self.replay_buffer.is_some()
+    }
+
+    /// Returns the number of packetized entries retained for replay.
+    #[must_use]
+    pub fn replay_buffer_packet_count(&self) -> usize {
+        self.replay_buffer.as_ref().map_or(0, ReplayBuffer::len)
+    }
+
     /// Opens a TCP or WebSocket OBS-RS packet stream.
     ///
     /// A refused or unreachable peer leaves the phase `Failed`, which is what
@@ -1933,6 +2007,9 @@ impl EngineSession {
     }
 
     fn emit_packet(&mut self, packet: EncodedPacket) -> Result<(), EngineError> {
+        if let Some(replay_buffer) = self.replay_buffer.as_mut() {
+            replay_buffer.push(packet.clone())?;
+        }
         match (self.recording.as_mut(), self.streaming.as_mut()) {
             (Some(recording), Some(stream)) => {
                 recording.push_packet(packet.clone())?;
@@ -2055,21 +2132,23 @@ impl EngineSession {
     }
 
     fn packetized_video_required(&self) -> bool {
-        self.recording.as_ref().is_some_and(|recording| {
-            recording.video_requirement() == VideoInputRequirement::Packetized
-        }) || self
-            .streaming
-            .as_ref()
-            .is_some_and(|stream| stream.video_requirement() == VideoInputRequirement::Packetized)
+        self.replay_buffer.is_some()
+            || self.recording.as_ref().is_some_and(|recording| {
+                recording.video_requirement() == VideoInputRequirement::Packetized
+            })
+            || self.streaming.as_ref().is_some_and(|stream| {
+                stream.video_requirement() == VideoInputRequirement::Packetized
+            })
     }
 
     fn packetized_audio_required(&self) -> bool {
-        self.recording.as_ref().is_some_and(|recording| {
-            recording.audio_requirement() == AudioInputRequirement::Packetized
-        }) || self
-            .streaming
-            .as_ref()
-            .is_some_and(|stream| stream.audio_requirement() == AudioInputRequirement::Packetized)
+        self.replay_buffer.is_some()
+            || self.recording.as_ref().is_some_and(|recording| {
+                recording.audio_requirement() == AudioInputRequirement::Packetized
+            })
+            || self.streaming.as_ref().is_some_and(|stream| {
+                stream.audio_requirement() == AudioInputRequirement::Packetized
+            })
     }
 
     fn raw_video_required(&self) -> bool {
@@ -2515,6 +2594,8 @@ fn audio_peak_milli(buffer: &AudioBuffer) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use obs_rs_audio::AudioDeviceInfo;
     use obs_rs_config::Config;
@@ -2545,6 +2626,42 @@ mod tests {
         profile.add_scene(scene).expect("add scene");
         project.add_profile(profile).expect("add profile");
         project
+    }
+
+    #[test]
+    fn replay_buffer_encodes_only_while_active_and_saves_atomically() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        assert!(!engine.is_replay_buffer_active());
+        assert_eq!(engine.replay_buffer_packet_count(), 0);
+
+        let final_path =
+            std::env::temp_dir().join(format!("obs-rs-replay-engine-{}.obsr", std::process::id()));
+        engine
+            .start_replay_buffer(4 * 1024 * 1024, Duration::from_secs(30))
+            .expect("start replay buffer");
+        assert!(engine.is_replay_buffer_active());
+        for _ in 0..3 {
+            engine.tick(None, Some("program")).expect("replay tick");
+        }
+        assert!(engine.replay_buffer_packet_count() >= 3);
+        let bytes = engine
+            .save_replay_buffer(&final_path)
+            .expect("save replay buffer");
+        assert!(bytes > 16);
+        let packets = obs_rs_output::MemoryMuxer::decode(
+            &std::fs::read(&final_path).expect("read replay file"),
+        )
+        .expect("decode replay file");
+        assert!(!packets.is_empty());
+        assert!(engine.is_replay_buffer_active());
+
+        engine.stop_replay_buffer();
+        assert!(!engine.is_replay_buffer_active());
+        assert!(matches!(
+            engine.save_replay_buffer(&final_path),
+            Err(EngineError::InvalidConfiguration(reason)) if reason.contains("not running")
+        ));
+        std::fs::remove_file(final_path).expect("remove replay file");
     }
 
     #[test]

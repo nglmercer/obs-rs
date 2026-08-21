@@ -317,6 +317,17 @@ The source keeps decoded frames in its bounded control-plane set and selects
 the timestamped frame without a per-render decode or file read. It still
 requires the existing preview presenter to copy the selected pixels for Slint.
 
+The portable replay-buffer push probe reports 1,000 encoded packet pushes in
+the release build at 2026-08-21:
+
+```text
+cargo test --release -p obs-rs-output replay_buffer_push_timing_report -- --nocapture
+replay buffer: 1000 packet pushes = 117.382 us (117 ns/push)
+```
+
+The buffer evicts oldest packet references by timestamp, byte budget, and
+packet-count bound; payload storage remains shared with the encoder fan-out.
+
 The audio gate timing probe reports 200 blocks of 480 stereo frames in the
 release build at 2026-08-21:
 

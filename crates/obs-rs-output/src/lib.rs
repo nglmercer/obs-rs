@@ -35,6 +35,7 @@ mod muxer;
 mod profile;
 mod queue;
 mod recording;
+mod replay;
 mod stream;
 mod types;
 mod video;
@@ -57,6 +58,7 @@ pub use profile::{
 };
 pub use queue::PacketQueue;
 pub use recording::{RawRecording, RawRecordingSession};
+pub use replay::{ReplayBuffer, ReplayPushOutcome, MAX_REPLAY_DURATION};
 pub use stream::{
     validate_websocket_handshake, MemoryPacketTransport, PacketMuxer, PacketTransport,
     StreamSession, TcpPacketTransport, WebSocketPacketTransport,

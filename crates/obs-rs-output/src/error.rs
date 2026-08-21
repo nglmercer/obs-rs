@@ -57,6 +57,8 @@ pub enum OutputError {
     },
     /// A packet queue or recording capacity is zero.
     ZeroCapacity,
+    /// A replay buffer duration is zero or exceeds the bounded limit.
+    InvalidReplayDuration { nanos: u128 },
     /// An encoded reference-codec payload is structurally invalid.
     InvalidCodecPayload(String),
     /// A packet cannot fit in the configured queue capacity.
@@ -137,6 +139,10 @@ impl fmt::Display for OutputError {
                 "packet timestamp {actual:?} is before the previous {previous:?}"
             ),
             Self::ZeroCapacity => formatter.write_str("output queue capacity must be non-zero"),
+            Self::InvalidReplayDuration { nanos } => write!(
+                formatter,
+                "replay buffer duration must be between 1 nanosecond and the bounded limit: {nanos} ns"
+            ),
             Self::InvalidCodecPayload(reason) => {
                 write!(formatter, "invalid reference codec payload: {reason}")
             }

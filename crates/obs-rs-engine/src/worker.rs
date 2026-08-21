@@ -7,6 +7,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFrame};
@@ -43,6 +44,9 @@ enum WorkerCommand {
     ),
     FinishRecording(mpsc::Sender<Result<usize, String>>),
     AbortRecording,
+    StartReplayBuffer(usize, Duration, mpsc::Sender<Result<(), String>>),
+    StopReplayBuffer,
+    SaveReplayBuffer(PathBuf, mpsc::Sender<Result<usize, String>>),
     StartStreaming(String, Option<(VideoEncoderConfig, AudioEncoderConfig)>),
     StartStreamingTarget(StreamTarget, VideoEncoderConfig, AudioEncoderConfig),
     FinishStreaming,
@@ -259,6 +263,54 @@ impl EngineWorker {
     /// Cancels an open recording without doing file work on the caller.
     pub fn abort_recording(&self) {
         let _ = self.sender.send(WorkerCommand::AbortRecording);
+    }
+
+    /// Starts bounded replay capture on the worker thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker queue is closed or the replay
+    /// bounds are invalid.
+    pub fn start_replay_buffer(
+        &self,
+        capacity_bytes: usize,
+        duration: Duration,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::StartReplayBuffer(
+                capacity_bytes,
+                duration,
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
+    /// Stops replay capture and discards its worker-owned history.
+    pub fn stop_replay_buffer(&self) {
+        let _ = self.sender.send(WorkerCommand::StopReplayBuffer);
+    }
+
+    /// Saves the worker-owned replay history without moving packet data onto
+    /// the caller's event thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker is closed, replay is inactive,
+    /// or the atomic packet file cannot be written.
+    pub fn save_replay_buffer(&self, path: impl Into<PathBuf>) -> Result<usize, EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SaveReplayBuffer(path.into(), reply))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
     }
 
     /// Enqueues a stream start without waiting for transport or encoder setup.
@@ -708,6 +760,24 @@ fn worker_loop(
                 false
             }
             WorkerCommand::AbortRecording => abort_recording(&mut session),
+            WorkerCommand::StartReplayBuffer(capacity_bytes, duration, reply) => {
+                let result = session
+                    .start_replay_buffer(capacity_bytes, duration)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::StopReplayBuffer => {
+                session.stop_replay_buffer();
+                false
+            }
+            WorkerCommand::SaveReplayBuffer(path, reply) => {
+                let result = session
+                    .save_replay_buffer(path)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
             WorkerCommand::StartStreaming(address, encoder_config) => {
                 start_stream(
                     &mut session,
@@ -1017,7 +1087,7 @@ mod tests {
     use std::time::Duration;
 
     use obs_rs_audio::AudioFormat;
-    use obs_rs_media::{FrameRate, VideoFormat};
+    use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 
     use super::*;
     use crate::EngineConfig;
@@ -1169,5 +1239,34 @@ mod tests {
             .set_channel_noise_gate(EngineAudioChannel::Microphone, 20_001, -40_000, 10, 125, 0)
             .expect_err("unbounded noise gate ratio");
         assert!(matches!(error, EngineError::Worker(reason) if reason.contains("ratio")));
+    }
+
+    #[test]
+    fn replay_buffer_controls_stay_on_the_worker() {
+        let worker = worker(1);
+        let path =
+            std::env::temp_dir().join(format!("obs-rs-replay-worker-{}.obsr", std::process::id()));
+        worker
+            .start_replay_buffer(1024 * 1024, Duration::from_secs(5))
+            .expect("start replay buffer");
+        let format =
+            VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+        assert!(worker.try_push_frame(VideoFrame::solid(
+            format,
+            Timestamp::ZERO,
+            [0x20, 0x40, 0x80, 0xFF],
+        )));
+        for _ in 0..100 {
+            if worker.snapshot().queued_frames == 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        let bytes = worker
+            .save_replay_buffer(&path)
+            .expect("save replay buffer");
+        assert!(bytes > 16);
+        worker.stop_replay_buffer();
+        std::fs::remove_file(path).expect("remove replay file");
     }
 }
