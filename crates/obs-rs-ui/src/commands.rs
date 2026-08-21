@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use obs_rs_audio::{AudioFormat, AudioMixer};
-use obs_rs_audio::{MAX_PAN_MILLI, MIN_PAN_MILLI};
+use obs_rs_audio::{MAX_GAIN_MILLI, MAX_PAN_MILLI, MIN_PAN_MILLI};
 use obs_rs_media::FrameTransition;
 
 use super::{
@@ -124,7 +124,7 @@ impl DesktopState {
     }
 
     pub(crate) fn set_mixer_gain(&mut self, id: &str, gain_milli: u16) -> Result<(), UiError> {
-        if gain_milli > 2_000 {
+        if gain_milli > MAX_GAIN_MILLI {
             return Err(UiError::InvalidMixerGain(gain_milli));
         }
         let source = *self

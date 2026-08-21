@@ -42,7 +42,7 @@ pub use filters::{
     MIN_GAIN_DB_MILLI, MIN_LIMITER_RELEASE_MS, MIN_LIMITER_THRESHOLD_DB_MILLI,
     MIN_NOISE_GATE_THRESHOLD_DB_MILLI, MIN_NOISE_GATE_TIME_MS,
 };
-pub use mixer::{AudioMixer, MAX_PAN_MILLI, MIN_PAN_MILLI};
+pub use mixer::{AudioMixer, MAX_GAIN_MILLI, MAX_PAN_MILLI, MIN_PAN_MILLI};
 pub use monitor::AudioMonitorTap;
 pub use pacing::{
     AudioClock, AudioDeadline, AudioPacer, AudioPacingResult, AudioScheduler, MonotonicAudioClock,

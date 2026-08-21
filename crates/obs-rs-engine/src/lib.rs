@@ -1068,8 +1068,7 @@ impl EngineSession {
             EngineAudioChannel::Desktop => self.desktop_audio_source,
             EngineAudioChannel::Microphone => self.microphone_audio_source,
         };
-        self.mixer
-            .set_gain(source, f32::from(gain_milli) / 1_000.0)?;
+        self.mixer.set_gain_milli(source, gain_milli)?;
         Ok(())
     }
 
@@ -2659,7 +2658,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use obs_rs_audio::AudioDeviceInfo;
+    use obs_rs_audio::{AudioDeviceInfo, MAX_GAIN_MILLI};
     use obs_rs_config::Config;
     use obs_rs_core::SourceId;
     use obs_rs_media::{FrameFilter, FrameRate, FrameTransform};
@@ -3175,6 +3174,14 @@ mod tests {
             "the live meter publishes its held peak from the same mixer source"
         );
         assert!(!stats.microphone_clipped);
+    }
+
+    #[test]
+    fn engine_rejects_gain_above_the_bounded_mixer_control() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        assert!(engine
+            .set_channel_gain_milli(EngineAudioChannel::Microphone, MAX_GAIN_MILLI + 1)
+            .is_err());
     }
 
     #[test]

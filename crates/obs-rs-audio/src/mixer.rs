@@ -11,6 +11,8 @@ use std::{collections::BTreeMap, sync::Arc};
 pub const MIN_PAN_MILLI: i32 = -1_000;
 /// Upper bound of the fixed-point stereo pan control (`1.0`, full right).
 pub const MAX_PAN_MILLI: i32 = 1_000;
+/// Upper bound of the fixed-point linear mixer gain (`2.0`, +6.02 dB).
+pub const MAX_GAIN_MILLI: u16 = 2_000;
 
 const CLIP_FLASH_DURATION_NANOS: u64 = 1_000_000_000;
 const PEAK_HOLD_DURATION_NANOS: u64 = 20_000_000_000;
@@ -95,6 +97,28 @@ impl AudioMixer {
             .ok_or(AudioError::UnknownSource(source))?;
         control.gain = gain;
         Ok(())
+    }
+
+    /// Sets a source's linear gain through the bounded control-plane unit.
+    ///
+    /// The floating-point method remains available to construct offline
+    /// reference mixes; engine and worker controls use this fixed-point
+    /// boundary so a remote/UI caller cannot install an unbounded fader.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::InvalidGain`] for a value above
+    /// [`MAX_GAIN_MILLI`] or [`AudioError::UnknownSource`] for an unknown
+    /// source.
+    pub fn set_gain_milli(
+        &mut self,
+        source: AudioSourceId,
+        gain_milli: u16,
+    ) -> Result<(), AudioError> {
+        if gain_milli > MAX_GAIN_MILLI {
+            return Err(AudioError::InvalidGain);
+        }
+        self.set_gain(source, f32::from(gain_milli) / 1_000.0)
     }
 
     /// Mutes or unmutes one source.

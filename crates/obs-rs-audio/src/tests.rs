@@ -164,6 +164,19 @@ fn mixer_applies_gain_mute_and_clamp() {
 }
 
 #[test]
+fn mixer_rejects_unbounded_fixed_point_gain_controls() {
+    let mut mixer = AudioMixer::new(format());
+    let source = mixer.add_source(1.0).expect("source");
+    assert_eq!(
+        mixer.set_gain_milli(source, MAX_GAIN_MILLI + 1),
+        Err(AudioError::InvalidGain)
+    );
+    mixer
+        .set_gain_milli(source, MAX_GAIN_MILLI)
+        .expect("maximum gain");
+}
+
+#[test]
 fn mixer_applies_stereo_pan_and_rejects_invalid_values() {
     let mut mixer = AudioMixer::new(format());
     let source = mixer.add_source(1.0).expect("source");
