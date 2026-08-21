@@ -1,8 +1,8 @@
 import { HorizontalBox } from "std-widgets.slint";
-import { DockPane, MixerRow, SceneRow, SourceRow } from "models.slint";
+import { DockPane, DockSplitter, MixerRow, SceneRow, SourceRow } from "models.slint";
 import { DockSlot } from "dock_slot.slint";
 import { Palette } from "palette.slint";
-import { TabButton } from "theme.slint";
+import { HorizontalSplitter, TabButton, VerticalSplitter } from "theme.slint";
 import { I18n } from "i18n.slint";
 
 // Renders the bounded pane projection emitted by DockNode::pane_layout(). The
@@ -10,7 +10,12 @@ import { I18n } from "i18n.slint";
 // this component only maps normalized rectangles to the current window.
 export component DockWorkspace inherits Rectangle {
     in property <[DockPane]> panes;
+    in property <[DockSplitter]> splitters;
     in property <[bool]> panel-floating;
+    in property <bool> dock-dragging;
+    in property <int> dock-drag-panel;
+    in property <int> dock-drop-target;
+    in property <int> dock-drop-zone;
     in property <string> locale;
     in property <[SceneRow]> scene-rows;
     in property <[SourceRow]> source-rows;
@@ -37,6 +42,10 @@ export component DockWorkspace inherits Rectangle {
     callback move-panel(int, int);
     callback resize-panel(int, int);
     callback select-dock-tab(int);
+    callback dock-drag-start(int, float, float);
+    callback dock-drag-moved(int, float, float);
+    callback dock-drag-end(int, float, float);
+    callback resize-dock-splitter(int, float);
     callback float-panel(int);
     callback close-panel(int);
     callback open-modal(int);
@@ -97,6 +106,14 @@ export component DockWorkspace inherits Rectangle {
             : I18n.text.controls_title
     }
 
+    function normalized-x(value: float) -> float {
+        Math.clamp((value - root.absolute-position.x / 1px) / (root.width / 1px), 0, 1)
+    }
+
+    function normalized-y(value: float) -> float {
+        Math.clamp((value - root.absolute-position.y / 1px) / (root.height / 1px), 0, 1)
+    }
+
     for pane in root.panes : Rectangle {
         x: pane.x * root.width;
         y: pane.y * root.height;
@@ -153,6 +170,35 @@ export component DockWorkspace inherits Rectangle {
             }
         }
 
+        // The target is calculated by Rust from the same pane projection that
+        // renders this region. Directional zones are deliberately visible so
+        // a drop never depends on an invisible threshold.
+        if root.dock-dragging
+            && root.dock-drag-panel != pane.panel-kind
+            && root.dock-drop-target == pane.panel-kind
+            && pane.active : Rectangle {
+            z: 5;
+            x: root.dock-drop-zone == 2
+                ? parent.width * 0.75
+                : (root.dock-drop-zone == 1 || root.dock-drop-zone == 0
+                    ? 0px : parent.width * 0.25);
+            y: root.dock-drop-zone == 4
+                ? parent.height * 0.75
+                : (root.dock-drop-zone == 3 || root.dock-drop-zone == 0
+                    ? 0px : parent.height * 0.25);
+            width: root.dock-drop-zone == 0
+                ? parent.width
+                : ((root.dock-drop-zone == 1 || root.dock-drop-zone == 2)
+                    ? parent.width * 0.25 : parent.width);
+            height: root.dock-drop-zone == 0
+                ? parent.height
+                : ((root.dock-drop-zone == 3 || root.dock-drop-zone == 4)
+                    ? parent.height * 0.25 : parent.height);
+            background: rgb(55, 145, 245, 55);
+            border-width: root.dock-drop-zone == 0 ? 3px : 2px;
+            border-color: Palette.tokens.accent;
+        }
+
         DockSlot {
             x: 0px;
             y: pane.tab-count > 1 ? 31px : 0px;
@@ -178,6 +224,15 @@ export component DockWorkspace inherits Rectangle {
             recording: root.recording;
             streaming: root.streaming;
             meters-paused: root.meters-paused;
+            dock-drag-start(kind, x, y) => {
+                root.dock-drag-start(kind, root.normalized-x(x), root.normalized-y(y));
+            }
+            dock-drag-moved(kind, x, y) => {
+                root.dock-drag-moved(kind, root.normalized-x(x), root.normalized-y(y));
+            }
+            dock-drag-end(kind, x, y) => {
+                root.dock-drag-end(kind, root.normalized-x(x), root.normalized-y(y));
+            }
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
             float-panel(kind) => { root.float-panel(kind); }
             close-panel(kind) => { root.close-panel(kind); }
@@ -211,6 +266,37 @@ export component DockWorkspace inherits Rectangle {
             toggle-recording() => { root.toggle-recording(); }
             toggle-streaming() => { root.toggle-streaming(); }
             open-settings-window() => { root.open-settings-window(); }
+        }
+    }
+
+    // Split handles are generated from the same tree projection as panes, so
+    // a nested split remains resizable without rebuilding a second hierarchy
+    // in Slint.
+    for splitter in root.splitters : Rectangle {
+        x: splitter.axis == 0
+            ? splitter.boundary * root.width - 3px : 0px;
+        y: splitter.axis == 1
+            ? splitter.boundary * root.height - 3px : 0px;
+        width: splitter.axis == 0 ? 6px : root.width;
+        height: splitter.axis == 1 ? 6px : root.height;
+        z: 8;
+        if splitter.axis == 0 : VerticalSplitter {
+            width: 100%;
+            height: 100%;
+            resized(delta) => {
+                root.resize-dock-splitter(
+                    splitter.id,
+                    (delta / 1px) / (root.width / 1px) * 1000);
+            }
+        }
+        if splitter.axis == 1 : HorizontalSplitter {
+            width: 100%;
+            height: 100%;
+            resized(delta) => {
+                root.resize-dock-splitter(
+                    splitter.id,
+                    (delta / 1px) / (root.height / 1px) * 1000);
+            }
         }
     }
 }

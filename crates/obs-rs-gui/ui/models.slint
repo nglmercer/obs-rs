@@ -69,6 +69,14 @@
         active: bool,
     }
 
+    // One typed splitter handle in the Rust-owned dock tree. Axis 0 divides
+    // width; axis 1 divides height. The boundary is normalized to 0..=1.
+    export struct DockSplitter {
+        id: int,
+        boundary: float,
+        axis: int,
+    }
+
     // One entry in the Add Source kind list. `obsolete` groups deprecated kinds
     // under their own heading the way OBS does.
     export struct SourceKindRow {

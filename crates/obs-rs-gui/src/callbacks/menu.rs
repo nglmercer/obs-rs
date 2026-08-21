@@ -193,6 +193,7 @@ fn install_session(
         let Some(ui) = weak.upgrade() else {
             return;
         };
+        docks.reset_floating(&ui);
         crate::settings::apply_default_layout(&ui);
         let tree =
             crate::dock_tree::DockNode::from_legacy(&[1, 0, 2, 3, 4], &[1.0, 1.0, 1.85, 1.0, 1.4])

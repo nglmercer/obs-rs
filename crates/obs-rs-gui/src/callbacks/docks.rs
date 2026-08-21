@@ -8,11 +8,12 @@
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_ui::DesktopState;
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, PhysicalPosition, PhysicalSize, VecModel};
 
 use crate::{
-    dock_tree::{DockAxis, DockNode},
-    DockPane, FloatingDockWindow, MainWindow,
+    dock_tree::{DockAxis, DockDropZone, DockNode},
+    settings::FloatingGeometry,
+    DockPane, DockSplitter, FloatingDockWindow, MainWindow,
 };
 
 /// The dock kinds, in the order their IDs are numbered.
@@ -36,6 +37,7 @@ const PIXELS_PER_WEIGHT: f32 = 320.0;
 pub(crate) struct DockController {
     windows: RefCell<Vec<Option<FloatingDockWindow>>>,
     tree: RefCell<DockNode>,
+    floating_geometry: RefCell<Vec<Option<FloatingGeometry>>>,
 }
 
 impl DockController {
@@ -83,6 +85,48 @@ impl DockController {
         *self.tree.borrow_mut() = tree.clone();
         ui.set_panel_order(ModelRc::new(VecModel::from(tree.leaf_order())));
         set_panes(ui, tree);
+    }
+
+    /// Closes every detached window for the Docks > Reset Layout action and
+    /// discards their saved positions. A reset must not leave invisible window
+    /// owners alive after the main window says the panels are docked.
+    pub(crate) fn reset_floating(&self, ui: &MainWindow) {
+        for slot in self.windows.borrow_mut().iter_mut() {
+            if let Some(window) = slot.take() {
+                let _ = window.hide();
+            }
+        }
+        self.floating_geometry.borrow_mut().fill(None);
+        for index in 0..PANEL_KINDS.len() {
+            set_floating(ui, index, false);
+        }
+    }
+
+    /// Captures every open detached window and returns the bounded geometry
+    /// records ready for settings persistence. Closed windows retain their
+    /// last captured position so a later re-detach returns to the same place.
+    pub(crate) fn capture_floating_geometry(&self) -> Vec<FloatingGeometry> {
+        let mut geometry = self.floating_geometry.borrow().clone();
+        for (index, window) in self.windows.borrow().iter().enumerate() {
+            if let Some(window) = window {
+                capture_window_geometry(&mut geometry, index, window);
+            }
+        }
+        self.floating_geometry.borrow_mut().clone_from(&geometry);
+        geometry.into_iter().flatten().collect()
+    }
+
+    fn stored_geometry(&self, index: usize) -> Option<FloatingGeometry> {
+        self.floating_geometry
+            .borrow()
+            .get(index)
+            .copied()
+            .flatten()
+    }
+
+    fn remember_window_geometry(&self, index: usize, window: &FloatingDockWindow) {
+        let mut geometry = self.floating_geometry.borrow_mut();
+        capture_window_geometry(&mut geometry, index, window);
     }
 
     #[cfg(test)]
@@ -158,6 +202,7 @@ pub(crate) fn resize(weights: &[f32], order: &[i32], index: usize, delta_pixels:
 /// A detached dock forwards every action to the studio window, so this needs
 /// only the studio state the window titles are localized from — not the
 /// surface or the output runtime.
+#[cfg(test)]
 #[allow(
     clippy::too_many_lines,
     reason = "one callback installation boundary owns all dock mutations"
@@ -166,15 +211,46 @@ pub(crate) fn install_dock_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
 ) -> Rc<DockController> {
+    install_dock_callbacks_with_layout(ui, state, None, &[])
+}
+
+/// Installs dock callbacks from the tree stored in the session settings.
+/// Legacy settings still pass `None` and are migrated from their row order and
+/// weights by the same bounded constructor used by the compatibility path.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one callback installation boundary owns the complete dock gesture lifecycle"
+)]
+pub(crate) fn install_dock_callbacks_with_layout(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    saved_tree: Option<&DockNode>,
+    saved_geometry: &[FloatingGeometry],
+) -> Rc<DockController> {
     let initial_order = read_ints(&ui.get_panel_order());
     let initial_weights = read_floats(&ui.get_panel_weights());
-    let tree = DockNode::from_legacy(&initial_order, &initial_weights).unwrap_or_else(|| {
-        DockNode::from_legacy(&[1, 0, 2, 3, 4], &[1.0, 1.0, 1.85, 1.0, 1.4])
-            .expect("the built-in dock layout must be valid")
-    });
+    let tree = saved_tree
+        .filter(|tree| tree.leaf_order().len() == PANEL_KINDS.len())
+        .cloned()
+        .or_else(|| DockNode::from_legacy(&initial_order, &initial_weights))
+        .unwrap_or_else(|| {
+            DockNode::from_legacy(&[1, 0, 2, 3, 4], &[1.0, 1.0, 1.85, 1.0, 1.4])
+                .expect("the built-in dock layout must be valid")
+        });
     let controller = Rc::new(DockController {
         windows: RefCell::new(PANEL_KINDS.map(|_| None).into_iter().collect()),
         tree: RefCell::new(tree),
+        floating_geometry: RefCell::new(
+            PANEL_KINDS
+                .map(|panel| {
+                    saved_geometry
+                        .iter()
+                        .find(|geometry| geometry.panel == panel)
+                        .copied()
+                })
+                .into_iter()
+                .collect(),
+        ),
     });
     set_panes(ui, &controller.tree_snapshot());
 
@@ -269,6 +345,100 @@ pub(crate) fn install_dock_callbacks(
     });
 
     let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
+    ui.on_dock_drag_start(move |panel, x, y| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        if !PANEL_KINDS.contains(&panel) {
+            return;
+        }
+        ui.set_dock_dragging(true);
+        ui.set_dock_drag_panel(panel);
+        update_drop_preview(&ui, &tree_controller.tree_snapshot(), panel, x, y);
+    });
+
+    let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
+    ui.on_dock_drag_moved(move |panel, x, y| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        if ui.get_dock_dragging() && ui.get_dock_drag_panel() == panel {
+            update_drop_preview(&ui, &tree_controller.tree_snapshot(), panel, x, y);
+        }
+    });
+
+    let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
+    ui.on_dock_drag_end(move |panel, _x, _y| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        if !ui.get_dock_dragging() || ui.get_dock_drag_panel() != panel {
+            return;
+        }
+        let target = ui.get_dock_drop_target();
+        let zone = dock_drop_zone(ui.get_dock_drop_zone());
+        let changed = zone.and_then(|zone| {
+            if target == panel {
+                return None;
+            }
+            let mut tree = tree_controller.tree.borrow_mut();
+            let changed = if tree.is_flat_horizontal()
+                && matches!(zone, DockDropZone::Left | DockDropZone::Right)
+            {
+                reorder_flat_drop(
+                    &tree,
+                    panel,
+                    target,
+                    zone == DockDropZone::Left,
+                    &read_floats(&ui.get_panel_weights()),
+                )
+                .is_some_and(|next| {
+                    *tree = next;
+                    true
+                })
+            } else {
+                tree.drop_dock_with(panel, target, zone)
+            };
+            if changed {
+                ui.set_panel_order(ModelRc::new(VecModel::from(tree.leaf_order())));
+                set_panes(&ui, &tree);
+            }
+            Some(changed)
+        });
+        clear_drop_preview(&ui);
+        if changed == Some(true) {
+            ui.set_status_message("Dock layout updated".into());
+        }
+    });
+
+    let weak = ui.as_weak();
+    let tree_controller = Rc::clone(&controller);
+    ui.on_resize_dock_splitter(move |id, delta| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "splitter deltas are bounded UI movement in fixed-point milli-units"
+        )]
+        let delta = if delta.is_finite() {
+            delta.round() as i32
+        } else {
+            return;
+        };
+        let Ok(id) = u8::try_from(id) else {
+            return;
+        };
+        let mut tree = tree_controller.tree.borrow_mut();
+        if tree.resize_splitter(id, delta) {
+            set_panes(&ui, &tree);
+        }
+    });
+
+    let weak = ui.as_weak();
     ui.on_toggle_meters_paused(move || {
         if let Some(ui) = weak.upgrade() {
             ui.set_meters_paused(!ui.get_meters_paused());
@@ -276,6 +446,7 @@ pub(crate) fn install_dock_callbacks(
     });
 
     install_float(ui, state, &controller);
+    restore_floating_windows(ui, state, &controller);
     controller
 }
 
@@ -301,6 +472,91 @@ fn set_panes(ui: &MainWindow, tree: &DockNode) {
         })
         .collect::<Vec<_>>();
     ui.set_dock_panes(ModelRc::new(VecModel::from(panes)));
+    let splitters = tree
+        .splitter_layout()
+        .into_iter()
+        .map(|splitter| DockSplitter {
+            id: i32::from(splitter.id),
+            boundary: f32::from(splitter.boundary_milli) / 1_000.0,
+            axis: match splitter.axis {
+                DockAxis::Horizontal => 0,
+                DockAxis::Vertical => 1,
+            },
+        })
+        .collect::<Vec<_>>();
+    ui.set_dock_splitters(ModelRc::new(VecModel::from(splitters)));
+}
+
+fn update_drop_preview(ui: &MainWindow, tree: &DockNode, panel: i32, x: f32, y: f32) {
+    let Some((target, zone)) = tree.drop_target(normalized_milli(x), normalized_milli(y)) else {
+        ui.set_dock_drop_target(-1);
+        ui.set_dock_drop_zone(-1);
+        return;
+    };
+    if target == panel {
+        ui.set_dock_drop_target(-1);
+        ui.set_dock_drop_zone(-1);
+        return;
+    }
+    ui.set_dock_drop_target(target);
+    ui.set_dock_drop_zone(zone.ui_value());
+}
+
+fn clear_drop_preview(ui: &MainWindow) {
+    ui.set_dock_dragging(false);
+    ui.set_dock_drag_panel(-1);
+    ui.set_dock_drop_target(-1);
+    ui.set_dock_drop_zone(-1);
+}
+
+fn normalized_milli(value: f32) -> u16 {
+    let value = if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the normalized pointer is clamped to 0..=1 before fixed-point conversion"
+    )]
+    {
+        (value * 1_000.0).round() as u16
+    }
+}
+
+fn dock_drop_zone(value: i32) -> Option<DockDropZone> {
+    match value {
+        0 => Some(DockDropZone::Tab),
+        1 => Some(DockDropZone::Left),
+        2 => Some(DockDropZone::Right),
+        3 => Some(DockDropZone::Top),
+        4 => Some(DockDropZone::Bottom),
+        _ => None,
+    }
+}
+
+/// Keeps the old horizontal row's direct reorder semantics when a drag lands
+/// on the left or right edge of a neighbour. Non-flat trees use the same drop
+/// zone to create a real nested split instead.
+fn reorder_flat_drop(
+    tree: &DockNode,
+    panel: i32,
+    target: i32,
+    before: bool,
+    weights: &[f32],
+) -> Option<DockNode> {
+    let mut order = tree.leaf_order();
+    let panel_index = order.iter().position(|id| *id == panel)?;
+    order.remove(panel_index);
+    let target_index = order.iter().position(|id| *id == target)?;
+    let insertion = if before {
+        target_index
+    } else {
+        target_index.saturating_add(1)
+    };
+    order.insert(insertion.min(order.len()), panel);
+    DockNode::from_legacy(&order, weights)
 }
 
 fn install_float(
@@ -329,7 +585,9 @@ fn install_float(
         }
         match float(&ui, &state, &controller, kind) {
             Ok(window) => {
-                controller.windows.borrow_mut()[index] = Some(window);
+                if let Some(slot) = controller.windows.borrow_mut().get_mut(index) {
+                    *slot = Some(window);
+                }
                 set_floating(&ui, index, true);
                 controller.sync(&ui);
             }
@@ -340,10 +598,47 @@ fn install_float(
 
 /// Returns a dock to the row and closes its window.
 fn redock(ui: &MainWindow, controller: &Rc<DockController>, index: usize) {
-    if let Some(window) = controller.windows.borrow_mut()[index].take() {
+    let window = controller
+        .windows
+        .borrow_mut()
+        .get_mut(index)
+        .and_then(Option::take);
+    if let Some(window) = window {
+        controller.remember_window_geometry(index, &window);
         let _ = window.hide();
     }
     set_floating(ui, index, false);
+}
+
+/// Reopens detached docks after the main window has installed all forwarding
+/// callbacks. A failure is visible in the status line and the dock is put back
+/// into the row instead of leaving a hidden boolean-only layout entry behind.
+fn restore_floating_windows(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &Rc<DockController>,
+) {
+    let floating = read_bools(&ui.get_panel_floating());
+    for (index, is_floating) in floating.into_iter().enumerate() {
+        if !is_floating {
+            continue;
+        }
+        let Ok(kind) = i32::try_from(index) else {
+            continue;
+        };
+        match float(ui, state, controller, kind) {
+            Ok(window) => {
+                if let Some(slot) = controller.windows.borrow_mut().get_mut(index) {
+                    *slot = Some(window);
+                }
+                controller.sync(ui);
+            }
+            Err(error) => {
+                set_floating(ui, index, false);
+                ui.set_status_message(format!("Restoring floating dock: {error}").into());
+            }
+        }
+    }
 }
 
 /// Builds and shows the window for one dock kind.
@@ -375,6 +670,9 @@ fn float(
         redock(&ui, &redock_controller, redock_index);
     });
 
+    if let Some(geometry) = controller.stored_geometry(redock_index) {
+        restore_window_geometry(&window, geometry);
+    }
     window.show()?;
     Ok(window)
 }
@@ -503,6 +801,77 @@ fn read_floats(model: &ModelRc<f32>) -> Vec<f32> {
     (0..model.row_count())
         .filter_map(|row| model.row_data(row))
         .collect()
+}
+
+fn read_bools(model: &ModelRc<bool>) -> Vec<bool> {
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+/// Stores the backend's physical desktop geometry and scale factor. The
+/// backend returns physical coordinates even when the generated Slint window
+/// properties are expressed in logical pixels, which keeps multi-monitor
+/// positions unambiguous.
+fn capture_window_geometry(
+    geometry: &mut [Option<FloatingGeometry>],
+    index: usize,
+    window: &FloatingDockWindow,
+) {
+    let Ok(panel) = i32::try_from(index) else {
+        return;
+    };
+    let position = window.window().position();
+    let size = window.window().size();
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the scale factor is finite and stored as bounded thousandths"
+    )]
+    let scale_milli = (window.window().scale_factor().max(0.5) * 1_000.0).round() as u32;
+    if let Some(entry) = FloatingGeometry::new(
+        panel,
+        position.x,
+        position.y,
+        size.width,
+        size.height,
+        scale_milli,
+    ) {
+        if let Some(slot) = geometry.get_mut(index) {
+            *slot = Some(entry);
+        }
+    }
+}
+
+/// Restores a saved physical position and scales dimensions to the current
+/// display DPI. Position is intentionally left in desktop coordinates: if a
+/// second monitor changed DPI, the window remains on that monitor rather than
+/// jumping to a different global location.
+fn restore_window_geometry(window: &FloatingDockWindow, geometry: FloatingGeometry) {
+    let current_scale = window.window().scale_factor().max(0.5);
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the stored scale is bounded thousandths and f32 is sufficient for DPI"
+    )]
+    let saved_scale = (geometry.scale_milli as f32 / 1_000.0).max(0.5);
+    let ratio = (current_scale / saved_scale).clamp(0.5, 2.0);
+    let width = scale_dimension(geometry.width, ratio, 240, 8_192);
+    let height = scale_dimension(geometry.height, ratio, 160, 8_192);
+    window
+        .window()
+        .set_position(PhysicalPosition::new(geometry.x, geometry.y));
+    window.window().set_size(PhysicalSize::new(width, height));
+}
+
+fn scale_dimension(value: u32, ratio: f32, minimum: u32, maximum: u32) -> u32 {
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "dimensions are bounded by FloatingGeometry before scaling"
+    )]
+    let scaled = (value as f32 * ratio).round() as u32;
+    scaled.clamp(minimum, maximum)
 }
 
 #[cfg(test)]

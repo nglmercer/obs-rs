@@ -720,6 +720,10 @@ fn output_runtime_finalizes_an_atomic_av_recording() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one deterministic GUI fixture exercises the persisted shell and dock surfaces"
+)]
 fn ui_layout_can_render_a_reference_snapshot() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {
@@ -739,7 +743,31 @@ fn ui_layout_can_render_a_reference_snapshot() {
         PreviewSurface::new(&project, 0).expect("preview surface"),
     ));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
-    let docks = crate::install_dock_callbacks(&ui, &state);
+    let persisted_tree = DockNode::Split {
+        axis: super::dock_tree::DockAxis::Vertical,
+        ratio_milli: 600,
+        first: Box::new(DockNode::Tabs {
+            docks: vec![1, 0],
+            active: 1,
+        }),
+        second: Box::new(DockNode::Split {
+            axis: super::dock_tree::DockAxis::Horizontal,
+            ratio_milli: 400,
+            first: Box::new(DockNode::Dock(2)),
+            second: Box::new(DockNode::Tabs {
+                docks: vec![3, 4],
+                active: 0,
+            }),
+        }),
+    };
+    let docks = crate::install_dock_callbacks_with_layout(&ui, &state, Some(&persisted_tree), &[]);
+    assert!(read_dock_panes(&ui).iter().any(|pane| pane.tab_count == 2));
+    assert_eq!(read_dock_splitters(&ui).len(), 2);
+    let default = AppSettings::default();
+    let default_tree =
+        DockNode::from_legacy(&default.layout.panel_order, &default.layout.panel_weights)
+            .expect("default dock tree");
+    docks.replace_tree(&default_tree, &ui);
     let canvas = install_canvas_callbacks(&ui, &state, &surface);
     ui.invoke_canvas_zoom_changed(100);
     assert_eq!(canvas.canvas_state().zoom().ui_value(), 100);
@@ -1189,11 +1217,33 @@ fn exercise_dock_layout(ui: &MainWindow, controller: &Rc<crate::callbacks::docks
         "the row's total width must be preserved"
     );
 
+    // A header drag resolves a pane target and paints a directional insertion
+    // hint before the drop mutates the tree.
+    ui.invoke_dock_drag_start(0, 0.99, 0.5);
+    ui.invoke_dock_drag_moved(0, 0.99, 0.5);
+    assert!(ui.get_dock_dragging());
+    assert_eq!(ui.get_dock_drop_target(), 4);
+    assert!(ui.get_dock_drop_zone() > 0);
+    ui.invoke_dock_drag_end(0, 0.99, 0.5);
+    assert!(!ui.get_dock_dragging());
+    assert_eq!(read_order(ui).last().copied(), Some(0));
+
+    let before_splitter = read_dock_splitters(ui)[0].boundary;
+    ui.invoke_resize_dock_splitter(0, 100.0);
+    assert!(read_dock_splitters(ui)[0].boundary > before_splitter);
+
     // Detaching opens a window for the dock and takes it out of the row.
     assert!(!controller.is_floating(2));
     ui.invoke_float_panel(2);
     assert!(controller.is_floating(2), "the mixer detached");
     assert!(read_floating(ui)[2], "the row must know the dock left it");
+    let floating_geometry = controller.capture_floating_geometry();
+    let mixer_geometry = floating_geometry
+        .iter()
+        .find(|geometry| geometry.panel == 2)
+        .expect("the detached window geometry is captured");
+    assert!(mixer_geometry.width >= 240);
+    assert!(mixer_geometry.height >= 160);
 
     // Detaching again returns it to the row.
     ui.invoke_float_panel(2);
@@ -1237,6 +1287,13 @@ fn read_floating(ui: &MainWindow) -> Vec<bool> {
 
 fn read_dock_panes(ui: &MainWindow) -> Vec<crate::DockPane> {
     let model = ui.get_dock_panes();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+fn read_dock_splitters(ui: &MainWindow) -> Vec<crate::DockSplitter> {
+    let model = ui.get_dock_splitters();
     (0..model.row_count())
         .filter_map(|row| model.row_data(row))
         .collect()

@@ -348,8 +348,67 @@ pub(crate) struct LayoutSettings {
     pub(crate) panel_weights: Vec<f32>,
     /// Dock kinds that were left detached in their own windows.
     pub(crate) floating_panels: Vec<i32>,
+    /// Last known physical desktop geometry for detached docks. The scale is
+    /// retained so a window can keep its logical size when it is restored on
+    /// a display with a different DPI.
+    pub(crate) floating_geometry: Vec<FloatingGeometry>,
     /// Versioned tree representation of the dock arrangement.
     pub(crate) dock_tree: DockNode,
+}
+
+/// Bounded geometry for one detached dock window.
+///
+/// Positions and dimensions use the windowing backend's physical pixel space,
+/// which is the only space that is stable across multi-monitor desktops. A
+/// saved scale factor lets restore adjust the dimensions without silently
+/// turning a 320 logical-pixel dock into a tiny window after a DPI change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct FloatingGeometry {
+    pub(crate) panel: i32,
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) scale_milli: u32,
+}
+
+impl FloatingGeometry {
+    const MIN_POSITION: i32 = -2_000_000;
+    const MAX_POSITION: i32 = 2_000_000;
+    const MIN_WIDTH: u32 = 240;
+    const MAX_WIDTH: u32 = 8_192;
+    const MIN_HEIGHT: u32 = 160;
+    const MAX_HEIGHT: u32 = 8_192;
+    const MIN_SCALE_MILLI: u32 = 500;
+    const MAX_SCALE_MILLI: u32 = 4_000;
+
+    /// Creates a geometry record only when every value is safe to restore.
+    pub(crate) fn new(
+        panel: i32,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        scale_milli: u32,
+    ) -> Option<Self> {
+        if !DEFAULT_PANEL_ORDER.contains(&panel)
+            || !(Self::MIN_POSITION..=Self::MAX_POSITION).contains(&x)
+            || !(Self::MIN_POSITION..=Self::MAX_POSITION).contains(&y)
+            || !(Self::MIN_WIDTH..=Self::MAX_WIDTH).contains(&width)
+            || !(Self::MIN_HEIGHT..=Self::MAX_HEIGHT).contains(&height)
+            || !(Self::MIN_SCALE_MILLI..=Self::MAX_SCALE_MILLI).contains(&scale_milli)
+        {
+            return None;
+        }
+        Some(Self {
+            panel,
+            x,
+            y,
+            width,
+            height,
+            scale_milli,
+        })
+    }
 }
 
 /// The dock IDs a layout must contain, in the order OBS ships them.
@@ -379,6 +438,7 @@ impl Default for LayoutSettings {
             dock_height: 248,
             panel_weights,
             floating_panels: Vec::new(),
+            floating_geometry: Vec::new(),
             dock_tree,
         }
     }
@@ -442,6 +502,60 @@ impl LayoutSettings {
             .map(i32::to_string)
             .collect::<Vec<_>>()
             .join(",")
+    }
+
+    /// Parses the versioned `v1:panel:x:y:width:height:scale;...` geometry
+    /// list. Individual bad records are discarded so one unplugged monitor
+    /// cannot destroy the positions of every other detached dock.
+    fn parse_floating_geometry(value: &str) -> Vec<FloatingGeometry> {
+        let Some(records) = value.strip_prefix("v1:") else {
+            return Vec::new();
+        };
+        let mut geometry: Vec<FloatingGeometry> = Vec::new();
+        for record in records.split(';').filter(|record| !record.is_empty()) {
+            let fields = record.split(':').collect::<Vec<_>>();
+            if fields.len() != 6 {
+                continue;
+            }
+            let [panel, x, y, width, height, scale] = [
+                fields[0], fields[1], fields[2], fields[3], fields[4], fields[5],
+            ];
+            let (Some(panel), Some(x), Some(y), Some(width), Some(height), Some(scale)) = (
+                panel.parse().ok(),
+                x.parse().ok(),
+                y.parse().ok(),
+                width.parse().ok(),
+                height.parse().ok(),
+                scale.parse().ok(),
+            ) else {
+                continue;
+            };
+            let Some(entry) = FloatingGeometry::new(panel, x, y, width, height, scale) else {
+                continue;
+            };
+            if geometry.iter().all(|other| other.panel != entry.panel)
+                && geometry.len() < DEFAULT_PANEL_ORDER.len()
+            {
+                geometry.push(entry);
+            }
+        }
+        geometry.sort_unstable_by_key(|entry| entry.panel);
+        geometry
+    }
+
+    fn floating_geometry_text(&self) -> String {
+        let mut geometry = self.floating_geometry.clone();
+        geometry.sort_unstable_by_key(|entry| entry.panel);
+        let records = geometry
+            .into_iter()
+            .map(|entry| {
+                format!(
+                    "{}:{}:{}:{}:{}:{}",
+                    entry.panel, entry.x, entry.y, entry.width, entry.height, entry.scale_milli
+                )
+            })
+            .collect::<Vec<_>>();
+        format!("v1:{}", records.join(";"))
     }
 
     fn panel_order_text(&self) -> String {
@@ -553,6 +667,10 @@ impl LayoutSettings {
                 .get("layout_floating_panels")
                 .map(Self::parse_floating)
                 .unwrap_or(defaults.floating_panels),
+            floating_geometry: config
+                .get("layout_floating_geometry")
+                .map(Self::parse_floating_geometry)
+                .unwrap_or(defaults.floating_geometry),
             dock_tree,
         }
     }
@@ -902,6 +1020,10 @@ impl AppSettings {
             ("layout_dock_height", self.layout.dock_height.to_string()),
             ("layout_panel_weights", self.layout.panel_weights_text()),
             ("layout_floating_panels", self.layout.floating_text()),
+            (
+                "layout_floating_geometry",
+                self.layout.floating_geometry_text(),
+            ),
             (
                 "layout_dock_tree",
                 self.layout
@@ -1747,6 +1869,35 @@ mod tests {
 
         assert_eq!(decoded.layout.dock_tree, tree);
         assert_eq!(decoded.layout.panel_order, vec![1, 0, 2, 3, 4]);
+    }
+
+    #[test]
+    fn floating_geometry_round_trips_and_rejects_unsafe_records() {
+        let mut settings = AppSettings::default();
+        settings.layout.floating_geometry = vec![
+            FloatingGeometry::new(2, -1_920, 84, 720, 520, 1_250).expect("valid geometry"),
+            FloatingGeometry::new(4, 2_560, 120, 480, 700, 2_000).expect("valid geometry"),
+        ];
+
+        let decoded = AppSettings::from_config(&settings.to_config());
+
+        assert_eq!(
+            decoded.layout.floating_geometry,
+            settings.layout.floating_geometry
+        );
+
+        let mut config = Config::new();
+        config
+            .set(
+                "layout_floating_geometry",
+                "v1:2:-1920:84:720:520:1250;4:0:0:99999:700:2000;bogus",
+            )
+            .expect("geometry key");
+        let decoded = AppSettings::from_config(&config);
+        assert_eq!(
+            decoded.layout.floating_geometry,
+            vec![FloatingGeometry::new(2, -1_920, 84, 720, 520, 1_250).expect("valid geometry")]
+        );
     }
 
     #[test]

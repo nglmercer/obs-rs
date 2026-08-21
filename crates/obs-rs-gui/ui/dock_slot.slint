@@ -32,6 +32,9 @@ export component DockSlot inherits Rectangle {
     in property <float> weight: 1.0;
 
     callback move-panel(int, int);
+    callback dock-drag-start(int, float, float);
+    callback dock-drag-moved(int, float, float);
+    callback dock-drag-end(int, float, float);
     callback float-panel(int);
     callback close-panel(int);
     callback open-modal(int);
@@ -80,6 +83,9 @@ export component DockSlot inherits Rectangle {
         scene-rows: root.scene-rows;
         preview-scene: root.preview-scene;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
+        dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+        dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+        dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         open-modal(modal) => { root.open-modal(modal); }
         select-preview(id) => { root.select-preview(id); }
         select-program(id) => { root.select-program(id); }
@@ -102,6 +108,9 @@ export component DockSlot inherits Rectangle {
         selected-source-last: root.selected-source-last;
         can-paste: root.can-paste;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
+        dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+        dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+        dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         open-modal(modal) => { root.open-modal(modal); }
         select-source(id) => { root.select-source(id); }
         open-filters(id) => { root.select-source(id); root.open-modal(13); }
@@ -129,6 +138,9 @@ export component DockSlot inherits Rectangle {
         mixer-rows: root.mixer-rows;
         meters-paused: root.meters-paused;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
+        dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+        dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+        dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
         toggle-meters-paused() => { root.toggle-meters-paused(); }
@@ -142,6 +154,9 @@ export component DockSlot inherits Rectangle {
         panel-kind: root.panel-kind;
         transition: root.transition;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
+        dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+        dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+        dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         cut-transition() => { root.cut-transition(); }
         fade-transition() => { root.fade-transition(); }
     }
@@ -153,6 +168,9 @@ export component DockSlot inherits Rectangle {
         recording: root.recording;
         streaming: root.streaming;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
+        dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+        dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+        dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         toggle-recording() => { root.toggle-recording(); }
         toggle-streaming() => { root.toggle-streaming(); }
         set-view-mode(mode) => { root.set-view-mode(mode); }

@@ -32,6 +32,8 @@ mod view;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use callbacks::install_dock_callbacks;
 pub(crate) use callbacks::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
     apply_source_transform_to, apply_source_transforms_to, duplicate_scene_and_refresh,
@@ -42,11 +44,11 @@ pub(crate) use callbacks::{
     toggle_source_visibility_and_refresh, transform_source_and_refresh, SourceTarget,
 };
 pub(crate) use callbacks::{
-    install_add_source_window, install_callbacks, install_canvas_callbacks, install_dock_callbacks,
-    install_menu_callbacks, install_monitor_window, install_settings_window, install_setup_window,
-    install_source_filters_window, install_source_properties_window,
-    install_source_transform_window, selection_rect, start_preview_timer, PeerWindows,
-    ProjectorController,
+    install_add_source_window, install_callbacks, install_canvas_callbacks,
+    install_dock_callbacks_with_layout, install_menu_callbacks, install_monitor_window,
+    install_settings_window, install_setup_window, install_source_filters_window,
+    install_source_properties_window, install_source_transform_window, selection_rect,
+    start_preview_timer, PeerWindows, ProjectorController,
 };
 pub(crate) use fixtures::{
     capture_devices, initial_project, kind_runs_in_this_session, kind_selects_monitor,
@@ -60,8 +62,8 @@ pub(crate) use refresh::{
 };
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
-    AddSourceText, AddSourceWindow, DockPane, FloatingDockWindow, I18n, LocaleOption, MainWindow,
-    Metrics, MixerRow, MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow,
+    AddSourceText, AddSourceWindow, DockPane, DockSplitter, FloatingDockWindow, I18n, LocaleOption,
+    MainWindow, Metrics, MixerRow, MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow,
     ProjectorWindow, PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow,
     SetupWindow, SourceCandidate, SourceFilterRow, SourceFiltersWindow, SourceKindRow,
     SourcePropertiesWindow, SourceRow, SourceTransformWindow, ThemeTokens, UiMetrics, UiText,
@@ -191,7 +193,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     settings.apply_layout(&ui);
     // Build the pane projection before the first refresh so the initial frame
     // and headless snapshots render the same tree as the running window.
-    let docks = install_dock_callbacks(&ui, &state);
+    let docks = install_dock_callbacks_with_layout(
+        &ui,
+        &state,
+        Some(&settings.layout.dock_tree),
+        &settings.layout.floating_geometry,
+    );
     refresh_ui(&ui, &state, &surface);
     if let Some(message) = restored {
         ui.set_status_message(message.into());

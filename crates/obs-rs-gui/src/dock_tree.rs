@@ -23,6 +23,40 @@ pub(crate) enum DockAxis {
     Vertical,
 }
 
+/// The five OBS-style drop targets shown while a dock is being dragged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockDropZone {
+    Tab,
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl DockDropZone {
+    pub(crate) const fn ui_value(self) -> i32 {
+        match self {
+            Self::Tab => 0,
+            Self::Left => 1,
+            Self::Right => 2,
+            Self::Top => 3,
+            Self::Bottom => 4,
+        }
+    }
+
+    pub(crate) const fn split(self) -> Option<(DockAxis, u16, bool)> {
+        match self {
+            Self::Tab => None,
+            // A split's first child is the existing target by default. The
+            // boolean makes the left/top zones place the dragged dock first.
+            Self::Left => Some((DockAxis::Horizontal, 350, true)),
+            Self::Right => Some((DockAxis::Horizontal, 650, false)),
+            Self::Top => Some((DockAxis::Vertical, 350, true)),
+            Self::Bottom => Some((DockAxis::Vertical, 650, false)),
+        }
+    }
+}
+
 /// A bounded dock tree.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum DockNode {
@@ -57,6 +91,15 @@ pub(crate) struct DockPaneLayout {
     pub(crate) tab_count: u8,
     pub(crate) tab_ids: [DockId; DOCK_IDS.len()],
     pub(crate) active: bool,
+}
+
+/// A bounded splitter projection. `boundary_milli` is the split edge along
+/// the splitter's axis in the same 0..=1000 workspace as dock panes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DockSplitterLayout {
+    pub(crate) id: u8,
+    pub(crate) axis: DockAxis,
+    pub(crate) boundary_milli: u16,
 }
 
 impl DockNode {
@@ -115,6 +158,32 @@ impl DockNode {
         panes
     }
 
+    /// Computes the visible splitter edges without exposing the tree to the
+    /// toolkit. There can be at most four splitters for the five built-in
+    /// docks, so the projection remains bounded by construction.
+    pub(crate) fn splitter_layout(&self) -> Vec<DockSplitterLayout> {
+        let mut splitters = Vec::new();
+        let mut next_id = 0;
+        self.collect_splitters(
+            LayoutRect {
+                x: 0,
+                y: 0,
+                width: 1_000,
+                height: 1_000,
+            },
+            &mut next_id,
+            &mut splitters,
+        );
+        splitters
+    }
+
+    /// Moves one splitter by a fixed-point delta, clamped to the same safe
+    /// ratio bounds used by settings and drag/drop insertion.
+    pub(crate) fn resize_splitter(&mut self, id: u8, delta_milli: i32) -> bool {
+        let mut next_id = 0;
+        resize_splitter_inner(self, id, delta_milli, &mut next_id)
+    }
+
     /// Activates a dock within its tab group, if it belongs to one.
     pub(crate) fn activate_tab(&mut self, panel: DockId) -> bool {
         match self {
@@ -170,6 +239,60 @@ impl DockNode {
         }
         self.move_dock(panel, |tree, moved| {
             insert_split(tree, target, axis, ratio_milli, moved)
+        })
+    }
+
+    /// Resolves a normalized pointer location to the active pane beneath it.
+    /// The outer quarter of a pane is a split insertion zone; its center is a
+    /// tab target. Inactive tabs are excluded so a hidden tab cannot steal a
+    /// drop from the visible region.
+    pub(crate) fn drop_target(&self, x_milli: u16, y_milli: u16) -> Option<(DockId, DockDropZone)> {
+        let x = u32::from(x_milli.min(1_000));
+        let y = u32::from(y_milli.min(1_000));
+        self.pane_layout().into_iter().find_map(|pane| {
+            if !pane.active
+                || x < u32::from(pane.x_milli)
+                || y < u32::from(pane.y_milli)
+                || x >= u32::from(pane.x_milli.saturating_add(pane.width_milli))
+                || y >= u32::from(pane.y_milli.saturating_add(pane.height_milli))
+            {
+                return None;
+            }
+            let local_x =
+                (x - u32::from(pane.x_milli)) * 1_000 / u32::from(pane.width_milli.max(1));
+            let local_y =
+                (y - u32::from(pane.y_milli)) * 1_000 / u32::from(pane.height_milli.max(1));
+            let zone = if local_x < 250 {
+                DockDropZone::Left
+            } else if local_x >= 750 {
+                DockDropZone::Right
+            } else if local_y < 250 {
+                DockDropZone::Top
+            } else if local_y >= 750 {
+                DockDropZone::Bottom
+            } else {
+                DockDropZone::Tab
+            };
+            Some((pane.panel, zone))
+        })
+    }
+
+    /// Applies a drag drop zone, placing the moved dock on the requested side
+    /// of the target rather than always appending it after the target.
+    pub(crate) fn drop_dock_with(
+        &mut self,
+        panel: DockId,
+        target: DockId,
+        zone: DockDropZone,
+    ) -> bool {
+        if zone == DockDropZone::Tab {
+            return self.tab_dock_with(panel, target);
+        }
+        let Some((axis, ratio_milli, moved_first)) = zone.split() else {
+            return false;
+        };
+        self.move_dock(panel, |tree, moved| {
+            insert_split_ordered(tree, target, axis, ratio_milli, moved, moved_first)
         })
     }
 
@@ -327,6 +450,75 @@ impl DockNode {
             }),
         }
     }
+
+    fn collect_splitters(
+        &self,
+        rect: LayoutRect,
+        next_id: &mut u8,
+        splitters: &mut Vec<DockSplitterLayout>,
+    ) {
+        let Self::Split {
+            axis,
+            ratio_milli,
+            first,
+            second,
+        } = self
+        else {
+            return;
+        };
+        let id = *next_id;
+        *next_id = next_id.saturating_add(1);
+        let boundary_milli = match axis {
+            DockAxis::Horizontal => fixed(rect.x + rect.width * u32::from(*ratio_milli) / 1_000),
+            DockAxis::Vertical => fixed(rect.y + rect.height * u32::from(*ratio_milli) / 1_000),
+        };
+        splitters.push(DockSplitterLayout {
+            id,
+            axis: *axis,
+            boundary_milli,
+        });
+        let (first_rect, second_rect) = match axis {
+            DockAxis::Horizontal => rect.split_horizontal(*ratio_milli),
+            DockAxis::Vertical => rect.split_vertical(*ratio_milli),
+        };
+        first.collect_splitters(first_rect, next_id, splitters);
+        second.collect_splitters(second_rect, next_id, splitters);
+    }
+}
+
+fn resize_splitter_inner(
+    node: &mut DockNode,
+    target_id: u8,
+    delta_milli: i32,
+    next_id: &mut u8,
+) -> bool {
+    let DockNode::Split {
+        ratio_milli,
+        first,
+        second,
+        ..
+    } = node
+    else {
+        return false;
+    };
+    let id = *next_id;
+    *next_id = next_id.saturating_add(1);
+    if id == target_id {
+        let current = i32::from(*ratio_milli);
+        let next = current
+            .saturating_add(delta_milli)
+            .clamp(i32::from(MIN_RATIO_MILLI), i32::from(MAX_RATIO_MILLI));
+        let Ok(next) = u16::try_from(next) else {
+            return false;
+        };
+        if next == *ratio_milli {
+            return false;
+        }
+        *ratio_milli = next;
+        return true;
+    }
+    resize_splitter_inner(first, target_id, delta_milli, next_id)
+        || resize_splitter_inner(second, target_id, delta_milli, next_id)
 }
 
 fn fixed(value: u32) -> u16 {
@@ -517,31 +709,52 @@ fn insert_split(
     ratio_milli: u16,
     moved: DockNode,
 ) -> bool {
+    insert_split_ordered(node, target, axis, ratio_milli, moved, false)
+}
+
+fn insert_split_ordered(
+    node: &mut DockNode,
+    target: DockId,
+    axis: DockAxis,
+    ratio_milli: u16,
+    moved: DockNode,
+    moved_first: bool,
+) -> bool {
     match node {
         DockNode::Dock(id) if *id == target => {
             let current = std::mem::replace(node, DockNode::Dock(target));
+            let (first, second) = if moved_first {
+                (moved, current)
+            } else {
+                (current, moved)
+            };
             *node = DockNode::Split {
                 axis,
                 ratio_milli,
-                first: Box::new(current),
-                second: Box::new(moved),
+                first: Box::new(first),
+                second: Box::new(second),
             };
             true
         }
         DockNode::Tabs { docks, .. } if docks.contains(&target) => {
             let current = std::mem::replace(node, DockNode::Dock(target));
+            let (first, second) = if moved_first {
+                (moved, current)
+            } else {
+                (current, moved)
+            };
             *node = DockNode::Split {
                 axis,
                 ratio_milli,
-                first: Box::new(current),
-                second: Box::new(moved),
+                first: Box::new(first),
+                second: Box::new(second),
             };
             true
         }
         DockNode::Dock(_) | DockNode::Tabs { .. } => false,
         DockNode::Split { first, second, .. } => {
-            insert_split(first, target, axis, ratio_milli, moved.clone())
-                || insert_split(second, target, axis, ratio_milli, moved)
+            insert_split_ordered(first, target, axis, ratio_milli, moved.clone(), moved_first)
+                || insert_split_ordered(second, target, axis, ratio_milli, moved, moved_first)
         }
     }
 }
@@ -760,6 +973,54 @@ mod tests {
         assert_eq!((panes[2].width_milli, panes[2].height_milli), (400, 400));
         assert_eq!((panes[3].x_milli, panes[3].y_milli), (400, 600));
         assert_eq!((panes[3].width_milli, panes[3].height_milli), (600, 400));
+    }
+
+    #[test]
+    fn drop_target_uses_only_the_active_pane_and_reports_insertion_zones() {
+        let tree = DockNode::Split {
+            axis: DockAxis::Horizontal,
+            ratio_milli: 600,
+            first: Box::new(DockNode::Tabs {
+                docks: vec![0, 1],
+                active: 1,
+            }),
+            second: Box::new(DockNode::Dock(2)),
+        };
+
+        assert_eq!(
+            tree.drop_target(50, 500),
+            Some((1, DockDropZone::Left)),
+            "the inactive tab must not be a drop target"
+        );
+        assert_eq!(tree.drop_target(300, 500), Some((1, DockDropZone::Tab)));
+        assert_eq!(tree.drop_target(950, 500), Some((2, DockDropZone::Right)));
+    }
+
+    #[test]
+    fn drag_drop_can_place_a_dock_before_or_after_the_target() {
+        let mut tree = DockNode::from_legacy(&ORDER, &WEIGHTS).expect("tree");
+
+        assert!(tree.drop_dock_with(4, 1, DockDropZone::Left));
+        assert_eq!(tree.leaf_order(), [4, 1, 0, 2, 3]);
+        assert!(tree.drop_dock_with(4, 1, DockDropZone::Right));
+        assert_eq!(tree.leaf_order(), [1, 4, 0, 2, 3]);
+        assert!(tree.is_valid());
+    }
+
+    #[test]
+    fn splitter_projection_and_resize_keep_ratios_bounded() {
+        let mut tree = DockNode::from_legacy(&ORDER, &WEIGHTS).expect("tree");
+        let before = tree.splitter_layout();
+        assert_eq!(before.len(), 4);
+        assert_eq!(before[0].axis, DockAxis::Horizontal);
+        assert!(tree.resize_splitter(before[0].id, 100));
+        assert_eq!(
+            tree.splitter_layout()[0].boundary_milli,
+            before[0].boundary_milli + 100
+        );
+        assert!(tree.resize_splitter(before[0].id, 10_000));
+        assert_eq!(tree.splitter_layout()[0].boundary_milli, 950);
+        assert!(!tree.resize_splitter(before[0].id, 10));
     }
 
     #[test]

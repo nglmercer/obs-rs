@@ -31,7 +31,9 @@ pub(crate) use add_source::install_add_source_window;
 #[cfg(test)]
 pub(crate) use add_source::{add_source_window, populate_add_source_window};
 pub(crate) use canvas::{install_canvas_callbacks, selection_rect, CanvasController};
+#[cfg(test)]
 pub(crate) use docks::install_dock_callbacks;
+pub(crate) use docks::install_dock_callbacks_with_layout;
 pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
