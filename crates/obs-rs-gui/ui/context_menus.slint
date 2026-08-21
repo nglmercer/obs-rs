@@ -140,7 +140,7 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             Menu {
                 title: I18n.text.transform_menu;
-                enabled: root.source-id != "" && !root.source-locked && !root.nested && !root.group;
+                enabled: root.source-id != "" && !root.source-locked && !root.group;
                 MenuItem {
                     title: I18n.text.reset_transform;
                     activated => root.reset-source-transform(root.source-id);
@@ -194,6 +194,7 @@ export component SourceContextMenuArea inherits Rectangle {
                 MenuSeparator {}
                 MenuItem {
                     title: I18n.text.edit_transform;
+                    enabled: !root.nested;
                     activated => {
                         root.select-source(root.source-id);
                         root.open-transform(root.source-id);

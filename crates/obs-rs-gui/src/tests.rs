@@ -1053,6 +1053,7 @@ fn exercise_group_source_callbacks(
 
     ui.invoke_toggle_source_visibility("overlay-group/background".into());
     ui.invoke_move_source_to("overlay-group/background".into(), 1);
+    ui.invoke_flip_source("overlay-group/background".into(), true);
     ui.invoke_duplicate_source("overlay-group/background".into());
     ui.invoke_toggle_source_locked("overlay-group/background".into());
     ui.invoke_remove_source("overlay-group/pattern".into());
@@ -1078,6 +1079,7 @@ fn exercise_group_source_callbacks(
     );
     assert!(!group.items()[0].visible());
     assert!(group.items()[0].locked());
+    assert!(group.items()[0].transform().flip_x());
     assert_eq!(group.items()[1].source_id().as_str(), "background_copy");
 }
 

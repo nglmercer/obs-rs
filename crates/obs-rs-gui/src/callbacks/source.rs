@@ -324,20 +324,18 @@ pub(crate) fn transform_source_and_refresh(
             let transform = project
                 .active_profile_spec()
                 .and_then(|profile| profile.scene(scene.as_str()))
-                .and_then(|scene| scene.item(source_id))
+                .and_then(|scene| item_for_target(scene, source_id))
                 .map(obs_rs_project::SceneItemSpec::transform)
                 .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
             let surface = surface.borrow();
             (transform, (surface.format.width(), surface.format.height()))
         };
+        let transform = transform_for_command(transform, command, canvas);
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
-                profile,
-                scene,
-                item: source_id.to_owned(),
-                transform: transform_for_command(transform, command, canvas),
-            }))?;
+            .dispatch(UiCommand::Project(scene_item_transform_command(
+                profile, scene, source_id, transform,
+            )))?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -371,18 +369,16 @@ fn update_source_transform_and_refresh(
             project
                 .active_profile_spec()
                 .and_then(|profile| profile.scene(scene.as_str()))
-                .and_then(|scene| scene.item(source_id))
+                .and_then(|scene| item_for_target(scene, source_id))
                 .map(obs_rs_project::SceneItemSpec::transform)
                 .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?
         };
+        let transform = update(transform)?;
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
-                profile,
-                scene,
-                item: source_id.to_owned(),
-                transform: update(transform)?,
-            }))?;
+            .dispatch(UiCommand::Project(scene_item_transform_command(
+                profile, scene, source_id, transform,
+            )))?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -460,6 +456,30 @@ fn group_target(target: &str) -> Option<(Vec<String>, String)> {
     }
     let item = parts.pop()?;
     Some((parts, item))
+}
+
+fn scene_item_transform_command(
+    profile: String,
+    scene: String,
+    target: &str,
+    transform: FrameTransform,
+) -> ProjectCommand {
+    if let Some((group_path, item)) = group_target(target) {
+        ProjectCommand::SetGroupItemTransform {
+            profile,
+            scene,
+            group_path,
+            item,
+            transform,
+        }
+    } else {
+        ProjectCommand::SetSceneItemTransform {
+            profile,
+            scene,
+            item: target.to_owned(),
+            transform,
+        }
+    }
 }
 
 fn group_items_for_path<'a>(scene: &'a SceneSpec, path: &[String]) -> Option<&'a [SceneItemSpec]> {
