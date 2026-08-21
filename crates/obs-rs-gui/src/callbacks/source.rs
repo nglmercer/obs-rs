@@ -589,9 +589,8 @@ pub(crate) fn source_target(state: &DesktopState, item: &str) -> Option<SourceTa
     let source = project
         .active_profile_spec()?
         .scene(scene.as_str())?
-        .item(item)?
-        .source_id()
-        .to_string();
+        .item(item)?;
+    let source = source.is_source().then(|| source.source_id().to_string())?;
     Some(SourceTarget {
         profile: project.active_profile().to_string(),
         scene,

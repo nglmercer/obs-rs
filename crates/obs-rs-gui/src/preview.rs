@@ -385,7 +385,11 @@ impl PreviewRenderer {
             if self.scene_ids.insert(name.to_owned()) {
                 self.runtime.create_scene(name)?;
             }
-            let order = self.visible_order(scene.items())?;
+            let flattened = self.visible_items(profile, name)?;
+            let order = flattened
+                .iter()
+                .map(|(source, _)| *source)
+                .collect::<Vec<_>>();
             let attached = self
                 .runtime
                 .scene_sources(name)
@@ -400,43 +404,41 @@ impl PreviewRenderer {
                     self.runtime.attach_source_instance(name, *source)?;
                 }
             }
-            for (item_index, item) in scene
-                .items()
-                .iter()
-                .filter(|item| item.visible())
-                .enumerate()
-            {
-                if let Some(&source) = self.source_ids.get(item.source_id().as_str()) {
-                    debug_assert_eq!(order.get(item_index), Some(&source));
-                    self.runtime
-                        .set_scene_item_transform(name, item_index, item.transform())?;
-                }
+            for (item_index, (_, transform)) in flattened.iter().enumerate() {
+                self.runtime
+                    .set_scene_item_transform(name, item_index, *transform)?;
             }
         }
         Ok(())
     }
 
-    /// Resolves a scene's visible items to runtime sources, in draw order.
+    /// Resolves a scene's visible items, including nested scene references, to
+    /// runtime sources and composed transforms in draw order.
     ///
     /// Keeps every visible scene item in draw order, including repeated
     /// references to one shared runtime source.
-    fn visible_order(&self, items: &[SceneItemSpec]) -> Result<Vec<SourceId>, Box<dyn Error>> {
-        let mut order = Vec::with_capacity(items.len());
-        for item in items.iter().filter(|item| item.visible()) {
-            let source = self
-                .source_ids
-                .get(item.source_id().as_str())
-                .copied()
-                .ok_or_else(|| {
-                    std::io::Error::other(format!(
-                        "scene item {} references unknown source {}",
-                        item.id(),
-                        item.source_id()
-                    ))
-                })?;
-            order.push(source);
-        }
-        Ok(order)
+    fn visible_items(
+        &self,
+        profile: &Profile,
+        scene_id: &str,
+    ) -> Result<Vec<(SourceId, FrameTransform)>, Box<dyn Error>> {
+        profile
+            .flatten_scene_items(scene_id)?
+            .into_iter()
+            .map(|item| {
+                let source = self
+                    .source_ids
+                    .get(item.source_id().as_str())
+                    .copied()
+                    .ok_or_else(|| {
+                        std::io::Error::other(format!(
+                            "scene item references unknown source {}",
+                            item.source_id()
+                        ))
+                    })?;
+                Ok((source, item.transform()))
+            })
+            .collect()
     }
 
     /// Destroys sources the project no longer defines.
@@ -844,9 +846,10 @@ fn static_scenes(profile: &Profile) -> HashSet<String> {
                     .iter()
                     .filter(|item| item.visible())
                     .all(|item| {
-                        profile
-                            .source(item.source_id())
-                            .is_some_and(|source| source.kind().as_str() == "color_source")
+                        item.is_source()
+                            && profile
+                                .source(item.source_id())
+                                .is_some_and(|source| source.kind().as_str() == "color_source")
                     })
         })
         .map(|scene| scene.id().as_str().to_owned())

@@ -402,6 +402,9 @@ fn source_context(
         .scene(scene.as_str())
         .and_then(|scene| scene.item(item.as_str()))
         .ok_or_else(|| std::io::Error::other("selected source is missing"))?;
+    if !item.is_source() {
+        return Err(std::io::Error::other("selected item is a nested scene").into());
+    }
     Ok((
         profile.to_string(),
         item.source_id().to_string(),

@@ -282,18 +282,36 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
                 let selected = state.is_source_selected(item.id().as_str());
                 if selected {
                     selected_item = Some(item);
-                    selected_source_spec =
-                        profile.and_then(|profile| profile.source(item.source_id()));
+                    selected_source_spec = profile.and_then(|profile| {
+                        item.is_source()
+                            .then(|| profile.source(item.source_id()))
+                            .flatten()
+                    });
                 }
-                let source = profile.and_then(|profile| profile.source(item.source_id()));
+                let source = profile.and_then(|profile| {
+                    item.is_source()
+                        .then(|| profile.source(item.source_id()))
+                        .flatten()
+                });
+                let nested_scene = profile.and_then(|profile| {
+                    item.scene_id().and_then(|scene_id| profile.scene(scene_id))
+                });
                 SourceRow {
                     id: item.id().as_str().into(),
                     name: source.map_or_else(
-                        || item.source_id().as_str().into(),
+                        || {
+                            nested_scene.map_or_else(
+                                || item.source_id().as_str().into(),
+                                |scene| scene.name().into(),
+                            )
+                        },
                         |source| source.name().into(),
                     ),
                     kind: source
-                        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
+                        .map_or_else(
+                            || nested_scene.map_or_else(String::new, |_| "scene".to_owned()),
+                            |source| source.kind().as_str().to_owned(),
+                        )
                         .into(),
                     order: (index + 1).to_string().into(),
                     selected,

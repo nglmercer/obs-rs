@@ -1949,22 +1949,24 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
                 runtime.add_source_filter(source_id, runtime_filter)?;
             }
         }
-        source_ids.insert(source.id().clone(), source_id);
+        source_ids.insert(source.id().as_str().to_owned(), source_id);
     }
     for scene in profile.scenes() {
         let scene_id = scene.id().as_str();
         runtime.create_scene(scene_id)?;
-        for item in scene.items() {
-            if !item.visible() {
-                continue;
-            }
-            let source_id = source_ids.get(item.source_id()).copied().ok_or_else(|| {
-                EngineError::InvalidConfiguration(format!(
-                    "scene item {} references unknown source {}",
-                    item.id(),
-                    item.source_id()
-                ))
-            })?;
+        for item in profile
+            .flatten_scene_items(scene_id)
+            .map_err(|error| EngineError::InvalidConfiguration(error.to_string()))?
+        {
+            let source_id = source_ids
+                .get(item.source_id().as_str())
+                .copied()
+                .ok_or_else(|| {
+                    EngineError::InvalidConfiguration(format!(
+                        "scene item references unknown source {}",
+                        item.source_id()
+                    ))
+                })?;
             let item_index = runtime.attach_source_instance(scene_id, source_id)?;
             runtime.set_scene_item_transform(scene_id, item_index, item.transform())?;
         }
@@ -2158,9 +2160,11 @@ mod tests {
     use super::*;
     use obs_rs_audio::AudioDeviceInfo;
     use obs_rs_config::Config;
-    use obs_rs_media::{FrameFilter, FrameRate};
+    use obs_rs_core::SourceId;
+    use obs_rs_media::{FrameFilter, FrameRate, FrameTransform};
     use obs_rs_project::{
-        Profile, SceneItemSpec, SceneSpec, SourceFilterCategory, SourceFilterSpec, SourceSpec,
+        Profile, ProjectCommand, SceneItemSpec, SceneSpec, SourceFilterCategory, SourceFilterSpec,
+        SourceSpec,
     };
 
     fn project() -> Project {
@@ -2183,6 +2187,70 @@ mod tests {
         profile.add_scene(scene).expect("add scene");
         project.add_profile(profile).expect("add profile");
         project
+    }
+
+    #[test]
+    fn nested_scene_items_flatten_to_shared_runtime_sources() {
+        let mut project = project();
+        let child_transform =
+            FrameTransform::new(1_500, 800, 10, -4, false, false, 200).expect("child transform");
+        let mut child = SceneSpec::new("child", "Child").expect("child scene");
+        let mut child_item = SceneItemSpec::for_source("pattern").expect("child item");
+        child_item.set_transform(child_transform);
+        child.add_item(child_item).expect("child item attach");
+        project
+            .apply(ProjectCommand::AddScene {
+                profile: "live".to_owned(),
+                scene: child,
+            })
+            .expect("add child scene");
+
+        project
+            .apply(ProjectCommand::AddScene {
+                profile: "live".to_owned(),
+                scene: SceneSpec::new("parent", "Parent").expect("parent scene"),
+            })
+            .expect("add parent scene");
+        let parent_transform =
+            FrameTransform::new(2_000, 1_500, 20, 30, false, false, 128).expect("parent transform");
+        let mut nested = SceneItemSpec::for_scene("child-item", "child").expect("nested item");
+        nested.set_transform(parent_transform);
+        project
+            .apply(ProjectCommand::AddSceneItem {
+                profile: "live".to_owned(),
+                scene: "parent".to_owned(),
+                item: nested,
+            })
+            .expect("add nested item");
+
+        let mut engine = EngineSession::new(project, EngineConfig::default()).expect("engine");
+        assert_eq!(engine.runtime.source_count(), 1);
+        assert_eq!(
+            engine.runtime.scene_sources("child").map(<[SourceId]>::len),
+            Some(1)
+        );
+        assert_eq!(
+            engine
+                .runtime
+                .scene_sources("parent")
+                .map(<[SourceId]>::len),
+            Some(1)
+        );
+        assert_eq!(
+            engine.runtime.scene_item_transform("parent", 0),
+            Some(
+                child_transform
+                    .compose_simple(parent_transform)
+                    .expect("compose")
+            )
+        );
+
+        let frame = engine
+            .render_scene("parent")
+            .expect("render nested scene")
+            .expect("nested scene has a frame");
+        assert_eq!(frame.format(), engine.format());
+        assert_eq!(engine.runtime.compositor_metrics().source_requests(), 1);
     }
 
     #[test]

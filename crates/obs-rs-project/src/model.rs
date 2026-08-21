@@ -298,14 +298,53 @@ impl SourceSpec {
     }
 }
 
-/// One scene-local reference to a source definition.
+/// The thing one scene item draws.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SceneItemTarget {
+    Source(Identifier),
+    Scene(Identifier),
+}
+
+impl SceneItemTarget {
+    fn id(&self) -> &Identifier {
+        match self {
+            Self::Source(id) | Self::Scene(id) => id,
+        }
+    }
+}
+
+/// One scene-local reference to a source definition or another scene.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SceneItemSpec {
     pub(crate) id: Identifier,
-    pub(crate) source_id: Identifier,
+    target: SceneItemTarget,
     pub(crate) transform: FrameTransform,
     pub(crate) visible: bool,
     pub(crate) locked: bool,
+}
+
+/// One source item after a nested-scene graph is flattened for a renderer.
+///
+/// The project remains the source of truth; runtime adapters map the stable
+/// source ID to their own live source handle without rebuilding this state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlattenedSceneItem {
+    source_id: Identifier,
+    transform: FrameTransform,
+}
+
+impl FlattenedSceneItem {
+    /// Returns the profile-wide source definition ID.
+    #[must_use]
+    pub fn source_id(&self) -> &Identifier {
+        &self.source_id
+    }
+
+    /// Returns the transform after nested axis-aligned composition.
+    #[must_use]
+    pub const fn transform(&self) -> FrameTransform {
+        self.transform
+    }
 }
 
 impl SceneItemSpec {
@@ -318,7 +357,7 @@ impl SceneItemSpec {
     pub fn new(id: &str, source_id: &str) -> Result<Self, ProjectError> {
         Ok(Self {
             id: identifier(id, "scene item id")?,
-            source_id: identifier(source_id, "source id")?,
+            target: SceneItemTarget::Source(identifier(source_id, "source id")?),
             transform: FrameTransform::IDENTITY,
             visible: true,
             locked: false,
@@ -334,16 +373,63 @@ impl SceneItemSpec {
         Self::new(source_id, source_id)
     }
 
+    /// Creates an item that draws another scene as a nested scene source.
+    ///
+    /// The target scene is validated when the item is added to a profile or
+    /// loaded from a project document, because the target may be declared
+    /// later in the profile's serialized scene order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identifier validation error when either ID is invalid.
+    pub fn for_scene(id: &str, scene_id: &str) -> Result<Self, ProjectError> {
+        Ok(Self {
+            id: identifier(id, "scene item id")?,
+            target: SceneItemTarget::Scene(identifier(scene_id, "scene id")?),
+            transform: FrameTransform::IDENTITY,
+            visible: true,
+            locked: false,
+        })
+    }
+
     /// Returns the stable scene-item ID.
     #[must_use]
     pub fn id(&self) -> &Identifier {
         &self.id
     }
 
-    /// Returns the referenced source ID.
+    /// Returns the target ID.
+    ///
+    /// For a nested-scene item this is the scene ID. Call [`Self::scene_id`]
+    /// or [`Self::is_source`] when the target kind matters.
     #[must_use]
     pub fn source_id(&self) -> &Identifier {
-        &self.source_id
+        self.target.id()
+    }
+
+    /// Returns the referenced nested scene ID, if this is a scene item.
+    #[must_use]
+    pub fn scene_id(&self) -> Option<&Identifier> {
+        match &self.target {
+            SceneItemTarget::Source(_) => None,
+            SceneItemTarget::Scene(id) => Some(id),
+        }
+    }
+
+    /// Returns whether this item references a profile source definition.
+    #[must_use]
+    pub const fn is_source(&self) -> bool {
+        matches!(self.target, SceneItemTarget::Source(_))
+    }
+
+    /// Returns whether this item references another scene.
+    #[must_use]
+    pub const fn is_scene_reference(&self) -> bool {
+        matches!(self.target, SceneItemTarget::Scene(_))
+    }
+
+    pub(crate) fn set_source_id(&mut self, source_id: Identifier) {
+        self.target = SceneItemTarget::Source(source_id);
     }
 
     /// Returns the scene-item transform.
@@ -509,7 +595,7 @@ impl SceneSpec {
     {
         self.items
             .iter()
-            .any(|item| item.source_id.borrow() == source_id)
+            .any(|item| item.is_source() && item.source_id().borrow() == source_id)
     }
 
     /// Finds a mutable scene item by project-local ID.
@@ -774,6 +860,80 @@ impl Profile {
             return Err(ProjectError::DuplicateScene(scene.id().clone()));
         }
         self.scenes.insert(scene.id().clone(), scene);
+        Ok(())
+    }
+
+    /// Flattens one visible scene graph into source references for a runtime
+    /// adapter, preserving draw order and composing simple nested transforms.
+    ///
+    /// Direct source transforms retain the full media transform model. Only a
+    /// transform that crosses a nested-scene boundary is restricted to the
+    /// axis-aligned scale/translation/opacity subset; unsupported transforms
+    /// fail explicitly instead of being approximated.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unknown-scene/source, cycle, media, or unsupported nested
+    /// transform error when the graph cannot be represented safely.
+    pub fn flatten_scene_items(
+        &self,
+        scene: &str,
+    ) -> Result<Vec<FlattenedSceneItem>, ProjectError> {
+        let scene_id = identifier(scene, "scene id")?;
+        let mut output = Vec::new();
+        self.flatten_scene_items_inner(
+            &scene_id,
+            FrameTransform::IDENTITY,
+            &mut Vec::new(),
+            &mut output,
+        )?;
+        Ok(output)
+    }
+
+    fn flatten_scene_items_inner(
+        &self,
+        scene_id: &Identifier,
+        parent_transform: FrameTransform,
+        stack: &mut Vec<Identifier>,
+        output: &mut Vec<FlattenedSceneItem>,
+    ) -> Result<(), ProjectError> {
+        if stack.iter().any(|current| current == scene_id) {
+            return Err(ProjectError::CircularSceneReference(scene_id.clone()));
+        }
+        let scene = self
+            .scene(scene_id)
+            .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+        stack.push(scene_id.clone());
+        for item in scene.items().iter().filter(|item| item.visible()) {
+            let transform = if parent_transform == FrameTransform::IDENTITY {
+                item.transform()
+            } else {
+                item.transform()
+                    .compose_simple(parent_transform)
+                    .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(item.id().clone()))?
+            };
+            if let Some(child_scene) = item.scene_id() {
+                if transform.is_cropped()
+                    || transform.is_rotated()
+                    || transform.flip_x()
+                    || transform.flip_y()
+                {
+                    return Err(ProjectError::UnsupportedNestedSceneTransform(
+                        item.id().clone(),
+                    ));
+                }
+                self.flatten_scene_items_inner(child_scene, transform, stack, output)?;
+            } else {
+                if !self.has_source(item.source_id()) {
+                    return Err(ProjectError::UnknownSource(item.source_id().clone()));
+                }
+                output.push(FlattenedSceneItem {
+                    source_id: item.source_id().clone(),
+                    transform,
+                });
+            }
+        }
+        stack.pop();
         Ok(())
     }
 

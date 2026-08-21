@@ -131,6 +131,37 @@ fn rotation_validation_is_bounded_and_subdegree_values_round_trip() {
 }
 
 #[test]
+fn simple_nested_transforms_compose_without_approximating_unsupported_features() {
+    let child =
+        FrameTransform::new(1_500, 800, 10, -4, false, false, 200).expect("child transform");
+    let parent =
+        FrameTransform::new(2_000, 1_500, 20, 30, false, false, 128).expect("parent transform");
+
+    let composed = child.compose_simple(parent).expect("simple composition");
+    assert_eq!(composed.scale_x_milli(), 3_000);
+    assert_eq!(composed.scale_y_milli(), 1_200);
+    assert_eq!(composed.translate_x(), 40);
+    assert_eq!(composed.translate_y(), 24);
+    assert_eq!(composed.opacity(), 100);
+
+    let cropped = child.with_crop(1, 0, 0, 0).expect("bounded crop");
+    assert_eq!(
+        cropped.compose_simple(parent),
+        Err(MediaError::InvalidTransform)
+    );
+    let rotated = child.with_rotation_degrees(15).expect("bounded rotation");
+    assert_eq!(
+        rotated.compose_simple(parent),
+        Err(MediaError::InvalidTransform)
+    );
+    let flipped = FrameTransform::new(1_000, 1_000, 0, 0, true, false, 255).expect("bounded flip");
+    assert_eq!(
+        flipped.compose_simple(parent),
+        Err(MediaError::InvalidTransform)
+    );
+}
+
+#[test]
 fn a_crop_that_consumes_the_frame_is_rejected_at_render_time() {
     let frame = VideoFrame::solid(format(), Timestamp::ZERO, [1, 2, 3, 255]);
     let transform = FrameTransform::IDENTITY

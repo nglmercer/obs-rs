@@ -23,7 +23,8 @@ use super::{
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, FrameTransform, VideoFormat};
 use obs_rs_output::OutputProfileKind;
-use obs_rs_util::Json;
+use obs_rs_util::{Identifier, Json};
+use std::collections::HashSet;
 
 use crate::RenderBackendPreference;
 
@@ -31,9 +32,11 @@ use crate::RenderBackendPreference;
 const FORMAT_TAG: &str = "obs-rs-project";
 
 /// Schema version this build writes.
-const FORMAT_VERSION: u32 = 3;
+const FORMAT_VERSION: u32 = 4;
+/// The format before nested scene-item targets were persisted.
+const PREVIOUS_FORMAT_VERSION: u32 = 3;
 /// The format before scene-item rotation was persisted.
-const PREVIOUS_FORMAT_VERSION: u32 = 2;
+const ROTATION_FORMAT_VERSION: u32 = 2;
 /// The format before sources were moved out of scenes.
 const LEGACY_FORMAT_VERSION: u32 = 1;
 
@@ -78,11 +81,12 @@ impl Project {
         }
         let version = match root.get("version").and_then(Json::as_number::<u32>) {
             Some(LEGACY_FORMAT_VERSION) => LEGACY_FORMAT_VERSION,
+            Some(ROTATION_FORMAT_VERSION) => ROTATION_FORMAT_VERSION,
             Some(PREVIOUS_FORMAT_VERSION) => PREVIOUS_FORMAT_VERSION,
             Some(FORMAT_VERSION) => FORMAT_VERSION,
             Some(version) => {
                 return Err(invalid(format!(
-                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, and {FORMAT_VERSION}"
+                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, and {FORMAT_VERSION}"
                 )))
             }
             None => return Err(invalid("missing or invalid `version`")),
@@ -174,9 +178,13 @@ fn encode_source(source: &SourceSpec) -> Json {
 }
 
 fn encode_item(item: &SceneItemSpec) -> Json {
+    let target = item.scene_id().map_or_else(
+        || ("source", Json::string(item.source_id().as_str())),
+        |scene| ("scene", Json::string(scene.as_str())),
+    );
     Json::object([
         ("id", Json::string(item.id.as_str())),
-        ("source", Json::string(item.source_id.as_str())),
+        target,
         ("transform", encode_transform(item.transform)),
         ("visible", Json::Bool(item.visible)),
         ("locked", Json::Bool(item.locked)),
@@ -275,6 +283,7 @@ fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectErro
     for scene in array_member(value, "scenes")? {
         profile.add_scene(decode_scene(scene, &profile)?)?;
     }
+    validate_scene_references(&profile)?;
     project.add_profile(profile)
 }
 
@@ -282,12 +291,49 @@ fn decode_scene(value: &Json, profile: &Profile) -> Result<SceneSpec, ProjectErr
     let mut scene = SceneSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
     for item in array_member(value, "items")? {
         let item = decode_item(item)?;
-        if !profile.has_source(item.source_id()) {
+        if item.is_source() && !profile.has_source(item.source_id()) {
             return Err(ProjectError::UnknownSource(item.source_id().clone()));
         }
         scene.add_item(item)?;
     }
     Ok(scene)
+}
+
+fn validate_scene_references(profile: &Profile) -> Result<(), ProjectError> {
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for scene in profile.scenes() {
+        validate_scene_graph(profile, scene.id(), &mut visiting, &mut visited)?;
+    }
+    Ok(())
+}
+
+fn validate_scene_graph(
+    profile: &Profile,
+    scene_id: &Identifier,
+    visiting: &mut HashSet<Identifier>,
+    visited: &mut HashSet<Identifier>,
+) -> Result<(), ProjectError> {
+    if visited.contains(scene_id) {
+        return Ok(());
+    }
+    if !visiting.insert(scene_id.clone()) {
+        return Err(ProjectError::CircularSceneReference(scene_id.clone()));
+    }
+    let scene = profile
+        .scene(scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    for item in scene.items() {
+        if let Some(target) = item.scene_id() {
+            if profile.scene(target).is_none() {
+                return Err(ProjectError::UnknownScene(target.clone()));
+            }
+            validate_scene_graph(profile, target, visiting, visited)?;
+        }
+    }
+    visiting.remove(scene_id);
+    visited.insert(scene_id.clone());
+    Ok(())
 }
 
 fn decode_source(value: &Json) -> Result<SourceSpec, ProjectError> {
@@ -316,8 +362,20 @@ fn decode_source(value: &Json) -> Result<SourceSpec, ProjectError> {
 }
 
 fn decode_item(value: &Json) -> Result<SceneItemSpec, ProjectError> {
-    let mut item =
-        SceneItemSpec::new(string_member(value, "id")?, string_member(value, "source")?)?;
+    let id = string_member(value, "id")?;
+    let mut item = if let Some(scene) = value.get("scene") {
+        let scene = scene
+            .as_str()
+            .ok_or_else(|| invalid("scene item `scene` is not a string"))?;
+        if value.get("source").is_some() {
+            return Err(invalid(
+                "scene item cannot contain both `source` and `scene`",
+            ));
+        }
+        SceneItemSpec::for_scene(id, scene)?
+    } else {
+        SceneItemSpec::new(id, string_member(value, "source")?)?
+    };
     item.set_transform(decode_transform(
         value
             .get("transform")
@@ -359,7 +417,7 @@ fn decode_legacy_scene(value: &Json, profile: &mut Profile) -> Result<SceneSpec,
             profile.add_source(source)?;
             original_id
         };
-        item.source_id = source_id;
+        item.set_source_id(source_id);
         scene.add_item(item)?;
     }
     Ok(scene)

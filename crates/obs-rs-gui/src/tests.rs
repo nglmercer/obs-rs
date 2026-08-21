@@ -694,6 +694,79 @@ fn repeated_scene_item_references_share_the_runtime_source() {
 }
 
 #[test]
+fn nested_scene_references_render_without_reopening_shared_sources() {
+    let mut project = initial_project().expect("initial GUI project should validate");
+    let child_transform =
+        FrameTransform::new(1_500, 800, 10, -4, false, false, 200).expect("child transform");
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    let mut child_item =
+        obs_rs_project::SceneItemSpec::for_source("background").expect("child item");
+    child_item.set_transform(child_transform);
+    child.add_item(child_item).expect("child item attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: SceneSpec::new("parent", "Parent").expect("parent scene"),
+        })
+        .expect("add parent scene");
+    let parent_transform =
+        FrameTransform::new(2_000, 1_500, 20, 30, false, false, 128).expect("parent transform");
+    let mut nested =
+        obs_rs_project::SceneItemSpec::for_scene("child-item", "child").expect("nested item");
+    nested.set_transform(parent_transform);
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "parent".to_owned(),
+            item: nested,
+        })
+        .expect("add nested item");
+
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
+    let source_count = renderer.runtime.source_count();
+    assert_eq!(
+        renderer
+            .runtime
+            .scene_sources("parent")
+            .expect("parent scene is live")
+            .len(),
+        1
+    );
+    assert_eq!(renderer.runtime.source_count(), source_count);
+    assert_eq!(
+        renderer.runtime.scene_item_transform("parent", 0),
+        Some(
+            child_transform
+                .compose_simple(parent_transform)
+                .expect("compose")
+        )
+    );
+
+    let layers = renderer
+        .runtime
+        .render_scene_layers(
+            "parent",
+            &VideoRequest::new(Timestamp::ZERO, renderer.format),
+        )
+        .expect("nested scene should render");
+    assert_eq!(layers.len(), 1);
+    assert_eq!(
+        renderer
+            .runtime
+            .compositor_metrics()
+            .capture_latency()
+            .samples(),
+        1
+    );
+}
+
+#[test]
 fn hiding_a_source_keeps_the_others_running() {
     let mut project = initial_project().expect("initial GUI project should validate");
     let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");

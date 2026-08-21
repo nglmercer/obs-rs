@@ -407,10 +407,17 @@ fn set_profile_output(
 
 fn add_scene(project: &mut Project, profile: &str, scene: SceneSpec) -> Result<(), ProjectError> {
     let profile_id = identifier(profile, "profile id")?;
-    project
+    let profile = project
         .profile_mut(&profile_id)
-        .ok_or(ProjectError::UnknownProfile(profile_id))?
-        .add_scene(scene)
+        .ok_or(ProjectError::UnknownProfile(profile_id))?;
+    for item in scene.items() {
+        if let Some(target) = item.scene_id() {
+            validate_scene_target(profile, scene.id(), target)?;
+        } else if !profile.has_source(item.source_id()) {
+            return Err(ProjectError::UnknownSource(item.source_id().clone()));
+        }
+    }
+    profile.add_scene(scene)
 }
 
 fn duplicate_scene(
@@ -439,6 +446,9 @@ fn duplicate_scene(
         let mut source_ids: std::collections::HashMap<Identifier, Identifier> =
             std::collections::HashMap::new();
         for item in &mut duplicate.items {
+            if item.is_scene_reference() {
+                continue;
+            }
             let original_source_id = item.source_id().clone();
             let new_source_id = if let Some(new_id) = source_ids.get(&original_source_id) {
                 new_id.clone()
@@ -461,7 +471,7 @@ fn duplicate_scene(
                 cloned_sources.push(source);
                 new_id
             };
-            item.source_id = new_source_id;
+            item.set_source_id(new_source_id);
         }
         profile.add_sources(cloned_sources)?;
     }
@@ -481,6 +491,49 @@ fn scene_mut<'a>(
     profile
         .scene_mut(&scene_id)
         .ok_or(ProjectError::UnknownScene(scene_id))
+}
+
+fn validate_scene_target(
+    profile: &Profile,
+    owner: &Identifier,
+    target: &Identifier,
+) -> Result<(), ProjectError> {
+    if profile.scene(target).is_none() {
+        return Err(ProjectError::UnknownScene(target.clone()));
+    }
+    if owner == target {
+        return Err(ProjectError::CircularSceneReference(owner.clone()));
+    }
+    let mut visited = HashSet::new();
+    if scene_reaches(profile, target, owner, &mut visited)? {
+        return Err(ProjectError::CircularSceneReference(owner.clone()));
+    }
+    Ok(())
+}
+
+fn scene_reaches(
+    profile: &Profile,
+    current: &Identifier,
+    target: &Identifier,
+    visited: &mut HashSet<Identifier>,
+) -> Result<bool, ProjectError> {
+    if current == target {
+        return Ok(true);
+    }
+    if !visited.insert(current.clone()) {
+        return Ok(false);
+    }
+    let scene = profile
+        .scene(current)
+        .ok_or_else(|| ProjectError::UnknownScene(current.clone()))?;
+    for item in scene.items() {
+        if let Some(next) = item.scene_id() {
+            if scene_reaches(profile, next, target, visited)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn add_source(
@@ -520,12 +573,13 @@ fn add_scene_item(
 ) -> Result<(), ProjectError> {
     let profile_id = identifier(profile, "profile id")?;
     let scene_id = identifier(scene, "scene id")?;
-    let source_id = item.source_id().clone();
     let profile = project
         .profile_mut(&profile_id)
         .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-    if !profile.has_source(&source_id) {
-        return Err(ProjectError::UnknownSource(source_id));
+    if let Some(target) = item.scene_id() {
+        validate_scene_target(profile, &scene_id, target)?;
+    } else if !profile.has_source(item.source_id()) {
+        return Err(ProjectError::UnknownSource(item.source_id().clone()));
     }
     profile
         .scene_mut(&scene_id)
@@ -591,6 +645,15 @@ fn paste_scene_item(
         }
     };
 
+    if let Some(target) = item.scene_id() {
+        validate_scene_target(profile, &scene_id, target)?;
+        item.id = duplicate_item_id;
+        return profile
+            .scene_mut(&scene_id)
+            .ok_or(ProjectError::UnknownScene(scene_id))?
+            .add_item(item);
+    }
+
     let source_id = match mode {
         SceneItemDuplicateMode::Reference => {
             let source_id = item.source_id().clone();
@@ -617,7 +680,7 @@ fn paste_scene_item(
         }
     };
     item.id = duplicate_item_id;
-    item.source_id = source_id;
+    item.set_source_id(source_id);
     profile
         .scene_mut(&scene_id)
         .ok_or(ProjectError::UnknownScene(scene_id))?

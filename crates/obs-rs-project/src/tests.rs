@@ -86,6 +86,60 @@ fn project_round_trips_deterministically_with_escaped_values() {
 }
 
 #[test]
+fn nested_scene_items_round_trip_and_reject_cycles() {
+    let mut project = project();
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    child
+        .add_item(SceneItemSpec::for_source("background").expect("child source item"))
+        .expect("child source item attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("child scene");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: SceneSpec::new("parent", "Parent").expect("parent scene"),
+        })
+        .expect("parent scene");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "parent".to_owned(),
+            item: SceneItemSpec::for_scene("child-item", "child").expect("nested item"),
+        })
+        .expect("nested scene item");
+
+    let encoded = project.serialize();
+    assert!(encoded.contains(r#""scene": "child""#), "{encoded}");
+    let decoded = Project::parse(&encoded).expect("nested project parses");
+    let nested = decoded
+        .profile("live")
+        .and_then(|profile| profile.scene("parent"))
+        .and_then(|scene| scene.item("child-item"))
+        .expect("nested item survives round trip");
+    assert!(nested.is_scene_reference());
+    assert_eq!(nested.scene_id().map(Identifier::as_str), Some("child"));
+    let flattened = decoded
+        .profile("live")
+        .expect("profile")
+        .flatten_scene_items("parent")
+        .expect("nested scene flattens");
+    assert_eq!(flattened.len(), 1);
+    assert_eq!(flattened[0].source_id().as_str(), "background");
+
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "child".to_owned(),
+            item: SceneItemSpec::for_scene("parent-item", "parent").expect("cycle item"),
+        })
+        .expect_err("cycle is rejected atomically");
+}
+
+#[test]
 fn parser_rejects_a_document_without_the_format_and_version_tags() {
     let encoded = project().serialize();
 
@@ -98,10 +152,10 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
         Err(ProjectError::InvalidDocument { .. })
     ));
 
-    let future = encoded.replace(r#""version": 3"#, r#""version": 4"#);
+    let future = encoded.replace(r#""version": 4"#, r#""version": 5"#);
     let error = Project::parse(&future).expect_err("a newer schema is not guessed at");
     assert!(
-        format!("{error}").contains("unsupported project schema version 4"),
+        format!("{error}").contains("unsupported project schema version 5"),
         "{error}"
     );
 }
@@ -110,7 +164,7 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
 fn parser_reports_the_line_a_syntax_error_is_on() {
     let broken = project()
         .serialize()
-        .replace(r#""version": 3"#, r#""version": ?"#);
+        .replace(r#""version": 4"#, r#""version": ?"#);
 
     let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
     match error {
@@ -1185,7 +1239,7 @@ fn version_one_scene_sources_migrate_to_registry_and_items() {
     assert_eq!(profile.source("camera").expect("source").filters().len(), 1);
 
     let encoded = migrated.serialize();
-    assert!(encoded.contains(r#""version": 3"#), "{encoded}");
+    assert!(encoded.contains(r#""version": 4"#), "{encoded}");
     assert!(encoded.contains(r#""items""#), "{encoded}");
     assert_eq!(
         Project::parse(&encoded).expect("new format parses"),

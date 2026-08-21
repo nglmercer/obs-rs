@@ -2,6 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
+**Latest measurement:** 2026-08-21 (nested-scene packet validation)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -19,7 +20,7 @@ scenes and capture devices.
 | `cargo check --workspace --all-targets --all-features` | Pass | Completed in 45.75 s in the warm workspace. |
 | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Pass | Baseline lint drift was cleaned up while preserving behavior; this is now a required phase gate. |
 | `cargo test --workspace --all-targets` | Pass with explicit environment ignores | Native production-sink tests and one native-window GUI test are explicitly ignored because this managed session has neither dependency; the remaining workspace tests pass. |
-| `cargo test -p obs-rs-gui --bin obs-rs-gui -- --test-threads=1` | Pass with explicit ignores | 104 pass; one compositor-dependent GUI test and one timing probe are ignored. |
+| `cargo test -p obs-rs-gui --bin obs-rs-gui -- --test-threads=1` | Pass with explicit ignores | 105 pass; one compositor-dependent GUI test and one timing probe are ignored. |
 | `cargo run -p obs-rs-gui -- --smoke` | Pass | Constructs the window and render path without entering the event loop. |
 | `cargo run -p obs-rs-app --bin obs-rs-linux-check` | Mixed | A/V soak passes; X11/window/camera/PipeWire checks skip due session capabilities. |
 | `cargo run -p obs-rs-app --bin obs-rs-benchmark --release` | Pass as a measurement | The harness completes, but its deadline metrics do not meet the future acceptance gate. |
@@ -37,16 +38,16 @@ Observed report:
 
 ```text
 render_samples=120
-render_p50_ns=1133473
-render_p95_ns=2939488
-render_max_ns=5518458
+render_p50_ns=921648
+render_p95_ns=1747481
+render_max_ns=2139239
 frame_owned_buffers=0
 frame_owned_bytes=0
 frame_shared_clones=480
 frame_cow_buffers=120
 frame_copied_bytes=110592000
-rss_before_kib=6104
-rss_after_kib=9568
+rss_before_kib=5948
+rss_after_kib=9412
 requested=120
 processed=120
 cancelled=false
@@ -54,10 +55,10 @@ empty=0
 dropped_oldest=0
 dropped_newest=0
 missed=120
-lateness_ns=229861735
-max_lateness_ns=5159715
+lateness_ns=165014163
+max_lateness_ns=4115430
 wait_ns=3740561341
-paced_render_ns=227871593
+paced_render_ns=164245790
 produced_bytes=110592000
 peak_queued_bytes=921600
 remaining=0
@@ -68,19 +69,19 @@ empty_sources=0
 transformed=250
 filtered=250
 blends=250
-elapsed_ms=3968
+elapsed_ms=3967
 multi_workers=2
 multi_requested=60
 multi_processed=60
 multi_missed=60
-multi_lateness_ns=7679258
+multi_lateness_ns=8218952
 multi_produced_bytes=55296000
 multi_peak_queued_bytes=921600
-multi_elapsed_ns=966976307
+multi_elapsed_ns=967032488
 ```
 
 The fixture is the historical 640x360@30 workload. The latest measured render
-p95 is 2.939 ms, but the current wall-clock deadline accounting reports a miss for all
+p95 is 1.747 ms, but the current wall-clock deadline accounting reports a miss for all
 120 single-worker frames and all 60 multi-worker frames in this session. That
 is a baseline finding, not evidence that a 60 FPS production path is accepted.
 The bounded queue footprint is one 921,600-byte RGBA frame in this fixture.

@@ -250,4 +250,61 @@ impl FrameTransform {
     pub const fn is_rotated(self) -> bool {
         self.rotation_milli_degrees != 0
     }
+
+    /// Composes a child transform with a parent transform for nested scenes.
+    ///
+    /// The compact scene representation can exactly flatten the axis-aligned
+    /// scale/translation/opacity subset. Cropping, rotation, and mirroring are
+    /// rejected here because their centre/edge semantics depend on the nested
+    /// scene's rendered canvas and cannot be silently approximated as a source
+    /// transform.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransform`] when either transform uses a
+    /// crop, rotation, or flip, or when the composed fixed-point values exceed
+    /// the bounded representation.
+    pub fn compose_simple(self, parent: Self) -> Result<Self, MediaError> {
+        if self.is_cropped()
+            || parent.is_cropped()
+            || self.is_rotated()
+            || parent.is_rotated()
+            || self.flip_x
+            || self.flip_y
+            || parent.flip_x
+            || parent.flip_y
+        {
+            return Err(MediaError::InvalidTransform);
+        }
+        let scale_x = (u64::from(self.scale_x_milli) * u64::from(parent.scale_x_milli)) / 1_000;
+        let scale_y = (u64::from(self.scale_y_milli) * u64::from(parent.scale_y_milli)) / 1_000;
+        if scale_x == 0
+            || scale_y == 0
+            || scale_x > u64::from(Self::MAX_SCALE_MILLI)
+            || scale_y > u64::from(Self::MAX_SCALE_MILLI)
+        {
+            return Err(MediaError::InvalidTransform);
+        }
+        let translate_x = (i64::from(self.translate_x) * i64::from(parent.scale_x_milli)) / 1_000
+            + i64::from(parent.translate_x);
+        let translate_y = (i64::from(self.translate_y) * i64::from(parent.scale_y_milli)) / 1_000
+            + i64::from(parent.translate_y);
+        let (Ok(scale_x), Ok(scale_y), Ok(translate_x), Ok(translate_y)) = (
+            u32::try_from(scale_x),
+            u32::try_from(scale_y),
+            i32::try_from(translate_x),
+            i32::try_from(translate_y),
+        ) else {
+            return Err(MediaError::InvalidTransform);
+        };
+        let opacity = (u16::from(self.opacity) * u16::from(parent.opacity) + 127) / 255;
+        Ok(Self {
+            scale_x_milli: scale_x,
+            scale_y_milli: scale_y,
+            translate_x,
+            translate_y,
+            opacity: u8::try_from(opacity).unwrap_or(u8::MAX),
+            ..Self::IDENTITY
+        })
+    }
 }
