@@ -606,6 +606,52 @@ impl GroupSpec {
         self.item_ids.contains_key(id)
     }
 
+    /// Finds a mutable child item by its group-local ID.
+    pub(crate) fn item_mut(&mut self, id: &Identifier) -> Option<&mut SceneItemSpec> {
+        let index = *self.item_ids.get(id)?;
+        self.items.get_mut(index)
+    }
+
+    /// Removes one child item and returns it.
+    pub fn remove_item(&mut self, id: &Identifier) -> Option<SceneItemSpec> {
+        let index = self.item_ids.remove(id)?;
+        let item = self.items.remove(index);
+        for (index, item) in self.items.iter().enumerate().skip(index) {
+            if let Some(entry) = self.item_ids.get_mut(item.id()) {
+                *entry = index;
+            }
+        }
+        Some(item)
+    }
+
+    /// Moves one child item to an existing order position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::UnknownSceneItem`] for an unknown child ID or
+    /// [`ProjectError::InvalidSceneItemOrder`] for an out-of-range index.
+    pub fn move_item(&mut self, id: &Identifier, target_index: usize) -> Result<(), ProjectError> {
+        let current_index = self
+            .item_ids
+            .get(id)
+            .copied()
+            .ok_or_else(|| ProjectError::UnknownSceneItem(id.clone()))?;
+        if target_index >= self.items.len() {
+            return Err(ProjectError::InvalidSceneItemOrder {
+                index: target_index,
+            });
+        }
+        let item = self.items.remove(current_index);
+        self.items.insert(target_index, item);
+        let first = current_index.min(target_index);
+        for (index, item) in self.items.iter().enumerate().skip(first) {
+            if let Some(entry) = self.item_ids.get_mut(item.id()) {
+                *entry = index;
+            }
+        }
+        Ok(())
+    }
+
     /// Returns whether any descendant references the source ID.
     #[must_use]
     pub fn has_source<Q>(&self, source_id: &Q) -> bool
@@ -619,6 +665,20 @@ impl GroupSpec {
                     .group()
                     .is_some_and(|group| group.has_source(source_id))
         })
+    }
+}
+
+pub(crate) fn group_mut_at<'a>(
+    items: &'a mut [SceneItemSpec],
+    path: &[Identifier],
+) -> Option<&'a mut GroupSpec> {
+    let (head, tail) = path.split_first()?;
+    let item = items.iter_mut().find(|item| item.id() == head)?;
+    let group = item.group_mut()?;
+    if tail.is_empty() {
+        Some(group)
+    } else {
+        group_mut_at(group.items_mut(), tail)
     }
 }
 

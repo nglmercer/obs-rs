@@ -1,8 +1,8 @@
 use super::{
     error::ProjectError,
     model::{
-        Profile, Project, RenderBackendPreference, SceneItemSpec, SceneSpec, SourceFilterCategory,
-        SourceFilterSpec, SourceSpec,
+        group_mut_at, Profile, Project, RenderBackendPreference, SceneItemSpec, SceneSpec,
+        SourceFilterCategory, SourceFilterSpec, SourceSpec, MAX_GROUP_NESTING_DEPTH,
     },
     validation::{identifier, source_id},
 };
@@ -193,6 +193,33 @@ pub enum ProjectCommand {
         item: String,
         locked: bool,
     },
+    /// Changes visibility for a child item addressed by its enclosing group path.
+    SetGroupItemVisibility {
+        profile: String,
+        scene: String,
+        /// Outermost-to-innermost group scene-item IDs.
+        group_path: Vec<String>,
+        item: String,
+        visible: bool,
+    },
+    /// Changes lock state for a child item addressed by its enclosing group path.
+    SetGroupItemLocked {
+        profile: String,
+        scene: String,
+        /// Outermost-to-innermost group scene-item IDs.
+        group_path: Vec<String>,
+        item: String,
+        locked: bool,
+    },
+    /// Reorders a child item within its enclosing group.
+    MoveGroupItem {
+        profile: String,
+        scene: String,
+        /// Outermost-to-innermost group scene-item IDs.
+        group_path: Vec<String>,
+        item: String,
+        target_index: usize,
+    },
 }
 
 impl Project {
@@ -353,12 +380,33 @@ impl Project {
                 item,
                 locked,
             } => set_scene_item_locked(self, &profile, &scene, &item, locked),
+            ProjectCommand::SetGroupItemVisibility {
+                profile,
+                scene,
+                group_path,
+                item,
+                visible,
+            } => set_group_item_visibility(self, &profile, &scene, &group_path, &item, visible),
+            ProjectCommand::SetGroupItemLocked {
+                profile,
+                scene,
+                group_path,
+                item,
+                locked,
+            } => set_group_item_locked(self, &profile, &scene, &group_path, &item, locked),
             ProjectCommand::MoveSceneItem {
                 profile,
                 scene,
                 item,
                 target_index,
             } => move_scene_item(self, &profile, &scene, &item, target_index),
+            ProjectCommand::MoveGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+                target_index,
+            } => move_group_item(self, &profile, &scene, &group_path, &item, target_index),
             ProjectCommand::RemoveSource { profile, source } => {
                 remove_source(self, &profile, &source)
             }
@@ -1030,6 +1078,77 @@ fn set_scene_item_locked(
 ) -> Result<(), ProjectError> {
     item_mut(project, profile, scene, item)?.set_locked(locked);
     Ok(())
+}
+
+fn parse_group_path(path: &[String]) -> Result<Vec<Identifier>, ProjectError> {
+    if path.is_empty() || path.len() > MAX_GROUP_NESTING_DEPTH {
+        return Err(ProjectError::InvalidGroupPath);
+    }
+    path.iter()
+        .map(|id| identifier(id, "group item id"))
+        .collect()
+}
+
+fn group_mut<'a>(
+    project: &'a mut Project,
+    profile: &str,
+    scene: &str,
+    path: &[String],
+) -> Result<&'a mut super::model::GroupSpec, ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let path = parse_group_path(path)?;
+    let profile = project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene = profile
+        .scene_mut(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    group_mut_at(&mut scene.items, &path).ok_or(ProjectError::InvalidGroupPath)
+}
+
+fn set_group_item_visibility(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    group_path: &[String],
+    item: &str,
+    visible: bool,
+) -> Result<(), ProjectError> {
+    let item_id = identifier(item, "scene item id")?;
+    group_mut(project, profile, scene, group_path)?
+        .item_mut(&item_id)
+        .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?
+        .set_visible(visible);
+    Ok(())
+}
+
+fn set_group_item_locked(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    group_path: &[String],
+    item: &str,
+    locked: bool,
+) -> Result<(), ProjectError> {
+    let item_id = identifier(item, "scene item id")?;
+    group_mut(project, profile, scene, group_path)?
+        .item_mut(&item_id)
+        .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?
+        .set_locked(locked);
+    Ok(())
+}
+
+fn move_group_item(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    group_path: &[String],
+    item: &str,
+    target_index: usize,
+) -> Result<(), ProjectError> {
+    let item_id = identifier(item, "scene item id")?;
+    group_mut(project, profile, scene, group_path)?.move_item(&item_id, target_index)
 }
 
 fn move_scene_item(

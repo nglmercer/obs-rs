@@ -293,6 +293,127 @@ fn group_nesting_is_bounded_before_runtime_flattening() {
     );
 }
 
+fn project_with_nested_group() -> Project {
+    let mut project = project();
+    let mut group = SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::new("first", "background").expect("first child"))
+        .expect("first child attach");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::new("second", "background").expect("second child"))
+        .expect("second child attach");
+    let mut inner = SceneItemSpec::for_group("inner-group", "Inner group").expect("inner group");
+    inner
+        .group_mut()
+        .expect("inner group target")
+        .add_item(SceneItemSpec::new("nested", "background").expect("nested child"))
+        .expect("nested child attach");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(inner)
+        .expect("inner group attach");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: group,
+        })
+        .expect("add group");
+    project
+}
+
+#[test]
+fn group_child_commands_are_path_addressed_and_atomic() {
+    let mut project = project_with_nested_group();
+    let group_path = vec!["overlay-group".to_owned()];
+    project
+        .apply(ProjectCommand::SetGroupItemVisibility {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: group_path.clone(),
+            item: "first".to_owned(),
+            visible: false,
+        })
+        .expect("hide group child");
+    project
+        .apply(ProjectCommand::SetGroupItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: group_path.clone(),
+            item: "first".to_owned(),
+            locked: true,
+        })
+        .expect("lock group child");
+    project
+        .apply(ProjectCommand::MoveGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: group_path.clone(),
+            item: "first".to_owned(),
+            target_index: 1,
+        })
+        .expect("reorder group child");
+    project
+        .apply(ProjectCommand::SetGroupItemVisibility {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned(), "inner-group".to_owned()],
+            item: "nested".to_owned(),
+            visible: false,
+        })
+        .expect("edit nested group child");
+
+    let group = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("group after child edits");
+    assert_eq!(
+        group
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["second", "first", "inner-group"]
+    );
+    assert!(!group.items()[1].visible());
+    assert!(group.items()[1].locked());
+    assert!(!group.items()[2].group().expect("inner group").items()[0].visible());
+
+    let before_invalid_move = project.clone();
+    let error = project
+        .apply(ProjectCommand::MoveGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path,
+            item: "first".to_owned(),
+            target_index: 99,
+        })
+        .expect_err("out-of-range child move must fail");
+    assert_eq!(error, ProjectError::InvalidSceneItemOrder { index: 99 });
+    assert_eq!(project, before_invalid_move);
+
+    let before_invalid_path = project.clone();
+    let error = project
+        .apply(ProjectCommand::SetGroupItemVisibility {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["missing-group".to_owned()],
+            item: "first".to_owned(),
+            visible: true,
+        })
+        .expect_err("unknown group path must fail");
+    assert_eq!(error, ProjectError::InvalidGroupPath);
+    assert_eq!(project, before_invalid_path);
+}
+
 #[test]
 fn parser_rejects_a_document_without_the_format_and_version_tags() {
     let encoded = project().serialize();
