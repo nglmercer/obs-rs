@@ -47,7 +47,8 @@ mod tests {
     #[test]
     fn gpu_upload_layer_submission_readback_and_recovery_are_explicit() {
         use obs_rs_media::{
-            FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame,
+            ColorCorrection, FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat,
+            VideoFrame,
         };
         use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderError, SceneLayer};
 
@@ -87,6 +88,34 @@ mod tests {
             expected
         );
         assert_eq!(backend.metrics().readbacks(), 1);
+
+        let color_correction =
+            ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("valid color correction");
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[FrameFilter::ColorCorrection(color_correction)],
+                )],
+            )
+            .expect("GPU color correction");
+        let gpu_corrected = backend.readback(target).expect("color correction readback");
+        let mut cpu_corrected = frame.clone();
+        cpu_corrected.apply_filter(FrameFilter::ColorCorrection(color_correction));
+        for (index, (actual, expected)) in gpu_corrected
+            .pixels()
+            .iter()
+            .zip(cpu_corrected.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "color correction channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 2);
 
         let rotated_transform = FrameTransform::IDENTITY
             .with_rotation_degrees(90)

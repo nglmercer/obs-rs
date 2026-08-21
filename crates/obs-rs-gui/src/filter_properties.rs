@@ -6,6 +6,7 @@
 //! component or another comma-separated serialization format.
 
 use obs_rs_config::Config;
+use obs_rs_media::ColorCorrection;
 use obs_rs_ui::UiLocale;
 use slint::{Brush, ModelRc, SharedString, VecModel};
 
@@ -81,49 +82,49 @@ const COLOR_CORRECTION: [Field; 6] = [
         key: "gamma",
         english: "Gamma",
         spanish: "Gamma",
-        minimum: -1_000,
-        maximum: 1_000,
+        minimum: ColorCorrection::MIN_GAMMA_MILLI,
+        maximum: ColorCorrection::MAX_GAMMA_MILLI,
         default: "0",
     },
     Field {
         key: "contrast",
         english: "Contrast",
         spanish: "Contraste",
-        minimum: -1_000,
-        maximum: 1_000,
+        minimum: ColorCorrection::MIN_CONTRAST_MILLI,
+        maximum: ColorCorrection::MAX_CONTRAST_MILLI,
         default: "0",
     },
     Field {
         key: "brightness",
         english: "Brightness",
         spanish: "Brillo",
-        minimum: -1_000,
-        maximum: 1_000,
+        minimum: ColorCorrection::MIN_BRIGHTNESS_MILLI,
+        maximum: ColorCorrection::MAX_BRIGHTNESS_MILLI,
         default: "0",
     },
     Field {
         key: "saturation",
         english: "Saturation",
         spanish: "Saturación",
-        minimum: -1_000,
-        maximum: 1_000,
+        minimum: ColorCorrection::MIN_SATURATION_MILLI,
+        maximum: ColorCorrection::MAX_SATURATION_MILLI,
         default: "0",
     },
     Field {
         key: "hue_shift",
         english: "Hue shift",
         spanish: "Cambio de tono",
-        minimum: -180,
-        maximum: 180,
+        minimum: ColorCorrection::MIN_HUE_SHIFT_DEGREES,
+        maximum: ColorCorrection::MAX_HUE_SHIFT_DEGREES,
         default: "0",
     },
     Field {
         key: "opacity",
         english: "Opacity",
         spanish: "Opacidad",
-        minimum: 0,
-        maximum: 255,
-        default: "255",
+        minimum: ColorCorrection::MIN_OPACITY_MILLI,
+        maximum: ColorCorrection::MAX_OPACITY_MILLI,
+        default: "1000",
     },
 ];
 
@@ -188,4 +189,19 @@ pub(crate) fn apply(kind: &str, document: &str, key: &str, value: &str) -> Optio
     let mut settings = Config::parse(document).unwrap_or_else(|_| default_settings(kind));
     settings.set(key, &number.to_string()).ok()?;
     Some(settings.serialize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_correction_schema_uses_shared_bounded_ranges() {
+        let rows = rows("color_correction", "", UiLocale::English);
+        assert_eq!(rows.len(), 6);
+        assert_eq!(rows[0].minimum, ColorCorrection::MIN_GAMMA_MILLI);
+        assert_eq!(rows[0].maximum, ColorCorrection::MAX_GAMMA_MILLI);
+        assert_eq!(rows[3].maximum, ColorCorrection::MAX_SATURATION_MILLI);
+        assert_eq!(rows[5].number, ColorCorrection::MAX_OPACITY_MILLI);
+    }
 }

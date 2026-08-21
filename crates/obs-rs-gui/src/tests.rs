@@ -1977,6 +1977,10 @@ fn render_source_filters_window(
     window.invoke_toggle_filter();
     window.invoke_edit_property("milli".into(), "450".into());
 
+    window.invoke_add_filter("color_correction".into());
+    window.invoke_edit_property("gamma".into(), "1000".into());
+    window.invoke_edit_property("opacity".into(), "900".into());
+
     let state_ref = state.borrow();
     let source = state_ref
         .project_session()
@@ -1984,7 +1988,7 @@ fn render_source_filters_window(
         .active_profile_spec()
         .and_then(|profile| profile.source("background"))
         .expect("background source after filter edits");
-    assert_eq!(source.filters().len(), 2);
+    assert_eq!(source.filters().len(), 3);
     assert_eq!(source.filters()[0].id().as_str(), "grayscale");
     assert_eq!(source.filters()[0].name(), "Scene grayscale");
     let brightness = source
@@ -1994,8 +1998,17 @@ fn render_source_filters_window(
         .expect("brightness filter");
     assert!(!brightness.enabled());
     assert_eq!(brightness.settings().get("milli"), Some("450"));
+    let color_correction = source
+        .filters()
+        .iter()
+        .find(|filter| filter.kind().as_str() == "color_correction")
+        .expect("color correction filter");
+    assert_eq!(color_correction.settings().get("gamma"), Some("1000"));
+    assert_eq!(color_correction.settings().get("opacity"), Some("900"));
     drop(state_ref);
 
+    window.invoke_select_filter("color_correction".into());
+    window.invoke_remove_filter();
     window.invoke_select_filter("grayscale".into());
     window.invoke_remove_filter();
     assert_eq!(window.get_effect_rows().row_count(), 1);

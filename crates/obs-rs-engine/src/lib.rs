@@ -22,8 +22,8 @@ use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{
-    FrameFilter, FrameRate, FrameTransform, LatencyMetrics, RawVideoFrame, Timestamp, VideoFormat,
-    VideoFrame,
+    ColorCorrection, FrameFilter, FrameRate, FrameTransform, LatencyMetrics, RawVideoFrame,
+    Timestamp, VideoFormat, VideoFrame,
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
@@ -2012,6 +2012,21 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
                 bottom: read_edge("bottom")?,
             })
         }
+        "color_correction" => {
+            let read_value = |key| {
+                spec.settings()
+                    .get(key)
+                    .and_then(|value| value.parse::<i32>().ok())
+            };
+            Some(FrameFilter::ColorCorrection(ColorCorrection::new(
+                read_value("gamma")?,
+                read_value("contrast")?,
+                read_value("brightness")?,
+                read_value("saturation")?,
+                read_value("hue_shift")?,
+                read_value("opacity")?,
+            )?))
+        }
         _ => None,
     }
 }
@@ -2349,6 +2364,23 @@ mod tests {
                 right: 3,
                 bottom: 1,
             })
+        );
+
+        let color_correction = SourceFilterSpec::new(
+            "color",
+            "Color Correction",
+            "color_correction",
+            Config::parse(
+                "brightness = 125\ncontrast = -500\ngamma = 250\nhue_shift = 30\nopacity = 900\nsaturation = 750\n",
+            )
+            .expect("color correction settings"),
+        )
+        .expect("color correction filter");
+        assert_eq!(
+            compile_filter(&color_correction),
+            Some(FrameFilter::ColorCorrection(
+                ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("valid color correction"),
+            ))
         );
 
         let mut disabled = brightness.clone();

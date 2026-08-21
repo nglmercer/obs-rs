@@ -1136,6 +1136,22 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
             }
             ("crop_pad", "Crop/Pad", settings)
         }
+        FrameFilter::ColorCorrection(correction) => {
+            let mut settings = Config::new();
+            for (key, value) in [
+                ("gamma", correction.gamma_milli()),
+                ("contrast", correction.contrast_milli()),
+                ("brightness", correction.brightness_milli()),
+                ("saturation", correction.saturation_milli()),
+                ("hue_shift", correction.hue_shift_degrees()),
+                ("opacity", correction.opacity_milli()),
+            ] {
+                settings
+                    .set(key, &value.to_string())
+                    .map_err(ProjectError::Config)?;
+            }
+            ("color_correction", "Color Correction", settings)
+        }
     };
     SourceFilterSpec::with_category(
         &format!("legacy_filter_{}", index.saturating_add(1)),

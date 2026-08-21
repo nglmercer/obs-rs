@@ -985,7 +985,7 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
     var filter_index = 0;
     loop {
         if (filter_index >= filter_count) { break; }
-        let filter_offset = 17 + filter_index * 5;
+        let filter_offset = 17 + filter_index * 7;
         let kind = parameters.values[filter_offset];
         let value = parameters.values[filter_offset + 1];
         if (kind == 0) {
@@ -1011,6 +1011,48 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
                 position.y < crop_top || position.y >= height - crop_bottom) {
                 pixel = vec4<i32>(0);
             }
+        } else if (kind == 4) {
+            let gamma = f32(parameters.values[filter_offset + 1]) / 1000.0;
+            var gamma_exponent: f32;
+            if (gamma < 0.0) {
+                gamma_exponent = -gamma + 1.0;
+            } else {
+                gamma_exponent = 1.0 / (gamma + 1.0);
+            }
+            var color = vec3<f32>(f32(pixel.r), f32(pixel.g), f32(pixel.b)) / 255.0;
+            color = pow(color, vec3<f32>(gamma_exponent));
+
+            let contrast_value = f32(parameters.values[filter_offset + 2]) / 1000.0;
+            let contrast = select(
+                contrast_value + 1.0,
+                1.0 / (-contrast_value + 1.0),
+                contrast_value < 0.0,
+            );
+            let brightness = f32(parameters.values[filter_offset + 3]) / 1000.0;
+            color = color * contrast + vec3<f32>(brightness);
+
+            let saturation = f32(parameters.values[filter_offset + 4]) / 1000.0 + 1.0;
+            let luma = dot(color, vec3<f32>(0.299, 0.587, 0.114));
+            color = vec3<f32>(luma) + saturation * (color - vec3<f32>(luma));
+
+            let half_angle = f32(parameters.values[filter_offset + 5]) *
+                3.14159265359 / 360.0;
+            let quaternion_axis = sin(half_angle) / sqrt(3.0);
+            let square = quaternion_axis * quaternion_axis;
+            let diagonal = 0.5 - 2.0 * square;
+            let a_line = square + quaternion_axis * cos(half_angle);
+            let b_line = square - quaternion_axis * cos(half_angle);
+            color = vec3<f32>(
+                2.0 * (diagonal * color.r + b_line * color.g + a_line * color.b),
+                2.0 * (a_line * color.r + diagonal * color.g + b_line * color.b),
+                2.0 * (b_line * color.r + a_line * color.g + diagonal * color.b),
+            );
+            color = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+            pixel.r = i32(floor(color.r * 255.0 + 0.5));
+            pixel.g = i32(floor(color.g * 255.0 + 0.5));
+            pixel.b = i32(floor(color.b * 255.0 + 0.5));
+            let opacity = parameters.values[filter_offset + 6];
+            pixel.a = i32(floor(f32(pixel.a) * f32(opacity) / 1000.0 + 0.5));
         }
         filter_index = filter_index + 1;
     }
@@ -1107,7 +1149,7 @@ fn layer_parameters(
     transform: FrameTransform,
     filters: &[FrameFilter],
 ) -> Vec<u8> {
-    let mut values = Vec::with_capacity(17 + filters.len() * 5);
+    let mut values = Vec::with_capacity(17 + filters.len() * 7);
     values.extend([
         i32::try_from(target_format.width()).unwrap_or(i32::MAX),
         i32::try_from(target_format.height()).unwrap_or(i32::MAX),
@@ -1129,12 +1171,12 @@ fn layer_parameters(
     ]);
     for filter in filters {
         match *filter {
-            FrameFilter::Grayscale => values.extend([0, 0, 0, 0, 0]),
+            FrameFilter::Grayscale => values.extend([0, 0, 0, 0, 0, 0, 0]),
             FrameFilter::Brightness { milli } => {
-                values.extend([1, i32::from(milli), 0, 0, 0]);
+                values.extend([1, i32::from(milli), 0, 0, 0, 0, 0]);
             }
             FrameFilter::Opacity(opacity) => {
-                values.extend([2, i32::from(opacity), 0, 0, 0]);
+                values.extend([2, i32::from(opacity), 0, 0, 0, 0, 0]);
             }
             FrameFilter::CropPad {
                 left,
@@ -1147,6 +1189,17 @@ fn layer_parameters(
                 i32::try_from(top).unwrap_or(i32::MAX),
                 i32::try_from(right).unwrap_or(i32::MAX),
                 i32::try_from(bottom).unwrap_or(i32::MAX),
+                0,
+                0,
+            ]),
+            FrameFilter::ColorCorrection(correction) => values.extend([
+                4,
+                correction.gamma_milli(),
+                correction.contrast_milli(),
+                correction.brightness_milli(),
+                correction.saturation_milli(),
+                correction.hue_shift_degrees(),
+                correction.opacity_milli(),
             ]),
         }
     }

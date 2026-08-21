@@ -107,8 +107,11 @@ transform, blend, grayscale, and solid-frame measurements. CPU and WGPU
 correctness are covered separately by the media filter test and the WGPU
 CPU-oracle/readback test; this is evidence for repeatable local measurement,
 not a 60 FPS acceptance result. On 2026-08-21 in this workspace's release
-profile, the 640x360 `clone + crop-pad` sample averaged `210.651 µs` over 200
-runs.
+profile, the 640x360 `clone + crop-pad` sample averaged `431.275 µs` over 200
+runs and `clone + color-correction` averaged `2.870357 ms` over 200 runs. The
+color correction path is deliberately recorded as a correctness/performance
+warning: it currently uses bounded scalar `powf`/matrix math and is not a
+60-FPS acceptance result at full-frame CPU resolution.
 
 ## Phase 1 render-target evidence
 

@@ -1,6 +1,10 @@
 use super::{
-    error::MediaError, filters::FrameFilter, format::VideoFormat, time::Timestamp,
-    transform::FrameTransform, transition::FrameTransition,
+    error::MediaError,
+    filters::{ColorCorrection, FrameFilter},
+    format::VideoFormat,
+    time::Timestamp,
+    transform::FrameTransform,
+    transition::FrameTransition,
 };
 use crate::metrics::{record_copy_on_write, record_owned_buffer, record_shared_clone};
 use rayon::prelude::*;
@@ -820,13 +824,16 @@ impl VideoFrame {
         if filters.is_empty() {
             return;
         }
-        // Crop/Pad is coordinate-dependent rather than a per-pixel colour
-        // operation. Apply it as its own bounded pass while retaining the
-        // ordered semantics of filters around it.
-        if filters
-            .iter()
-            .any(|filter| matches!(filter, FrameFilter::CropPad { .. }))
-        {
+        // Crop/Pad is coordinate-dependent, and Color Correction has a small
+        // derived matrix that should be built once per frame rather than once
+        // per pixel. Apply both as their own bounded pass while retaining the
+        // ordered semantics of filters around them.
+        if filters.iter().any(|filter| {
+            matches!(
+                filter,
+                FrameFilter::CropPad { .. } | FrameFilter::ColorCorrection(_)
+            )
+        }) {
             for filter in filters {
                 match *filter {
                     FrameFilter::CropPad {
@@ -835,7 +842,7 @@ impl VideoFrame {
                         right,
                         bottom,
                     } => self.apply_crop_pad(left, top, right, bottom),
-                    _ => self.apply_pixel_filters(std::slice::from_ref(filter)),
+                    _ => self.apply_single_pixel_filter(*filter),
                 }
             }
             return;
@@ -848,28 +855,7 @@ impl VideoFrame {
         // rather than once per pixel is what lets the inner loop stay a tight
         // arithmetic pass the compiler can vectorize.
         if let [filter] = filters {
-            let filter = *filter;
-            for_each_block(self.pixels_mut(), move |block| match filter {
-                FrameFilter::Grayscale => {
-                    for pixel in block.chunks_exact_mut(4) {
-                        apply_grayscale(pixel);
-                    }
-                }
-                FrameFilter::Brightness { milli } => {
-                    let multiplier = i32::from(milli) + 1_000;
-                    for pixel in block.chunks_exact_mut(4) {
-                        apply_brightness(pixel, multiplier);
-                    }
-                }
-                FrameFilter::Opacity(opacity) => {
-                    for pixel in block.chunks_exact_mut(4) {
-                        apply_opacity(pixel, u32::from(opacity));
-                    }
-                }
-                FrameFilter::CropPad { .. } => unreachable!(
-                    "coordinate-dependent crop filters are handled before pixel filters"
-                ),
-            });
+            self.apply_single_pixel_filter(*filter);
             return;
         }
         for_each_block(self.pixels_mut(), |block| {
@@ -886,8 +872,48 @@ impl VideoFrame {
                         FrameFilter::CropPad { .. } => unreachable!(
                             "coordinate-dependent crop filters are handled before pixel filters"
                         ),
+                        FrameFilter::ColorCorrection(_) => unreachable!(
+                            "derived color correction filters are handled before pixel filters"
+                        ),
                     }
                 }
+            }
+        });
+    }
+
+    fn apply_single_pixel_filter(&mut self, filter: FrameFilter) {
+        if let FrameFilter::ColorCorrection(correction) = filter {
+            let parameters = ColorCorrectionParameters::new(correction);
+            let gamma_lut = parameters.gamma_lut();
+            for_each_block(self.pixels_mut(), move |block| {
+                for pixel in block.chunks_exact_mut(4) {
+                    apply_color_correction(pixel, parameters, &gamma_lut);
+                }
+            });
+            return;
+        }
+        for_each_block(self.pixels_mut(), move |block| match filter {
+            FrameFilter::Grayscale => {
+                for pixel in block.chunks_exact_mut(4) {
+                    apply_grayscale(pixel);
+                }
+            }
+            FrameFilter::Brightness { milli } => {
+                let multiplier = i32::from(milli) + 1_000;
+                for pixel in block.chunks_exact_mut(4) {
+                    apply_brightness(pixel, multiplier);
+                }
+            }
+            FrameFilter::Opacity(opacity) => {
+                for pixel in block.chunks_exact_mut(4) {
+                    apply_opacity(pixel, u32::from(opacity));
+                }
+            }
+            FrameFilter::CropPad { .. } => {
+                unreachable!("coordinate-dependent crop filters are handled before pixel filters")
+            }
+            FrameFilter::ColorCorrection(_) => {
+                unreachable!("color correction filters are handled with their gamma lookup table")
             }
         });
     }
@@ -1018,6 +1044,121 @@ fn apply_brightness(pixel: &mut [u8], multiplier: i32) {
 /// Scales the alpha channel by a 0-255 opacity.
 fn apply_opacity(pixel: &mut [u8], opacity: u32) {
     pixel[3] = to_byte(divide_by_255(u32::from(pixel[3]) * opacity));
+}
+
+#[derive(Clone, Copy)]
+struct ColorCorrectionParameters {
+    gamma_exponent: f32,
+    contrast: f32,
+    brightness: f32,
+    saturation: f32,
+    hue_matrix: [f32; 9],
+    opacity: f32,
+}
+
+impl ColorCorrectionParameters {
+    /// Precomputes the matrix/scalars that are constant across a frame.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "all fixed-point color controls are bounded to small UI ranges"
+    )]
+    fn new(correction: ColorCorrection) -> Self {
+        let gamma = correction.gamma_milli() as f32 / 1_000.0;
+        let gamma_exponent = if gamma < 0.0 {
+            -gamma + 1.0
+        } else {
+            1.0 / (gamma + 1.0)
+        };
+        let contrast_value = correction.contrast_milli() as f32 / 1_000.0;
+        let contrast = if contrast_value < 0.0 {
+            1.0 / (-contrast_value + 1.0)
+        } else {
+            contrast_value + 1.0
+        };
+        let saturation = correction.saturation_milli() as f32 / 1_000.0 + 1.0;
+        let half_angle = correction.hue_shift_degrees() as f32 * std::f32::consts::PI / 360.0;
+        let quaternion_axis = (1.0 / 3.0_f32.sqrt()) * half_angle.sin();
+        let square = quaternion_axis * quaternion_axis;
+        let cross = square;
+        let wimag = quaternion_axis * half_angle.cos();
+        let diagonal = 0.5 - 2.0 * square;
+        let a_line = cross + wimag;
+        let b_line = cross - wimag;
+        Self {
+            gamma_exponent,
+            contrast,
+            brightness: correction.brightness_milli() as f32 / 1_000.0,
+            saturation,
+            hue_matrix: [
+                2.0 * diagonal,
+                2.0 * b_line,
+                2.0 * a_line,
+                2.0 * a_line,
+                2.0 * diagonal,
+                2.0 * b_line,
+                2.0 * b_line,
+                2.0 * a_line,
+                2.0 * diagonal,
+            ],
+            opacity: correction.opacity_milli() as f32 / 1_000.0,
+        }
+    }
+
+    /// Builds a bounded 8-bit lookup table for the per-channel gamma step.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the table index is bounded to the 8-bit channel range"
+    )]
+    fn gamma_lut(self) -> [f32; 256] {
+        let mut table = [0.0; 256];
+        for (index, value) in table.iter_mut().enumerate() {
+            *value = (index as f32 / 255.0).powf(self.gamma_exponent);
+        }
+        table
+    }
+}
+
+/// Applies the six numeric controls of OBS's v2 Color Correction filter.
+///
+/// The media contract stores straight-alpha RGBA8 frames, so the operation is
+/// evaluated on straight RGB and opacity is applied to alpha only. This keeps
+/// the no-op correction bit-for-bit stable while matching the visible color
+/// operation order: gamma, contrast/brightness, saturation, hue, opacity.
+fn apply_color_correction(
+    pixel: &mut [u8],
+    parameters: ColorCorrectionParameters,
+    gamma_lut: &[f32; 256],
+) {
+    let mut red = gamma_lut[usize::from(pixel[0])];
+    let mut green = gamma_lut[usize::from(pixel[1])];
+    let mut blue = gamma_lut[usize::from(pixel[2])];
+
+    red = red * parameters.contrast + parameters.brightness;
+    green = green * parameters.contrast + parameters.brightness;
+    blue = blue * parameters.contrast + parameters.brightness;
+
+    let luma = red * 0.299 + green * 0.587 + blue * 0.114;
+    red = luma + parameters.saturation * (red - luma);
+    green = luma + parameters.saturation * (green - luma);
+    blue = luma + parameters.saturation * (blue - luma);
+
+    let matrix = parameters.hue_matrix;
+    let red_hue = matrix[0] * red + matrix[1] * green + matrix[2] * blue;
+    let green_hue = matrix[3] * red + matrix[4] * green + matrix[5] * blue;
+    let blue_hue = matrix[6] * red + matrix[7] * green + matrix[8] * blue;
+    pixel[0] = float_to_byte(red_hue);
+    pixel[1] = float_to_byte(green_hue);
+    pixel[2] = float_to_byte(blue_hue);
+    pixel[3] = float_to_byte(f32::from(pixel[3]) / 255.0 * parameters.opacity);
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamping and rounding constrain the value to the byte range"
+)]
+fn float_to_byte(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
 /// Divides by 255 exactly, without a division instruction.

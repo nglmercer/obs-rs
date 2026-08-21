@@ -1,6 +1,6 @@
 use super::*;
 use obs_rs_config::Config;
-use obs_rs_media::{FrameFilter, FrameRate, FrameTransform, VideoFormat};
+use obs_rs_media::{ColorCorrection, FrameFilter, FrameRate, FrameTransform, VideoFormat};
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
 use std::path::PathBuf;
@@ -749,7 +749,12 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
         .dispatch(ProjectCommand::SetSourceFilters {
             profile: "live".to_owned(),
             source: "background".to_owned(),
-            filters: vec![FrameFilter::Grayscale],
+            filters: vec![
+                FrameFilter::Grayscale,
+                FrameFilter::ColorCorrection(
+                    ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("color correction"),
+                ),
+            ],
         })
         .expect("set source filters command");
     session

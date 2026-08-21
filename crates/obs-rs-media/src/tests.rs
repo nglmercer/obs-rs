@@ -210,6 +210,26 @@ fn crop_pad_filter_clears_edges_without_changing_frame_geometry() {
 }
 
 #[test]
+fn color_correction_uses_fixed_point_obs_ranges_and_preserves_noop_frames() {
+    let format =
+        VideoFormat::new(1, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let frame = VideoFrame::solid(format, Timestamp::ZERO, [64, 128, 255, 255]);
+    let identity = ColorCorrection::new(0, 0, 0, 0, 0, 1_000).expect("identity");
+    assert_eq!(
+        frame.filtered(FrameFilter::ColorCorrection(identity)),
+        frame
+    );
+
+    let corrected = frame.filtered(FrameFilter::ColorCorrection(
+        ColorCorrection::new(1_000, 0, 0, 0, 0, 500).expect("gamma and opacity"),
+    ));
+    assert_eq!(corrected.pixel(0, 0), Some([128, 181, 255, 128]));
+    assert!(
+        ColorCorrection::new(ColorCorrection::MIN_GAMMA_MILLI - 1, 0, 0, 0, 0, 1_000,).is_none()
+    );
+}
+
+#[test]
 fn shared_capture_storage_clones_without_copy_and_detaches_on_mutation() {
     // Thread-scoped counters: the process-wide ones are perturbed by any other
     // test rendering concurrently in this binary.
@@ -597,6 +617,16 @@ fn composition_primitives_timing_report() {
         Box::new(move || {
             let mut target = frame.clone();
             target.apply_filter(crop);
+            std::hint::black_box(target);
+        }),
+    );
+    let frame = background.clone();
+    let correction = ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("correction");
+    measure(
+        "clone + color-correction",
+        Box::new(move || {
+            let mut target = frame.clone();
+            target.apply_filter(FrameFilter::ColorCorrection(correction));
             std::hint::black_box(target);
         }),
     );
