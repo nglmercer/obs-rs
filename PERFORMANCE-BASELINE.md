@@ -94,24 +94,26 @@ in the live metrics string.
 
 ## Crop/Pad filter evidence
 
-The Crop/Pad packet keeps the effect in-place and bounded: it clears edge pixels
-without changing frame geometry, and the WGPU path carries every filter in a
-fixed five-word record so the shader does not parse variable-length data.
+The Crop/Pad and Color Key packets keep their effects in-place and bounded: Crop/Pad
+clears edge pixels without changing frame geometry, while Color Key adjusts alpha
+from a normalized RGB distance and canonicalizes fully transparent pixels. The WGPU
+path carries every filter in a fixed seven-word record so the shader does not parse
+variable-length data.
 
 ```text
 cargo test --release -p obs-rs-media -- --ignored --nocapture composition_primitives_timing_report
 ```
 
-The ignored timing report now includes `clone + crop-pad` beside the existing
-transform, blend, grayscale, and solid-frame measurements. CPU and WGPU
-correctness are covered separately by the media filter test and the WGPU
-CPU-oracle/readback test; this is evidence for repeatable local measurement,
-not a 60 FPS acceptance result. On 2026-08-21 in this workspace's release
-profile, the 640x360 `clone + crop-pad` sample averaged `431.275 µs` over 200
-runs and `clone + color-correction` averaged `2.870357 ms` over 200 runs. The
-color correction path is deliberately recorded as a correctness/performance
-warning: it currently uses bounded scalar `powf`/matrix math and is not a
-60-FPS acceptance result at full-frame CPU resolution.
+The ignored timing report now includes `clone + crop-pad`, `clone +
+color-correction`, and `clone + color-key` beside the existing transform, blend,
+grayscale, and solid-frame measurements. CPU and WGPU correctness are covered
+separately by the media filter test and the WGPU CPU-oracle/readback test; this is
+evidence for repeatable local measurement, not a 60 FPS acceptance result. On
+2026-08-21 in this workspace's release profile, the 640x360 samples averaged
+`132.794 µs` for Crop/Pad, `618.948 µs` for Color Correction, and `847.483 µs`
+for Color Key over 200 runs. These are local samples rather than acceptance
+thresholds; full-resolution CPU filter performance still requires the Phase 16
+comparison suite.
 
 ## Phase 1 render-target evidence
 

@@ -6,7 +6,7 @@
 //! component or another comma-separated serialization format.
 
 use obs_rs_config::Config;
-use obs_rs_media::ColorCorrection;
+use obs_rs_media::{ColorCorrection, ColorKey};
 use obs_rs_ui::UiLocale;
 use slint::{Brush, ModelRc, SharedString, VecModel};
 
@@ -128,12 +128,56 @@ const COLOR_CORRECTION: [Field; 6] = [
     },
 ];
 
+const COLOR_KEY: [Field; 5] = [
+    Field {
+        key: "key_red",
+        english: "Key red",
+        spanish: "Rojo clave",
+        minimum: 0,
+        maximum: 255,
+        default: "0",
+    },
+    Field {
+        key: "key_green",
+        english: "Key green",
+        spanish: "Verde clave",
+        minimum: 0,
+        maximum: 255,
+        default: "255",
+    },
+    Field {
+        key: "key_blue",
+        english: "Key blue",
+        spanish: "Azul clave",
+        minimum: 0,
+        maximum: 255,
+        default: "0",
+    },
+    Field {
+        key: "similarity",
+        english: "Similarity",
+        spanish: "Similitud",
+        minimum: ColorKey::MIN_SIMILARITY_MILLI,
+        maximum: ColorKey::MAX_SIMILARITY_MILLI,
+        default: "120",
+    },
+    Field {
+        key: "smoothness",
+        english: "Smoothness",
+        spanish: "Suavidad",
+        minimum: ColorKey::MIN_SMOOTHNESS_MILLI,
+        maximum: ColorKey::MAX_SMOOTHNESS_MILLI,
+        default: "80",
+    },
+];
+
 fn fields(kind: &str) -> &'static [Field] {
     match kind {
         "brightness" => &BRIGHTNESS,
         "opacity" => &OPACITY,
         "crop_pad" => &CROP_PAD,
         "color_correction" => &COLOR_CORRECTION,
+        "color_key" => &COLOR_KEY,
         _ => &[],
     }
 }
@@ -203,5 +247,15 @@ mod tests {
         assert_eq!(rows[0].maximum, ColorCorrection::MAX_GAMMA_MILLI);
         assert_eq!(rows[3].maximum, ColorCorrection::MAX_SATURATION_MILLI);
         assert_eq!(rows[5].number, ColorCorrection::MAX_OPACITY_MILLI);
+    }
+
+    #[test]
+    fn color_key_schema_has_bounded_rgb_and_threshold_fields() {
+        let rows = rows("color_key", "", UiLocale::English);
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0].number, 0);
+        assert_eq!(rows[1].number, 255);
+        assert_eq!(rows[3].maximum, ColorKey::MAX_SIMILARITY_MILLI);
+        assert_eq!(rows[4].text, "80");
     }
 }

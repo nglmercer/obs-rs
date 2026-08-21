@@ -113,6 +113,82 @@ impl ColorCorrection {
     }
 }
 
+/// Fixed-point parameters for the portable RGB-distance Color Key slice.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ColorKey {
+    key_red: u8,
+    key_green: u8,
+    key_blue: u8,
+    similarity_milli: i32,
+    smoothness_milli: i32,
+}
+
+impl ColorKey {
+    /// Smallest similarity threshold, in thousandths.
+    pub const MIN_SIMILARITY_MILLI: i32 = 0;
+    /// Largest similarity threshold, in thousandths.
+    pub const MAX_SIMILARITY_MILLI: i32 = 1_000;
+    /// Smallest smoothness threshold, in thousandths.
+    pub const MIN_SMOOTHNESS_MILLI: i32 = 0;
+    /// Largest smoothness threshold, in thousandths.
+    pub const MAX_SMOOTHNESS_MILLI: i32 = 1_000;
+
+    /// Creates bounded RGB-distance key parameters.
+    #[must_use]
+    pub const fn new(
+        key_red: u8,
+        key_green: u8,
+        key_blue: u8,
+        similarity_milli: i32,
+        smoothness_milli: i32,
+    ) -> Option<Self> {
+        if similarity_milli < Self::MIN_SIMILARITY_MILLI
+            || similarity_milli > Self::MAX_SIMILARITY_MILLI
+            || smoothness_milli < Self::MIN_SMOOTHNESS_MILLI
+            || smoothness_milli > Self::MAX_SMOOTHNESS_MILLI
+        {
+            return None;
+        }
+        Some(Self {
+            key_red,
+            key_green,
+            key_blue,
+            similarity_milli,
+            smoothness_milli,
+        })
+    }
+
+    /// Returns the red component of the key color.
+    #[must_use]
+    pub const fn key_red(self) -> u8 {
+        self.key_red
+    }
+
+    /// Returns the green component of the key color.
+    #[must_use]
+    pub const fn key_green(self) -> u8 {
+        self.key_green
+    }
+
+    /// Returns the blue component of the key color.
+    #[must_use]
+    pub const fn key_blue(self) -> u8 {
+        self.key_blue
+    }
+
+    /// Returns the similarity threshold in thousandths of the maximum RGB distance.
+    #[must_use]
+    pub const fn similarity_milli(self) -> i32 {
+        self.similarity_milli
+    }
+
+    /// Returns the smoothness threshold in thousandths of the maximum RGB distance.
+    #[must_use]
+    pub const fn smoothness_milli(self) -> i32 {
+        self.smoothness_milli
+    }
+}
+
 /// A deterministic CPU filter applied after a scene-item transform.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrameFilter {
@@ -135,4 +211,6 @@ pub enum FrameFilter {
     },
     /// Applies the portable six-control Color Correction effect.
     ColorCorrection(ColorCorrection),
+    /// Makes pixels within a bounded RGB distance transparent.
+    ColorKey(ColorKey),
 }

@@ -230,6 +230,31 @@ fn color_correction_uses_fixed_point_obs_ranges_and_preserves_noop_frames() {
 }
 
 #[test]
+fn color_key_clears_matching_pixels_and_feathers_the_edge() {
+    let format =
+        VideoFormat::new(3, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let frame = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![0, 255, 0, 255, 32, 52, 200, 255, 255, 0, 0, 255],
+    )
+    .expect("frame");
+    let key = ColorKey::new(0, 255, 0, 0, 0).expect("exact key");
+    let keyed = frame.filtered(FrameFilter::ColorKey(key));
+
+    assert_eq!(keyed.pixel(0, 0), Some([0, 0, 0, 0]));
+    assert_eq!(keyed.pixel(1, 0), Some([32, 52, 200, 255]));
+    assert_eq!(keyed.pixel(2, 0), Some([255, 0, 0, 255]));
+
+    let feathered = frame.filtered(FrameFilter::ColorKey(
+        ColorKey::new(0, 255, 0, 0, 1_000).expect("feathered key"),
+    ));
+    assert!(feathered.pixel(1, 0).expect("middle pixel")[3] < 255);
+    assert!(ColorKey::new(0, 0, 0, 1_001, 0).is_none());
+    assert!(ColorKey::new(0, 0, 0, 0, -1).is_none());
+}
+
+#[test]
 fn shared_capture_storage_clones_without_copy_and_detaches_on_mutation() {
     // Thread-scoped counters: the process-wide ones are perturbed by any other
     // test rendering concurrently in this binary.
@@ -558,6 +583,7 @@ fn composition_primitives_timing_report() {
         right: 8,
         bottom: 8,
     };
+    let color_key = ColorKey::new(32, 52, 200, 100, 100).expect("color key");
     let runs = 200;
 
     let measure = |label: &str, mut work: Box<dyn FnMut()>| {
@@ -627,6 +653,15 @@ fn composition_primitives_timing_report() {
         Box::new(move || {
             let mut target = frame.clone();
             target.apply_filter(FrameFilter::ColorCorrection(correction));
+            std::hint::black_box(target);
+        }),
+    );
+    let frame = background.clone();
+    measure(
+        "clone + color-key",
+        Box::new(move || {
+            let mut target = frame.clone();
+            target.apply_filter(FrameFilter::ColorKey(color_key));
             std::hint::black_box(target);
         }),
     );

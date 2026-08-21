@@ -1,6 +1,8 @@
 use super::*;
 use obs_rs_config::Config;
-use obs_rs_media::{ColorCorrection, FrameFilter, FrameRate, FrameTransform, VideoFormat};
+use obs_rs_media::{
+    ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, VideoFormat,
+};
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
 use std::path::PathBuf;
@@ -754,6 +756,7 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
                 FrameFilter::ColorCorrection(
                     ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("color correction"),
                 ),
+                FrameFilter::ColorKey(ColorKey::new(0, 255, 0, 120, 80).expect("color key")),
             ],
         })
         .expect("set source filters command");

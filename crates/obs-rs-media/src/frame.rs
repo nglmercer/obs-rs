@@ -1,6 +1,6 @@
 use super::{
     error::MediaError,
-    filters::{ColorCorrection, FrameFilter},
+    filters::{ColorCorrection, ColorKey, FrameFilter},
     format::VideoFormat,
     time::Timestamp,
     transform::FrameTransform,
@@ -824,14 +824,16 @@ impl VideoFrame {
         if filters.is_empty() {
             return;
         }
-        // Crop/Pad is coordinate-dependent, and Color Correction has a small
-        // derived matrix that should be built once per frame rather than once
-        // per pixel. Apply both as their own bounded pass while retaining the
-        // ordered semantics of filters around them.
+        // Crop/Pad is coordinate-dependent, and Color Correction/Color Key
+        // have derived parameters that should be built once per frame rather
+        // than once per pixel. Apply them as their own bounded passes while
+        // retaining the ordered semantics of filters around them.
         if filters.iter().any(|filter| {
             matches!(
                 filter,
-                FrameFilter::CropPad { .. } | FrameFilter::ColorCorrection(_)
+                FrameFilter::CropPad { .. }
+                    | FrameFilter::ColorCorrection(_)
+                    | FrameFilter::ColorKey(_)
             )
         }) {
             for filter in filters {
@@ -875,6 +877,9 @@ impl VideoFrame {
                         FrameFilter::ColorCorrection(_) => unreachable!(
                             "derived color correction filters are handled before pixel filters"
                         ),
+                        FrameFilter::ColorKey(_) => unreachable!(
+                            "derived color key filters are handled before pixel filters"
+                        ),
                     }
                 }
             }
@@ -888,6 +893,15 @@ impl VideoFrame {
             for_each_block(self.pixels_mut(), move |block| {
                 for pixel in block.chunks_exact_mut(4) {
                     apply_color_correction(pixel, parameters, &gamma_lut);
+                }
+            });
+            return;
+        }
+        if let FrameFilter::ColorKey(color_key) = filter {
+            let parameters = ColorKeyParameters::new(color_key);
+            for_each_block(self.pixels_mut(), move |block| {
+                for pixel in block.chunks_exact_mut(4) {
+                    apply_color_key(pixel, parameters);
                 }
             });
             return;
@@ -914,6 +928,9 @@ impl VideoFrame {
             }
             FrameFilter::ColorCorrection(_) => {
                 unreachable!("color correction filters are handled with their gamma lookup table")
+            }
+            FrameFilter::ColorKey(_) => {
+                unreachable!("color key filters are handled with derived parameters")
             }
         });
     }
@@ -1150,6 +1167,61 @@ fn apply_color_correction(
     pixel[1] = float_to_byte(green_hue);
     pixel[2] = float_to_byte(blue_hue);
     pixel[3] = float_to_byte(f32::from(pixel[3]) / 255.0 * parameters.opacity);
+}
+
+#[derive(Clone, Copy)]
+struct ColorKeyParameters {
+    key_red: f32,
+    key_green: f32,
+    key_blue: f32,
+    similarity: f32,
+    smoothness: f32,
+}
+
+impl ColorKeyParameters {
+    /// Precomputes normalized key thresholds that are constant across a frame.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the key channels and thresholds are bounded to byte/UI ranges"
+    )]
+    fn new(color_key: ColorKey) -> Self {
+        Self {
+            key_red: f32::from(color_key.key_red()) / 255.0,
+            key_green: f32::from(color_key.key_green()) / 255.0,
+            key_blue: f32::from(color_key.key_blue()) / 255.0,
+            similarity: color_key.similarity_milli() as f32 / 1_000.0,
+            smoothness: color_key.smoothness_milli() as f32 / 1_000.0,
+        }
+    }
+}
+
+/// Applies a bounded RGB-distance key and canonicalizes fully transparent
+/// pixels so CPU and GPU compositor paths share the same straight-alpha form.
+fn apply_color_key(pixel: &mut [u8], parameters: ColorKeyParameters) {
+    let red = f32::from(pixel[0]) / 255.0;
+    let green = f32::from(pixel[1]) / 255.0;
+    let blue = f32::from(pixel[2]) / 255.0;
+    let red_delta = red - parameters.key_red;
+    let green_delta = green - parameters.key_green;
+    let blue_delta = blue - parameters.key_blue;
+    let distance = (red_delta * red_delta + green_delta * green_delta + blue_delta * blue_delta)
+        .sqrt()
+        / 3.0_f32.sqrt();
+    let alpha_factor = if distance <= parameters.similarity {
+        0.0
+    } else if parameters.smoothness <= 0.0
+        || distance >= parameters.similarity + parameters.smoothness
+    {
+        1.0
+    } else {
+        (distance - parameters.similarity) / parameters.smoothness
+    };
+    pixel[3] = float_to_byte(f32::from(pixel[3]) / 255.0 * alpha_factor);
+    if pixel[3] == 0 {
+        pixel[0] = 0;
+        pixel[1] = 0;
+        pixel[2] = 0;
+    }
 }
 
 #[allow(

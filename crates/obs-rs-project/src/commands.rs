@@ -1152,6 +1152,21 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
             }
             ("color_correction", "Color Correction", settings)
         }
+        FrameFilter::ColorKey(color_key) => {
+            let mut settings = Config::new();
+            for (key, value) in [
+                ("key_red", i32::from(color_key.key_red())),
+                ("key_green", i32::from(color_key.key_green())),
+                ("key_blue", i32::from(color_key.key_blue())),
+                ("similarity", color_key.similarity_milli()),
+                ("smoothness", color_key.smoothness_milli()),
+            ] {
+                settings
+                    .set(key, &value.to_string())
+                    .map_err(ProjectError::Config)?;
+            }
+            ("color_key", "Color Key", settings)
+        }
     };
     SourceFilterSpec::with_category(
         &format!("legacy_filter_{}", index.saturating_add(1)),

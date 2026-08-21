@@ -22,8 +22,8 @@ use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
 use obs_rs_core::{Runtime, RuntimeError};
 use obs_rs_media::{
-    ColorCorrection, FrameFilter, FrameRate, FrameTransform, LatencyMetrics, RawVideoFrame,
-    Timestamp, VideoFormat, VideoFrame,
+    ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, LatencyMetrics,
+    RawVideoFrame, Timestamp, VideoFormat, VideoFrame,
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
@@ -2027,6 +2027,17 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
                 read_value("opacity")?,
             )?))
         }
+        "color_key" => {
+            let read_channel = |key| spec.settings().get(key)?.parse::<u8>().ok();
+            let read_threshold = |key| spec.settings().get(key)?.parse::<i32>().ok();
+            Some(FrameFilter::ColorKey(ColorKey::new(
+                read_channel("key_red")?,
+                read_channel("key_green")?,
+                read_channel("key_blue")?,
+                read_threshold("similarity")?,
+                read_threshold("smoothness")?,
+            )?))
+        }
         _ => None,
     }
 }
@@ -2380,6 +2391,23 @@ mod tests {
             compile_filter(&color_correction),
             Some(FrameFilter::ColorCorrection(
                 ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("valid color correction"),
+            ))
+        );
+
+        let color_key = SourceFilterSpec::new(
+            "key",
+            "Color Key",
+            "color_key",
+            Config::parse(
+                "key_blue = 0\nkey_green = 255\nkey_red = 0\nsimilarity = 120\nsmoothness = 80\n",
+            )
+            .expect("color key settings"),
+        )
+        .expect("color key filter");
+        assert_eq!(
+            compile_filter(&color_key),
+            Some(FrameFilter::ColorKey(
+                ColorKey::new(0, 255, 0, 120, 80).expect("valid color key"),
             ))
         );
 

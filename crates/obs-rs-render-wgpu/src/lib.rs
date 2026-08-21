@@ -47,8 +47,8 @@ mod tests {
     #[test]
     fn gpu_upload_layer_submission_readback_and_recovery_are_explicit() {
         use obs_rs_media::{
-            ColorCorrection, FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat,
-            VideoFrame,
+            ColorCorrection, ColorKey, FrameFilter, FrameRate, FrameTransform, Timestamp,
+            VideoFormat, VideoFrame,
         };
         use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderError, SceneLayer};
 
@@ -116,6 +116,33 @@ mod tests {
             );
         }
         assert_eq!(backend.metrics().readbacks(), 2);
+
+        let color_key = ColorKey::new(32, 52, 200, 100, 100).expect("valid color key");
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[FrameFilter::ColorKey(color_key)],
+                )],
+            )
+            .expect("GPU color key");
+        let gpu_keyed = backend.readback(target).expect("color key readback");
+        let mut cpu_keyed = frame.clone();
+        cpu_keyed.apply_filter(FrameFilter::ColorKey(color_key));
+        for (index, (actual, expected)) in gpu_keyed
+            .pixels()
+            .iter()
+            .zip(cpu_keyed.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "color key channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 3);
 
         let rotated_transform = FrameTransform::IDENTITY
             .with_rotation_degrees(90)

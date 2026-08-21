@@ -1053,6 +1053,23 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
             pixel.b = i32(floor(color.b * 255.0 + 0.5));
             let opacity = parameters.values[filter_offset + 6];
             pixel.a = i32(floor(f32(pixel.a) * f32(opacity) / 1000.0 + 0.5));
+        } else if (kind == 5) {
+            let key = vec3<f32>(
+                f32(parameters.values[filter_offset + 1]),
+                f32(parameters.values[filter_offset + 2]),
+                f32(parameters.values[filter_offset + 3]),
+            ) / 255.0;
+            let color = vec3<f32>(f32(pixel.r), f32(pixel.g), f32(pixel.b)) / 255.0;
+            let distance = length(color - key) / sqrt(3.0);
+            let similarity = f32(parameters.values[filter_offset + 4]) / 1000.0;
+            let smoothness = f32(parameters.values[filter_offset + 5]) / 1000.0;
+            var alpha_factor = 1.0;
+            if (distance <= similarity) {
+                alpha_factor = 0.0;
+            } else if (smoothness > 0.0 && distance < similarity + smoothness) {
+                alpha_factor = (distance - similarity) / smoothness;
+            }
+            pixel.a = i32(floor(f32(pixel.a) * alpha_factor + 0.5));
         }
         filter_index = filter_index + 1;
     }
@@ -1200,6 +1217,15 @@ fn layer_parameters(
                 correction.saturation_milli(),
                 correction.hue_shift_degrees(),
                 correction.opacity_milli(),
+            ]),
+            FrameFilter::ColorKey(color_key) => values.extend([
+                5,
+                i32::from(color_key.key_red()),
+                i32::from(color_key.key_green()),
+                i32::from(color_key.key_blue()),
+                color_key.similarity_milli(),
+                color_key.smoothness_milli(),
+                0,
             ]),
         }
     }
