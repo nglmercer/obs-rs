@@ -198,6 +198,33 @@ mod tests {
         }
         assert_eq!(backend.metrics().readbacks(), 5);
 
+        let sharpen = FrameFilter::Sharpen { milli: 80 };
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[sharpen],
+                )],
+            )
+            .expect("GPU sharpen");
+        let gpu_sharpened = backend.readback(target).expect("sharpen readback");
+        let mut cpu_sharpened = frame.clone();
+        cpu_sharpened.apply_filter(sharpen);
+        for (index, (actual, expected)) in gpu_sharpened
+            .pixels()
+            .iter()
+            .zip(cpu_sharpened.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "sharpen channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 6);
+
         let rotated_transform = FrameTransform::IDENTITY
             .with_rotation_degrees(90)
             .expect("rotation");

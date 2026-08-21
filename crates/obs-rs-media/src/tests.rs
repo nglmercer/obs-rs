@@ -290,6 +290,24 @@ fn chroma_key_uses_ycbcr_distance_and_reduces_spill() {
 }
 
 #[test]
+fn sharpen_uses_a_bounded_three_by_three_kernel() {
+    let format =
+        VideoFormat::new(3, 3, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let mut pixels: Vec<u8> = (0..9).flat_map(|_| [100, 100, 100, 255]).collect();
+    pixels[4 * 4..4 * 4 + 4].copy_from_slice(&[120, 120, 120, 255]);
+    let frame = VideoFrame::new(format, Timestamp::ZERO, pixels).expect("frame");
+    let sharpened = frame.filtered(FrameFilter::Sharpen { milli: 500 });
+
+    assert_eq!(sharpened.pixel(1, 1), Some([200, 200, 200, 255]));
+    assert_eq!(sharpened.pixel(0, 0), Some([100, 100, 100, 255]));
+    assert_eq!(
+        VideoFrame::solid(format, Timestamp::ZERO, [64, 128, 192, 255])
+            .filtered(FrameFilter::Sharpen { milli: 1_000 }),
+        VideoFrame::solid(format, Timestamp::ZERO, [64, 128, 192, 255])
+    );
+}
+
+#[test]
 fn luma_key_keeps_the_interval_and_smooths_both_edges() {
     let format =
         VideoFormat::new(4, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
@@ -652,6 +670,7 @@ fn composition_primitives_timing_report() {
     let color_key = ColorKey::new(32, 52, 200, 100, 100).expect("color key");
     let luma_key = LumaKey::new(900, 100, 40, 60).expect("luma key");
     let chroma_key = ChromaKey::new(0, 255, 0, 400, 80, 100).expect("chroma key");
+    let sharpen = FrameFilter::Sharpen { milli: 80 };
     let runs = 200;
 
     let measure = |label: &str, mut work: Box<dyn FnMut()>| {
@@ -748,6 +767,15 @@ fn composition_primitives_timing_report() {
         Box::new(move || {
             let mut target = frame.clone();
             target.apply_filter(FrameFilter::ChromaKey(chroma_key));
+            std::hint::black_box(target);
+        }),
+    );
+    let frame = background.clone();
+    measure(
+        "clone + sharpen",
+        Box::new(move || {
+            let mut target = frame.clone();
+            target.apply_filter(sharpen);
             std::hint::black_box(target);
         }),
     );

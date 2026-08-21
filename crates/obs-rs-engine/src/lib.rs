@@ -2063,6 +2063,12 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
                 read_threshold("spill")?,
             )?))
         }
+        "sharpen" => spec
+            .settings()
+            .get("sharpness")
+            .and_then(|value| value.parse::<u16>().ok())
+            .filter(|value| *value <= 1_000)
+            .map(|milli| FrameFilter::Sharpen { milli }),
         _ => None,
     }
 }
@@ -2472,6 +2478,18 @@ mod tests {
             Some(FrameFilter::ChromaKey(
                 ChromaKey::new(0, 255, 0, 400, 80, 100).expect("valid chroma key"),
             ))
+        );
+
+        let sharpen = SourceFilterSpec::new(
+            "sharpen",
+            "Sharpen",
+            "sharpen",
+            Config::parse("sharpness = 80\n").expect("sharpen settings"),
+        )
+        .expect("sharpen filter");
+        assert_eq!(
+            compile_filter(&sharpen),
+            Some(FrameFilter::Sharpen { milli: 80 })
         );
 
         let mut disabled = brightness.clone();

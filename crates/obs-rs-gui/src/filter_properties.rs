@@ -257,6 +257,15 @@ const CHROMA_KEY: [Field; 6] = [
     },
 ];
 
+const SHARPEN: [Field; 1] = [Field {
+    key: "sharpness",
+    english: "Sharpness",
+    spanish: "Nitidez",
+    minimum: 0,
+    maximum: 1_000,
+    default: "80",
+}];
+
 fn fields(kind: &str) -> &'static [Field] {
     match kind {
         "brightness" => &BRIGHTNESS,
@@ -266,6 +275,7 @@ fn fields(kind: &str) -> &'static [Field] {
         "luma_key" => &LUMA_KEY,
         "color_key" => &COLOR_KEY,
         "chroma_key" => &CHROMA_KEY,
+        "sharpen" => &SHARPEN,
         _ => &[],
     }
 }
@@ -365,5 +375,14 @@ mod tests {
         assert_eq!(rows[3].number, 400);
         assert_eq!(rows[4].minimum, ChromaKey::MIN_SMOOTHNESS_MILLI);
         assert_eq!(rows[5].text, "100");
+    }
+
+    #[test]
+    fn sharpen_schema_uses_the_bounded_strength_field() {
+        let rows = rows("sharpen", "", UiLocale::Spanish);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].number, 80);
+        assert_eq!(rows[0].maximum, 1_000);
+        assert_eq!(rows[0].label, "Nitidez");
     }
 }

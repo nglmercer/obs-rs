@@ -836,6 +836,7 @@ impl VideoFrame {
                     | FrameFilter::LumaKey(_)
                     | FrameFilter::ColorKey(_)
                     | FrameFilter::ChromaKey(_)
+                    | FrameFilter::Sharpen { .. }
             )
         }) {
             for filter in filters {
@@ -846,6 +847,7 @@ impl VideoFrame {
                         right,
                         bottom,
                     } => self.apply_crop_pad(left, top, right, bottom),
+                    FrameFilter::Sharpen { milli } => self.apply_sharpen(milli),
                     _ => self.apply_single_pixel_filter(*filter),
                 }
             }
@@ -887,6 +889,9 @@ impl VideoFrame {
                         ),
                         FrameFilter::ChromaKey(_) => unreachable!(
                             "derived chroma key filters are handled before pixel filters"
+                        ),
+                        FrameFilter::Sharpen { .. } => unreachable!(
+                            "neighbour-based sharpen filters are handled before pixel filters"
                         ),
                     }
                 }
@@ -964,6 +969,9 @@ impl VideoFrame {
             FrameFilter::ChromaKey(_) => {
                 unreachable!("chroma key filters are handled with derived parameters")
             }
+            FrameFilter::Sharpen { .. } => {
+                unreachable!("sharpen filters are handled with the source snapshot")
+            }
         });
     }
 
@@ -983,6 +991,87 @@ impl VideoFrame {
                 for (x, pixel) in row.chunks_exact_mut(4).enumerate() {
                     if outside_vertical || x < left || x >= width.saturating_sub(right) {
                         pixel.copy_from_slice(&[0, 0, 0, 0]);
+                    }
+                }
+            });
+    }
+
+    /// Applies OBS's bounded 3x3 sharpen kernel using a copy-on-write source
+    /// snapshot. Clamped neighbours match the effect sampler at frame edges,
+    /// and the snapshot keeps one ordered filter pass from reading pixels that
+    /// an earlier output pixel has already modified.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the fixed-point strength is bounded to the u16 UI range"
+    )]
+    fn apply_sharpen(&mut self, milli: u16) {
+        if milli == 0 {
+            return;
+        }
+        let source = Arc::clone(&self.pixels);
+        let width = self.format.width_index();
+        let height = self.format.height_index();
+        let strength = f32::from(milli.min(1_000)) / 1_000.0;
+        let pixels = self.pixels_mut();
+        pixels
+            .par_chunks_exact_mut(width * 4)
+            .enumerate()
+            .for_each(|(y, row)| {
+                let source = source.as_slice();
+                for x in 0..width {
+                    let center = source_pixel(source, width, height, x, y);
+                    let left = source_pixel(source, width, height, x.saturating_sub(1), y);
+                    let right = source_pixel(source, width, height, x.saturating_add(1), y);
+                    let top = source_pixel(source, width, height, x, y.saturating_sub(1));
+                    let bottom = source_pixel(source, width, height, x, y.saturating_add(1));
+                    let active =
+                        (left != center && right != center) || (top != center && bottom != center);
+                    let output = &mut row[x * 4..x * 4 + 4];
+                    if !active {
+                        output.copy_from_slice(&center);
+                        continue;
+                    }
+
+                    for channel in 0..4 {
+                        let mut kernel = 8.0 * f32::from(center[channel]);
+                        for neighbour in [
+                            left,
+                            right,
+                            top,
+                            bottom,
+                            source_pixel(
+                                source,
+                                width,
+                                height,
+                                x.saturating_sub(1),
+                                y.saturating_sub(1),
+                            ),
+                            source_pixel(
+                                source,
+                                width,
+                                height,
+                                x.saturating_add(1),
+                                y.saturating_sub(1),
+                            ),
+                            source_pixel(
+                                source,
+                                width,
+                                height,
+                                x.saturating_sub(1),
+                                y.saturating_add(1),
+                            ),
+                            source_pixel(
+                                source,
+                                width,
+                                height,
+                                x.saturating_add(1),
+                                y.saturating_add(1),
+                            ),
+                        ] {
+                            kernel -= f32::from(neighbour[channel]);
+                        }
+                        output[channel] =
+                            float_to_byte((f32::from(center[channel]) + kernel * strength) / 255.0);
                     }
                 }
             });
@@ -1404,6 +1493,19 @@ fn apply_chroma_key(pixel: &mut [u8], parameters: ChromaKeyParameters) {
         pixel[1] = 0;
         pixel[2] = 0;
     }
+}
+
+/// Reads one clamped RGBA pixel from a validated frame snapshot.
+fn source_pixel(source: &[u8], width: usize, height: usize, x: usize, y: usize) -> [u8; 4] {
+    let x = x.min(width.saturating_sub(1));
+    let y = y.min(height.saturating_sub(1));
+    let offset = (y * width + x) * 4;
+    [
+        source[offset],
+        source[offset + 1],
+        source[offset + 2],
+        source[offset + 3],
+    ]
 }
 
 #[allow(

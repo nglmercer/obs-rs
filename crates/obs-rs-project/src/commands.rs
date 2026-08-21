@@ -1201,6 +1201,13 @@ fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterS
             }
             ("chroma_key", "Chroma Key", settings)
         }
+        FrameFilter::Sharpen { milli } => {
+            let mut settings = Config::new();
+            settings
+                .set("sharpness", &milli.to_string())
+                .map_err(ProjectError::Config)?;
+            ("sharpen", "Sharpen", settings)
+        }
     };
     SourceFilterSpec::with_category(
         &format!("legacy_filter_{}", index.saturating_add(1)),

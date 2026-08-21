@@ -385,4 +385,6 @@ pub enum FrameFilter {
     ColorKey(ColorKey),
     /// Makes pixels near a bounded YCbCr chroma distance transparent.
     ChromaKey(ChromaKey),
+    /// Applies the bounded OBS 3x3 sharpen kernel in thousandths.
+    Sharpen { milli: u16 },
 }

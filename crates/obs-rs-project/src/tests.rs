@@ -766,6 +766,7 @@ fn command_session_tracks_dirty_state_and_rejects_bad_references() {
                 FrameFilter::ChromaKey(
                     ChromaKey::new(0, 255, 0, 400, 80, 100).expect("chroma key"),
                 ),
+                FrameFilter::Sharpen { milli: 80 },
             ],
         })
         .expect("set source filters command");

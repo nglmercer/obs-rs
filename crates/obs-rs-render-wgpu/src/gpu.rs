@@ -1157,6 +1157,74 @@ fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
             pixel.g = i32(floor(clamp(spill_color.g, 0.0, 1.0) * 255.0 + 0.5));
             pixel.b = i32(floor(clamp(spill_color.b, 0.0, 1.0) * 255.0 + 0.5));
             pixel.a = i32(floor(f32(pixel.a) * full_mask + 0.5));
+        } else if (kind == 8) {
+            let center = vec4<f32>(pixel) / 255.0;
+            let left_position = vec2<i32>(
+                clamp(source_x - 1, 0, source_width - 1),
+                source_y,
+            );
+            let right_position = vec2<i32>(
+                clamp(source_x + 1, 0, source_width - 1),
+                source_y,
+            );
+            let top_position = vec2<i32>(
+                source_x,
+                clamp(source_y - 1, 0, source_height - 1),
+            );
+            let bottom_position = vec2<i32>(
+                source_x,
+                clamp(source_y + 1, 0, source_height - 1),
+            );
+            let top_left_position = vec2<i32>(
+                clamp(source_x - 1, 0, source_width - 1),
+                clamp(source_y - 1, 0, source_height - 1),
+            );
+            let top_right_position = vec2<i32>(
+                clamp(source_x + 1, 0, source_width - 1),
+                clamp(source_y - 1, 0, source_height - 1),
+            );
+            let bottom_left_position = vec2<i32>(
+                clamp(source_x - 1, 0, source_width - 1),
+                clamp(source_y + 1, 0, source_height - 1),
+            );
+            let bottom_right_position = vec2<i32>(
+                clamp(source_x + 1, 0, source_width - 1),
+                clamp(source_y + 1, 0, source_height - 1),
+            );
+            let left = textureLoad(layer_texture, left_position, 0);
+            let right = textureLoad(layer_texture, right_position, 0);
+            let top = textureLoad(layer_texture, top_position, 0);
+            let bottom = textureLoad(layer_texture, bottom_position, 0);
+            let top_left = textureLoad(layer_texture, top_left_position, 0);
+            let top_right = textureLoad(layer_texture, top_right_position, 0);
+            let bottom_left = textureLoad(layer_texture, bottom_left_position, 0);
+            let bottom_right = textureLoad(layer_texture, bottom_right_position, 0);
+            let left_pixel = vec4<i32>(floor(left * 255.0 + vec4<f32>(0.5)));
+            let right_pixel = vec4<i32>(floor(right * 255.0 + vec4<f32>(0.5)));
+            let top_pixel = vec4<i32>(floor(top * 255.0 + vec4<f32>(0.5)));
+            let bottom_pixel = vec4<i32>(floor(bottom * 255.0 + vec4<f32>(0.5)));
+            let should_sharpen =
+                (any(left_pixel != pixel) && any(right_pixel != pixel)) ||
+                (any(top_pixel != pixel) && any(bottom_pixel != pixel));
+            if (should_sharpen) {
+                let top_left_pixel = vec4<i32>(floor(top_left * 255.0 + vec4<f32>(0.5)));
+                let top_right_pixel = vec4<i32>(floor(top_right * 255.0 + vec4<f32>(0.5)));
+                let bottom_left_pixel =
+                    vec4<i32>(floor(bottom_left * 255.0 + vec4<f32>(0.5)));
+                let bottom_right_pixel =
+                    vec4<i32>(floor(bottom_right * 255.0 + vec4<f32>(0.5)));
+                let kernel = vec4<f32>(
+                    8 * pixel - left_pixel - right_pixel - top_pixel - bottom_pixel -
+                        top_left_pixel - top_right_pixel - bottom_left_pixel - bottom_right_pixel,
+                ) / 255.0;
+                let strength = f32(parameters.values[filter_offset + 1]) / 1000.0;
+                let sharpened = clamp(
+                    center + kernel * strength,
+                    vec4<f32>(0.0),
+                    vec4<f32>(1.0),
+                );
+                pixel = vec4<i32>(floor(sharpened * 255.0 + vec4<f32>(0.5)));
+            }
         }
         filter_index = filter_index + 1;
     }
@@ -1332,6 +1400,7 @@ fn layer_parameters(
                 chroma_key.smoothness_milli(),
                 chroma_key.spill_milli(),
             ]),
+            FrameFilter::Sharpen { milli } => values.extend([8, i32::from(milli), 0, 0, 0, 0, 0]),
         }
     }
     values.into_iter().flat_map(i32::to_le_bytes).collect()
