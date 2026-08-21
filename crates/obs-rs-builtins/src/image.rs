@@ -16,6 +16,13 @@ const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 16_384;
 /// Maximum decoder allocation budget, including the decoded image buffer.
 const MAX_IMAGE_DECODE_BYTES: u64 = 128 * 1024 * 1024;
+/// Maximum number of entries held by the portable slideshow source.
+const MAX_SLIDESHOW_FILES: usize = 64;
+/// Maximum resident RGBA storage retained by one slideshow source.
+const MAX_SLIDESHOW_MEMORY_BYTES: usize = 256 * 1024 * 1024;
+/// OBS's lower and upper automatic slideshow interval bounds.
+const MIN_SLIDE_TIME_MS: u64 = 50;
+const MAX_SLIDE_TIME_MS: u64 = 3_600_000;
 
 pub(crate) struct ImageSourceFactory {
     kind: Identifier,
@@ -93,6 +100,160 @@ impl Source for ImageSource {
             .as_ref()
             .map(|frame| frame.at_timestamp(request.timestamp())))
     }
+}
+
+pub(crate) struct ImageSlideshowSourceFactory {
+    kind: Identifier,
+}
+
+impl ImageSlideshowSourceFactory {
+    pub(crate) fn new() -> Result<Self, PluginError> {
+        let kind = Identifier::new(crate::IMAGE_SLIDESHOW_SOURCE_KIND)
+            .map_err(PluginError::InvalidIdentifier)?;
+        Ok(Self { kind })
+    }
+}
+
+impl SourceFactory for ImageSlideshowSourceFactory {
+    fn kind(&self) -> &Identifier {
+        &self.kind
+    }
+
+    fn create(&self, name: &str, settings: &Config) -> Result<Box<dyn Source>, SourceError> {
+        Ok(Box::new(ImageSlideshowSource::from_settings(
+            self.kind.clone(),
+            name,
+            settings,
+        )?))
+    }
+}
+
+struct ImageSlideshowSource {
+    kind: Identifier,
+    name: String,
+    format: VideoFormat,
+    frames: Vec<VideoFrame>,
+    slide_time_nanos: u64,
+    loop_slides: bool,
+}
+
+impl ImageSlideshowSource {
+    fn from_settings(kind: Identifier, name: &str, settings: &Config) -> Result<Self, SourceError> {
+        if name.trim().is_empty() {
+            return Err(SourceError::invalid_setting("name", "source name is empty"));
+        }
+        let format = parse_format(settings)?;
+        let (frames, slide_time_nanos, loop_slides) = load_slideshow(format, settings)?;
+        Ok(Self {
+            kind,
+            name: name.to_owned(),
+            format,
+            frames,
+            slide_time_nanos,
+            loop_slides,
+        })
+    }
+}
+
+impl Source for ImageSlideshowSource {
+    fn kind(&self) -> &Identifier {
+        &self.kind
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn update(&mut self, settings: &Config) -> Result<(), SourceError> {
+        let format = parse_format(settings)?;
+        let (frames, slide_time_nanos, loop_slides) = load_slideshow(format, settings)?;
+        self.format = format;
+        self.frames = frames;
+        self.slide_time_nanos = slide_time_nanos;
+        self.loop_slides = loop_slides;
+        Ok(())
+    }
+
+    fn render(&mut self, request: &VideoRequest) -> Result<Option<VideoFrame>, SourceError> {
+        if request.format() != self.format {
+            return Err(SourceError::UnsupportedFormat {
+                configured: self.format,
+                requested: request.format(),
+            });
+        }
+        let Some(count) = u64::try_from(self.frames.len()).ok() else {
+            return Ok(None);
+        };
+        if count == 0 {
+            return Ok(None);
+        }
+        let elapsed_slide = request.timestamp().as_nanos() / self.slide_time_nanos;
+        let index = if self.loop_slides {
+            elapsed_slide % count
+        } else {
+            elapsed_slide.min(count - 1)
+        };
+        let index = usize::try_from(index).unwrap_or(0);
+        Ok(self
+            .frames
+            .get(index)
+            .map(|frame| frame.at_timestamp(request.timestamp())))
+    }
+}
+
+fn load_slideshow(
+    format: VideoFormat,
+    settings: &Config,
+) -> Result<(Vec<VideoFrame>, u64, bool), SourceError> {
+    let slide_time_ms = settings
+        .get("slide_time_ms")
+        .unwrap_or("8000")
+        .parse::<u64>()
+        .map_err(|error| SourceError::invalid_setting("slide_time_ms", error.to_string()))?;
+    if !(MIN_SLIDE_TIME_MS..=MAX_SLIDE_TIME_MS).contains(&slide_time_ms) {
+        return Err(SourceError::invalid_setting(
+            "slide_time_ms",
+            format!(
+                "value must be between {MIN_SLIDE_TIME_MS} and {MAX_SLIDE_TIME_MS} milliseconds"
+            ),
+        ));
+    }
+    let loop_slides = settings
+        .get("loop")
+        .unwrap_or("true")
+        .parse::<bool>()
+        .map_err(|error| SourceError::invalid_setting("loop", error.to_string()))?;
+    let paths = settings.get("paths").or_else(|| settings.get("path"));
+    let mut frames = Vec::new();
+    let mut resident_bytes = 0_usize;
+    for path in paths
+        .into_iter()
+        .flat_map(str::lines)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        if frames.len() >= MAX_SLIDESHOW_FILES {
+            return Err(SourceError::invalid_setting(
+                "paths",
+                format!("slideshow is limited to {MAX_SLIDESHOW_FILES} files"),
+            ));
+        }
+        let frame = load_frame(format, path)?.ok_or_else(|| {
+            SourceError::invalid_setting("paths", "slideshow entries must name an image file")
+        })?;
+        resident_bytes = resident_bytes.saturating_add(frame.pixels().len());
+        if resident_bytes > MAX_SLIDESHOW_MEMORY_BYTES {
+            return Err(SourceError::invalid_setting(
+                "paths",
+                format!(
+                    "decoded slideshow frames exceed the {MAX_SLIDESHOW_MEMORY_BYTES}-byte limit"
+                ),
+            ));
+        }
+        frames.push(frame);
+    }
+    let slide_time_nanos = slide_time_ms.saturating_mul(1_000_000);
+    Ok((frames, slide_time_nanos, loop_slides))
 }
 
 fn load_frame(format: VideoFormat, path: &str) -> Result<Option<VideoFrame>, SourceError> {

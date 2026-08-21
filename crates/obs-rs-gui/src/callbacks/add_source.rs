@@ -592,6 +592,7 @@ pub(crate) fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedStrin
     match kind {
         "color_source" => text.kind_color_source.clone(),
         "image_source" => text.kind_image_source.clone(),
+        "image_slideshow" => text.kind_image_slideshow.clone(),
         "text_source" => text.kind_text_source.clone(),
         "test_pattern" => text.kind_test_pattern.clone(),
         "screen_capture" => text.kind_screen_capture.clone(),
@@ -609,6 +610,7 @@ fn kind_display(kind: &str) -> &str {
     match kind {
         "color_source" => "Color",
         "image_source" => "Image",
+        "image_slideshow" => "Image slideshow",
         "text_source" => "Text",
         "test_pattern" => "Test pattern",
         "screen_capture" | "x11_screen_capture" | "wayland_screen_capture" => "Screen capture",

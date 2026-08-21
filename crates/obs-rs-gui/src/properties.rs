@@ -72,6 +72,10 @@ const SIZE_FIELDS: [Field; 2] = [
 ];
 
 /// Returns the fields for `kind`, in the order the dialog shows them.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the typed source-property catalog keeps each built-in schema together"
+)]
 fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
     static COLOR: Field = Field {
         key: "color",
@@ -90,6 +94,27 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         label: |text| text.property_ui.path.clone(),
         hint: |text| text.property_ui.path_hint.clone(),
         kind: FieldKind::Text,
+    };
+    static PATHS: Field = Field {
+        key: "paths",
+        label: |text| text.property_ui.paths.clone(),
+        hint: |text| text.property_ui.paths_hint.clone(),
+        kind: FieldKind::Text,
+    };
+    static SLIDE_TIME: Field = Field {
+        key: "slide_time_ms",
+        label: |text| text.property_ui.slide_time_ms.clone(),
+        hint: |text| text.property_ui.slide_time_hint.clone(),
+        kind: FieldKind::Number {
+            minimum: 50,
+            maximum: 3_600_000,
+        },
+    };
+    static LOOP: Field = Field {
+        key: "loop",
+        label: |text| text.property_ui.loop_label.clone(),
+        hint: |text| text.property_ui.loop_hint.clone(),
+        kind: FieldKind::Toggle,
     };
     static FONT_SIZE: Field = Field {
         key: "font_size",
@@ -154,6 +179,7 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
     let mut fields = match kind.trim() {
         "color_source" => vec![&COLOR],
         "image_source" => vec![&PATH],
+        "image_slideshow" => vec![&PATHS, &SLIDE_TIME, &LOOP],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         "screen_capture" | "window_capture" => vec![&DEVICE],
         "camera_capture" => {
@@ -532,6 +558,23 @@ mod tests {
         assert_eq!(keys, ["path", "width", "height"]);
         assert_eq!(rows[0].kind, KIND_TEXT);
         assert_eq!(rows[0].text, "/tmp/example.png");
+    }
+
+    #[test]
+    fn image_slideshows_expose_paths_interval_loop_and_video_size() {
+        let document =
+            "height = 360\nloop = true\npaths = \"/tmp/a.png\\n/tmp/b.png\"\nslide_time_ms = 8000\nwidth = 640\n";
+
+        let rows = rows("image_slideshow", document, UiLocale::English);
+
+        let keys = rows
+            .iter()
+            .map(|row| row.key.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["paths", "slide_time_ms", "loop", "width", "height"]);
+        assert_eq!(rows[1].kind, KIND_NUMBER);
+        assert_eq!(rows[1].number, 8_000);
+        assert!(rows[2].toggle);
     }
 
     #[test]

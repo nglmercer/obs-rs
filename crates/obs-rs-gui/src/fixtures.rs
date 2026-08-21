@@ -113,6 +113,11 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
     if kind.trim() == "image_source" {
         settings.set("path", "")?;
     }
+    if kind.trim() == "image_slideshow" {
+        settings.set("paths", "")?;
+        settings.set("slide_time_ms", "8000")?;
+        settings.set("loop", "true")?;
+    }
     if kind.trim() == "text_source" {
         settings.set("text", "OBS-RS")?;
         settings.set("color", "#FFFFFFFF")?;

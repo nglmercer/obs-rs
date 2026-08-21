@@ -305,6 +305,18 @@ compatibility. The WGPU backend proves that readback is explicit, and the GUI
 preview now requires only a viewport-sized CPU frame. A native surface presenter
 remains the next performance target.
 
+The portable image slideshow render probe reports 100 timestamped 640x360
+renders in the release build at 2026-08-21:
+
+```text
+cargo test --release -p obs-rs-builtins image_slideshow_render_timing_report -- --nocapture
+image slideshow: 100 x 640x360 renders = 3.183 us total (about 31 ns/render)
+```
+
+The source keeps decoded frames in its bounded control-plane set and selects
+the timestamped frame without a per-render decode or file read. It still
+requires the existing preview presenter to copy the selected pixels for Slint.
+
 The audio gate timing probe reports 200 blocks of 480 stereo frames in the
 release build at 2026-08-21:
 

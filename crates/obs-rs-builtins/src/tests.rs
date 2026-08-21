@@ -2,12 +2,27 @@ use super::*;
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat};
 use obs_rs_plugin_api::{Plugin, SourceError, VideoRequest};
+use std::time::Instant;
 
 fn image_settings(path: &str, width: &str, height: &str) -> Config {
     let mut config = Config::new();
     config.set("width", width).expect("valid image width");
     config.set("height", height).expect("valid image height");
     config.set("path", path).expect("valid image path");
+    config
+}
+
+fn slideshow_settings(paths: &str, width: &str, height: &str, slide_time_ms: &str) -> Config {
+    let mut config = Config::new();
+    config.set("width", width).expect("valid slideshow width");
+    config
+        .set("height", height)
+        .expect("valid slideshow height");
+    config.set("paths", paths).expect("valid slideshow paths");
+    config
+        .set("slide_time_ms", slide_time_ms)
+        .expect("valid slideshow interval");
+    config.set("loop", "true").expect("valid slideshow loop");
     config
 }
 
@@ -187,6 +202,153 @@ fn image_source_rejects_dimensions_beyond_the_decoder_limit() {
 }
 
 #[test]
+fn image_slideshow_advances_by_timestamp_and_updates_atomically() {
+    let red_path = std::env::temp_dir().join(format!(
+        "obs-rs-image-slideshow-red-{}.ppm",
+        std::process::id()
+    ));
+    let blue_path = std::env::temp_dir().join(format!(
+        "obs-rs-image-slideshow-blue-{}.ppm",
+        std::process::id()
+    ));
+    std::fs::write(&red_path, b"P6\n1 1\n255\n\xFF\x00\x00").expect("write red fixture");
+    std::fs::write(&blue_path, b"P6\n1 1\n255\n\x00\x00\xFF").expect("write blue fixture");
+
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == IMAGE_SLIDESHOW_SOURCE_KIND)
+        .expect("slideshow factory");
+    let paths = format!(
+        "{}\n{}",
+        red_path.to_str().expect("red path is UTF-8"),
+        blue_path.to_str().expect("blue path is UTF-8")
+    );
+    let format =
+        VideoFormat::new(1, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let mut source = factory
+        .create("slideshow", &slideshow_settings(&paths, "1", "1", "100"))
+        .expect("valid slideshow source");
+    let first = source
+        .render(&VideoRequest::new(Timestamp::ZERO, format))
+        .expect("first render")
+        .expect("first slide");
+    let second = source
+        .render(&VideoRequest::new(Timestamp::from_millis(100), format))
+        .expect("second render")
+        .expect("second slide");
+    let wrapped = source
+        .render(&VideoRequest::new(Timestamp::from_millis(200), format))
+        .expect("wrapped render")
+        .expect("wrapped slide");
+    assert_eq!(first.pixel(0, 0), Some([0xFF, 0, 0, 0xFF]));
+    assert_eq!(second.pixel(0, 0), Some([0, 0, 0xFF, 0xFF]));
+    assert_eq!(wrapped.pixel(0, 0), first.pixel(0, 0));
+
+    let error = source
+        .update(&slideshow_settings(
+            "/definitely/missing/image.png",
+            "1",
+            "1",
+            "100",
+        ))
+        .expect_err("missing slideshow image is rejected");
+    assert!(
+        matches!(error, SourceError::InvalidSetting { key, .. } if key == "path" || key == "paths")
+    );
+    let retained = source
+        .render(&VideoRequest::new(Timestamp::ZERO, format))
+        .expect("render after failed update")
+        .expect("old slideshow remains");
+    assert_eq!(retained.pixel(0, 0), first.pixel(0, 0));
+
+    std::fs::remove_file(red_path).expect("remove red fixture");
+    std::fs::remove_file(blue_path).expect("remove blue fixture");
+}
+
+#[test]
+fn image_slideshow_rejects_unbounded_interval_and_file_count() {
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == IMAGE_SLIDESHOW_SOURCE_KIND)
+        .expect("slideshow factory");
+    assert!(matches!(
+        factory.create(
+            "slideshow",
+            &slideshow_settings("", "2", "2", "49")
+        ),
+        Err(SourceError::InvalidSetting { key, .. }) if key == "slide_time_ms"
+    ));
+
+    let path = std::env::temp_dir().join(format!(
+        "obs-rs-image-slideshow-count-{}.ppm",
+        std::process::id()
+    ));
+    std::fs::write(&path, b"P6\n1 1\n255\n\x00\xFF\x00").expect("write count fixture");
+    let path = path.to_str().expect("count path is UTF-8");
+    let paths = (0..65).map(|_| path).collect::<Vec<_>>().join("\n");
+    assert!(matches!(
+        factory.create("slideshow", &slideshow_settings(&paths, "2", "2", "100")),
+        Err(SourceError::InvalidSetting { key, .. }) if key == "paths"
+    ));
+    std::fs::remove_file(path).expect("remove count fixture");
+}
+
+#[test]
+fn image_slideshow_render_timing_report() {
+    let path = std::env::temp_dir().join(format!(
+        "obs-rs-image-slideshow-timing-{}.ppm",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        b"P6\n2 2\n255\n\x80\x40\x20\x80\x40\x20\x80\x40\x20\x80\x40\x20",
+    )
+    .expect("write timing fixture");
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == IMAGE_SLIDESHOW_SOURCE_KIND)
+        .expect("slideshow factory");
+    let format =
+        VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let mut source = factory
+        .create(
+            "slideshow",
+            &slideshow_settings(
+                path.to_str().expect("timing path is UTF-8"),
+                "640",
+                "360",
+                "100",
+            ),
+        )
+        .expect("valid slideshow source");
+    let started = Instant::now();
+    let mut checksum = 0_u64;
+    for index in 0..100 {
+        let frame = source
+            .render(&VideoRequest::new(Timestamp::from_millis(index), format))
+            .expect("slideshow render")
+            .expect("slideshow frame");
+        checksum = checksum.saturating_add(u64::from(frame.pixels()[0]));
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum > 0);
+    std::hint::black_box(checksum);
+    println!(
+        "image slideshow: 100 x 640x360 renders = {:?} ({:?}/render)",
+        elapsed,
+        elapsed / 100
+    );
+    std::fs::remove_file(path).expect("remove timing fixture");
+}
+
+#[test]
 fn builtins_expose_the_capture_source_kind() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
 
@@ -202,6 +364,10 @@ fn builtins_expose_the_capture_source_kind() {
         .source_factories()
         .iter()
         .any(|factory| factory.kind().as_str() == IMAGE_SOURCE_KIND));
+    assert!(plugin
+        .source_factories()
+        .iter()
+        .any(|factory| factory.kind().as_str() == IMAGE_SLIDESHOW_SOURCE_KIND));
     assert_eq!(BUILTIN_TEST_PATTERN_SOURCE_KIND, "test_pattern");
 }
 

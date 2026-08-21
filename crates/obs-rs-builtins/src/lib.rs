@@ -31,6 +31,8 @@ pub const COLOR_SOURCE_KIND: &str = "color_source";
 pub const TEXT_SOURCE_KIND: &str = "text_source";
 /// Stable kind identifier for the bounded static image source.
 pub const IMAGE_SOURCE_KIND: &str = "image_source";
+/// Stable kind identifier for the bounded timestamp-driven image slideshow.
+pub const IMAGE_SLIDESHOW_SOURCE_KIND: &str = "image_slideshow";
 pub use obs_rs_capture::CAMERA_CAPTURE_SOURCE_KIND as BUILTIN_CAMERA_SOURCE_KIND;
 pub use obs_rs_capture::SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_SCREEN_SOURCE_KIND;
 pub use obs_rs_capture::TEST_PATTERN_SOURCE_KIND as BUILTIN_TEST_PATTERN_SOURCE_KIND;
