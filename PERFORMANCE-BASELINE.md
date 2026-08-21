@@ -139,6 +139,16 @@ The observed release result was `112.129 µs` total, or `560 ns` per
 full audio-graph and device-clock performance still require the Phase 16
 matrix.
 
+The same release probe for Invert Polarity is kept separate because it has no
+settings or gain conversion; its result is recorded by:
+
+```text
+cargo test --release -p obs-rs-audio invert_polarity_block_timing_report -- --nocapture
+```
+
+The observed release result was `27.754 µs` total, or `138 ns` per
+480-frame stereo block on this host.
+
 ## Phase 1 render-target evidence
 
 The first performance architecture packet is implemented and independently

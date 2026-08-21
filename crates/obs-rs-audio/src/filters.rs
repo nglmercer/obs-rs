@@ -50,6 +50,8 @@ impl AudioGain {
 pub enum AudioFilter {
     /// Multiplies every channel by the same OBS dB gain.
     Gain(AudioGain),
+    /// Inverts the polarity of every channel without changing its magnitude.
+    InvertPolarity,
 }
 
 impl AudioFilter {
@@ -75,6 +77,10 @@ impl AudioFilter {
     pub fn apply(self, buffer: &mut AudioBuffer) -> Result<(), AudioError> {
         match self {
             Self::Gain(gain) => apply_gain(buffer, gain),
+            Self::InvertPolarity => {
+                apply_invert_polarity(buffer);
+                Ok(())
+            }
         }
     }
 }
@@ -163,4 +169,10 @@ fn apply_gain(buffer: &mut AudioBuffer, gain: AudioGain) -> Result<(), AudioErro
         *sample *= multiplier;
     }
     Ok(())
+}
+
+fn apply_invert_polarity(buffer: &mut AudioBuffer) {
+    for sample in buffer.samples_mut() {
+        *sample = -*sample;
+    }
 }

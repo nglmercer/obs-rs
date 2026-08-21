@@ -1092,6 +1092,21 @@ impl EngineSession {
         Ok(())
     }
 
+    /// Installs OBS's Invert Polarity filter on a live mixer channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] if the bounded chain cannot accept the filter.
+    pub fn set_channel_invert_polarity(
+        &mut self,
+        channel: EngineAudioChannel,
+    ) -> Result<(), EngineError> {
+        let mut filters = AudioFilterChain::new();
+        filters.try_push(AudioFilter::InvertPolarity)?;
+        self.set_channel_audio_filters(channel, filters);
+        Ok(())
+    }
+
     /// Mutes or unmutes the live input source.
     ///
     /// # Errors
@@ -2130,6 +2145,7 @@ pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
             .get("db_milli")
             .and_then(|value| value.parse::<i32>().ok())
             .and_then(|milli_db| AudioFilter::gain_db_milli(milli_db).ok()),
+        "invert_polarity" => Some(AudioFilter::InvertPolarity),
         _ => None,
     }
 }
@@ -2579,6 +2595,18 @@ mod tests {
             compile_audio_filter(&gain),
             Some(AudioFilter::gain_db_milli(-6_000).expect("valid gain"))
         );
+        let invert = SourceFilterSpec::with_category(
+            "invert",
+            "Invert Polarity",
+            "invert_polarity",
+            SourceFilterCategory::AudioVideo,
+            Config::new(),
+        )
+        .expect("invert polarity filter");
+        assert_eq!(
+            compile_audio_filter(&invert),
+            Some(AudioFilter::InvertPolarity)
+        );
         assert_eq!(compile_audio_filter(&brightness), None);
     }
 
@@ -2653,6 +2681,33 @@ mod tests {
                 .any(|sample| sample.abs() > 0.0),
             "the filter must preserve a non-silent live channel"
         );
+    }
+
+    #[test]
+    fn invert_polarity_runs_on_a_live_channel_without_changing_peak() {
+        let mut baseline = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let baseline_tick = baseline.tick(None, Some("program")).expect("baseline tick");
+
+        let mut inverted = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        inverted
+            .set_channel_invert_polarity(EngineAudioChannel::Microphone)
+            .expect("invert polarity");
+        let inverted_tick = inverted.tick(None, Some("program")).expect("inverted tick");
+
+        assert_eq!(
+            baseline.stats().microphone_peak_milli,
+            inverted.stats().microphone_peak_milli
+        );
+        let mut saw_signal = false;
+        for (original, inverted) in baseline_tick.audio_blocks[0]
+            .samples()
+            .iter()
+            .zip(inverted_tick.audio_blocks[0].samples())
+        {
+            assert!((original + inverted).abs() < 0.000_001);
+            saw_signal |= original.abs() > 0.0;
+        }
+        assert!(saw_signal, "deterministic microphone must produce audio");
     }
 
     /// Provider exposing one playback route whose monitor is readable, which is

@@ -217,6 +217,22 @@ fn gain_filter_rejects_unbounded_values_and_overflow_without_partial_write() {
 }
 
 #[test]
+fn invert_polarity_preserves_magnitude_and_composes_in_order() {
+    let mut chain = AudioFilterChain::new();
+    chain
+        .try_push(AudioFilter::gain_db_milli(6_000).expect("gain"))
+        .expect("gain filter");
+    chain
+        .try_push(AudioFilter::InvertPolarity)
+        .expect("polarity filter");
+
+    let mut input = buffer(&[0.5, -0.25]);
+    chain.apply(&mut input).expect("audio chain");
+    assert!((input.samples()[0] + 0.997_631).abs() < 0.0001);
+    assert!((input.samples()[1] - 0.498_815).abs() < 0.0001);
+}
+
+#[test]
 fn audio_filter_chain_has_a_fixed_capacity() {
     let mut chain = AudioFilterChain::new();
     let filter = AudioFilter::gain_db_milli(0).expect("zero gain");
@@ -252,6 +268,32 @@ fn gain_filter_block_timing_report() {
     std::hint::black_box(checksum);
     println!(
         "gain filter: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
+fn invert_polarity_block_timing_report() {
+    let mut chain = AudioFilterChain::new();
+    chain
+        .try_push(AudioFilter::InvertPolarity)
+        .expect("polarity filter");
+    let mut block =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.1; 480 * 2]).expect("audio block");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for _ in 0..200 {
+        block.samples_mut().fill(0.1);
+        chain.apply(&mut block).expect("polarity block");
+        checksum += block.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "invert polarity: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
         elapsed,
         elapsed / 200
     );
