@@ -1069,6 +1069,26 @@ impl EngineSession {
         Ok(())
     }
 
+    /// Updates the stereo pan of a live input source in thousandths of a full
+    /// left/right turn (`-1000` is left, `0` is center, `1000` is right).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the pan is outside the bounded mixer
+    /// contract or the channel source is unavailable.
+    pub fn set_channel_pan_milli(
+        &mut self,
+        channel: EngineAudioChannel,
+        pan_milli: i32,
+    ) -> Result<(), EngineError> {
+        let source = match channel {
+            EngineAudioChannel::Desktop => self.desktop_audio_source,
+            EngineAudioChannel::Microphone => self.microphone_audio_source,
+        };
+        self.mixer.set_pan_milli(source, pan_milli)?;
+        Ok(())
+    }
+
     /// Replaces the ordered audio-filter chain on one live mixer channel.
     ///
     /// The chain is owned by the engine and applied to each captured block
@@ -3135,6 +3155,24 @@ mod tests {
             stats.microphone_peak_milli > 0,
             "the deterministic input drives only the microphone node"
         );
+    }
+
+    #[test]
+    fn pan_reaches_the_mixed_audio_output_before_encoding() {
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine
+            .set_channel_pan_milli(EngineAudioChannel::Microphone, -1_000)
+            .expect("full-left pan");
+        let tick = engine.tick(None, Some("program")).expect("panned tick");
+        let block = tick.audio_blocks.first().expect("audio block");
+        assert!(block
+            .samples()
+            .chunks_exact(2)
+            .all(|frame| frame[1].abs() < f32::EPSILON));
+        assert!(block
+            .samples()
+            .chunks_exact(2)
+            .any(|frame| frame[0].abs() > f32::EPSILON));
     }
 
     #[test]

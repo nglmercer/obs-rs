@@ -164,7 +164,13 @@ fn mixer_applies_stereo_pan_and_rejects_invalid_values() {
     let source = mixer.add_source(1.0).expect("source");
     assert_eq!(mixer.set_pan(source, 2.0), Err(AudioError::InvalidPan));
     assert_eq!(mixer.set_pan(source, f32::NAN), Err(AudioError::InvalidPan));
-    mixer.set_pan(source, 1.0).expect("right pan");
+    assert_eq!(
+        mixer.set_pan_milli(source, MAX_PAN_MILLI + 1),
+        Err(AudioError::InvalidPan)
+    );
+    mixer
+        .set_pan_milli(source, MAX_PAN_MILLI)
+        .expect("right pan");
 
     let output = mixer
         .mix(Timestamp::ZERO, 1, &[(source, &buffer(&[0.75, 0.5]))])

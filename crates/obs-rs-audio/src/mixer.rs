@@ -6,6 +6,12 @@ use super::{
 };
 use obs_rs_media::Timestamp;
 use std::{collections::BTreeMap, sync::Arc};
+
+/// Lower bound of the fixed-point stereo pan control (`-1.0`, full left).
+pub const MIN_PAN_MILLI: i32 = -1_000;
+/// Upper bound of the fixed-point stereo pan control (`1.0`, full right).
+pub const MAX_PAN_MILLI: i32 = 1_000;
+
 struct SourceControl {
     gain: f32,
     muted: bool,
@@ -111,6 +117,29 @@ impl AudioMixer {
             .ok_or(AudioError::UnknownSource(source))?;
         control.pan = pan;
         Ok(())
+    }
+
+    /// Sets a source's stereo pan using the bounded fixed-point control used by
+    /// engine and worker APIs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::InvalidPan`] for a value outside
+    /// [`MIN_PAN_MILLI`..=`MAX_PAN_MILLI`], or [`AudioError::UnknownSource`]
+    /// for an unknown source.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the bounded fixed-point control is converted once at the control boundary"
+    )]
+    pub fn set_pan_milli(
+        &mut self,
+        source: AudioSourceId,
+        pan_milli: i32,
+    ) -> Result<(), AudioError> {
+        if !(MIN_PAN_MILLI..=MAX_PAN_MILLI).contains(&pan_milli) {
+            return Err(AudioError::InvalidPan);
+        }
+        self.set_pan(source, pan_milli as f32 / 1_000.0)
     }
 
     /// Removes a source from future mixes.

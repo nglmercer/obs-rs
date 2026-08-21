@@ -54,6 +54,7 @@ enum WorkerCommand {
     PushRawFrame(RawVideoFrame),
     MonitorAudio(Timestamp),
     SetGain(EngineAudioChannel, u16, mpsc::Sender<Result<(), String>>),
+    SetPan(EngineAudioChannel, i32, mpsc::Sender<Result<(), String>>),
     SetGainFilter(EngineAudioChannel, i32, mpsc::Sender<Result<(), String>>),
     SetInvertPolarity(EngineAudioChannel, mpsc::Sender<Result<(), String>>),
     SetLimiter(
@@ -491,6 +492,27 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Applies live stereo pan on the worker-owned mixer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker or bounded pan range rejects
+    /// the update.
+    pub fn set_channel_pan_milli(
+        &self,
+        channel: EngineAudioChannel,
+        pan_milli: i32,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetPan(channel, pan_milli, reply))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Replaces the live channel's Gain filter on the worker-owned engine.
     ///
     /// # Errors
@@ -818,6 +840,13 @@ fn worker_loop(
             WorkerCommand::SetGain(channel, gain, reply) => {
                 let result = session
                     .set_channel_gain_milli(channel, gain)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::SetPan(channel, pan_milli, reply) => {
+                let result = session
+                    .set_channel_pan_milli(channel, pan_milli)
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
@@ -1205,6 +1234,9 @@ mod tests {
             .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, -6_000)
             .expect("valid gain filter");
         worker
+            .set_channel_pan_milli(EngineAudioChannel::Microphone, -1_000)
+            .expect("valid pan");
+        worker
             .set_channel_invert_polarity(EngineAudioChannel::Microphone)
             .expect("valid invert polarity filter");
         worker
@@ -1230,6 +1262,10 @@ mod tests {
             .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, 30_001)
             .expect_err("unbounded gain filter");
         assert!(matches!(error, EngineError::Worker(reason) if reason.contains("outside")));
+        let error = worker
+            .set_channel_pan_milli(EngineAudioChannel::Microphone, 1_001)
+            .expect_err("unbounded pan");
+        assert!(matches!(error, EngineError::Worker(reason) if reason.contains("pan")));
         let error = worker
             .set_channel_limiter(EngineAudioChannel::Microphone, -60_001, 60)
             .expect_err("unbounded limiter threshold");
