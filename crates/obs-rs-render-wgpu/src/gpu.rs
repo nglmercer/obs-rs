@@ -416,7 +416,7 @@ impl WgpuRenderBackend {
     fn composite_textures(
         &self,
         target: TextureId,
-        sources: &[(&wgpu::Texture, FrameTransform, &[FrameFilter])],
+        sources: &[(&wgpu::Texture, VideoFormat, FrameTransform, &[FrameFilter])],
     ) -> Result<(), RenderError> {
         if sources.is_empty() {
             return Err(RenderError::EmptyComposition);
@@ -432,7 +432,7 @@ impl WgpuRenderBackend {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("obs-rs-gpu-composite"),
             });
-        for (index, (source, transform, filters)) in sources.iter().enumerate() {
+        for (index, (source, source_format, transform, filters)) in sources.iter().enumerate() {
             let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
             let background = if index.is_multiple_of(2) {
                 if index == 0 {
@@ -450,7 +450,8 @@ impl WgpuRenderBackend {
                 &scratch_b
             };
             let destination_view = destination.create_view(&wgpu::TextureViewDescriptor::default());
-            let parameters = layer_parameters(target_texture.format, *transform, filters);
+            let parameters =
+                layer_parameters(*source_format, target_texture.format, *transform, filters);
             let parameter_buffer =
                 self.device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -569,11 +570,6 @@ impl RenderBackend for WgpuRenderBackend {
         if layers.is_empty() {
             return Err(RenderError::EmptyComposition);
         }
-        let target_format = self
-            .textures
-            .get(&target)
-            .ok_or(RenderError::UnknownTexture(target))?
-            .format;
         let mut prepared = Vec::with_capacity(layers.len());
         let mut timestamp = Timestamp::ZERO;
         for layer in layers {
@@ -585,25 +581,22 @@ impl RenderBackend for WgpuRenderBackend {
                     });
                 }
             };
-            if frame.format() != target_format {
-                return Err(RenderError::FormatMismatch {
-                    expected: target_format,
-                    actual: frame.format(),
-                });
-            }
             timestamp = frame.timestamp();
-            let texture = self.acquire_texture(target_format);
+            let source_format = frame.format();
+            let texture = self.acquire_texture(source_format);
             write_texture(&self.queue, &texture, frame);
-            prepared.push((texture, layer.transform(), layer.filters()));
+            prepared.push((texture, source_format, layer.transform(), layer.filters()));
         }
         let sources = prepared
             .iter()
-            .map(|(texture, transform, filters)| (texture, *transform, *filters))
+            .map(|(texture, source_format, transform, filters)| {
+                (texture, *source_format, *transform, *filters)
+            })
             .collect::<Vec<_>>();
         self.composite_textures(target, &sources)?;
         drop(sources);
-        for (texture, _, _) in prepared {
-            self.recycle_texture(target_format, texture);
+        for (texture, source_format, _, _) in prepared {
+            self.recycle_texture(source_format, texture);
         }
         let target = self
             .textures
@@ -704,8 +697,10 @@ impl RenderBackend for WgpuRenderBackend {
         let sources = layers
             .iter()
             .map(|layer| {
+                let texture = self.textures.get(layer).expect("validated layer");
                 (
-                    &self.textures.get(layer).expect("validated layer").texture,
+                    &texture.texture,
+                    texture.format,
                     FrameTransform::IDENTITY,
                     &[] as &[FrameFilter],
                 )
@@ -925,38 +920,44 @@ fn vs_main(@builtin(vertex_index) vertex: u32) -> VertexOutput {
 fn layer_pixel(position: vec2<i32>) -> vec4<i32> {
     let x = position.x;
     let y = position.y;
-    let width = parameters.values[0];
-    let height = parameters.values[1];
-    let local_x = x - parameters.values[4];
-    let local_y = y - parameters.values[5];
+    let target_width = parameters.values[0];
+    let target_height = parameters.values[1];
+    let source_width = parameters.values[2];
+    let source_height = parameters.values[3];
+    // Scene transforms are expressed in canvas pixels. Map the viewport
+    // fragment back into that canvas before applying the source transform.
+    let canvas_x = x * source_width / target_width;
+    let canvas_y = y * source_height / target_height;
+    let local_x = canvas_x - parameters.values[6];
+    let local_y = canvas_y - parameters.values[7];
     if (local_x < 0 || local_y < 0) {
         return vec4<i32>(0);
     }
-    let crop_left = parameters.values[9];
-    let crop_top = parameters.values[10];
-    let visible_right = width - parameters.values[11];
-    let visible_bottom = height - parameters.values[12];
-    var source_x = crop_left + local_x * 1000 / parameters.values[2];
-    var source_y = crop_top + local_y * 1000 / parameters.values[3];
+    let crop_left = parameters.values[11];
+    let crop_top = parameters.values[12];
+    let visible_right = source_width - parameters.values[13];
+    let visible_bottom = source_height - parameters.values[14];
+    var source_x = crop_left + local_x * 1000 / parameters.values[4];
+    var source_y = crop_top + local_y * 1000 / parameters.values[5];
     if (source_x < crop_left || source_x >= visible_right ||
         source_y < crop_top || source_y >= visible_bottom) {
         return vec4<i32>(0);
     }
-    if (parameters.values[6] != 0) {
+    if (parameters.values[8] != 0) {
         source_x = crop_left + visible_right - 1 - source_x;
     }
-    if (parameters.values[7] != 0) {
+    if (parameters.values[9] != 0) {
         source_y = crop_top + visible_bottom - 1 - source_y;
     }
     let sampled = textureLoad(layer_texture, vec2<i32>(source_x, source_y), 0);
     var pixel = vec4<i32>(floor(sampled * 255.0 + vec4<f32>(0.5)));
-    pixel.a = pixel.a * parameters.values[8] / 255;
-    let filter_count = parameters.values[13];
+    pixel.a = pixel.a * parameters.values[10] / 255;
+    let filter_count = parameters.values[15];
     var filter_index = 0;
     loop {
         if (filter_index >= filter_count) { break; }
-        let kind = parameters.values[14 + filter_index * 2];
-        let value = parameters.values[15 + filter_index * 2];
+        let kind = parameters.values[16 + filter_index * 2];
+        let value = parameters.values[17 + filter_index * 2];
         if (kind == 0) {
             let luma = (pixel.r * 77 + pixel.g * 150 + pixel.b * 29) / 256;
             pixel.r = luma;
@@ -1060,14 +1061,17 @@ fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 fn layer_parameters(
-    format: VideoFormat,
+    source_format: VideoFormat,
+    target_format: VideoFormat,
     transform: FrameTransform,
     filters: &[FrameFilter],
 ) -> Vec<u8> {
-    let mut values = Vec::with_capacity(14 + filters.len() * 2);
+    let mut values = Vec::with_capacity(16 + filters.len() * 2);
     values.extend([
-        i32::try_from(format.width()).unwrap_or(i32::MAX),
-        i32::try_from(format.height()).unwrap_or(i32::MAX),
+        i32::try_from(target_format.width()).unwrap_or(i32::MAX),
+        i32::try_from(target_format.height()).unwrap_or(i32::MAX),
+        i32::try_from(source_format.width()).unwrap_or(i32::MAX),
+        i32::try_from(source_format.height()).unwrap_or(i32::MAX),
         i32::try_from(transform.scale_x_milli()).unwrap_or(i32::MAX),
         i32::try_from(transform.scale_y_milli()).unwrap_or(i32::MAX),
         transform.translate_x(),

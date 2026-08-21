@@ -72,6 +72,10 @@ impl DesktopState {
     ///
     /// Returns [`UiError`] and leaves the affected state unchanged when validation
     /// or lifecycle checks fail.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the command dispatcher keeps the UI state-machine boundary explicit"
+    )]
     pub fn dispatch(&mut self, command: UiCommand) -> Result<(), UiError> {
         let message = match command {
             UiCommand::SwapPreviewProgram => {
@@ -131,7 +135,7 @@ impl DesktopState {
                     .and_then(|profile| profile.scene(preview_scene))
                     .and_then(|scene| scene.item(id.as_str()))
                     .cloned()
-                    .ok_or_else(|| UiError::UnknownSelection { kind: "source", id })?;
+                    .ok_or(UiError::UnknownSelection { kind: "source", id })?;
                 self.clipboard = Some(item);
                 "source item copied"
             }

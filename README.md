@@ -58,8 +58,9 @@ control surfaces:
   drift diagnostics, provides one monotonic clock implementation for both worker
   traits, models independent device-clock drift deterministically, and runs bounded
   synchronized `MediaSession` ticks.
-- `obs-rs-render` defines portable texture/composition contracts and a deterministic
-  CPU backend with bounded texture bytes, lifecycle/readback metrics, and context-loss
+- `obs-rs-render` defines portable texture/composition contracts, explicit
+  program/preview/projector/encoder render-target roles, and a deterministic CPU
+  backend with bounded texture bytes, lifecycle/readback metrics, and context-loss
   recovery.
 - `obs-rs-output` provides validated video/audio packet encoders, muxer contracts,
   bounded packet back-pressure, a lossless Rust RLE video reference codec, a
@@ -82,8 +83,9 @@ control surfaces:
   real preview-to-program takes, mixer peak telemetry, deterministic bilingual
   labeled accessibility snapshots, strict terminal/HTTP command parsers, and an
   accessible browser page.
-- `obs-rs-gui` provides the first Slint desktop control room: preview/program
-  status cards with CPU-rendered RGBA scene frames, scene selection, transitions,
+- `obs-rs-gui` provides the first Slint desktop control room: viewport-sized
+  preview/program status cards with a replaceable presentation boundary, scene
+  selection, transitions,
   recording/streaming controls, scene/source ordering and visibility/lock controls,
   a mixer with gain/mute/peak state, a typed OBS-style source properties form with
   a display picker, a live microphone channel whose fader, mute, and meter drive

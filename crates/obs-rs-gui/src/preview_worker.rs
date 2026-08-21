@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use obs_rs_media::{LatencyMetrics, RawVideoFrame, VideoFrame};
+use obs_rs_media::{LatencyMetrics, RawVideoFrame, VideoFormat, VideoFrame};
 use obs_rs_project::Project;
 
 use crate::preview::{PreviewRenderer, RuntimeDiagnostics, TransformDraft};
@@ -17,6 +17,7 @@ struct PreviewRequest {
     project: Option<Project>,
     revision: u64,
     preview_scene: Option<String>,
+    preview_format: VideoFormat,
     program_scene: Option<String>,
     render_program: bool,
     prepare_output: bool,
@@ -59,6 +60,7 @@ pub(crate) struct PreviewPerformanceSnapshot {
     pub(crate) program_render: LatencyMetrics,
     pub(crate) worker: LatencyMetrics,
     pub(crate) frame_copy: LatencyMetrics,
+    pub(crate) frame_copy_bytes: u64,
     pub(crate) slint_update: LatencyMetrics,
     pub(crate) ui_callback: LatencyMetrics,
 }
@@ -67,6 +69,7 @@ pub(crate) struct PreviewPerformanceSnapshot {
 #[derive(Clone, Copy)]
 pub(crate) struct RenderTargets<'a> {
     pub(crate) preview_scene: Option<&'a str>,
+    pub(crate) preview_format: VideoFormat,
     pub(crate) program_scene: Option<&'a str>,
     /// Whether the program canvas is wanted as well as the preview one.
     pub(crate) render_program: bool,
@@ -154,6 +157,7 @@ impl PreviewWorker {
             project,
             revision,
             preview_scene: targets.preview_scene.map(str::to_owned),
+            preview_format: targets.preview_format,
             program_scene: targets.program_scene.map(str::to_owned),
             render_program: targets.render_program,
             prepare_output: targets.prepare_output,
@@ -179,9 +183,12 @@ impl PreviewWorker {
         self.dropped_requests.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn record_frame_copy(&self, duration: Duration) {
+    pub(crate) fn record_frame_copy(&self, duration: Duration, bytes: usize) {
         if let Ok(mut performance) = self.performance.lock() {
             performance.frame_copy.record(duration);
+            performance.frame_copy_bytes = performance
+                .frame_copy_bytes
+                .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
         }
     }
 
@@ -289,22 +296,29 @@ fn render_request(
     performance: &Mutex<PreviewPerformanceSnapshot>,
 ) -> PreviewResult {
     let preview_started = std::time::Instant::now();
-    let preview = render_scene(renderer, request.preview_scene.as_deref());
+    let preview = render_preview_scene(
+        renderer,
+        request.preview_scene.as_deref(),
+        request.preview_format,
+    );
     if let Ok(mut performance) = performance.lock() {
         performance.preview_render.record(preview_started.elapsed());
     }
-    let program = if !request.render_program {
-        Ok(None)
-    } else if request.preview_scene == request.program_scene {
-        preview.clone()
-    } else {
+    let program = if request.render_program {
         let program_started = std::time::Instant::now();
-        let program = render_scene(renderer, request.program_scene.as_deref());
+        let program = render_program_scene(renderer, request.program_scene.as_deref());
         if let Ok(mut performance) = performance.lock() {
             performance.program_render.record(program_started.elapsed());
         }
         program
+    } else {
+        Ok(None)
     };
+    if request.preview_scene.is_some()
+        || (request.render_program && request.program_scene.is_some())
+    {
+        renderer.advance_timestamp();
+    }
     let error = preview
         .as_ref()
         .err()
@@ -345,14 +359,29 @@ fn render_request(
     }
 }
 
-fn render_scene(
+fn render_preview_scene(
+    renderer: &mut PreviewRenderer,
+    scene: Option<&str>,
+    format: VideoFormat,
+) -> Result<Option<VideoFrame>, String> {
+    let Some(scene) = scene else {
+        return Ok(None);
+    };
+    renderer
+        .render_preview(scene, format)
+        .map_err(|error| error.to_string())
+}
+
+fn render_program_scene(
     renderer: &mut PreviewRenderer,
     scene: Option<&str>,
 ) -> Result<Option<VideoFrame>, String> {
     let Some(scene) = scene else {
         return Ok(None);
     };
-    renderer.render(scene).map_err(|error| error.to_string())
+    renderer
+        .render_program(scene)
+        .map_err(|error| error.to_string())
 }
 
 fn renderer_error(
@@ -415,6 +444,12 @@ mod tests {
             project: None,
             revision: 0,
             preview_scene: Some(scene.to_owned()),
+            preview_format: VideoFormat::new(
+                16,
+                16,
+                obs_rs_media::FrameRate::new(30, 1).expect("rate"),
+            )
+            .expect("preview format"),
             program_scene: None,
             render_program: false,
             prepare_output: false,
@@ -449,6 +484,24 @@ mod tests {
     }
 
     #[test]
+    fn preview_format_is_bounded_and_preserves_canvas_aspect() {
+        let canvas = VideoFormat::new(
+            1_920,
+            1_080,
+            obs_rs_media::FrameRate::new(60, 1).expect("rate"),
+        )
+        .expect("canvas format");
+        let preview = PreviewRenderer::preview_format_for_canvas(canvas);
+        assert_eq!((preview.width(), preview.height()), (1_048, 590));
+        assert_eq!(preview.frame_rate(), canvas.frame_rate());
+
+        let small = VideoFormat::new(640, 360, obs_rs_media::FrameRate::new(30, 1).expect("rate"))
+            .expect("small canvas");
+        let preview = PreviewRenderer::preview_format_for_canvas(small);
+        assert_eq!((preview.width(), preview.height()), (640, 360));
+    }
+
+    #[test]
     fn scene_composition_runs_on_the_preview_thread() {
         let project = crate::initial_project().expect("project");
         let scene = project
@@ -472,6 +525,12 @@ mod tests {
             0,
             RenderTargets {
                 preview_scene: Some(&scene),
+                preview_format: PreviewRenderer::preview_format_for_canvas(
+                    project
+                        .active_profile_spec()
+                        .expect("profile")
+                        .video_format(),
+                ),
                 program_scene: Some(&scene),
                 render_program: true,
                 prepare_output: false,
@@ -489,8 +548,18 @@ mod tests {
         }
         let result = result.expect("render result");
         assert_ne!(result.render_thread, caller);
-        assert!(result.preview_frame.is_some());
-        assert!(result.program_frame.is_some());
+        let canvas_format = project
+            .active_profile_spec()
+            .expect("profile")
+            .video_format();
+        assert_eq!(
+            result.preview_frame.expect("preview frame").format(),
+            PreviewRenderer::preview_format_for_canvas(canvas_format)
+        );
+        assert_eq!(
+            result.program_frame.expect("program frame").format(),
+            canvas_format
+        );
         assert_eq!(worker.queue_depth(), 0);
         let performance = worker.performance();
         assert_eq!(performance.preview_render.samples(), 1);

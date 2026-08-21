@@ -366,6 +366,7 @@ fn a_canvas_change_the_engine_rejects_is_rolled_back() {
 }
 
 #[test]
+#[ignore = "requires a live Wayland or X11 compositor for MainWindow::new"]
 fn a_failed_output_clears_the_claim_and_offers_guided_recovery() {
     let ui = MainWindow::new().expect("window");
     let (state, output) = canvas_fixture();
@@ -870,6 +871,10 @@ fn exercise_menu_actions(
     );
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the integration fixture exercises one complete context-menu workflow"
+)]
 fn exercise_context_menus(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,

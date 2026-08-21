@@ -24,7 +24,7 @@ use slint::{ComponentHandle, Timer, TimerMode};
 
 use crate::{
     preview_worker::RenderTargets, refresh_output_ui, refresh_preview_frames_for_view, MainWindow,
-    OutputRuntime, PreviewSurface, PreviewWorker,
+    OutputRuntime, PreviewRenderer, PreviewSurface, PreviewWorker,
 };
 
 pub(crate) use add_source::install_add_source_window;
@@ -55,6 +55,10 @@ pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
 pub(crate) use source_transform::install_source_transform_window;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the timer coordinates bounded rendering and the output lifecycle"
+)]
 pub(crate) fn start_preview_timer(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -75,7 +79,10 @@ pub(crate) fn start_preview_timer(
     let mut last_output_ui_refresh = Instant::now()
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
-    timer.start(TimerMode::Repeated, Duration::from_millis(33), move || {
+    let mut last_preview_request = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
+    timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
@@ -129,29 +136,41 @@ pub(crate) fn start_preview_timer(
                 ui.set_status_message(format!("Output project sync failed: {error}").into());
             }
         }
-        {
+        let preview_due = last_preview_request.elapsed()
+            >= if output_active {
+                Duration::from_millis(16)
+            } else {
+                Duration::from_millis(33)
+            };
+        if preview_due {
             let state = state.borrow();
             let draft = canvas.draft();
-            preview_worker.request_render(
-                state.project_session().project(),
-                revision,
-                RenderTargets {
-                    preview_scene: preview_scene.as_deref(),
-                    program_scene: program_scene.as_deref(),
-                    // A program projector is a third consumer of the program
-                    // canvas, so single-canvas editing has to render it again
-                    // while one is up.
-                    render_program: output_active
-                        || ui.get_view_mode() == 0
-                        || projectors.wants_program(),
-                    prepare_output: output_active,
-                    // A canvas drag reaches the compositor here rather than
-                    // through a project revision, so the picture follows the
-                    // pointer while the undo history stays at one entry per
-                    // gesture.
-                    draft: draft.as_ref(),
-                },
-            );
+            if let Some(profile) = state.project_session().project().active_profile_spec() {
+                preview_worker.request_render(
+                    state.project_session().project(),
+                    revision,
+                    RenderTargets {
+                        preview_scene: preview_scene.as_deref(),
+                        preview_format: PreviewRenderer::preview_format_for_canvas(
+                            profile.video_format(),
+                        ),
+                        program_scene: program_scene.as_deref(),
+                        // A program projector is a third consumer of the program
+                        // canvas, so single-canvas editing has to render it again
+                        // while one is up.
+                        render_program: output_active
+                            || ui.get_view_mode() == 0
+                            || projectors.wants_program(),
+                        prepare_output: output_active,
+                        // A canvas drag reaches the compositor here rather than
+                        // through a project revision, so the picture follows the
+                        // pointer while the undo history stays at one entry per
+                        // gesture.
+                        draft: draft.as_ref(),
+                    },
+                );
+                last_preview_request = Instant::now();
+            }
         }
         let (preview_frame, program_frame, program_output, render_error) =
             refresh_preview_frames_for_view(&ui, &preview_worker);

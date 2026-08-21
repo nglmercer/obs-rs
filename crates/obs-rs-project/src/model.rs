@@ -207,6 +207,10 @@ impl SourceSpec {
     }
 
     /// Replaces the source's display name after validating that it is non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::InvalidName`] when `name` is empty or whitespace.
     pub fn set_name(&mut self, name: &str) -> Result<(), ProjectError> {
         if name.trim().is_empty() {
             return Err(ProjectError::InvalidName { kind: "source" });
@@ -233,6 +237,11 @@ impl SourceSpec {
     }
 
     /// Appends a filter instance to the source's ordered filter chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::DuplicateFilter`] when the filter ID is already
+    /// present in this source.
     pub fn add_filter(&mut self, filter: SourceFilterSpec) -> Result<(), ProjectError> {
         if self
             .filters
@@ -263,6 +272,11 @@ impl SourceSpec {
     }
 
     /// Moves a filter instance to an existing order position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::UnknownFilter`] for an unknown ID or
+    /// [`ProjectError::InvalidFilterOrder`] for an out-of-range index.
     pub fn move_filter(
         &mut self,
         id: &Identifier,
@@ -296,6 +310,11 @@ pub struct SceneItemSpec {
 
 impl SceneItemSpec {
     /// Creates an item reference with the default scene-item state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identifier validation error when either ID is empty or
+    /// contains unsupported characters.
     pub fn new(id: &str, source_id: &str) -> Result<Self, ProjectError> {
         Ok(Self {
             id: identifier(id, "scene item id")?,
@@ -307,6 +326,10 @@ impl SceneItemSpec {
     }
 
     /// Creates the conventional item whose ID starts out equal to its source ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identifier validation error when `source_id` is invalid.
     pub fn for_source(source_id: &str) -> Result<Self, ProjectError> {
         Self::new(source_id, source_id)
     }
@@ -371,6 +394,11 @@ pub struct SceneSpec {
 
 impl SceneSpec {
     /// Creates an empty scene definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::InvalidName`] for an empty scene name or an
+    /// identifier validation error for an invalid ID.
     pub fn new(id: &str, name: &str) -> Result<Self, ProjectError> {
         if name.trim().is_empty() {
             return Err(ProjectError::InvalidName { kind: "scene" });
@@ -408,6 +436,10 @@ impl SceneSpec {
     }
 
     /// Replaces the scene's display name after validating that it is non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::InvalidName`] when `name` is empty or whitespace.
     pub fn set_name(&mut self, name: &str) -> Result<(), ProjectError> {
         if name.trim().is_empty() {
             return Err(ProjectError::InvalidName { kind: "scene" });
@@ -417,6 +449,11 @@ impl SceneSpec {
     }
 
     /// Appends a scene item while rejecting duplicate item IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::DuplicateSceneItem`] when the item ID is already
+    /// present in this scene.
     pub fn add_item(&mut self, item: SceneItemSpec) -> Result<(), ProjectError> {
         if self.item_ids.contains_key(item.id()) {
             return Err(ProjectError::DuplicateSceneItem(item.id().clone()));
@@ -428,6 +465,11 @@ impl SceneSpec {
     }
 
     /// Appends several scene items, rejecting duplicates atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::DuplicateSceneItem`] when an incoming item or
+    /// an existing item has the same ID.
     pub fn add_items(
         &mut self,
         items: impl IntoIterator<Item = SceneItemSpec>,
@@ -500,6 +542,11 @@ impl SceneSpec {
     }
 
     /// Moves one scene item to an existing order position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::UnknownSceneItem`] for an unknown ID or
+    /// [`ProjectError::InvalidSceneItemOrder`] for an out-of-range index.
     pub fn move_item(&mut self, id: &Identifier, target_index: usize) -> Result<(), ProjectError> {
         let current_index = self
             .item_ids
@@ -630,6 +677,11 @@ impl Profile {
     }
 
     /// Adds a source to the profile-wide registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::DuplicateSource`] when the source ID is already
+    /// registered.
     pub fn add_source(&mut self, source: SourceSpec) -> Result<(), ProjectError> {
         if self.sources.contains_key(source.id()) {
             return Err(ProjectError::DuplicateSource(source.id().clone()));
@@ -639,6 +691,11 @@ impl Profile {
     }
 
     /// Adds several sources, rejecting duplicates atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::DuplicateSource`] when an incoming source or an
+    /// existing source has the same ID.
     pub fn add_sources(
         &mut self,
         sources: impl IntoIterator<Item = SourceSpec>,
@@ -693,6 +750,11 @@ impl Profile {
     }
 
     /// Removes an unreferenced source from the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::SourceInUse`] when a scene still references the
+    /// source or [`ProjectError::UnknownSource`] when the ID is absent.
     pub fn remove_source(&mut self, id: &Identifier) -> Result<SourceSpec, ProjectError> {
         if self.source_in_use(id) {
             return Err(ProjectError::SourceInUse(id.clone()));

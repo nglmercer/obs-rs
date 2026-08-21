@@ -18,11 +18,11 @@ use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 const PLATFORM_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(1);
 const CAMERA_MODE_CACHE_TTL: Duration = Duration::from_secs(5);
 
-static PLATFORM_DISCOVERY_CACHE: OnceLock<
-    Mutex<BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>>,
-> = OnceLock::new();
-static CAMERA_MODE_CACHE: OnceLock<Mutex<BTreeMap<String, (Instant, Vec<CameraMode>)>>> =
-    OnceLock::new();
+type PlatformDiscoveryCache = BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>;
+type CameraModeCache = BTreeMap<String, (Instant, Vec<CameraMode>)>;
+
+static PLATFORM_DISCOVERY_CACHE: OnceLock<Mutex<PlatformDiscoveryCache>> = OnceLock::new();
+static CAMERA_MODE_CACHE: OnceLock<Mutex<CameraModeCache>> = OnceLock::new();
 
 fn platform_devices_for_kind(kind: CaptureKind) -> Vec<CaptureDeviceInfo> {
     let cache = PLATFORM_DISCOVERY_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));

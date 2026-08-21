@@ -501,6 +501,8 @@ impl RecordingOutput {
     }
 
     fn push_raw_video(&mut self, frame: &RawVideoFrame) -> Result<(), EngineError> {
+        #[cfg(not(feature = "production-gstreamer"))]
+        let _ = frame;
         match self {
             Self::Reference(_) => Ok(()),
             #[cfg(feature = "production-gstreamer")]
@@ -2679,6 +2681,7 @@ mod tests {
 
     #[cfg(feature = "production-gstreamer")]
     #[test]
+    #[ignore = "requires a local native production sink; run on a reference output host"]
     fn production_schemes_create_native_stream_outputs() {
         let video = project()
             .active_profile_spec()
@@ -2701,6 +2704,7 @@ mod tests {
 
     #[cfg(feature = "production-gstreamer")]
     #[test]
+    #[ignore = "requires a local native production sink; run on a reference output host"]
     fn production_only_streams_skip_reference_encoders_and_receive_raw_media() {
         let frame = VideoFrame::solid(
             project()

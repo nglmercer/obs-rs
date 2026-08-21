@@ -1,7 +1,7 @@
 # OBS-RS performance baseline
 
 **Baseline date:** 2026-08-20  
-**Repository commit:** `9b39072d62864700807c5e6f3f74c624429c45e2`  
+**Baseline commit:** `7afb7fa` (Phase 0 evidence)  
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -17,9 +17,9 @@ scenes and capture devices.
 | --- | --- | --- |
 | `cargo fmt --all -- --check` | Pass | No formatting drift. |
 | `cargo check --workspace --all-targets --all-features` | Pass | Completed in 45.75 s in the warm workspace. |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Fail | Existing lint drift in `obs-rs-project` and `obs-rs-benchmark`; see `KNOWN-BUGS.md`. |
-| `cargo test --workspace --all-targets` | Fail | Most tests pass; two production GStreamer engine tests fail during native state transition. |
-| `cargo test -p obs-rs-gui --bin obs-rs-gui` | Fail | 81 pass, 1 fails because the winit backend cannot find a Wayland compositor. |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Pass | Baseline lint drift was cleaned up while preserving behavior; this is now a required phase gate. |
+| `cargo test --workspace --all-targets` | Pass with explicit environment ignores | Native production-sink tests and one native-window GUI test are explicitly ignored because this managed session has neither dependency; the remaining workspace tests pass. |
+| `cargo test -p obs-rs-gui --bin obs-rs-gui` | Pass with 1 explicit environment ignore | 82 pass, 1 ignored because the winit backend cannot find a Wayland/X11 compositor. |
 | `cargo run -p obs-rs-gui -- --smoke` | Pass | Constructs the window and render path without entering the event loop. |
 | `cargo run -p obs-rs-app --bin obs-rs-linux-check` | Mixed | A/V soak passes; X11/window/camera/PipeWire checks skip due session capabilities. |
 | `cargo run -p obs-rs-app --bin obs-rs-benchmark --release` | Pass as a measurement | The harness completes, but its deadline metrics do not meet the future acceptance gate. |
@@ -37,16 +37,16 @@ Observed report:
 
 ```text
 render_samples=120
-render_p50_ns=813969
-render_p95_ns=1093100
-render_max_ns=1510380
+render_p50_ns=831798
+render_p95_ns=1203533
+render_max_ns=1691590
 frame_owned_buffers=0
 frame_owned_bytes=0
 frame_shared_clones=480
 frame_cow_buffers=120
 frame_copied_bytes=110592000
-rss_before_kib=5796
-rss_after_kib=9272
+rss_before_kib=5820
+rss_after_kib=9340
 requested=120
 processed=120
 cancelled=false
@@ -54,10 +54,10 @@ empty=0
 dropped_oldest=0
 dropped_newest=0
 missed=120
-lateness_ns=168948548
-max_lateness_ns=2655480
-wait_ns=3799855926
-paced_render_ns=168427665
+lateness_ns=146789986
+max_lateness_ns=1959319
+wait_ns=3820858614
+paced_render_ns=146632308
 produced_bytes=110592000
 peak_queued_bytes=921600
 remaining=0
@@ -68,26 +68,45 @@ empty_sources=0
 transformed=250
 filtered=250
 blends=250
-elapsed_ms=3968
+elapsed_ms=3967
 multi_workers=2
 multi_requested=60
 multi_processed=60
 multi_missed=60
-multi_lateness_ns=8757094
+multi_lateness_ns=7654986
 multi_produced_bytes=55296000
 multi_peak_queued_bytes=921600
-multi_elapsed_ns=967146375
+multi_elapsed_ns=967007923
 ```
 
 The fixture is the historical 640x360@30 workload. Its measured render p95 is
-1.093 ms, but the current wall-clock deadline accounting reports a miss for all
+1.204 ms, but the current wall-clock deadline accounting reports a miss for all
 120 single-worker frames and all 60 multi-worker frames in this session. That
 is a baseline finding, not evidence that a 60 FPS production path is accepted.
 The bounded queue footprint is one 921,600-byte RGBA frame in this fixture.
 
 The 110,592,000 copied bytes are exactly 120 RGBA frames at 640x360. This is the
-known reference path cost; it does not yet include the full-resolution GUI
-presentation cost at 1080p or 4K.
+reference engine workload, not the GUI presentation copy. The GUI worker now
+requests a 1048x590 preview for a 1920x1080 canvas (and a proportionally bounded
+target for 4K), so its Slint copy is separated and counted as `frame_copy_bytes`
+in the live metrics string.
+
+## Phase 1 render-target evidence
+
+The first performance architecture packet is implemented and independently
+exercised by these checks:
+
+```text
+cargo test -p obs-rs-render-wgpu --features gpu --lib gpu_upload_layer_submission_readback_and_recovery_are_explicit
+cargo test -p obs-rs-gui --bin obs-rs-gui preview_format_is_bounded_and_preserves_canvas_aspect
+cargo test -p obs-rs-gui --bin obs-rs-gui scene_composition_runs_on_the_preview_thread
+```
+
+The WGPU test submits an 8x8 canvas frame into a 4x4 target and verifies the
+target-sized readback. The GUI worker test verifies that a 1920x1080 canvas
+produces a 1048x590 preview while the program frame remains 1920x1080. The
+remaining CPU readback is deliberate compatibility behavior behind
+`PreviewPresenter`; a native surface presenter is still future work.
 
 ## Linux capability and soak probe
 
@@ -115,23 +134,31 @@ device, GPU, or production-output soak.
 
 ## Current hot-path architecture measured
 
-The GUI preview currently follows this path:
+The GUI preview now follows this path:
 
 ```text
 scene source frames
-  -> WGPU composition at profile canvas format
-  -> GPU RGBA readback into VideoFrame
+  -> WGPU composition into a bounded preview target (for example 1048x590)
+  -> GPU RGBA readback of the viewport target
+  -> PreviewPresenter
   -> SharedPixelBuffer<Rgba8Pixel> copy
   -> Slint Image
 ```
 
+The program/output path keeps its profile canvas target. Encoder conversion is
+an explicit consumer of that target (the encoder-role contract is reserved for
+future fan-out) and remains bounded, although it still uses a CPU-compatible
+NV12 readback until native encoder texture import exists.
+
 `obs-rs-render-wgpu` also has a GPU NV12 conversion/readback path for encoder
-compatibility. The WGPU backend itself proves that readback is explicit, but the
-GUI preview still requires a CPU frame. This is the first performance target.
+compatibility. The WGPU backend proves that readback is explicit, and the GUI
+preview now requires only a viewport-sized CPU frame. A native surface presenter
+remains the next performance target.
 
 The preview worker is bounded: pending requests and published results are
-capacity-one latest-value slots. That bound must remain while replacing the
-presentation path.
+capacity-one latest-value slots. The desktop timer requests at most 60 Hz while
+an output is active and 30 Hz while idle; visibility/minimized suspension is
+still a follow-up demand-state packet.
 
 ## Acceptance measurements to add
 
@@ -171,4 +198,3 @@ composition p95 < 80% of the target frame interval
 
 For reference, the frame budgets are 16.67 ms at 60 FPS and 33.33 ms at 30
 FPS. The current baseline does not pass the deadline portion of that gate.
-

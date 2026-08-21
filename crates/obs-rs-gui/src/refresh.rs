@@ -141,7 +141,7 @@ pub(crate) fn refresh_preview_frames_for_view(
         (_, Some(frame)) => {
             let copy_started = Instant::now();
             let image = frame_to_image(frame);
-            worker.record_frame_copy(copy_started.elapsed());
+            worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
             let update_started = Instant::now();
             ui.set_preview_image(image);
             worker.record_slint_update(update_started.elapsed());
@@ -153,7 +153,7 @@ pub(crate) fn refresh_preview_frames_for_view(
         (_, Some(frame)) => {
             let copy_started = Instant::now();
             let image = frame_to_image(frame);
-            worker.record_frame_copy(copy_started.elapsed());
+            worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
             let update_started = Instant::now();
             ui.set_program_image(image);
             worker.record_slint_update(update_started.elapsed());
@@ -164,7 +164,7 @@ pub(crate) fn refresh_preview_frames_for_view(
     let performance = worker.performance();
     ui.set_preview_metrics(
         format!(
-            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · copy p95={} µs · Slint p95={} µs · callback p95={} µs",
+            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · copy p95={} µs bytes={} · Slint p95={} µs · callback p95={} µs",
             result.metrics,
             worker.queue_depth(),
             worker.dropped_requests(),
@@ -174,6 +174,7 @@ pub(crate) fn refresh_preview_frames_for_view(
             nanos_to_micros(performance.preview_render.max_nanos()),
             nanos_to_micros(performance.program_render.percentile_nanos(95)),
             nanos_to_micros(performance.frame_copy.percentile_nanos(95)),
+            performance.frame_copy_bytes,
             nanos_to_micros(performance.slint_update.percentile_nanos(95)),
             nanos_to_micros(performance.ui_callback.percentile_nanos(95)),
         )

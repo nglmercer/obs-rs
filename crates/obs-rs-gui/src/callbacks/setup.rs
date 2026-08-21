@@ -219,7 +219,7 @@ impl SetupController {
             &self.surface,
             &self.output,
             &self.settings,
-            settings,
+            &settings,
         );
         main.set_setup_benchmark_summary(report.summary().into());
         main.set_setup_active(false);
@@ -246,7 +246,7 @@ impl SetupController {
             &self.surface,
             &self.output,
             &self.settings,
-            settings,
+            &settings,
         );
         main.set_setup_active(false);
         let _ = self.window.hide();
@@ -410,16 +410,18 @@ fn report_rows(report: &SetupBenchmarkReport) -> ModelRc<SharedString> {
         .iter()
         .map(|candidate| {
             if let Some(metrics) = candidate.result {
-                let marker = (report.recommended
+                let marker = if report.recommended
                     == Some(
                         report
                             .candidates
                             .iter()
                             .position(|entry| entry.label == candidate.label)
                             .unwrap_or(usize::MAX),
-                    ))
-                .then_some(" · recommended")
-                .unwrap_or("");
+                    ) {
+                    " · recommended"
+                } else {
+                    ""
+                };
                 format!(
                     "{}{} — tier {} · p95 {} ms · missed {} · dropped {}",
                     format_candidate(candidate),

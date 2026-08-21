@@ -580,8 +580,10 @@ impl AppSettings {
         let Ok(config) = Config::parse(&document) else {
             // An existing but malformed document should not trap a user in the
             // wizard. The regular settings loader still falls back safely.
-            let mut settings = Self::default();
-            settings.setup_state = SetupState::Completed;
+            let settings = Self {
+                setup_state: SetupState::Completed,
+                ..Self::default()
+            };
             return SettingsLoad {
                 settings,
                 show_setup: false,
@@ -1787,9 +1789,11 @@ mod tests {
 
     #[test]
     fn setup_state_round_trips_and_legacy_documents_do_not_open_the_wizard() {
-        let mut settings = AppSettings::default();
-        settings.setup_state = SetupState::Skipped;
-        settings.setup_benchmark_summary = "recommended=720p30".to_owned();
+        let settings = AppSettings {
+            setup_state: SetupState::Skipped,
+            setup_benchmark_summary: "recommended=720p30".to_owned(),
+            ..AppSettings::default()
+        };
         let decoded = AppSettings::from_config(&settings.to_config());
         assert_eq!(decoded.setup_state, SetupState::Skipped);
         assert_eq!(

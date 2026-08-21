@@ -1591,7 +1591,7 @@ fn commit(
         return;
     }
     let settings = read_draft(controller);
-    apply_settings_snapshot(ui, state, surface, output, controller, settings);
+    apply_settings_snapshot(ui, state, surface, output, controller, &settings);
 }
 
 /// Applies a validated settings snapshot from either the settings draft or the
@@ -1606,7 +1606,7 @@ pub(crate) fn apply_settings_snapshot(
     surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
-    settings: AppSettings,
+    settings: &AppSettings,
 ) {
     let window = &controller.window;
 
@@ -1626,7 +1626,7 @@ pub(crate) fn apply_settings_snapshot(
         notes.push(format!("audio input: {error}"));
     }
 
-    output.borrow_mut().configure_stream(&settings);
+    output.borrow_mut().configure_stream(settings);
     // A selection the graph cannot resolve is kept rather than reset, so the
     // user has to be told the engine is on the fallback in the meantime;
     // silently recording from a different source would be worse.
@@ -1692,8 +1692,8 @@ pub(crate) fn apply_settings_snapshot(
     }
 
     *controller.settings.borrow_mut() = settings.clone();
-    apply_to_studio(ui, &settings);
-    push_palette(ui, controller, &settings);
+    apply_to_studio(ui, settings);
+    push_palette(ui, controller, settings);
     // The previewed geometry becomes the committed geometry, so a later Cancel
     // restores what was applied rather than what the window opened with.
     controller.push_metrics(settings.metrics());

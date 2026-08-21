@@ -952,8 +952,12 @@ fn project_codec_round_trips_crop_and_accepts_legacy_transforms() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the legacy migration fixture stays readable as one document"
+)]
 fn version_one_scene_sources_migrate_to_registry_and_items() {
-    let legacy = r##"
+    let legacy = r#"
 {
   "format": "obs-rs-project",
   "version": 1,
@@ -1047,7 +1051,7 @@ fn version_one_scene_sources_migrate_to_registry_and_items() {
     }
   ]
 }
-"##;
+"#;
 
     let migrated = Project::parse(legacy).expect("legacy project migrates");
     let profile = migrated.profile("live").expect("profile");

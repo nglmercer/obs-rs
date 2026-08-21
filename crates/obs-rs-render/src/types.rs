@@ -1,3 +1,5 @@
+use obs_rs_media::VideoFormat;
+
 /// Stable handle for one backend-owned texture resource.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TextureId(pub(crate) u64);
@@ -7,6 +9,50 @@ impl TextureId {
     #[must_use]
     pub const fn value(self) -> u64 {
         self.0
+    }
+}
+
+/// The consumer that owns a render target's latency and size budget.
+///
+/// Keeping the role beside the format prevents a GUI viewport from being
+/// treated as an alias for the program canvas. A backend may share resources
+/// between roles, but the decision remains explicit at the submission boundary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RenderTargetRole {
+    /// The scene selected for the live program/output path.
+    Program,
+    /// A bounded desktop preview viewport.
+    Preview,
+    /// A projector or multiview consumer.
+    Projector,
+    /// A target whose pixels are being converted for an encoder.
+    Encoder,
+}
+
+/// A render target request with an explicit consumer role and media format.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RenderTarget {
+    role: RenderTargetRole,
+    format: VideoFormat,
+}
+
+impl RenderTarget {
+    /// Creates a target request.
+    #[must_use]
+    pub const fn new(role: RenderTargetRole, format: VideoFormat) -> Self {
+        Self { role, format }
+    }
+
+    /// Returns the consumer role.
+    #[must_use]
+    pub const fn role(self) -> RenderTargetRole {
+        self.role
+    }
+
+    /// Returns the target media format.
+    #[must_use]
+    pub const fn format(self) -> VideoFormat {
+        self.format
     }
 }
 

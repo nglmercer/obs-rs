@@ -52,7 +52,7 @@ pub(crate) use fixtures::{
     kind_uses_portal, platform_capture_summary, source_settings,
 };
 pub(crate) use output::OutputRuntime;
-pub(crate) use preview::{frame_to_image, PreviewSurface};
+pub(crate) use preview::{frame_to_image, PreviewRenderer, PreviewSurface};
 pub(crate) use preview_worker::PreviewWorker;
 pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames_for_view, refresh_ui,
@@ -80,6 +80,10 @@ pub(crate) const MIC_CHANNEL_ID: &str = "mic";
 /// it is capturing so a silent meter is never mistaken for a broken one.
 pub(crate) const DESKTOP_CHANNEL_ID: &str = "desktop";
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "startup wires the complete desktop lifecycle in one boundary"
+)]
 fn main() -> Result<(), Box<dyn Error>> {
     let smoke = std::env::args().any(|argument| argument == "--smoke");
     // `--settings-screenshot <page> [file]` renders one settings page through

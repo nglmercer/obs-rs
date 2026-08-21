@@ -7,7 +7,11 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::{fmt::Display, fs, time::Instant};
+use std::{
+    fmt::{Display, Write},
+    fs,
+    time::Instant,
+};
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_config::Config;
@@ -104,10 +108,11 @@ impl SetupBenchmarkReport {
                     metrics.dropped_frames,
                 )
             });
-            summary.push_str(&format!(
+            let _ = write!(
+                summary,
                 " | {}:tier={},score={},p95_ns={},missed={},dropped={}",
                 candidate.label, candidate.tier, candidate.score, p95, missed, dropped
-            ));
+            );
         }
         summary.truncate(4_096);
         summary
@@ -115,6 +120,11 @@ impl SetupBenchmarkReport {
 }
 
 /// Runs the historical 640x360@30 benchmark used by `obs-rs-benchmark`.
+///
+/// # Errors
+///
+/// Returns a bounded diagnostic when the fixture cannot be built or the
+/// worker/compositor reports an error.
 pub fn run_legacy_benchmark() -> Result<BenchmarkOutput, String> {
     let rate = FrameRate::new(30, 1).map_err(error_text)?;
     let format = VideoFormat::new(640, 360, rate).map_err(error_text)?;
@@ -122,6 +132,11 @@ pub fn run_legacy_benchmark() -> Result<BenchmarkOutput, String> {
 }
 
 /// Runs the short local matrix used by the first-run setup wizard.
+///
+/// # Errors
+///
+/// Returns a diagnostic when no candidate can be validated or when the
+/// benchmark inputs cannot be constructed.
 pub fn run_setup_benchmark() -> Result<SetupBenchmarkReport, String> {
     let started = Instant::now();
     let candidates = candidate_formats()?;
@@ -419,13 +434,7 @@ fn rank_candidate(format: VideoFormat, metrics: SetupCandidateMetrics) -> (u8, u
         && metrics.dropped_frames == 0
         && metrics.render_p95_nanos <= frame_budget;
     let usable = metrics.render_p95_nanos <= frame_budget.saturating_mul(3) / 2;
-    let tier = if stable {
-        2
-    } else if usable {
-        1
-    } else {
-        0
-    };
+    let tier = if stable { 2 } else { u8::from(usable) };
     let pixels = u64::from(format.width()).saturating_mul(u64::from(format.height()));
     let score = pixels
         .saturating_mul(u64::from(format.frame_rate().numerator()))

@@ -78,6 +78,27 @@ mod tests {
         );
         assert_eq!(backend.metrics().readbacks(), 1);
 
+        // A desktop preview is allowed to be smaller than the program
+        // canvas. The compositor must scale the canvas-space layer into the
+        // target without first producing a full-size CPU frame.
+        let preview_format = VideoFormat::new(4, 4, format.frame_rate()).expect("preview format");
+        let preview_target = backend
+            .create_texture(preview_format)
+            .expect("preview target");
+        let solid = VideoFrame::solid(format, Timestamp::ZERO, [32, 96, 160, 255]);
+        backend
+            .submit_layers(
+                preview_target,
+                &[SceneLayer::frame(&solid, FrameTransform::IDENTITY, &[])],
+            )
+            .expect("viewport-sized GPU composition");
+        let preview = backend.readback(preview_target).expect("preview readback");
+        assert_eq!(preview.format(), preview_format);
+        assert!(preview
+            .pixels()
+            .chunks_exact(4)
+            .all(|pixel| pixel == [32, 96, 160, 255]));
+
         let background_pixels = (0_u8..64)
             .flat_map(|value| [10, 200, 30, value.saturating_mul(4)])
             .collect();

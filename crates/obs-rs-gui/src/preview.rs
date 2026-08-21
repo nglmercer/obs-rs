@@ -8,16 +8,14 @@ use std::{
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::{CompositorMetrics, Runtime, RuntimeLimits, RuntimeUsage, SourceId};
 use obs_rs_engine::compile_filter;
-use obs_rs_media::FrameTransform;
 #[cfg(test)]
 use obs_rs_media::FrameTransition;
+use obs_rs_media::{FrameScaler, FrameTransform, ScaleFilter};
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::Plugin;
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Profile, Project, SceneItemSpec, SourceSpec};
-use obs_rs_render::{
-    GpuFrameHandle, GpuPlaneHandle, RenderBackend, SceneLayer, TextureId, VideoSurface,
-};
+use obs_rs_render::{RenderBackend, RenderTarget, RenderTargetRole, SceneLayer, TextureId};
 use obs_rs_render_wgpu::WgpuRenderBackend;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -46,9 +44,11 @@ pub(crate) struct PreviewRenderer {
     /// frames. Their first composed pixel buffer is reused while fresh frame
     /// timestamps are issued to the output encoder.
     static_scenes: HashSet<String>,
-    static_frames: HashMap<String, Vec<u8>>,
+    static_frames: HashMap<String, Arc<Vec<u8>>>,
+    static_preview_frames: HashMap<(String, VideoFormat), Arc<Vec<u8>>>,
     compositor: PreviewCompositor,
-    gpu_scene: Option<String>,
+    gpu_program_scene: Option<String>,
+    preview_scaler: Option<FrameScaler>,
     /// The canvas drag currently applied to the runtime, if any.
     applied_draft: Option<(String, SourceId)>,
 }
@@ -142,29 +142,46 @@ impl PreviewSurface {
     }
 }
 
+struct GpuTarget {
+    target: RenderTarget,
+    texture: TextureId,
+}
+
+struct WgpuCompositor {
+    backend: Box<WgpuRenderBackend>,
+    targets: HashMap<RenderTargetRole, GpuTarget>,
+}
+
+impl WgpuCompositor {
+    fn target(&mut self, target: RenderTarget) -> Result<TextureId, Box<dyn Error>> {
+        if let Some(existing) = self.targets.get(&target.role()) {
+            if existing.target.format() == target.format() {
+                return Ok(existing.texture);
+            }
+        }
+        if let Some(previous) = self.targets.remove(&target.role()) {
+            self.backend.destroy_texture(previous.texture)?;
+        }
+        let texture = self.backend.create_texture(target.format())?;
+        self.targets
+            .insert(target.role(), GpuTarget { target, texture });
+        Ok(texture)
+    }
+}
+
 enum PreviewCompositor {
-    Wgpu {
-        backend: Box<WgpuRenderBackend>,
-        target: TextureId,
-    },
-    Cpu {
-        reason: Option<String>,
-    },
+    Wgpu(WgpuCompositor),
+    Cpu { reason: Option<String> },
 }
 
 impl PreviewCompositor {
     fn new(format: VideoFormat) -> Self {
         let texture_budget = format.rgba_bytes().saturating_mul(12);
         match WgpuRenderBackend::new(12, texture_budget) {
-            Ok(mut backend) => match backend.create_texture(format) {
-                Ok(target) => Self::Wgpu {
-                    backend: Box::new(backend),
-                    target,
-                },
-                Err(error) => Self::Cpu {
-                    reason: Some(format!("target allocation failed: {error}")),
-                },
-            },
+            Ok(backend) => Self::Wgpu(WgpuCompositor {
+                backend: Box::new(backend),
+                targets: HashMap::new(),
+            }),
             Err(error) => Self::Cpu {
                 reason: Some(error.to_string()),
             },
@@ -204,8 +221,10 @@ impl PreviewRenderer {
             scene_ids: HashSet::new(),
             static_scenes: HashSet::new(),
             static_frames: HashMap::new(),
+            static_preview_frames: HashMap::new(),
             compositor: PreviewCompositor::new(format),
-            gpu_scene: None,
+            gpu_program_scene: None,
+            preview_scaler: None,
             applied_draft: None,
         };
         // Building from an empty mirror of the same profile makes the first
@@ -296,6 +315,7 @@ impl PreviewRenderer {
         self.static_scenes = static_scenes(profile);
         // Cached still frames describe scene content that may have just moved.
         self.static_frames.clear();
+        self.static_preview_frames.clear();
         Ok(())
     }
 
@@ -468,7 +488,7 @@ impl PreviewRenderer {
                 let _ = self.runtime.set_source_transform(&scene, source, committed);
                 // A scene composed only of still sources caches its picture, so
                 // the cache has to go when the drag stops moving it.
-                self.static_frames.remove(&scene);
+                self.invalidate_static_scene_cache(&scene);
                 self.applied_draft = None;
             }
         }
@@ -480,7 +500,7 @@ impl PreviewRenderer {
             .set_source_transform(&scene, source, draft.transform)
             .is_ok()
         {
-            self.static_frames.remove(&scene);
+            self.invalidate_static_scene_cache(&scene);
             self.applied_draft = Some((scene, source));
         }
     }
@@ -506,75 +526,168 @@ impl PreviewRenderer {
         }
     }
 
+    /// Returns the bounded viewport format used for GUI preview rendering.
+    ///
+    /// The preview is deliberately independent from the profile's program
+    /// format: a 4K canvas should not force a 4K CPU readback for a roughly
+    /// 1,050-pixel-wide window.
+    #[must_use]
+    pub(crate) fn preview_format_for_canvas(canvas: VideoFormat) -> VideoFormat {
+        const MAX_WIDTH: u64 = 1_050;
+        const MAX_HEIGHT: u64 = 590;
+        let canvas_width = u64::from(canvas.width());
+        let canvas_height = u64::from(canvas.height());
+        let (width, height) =
+            if canvas_width.saturating_mul(MAX_HEIGHT) <= canvas_height.saturating_mul(MAX_WIDTH) {
+                (
+                    canvas_width.saturating_mul(MAX_HEIGHT) / canvas_height,
+                    MAX_HEIGHT,
+                )
+            } else {
+                (
+                    MAX_WIDTH,
+                    canvas_height.saturating_mul(MAX_WIDTH) / canvas_width,
+                )
+            };
+        let width = width.max(1).min(canvas_width);
+        let height = height.max(1).min(canvas_height);
+        VideoFormat::new(
+            u32::try_from(width).unwrap_or(u32::MAX),
+            u32::try_from(height).unwrap_or(u32::MAX),
+            canvas.frame_rate(),
+        )
+        .expect("bounded preview dimensions are valid")
+    }
+
+    fn invalidate_static_scene_cache(&mut self, scene: &str) {
+        self.static_frames.remove(scene);
+        self.static_preview_frames
+            .retain(|(cached_scene, _), _| cached_scene != scene);
+    }
+
+    #[allow(
+        dead_code,
+        reason = "kept as the single-frame program render API for diagnostics"
+    )]
     pub(crate) fn render(&mut self, scene: &str) -> Result<Option<VideoFrame>, Box<dyn Error>> {
-        let frame = if let Some(pixels) = self.static_frames.get(scene) {
-            self.gpu_scene = None;
-            Some(VideoFrame::new(
-                self.format,
-                self.timestamp,
-                pixels.clone(),
-            )?)
-        } else {
-            let frame = self.render_live_scene(scene)?;
-            if self.static_scenes.contains(scene) {
-                if let Some(frame) = frame.as_ref() {
-                    self.static_frames
-                        .insert(scene.to_owned(), frame.pixels().to_vec());
-                }
-            }
-            frame
-        };
+        let frame = self.render_target(
+            scene,
+            RenderTarget::new(RenderTargetRole::Program, self.format),
+        )?;
         self.advance_timestamp();
         Ok(frame)
     }
 
-    fn render_live_scene(&mut self, scene: &str) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+    /// Renders the current scene into the viewport-sized preview target.
+    /// The caller can render a matching program target at the same timestamp
+    /// and advance the clock once after the complete request.
+    pub(crate) fn render_preview(
+        &mut self,
+        scene: &str,
+        format: VideoFormat,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        self.render_target(scene, RenderTarget::new(RenderTargetRole::Preview, format))
+    }
+
+    pub(crate) fn render_program(
+        &mut self,
+        scene: &str,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        self.render_target(
+            scene,
+            RenderTarget::new(RenderTargetRole::Program, self.format),
+        )
+    }
+
+    fn render_target(
+        &mut self,
+        scene: &str,
+        target: RenderTarget,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        let cached = match target.role() {
+            RenderTargetRole::Program => self
+                .static_frames
+                .get(scene)
+                .map(|pixels| (self.format, Arc::clone(pixels))),
+            RenderTargetRole::Preview => self
+                .static_preview_frames
+                .get(&(scene.to_owned(), target.format()))
+                .map(|pixels| (target.format(), Arc::clone(pixels))),
+            RenderTargetRole::Projector | RenderTargetRole::Encoder => None,
+        };
+        let frame = if let Some((cached_format, pixels)) = cached.as_ref() {
+            Some(VideoFrame::from_shared(
+                *cached_format,
+                self.timestamp,
+                Arc::clone(pixels),
+            )?)
+        } else {
+            self.render_live_scene(scene, target)?
+        };
+        let frame = match frame {
+            Some(frame) if frame.format() != target.format() => {
+                self.scale_frame(&frame, target.format())?
+            }
+            Some(frame) => frame,
+            None => return Ok(None),
+        };
+        if self.static_scenes.contains(scene) && cached.is_none() {
+            match target.role() {
+                RenderTargetRole::Program => {
+                    self.static_frames
+                        .insert(scene.to_owned(), Arc::new(frame.pixels().to_vec()));
+                }
+                RenderTargetRole::Preview => {
+                    self.static_preview_frames.insert(
+                        (scene.to_owned(), target.format()),
+                        Arc::new(frame.pixels().to_vec()),
+                    );
+                }
+                RenderTargetRole::Projector | RenderTargetRole::Encoder => {}
+            }
+        }
+        Ok(Some(frame))
+    }
+
+    fn render_live_scene(
+        &mut self,
+        scene: &str,
+        target: RenderTarget,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
         let request = VideoRequest::new(self.timestamp, self.format);
         match &mut self.compositor {
-            PreviewCompositor::Wgpu { backend, target } => {
+            PreviewCompositor::Wgpu(compositor) => {
                 let layers = self.runtime.render_scene_layers(scene, &request)?;
                 if layers.is_empty() {
                     return Ok(None);
                 }
+                let texture = compositor.target(target)?;
                 let submitted = layers
                     .iter()
                     .map(|layer| {
                         SceneLayer::frame(layer.frame(), layer.transform(), layer.filters())
                     })
                     .collect::<Vec<_>>();
-                if let Err(error) = backend.submit_layers(*target, &submitted) {
+                if let Err(error) = compositor.backend.submit_layers(texture, &submitted) {
                     self.compositor = PreviewCompositor::Cpu {
                         reason: Some(format!("GPU composition failed: {error}")),
                     };
+                    self.gpu_program_scene = None;
                     return Err(error.into());
                 }
-                self.gpu_scene = Some(scene.to_owned());
-                let timestamp = layers
-                    .last()
-                    .map_or(self.timestamp, |layer| layer.frame().timestamp());
-                let handle = GpuFrameHandle::new(
-                    "obs-rs-wgpu",
-                    self.format,
-                    obs_rs_media::PixelFormat::Rgba8,
-                    timestamp,
-                    vec![GpuPlaneHandle::new(
-                        *target,
-                        self.format.width(),
-                        self.format.height(),
-                    )],
-                )
-                .ok_or_else(|| std::io::Error::other("invalid GPU surface descriptor"))?;
-                let surface = VideoSurface::Gpu(handle);
-                match surface {
-                    VideoSurface::Gpu(handle) => backend
-                        .readback(handle.planes()[0].texture())
-                        .map(Some)
-                        .map_err(Into::into),
-                    VideoSurface::Cpu(frame) => Ok(Some(frame)),
+                if target.role() == RenderTargetRole::Program {
+                    self.gpu_program_scene = Some(scene.to_owned());
                 }
+                compositor
+                    .backend
+                    .readback(texture)
+                    .map(Some)
+                    .map_err(Into::into)
             }
             PreviewCompositor::Cpu { .. } => {
-                self.gpu_scene = None;
+                if target.role() == RenderTargetRole::Program {
+                    self.gpu_program_scene = None;
+                }
                 self.runtime
                     .render_scene(scene, &request)
                     .map_err(Into::into)
@@ -582,22 +695,40 @@ impl PreviewRenderer {
         }
     }
 
-    /// Produces an encoder-oriented NV12 frame from the current GPU target.
+    fn scale_frame(
+        &mut self,
+        frame: &VideoFrame,
+        target: VideoFormat,
+    ) -> Result<VideoFrame, Box<dyn Error>> {
+        let scaler = self
+            .preview_scaler
+            .get_or_insert_with(|| FrameScaler::new(frame.format(), target, ScaleFilter::Bilinear));
+        scaler.reconfigure(frame.format(), target, ScaleFilter::Bilinear);
+        scaler.scale(frame).map_err(Into::into)
+    }
+
+    /// Produces an encoder-oriented NV12 frame from the program target.
     /// Static/cached frames are uploaded once when the target no longer names
-    /// this scene; live GPU composition proceeds directly to conversion.
+    /// this scene; live program composition proceeds directly to conversion.
     pub(crate) fn encoder_frame(
         &mut self,
         scene: &str,
         frame: &VideoFrame,
     ) -> Result<Option<RawVideoFrame>, Box<dyn Error>> {
-        let PreviewCompositor::Wgpu { backend, target } = &mut self.compositor else {
+        let PreviewCompositor::Wgpu(compositor) = &mut self.compositor else {
             return Ok(None);
         };
-        if self.gpu_scene.as_deref() != Some(scene) {
-            backend.upload(*target, frame)?;
-            self.gpu_scene = Some(scene.to_owned());
+        let target =
+            compositor.target(RenderTarget::new(RenderTargetRole::Program, self.format))?;
+        if self.gpu_program_scene.as_deref() != Some(scene) {
+            compositor.backend.upload(target, frame)?;
+            self.gpu_program_scene = Some(scene.to_owned());
         }
-        backend.readback_nv12(*target).map(Some).map_err(Into::into)
+        compositor
+            .backend
+            .readback_nv12(target)
+            .map(Some)
+            .map_err(Into::into)
     }
 
     #[cfg(test)]
@@ -618,7 +749,7 @@ impl PreviewRenderer {
         Ok(frame)
     }
 
-    fn advance_timestamp(&mut self) {
+    pub(crate) fn advance_timestamp(&mut self) {
         let period = self
             .format
             .frame_rate()
@@ -634,7 +765,8 @@ impl PreviewRenderer {
         let metrics = self.runtime.compositor_metrics();
         let capture = metrics.capture_latency();
         let backend = match &self.compositor {
-            PreviewCompositor::Wgpu { backend, .. } => {
+            PreviewCompositor::Wgpu(compositor) => {
+                let backend = &compositor.backend;
                 let render = backend.metrics();
                 format!(
                     "WGPU uploads={} compositions={} conversions={} readbacks={} gpu={} MiB",
@@ -726,14 +858,28 @@ pub(crate) fn builtin_source_kinds() -> Vec<String> {
     })
 }
 
+pub(crate) trait PreviewPresenter {
+    fn present(&mut self, frame: &VideoFrame) -> Image;
+}
+
+struct SlintPreviewPresenter;
+
+impl PreviewPresenter for SlintPreviewPresenter {
+    fn present(&mut self, frame: &VideoFrame) -> Image {
+        let format = frame.format();
+        // Slint owns its pixel storage, so one copy out of the engine frame is
+        // unavoidable here; `clone_from_slice` performs it as a single block
+        // copy. The worker supplies a viewport-sized frame, not the full
+        // program canvas.
+        let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+            frame.pixels(),
+            format.width(),
+            format.height(),
+        );
+        Image::from_rgba8(buffer)
+    }
+}
+
 pub(crate) fn frame_to_image(frame: &VideoFrame) -> Image {
-    let format = frame.format();
-    // Slint owns its pixel storage, so one copy out of the engine frame is
-    // unavoidable here; `clone_from_slice` performs it as a single block copy.
-    let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
-        frame.pixels(),
-        format.width(),
-        format.height(),
-    );
-    Image::from_rgba8(buffer)
+    SlintPreviewPresenter.present(frame)
 }

@@ -310,12 +310,10 @@ fn move_filter(
     let filter_id = selected_id(controller)?;
     let index = filter_index(state, &source, &filter_id)
         .ok_or_else(|| std::io::Error::other("selected filter is missing"))?;
-    let target = if delta < 0 {
-        index.checked_sub(1)
-    } else if delta > 0 {
-        Some(index.saturating_add(1))
-    } else {
-        Some(index)
+    let target = match delta.cmp(&0) {
+        std::cmp::Ordering::Less => index.checked_sub(1),
+        std::cmp::Ordering::Greater => Some(index.saturating_add(1)),
+        std::cmp::Ordering::Equal => Some(index),
     }
     .ok_or_else(|| std::io::Error::other("filter is already at the top"))?;
     state
@@ -504,6 +502,10 @@ fn filter_instance_name(base: &str, kind: &str, id: &str) -> String {
         .map_or_else(|| base.to_owned(), |ordinal| format!("{base} {ordinal}"))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the filter editor refresh keeps all dependent rows synchronized"
+)]
 fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersController) {
     let locale = state.borrow().locale();
     controller
