@@ -251,6 +251,7 @@ export component MainWindow inherits Window {
         callback canvas-nudged(int, int);
         callback canvas-zoom-changed(int);
         callback canvas-zoom-step(int);
+        callback canvas-zoom-at(int, int, int, int, int, int, int, int);
         callback canvas-pan-dragged(int, int);
 
         // The selected scene item's rectangle in canvas pixels.
@@ -548,6 +549,9 @@ export component MainWindow inherits Window {
                 canvas-selection-committed() => { root.canvas-selection-committed(); }
                 canvas-zoom-changed(value) => { root.canvas-zoom-changed(value); }
                 canvas-zoom-step(direction) => { root.canvas-zoom-step(direction); }
+                canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale) => {
+                    root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
+                }
                 canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
             }
 

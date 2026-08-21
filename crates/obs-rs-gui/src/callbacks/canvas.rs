@@ -26,6 +26,11 @@ use crate::{
 const MINIMUM_ITEM_PIXELS: i64 = 16;
 const MAX_PAN_PIXELS: i32 = 16_384;
 const MAX_SNAP_GUIDES: usize = 64;
+const MIN_ZOOM_PERCENT: u16 = 10;
+const MAX_ZOOM_PERCENT: u16 = 800;
+const WHEEL_ZOOM_FACTOR_MILLI: i64 = 1_250;
+const SCALE_MICROS_PER_PERCENT: i64 = 10_000;
+const SCALE_MICROS_PER_UNIT: i64 = 1_000_000;
 
 /// The scale a transform stores for a source that fills the canvas.
 const UNIT_SCALE_MILLI: i64 = 1_000;
@@ -60,8 +65,33 @@ impl CanvasZoom {
         }
     }
 
+    /// Returns the next bounded continuous zoom level for a wheel tick.
+    ///
+    /// Fit-to-window supplies its effective scale from the live viewport so
+    /// the first wheel tick starts from what the user is actually seeing.
+    pub(crate) fn wheel(self, direction: i32, current_scale_micros: i32) -> Self {
+        if direction == 0 {
+            return self;
+        }
+        let current_percent_milli = match self {
+            Self::FitToWindow => i64::from(current_scale_micros.max(1)) / 10,
+            Self::Percent(percent) => i64::from(percent) * 1_000,
+        };
+        let scaled = if direction > 0 {
+            current_percent_milli.saturating_mul(WHEEL_ZOOM_FACTOR_MILLI) / 1_000
+        } else {
+            current_percent_milli
+                .saturating_mul(1_000)
+                .checked_div(WHEEL_ZOOM_FACTOR_MILLI)
+                .unwrap_or(0)
+        };
+        let percent = ((scaled + 500) / 1_000)
+            .clamp(i64::from(MIN_ZOOM_PERCENT), i64::from(MAX_ZOOM_PERCENT));
+        Self::Percent(u16::try_from(percent).unwrap_or(MAX_ZOOM_PERCENT))
+    }
+
     /// Moves one position through the OBS-style bounded preset list.
-    pub(crate) const fn stepped(self, direction: i32) -> Self {
+    pub(crate) fn stepped(self, direction: i32) -> Self {
         const PRESETS: [CanvasZoom; 5] = [
             CanvasZoom::FitToWindow,
             CanvasZoom::Percent(25),
@@ -69,28 +99,33 @@ impl CanvasZoom {
             CanvasZoom::Percent(100),
             CanvasZoom::Percent(200),
         ];
-        let current: usize = match self {
-            Self::Percent(25) => 1,
-            Self::Percent(50) => 2,
-            Self::Percent(100) => 3,
-            Self::Percent(200) => 4,
-            // The constructor is private to this module, but keeping the
-            // fallback makes the stepping contract total if another preset is
-            // added later.
-            Self::FitToWindow | Self::Percent(_) => 0,
+        let current_percent = match self {
+            Self::FitToWindow => 0,
+            Self::Percent(percent) => i32::from(percent),
         };
-        let next = if direction < 0 {
-            current.saturating_sub(1)
-        } else if direction > 0 {
-            if current + 1 >= PRESETS.len() {
-                PRESETS.len() - 1
-            } else {
-                current + 1
-            }
-        } else {
-            current
+        let next = match direction.cmp(&0) {
+            std::cmp::Ordering::Less => PRESETS
+                .iter()
+                .rposition(|preset| preset.ui_value() < current_percent)
+                .unwrap_or(0),
+            std::cmp::Ordering::Greater => PRESETS
+                .iter()
+                .position(|preset| preset.ui_value() > current_percent)
+                .unwrap_or(PRESETS.len() - 1),
+            std::cmp::Ordering::Equal => PRESETS
+                .iter()
+                .position(|preset| preset.ui_value() == current_percent)
+                .unwrap_or(0),
         };
         PRESETS[next]
+    }
+
+    /// Returns the fixed-point scale used by the Slint canvas mapping.
+    fn scale_micros(self, fit_scale_micros: i32) -> i64 {
+        match self {
+            Self::FitToWindow => i64::from(fit_scale_micros.max(1)),
+            Self::Percent(percent) => i64::from(percent) * SCALE_MICROS_PER_PERCENT,
+        }
     }
 }
 
@@ -221,6 +256,49 @@ impl CanvasState {
                 .unwrap_or_else(|_| unreachable!("pan is clamped to i32 bounds"))
         };
         self.with_pan((bounded(self.pan.0, dx), bounded(self.pan.1, dy)))
+    }
+
+    /// Changes zoom while keeping the canvas point under the wheel cursor
+    /// under that same widget point. All arithmetic is fixed-point and
+    /// bounded before it becomes transient viewport state.
+    pub(crate) fn zoomed_at(
+        self,
+        direction: i32,
+        anchor: (i32, i32),
+        pointer: (i32, i32),
+        old_view_origin: (i32, i32),
+        old_scale_micros: i32,
+    ) -> Self {
+        let zoom = self.zoom.wheel(direction, old_scale_micros);
+        let new_scale_micros = zoom.scale_micros(old_scale_micros);
+        let old_scale_micros = i64::from(old_scale_micros.max(1));
+        let center_offset = (
+            i64::from(old_view_origin.0)
+                .saturating_mul(SCALE_MICROS_PER_UNIT)
+                .saturating_sub(i64::from(self.pan.0).saturating_mul(old_scale_micros)),
+            i64::from(old_view_origin.1)
+                .saturating_mul(SCALE_MICROS_PER_UNIT)
+                .saturating_sub(i64::from(self.pan.1).saturating_mul(old_scale_micros)),
+        );
+        let anchored_pan = |pointer: i32, anchor: i32, center_offset: i64| {
+            let numerator = i64::from(pointer)
+                .saturating_mul(SCALE_MICROS_PER_UNIT)
+                .saturating_sub(center_offset)
+                .saturating_sub(i64::from(anchor).saturating_mul(new_scale_micros));
+            let value = numerator
+                .checked_div(new_scale_micros.max(1))
+                .unwrap_or(0)
+                .clamp(-i64::from(MAX_PAN_PIXELS), i64::from(MAX_PAN_PIXELS));
+            i32::try_from(value).unwrap_or_else(|_| unreachable!("pan is bounded"))
+        };
+        Self {
+            zoom,
+            pan: (
+                anchored_pan(pointer.0, anchor.0, center_offset.0),
+                anchored_pan(pointer.1, anchor.1, center_offset.1),
+            ),
+            ..self
+        }
     }
 
     fn begin_selection(self, x: i64, y: i64, additive: bool) -> Self {
@@ -986,6 +1064,26 @@ fn install_zoom_callbacks(ui: &MainWindow, controller: &Rc<CanvasController>) {
     });
 
     let weak = ui.as_weak();
+    let zoom_controller = Rc::clone(controller);
+    ui.on_canvas_zoom_at(
+        move |direction, anchor_x, anchor_y, pointer_x, pointer_y, view_x, view_y, scale| {
+            let state = zoom_controller.canvas_state().zoomed_at(
+                direction,
+                (anchor_x, anchor_y),
+                (pointer_x, pointer_y),
+                (view_x, view_y),
+                scale,
+            );
+            zoom_controller.state.replace(state);
+            if let Some(ui) = weak.upgrade() {
+                ui.set_canvas_zoom(state.zoom().ui_value());
+                ui.set_canvas_pan_x(state.pan().0);
+                ui.set_canvas_pan_y(state.pan().1);
+            }
+        },
+    );
+
+    let weak = ui.as_weak();
     let pan_controller = Rc::clone(controller);
     ui.on_canvas_pan_dragged(move |dx, dy| {
         let state = pan_controller.pan_by(dx, dy);
@@ -1536,6 +1634,50 @@ mod tests {
         assert_eq!(
             CanvasZoom::Percent(200).stepped(1),
             CanvasZoom::Percent(200)
+        );
+        assert_eq!(CanvasZoom::Percent(63).stepped(-1), CanvasZoom::Percent(50));
+        assert_eq!(CanvasZoom::Percent(63).stepped(1), CanvasZoom::Percent(100));
+    }
+
+    #[test]
+    fn wheel_zoom_is_continuous_and_bounded() {
+        assert_eq!(
+            CanvasZoom::FitToWindow.wheel(1, 500_000),
+            CanvasZoom::Percent(63)
+        );
+        assert_eq!(
+            CanvasZoom::Percent(63).wheel(-1, 1_000_000),
+            CanvasZoom::Percent(50)
+        );
+        assert_eq!(
+            CanvasZoom::Percent(MIN_ZOOM_PERCENT).wheel(-1, 1_000_000),
+            CanvasZoom::Percent(MIN_ZOOM_PERCENT)
+        );
+        assert_eq!(
+            CanvasZoom::Percent(MAX_ZOOM_PERCENT).wheel(1, 1_000_000),
+            CanvasZoom::Percent(MAX_ZOOM_PERCENT)
+        );
+    }
+
+    #[test]
+    fn cursor_anchored_zoom_preserves_the_canvas_point_under_the_pointer() {
+        let state = CanvasState::default()
+            .with_zoom(CanvasZoom::Percent(100))
+            .zoomed_at(1, (400, 250), (500, 300), (100, 50), 1_000_000);
+
+        assert_eq!(state.zoom(), CanvasZoom::Percent(125));
+        assert_eq!(state.pan(), (-80, -50));
+
+        let new_scale = i64::from(state.zoom().ui_value()) * SCALE_MICROS_PER_PERCENT;
+        let new_origin_x = 100_i64 * SCALE_MICROS_PER_UNIT + i64::from(state.pan().0) * new_scale;
+        let new_origin_y = 50_i64 * SCALE_MICROS_PER_UNIT + i64::from(state.pan().1) * new_scale;
+        assert_eq!(
+            new_origin_x + 400_i64 * new_scale,
+            500_i64 * SCALE_MICROS_PER_UNIT
+        );
+        assert_eq!(
+            new_origin_y + 250_i64 * new_scale,
+            300_i64 * SCALE_MICROS_PER_UNIT
         );
     }
 

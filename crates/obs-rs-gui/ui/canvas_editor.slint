@@ -36,6 +36,10 @@ export component CanvasEditor inherits Rectangle {
     callback canvas-selection-committed();
     callback canvas-pan-dragged(int, int);
     callback canvas-zoom-step(int);
+    // direction, canvas anchor, pointer position, old view origin, and the
+    // old view scale in fixed-point micros. The Rust controller uses these to
+    // keep the point under the cursor stationary while zooming.
+    callback canvas-zoom-at(int, int, int, int, int, int, int, int);
 
     property <length> handle-size: 9px;
     // A drag reports the delta since the previous move, so the Rust side only
@@ -121,11 +125,27 @@ export component CanvasEditor inherits Rectangle {
         }
         scroll-event(event) => {
             if event.delta-y > 0 {
-                root.canvas-zoom-step(1);
+                root.canvas-zoom-at(
+                    1,
+                    root.to-canvas-x(self.mouse-x),
+                    root.to-canvas-y(self.mouse-y),
+                    Math.round(self.mouse-x / 1px),
+                    Math.round(self.mouse-y / 1px),
+                    Math.round(root.view-x / 1px),
+                    Math.round(root.view-y / 1px),
+                    Math.round(root.view-scale * 1000000));
                 return accept;
             }
             if event.delta-y < 0 {
-                root.canvas-zoom-step(-1);
+                root.canvas-zoom-at(
+                    -1,
+                    root.to-canvas-x(self.mouse-x),
+                    root.to-canvas-y(self.mouse-y),
+                    Math.round(self.mouse-x / 1px),
+                    Math.round(self.mouse-y / 1px),
+                    Math.round(root.view-x / 1px),
+                    Math.round(root.view-y / 1px),
+                    Math.round(root.view-scale * 1000000));
                 return accept;
             }
             reject
