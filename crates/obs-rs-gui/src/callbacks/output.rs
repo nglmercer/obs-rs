@@ -162,20 +162,26 @@ pub(crate) fn take_transition_and_refresh(
 
 pub(crate) fn push_program_frame(
     ui: &MainWindow,
-    frame: Option<VideoFrame>,
+    preview_frame: Option<&VideoFrame>,
     raw_frame: Option<RawVideoFrame>,
+    canvas_frame: Option<VideoFrame>,
     output: &Rc<RefCell<OutputRuntime>>,
 ) {
     // An accelerated frame is only usable while the encoders run at the canvas
     // geometry: packed and planar layouts are not resampled, so a scaled output
-    // takes the RGBA path instead of dropping the frame.
+    // takes the full-canvas RGBA path instead of dropping the bounded GUI view.
     let accepts_raw = output.borrow().accepts_raw_frames();
     if let Some(frame) = raw_frame.filter(|_| accepts_raw) {
         output.borrow_mut().push_raw_frame(frame);
-    } else if let Some(frame) = frame {
+    } else if let Some(frame) = canvas_frame {
         output.borrow_mut().push_frame(&frame);
     } else {
-        ui.set_status_message("Output skipped: program scene is empty".into());
+        let message = if preview_frame.is_some() {
+            "Output skipped: full-canvas program frame unavailable"
+        } else {
+            "Output skipped: program scene is empty"
+        };
+        ui.set_status_message(message.into());
     }
 }
 

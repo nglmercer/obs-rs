@@ -186,18 +186,21 @@ pub(crate) fn refresh_ui(
     ui.set_status_message(render_error.unwrap_or(notice).into());
 }
 
+type RefreshedPreviewFrames = (
+    Option<VideoFrame>,
+    Option<VideoFrame>,
+    Option<RawVideoFrame>,
+    Option<VideoFrame>,
+    Option<String>,
+);
+
 /// Applies the newest completed background composition without waiting for one.
 pub(crate) fn refresh_preview_frames_for_view(
     ui: &MainWindow,
     worker: &PreviewWorker,
-) -> (
-    Option<VideoFrame>,
-    Option<VideoFrame>,
-    Option<RawVideoFrame>,
-    Option<String>,
-) {
+) -> RefreshedPreviewFrames {
     let Some(result) = worker.try_take_latest() else {
-        return (None, None, None, None);
+        return (None, None, None, None, None);
     };
     match (&result.preview_scene, &result.preview_frame) {
         (_, Some(frame)) => {
@@ -246,6 +249,7 @@ pub(crate) fn refresh_preview_frames_for_view(
         result.preview_frame,
         result.program_frame,
         result.program_output,
+        result.program_output_frame,
         result.error.map(|error| format!("Preview worker: {error}")),
     )
 }

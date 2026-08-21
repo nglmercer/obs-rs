@@ -2,7 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
-**Latest measurement:** 2026-08-21 (bounded Render Delay filter packet)
+**Latest measurement:** 2026-08-21 (bounded program/preview render-target split packet)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -38,16 +38,16 @@ Observed report:
 
 ```text
 render_samples=120
-render_p50_ns=839342
-render_p95_ns=1401613
-render_max_ns=2570633
+render_p50_ns=772671
+render_p95_ns=1131076
+render_max_ns=2090687
 frame_owned_buffers=0
 frame_owned_bytes=0
 frame_shared_clones=480
 frame_cow_buffers=120
 frame_copied_bytes=110592000
-rss_before_kib=6028
-rss_after_kib=9496
+rss_before_kib=6420
+rss_after_kib=9912
 requested=120
 processed=120
 cancelled=false
@@ -55,10 +55,10 @@ empty=0
 dropped_oldest=0
 dropped_newest=0
 missed=120
-lateness_ns=158060380
-max_lateness_ns=3066281
-wait_ns=3810873585
-paced_render_ns=156889905
+lateness_ns=180437012
+max_lateness_ns=2895770
+wait_ns=3787514488
+paced_render_ns=180254360
 produced_bytes=110592000
 peak_queued_bytes=921600
 remaining=0
@@ -74,23 +74,23 @@ multi_workers=2
 multi_requested=60
 multi_processed=60
 multi_missed=60
-multi_lateness_ns=7539771
+multi_lateness_ns=8332885
 multi_produced_bytes=55296000
 multi_peak_queued_bytes=921600
-multi_elapsed_ns=966990825
+multi_elapsed_ns=967025892
 ```
 
 The fixture is the historical 640x360@30 workload. The latest measured render
-p95 is 1.402 ms, but the current wall-clock deadline accounting reports a miss for all
+p95 is 1.131 ms, but the current wall-clock deadline accounting reports a miss for all
 120 single-worker frames and all 60 multi-worker frames in this session. That
 is a baseline finding, not evidence that a 60 FPS production path is accepted.
 The bounded queue footprint is one 921,600-byte RGBA frame in this fixture.
 
 The 110,592,000 copied bytes are exactly 120 RGBA frames at 640x360. This is the
 reference engine workload, not the GUI presentation copy. The GUI worker now
-requests a 1048x590 preview for a 1920x1080 canvas (and a proportionally bounded
-target for 4K), so its Slint copy is separated and counted as `frame_copy_bytes`
-in the live metrics string.
+requests separate 1048x590 preview and program-view targets for a 1920x1080
+canvas (and proportionally bounded targets for 4K), so their Slint copies are
+separated and counted as `frame_copy_bytes` in the live metrics string.
 
 ## Crop/Pad, key, color, Scroll, and Render Delay evidence
 
@@ -241,9 +241,12 @@ cargo test -p obs-rs-gui --bin obs-rs-gui scene_composition_runs_on_the_preview_
 
 The WGPU test submits an 8x8 canvas frame into a 4x4 target and verifies the
 target-sized readback. The GUI worker test verifies that a 1920x1080 canvas
-produces a 1048x590 preview while the program frame remains 1920x1080. The
-remaining CPU readback is deliberate compatibility behavior behind
-`PreviewPresenter`; a native surface presenter is still future work.
+produces both a 1048x590 preview/program-view frame and an explicit
+1920x1080 full-canvas fallback only when the output path requests RGBA. The
+normal WGPU output path now submits the full Program target directly and reads
+back only its encoder-oriented NV12 payload. The remaining CPU readback is
+deliberate compatibility behavior behind `PreviewPresenter`; a native surface
+presenter is still future work.
 
 ## Canvas transform timing evidence
 
@@ -329,10 +332,13 @@ scene source frames
   -> Slint Image
 ```
 
-The program/output path keeps its profile canvas target. Encoder conversion is
-an explicit consumer of that target (the encoder-role contract is reserved for
-future fan-out) and remains bounded, although it still uses a CPU-compatible
-NV12 readback until native encoder texture import exists.
+The program/output path keeps its profile canvas target. The GUI program view
+uses a separate bounded ProgramPreview target, while encoder conversion is an
+explicit consumer of the full Program target (the encoder-role contract is
+reserved for future fan-out). It remains bounded, although it still uses a
+CPU-compatible NV12 readback until native encoder texture import exists. A
+full-canvas RGBA readback is requested only for output scaling or when the
+accelerated compositor is unavailable.
 
 `obs-rs-render-wgpu` also has a GPU NV12 conversion/readback path for encoder
 compatibility. The WGPU backend proves that readback is explicit, and the GUI

@@ -161,6 +161,9 @@ pub(crate) fn start_preview_timer(
                             profile.video_format(),
                         ),
                         program_scene: program_scene.as_deref(),
+                        program_preview_format: PreviewRenderer::preview_format_for_canvas(
+                            profile.video_format(),
+                        ),
                         // A program projector is a third consumer of the program
                         // canvas, so single-canvas editing has to render it again
                         // while one is up.
@@ -168,6 +171,7 @@ pub(crate) fn start_preview_timer(
                             || ui.get_view_mode() == 0
                             || projectors.wants_program(),
                         prepare_output: output_active,
+                        prepare_output_rgba: output_active && !output.borrow().accepts_raw_frames(),
                         // A canvas drag reaches the compositor here rather than
                         // through a project revision, so the picture follows the
                         // pointer while the undo history stays at one entry per
@@ -178,14 +182,20 @@ pub(crate) fn start_preview_timer(
                 last_preview_request = Instant::now();
             }
         }
-        let (preview_frame, program_frame, program_output, render_error) =
+        let (preview_frame, program_frame, program_output, program_output_frame, render_error) =
             refresh_preview_frames_for_view(&ui, &preview_worker);
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
         }
         projectors.sync(&ui);
         if output_active {
-            push_program_frame(&ui, program_frame, program_output, &output);
+            push_program_frame(
+                &ui,
+                program_frame.as_ref(),
+                program_output,
+                program_output_frame,
+                &output,
+            );
         } else if let Some(frame) = preview_frame.as_ref().or(program_frame.as_ref()) {
             output.borrow().monitor_audio(frame);
         }

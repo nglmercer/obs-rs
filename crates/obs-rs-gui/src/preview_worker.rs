@@ -19,8 +19,10 @@ struct PreviewRequest {
     preview_scene: Option<String>,
     preview_format: VideoFormat,
     program_scene: Option<String>,
+    program_preview_format: VideoFormat,
     render_program: bool,
     prepare_output: bool,
+    prepare_output_rgba: bool,
     /// The canvas drag in progress, which is not a project edit yet.
     draft: Option<TransformDraft>,
 }
@@ -31,6 +33,9 @@ pub(crate) struct PreviewResult {
     pub(crate) program_scene: Option<String>,
     pub(crate) program_frame: Option<VideoFrame>,
     pub(crate) program_output: Option<RawVideoFrame>,
+    /// Full-canvas RGBA is present only when the output cannot consume the
+    /// accelerated raw path, such as CPU fallback or output scaling.
+    pub(crate) program_output_frame: Option<VideoFrame>,
     pub(crate) error: Option<String>,
     pub(crate) metrics: String,
     #[cfg(test)]
@@ -71,10 +76,14 @@ pub(crate) struct RenderTargets<'a> {
     pub(crate) preview_scene: Option<&'a str>,
     pub(crate) preview_format: VideoFormat,
     pub(crate) program_scene: Option<&'a str>,
+    pub(crate) program_preview_format: VideoFormat,
     /// Whether the program canvas is wanted as well as the preview one.
     pub(crate) render_program: bool,
     /// Whether the program frame should also be converted for the encoder.
     pub(crate) prepare_output: bool,
+    /// Requests a full-canvas RGBA frame for output scaling. The normal GPU
+    /// output path does not need this CPU-compatible frame.
+    pub(crate) prepare_output_rgba: bool,
     /// The canvas drag in progress, which is not a project edit yet.
     pub(crate) draft: Option<&'a TransformDraft>,
 }
@@ -159,8 +168,10 @@ impl PreviewWorker {
             preview_scene: targets.preview_scene.map(str::to_owned),
             preview_format: targets.preview_format,
             program_scene: targets.program_scene.map(str::to_owned),
+            program_preview_format: targets.program_preview_format,
             render_program: targets.render_program,
             prepare_output: targets.prepare_output,
+            prepare_output_rgba: targets.prepare_output_rgba,
             draft: targets.draft.cloned(),
         };
         enqueue_request(
@@ -264,6 +275,7 @@ fn preview_loop(project: &Project, revision: u64, shared: PreviewLoopShared<'_>)
                 program_scene: None,
                 program_frame: None,
                 program_output: None,
+                program_output_frame: None,
                 error: Some(error.clone()),
                 metrics: "Preview worker unavailable".to_owned(),
                 #[cfg(test)]
@@ -306,7 +318,11 @@ fn render_request(
     }
     let program = if request.render_program {
         let program_started = std::time::Instant::now();
-        let program = render_program_scene(renderer, request.program_scene.as_deref());
+        let program = render_program_scene(
+            renderer,
+            request.program_scene.as_deref(),
+            request.program_preview_format,
+        );
         if let Ok(mut performance) = performance.lock() {
             performance.program_render.record(program_started.elapsed());
         }
@@ -314,11 +330,6 @@ fn render_request(
     } else {
         Ok(None)
     };
-    if request.preview_scene.is_some()
-        || (request.render_program && request.program_scene.is_some())
-    {
-        renderer.advance_timestamp();
-    }
     let error = preview
         .as_ref()
         .err()
@@ -334,17 +345,31 @@ fn render_request(
                 && matches!(program, Ok(None)))
             .then(|| "program scene produced no frame".to_owned())
         });
-    let output = if request.prepare_output {
-        match (
-            request.program_scene.as_deref(),
-            program.as_ref().ok().and_then(Option::as_ref),
-        ) {
-            (Some(scene), Some(frame)) => renderer.encoder_frame(scene, frame),
-            _ => Ok(None),
+    let (output, output_frame) = if request.prepare_output {
+        match request.program_scene.as_deref() {
+            Some(scene) if request.prepare_output_rgba => match renderer.render_program(scene) {
+                Ok(frame) => (Ok(None), frame),
+                Err(error) => (Err(error), None),
+            },
+            Some(scene) => match renderer.encoder_frame(scene) {
+                Ok(Some(frame)) => (Ok(Some(frame)), None),
+                Ok(None) => match renderer.render_program(scene) {
+                    Ok(frame) => (Ok(None), frame),
+                    Err(error) => (Err(error), None),
+                },
+                Err(error) => (Err(error), None),
+            },
+            None => (Ok(None), None),
         }
     } else {
-        Ok(None)
+        (Ok(None), None)
     };
+    if request.preview_scene.is_some()
+        || (request.render_program && request.program_scene.is_some())
+        || (request.prepare_output && request.program_scene.is_some())
+    {
+        renderer.advance_timestamp();
+    }
     let error = error.or_else(|| output.as_ref().err().map(ToString::to_string));
     PreviewResult {
         preview_scene: request.preview_scene,
@@ -352,6 +377,7 @@ fn render_request(
         program_scene: request.program_scene,
         program_frame: program.as_ref().ok().cloned().flatten(),
         program_output: output.ok().flatten(),
+        program_output_frame: output_frame,
         error,
         metrics: renderer.metrics_summary(),
         #[cfg(test)]
@@ -375,12 +401,13 @@ fn render_preview_scene(
 fn render_program_scene(
     renderer: &mut PreviewRenderer,
     scene: Option<&str>,
+    format: VideoFormat,
 ) -> Result<Option<VideoFrame>, String> {
     let Some(scene) = scene else {
         return Ok(None);
     };
     renderer
-        .render_program(scene)
+        .render_program_preview(scene, format)
         .map_err(|error| error.to_string())
 }
 
@@ -398,6 +425,7 @@ fn renderer_error(
             program_scene: None,
             program_frame: None,
             program_output: None,
+            program_output_frame: None,
             error: Some(error),
             metrics: "Preview project sync failed".to_owned(),
             #[cfg(test)]
@@ -451,8 +479,15 @@ mod tests {
             )
             .expect("preview format"),
             program_scene: None,
+            program_preview_format: VideoFormat::new(
+                16,
+                16,
+                obs_rs_media::FrameRate::new(30, 1).expect("rate"),
+            )
+            .expect("program preview format"),
             render_program: false,
             prepare_output: false,
+            prepare_output_rgba: false,
             draft: None,
         }
     }
@@ -532,8 +567,15 @@ mod tests {
                         .video_format(),
                 ),
                 program_scene: Some(&scene),
+                program_preview_format: PreviewRenderer::preview_format_for_canvas(
+                    project
+                        .active_profile_spec()
+                        .expect("profile")
+                        .video_format(),
+                ),
                 render_program: true,
-                prepare_output: false,
+                prepare_output: true,
+                prepare_output_rgba: true,
                 draft: None,
             },
         );
@@ -561,6 +603,14 @@ mod tests {
         );
         assert_eq!(
             result.program_frame.expect("program frame").format(),
+            PreviewRenderer::preview_format_for_canvas(canvas_format)
+        );
+        assert!(result.program_output.is_none());
+        assert_eq!(
+            result
+                .program_output_frame
+                .expect("full output fallback frame")
+                .format(),
             canvas_format
         );
         assert_eq!(worker.queue_depth(), 0);

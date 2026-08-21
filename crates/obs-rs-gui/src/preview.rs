@@ -324,6 +324,11 @@ impl PreviewRenderer {
         // Cached still frames describe scene content that may have just moved.
         self.static_frames.clear();
         self.static_preview_frames.clear();
+        // The full program target is retained by the compositor between GUI
+        // requests. Any project diff invalidates that GPU-side snapshot too;
+        // otherwise an output request for the same scene ID could reuse pixels
+        // from before the edit.
+        self.gpu_program_scene = None;
         Ok(())
     }
 
@@ -593,6 +598,7 @@ impl PreviewRenderer {
         self.static_frames.remove(scene);
         self.static_preview_frames
             .retain(|(cached_scene, _), _| cached_scene != scene);
+        self.gpu_program_scene = None;
     }
 
     #[allow(
@@ -629,6 +635,20 @@ impl PreviewRenderer {
         )
     }
 
+    /// Renders the program feed at the bounded size used by the desktop
+    /// program view. The full [`RenderTargetRole::Program`] target remains
+    /// reserved for output and encoder consumers.
+    pub(crate) fn render_program_preview(
+        &mut self,
+        scene: &str,
+        format: VideoFormat,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        self.render_target(
+            scene,
+            RenderTarget::new(RenderTargetRole::ProgramPreview, format),
+        )
+    }
+
     fn render_target(
         &mut self,
         scene: &str,
@@ -639,7 +659,7 @@ impl PreviewRenderer {
                 .static_frames
                 .get(scene)
                 .map(|pixels| (self.format, Arc::clone(pixels))),
-            RenderTargetRole::Preview => self
+            RenderTargetRole::Preview | RenderTargetRole::ProgramPreview => self
                 .static_preview_frames
                 .get(&(scene.to_owned(), target.format()))
                 .map(|pixels| (target.format(), Arc::clone(pixels))),
@@ -667,7 +687,7 @@ impl PreviewRenderer {
                     self.static_frames
                         .insert(scene.to_owned(), Arc::new(frame.pixels().to_vec()));
                 }
-                RenderTargetRole::Preview => {
+                RenderTargetRole::Preview | RenderTargetRole::ProgramPreview => {
                     self.static_preview_frames.insert(
                         (scene.to_owned(), target.format()),
                         Arc::new(frame.pixels().to_vec()),
@@ -684,45 +704,66 @@ impl PreviewRenderer {
         scene: &str,
         target: RenderTarget,
     ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
-        let request = VideoRequest::new(self.timestamp, self.format);
-        match &mut self.compositor {
-            PreviewCompositor::Wgpu(compositor) => {
-                let layers = self.runtime.render_scene_layers(scene, &request)?;
-                if layers.is_empty() {
-                    return Ok(None);
-                }
-                let texture = compositor.target(target)?;
-                let submitted = layers
-                    .iter()
-                    .map(|layer| {
-                        SceneLayer::frame(layer.frame(), layer.transform(), layer.filters())
-                    })
-                    .collect::<Vec<_>>();
-                if let Err(error) = compositor.backend.submit_layers(texture, &submitted) {
-                    self.compositor = PreviewCompositor::Cpu {
-                        reason: Some(format!("GPU composition failed: {error}")),
-                    };
-                    self.gpu_program_scene = None;
-                    return Err(error.into());
-                }
-                if target.role() == RenderTargetRole::Program {
-                    self.gpu_program_scene = Some(scene.to_owned());
-                }
-                compositor
-                    .backend
-                    .readback(texture)
-                    .map(Some)
-                    .map_err(Into::into)
+        if matches!(self.compositor, PreviewCompositor::Wgpu(_)) {
+            if !self.submit_live_scene(scene, target)? {
+                return Ok(None);
             }
-            PreviewCompositor::Cpu { .. } => {
-                if target.role() == RenderTargetRole::Program {
-                    self.gpu_program_scene = None;
-                }
-                self.runtime
-                    .render_scene(scene, &request)
-                    .map_err(Into::into)
-            }
+            let PreviewCompositor::Wgpu(compositor) = &mut self.compositor else {
+                return Ok(None);
+            };
+            let texture = compositor.target(target)?;
+            return compositor
+                .backend
+                .readback(texture)
+                .map(Some)
+                .map_err(Into::into);
         }
+        if target.role() == RenderTargetRole::Program {
+            self.gpu_program_scene = None;
+        }
+        let request = VideoRequest::new(self.timestamp, self.format);
+        self.runtime
+            .render_scene(scene, &request)
+            .map_err(Into::into)
+    }
+
+    /// Submits one scene to a WGPU target without reading its pixels back.
+    ///
+    /// Keeping submission separate lets the encoder consume the full program
+    /// texture as NV12 while the GUI consumes a different, viewport-sized
+    /// target. A `false` result means the scene has no visible layers.
+    fn submit_live_scene(
+        &mut self,
+        scene: &str,
+        target: RenderTarget,
+    ) -> Result<bool, Box<dyn Error>> {
+        let request = VideoRequest::new(self.timestamp, self.format);
+        let layers = self.runtime.render_scene_layers(scene, &request)?;
+        if layers.is_empty() {
+            return Ok(false);
+        }
+        let submitted = layers
+            .iter()
+            .map(|layer| SceneLayer::frame(layer.frame(), layer.transform(), layer.filters()))
+            .collect::<Vec<_>>();
+        let submit_result = {
+            let PreviewCompositor::Wgpu(compositor) = &mut self.compositor else {
+                return Ok(false);
+            };
+            let texture = compositor.target(target)?;
+            compositor.backend.submit_layers(texture, &submitted)
+        };
+        if let Err(error) = submit_result {
+            self.compositor = PreviewCompositor::Cpu {
+                reason: Some(format!("GPU composition failed: {error}")),
+            };
+            self.gpu_program_scene = None;
+            return Err(error.into());
+        }
+        if target.role() == RenderTargetRole::Program {
+            self.gpu_program_scene = Some(scene.to_owned());
+        }
+        Ok(true)
     }
 
     fn scale_frame(
@@ -737,23 +778,30 @@ impl PreviewRenderer {
         scaler.scale(frame).map_err(Into::into)
     }
 
-    /// Produces an encoder-oriented NV12 frame from the program target.
-    /// Static/cached frames are uploaded once when the target no longer names
-    /// this scene; live program composition proceeds directly to conversion.
+    /// Produces an encoder-oriented NV12 frame from the full program target.
+    /// The target is submitted directly when its scene snapshot is stale, so
+    /// the normal accelerated path never needs an intermediate full RGBA
+    /// frame.
     pub(crate) fn encoder_frame(
         &mut self,
         scene: &str,
-        frame: &VideoFrame,
     ) -> Result<Option<RawVideoFrame>, Box<dyn Error>> {
+        if !matches!(self.compositor, PreviewCompositor::Wgpu(_)) {
+            return Ok(None);
+        }
+        if self.gpu_program_scene.as_deref() != Some(scene)
+            && !self.submit_live_scene(
+                scene,
+                RenderTarget::new(RenderTargetRole::Program, self.format),
+            )?
+        {
+            return Ok(None);
+        }
         let PreviewCompositor::Wgpu(compositor) = &mut self.compositor else {
             return Ok(None);
         };
         let target =
             compositor.target(RenderTarget::new(RenderTargetRole::Program, self.format))?;
-        if self.gpu_program_scene.as_deref() != Some(scene) {
-            compositor.backend.upload(target, frame)?;
-            self.gpu_program_scene = Some(scene.to_owned());
-        }
         compositor
             .backend
             .readback_nv12(target)

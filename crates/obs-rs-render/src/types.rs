@@ -21,6 +21,11 @@ impl TextureId {
 pub enum RenderTargetRole {
     /// The scene selected for the live program/output path.
     Program,
+    /// The bounded desktop view of the live program feed.
+    ///
+    /// This is deliberately separate from [`Self::Program`]: the program
+    /// canvas may be 4K even when the studio window only needs a 1000px view.
+    ProgramPreview,
     /// A bounded desktop preview viewport.
     Preview,
     /// A projector or multiview consumer.
