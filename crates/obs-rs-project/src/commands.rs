@@ -211,6 +211,19 @@ pub enum ProjectCommand {
         item: String,
         locked: bool,
     },
+    /// Replaces a child transform addressed by its enclosing group path.
+    ///
+    /// The command validates composition against the current nested-group
+    /// boundary before mutating the project, so a transform that the runtime
+    /// cannot flatten is rejected atomically.
+    SetGroupItemTransform {
+        profile: String,
+        scene: String,
+        /// Outermost-to-innermost group scene-item IDs.
+        group_path: Vec<String>,
+        item: String,
+        transform: FrameTransform,
+    },
     /// Reorders a child item within its enclosing group.
     MoveGroupItem {
         profile: String,
@@ -413,6 +426,13 @@ impl Project {
                 item,
                 locked,
             } => set_group_item_locked(self, &profile, &scene, &group_path, &item, locked),
+            ProjectCommand::SetGroupItemTransform {
+                profile,
+                scene,
+                group_path,
+                item,
+                transform,
+            } => set_group_item_transform(self, &profile, &scene, &group_path, &item, transform),
             ProjectCommand::MoveSceneItem {
                 profile,
                 scene,
@@ -1169,6 +1189,75 @@ fn set_group_item_locked(
         .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?
         .set_locked(locked);
     Ok(())
+}
+
+fn set_group_item_transform(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    group_path: &[String],
+    item: &str,
+    transform: FrameTransform,
+) -> Result<(), ProjectError> {
+    let item_id = identifier(item, "scene item id")?;
+    let parent_transform = group_parent_transform(project, profile, scene, group_path)?;
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let path = parse_group_path(group_path)?;
+    let profile_spec = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene_spec = profile_spec
+        .scene(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    let group = group_at(scene_spec.items(), &path).ok_or(ProjectError::InvalidGroupPath)?;
+    if !group.has_item(&item_id) {
+        return Err(ProjectError::UnknownSceneItem(item_id));
+    }
+    if parent_transform != FrameTransform::IDENTITY {
+        transform
+            .compose_simple(parent_transform)
+            .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(item_id.clone()))?;
+    }
+    group_mut(project, profile, scene, group_path)?
+        .item_mut(&item_id)
+        .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?
+        .set_transform(transform);
+    Ok(())
+}
+
+fn group_parent_transform(
+    project: &Project,
+    profile: &str,
+    scene: &str,
+    group_path: &[String],
+) -> Result<FrameTransform, ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let path = parse_group_path(group_path)?;
+    let profile = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene = profile
+        .scene(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    let mut items = scene.items();
+    let mut parent = FrameTransform::IDENTITY;
+    for group_id in path {
+        let group_item = items
+            .iter()
+            .find(|item| item.id() == &group_id)
+            .ok_or(ProjectError::InvalidGroupPath)?;
+        parent = group_item
+            .transform()
+            .compose_simple(parent)
+            .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(group_id.clone()))?;
+        items = group_item
+            .group()
+            .ok_or(ProjectError::InvalidGroupPath)?
+            .items();
+    }
+    Ok(parent)
 }
 
 fn move_group_item(
