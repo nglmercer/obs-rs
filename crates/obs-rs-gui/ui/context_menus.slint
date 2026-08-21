@@ -30,6 +30,7 @@ export component SourceContextMenuArea inherits Rectangle {
     callback move-source-to(string, int);
     callback reset-source-transform(string);
     callback flip-source(string, bool);
+    callback transform-source(string, string);
     callback remove-source(string);
 
     public function show-at(position: Point) {
@@ -141,6 +142,43 @@ export component SourceContextMenuArea inherits Rectangle {
                 MenuItem {
                     title: I18n.text.reset_transform;
                     activated => root.reset-source-transform(root.source-id);
+                }
+                MenuSeparator {}
+                MenuItem {
+                    title: I18n.text.fit_to_screen;
+                    activated => root.transform-source(root.source-id, "fit-screen");
+                }
+                MenuItem {
+                    title: I18n.text.stretch_to_screen;
+                    activated => root.transform-source(root.source-id, "stretch-screen");
+                }
+                MenuItem {
+                    title: I18n.text.center_to_screen;
+                    activated => root.transform-source(root.source-id, "center-screen");
+                }
+                MenuItem {
+                    title: I18n.text.center_horizontally;
+                    activated => root.transform-source(root.source-id, "center-horizontally");
+                }
+                MenuItem {
+                    title: I18n.text.center_vertically;
+                    activated => root.transform-source(root.source-id, "center-vertically");
+                }
+                MenuItem {
+                    title: I18n.text.align_left;
+                    activated => root.transform-source(root.source-id, "align-left");
+                }
+                MenuItem {
+                    title: I18n.text.align_right;
+                    activated => root.transform-source(root.source-id, "align-right");
+                }
+                MenuItem {
+                    title: I18n.text.align_top;
+                    activated => root.transform-source(root.source-id, "align-top");
+                }
+                MenuItem {
+                    title: I18n.text.align_bottom;
+                    activated => root.transform-source(root.source-id, "align-bottom");
                 }
                 MenuSeparator {}
                 MenuItem {

@@ -38,7 +38,7 @@ pub(crate) use callbacks::{
     move_source_to_and_refresh, project_store, remove_scene_and_refresh, remove_source_and_refresh,
     rename_scene_and_refresh, reset_source_transform_and_refresh, selected_target, source_target,
     source_transform_document, target_settings_document, toggle_source_locked_and_refresh,
-    toggle_source_visibility_and_refresh, SourceTarget,
+    toggle_source_visibility_and_refresh, transform_source_and_refresh, SourceTarget,
 };
 pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks, install_dock_callbacks,

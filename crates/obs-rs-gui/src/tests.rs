@@ -746,6 +746,27 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(canvas.canvas_state().pan(), (24, -12));
     assert_eq!(ui.get_canvas_pan_x(), 24);
     assert_eq!(ui.get_canvas_pan_y(), -12);
+    let before_nudge = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("background"))
+        .expect("initial selected item")
+        .transform();
+    ui.invoke_canvas_nudged(3, -2);
+    let after_nudge = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("background"))
+        .expect("nudged selected item")
+        .transform();
+    assert_eq!(after_nudge.translate_x(), before_nudge.translate_x() + 3);
+    assert_eq!(after_nudge.translate_y(), before_nudge.translate_y() - 2);
     refresh_ui(&ui, &state, &surface);
     ui.show().expect("testing window should show");
     exercise_navbar_popup(&ui);
@@ -913,6 +934,29 @@ fn exercise_context_menus(
             .expect("add source");
     }
     refresh_ui(ui, state, surface);
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
+            profile: profile.clone(),
+            scene: "preview".to_owned(),
+            item: "foreground".to_owned(),
+            transform: FrameTransform::new(500, 250, 100, 50, false, false, 255)
+                .expect("source transform"),
+        }))
+        .expect("position source for transform command");
+    refresh_ui(ui, state, surface);
+    ui.invoke_transform_source("foreground".into(), "center-screen".into());
+    let centered = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("foreground"))
+        .expect("centered source")
+        .transform();
+    assert_eq!((centered.translate_x(), centered.translate_y()), (160, 135));
 
     let rows = ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
         .filter(|row| row.size().height > 30.0)

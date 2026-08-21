@@ -31,6 +31,7 @@ export component SourceDock inherits Rectangle {
     callback move-source-to(string, int);
     callback reset-source-transform(string);
     callback flip-source(string, bool);
+    callback transform-source(string, string);
     callback open-source-rename(string);
     callback duplicate-source(string);
     callback copy-source(string);
@@ -90,6 +91,7 @@ export component SourceDock inherits Rectangle {
                         move-source-to(id, index) => { root.move-source-to(id, index); }
                         reset-source-transform(id) => { root.reset-source-transform(id); }
                         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+                        transform-source(id, action) => { root.transform-source(id, action); }
                         remove-source(id) => { root.remove-source(id); }
                         background: source.selected ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
                         border-width: 1px;
@@ -164,6 +166,7 @@ export component SourceDock inherits Rectangle {
                     move-source-to(id, index) => { root.move-source-to(id, index); }
                     reset-source-transform(id) => { root.reset-source-transform(id); }
                     flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+                    transform-source(id, action) => { root.transform-source(id, action); }
                     remove-source(id) => { root.remove-source(id); }
                     HorizontalBox {
                     spacing: 4px;

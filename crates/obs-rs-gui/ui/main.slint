@@ -176,6 +176,7 @@ export component MainWindow inherits Window {
         callback move-source-to(string, int);
         callback reset-source-transform(string);
         callback flip-source(string, bool);
+        callback transform-source(string, string);
         callback open-source-rename(string);
         callback apply-source-name();
         callback duplicate-source(string);
@@ -226,6 +227,7 @@ export component MainWindow inherits Window {
         callback canvas-pointer-pressed(int, int, bool);
         callback canvas-selection-dragged(int, int);
         callback canvas-selection-committed();
+        callback canvas-nudged(int, int);
         callback canvas-zoom-changed(int);
         callback canvas-zoom-step(int);
         callback canvas-pan-dragged(int, int);
@@ -359,6 +361,27 @@ export component MainWindow inherits Window {
             }
             if (event.text == " ") {
                 root.space-held = true;
+                return accept;
+            }
+            // Arrow keys move every unlocked selected item by one canvas pixel;
+            // Shift makes the same command coarse (ten pixels). The Rust
+            // callback owns selection validation and commits the whole nudge
+            // as one bounded project command.
+            if (!event.modifiers.alt
+                && (event.text == Key.LeftArrow
+                    || event.text == Key.RightArrow
+                    || event.text == Key.UpArrow
+                    || event.text == Key.DownArrow)) {
+                let step = event.modifiers.shift ? 10 : 1;
+                if (event.text == Key.LeftArrow) {
+                    root.canvas-nudged(-step, 0);
+                } else if (event.text == Key.RightArrow) {
+                    root.canvas-nudged(step, 0);
+                } else if (event.text == Key.UpArrow) {
+                    root.canvas-nudged(0, -step);
+                } else {
+                    root.canvas-nudged(0, step);
+                }
                 return accept;
             }
             reject
@@ -583,6 +606,7 @@ export component MainWindow inherits Window {
                         move-source-to(id, index) => { root.move-source-to(id, index); }
                         reset-source-transform(id) => { root.reset-source-transform(id); }
                         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+                        transform-source(id, action) => { root.transform-source(id, action); }
                         open-source-rename(id) => { root.open-source-rename(id); }
                         duplicate-source(id) => { root.duplicate-source(id); }
                         remove-source(id) => { root.remove-source(id); }

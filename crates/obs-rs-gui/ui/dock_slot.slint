@@ -48,6 +48,7 @@ export component DockSlot inherits Rectangle {
     callback move-source-to(string, int);
     callback reset-source-transform(string);
     callback flip-source(string, bool);
+    callback transform-source(string, string);
     callback open-source-rename(string);
     callback duplicate-source(string);
     callback copy-source(string);
@@ -111,6 +112,7 @@ export component DockSlot inherits Rectangle {
         move-source-to(id, index) => { root.move-source-to(id, index); }
         reset-source-transform(id) => { root.reset-source-transform(id); }
         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+        transform-source(id, action) => { root.transform-source(id, action); }
         open-source-rename(id) => { root.open-source-rename(id); }
         duplicate-source(id) => { root.duplicate-source(id); }
         copy-source(id) => { root.copy-source(id); }

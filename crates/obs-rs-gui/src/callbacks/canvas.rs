@@ -110,13 +110,47 @@ impl Default for SnapSettings {
     }
 }
 
+/// Transform commands exposed by the OBS-style source menu.
+///
+/// The menu crosses the Slint boundary as a short action name, but the
+/// geometry is parsed into this closed set before it can reach project state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CanvasTransformCommand {
+    FitToScreen,
+    StretchToScreen,
+    CenterToScreen,
+    CenterHorizontally,
+    CenterVertically,
+    AlignLeft,
+    AlignRight,
+    AlignTop,
+    AlignBottom,
+}
+
+impl CanvasTransformCommand {
+    pub(crate) fn from_action(action: &str) -> Option<Self> {
+        match action {
+            "fit-screen" => Some(Self::FitToScreen),
+            "stretch-screen" => Some(Self::StretchToScreen),
+            "center-screen" => Some(Self::CenterToScreen),
+            "center-horizontally" => Some(Self::CenterHorizontally),
+            "center-vertically" => Some(Self::CenterVertically),
+            "align-left" => Some(Self::AlignLeft),
+            "align-right" => Some(Self::AlignRight),
+            "align-top" => Some(Self::AlignTop),
+            "align-bottom" => Some(Self::AlignBottom),
+            _ => None,
+        }
+    }
+}
+
 /// Transient canvas viewport state owned by the canvas controller.
 ///
 /// Zoom and pan are presentation state, not project data. Keeping them beside
 /// the transform draft gives the UI one owner while leaving scene commands and
-/// persisted documents free of widget-specific values. Pan is introduced here
-/// so the next canvas packet can extend the same state without creating a
-/// second viewport model.
+/// persisted documents free of widget-specific values. Keyboard nudges are
+/// immediate commands, not persistent viewport state, and use the same owner
+/// for selection validation before they reach the project.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CanvasState {
     zoom: CanvasZoom,
@@ -528,6 +562,123 @@ pub(crate) fn item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRe
     }
 }
 
+/// Rebuilds a transform after changing only its geometry.
+fn transform_with_geometry(
+    base: FrameTransform,
+    scale_x: u32,
+    scale_y: u32,
+    translate_x: i64,
+    translate_y: i64,
+) -> FrameTransform {
+    FrameTransform::new(
+        scale_x,
+        scale_y,
+        i32::try_from(translate_x).unwrap_or_else(|_| {
+            if translate_x.is_negative() {
+                i32::MIN
+            } else {
+                i32::MAX
+            }
+        }),
+        i32::try_from(translate_y).unwrap_or_else(|_| {
+            if translate_y.is_negative() {
+                i32::MIN
+            } else {
+                i32::MAX
+            }
+        }),
+        base.flip_x(),
+        base.flip_y(),
+        base.opacity(),
+    )
+    .and_then(|transform| transform.with_rotation_milli_degrees(base.rotation_milli_degrees()))
+    .and_then(|transform| {
+        transform.with_crop(
+            base.crop_left(),
+            base.crop_top(),
+            base.crop_right(),
+            base.crop_bottom(),
+        )
+    })
+    .unwrap_or(base)
+}
+
+/// Returns a scale in fixed-point thousandths for one source extent.
+fn scale_for_extent(output_extent: i64, source_extent: i64) -> u32 {
+    let milli = output_extent
+        .max(1)
+        .saturating_mul(UNIT_SCALE_MILLI)
+        .div_euclid(source_extent.max(1));
+    u32::try_from(milli.clamp(1, i64::from(FrameTransform::MAX_SCALE_MILLI))).unwrap_or(1)
+}
+
+/// Translates a transform so the requested part of its visible rectangle is
+/// aligned to the canvas. Translation moves a rotated rectangle as a whole,
+/// so the same operation works before and after rotation.
+fn align_transform(
+    base: FrameTransform,
+    canvas: (u32, u32),
+    horizontal: Option<i64>,
+    vertical: Option<i64>,
+) -> FrameTransform {
+    let rect = item_rect(base, canvas);
+    let right = rect.x.saturating_add(rect.width);
+    let bottom = rect.y.saturating_add(rect.height);
+    let target_x = horizontal.unwrap_or(rect.x);
+    let target_y = vertical.unwrap_or(rect.y);
+    let delta_x = match horizontal {
+        Some(0) => target_x.saturating_sub(rect.x),
+        Some(1) => i64::from(canvas.0).saturating_sub(right),
+        Some(2) => i64::from(canvas.0) / 2 - rect.x.saturating_add(rect.width / 2),
+        _ => 0,
+    };
+    let delta_y = match vertical {
+        Some(0) => target_y.saturating_sub(rect.y),
+        Some(1) => i64::from(canvas.1).saturating_sub(bottom),
+        Some(2) => i64::from(canvas.1) / 2 - rect.y.saturating_add(rect.height / 2),
+        _ => 0,
+    };
+    transform_with_geometry(
+        base,
+        base.scale_x_milli(),
+        base.scale_y_milli(),
+        i64::from(base.translate_x()).saturating_add(delta_x),
+        i64::from(base.translate_y()).saturating_add(delta_y),
+    )
+}
+
+/// Applies one OBS-style Transform submenu command to a scene-item transform.
+pub(crate) fn transform_for_command(
+    base: FrameTransform,
+    command: CanvasTransformCommand,
+    canvas: (u32, u32),
+) -> FrameTransform {
+    match command {
+        CanvasTransformCommand::FitToScreen | CanvasTransformCommand::StretchToScreen => {
+            let (source_width, source_height) = visible_source_extent(base, canvas);
+            let scale_x = scale_for_extent(i64::from(canvas.0), source_width);
+            let scale_y = scale_for_extent(i64::from(canvas.1), source_height);
+            let (scale_x, scale_y) = match command {
+                CanvasTransformCommand::FitToScreen => {
+                    let scale = scale_x.min(scale_y);
+                    (scale, scale)
+                }
+                CanvasTransformCommand::StretchToScreen => (scale_x, scale_y),
+                _ => unreachable!("the outer match limits this arm to screen sizing"),
+            };
+            let resized = transform_with_geometry(base, scale_x, scale_y, 0, 0);
+            align_transform(resized, canvas, Some(2), Some(2))
+        }
+        CanvasTransformCommand::CenterToScreen => align_transform(base, canvas, Some(2), Some(2)),
+        CanvasTransformCommand::CenterHorizontally => align_transform(base, canvas, Some(2), None),
+        CanvasTransformCommand::CenterVertically => align_transform(base, canvas, None, Some(2)),
+        CanvasTransformCommand::AlignLeft => align_transform(base, canvas, Some(0), None),
+        CanvasTransformCommand::AlignRight => align_transform(base, canvas, Some(1), None),
+        CanvasTransformCommand::AlignTop => align_transform(base, canvas, None, Some(0)),
+        CanvasTransformCommand::AlignBottom => align_transform(base, canvas, None, Some(1)),
+    }
+}
+
 /// Returns the single or multi-item selection bounds used by the overlay.
 pub(crate) fn selection_rect(state: &DesktopState, canvas: (u32, u32)) -> Option<ItemRect> {
     let scene_id = state.preview_scene()?;
@@ -860,6 +1011,64 @@ pub(crate) fn install_canvas_callbacks(
         state: RefCell::new(CanvasState::default()),
     });
     install_zoom_callbacks(ui, &controller);
+
+    let weak = ui.as_weak();
+    let nudge_state = Rc::clone(state);
+    let nudge_surface = Rc::clone(surface);
+    ui.on_canvas_nudged(move |dx, dy| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let Some(scene) = nudge_state.borrow().preview_scene().map(str::to_owned) else {
+            return;
+        };
+        let (profile, transforms) = {
+            let state = nudge_state.borrow();
+            let profile = state
+                .project_session()
+                .project()
+                .active_profile()
+                .to_string();
+            let Some(scene_spec) = state
+                .project_session()
+                .project()
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(scene.as_str()))
+            else {
+                return;
+            };
+            let transforms = state
+                .selected_sources()
+                .filter_map(|id| scene_spec.item(id))
+                .filter(|item| !item.locked())
+                .map(|item| {
+                    let transform = item.transform();
+                    (
+                        item.id().to_string(),
+                        transform_with_geometry(
+                            transform,
+                            transform.scale_x_milli(),
+                            transform.scale_y_milli(),
+                            i64::from(transform.translate_x()).saturating_add(i64::from(dx)),
+                            i64::from(transform.translate_y()).saturating_add(i64::from(dy)),
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (profile, transforms)
+        };
+        if transforms.is_empty() {
+            return;
+        }
+        crate::apply_source_transforms_to(
+            &ui,
+            &nudge_state,
+            &nudge_surface,
+            &profile,
+            &scene,
+            transforms,
+        );
+    });
 
     let weak = ui.as_weak();
     let pointer_state = Rc::clone(state);
@@ -1488,6 +1697,58 @@ mod tests {
                 height: 1_920,
             }
         );
+    }
+
+    #[test]
+    fn transform_commands_apply_screen_sizing_and_alignment() {
+        let canvas = (1_280, 720);
+        let base = FrameTransform::IDENTITY
+            .with_crop(140, 0, 140, 0)
+            .expect("crop")
+            .with_rotation_degrees(0)
+            .expect("rotation");
+
+        let fit = transform_for_command(base, CanvasTransformCommand::FitToScreen, canvas);
+        assert_eq!(fit.scale_x_milli(), 1_000);
+        assert_eq!(fit.scale_y_milli(), 1_000);
+        assert_eq!(fit.translate_x(), 140);
+        assert_eq!(fit.translate_y(), 0);
+
+        let stretch = transform_for_command(base, CanvasTransformCommand::StretchToScreen, canvas);
+        assert_eq!(stretch.scale_x_milli(), 1_280);
+        assert_eq!(stretch.scale_y_milli(), 1_000);
+        assert_eq!(stretch.translate_x(), 0);
+        assert_eq!(stretch.translate_y(), 0);
+
+        let positioned =
+            FrameTransform::new(500, 250, 100, 50, true, false, 180).expect("transform");
+        let centered =
+            transform_for_command(positioned, CanvasTransformCommand::CenterToScreen, canvas);
+        assert_eq!(
+            item_rect(centered, canvas),
+            ItemRect {
+                x: 320,
+                y: 270,
+                width: 640,
+                height: 180,
+            }
+        );
+        assert!(centered.flip_x());
+        assert_eq!(centered.opacity(), 180);
+
+        let right = transform_for_command(positioned, CanvasTransformCommand::AlignRight, canvas);
+        assert_eq!(item_rect(right, canvas).x, 640);
+        let bottom = transform_for_command(positioned, CanvasTransformCommand::AlignBottom, canvas);
+        assert_eq!(item_rect(bottom, canvas).y, 540);
+    }
+
+    #[test]
+    fn transform_command_parser_rejects_untrusted_actions() {
+        assert_eq!(
+            CanvasTransformCommand::from_action("fit-screen"),
+            Some(CanvasTransformCommand::FitToScreen)
+        );
+        assert_eq!(CanvasTransformCommand::from_action("delete-project"), None);
     }
 
     #[test]

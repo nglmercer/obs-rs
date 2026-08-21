@@ -2,11 +2,15 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use slint::Weak;
 
-use crate::{refresh_ui, MainWindow, PreviewSurface};
 use obs_rs_config::Config;
 use obs_rs_media::FrameTransform;
 use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 use obs_rs_ui::{DesktopState, UiCommand};
+
+use crate::{
+    callbacks::canvas::{transform_for_command, CanvasTransformCommand},
+    refresh_ui, MainWindow, PreviewSurface,
+};
 
 pub(crate) fn remove_scene_and_refresh(
     weak: &Weak<MainWindow>,
@@ -269,6 +273,56 @@ pub(crate) fn flip_source_and_refresh(
         )
         .map_err(Into::into)
     });
+}
+
+/// Applies one bounded Transform submenu command to a named scene item.
+pub(crate) fn transform_source_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    source_id: &str,
+    action: &str,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let command = CanvasTransformCommand::from_action(action)
+            .ok_or_else(|| std::io::Error::other("unknown transform command"))?;
+        let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
+        if locked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "source is locked",
+            )
+            .into());
+        }
+        let (transform, canvas) = {
+            let state = state.borrow();
+            let project = state.project_session().project();
+            let transform = project
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(scene.as_str()))
+                .and_then(|scene| scene.item(source_id))
+                .map(obs_rs_project::SceneItemSpec::transform)
+                .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
+            let surface = surface.borrow();
+            (transform, (surface.format.width(), surface.format.height()))
+        };
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
+                profile,
+                scene,
+                item: source_id.to_owned(),
+                transform: transform_for_command(transform, command, canvas),
+            }))?;
+        Ok(())
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, surface),
+        Err(error) => ui.set_status_message(format!("Transform failed: {error}").into()),
+    }
 }
 
 fn update_source_transform_and_refresh(

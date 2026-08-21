@@ -9,8 +9,8 @@ use crate::{
     duplicate_scene_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
     move_source_and_refresh, move_source_to_and_refresh, remove_scene_and_refresh,
     remove_source_and_refresh, rename_scene_and_refresh, reset_source_transform_and_refresh,
-    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh, MainWindow,
-    PreviewSurface,
+    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
+    transform_source_and_refresh, MainWindow, PreviewSurface,
 };
 
 pub(crate) fn install_scene_callbacks(
@@ -192,6 +192,19 @@ fn install_source_list_callbacks(
     let flip_surface = Rc::clone(surface);
     ui.on_flip_source(move |id, horizontal| {
         flip_source_and_refresh(&weak, &flip_state, &flip_surface, id.as_str(), horizontal);
+    });
+
+    let weak = ui.as_weak();
+    let transform_state = Rc::clone(state);
+    let transform_surface = Rc::clone(surface);
+    ui.on_transform_source(move |id, action| {
+        transform_source_and_refresh(
+            &weak,
+            &transform_state,
+            &transform_surface,
+            id.as_str(),
+            action.as_str(),
+        );
     });
 
     let weak = ui.as_weak();

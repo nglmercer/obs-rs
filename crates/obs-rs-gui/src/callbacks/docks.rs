@@ -302,6 +302,7 @@ fn forward_to_studio(
     forward!(on_move_source_to, invoke_move_source_to, id, index);
     forward!(on_reset_source_transform, invoke_reset_source_transform, id);
     forward!(on_flip_source, invoke_flip_source, id, horizontal);
+    forward!(on_transform_source, invoke_transform_source, id, action);
     forward!(on_open_source_rename, invoke_open_source_rename, id);
     forward!(on_duplicate_source, invoke_duplicate_source, id);
     forward!(on_copy_source, invoke_copy_source, id);
