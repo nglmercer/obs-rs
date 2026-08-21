@@ -1080,7 +1080,17 @@ pub(crate) fn install_canvas_callbacks(
         };
         pointer_controller.draft.borrow_mut().take();
         let canvas = canvas_size(&ui);
-        let hit = source_at(&pointer_state, canvas, i64::from(x), i64::from(y));
+        // A plain click follows OBS's preview behavior: if the current
+        // topmost item is already selected, walk down through the hit stack
+        // so an obscured source can be reached without first moving it.
+        // Ctrl-click remains an explicit toggle of the topmost hit.
+        let hit = source_at(
+            &pointer_state,
+            canvas,
+            i64::from(x),
+            i64::from(y),
+            !additive,
+        );
         if let Some(id) = hit {
             let command = if additive {
                 UiCommand::ToggleSourceSelection { id }
@@ -1375,6 +1385,24 @@ fn source_ids_in_rect(
         .collect()
 }
 
+/// Returns the first hit that a plain preview click may select.
+///
+/// OBS walks down through already-selected hits when a normal click lands on
+/// a stack of overlapping sources. Ctrl-click calls the same hit test with
+/// `select_below = false`, preserving the topmost-toggle behavior.
+fn first_selectable_hit<'a, I>(hits: I, select_below: bool) -> Option<&'a str>
+where
+    I: IntoIterator<Item = (&'a str, bool)>,
+{
+    hits.into_iter().find_map(|(id, selected)| {
+        if select_below && selected {
+            None
+        } else {
+            Some(id)
+        }
+    })
+}
+
 /// Returns the canvas size the studio is currently rendering at.
 fn canvas_size(ui: &MainWindow) -> (u32, u32) {
     (
@@ -1411,17 +1439,25 @@ fn source_at(
     canvas: (u32, u32),
     x: i64,
     y: i64,
+    select_below: bool,
 ) -> Option<String> {
     let state = state.borrow();
     let scene = state.preview_scene()?;
     let session = state.project_session();
     let scene = session.project().active_profile_spec()?.scene(scene)?;
-    scene
-        .items()
-        .iter()
-        .rev()
-        .find(|item| item.visible() && item_rect(item.transform(), canvas).contains(x, y))
-        .map(|item| item.id().as_str().to_owned())
+    first_selectable_hit(
+        scene.items().iter().rev().filter_map(|item| {
+            if !item.visible() || !item_rect(item.transform(), canvas).contains(x, y) {
+                return None;
+            }
+            Some((
+                item.id().as_str(),
+                state.is_source_selected(item.id().as_str()),
+            ))
+        }),
+        select_below,
+    )
+    .map(str::to_owned)
 }
 
 /// Builds the bounded canvas and source guides for one transform gesture.
@@ -1815,6 +1851,28 @@ mod tests {
         assert!(rect.contains(499, 349));
         assert!(!rect.contains(99, 50));
         assert!(!rect.contains(500, 350));
+    }
+
+    #[test]
+    fn plain_preview_selection_skips_selected_hits_to_reach_underneath() {
+        let hits = [("top", true), ("middle", true), ("bottom", false)];
+        assert_eq!(
+            first_selectable_hit(hits.iter().copied(), true),
+            Some("bottom")
+        );
+        assert_eq!(
+            first_selectable_hit(hits.iter().copied(), false),
+            Some("top")
+        );
+
+        let hits = [("top", false), ("underneath", true)];
+        assert_eq!(
+            first_selectable_hit(hits.iter().copied(), true),
+            Some("top")
+        );
+
+        let hits = [("top", true)];
+        assert_eq!(first_selectable_hit(hits.iter().copied(), true), None);
     }
 
     /// Measures the bounded group-geometry work used for every multi-select
