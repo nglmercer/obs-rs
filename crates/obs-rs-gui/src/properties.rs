@@ -85,6 +85,12 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         hint: |text| text.property_ui.text_hint.clone(),
         kind: FieldKind::Text,
     };
+    static PATH: Field = Field {
+        key: "path",
+        label: |text| text.property_ui.path.clone(),
+        hint: |text| text.property_ui.path_hint.clone(),
+        kind: FieldKind::Text,
+    };
     static FONT_SIZE: Field = Field {
         key: "font_size",
         label: |text| text.property_ui.font_size.clone(),
@@ -147,6 +153,7 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
 
     let mut fields = match kind.trim() {
         "color_source" => vec![&COLOR],
+        "image_source" => vec![&PATH],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         "screen_capture" | "window_capture" => vec![&DEVICE],
         "camera_capture" => {
@@ -510,6 +517,21 @@ mod tests {
         assert_eq!(rows[0].kind, KIND_TEXT);
         assert_eq!(rows[2].kind, KIND_NUMBER);
         assert_eq!(rows[2].number, 24);
+    }
+
+    #[test]
+    fn image_sources_expose_path_and_video_size() {
+        let document = "height = 360\npath = \"/tmp/example.png\"\nwidth = 640\n";
+
+        let rows = rows("image_source", document, UiLocale::English);
+
+        let keys = rows
+            .iter()
+            .map(|row| row.key.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["path", "width", "height"]);
+        assert_eq!(rows[0].kind, KIND_TEXT);
+        assert_eq!(rows[0].text, "/tmp/example.png");
     }
 
     #[test]

@@ -110,6 +110,9 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
     if kind.trim() == "color_source" {
         settings.set("color", "#405070FF")?;
     }
+    if kind.trim() == "image_source" {
+        settings.set("path", "")?;
+    }
     if kind.trim() == "text_source" {
         settings.set("text", "OBS-RS")?;
         settings.set("color", "#FFFFFFFF")?;

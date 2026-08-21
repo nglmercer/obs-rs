@@ -6,6 +6,7 @@ publish.workspace = true
 version.workspace = true
 
 [dependencies]
+image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "pnm", "webp"] }
 obs-rs-capture = { path = "../obs-rs-capture" }
 obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-media = { path = "../obs-rs-media" }

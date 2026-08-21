@@ -3,6 +3,14 @@ use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat};
 use obs_rs_plugin_api::{Plugin, SourceError, VideoRequest};
 
+fn image_settings(path: &str, width: &str, height: &str) -> Config {
+    let mut config = Config::new();
+    config.set("width", width).expect("valid image width");
+    config.set("height", height).expect("valid image height");
+    config.set("path", path).expect("valid image path");
+    config
+}
+
 fn settings(color: &str) -> Config {
     let mut config = Config::new();
     config.set("width", "2").expect("valid width");
@@ -108,6 +116,77 @@ fn text_source_rejects_control_text_and_font_size() {
 }
 
 #[test]
+fn image_source_decodes_and_keeps_the_last_frame_on_failed_update() {
+    let path = std::env::temp_dir().join(format!("obs-rs-image-source-{}.ppm", std::process::id()));
+    std::fs::write(&path, b"P6\n2 1\n255\n\xFF\x00\x00\x00\x00\xFF").expect("write image fixture");
+
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == IMAGE_SOURCE_KIND)
+        .expect("image factory");
+    let format =
+        VideoFormat::new(2, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let mut source = factory
+        .create(
+            "still",
+            &image_settings(path.to_str().expect("fixture path is UTF-8"), "2", "1"),
+        )
+        .expect("valid image source");
+    let request = VideoRequest::new(Timestamp::ZERO, format);
+    let first = source
+        .render(&request)
+        .expect("render succeeds")
+        .expect("image has a frame");
+    assert_eq!(first.pixel(0, 0), Some([0xFF, 0, 0, 0xFF]));
+    assert_eq!(first.pixel(1, 0), Some([0, 0, 0xFF, 0xFF]));
+
+    let error = source
+        .update(&image_settings("/definitely/missing/image.png", "2", "1"))
+        .expect_err("missing image is rejected");
+    assert!(matches!(error, SourceError::InvalidSetting { key, .. } if key == "path"));
+    let retained = source
+        .render(&request)
+        .expect("render after failed update succeeds")
+        .expect("last valid image remains");
+    assert_eq!(retained.pixels(), first.pixels());
+
+    source
+        .update(&image_settings("", "2", "1"))
+        .expect("empty path clears the source without an error");
+    assert!(source
+        .render(&request)
+        .expect("empty image render succeeds")
+        .is_none());
+    std::fs::remove_file(path).expect("remove image fixture");
+}
+
+#[test]
+fn image_source_rejects_dimensions_beyond_the_decoder_limit() {
+    let path = std::env::temp_dir().join(format!(
+        "obs-rs-image-source-large-{}.ppm",
+        std::process::id()
+    ));
+    std::fs::write(&path, b"P6\n20000 1\n255\n\x00\x00\x00").expect("write oversized image header");
+
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == IMAGE_SOURCE_KIND)
+        .expect("image factory");
+    assert!(matches!(
+        factory.create(
+            "large",
+            &image_settings(path.to_str().expect("fixture path is UTF-8"), "2", "1"),
+        ),
+        Err(SourceError::InvalidSetting { key, .. }) if key == "path"
+    ));
+    std::fs::remove_file(path).expect("remove oversized image fixture");
+}
+
+#[test]
 fn builtins_expose_the_capture_source_kind() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
 
@@ -119,6 +198,10 @@ fn builtins_expose_the_capture_source_kind() {
         .source_factories()
         .iter()
         .any(|factory| factory.kind().as_str() == TEXT_SOURCE_KIND));
+    assert!(plugin
+        .source_factories()
+        .iter()
+        .any(|factory| factory.kind().as_str() == IMAGE_SOURCE_KIND));
     assert_eq!(BUILTIN_TEST_PATTERN_SOURCE_KIND, "test_pattern");
 }
 
