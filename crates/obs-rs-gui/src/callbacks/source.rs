@@ -458,7 +458,7 @@ fn group_target(target: &str) -> Option<(Vec<String>, String)> {
     Some((parts, item))
 }
 
-fn scene_item_transform_command(
+pub(crate) fn scene_item_transform_command(
     profile: String,
     scene: String,
     target: &str,
@@ -491,7 +491,7 @@ fn group_items_for_path<'a>(scene: &'a SceneSpec, path: &[String]) -> Option<&'a
     Some(items)
 }
 
-fn item_for_target<'a>(scene: &'a SceneSpec, target: &str) -> Option<&'a SceneItemSpec> {
+pub(crate) fn item_for_target<'a>(scene: &'a SceneSpec, target: &str) -> Option<&'a SceneItemSpec> {
     if let Some((group_path, item_id)) = group_target(target) {
         group_items_for_path(scene, &group_path)?
             .iter()
@@ -602,11 +602,11 @@ pub(crate) fn apply_source_transform_to(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
-    target: &SourceTarget,
+    target: &SceneItemTarget,
     document: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
-        if is_locked(&state.borrow(), target) {
+        if scene_item_target_is_locked(&state.borrow(), target) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
                 "source is locked",
@@ -616,12 +616,12 @@ pub(crate) fn apply_source_transform_to(
         let transform = parse_source_transform(document)?;
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
-                profile: target.profile.clone(),
-                scene: target.scene.clone(),
-                item: target.item.clone(),
+            .dispatch(UiCommand::Project(scene_item_transform_command(
+                target.profile.clone(),
+                target.scene.clone(),
+                target.item.as_str(),
                 transform,
-            }))?;
+            )))?;
         Ok(())
     })();
     if let Err(error) = result {
@@ -658,11 +658,6 @@ pub(crate) fn apply_source_transforms_to(
     }
 }
 
-/// Returns whether a target's scene item is protected from editing.
-fn is_locked(state: &DesktopState, target: &SourceTarget) -> bool {
-    source_target_is_locked(state, target)
-}
-
 /// A stable reference to one scene item and the source definition it shows.
 ///
 /// Anything that outlives the click that started it — a dialog the user leaves
@@ -678,6 +673,45 @@ pub(crate) struct SourceTarget {
     pub(crate) item: String,
     /// The profile-wide source definition, which is what settings belong to.
     pub(crate) source: String,
+}
+
+/// A stable reference to any scene item, including scene and group targets.
+///
+/// Transform dialogs need only the scene-item address; source properties and
+/// filters use [`SourceTarget`] because they additionally require a
+/// profile-wide source definition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SceneItemTarget {
+    pub(crate) profile: String,
+    pub(crate) scene: String,
+    pub(crate) item: String,
+}
+
+/// Resolves one preview-scene item, regardless of whether it points at a
+/// source, nested scene, or embedded group.
+pub(crate) fn scene_item_target(state: &DesktopState, item: &str) -> Option<SceneItemTarget> {
+    let project = state.project_session().project();
+    let scene = state.preview_scene()?.to_owned();
+    let profile = project.active_profile_spec()?;
+    let scene_spec = profile.scene(scene.as_str())?;
+    item_for_target(scene_spec, item)?;
+    Some(SceneItemTarget {
+        profile: project.active_profile().to_string(),
+        scene,
+        item: item.to_owned(),
+    })
+}
+
+/// Returns whether a scene-item target is locked, including a nested group
+/// child addressed by its outer-to-inner path.
+pub(crate) fn scene_item_target_is_locked(state: &DesktopState, target: &SceneItemTarget) -> bool {
+    state
+        .project_session()
+        .project()
+        .profile(target.profile.as_str())
+        .and_then(|profile| profile.scene(target.scene.as_str()))
+        .and_then(|scene| item_for_target(scene, target.item.as_str()))
+        .is_some_and(obs_rs_project::SceneItemSpec::locked)
 }
 
 /// Resolves one scene item in the preview scene to a stable target.

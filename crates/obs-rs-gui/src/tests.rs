@@ -1062,6 +1062,40 @@ fn exercise_group_source_callbacks(
         .iter()
         .any(|row| row.target == "overlay-group/background"));
 
+    let transform = crate::install_source_transform_window(ui, state, surface)
+        .expect("nested transform window should instantiate");
+    ui.invoke_open_source_transform_for("overlay-group/background".into());
+    let transform_window = crate::callbacks::source_transform::source_transform_window(&transform);
+    assert_eq!(transform_window.get_source_name(), "Background");
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("background"),
+        "opening a nested transform must not replace canvas selection"
+    );
+    transform_window.set_position_x(37);
+    transform_window.set_position_y(-9);
+    transform_window.set_item_opacity(190);
+    transform_window.invoke_accept_transform();
+    let nested_transform = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(obs_rs_project::SceneItemSpec::group)
+        .and_then(|group| {
+            group
+                .items()
+                .iter()
+                .find(|item| item.id().as_str() == "background")
+        })
+        .map(obs_rs_project::SceneItemSpec::transform)
+        .expect("nested transform should be committed to the child");
+    assert_eq!(nested_transform.translate_x(), 37);
+    assert_eq!(nested_transform.translate_y(), -9);
+    assert_eq!(nested_transform.opacity(), 190);
+
     let properties = crate::install_source_properties_window(ui, state, surface)
         .expect("nested properties window should instantiate");
     ui.invoke_open_source_properties_for("overlay-group/background".into());

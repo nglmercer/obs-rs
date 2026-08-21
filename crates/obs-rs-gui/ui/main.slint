@@ -223,6 +223,7 @@ export component MainWindow inherits Window {
         callback open-source-filters-window();
         callback open-source-filters-for(string);
         callback open-source-transform-window();
+        callback open-source-transform-for(string);
         callback open-monitor-window();
         callback undo-edit();
         callback redo-edit();
@@ -623,7 +624,7 @@ export component MainWindow inherits Window {
                 select-source(id) => { root.select-source(id); }
                 open-properties(id) => { root.open-source-properties-for(id); }
                 open-filters(id) => { root.open-source-filters-for(id); }
-                open-transform(id) => { root.open-source-transform-window(); }
+                open-transform(id) => { root.open-source-transform-for(id); }
                 toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
                 toggle-source-locked(id) => { root.toggle-source-locked(id); }
                 move-source(id, delta) => { root.move-source(id, delta); }

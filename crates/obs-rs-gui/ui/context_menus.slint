@@ -199,9 +199,8 @@ export component SourceContextMenuArea inherits Rectangle {
                 MenuSeparator {}
                 MenuItem {
                     title: I18n.text.edit_transform;
-                    enabled: !root.nested;
+                    enabled: root.source-id != "" && !root.source-locked && !root.group;
                     activated => {
-                        root.select-source(root.source-id);
                         root.open-transform(root.source-id);
                     }
                 }

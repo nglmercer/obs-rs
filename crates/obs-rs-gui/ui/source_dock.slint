@@ -91,7 +91,7 @@ export component SourceDock inherits Rectangle {
                         select-source(id) => { root.select-source(id); }
                         open-properties(id) => { root.open-properties(id); }
                         open-filters(id) => { root.open-filters(id); }
-                        open-transform(id) => { root.select-source(id); root.open-modal(14); }
+                        open-transform(id) => { root.open-transform(id); }
                         rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                         duplicate-source(id) => {
                             if !source.nested { root.select-source(id); }
@@ -174,7 +174,7 @@ export component SourceDock inherits Rectangle {
                     select-source(id) => { root.select-source(id); }
                     open-properties(id) => { root.open-properties(id); }
                     open-filters(id) => { root.open-filters(id); }
-                    open-transform(id) => { root.select-source(id); root.open-modal(14); }
+                    open-transform(id) => { root.open-transform(id); }
                     rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                     duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
                     copy-source(id) => { root.copy-source(id); }
