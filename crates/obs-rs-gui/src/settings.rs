@@ -1803,20 +1803,41 @@ fn serialize_project_scene_selections(
     selections: &[ProjectSceneSelection],
     preferred_key: Option<&str>,
 ) -> String {
-    let mut unique = BTreeMap::new();
+    // Keep a small bounded insertion-ordered set. The profile is part of the
+    // identity, so two profiles for one document must survive independently;
+    // preserving order also keeps settings round-trips stable for callers that
+    // compare the typed snapshot vector.
+    let mut unique: Vec<&ProjectSceneSelection> =
+        Vec::with_capacity(MAX_PERSISTED_PROJECT_SCENE_SELECTIONS * 2);
     for selection in selections {
         let key = selection.key();
-        if key.is_empty() || key.len() > MAX_PERSISTED_SELECTION_KEY_BYTES {
+        if key.is_empty()
+            || key.len() > MAX_PERSISTED_SELECTION_KEY_BYTES
+            || selection.profile().is_empty()
+        {
             continue;
         }
-        unique.insert(key.to_owned(), selection);
+        let existing = unique
+            .iter()
+            .position(|current| current.key() == key && current.profile() == selection.profile());
+        if let Some(existing) = existing {
+            unique[existing] = selection;
+        } else if unique.len() < MAX_PERSISTED_PROJECT_SCENE_SELECTIONS * 2 {
+            unique.push(selection);
+        }
     }
 
     let mut encoded = String::from("v1");
-    let preferred = preferred_key.and_then(|key| unique.remove(key));
-    let ordered = preferred
-        .into_iter()
-        .chain(unique.into_values())
+    let ordered = unique
+        .iter()
+        .filter(|selection| preferred_key == Some(selection.key()))
+        .copied()
+        .chain(
+            unique
+                .iter()
+                .filter(|selection| preferred_key != Some(selection.key()))
+                .copied(),
+        )
         .take(MAX_PERSISTED_PROJECT_SCENE_SELECTIONS);
     for selection in ordered {
         let record = [
@@ -1837,7 +1858,8 @@ fn serialize_project_scene_selections(
 }
 
 fn parse_project_scene_selections(value: &str) -> Vec<ProjectSceneSelection> {
-    let mut records = BTreeMap::new();
+    let mut records: Vec<ProjectSceneSelection> =
+        Vec::with_capacity(MAX_PERSISTED_PROJECT_SCENE_SELECTIONS);
     let mut parts = value.split(';');
     if parts.next() != Some("v1") {
         return Vec::new();
@@ -1862,17 +1884,21 @@ fn parse_project_scene_selections(value: &str) -> Vec<ProjectSceneSelection> {
         {
             continue;
         }
-        records.insert(
-            key.clone(),
-            ProjectSceneSelection::new(
-                key,
-                profile,
-                (!preview.is_empty()).then_some(preview),
-                (!program.is_empty()).then_some(program),
-            ),
+        let selection = ProjectSceneSelection::new(
+            key,
+            profile,
+            (!preview.is_empty()).then_some(preview),
+            (!program.is_empty()).then_some(program),
         );
+        if let Some(existing) = records.iter().position(|current| {
+            current.key() == selection.key() && current.profile() == selection.profile()
+        }) {
+            records[existing] = selection;
+        } else {
+            records.push(selection);
+        }
     }
-    records.into_values().collect()
+    records
 }
 
 fn selection_component(value: &str) -> String {
@@ -2088,12 +2114,20 @@ mod tests {
             preview_border_color: "#00FF88".to_owned(),
             last_preview_scene: "source_scene".to_owned(),
             last_program_scene: "program".to_owned(),
-            project_scene_selections: vec![ProjectSceneSelection::new(
-                "/tmp/a|b;c%ñ.obsrproj",
-                "live",
-                Some("source_scene".to_owned()),
-                Some("program".to_owned()),
-            )],
+            project_scene_selections: vec![
+                ProjectSceneSelection::new(
+                    "/tmp/a|b;c%ñ.obsrproj",
+                    "live",
+                    Some("source_scene".to_owned()),
+                    Some("program".to_owned()),
+                ),
+                ProjectSceneSelection::new(
+                    "/tmp/a|b;c%ñ.obsrproj",
+                    "alternate",
+                    Some("alternate_preview".to_owned()),
+                    Some("alternate_program".to_owned()),
+                ),
+            ],
             recording_format: RecordingFormat::ReferencePacket,
             recording_path: "/tmp/reference.obsr".to_owned(),
             stream_protocol: StreamProtocol::Rtmps,

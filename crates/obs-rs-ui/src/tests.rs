@@ -694,6 +694,76 @@ fn project_scene_selection_snapshots_restore_after_a_restart() {
 }
 
 #[test]
+fn project_scene_selection_snapshots_restore_each_profile_after_a_restart() {
+    let mut project = project();
+    let format = project
+        .profile("live")
+        .expect("live profile")
+        .video_format();
+    let mut alternate = Profile::new("alternate", "Alternate", format).expect("profile");
+    alternate
+        .add_scene(SceneSpec::new("alternate_preview", "Alternate preview").expect("scene"))
+        .expect("scene");
+    alternate
+        .add_scene(SceneSpec::new("alternate_program", "Alternate program").expect("scene"))
+        .expect("scene");
+    project.add_profile(alternate).expect("profile");
+
+    let key = "/tmp/obs-rs-persisted-profile-selections.obsrproj";
+    let mut state = DesktopState::new(project);
+    state.set_project_selection_key(key);
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("live preview selection");
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("live program selection");
+    state
+        .dispatch(UiCommand::SelectProfile {
+            id: "alternate".to_owned(),
+        })
+        .expect("alternate profile selection");
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "alternate_program".to_owned(),
+        })
+        .expect("alternate program selection");
+    state
+        .dispatch(UiCommand::SelectProfile {
+            id: "live".to_owned(),
+        })
+        .expect("return to live profile");
+
+    let snapshots = state.project_scene_selections();
+    assert_eq!(
+        snapshots
+            .iter()
+            .filter(|snapshot| snapshot.key() == key)
+            .count(),
+        2
+    );
+    let restart_project = state.project_session().project().clone();
+    let mut restarted = DesktopState::new(restart_project);
+    restarted.set_project_selection_key(key);
+    restarted.restore_project_selections(&snapshots);
+    restarted.restore_project_selection_for_current_key();
+
+    assert_eq!(restarted.preview_scene(), Some("source_scene"));
+    assert_eq!(restarted.program_scene(), Some("program"));
+    restarted
+        .dispatch(UiCommand::SelectProfile {
+            id: "alternate".to_owned(),
+        })
+        .expect("restore alternate profile");
+    assert_eq!(restarted.preview_scene(), Some("alternate_preview"));
+    assert_eq!(restarted.program_scene(), Some("alternate_program"));
+}
+
+#[test]
 fn console_parser_covers_state_and_output_commands() {
     assert_eq!(
         parse_console_command("preview program"),

@@ -14,7 +14,8 @@ pub enum SceneView {
     Program,
 }
 
-/// The last Preview/Program choices associated with one project document.
+/// The last Preview/Program choices associated with one project document and
+/// profile.
 ///
 /// This is a desktop-session snapshot rather than project content. Frontends
 /// may persist a bounded collection of these records in their own settings
@@ -29,7 +30,7 @@ pub struct ProjectSceneSelection {
 }
 
 impl ProjectSceneSelection {
-    /// Creates a snapshot from the document key and active profile.
+    /// Creates a snapshot from the document key, profile, and scene choices.
     #[must_use]
     pub fn new(
         key: impl Into<String>,

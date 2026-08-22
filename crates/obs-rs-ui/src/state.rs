@@ -25,10 +25,9 @@ struct SceneSelection {
 }
 
 /// The scene choices associated with one loaded project document.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct ProjectSceneSelectionState {
-    profile: Identifier,
-    selection: SceneSelection,
+    selections: BTreeMap<Identifier, SceneSelection>,
 }
 
 /// The selection cache is session state, not project data. Keep it bounded so
@@ -39,6 +38,11 @@ const MAX_PROJECT_SELECTION_KEY_BYTES: usize = 4_096;
 /// A studio session can visit many collections, but never needs an unbounded
 /// history of their last visible scenes.
 const MAX_PROJECT_SCENE_SELECTIONS: usize = 32;
+/// Keep per-profile history bounded inside each remembered collection.
+const MAX_PROJECT_PROFILE_SCENE_SELECTIONS: usize = 64;
+/// Bound the flattened frontend snapshot list independently of its nested
+/// document/profile dimensions.
+const MAX_PROJECT_SELECTION_RECORDS: usize = 256;
 
 pub struct DesktopState {
     pub(crate) project: ProjectSession,
@@ -467,19 +471,12 @@ impl DesktopState {
     /// matching record after the project is available.
     pub fn restore_project_selections(&mut self, selections: &[ProjectSceneSelection]) {
         self.project_scene_selections.clear();
-        for selection in selections.iter().take(MAX_PROJECT_SCENE_SELECTIONS) {
+        for selection in selections.iter().take(MAX_PROJECT_SELECTION_RECORDS) {
             let Some(key) = project_selection_key(selection.key()) else {
                 continue;
             };
             let Ok(profile) = Identifier::new(selection.profile()) else {
                 continue;
-            };
-            let selection = ProjectSceneSelectionState {
-                profile,
-                selection: SceneSelection {
-                    preview: selection.preview().and_then(|id| Identifier::new(id).ok()),
-                    program: selection.program().and_then(|id| Identifier::new(id).ok()),
-                },
             };
             if self.project_scene_selections.len() == MAX_PROJECT_SCENE_SELECTIONS
                 && !self.project_scene_selections.contains_key(&key)
@@ -488,52 +485,70 @@ impl DesktopState {
                     self.project_scene_selections.remove(&oldest);
                 }
             }
-            self.project_scene_selections.insert(key, selection);
+            let document = self.project_scene_selections.entry(key).or_default();
+            if document.selections.len() == MAX_PROJECT_PROFILE_SCENE_SELECTIONS
+                && !document.selections.contains_key(&profile)
+            {
+                if let Some(oldest) = document.selections.keys().next().cloned() {
+                    document.selections.remove(&oldest);
+                }
+            }
+            document.selections.insert(
+                profile,
+                SceneSelection {
+                    preview: selection.preview().and_then(|id| Identifier::new(id).ok()),
+                    program: selection.program().and_then(|id| Identifier::new(id).ok()),
+                },
+            );
         }
     }
 
-    /// Returns bounded document-selection snapshots, including the active
-    /// document's current choices even when it has not been switched away.
+    /// Returns bounded document/profile-selection snapshots, including all
+    /// visited profiles for the active document and its current choices even
+    /// when it has not been switched away.
     #[must_use]
     pub fn project_scene_selections(&self) -> Vec<ProjectSceneSelection> {
-        let mut selections = self
-            .project_scene_selections
-            .iter()
-            .map(|(key, selection)| {
-                (
-                    key.clone(),
-                    ProjectSceneSelection::new(
-                        key.clone(),
-                        selection.profile.to_string(),
-                        selection
-                            .selection
-                            .preview
-                            .as_ref()
-                            .map(ToString::to_string),
-                        selection
-                            .selection
-                            .program
-                            .as_ref()
-                            .map(ToString::to_string),
-                    ),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        if let Some(key) = self.project_selection_key.as_ref() {
-            if selections.len() == MAX_PROJECT_SCENE_SELECTIONS && !selections.contains_key(key) {
-                if let Some(oldest) = selections.keys().next().cloned() {
-                    selections.remove(&oldest);
-                }
+        let mut selections = BTreeMap::new();
+        let mut insert = |key: &str, profile: &Identifier, selection: &SceneSelection| {
+            let profile_text = profile.to_string();
+            let record_key = (key.to_owned(), profile_text.clone());
+            if selections.len() == MAX_PROJECT_SELECTION_RECORDS
+                && !selections.contains_key(&record_key)
+            {
+                return;
             }
             selections.insert(
-                key.clone(),
+                record_key,
                 ProjectSceneSelection::new(
-                    key.clone(),
-                    self.project.project().active_profile().to_string(),
-                    self.preview_scene.as_ref().map(ToString::to_string),
-                    self.program_scene.as_ref().map(ToString::to_string),
+                    key,
+                    profile_text,
+                    selection.preview.as_ref().map(ToString::to_string),
+                    selection.program.as_ref().map(ToString::to_string),
                 ),
             );
+        };
+        if let Some(key) = self.project_selection_key.as_ref() {
+            if let Some(saved) = self.project_scene_selections.get(key) {
+                for (profile, selection) in &saved.selections {
+                    insert(key, profile, selection);
+                }
+            }
+            for (profile, selection) in &self.profile_scene_selections {
+                insert(key, profile, selection);
+            }
+            insert(
+                key,
+                self.project.project().active_profile(),
+                &self.scene_selection(),
+            );
+        }
+        for (key, saved) in &self.project_scene_selections {
+            if self.project_selection_key.as_deref() == Some(key.as_str()) {
+                continue;
+            }
+            for (profile, selection) in &saved.selections {
+                insert(key, profile, selection);
+            }
         }
         selections.into_values().collect()
     }
@@ -583,10 +598,7 @@ impl DesktopState {
             return;
         };
         let profile = self.project.project().active_profile().clone();
-        let selection = ProjectSceneSelectionState {
-            profile,
-            selection: self.scene_selection(),
-        };
+        let selection = self.scene_selection();
         if self.project_scene_selections.len() == MAX_PROJECT_SCENE_SELECTIONS
             && !self.project_scene_selections.contains_key(key)
         {
@@ -594,7 +606,18 @@ impl DesktopState {
                 self.project_scene_selections.remove(&oldest);
             }
         }
-        self.project_scene_selections.insert(key.clone(), selection);
+        let document = self
+            .project_scene_selections
+            .entry(key.clone())
+            .or_default();
+        if document.selections.len() == MAX_PROJECT_PROFILE_SCENE_SELECTIONS
+            && !document.selections.contains_key(&profile)
+        {
+            if let Some(oldest) = document.selections.keys().next().cloned() {
+                document.selections.remove(&oldest);
+            }
+        }
+        document.selections.insert(profile, selection);
     }
 
     fn restore_project_selection(&mut self) {
@@ -604,18 +627,18 @@ impl DesktopState {
         let Some(saved) = self.project_scene_selections.get(key).cloned() else {
             return;
         };
-        if self.project.project().active_profile() != &saved.profile {
-            return;
+        self.profile_scene_selections.clear();
+        for (profile, selection) in saved.selections {
+            if self.project.project().profile(&profile).is_some() {
+                self.profile_scene_selections.insert(profile, selection);
+            }
         }
-        self.restore_scene_selection(
-            saved.selection.preview.as_ref().map(Identifier::as_str),
-            saved.selection.program.as_ref().map(Identifier::as_str),
-        );
+        self.restore_active_profile_selection();
     }
 
-    /// Applies the persisted selection for the currently loaded document, if
-    /// its profile matches. Invalid or stale scene IDs keep the current
-    /// first-scene fallback.
+    /// Applies all persisted profile selections for the currently loaded
+    /// document. Invalid or stale profiles/scenes keep their first-scene
+    /// fallback and do not create project history entries.
     pub fn restore_project_selection_for_current_key(&mut self) {
         self.restore_project_selection();
     }
