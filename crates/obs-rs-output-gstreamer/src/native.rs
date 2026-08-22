@@ -36,6 +36,98 @@ pub enum RemuxRecovery {
     Recovered { bytes: usize },
 }
 
+/// Maximum number of remux candidates returned from one directory scan.
+pub const MAX_REMUX_RECOVERY_CANDIDATES: usize = 64;
+/// Maximum directory entries inspected by one remux candidate scan.
+pub const MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES: usize = 4_096;
+
+/// Finds recoverable automatic-remux destinations in a bounded directory scan.
+///
+/// A native remux keeps its source at <final>.mkv.part until the MP4 is
+/// published. This function returns the corresponding final .mp4 paths for
+/// non-empty sources whose destination does not already exist. It performs no
+/// media work and is intended for the engine control plane, never a UI or
+/// real-time callback.
+///
+/// # Errors
+///
+/// Returns a typed filesystem error when the directory cannot be inspected or
+/// the bounded scan would be exceeded.
+pub fn discover_interrupted_remux_candidates(
+    directory: impl AsRef<Path>,
+) -> Result<Vec<PathBuf>, GStreamerError> {
+    let directory = directory.as_ref();
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
+    if !directory.is_dir() {
+        return Err(GStreamerError::InvalidEndpoint(
+            "remux candidate path must be a directory".to_owned(),
+        ));
+    }
+    let entries = fs::read_dir(directory).map_err(|error| {
+        GStreamerError::Native(format!("inspect remux candidate directory: {error}"))
+    })?;
+    let mut candidates = Vec::new();
+    for (index, entry) in entries
+        .take(MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES + 1)
+        .enumerate()
+    {
+        if index == MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES {
+            return Err(GStreamerError::Native(format!(
+                "remux candidate directory exceeds {MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES} entries"
+            )));
+        }
+        let entry = entry.map_err(|error| {
+            GStreamerError::Native(format!("read remux candidate entry: {error}"))
+        })?;
+        if !entry
+            .file_type()
+            .map_err(|error| {
+                GStreamerError::Native(format!("inspect remux candidate entry: {error}"))
+            })?
+            .is_file()
+        {
+            continue;
+        }
+        let source_path = entry.path();
+        let Some(final_path) = remux_final_path_from_source(&source_path) else {
+            continue;
+        };
+        let source_bytes = entry.metadata().map_err(|error| {
+            GStreamerError::Native(format!("inspect remux candidate metadata: {error}"))
+        })?;
+        if source_bytes.len() == 0 || final_path.exists() {
+            continue;
+        }
+        candidates.push(final_path);
+        if candidates.len() > MAX_REMUX_RECOVERY_CANDIDATES {
+            return Err(GStreamerError::Native(format!(
+                "remux candidate directory contains more than {MAX_REMUX_RECOVERY_CANDIDATES} recoverable files"
+            )));
+        }
+    }
+    candidates.sort_unstable();
+    Ok(candidates)
+}
+
+fn remux_final_path_from_source(source_path: &Path) -> Option<PathBuf> {
+    let file_name = source_path.file_name()?.to_str()?;
+    let suffix = ".mkv.part";
+    if file_name.len() <= suffix.len()
+        || !file_name[file_name.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+    {
+        return None;
+    }
+    let stem = &file_name[..file_name.len() - suffix.len()];
+    (!stem.is_empty()).then(|| {
+        source_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(format!("{stem}.mp4"))
+    })
+}
+
 /// Remuxes the native H.264/AAC Matroska recording into MP4 without decoding
 /// or re-encoding either stream.
 ///
@@ -2109,6 +2201,43 @@ mod tests {
         );
         assert!(!final_path.with_extension("mp4.part").exists());
         std::fs::remove_file(final_path).expect("remove remuxed MP4");
+    }
+
+    #[test]
+    fn remux_candidate_discovery_is_sorted_bounded_and_skips_published_artifacts() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("obs-rs-remux-candidates-{token}"));
+        std::fs::create_dir(&directory).expect("candidate directory");
+        std::fs::write(directory.join("zeta.mkv.part"), [1_u8, 2]).expect("zeta candidate");
+        std::fs::write(directory.join("alpha.mkv.part"), [3_u8]).expect("alpha candidate");
+        std::fs::write(directory.join("empty.mkv.part"), []).expect("empty candidate");
+        std::fs::write(directory.join("published.mkv.part"), [4_u8]).expect("published source");
+        std::fs::write(directory.join("published.mp4"), [5_u8]).expect("published destination");
+        std::fs::write(directory.join("ignore.txt"), [6_u8]).expect("unrelated file");
+        std::fs::create_dir(directory.join("nested.mkv.part")).expect("nested directory");
+
+        let candidates =
+            discover_interrupted_remux_candidates(&directory).expect("discover candidates");
+        assert_eq!(
+            candidates,
+            vec![directory.join("alpha.mp4"), directory.join("zeta.mp4")]
+        );
+        assert_eq!(
+            remux_final_path_from_source(Path::new("/tmp/Case.MKV.PART")),
+            Some(PathBuf::from("/tmp/Case.mp4"))
+        );
+        assert!(
+            discover_interrupted_remux_candidates(directory.join("missing"))
+                .expect("missing directory is empty")
+                .is_empty()
+        );
+        let error = discover_interrupted_remux_candidates(directory.join("ignore.txt"))
+            .expect_err("file is not a candidate directory");
+        assert!(error.to_string().contains("must be a directory"));
+        std::fs::remove_dir_all(directory).expect("remove candidate directory");
     }
 
     #[test]

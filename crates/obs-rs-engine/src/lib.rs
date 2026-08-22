@@ -44,8 +44,9 @@ use obs_rs_output::{
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output_gstreamer::{
-    recover_interrupted_remux_recording, GStreamerCapabilitySnapshot, GStreamerError,
-    GStreamerOutputSession, NativeOutputState, ProductionDestination, ProductionPipelinePlan,
+    discover_interrupted_remux_candidates, recover_interrupted_remux_recording,
+    GStreamerCapabilitySnapshot, GStreamerError, GStreamerOutputSession, NativeOutputState,
+    ProductionDestination, ProductionPipelinePlan,
 };
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
@@ -1635,6 +1636,27 @@ impl EngineSession {
             return Err(EngineError::Busy("recover an interrupted recording"));
         }
         recover_interrupted_remux_recording(path.into()).map_err(Into::into)
+    }
+
+    /// Discovers recoverable automatic-remux destinations in an idle directory.
+    ///
+    /// The native boundary applies hard directory and candidate limits. This
+    /// method is intentionally a control-plane operation and refuses to run
+    /// while media output is active.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::Busy` while recording or streaming, or a typed
+    /// native/filesystem error when the bounded scan cannot complete.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn discover_interrupted_remux_candidates(
+        &mut self,
+        directory: impl Into<PathBuf>,
+    ) -> Result<Vec<PathBuf>, EngineError> {
+        if self.recording.is_some() || self.streaming.is_some() {
+            return Err(EngineError::Busy("discover interrupted recordings"));
+        }
+        discover_interrupted_remux_candidates(directory.into()).map_err(Into::into)
     }
 
     /// Starts a production recording using an explicit versioned output

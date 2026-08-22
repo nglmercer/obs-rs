@@ -57,6 +57,8 @@ enum WorkerCommand {
     #[cfg(feature = "production-gstreamer")]
     RecoverInterruptedRemux(PathBuf, mpsc::Sender<Result<RemuxRecovery, String>>),
     #[cfg(feature = "production-gstreamer")]
+    DiscoverInterruptedRemux(PathBuf, mpsc::Sender<Result<Vec<PathBuf>, String>>),
+    #[cfg(feature = "production-gstreamer")]
     StartRecordingProfile(
         PathBuf,
         OutputProfile,
@@ -383,6 +385,49 @@ impl EngineWorker {
             .try_send(WorkerCommand::RecoverInterruptedRemux(path.into(), reply))
             .map_err(|error| command_enqueue_error(&error))?;
         Ok(receive)
+    }
+
+    /// Discovers recoverable automatic-remux destinations without waiting for
+    /// the worker or filesystem scan.
+    ///
+    /// The returned one-shot receiver is bounded to one result.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError` when the bounded worker command queue is full or
+    /// closed.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn try_discover_interrupted_remux_candidates(
+        &self,
+        directory: impl Into<PathBuf>,
+    ) -> Result<mpsc::Receiver<Result<Vec<PathBuf>, String>>, EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .try_send(WorkerCommand::DiscoverInterruptedRemux(
+                directory.into(),
+                reply,
+            ))
+            .map_err(|error| command_enqueue_error(&error))?;
+        Ok(receive)
+    }
+
+    /// Discovers recoverable automatic-remux destinations synchronously.
+    ///
+    /// This convenience method is for control-plane callers already off UI and
+    /// media submission paths. GUI callers should use the try_ variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError` when the worker closes or the bounded scan fails.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn discover_interrupted_remux_candidates(
+        &self,
+        directory: impl Into<PathBuf>,
+    ) -> Result<Vec<PathBuf>, EngineError> {
+        self.try_discover_interrupted_remux_candidates(directory)?
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
     }
 
     /// Requests a production recording using an explicit versioned profile.
@@ -1237,6 +1282,14 @@ fn worker_loop(
                 false
             }
             #[cfg(feature = "production-gstreamer")]
+            WorkerCommand::DiscoverInterruptedRemux(directory, reply) => {
+                let result = session
+                    .discover_interrupted_remux_candidates(directory)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            #[cfg(feature = "production-gstreamer")]
             WorkerCommand::StartRecordingProfile(path, profile, encoder_config, reply) => {
                 let result = start_recording_profile(&mut session, path, profile, encoder_config);
                 let _ = reply.send(result);
@@ -1911,6 +1964,36 @@ mod tests {
         assert!(final_path.is_file());
         assert!(!interrupted_source.exists());
         std::fs::remove_file(final_path).expect("remove recovered MP4");
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn worker_discovers_bounded_remux_candidates_on_the_worker_thread() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("obs-rs-worker-candidates-{token}"));
+        std::fs::create_dir(&directory).expect("candidate directory");
+        std::fs::write(directory.join("zeta.mkv.part"), [1_u8]).expect("zeta candidate");
+        std::fs::write(directory.join("alpha.mkv.part"), [2_u8]).expect("alpha candidate");
+        std::fs::write(directory.join("published.mkv.part"), [3_u8]).expect("published source");
+        std::fs::write(directory.join("published.mp4"), [4_u8]).expect("published destination");
+
+        let worker = worker(2);
+        let receive = worker
+            .try_discover_interrupted_remux_candidates(&directory)
+            .expect("enqueue candidate discovery");
+        let candidates = receive
+            .recv_timeout(Duration::from_secs(1))
+            .expect("candidate discovery result")
+            .expect("discover remux candidates");
+        assert_eq!(
+            candidates,
+            vec![directory.join("alpha.mp4"), directory.join("zeta.mp4")]
+        );
+
+        std::fs::remove_dir_all(directory).expect("remove candidate directory");
     }
 
     #[test]
