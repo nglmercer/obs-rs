@@ -12,6 +12,7 @@ use slint::{ComponentHandle, Model, ModelRc, PhysicalPosition, PhysicalSize, Vec
 
 use crate::{
     dock_tree::{DockAxis, DockDropZone, DockNode},
+    fixtures::{desktop_bounds, screen_monitors, DesktopBounds},
     settings::FloatingGeometry,
     DockPane, DockSplitter, FloatingDockWindow, MainWindow,
 };
@@ -585,7 +586,7 @@ fn install_float(
             redock(&ui, &controller, index);
             return;
         }
-        match float(&ui, &state, &controller, kind) {
+        match float(&ui, &state, &controller, kind, current_desktop_bounds()) {
             Ok(window) => {
                 if let Some(slot) = controller.windows.borrow_mut().get_mut(index) {
                     *slot = Some(window);
@@ -621,6 +622,7 @@ fn restore_floating_windows(
     controller: &Rc<DockController>,
 ) {
     let floating = read_bools(&ui.get_panel_floating());
+    let bounds = current_desktop_bounds();
     for (index, is_floating) in floating.into_iter().enumerate() {
         if !is_floating {
             continue;
@@ -628,7 +630,7 @@ fn restore_floating_windows(
         let Ok(kind) = i32::try_from(index) else {
             continue;
         };
-        match float(ui, state, controller, kind) {
+        match float(ui, state, controller, kind, bounds) {
             Ok(window) => {
                 if let Some(slot) = controller.windows.borrow_mut().get_mut(index) {
                     *slot = Some(window);
@@ -649,6 +651,7 @@ fn float(
     state: &Rc<RefCell<DesktopState>>,
     controller: &Rc<DockController>,
     kind: i32,
+    bounds: Option<DesktopBounds>,
 ) -> Result<FloatingDockWindow, slint::PlatformError> {
     let window = FloatingDockWindow::new()?;
     window
@@ -673,7 +676,7 @@ fn float(
     });
 
     if let Some(geometry) = controller.stored_geometry(redock_index) {
-        restore_window_geometry(&window, geometry);
+        restore_window_geometry(&window, geometry, bounds);
     }
     window.show()?;
     Ok(window)
@@ -850,10 +853,15 @@ fn capture_window_geometry(
 }
 
 /// Restores a saved physical position and scales dimensions to the current
-/// display DPI. Position is intentionally left in desktop coordinates: if a
-/// second monitor changed DPI, the window remains on that monitor rather than
-/// jumping to a different global location.
-fn restore_window_geometry(window: &FloatingDockWindow, geometry: FloatingGeometry) {
+/// display DPI. Position stays in desktop coordinates: if a second monitor
+/// changed DPI, the window remains on that monitor rather than jumping to a
+/// different global location, subject only to the known-desktop visibility
+/// clamp.
+fn restore_window_geometry(
+    window: &FloatingDockWindow,
+    geometry: FloatingGeometry,
+    bounds: Option<DesktopBounds>,
+) {
     let current_scale = window.window().scale_factor().max(0.5);
     #[allow(
         clippy::cast_precision_loss,
@@ -863,10 +871,62 @@ fn restore_window_geometry(window: &FloatingDockWindow, geometry: FloatingGeomet
     let ratio = (current_scale / saved_scale).clamp(0.5, 2.0);
     let width = scale_dimension(geometry.width, ratio, 240, 8_192);
     let height = scale_dimension(geometry.height, ratio, 160, 8_192);
-    window
-        .window()
-        .set_position(PhysicalPosition::new(geometry.x, geometry.y));
+    let (x, y) = bounds.map_or((geometry.x, geometry.y), |bounds| {
+        clamp_window_position(geometry.x, geometry.y, width, height, bounds)
+    });
+    window.window().set_position(PhysicalPosition::new(x, y));
     window.window().set_size(PhysicalSize::new(width, height));
+}
+
+/// Keeps a restored dock at least partially visible in the known virtual
+/// desktop. The position remains in physical coordinates, so negative offsets
+/// for a monitor left or above the primary display are preserved.
+const MIN_VISIBLE_DOCK_PIXELS: i32 = 48;
+
+fn clamp_window_position(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    bounds: DesktopBounds,
+) -> (i32, i32) {
+    let width = i32::try_from(width).unwrap_or(i32::MAX);
+    let height = i32::try_from(height).unwrap_or(i32::MAX);
+    let min_x = bounds
+        .left
+        .saturating_sub(width.saturating_sub(MIN_VISIBLE_DOCK_PIXELS));
+    let max_x = bounds.right.saturating_sub(MIN_VISIBLE_DOCK_PIXELS);
+    let min_y = bounds
+        .top
+        .saturating_sub(height.saturating_sub(MIN_VISIBLE_DOCK_PIXELS));
+    let max_y = bounds.bottom.saturating_sub(MIN_VISIBLE_DOCK_PIXELS);
+    let x = if width >= bounds.width {
+        bounds.left
+    } else {
+        clamp_position(x, min_x, max_x, bounds.left)
+    };
+    let y = if height >= bounds.height {
+        bounds.top
+    } else {
+        clamp_position(y, min_y, max_y, bounds.top)
+    };
+    (x, y)
+}
+
+fn clamp_position(value: i32, minimum: i32, maximum: i32, oversized_fallback: i32) -> i32 {
+    if minimum <= maximum {
+        value.clamp(minimum, maximum)
+    } else {
+        // A dock wider/taller than the whole desktop cannot fit between both
+        // visibility constraints; anchoring its origin at the desktop edge
+        // leaves the largest useful portion on-screen.
+        oversized_fallback
+    }
+}
+
+fn current_desktop_bounds() -> Option<DesktopBounds> {
+    let monitors = screen_monitors();
+    (!monitors.is_empty()).then(|| desktop_bounds(&monitors))
 }
 
 fn scale_dimension(value: u32, ratio: f32, minimum: u32, maximum: u32) -> u32 {
@@ -913,6 +973,57 @@ mod tests {
         assert!(
             (total - weights.iter().sum::<f32>()).abs() < 1e-5,
             "the row's total width must not change"
+        );
+    }
+
+    fn bounds() -> DesktopBounds {
+        desktop_bounds(&[
+            crate::fixtures::MonitorChoice {
+                id: "DP-1".to_owned(),
+                name: "DP-1".to_owned(),
+                x: 0,
+                y: 0,
+                width: 1_920,
+                height: 1_080,
+                primary: true,
+            },
+            crate::fixtures::MonitorChoice {
+                id: "HDMI-1".to_owned(),
+                name: "HDMI-1".to_owned(),
+                x: -1_280,
+                y: 120,
+                width: 1_280,
+                height: 1_024,
+                primary: false,
+            },
+        ])
+    }
+
+    #[test]
+    fn restored_dock_position_keeps_a_title_bar_visible() {
+        assert_eq!(
+            clamp_window_position(5_000, 5_000, 720, 520, bounds()),
+            (1_872, 1_096)
+        );
+        assert_eq!(
+            clamp_window_position(-5_000, -5_000, 720, 520, bounds()),
+            (-1_952, -472)
+        );
+    }
+
+    #[test]
+    fn restored_dock_preserves_negative_secondary_monitor_offsets() {
+        assert_eq!(
+            clamp_window_position(-1_920, 84, 720, 520, bounds()),
+            (-1_920, 84)
+        );
+    }
+
+    #[test]
+    fn oversized_dock_anchors_to_the_desktop_edge() {
+        assert_eq!(
+            clamp_window_position(500, 500, 10_000, 10_000, bounds()),
+            (-1_280, 0)
         );
     }
 

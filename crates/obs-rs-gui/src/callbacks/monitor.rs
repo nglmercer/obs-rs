@@ -16,7 +16,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     apply_source_settings_to,
-    fixtures::{kind_selects_monitor, screen_monitors, MonitorChoice},
+    fixtures::{desktop_bounds, kind_selects_monitor, screen_monitors, MonitorChoice},
     source_target, target_settings_document, I18n, MainWindow, MonitorRow, MonitorWindow, Palette,
     PreviewSurface, SourceTarget,
 };
@@ -124,45 +124,6 @@ impl MonitorController {
         self.window.set_selected_id(selected.as_str().into());
         self.window
             .set_monitor_rows(ModelRc::new(VecModel::from(rows)));
-    }
-}
-
-/// The rectangle covering every monitor, used to normalize the layout map.
-struct DesktopBounds {
-    left: i32,
-    top: i32,
-    width: i32,
-    height: i32,
-}
-
-fn desktop_bounds(monitors: &[MonitorChoice]) -> DesktopBounds {
-    let left = monitors.iter().map(|monitor| monitor.x).min().unwrap_or(0);
-    let top = monitors.iter().map(|monitor| monitor.y).min().unwrap_or(0);
-    let right = monitors
-        .iter()
-        .map(|monitor| {
-            monitor
-                .x
-                .saturating_add(i32::try_from(monitor.width).unwrap_or(i32::MAX))
-        })
-        .max()
-        .unwrap_or(1);
-    let bottom = monitors
-        .iter()
-        .map(|monitor| {
-            monitor
-                .y
-                .saturating_add(i32::try_from(monitor.height).unwrap_or(i32::MAX))
-        })
-        .max()
-        .unwrap_or(1);
-    DesktopBounds {
-        left,
-        top,
-        // A zero extent would divide by zero in the map; one pixel is the
-        // smallest value that keeps every rectangle finite.
-        width: (right - left).max(1),
-        height: (bottom - top).max(1),
     }
 }
 

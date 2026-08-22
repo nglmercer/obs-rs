@@ -251,6 +251,55 @@ impl MonitorChoice {
     }
 }
 
+/// The virtual desktop rectangle reported by a platform monitor enumerator.
+///
+/// This is deliberately a capability result rather than a made-up fallback:
+/// callers may preserve a saved window position when the platform cannot
+/// enumerate the current desktop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DesktopBounds {
+    pub(crate) left: i32,
+    pub(crate) top: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) right: i32,
+    pub(crate) bottom: i32,
+}
+
+/// Returns the rectangle spanning all known monitors.
+pub(crate) fn desktop_bounds(monitors: &[MonitorChoice]) -> DesktopBounds {
+    let left = monitors.iter().map(|monitor| monitor.x).min().unwrap_or(0);
+    let top = monitors.iter().map(|monitor| monitor.y).min().unwrap_or(0);
+    let right = monitors
+        .iter()
+        .map(|monitor| {
+            monitor
+                .x
+                .saturating_add(i32::try_from(monitor.width).unwrap_or(i32::MAX))
+        })
+        .max()
+        .unwrap_or(1);
+    let bottom = monitors
+        .iter()
+        .map(|monitor| {
+            monitor
+                .y
+                .saturating_add(i32::try_from(monitor.height).unwrap_or(i32::MAX))
+        })
+        .max()
+        .unwrap_or(1);
+    DesktopBounds {
+        left,
+        top,
+        // A zero extent would divide by zero in the monitor map or make a
+        // restore clamp impossible; one pixel is the smallest safe extent.
+        width: (right - left).max(1),
+        height: (bottom - top).max(1),
+        right,
+        bottom,
+    }
+}
+
 /// Lists the displays a screen capture source can be pointed at.
 ///
 /// Returns an empty list when no display server is reachable, which the picker
