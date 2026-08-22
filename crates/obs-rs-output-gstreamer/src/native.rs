@@ -385,9 +385,7 @@ impl GStreamerOutputSession {
             .set_state(gst::State::Null)
             .map_err(native_error)?;
         if let (Some(temp), Some(final_path)) = (&self.temp_path, &self.final_path) {
-            fs::rename(temp, final_path).map_err(|error| {
-                GStreamerError::Native(format!("publish production recording: {error}"))
-            })?;
+            publish_recording_artifact(temp, final_path)?;
         }
         self.state = NativeOutputState::Closed;
         Ok(())
@@ -1025,6 +1023,28 @@ fn recover_stale_recording_artifact(temp_path: Option<&Path>) -> Result<(), GStr
     }
 }
 
+fn publish_recording_artifact(temp: &Path, final_path: &Path) -> Result<(), GStreamerError> {
+    let bytes = fs::metadata(temp)
+        .map_err(|error| GStreamerError::Native(format!("inspect production recording: {error}")))?
+        .len();
+    if bytes == 0 {
+        return Err(GStreamerError::Native(
+            "refusing to publish an empty production recording".to_owned(),
+        ));
+    }
+    fs::hard_link(temp, final_path).map_err(|error| {
+        GStreamerError::Native(format!(
+            "publish production recording without replacing an existing file: {error}"
+        ))
+    })?;
+    fs::remove_file(temp).map_err(|error| {
+        GStreamerError::Native(format!(
+            "remove published production recording temporary path: {error}"
+        ))
+    })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1211,6 +1231,42 @@ mod tests {
             .to_string()
             .contains("remove stale production recording artifact"));
         std::fs::remove_dir(&stale).expect("remove invalid artifact");
+    }
+
+    #[test]
+    fn native_publication_is_no_clobber_and_rejects_empty_artifacts() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = std::env::temp_dir();
+        let temp = directory.join(format!("obs-rs-native-publish-{token}.part"));
+        let final_path = directory.join(format!("obs-rs-native-publish-{token}.mp4"));
+        std::fs::write(&temp, [1, 2, 3]).expect("write temporary recording");
+        publish_recording_artifact(&temp, &final_path).expect("publish recording");
+        assert_eq!(
+            std::fs::read(&final_path).expect("read recording"),
+            [1, 2, 3]
+        );
+        assert!(!temp.exists());
+
+        std::fs::write(&temp, [4, 5, 6]).expect("write second temporary recording");
+        let error = publish_recording_artifact(&temp, &final_path)
+            .expect_err("existing final path must not be replaced");
+        assert!(error.to_string().contains("without replacing"));
+        assert_eq!(
+            std::fs::read(&temp).expect("read preserved temporary"),
+            [4, 5, 6]
+        );
+        std::fs::remove_file(&temp).expect("remove preserved temporary");
+
+        let empty_final = directory.join(format!("obs-rs-native-publish-{token}-empty.mp4"));
+        std::fs::write(&temp, []).expect("write empty recording");
+        let error = publish_recording_artifact(&temp, &empty_final)
+            .expect_err("empty final artifact must be rejected");
+        assert!(error.to_string().contains("empty production recording"));
+        std::fs::remove_file(&temp).expect("remove empty temporary");
+        std::fs::remove_file(&final_path).expect("remove published recording");
     }
 
     #[test]
