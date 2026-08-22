@@ -398,6 +398,17 @@ pub(crate) fn duplicate_source_and_refresh(
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let (profile, scene, _, _) = source_display_state(&state.borrow(), source_id)?;
+        // OBS selects the newly-created top-level item after Duplicate. Keep
+        // the pre-edit IDs so the selection follows the command's fresh item
+        // rather than guessing from the source name (which may already have
+        // copies). Nested rows intentionally remain outside the canvas
+        // selection model, so their existing selection is preserved.
+        let before_root_items = if group_target(source_id).is_none() {
+            Some(root_item_ids(&state.borrow(), scene.as_str())?)
+        } else {
+            None
+        };
+        let scene_for_selection = scene.clone();
         let command = if let Some((group_path, item)) = group_target(source_id) {
             ProjectCommand::DuplicateGroupItem {
                 profile,
@@ -415,6 +426,15 @@ pub(crate) fn duplicate_source_and_refresh(
             }
         };
         state.borrow_mut().dispatch(UiCommand::Project(command))?;
+        if let Some(before_root_items) = before_root_items {
+            let duplicated = {
+                let state = state.borrow();
+                newly_added_root_item(&state, scene_for_selection.as_str(), &before_root_items)?
+            };
+            state
+                .borrow_mut()
+                .dispatch(UiCommand::SelectSource { id: duplicated })?;
+        }
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -456,6 +476,43 @@ fn group_target(target: &str) -> Option<(Vec<String>, String)> {
     }
     let item = parts.pop()?;
     Some((parts, item))
+}
+
+fn root_item_ids(state: &DesktopState, scene_id: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    let project = state.project_session().project();
+    let scene = project
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .ok_or_else(|| std::io::Error::other("source scene is missing"))?;
+    Ok(scene
+        .items()
+        .iter()
+        .map(|item| item.id().to_string())
+        .collect())
+}
+
+fn newly_added_root_item(
+    state: &DesktopState,
+    scene_id: &str,
+    before: &[String],
+) -> Result<String, Box<dyn Error>> {
+    let project = state.project_session().project();
+    let scene = project
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .ok_or_else(|| std::io::Error::other("source scene is missing after duplicate"))?;
+    let mut added = scene
+        .items()
+        .iter()
+        .filter(|item| !before.iter().any(|id| id == item.id().as_str()))
+        .map(|item| item.id().to_string());
+    let duplicated = added
+        .next()
+        .ok_or_else(|| std::io::Error::other("duplicate did not add a root source item"))?;
+    if added.next().is_some() {
+        return Err(std::io::Error::other("duplicate added more than one root source item").into());
+    }
+    Ok(duplicated)
 }
 
 pub(crate) fn scene_item_transform_command(

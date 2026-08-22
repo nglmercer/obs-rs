@@ -1187,29 +1187,49 @@ fn exercise_group_source_callbacks(
     ui.invoke_toggle_source_locked("overlay-group/background".into());
     ui.invoke_remove_source("overlay-group/pattern".into());
 
-    let state = state.borrow();
-    let group = state
+    {
+        let state = state.borrow();
+        let group = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(|scene| scene.item("overlay-group"))
+            .and_then(obs_rs_project::SceneItemSpec::group)
+            .expect("group after UI callbacks");
+        assert_eq!(
+            group.items().len(),
+            2,
+            "the nested remove callback removes one child after duplication"
+        );
+        assert_eq!(
+            group.items()[0].source_id().as_str(),
+            "background",
+            "the group move callback must use the group-local order"
+        );
+        assert!(!group.items()[0].visible());
+        assert!(group.items()[0].locked());
+        assert!(group.items()[0].transform().flip_x());
+        assert_eq!(group.items()[1].source_id().as_str(), "background_copy");
+    }
+
+    // Root-level duplication follows OBS's selection behavior even when
+    // existing copies mean the new ID is not a predictable "_copy" suffix.
+    ui.invoke_select_source("background".into());
+    ui.invoke_duplicate_source("background".into());
+    let selected = state
+        .borrow()
+        .selected_source()
+        .map(str::to_owned)
+        .expect("duplicating a root source selects the new item");
+    assert_ne!(selected, "background");
+    assert!(state
+        .borrow()
         .project_session()
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.scene("preview"))
-        .and_then(|scene| scene.item("overlay-group"))
-        .and_then(obs_rs_project::SceneItemSpec::group)
-        .expect("group after UI callbacks");
-    assert_eq!(
-        group.items().len(),
-        2,
-        "the nested remove callback removes one child after duplication"
-    );
-    assert_eq!(
-        group.items()[0].source_id().as_str(),
-        "background",
-        "the group move callback must use the group-local order"
-    );
-    assert!(!group.items()[0].visible());
-    assert!(group.items()[0].locked());
-    assert!(group.items()[0].transform().flip_x());
-    assert_eq!(group.items()[1].source_id().as_str(), "background_copy");
+        .is_some_and(|scene| scene.item(selected.as_str()).is_some()));
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup
