@@ -213,16 +213,22 @@ export component CollectionDialog inherits ModalShell {
     }
 }
 
-// Guards an action that would discard unsaved project edits. The window owns
-// which action is pending, so this only has to state the consequence.
+// Guards an action that would discard unsaved project edits. Save continues
+// only after the Rust project store succeeds; Don't save uses the pending
+// action without touching the project document.
 export component DiscardChangesDialog inherits ModalShell {
     in property <string> locale;
+    callback save();
+    callback discard();
 
     title: I18n.text.discard_changes_title;
     subtitle: I18n.text.discard_changes_message;
-    accept-label: I18n.text.settings_ui.ok;
+    accept-label: I18n.text.menu_save;
+    alternate-label: I18n.text.dont_save;
     cancel-label: I18n.text.cancel;
     panel-height: 190px;
+    accepted => save();
+    alternate => discard();
 
     Rectangle { }
 }

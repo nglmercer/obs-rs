@@ -114,6 +114,8 @@ fn gui_catalog_switches_complete_copy_between_supported_locales() {
     assert_eq!(spanish.scenes_title, "Escenas");
     assert_eq!(english.add_source, "Add source");
     assert_eq!(spanish.add_source, "Añadir fuente");
+    assert_eq!(english.dont_save, "Don't save");
+    assert_eq!(spanish.dont_save, "No guardar");
     assert_ne!(english.shortcuts, spanish.shortcuts);
 }
 
@@ -1033,6 +1035,13 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui.set_show_safe_areas(true);
     ui.show().expect("testing window should show");
     exercise_navbar_popup(&ui);
+    ui.set_pending_discard(5);
+    let discard_snapshot = ui
+        .window()
+        .take_snapshot()
+        .expect("discard dialog should render with its three actions");
+    assert!(discard_snapshot.width() > 0 && discard_snapshot.height() > 0);
+    ui.set_pending_discard(0);
     let snapshot = ui
         .window()
         .take_snapshot()
@@ -1082,6 +1091,35 @@ fn exercise_group_source_callbacks(
 ) {
     let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
     crate::callbacks::install_callbacks(ui, state, surface, &output);
+
+    // A failed Save must leave the pending action armed so the user can fix
+    // the path and try again instead of silently discarding the project.
+    let missing_parent = std::env::temp_dir().join(format!(
+        "obs-rs-save-discard-missing-{}.directory",
+        std::process::id()
+    ));
+    let failed_path = missing_parent.join("project.obsrproj");
+    ui.set_project_path(failed_path.to_string_lossy().into_owned().into());
+    ui.set_pending_discard(4);
+    ui.invoke_save_discard(4);
+    assert_eq!(ui.get_pending_discard(), 4);
+    assert!(ui.get_status_message().contains("Save failed"));
+    ui.set_pending_discard(0);
+
+    let saved_path = std::env::temp_dir().join(format!(
+        "obs-rs-save-discard-success-{}.obsrproj",
+        std::process::id()
+    ));
+    ui.set_project_path(saved_path.to_string_lossy().into_owned().into());
+    ui.set_pending_discard(8);
+    ui.invoke_save_discard(8);
+    assert_eq!(ui.get_pending_discard(), 0);
+    assert!(!state.borrow().is_dirty());
+    assert!(saved_path.is_file());
+    std::fs::remove_file(&saved_path).expect("remove save/discard fixture");
+
+    ui.set_project_path("obs-rs-project.json".into());
+
     let mut group =
         obs_rs_project::SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
     group

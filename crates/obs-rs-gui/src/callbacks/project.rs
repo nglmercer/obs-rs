@@ -7,6 +7,13 @@ use slint::{ComponentHandle, Weak};
 
 use crate::{refresh_ui, source_settings, MainWindow, OutputRuntime, PreviewSurface};
 
+const DISCARD_NEW_PROJECT: i32 = 4;
+const DISCARD_EXIT: i32 = 5;
+const DISCARD_SWITCH_COLLECTION: i32 = 6;
+const DISCARD_IMPORT_COLLECTION: i32 = 7;
+const DISCARD_LOAD_PROJECT: i32 = 8;
+const DISCARD_RECOVER_PROJECT: i32 = 9;
+
 pub(crate) fn install_project_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -18,6 +25,13 @@ pub(crate) fn install_project_callbacks(
     let save_surface = Rc::clone(surface);
     ui.on_save_project(move || {
         save_and_refresh(&weak, &save_state, &save_surface);
+    });
+
+    let weak = ui.as_weak();
+    let save_discard_state = Rc::clone(state);
+    let save_discard_surface = Rc::clone(surface);
+    ui.on_save_discard(move |action| {
+        save_and_resolve_discard(&weak, &save_discard_state, &save_discard_surface, action);
     });
 
     let weak = ui.as_weak();
@@ -135,6 +149,52 @@ fn save_and_refresh(
             ui.set_status_message(format!("Saved {bytes} bytes to {path}").into());
         }
         Err(error) => ui.set_status_message(format!("Save failed: {error}").into()),
+    }
+}
+
+fn save_and_resolve_discard(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    action: i32,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let path = ui.get_project_path().to_string();
+    let result: Result<usize, Box<dyn Error>> = (|| {
+        let store = project_store(&path)?;
+        Ok(state.borrow_mut().save_project(&store)?)
+    })();
+    match result {
+        Ok(bytes) => {
+            crate::refresh::invalidate_recovery_cache();
+            refresh_ui(&ui, state, surface);
+            ui.set_pending_discard(0);
+            continue_after_discard_save(&ui, action);
+            if action != 5 {
+                ui.set_status_message(format!("Saved {bytes} bytes to {path}").into());
+            }
+        }
+        Err(error) => ui.set_status_message(format!("Save failed: {error}").into()),
+    }
+}
+
+fn continue_after_discard_save(ui: &MainWindow, action: i32) {
+    match action {
+        DISCARD_NEW_PROJECT => ui.invoke_new_project(),
+        DISCARD_EXIT => {
+            let _ = slint::quit_event_loop();
+        }
+        DISCARD_SWITCH_COLLECTION => ui.invoke_select_collection(ui.get_pending_collection()),
+        DISCARD_IMPORT_COLLECTION => {
+            ui.set_collection_transfer_path("".into());
+            ui.set_project_dialog_mode(2);
+            ui.set_active_modal(1);
+        }
+        DISCARD_LOAD_PROJECT => ui.invoke_load_project(),
+        DISCARD_RECOVER_PROJECT => ui.invoke_recover_project(),
+        _ => {}
     }
 }
 

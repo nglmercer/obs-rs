@@ -422,11 +422,13 @@ export component ModalShell inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
     in property <string> accept-label;
+    in property <string> alternate-label;
     in property <string> cancel-label;
     in property <length> panel-width: 560px;
     in property <length> panel-height: 390px;
     callback close();
     callback accepted();
+    callback alternate();
 
     visible: open;
     x: 0;
@@ -479,6 +481,10 @@ export component ModalShell inherits Rectangle {
                 if root.cancel-label != "" : Button {
                     text: root.cancel-label;
                     clicked => root.close();
+                }
+                if root.alternate-label != "" : Button {
+                    text: root.alternate-label;
+                    clicked => root.alternate();
                 }
                 Button {
                     text: root.accept-label;
