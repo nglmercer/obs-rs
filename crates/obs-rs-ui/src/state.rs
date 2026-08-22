@@ -11,7 +11,9 @@ use obs_rs_util::Identifier;
 use super::{
     error::UiError,
     helpers::{default_mixer, first_scene_id, first_source_id, identifier, project_has_scene},
-    types::{MixerChannel, Shortcut, UiAction, UiCommand, UiLocale, UiNotice},
+    types::{
+        MixerChannel, ProjectSceneSelection, Shortcut, UiAction, UiCommand, UiLocale, UiNotice,
+    },
     MAX_UI_NOTICES,
 };
 
@@ -24,7 +26,7 @@ struct SceneSelection {
 
 /// The scene choices associated with one loaded project document.
 #[derive(Clone, Debug)]
-struct ProjectSceneSelection {
+struct ProjectSceneSelectionState {
     profile: Identifier,
     selection: SceneSelection,
 }
@@ -44,7 +46,7 @@ pub struct DesktopState {
     pub(crate) program_scene: Option<Identifier>,
     profile_scene_selections: BTreeMap<Identifier, SceneSelection>,
     project_selection_key: Option<String>,
-    project_scene_selections: BTreeMap<String, ProjectSceneSelection>,
+    project_scene_selections: BTreeMap<String, ProjectSceneSelectionState>,
     /// Ordered transient canvas selection. The last item is the active item
     /// used by property dialogs and single-row source actions.
     pub(crate) selected_sources: Vec<Identifier>,
@@ -453,6 +455,86 @@ impl DesktopState {
         self.project_selection_key = selection_key;
     }
 
+    /// Replaces the bounded document-selection cache from a frontend's
+    /// persisted session settings.
+    ///
+    /// Invalid keys, profiles, and scene IDs are ignored. The active project
+    /// is not changed; a keyed load or
+    /// [`Self::restore_project_selection_for_current_key`] applies a valid
+    /// matching record after the project is available.
+    pub fn restore_project_selections(&mut self, selections: &[ProjectSceneSelection]) {
+        self.project_scene_selections.clear();
+        for selection in selections.iter().take(MAX_PROJECT_SCENE_SELECTIONS) {
+            let Some(key) = project_selection_key(selection.key()) else {
+                continue;
+            };
+            let Ok(profile) = Identifier::new(selection.profile()) else {
+                continue;
+            };
+            let selection = ProjectSceneSelectionState {
+                profile,
+                selection: SceneSelection {
+                    preview: selection.preview().and_then(|id| Identifier::new(id).ok()),
+                    program: selection.program().and_then(|id| Identifier::new(id).ok()),
+                },
+            };
+            if self.project_scene_selections.len() == MAX_PROJECT_SCENE_SELECTIONS
+                && !self.project_scene_selections.contains_key(&key)
+            {
+                if let Some(oldest) = self.project_scene_selections.keys().next().cloned() {
+                    self.project_scene_selections.remove(&oldest);
+                }
+            }
+            self.project_scene_selections.insert(key, selection);
+        }
+    }
+
+    /// Returns bounded document-selection snapshots, including the active
+    /// document's current choices even when it has not been switched away.
+    #[must_use]
+    pub fn project_scene_selections(&self) -> Vec<ProjectSceneSelection> {
+        let mut selections = self
+            .project_scene_selections
+            .iter()
+            .map(|(key, selection)| {
+                (
+                    key.clone(),
+                    ProjectSceneSelection::new(
+                        key.clone(),
+                        selection.profile.to_string(),
+                        selection
+                            .selection
+                            .preview
+                            .as_ref()
+                            .map(ToString::to_string),
+                        selection
+                            .selection
+                            .program
+                            .as_ref()
+                            .map(ToString::to_string),
+                    ),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        if let Some(key) = self.project_selection_key.as_ref() {
+            if selections.len() == MAX_PROJECT_SCENE_SELECTIONS && !selections.contains_key(key) {
+                if let Some(oldest) = selections.keys().next().cloned() {
+                    selections.remove(&oldest);
+                }
+            }
+            selections.insert(
+                key.clone(),
+                ProjectSceneSelection::new(
+                    key.clone(),
+                    self.project.project().active_profile().to_string(),
+                    self.preview_scene.as_ref().map(ToString::to_string),
+                    self.program_scene.as_ref().map(ToString::to_string),
+                ),
+            );
+        }
+        selections.into_values().collect()
+    }
+
     fn scene_selection(&self) -> SceneSelection {
         SceneSelection {
             preview: self.preview_scene.clone(),
@@ -498,7 +580,7 @@ impl DesktopState {
             return;
         };
         let profile = self.project.project().active_profile().clone();
-        let selection = ProjectSceneSelection {
+        let selection = ProjectSceneSelectionState {
             profile,
             selection: self.scene_selection(),
         };
@@ -526,6 +608,13 @@ impl DesktopState {
             saved.selection.preview.as_ref().map(Identifier::as_str),
             saved.selection.program.as_ref().map(Identifier::as_str),
         );
+    }
+
+    /// Applies the persisted selection for the currently loaded document, if
+    /// its profile matches. Invalid or stale scene IDs keep the current
+    /// first-scene fallback.
+    pub fn restore_project_selection_for_current_key(&mut self) {
+        self.restore_project_selection();
     }
 
     /// Returns the project session used by persistence and rendering adapters.

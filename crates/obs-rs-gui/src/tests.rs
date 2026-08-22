@@ -16,7 +16,7 @@ use obs_rs_media::{
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
-use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
+use obs_rs_ui::{DesktopState, ProjectSceneSelection, UiCommand, UiLocale};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{CloseRequestResponse, ComponentHandle, LogicalPosition, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
@@ -488,6 +488,50 @@ fn startup_restores_persisted_scene_selection_after_project_load() {
     let message = restore_project(&state, &settings).expect("project should restore");
 
     assert!(message.starts_with("Restored project"));
+    assert_eq!(state.borrow().preview_scene(), Some("intermission"));
+    assert_eq!(state.borrow().program_scene(), Some("program"));
+
+    std::fs::remove_file(path).expect("remove project fixture");
+}
+
+#[test]
+fn startup_prefers_the_document_scoped_scene_selection() {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-document-scenes-{token}.json"));
+    let path_text = path.to_string_lossy().into_owned();
+    let state = Rc::new(RefCell::new(DesktopState::new(
+        initial_project().expect("initial project"),
+    )));
+    let store = crate::project_store(&path_text).expect("project store");
+    state
+        .borrow_mut()
+        .save_project(&store)
+        .expect("project fixture should save");
+    state.borrow_mut().set_project_selection_key(&path_text);
+
+    let settings = AppSettings {
+        project_path: path_text.clone(),
+        last_preview_scene: "preview".to_owned(),
+        last_program_scene: "preview".to_owned(),
+        project_scene_selections: vec![ProjectSceneSelection::new(
+            path_text,
+            "live",
+            Some("intermission".to_owned()),
+            Some("program".to_owned()),
+        )],
+        ..AppSettings::default()
+    };
+    restore_project(&state, &settings).expect("project should restore");
+    state
+        .borrow_mut()
+        .restore_project_selections(&settings.project_scene_selections);
+    state
+        .borrow_mut()
+        .restore_project_selection_for_current_key();
+
     assert_eq!(state.borrow().preview_scene(), Some("intermission"));
     assert_eq!(state.borrow().program_scene(), Some("program"));
 

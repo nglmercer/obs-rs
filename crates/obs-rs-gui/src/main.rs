@@ -147,6 +147,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     // resumes with the scenes and sources it was left with rather than with the
     // starter fixture.
     let restored = restore_project(&state, &settings);
+    if restored_project_loaded(restored.as_deref()) {
+        state
+            .borrow_mut()
+            .restore_project_selections(&settings.project_scene_selections);
+        state
+            .borrow_mut()
+            .restore_project_selection_for_current_key();
+    }
     let (preview_project, preview_revision) = {
         let state = state.borrow();
         (
@@ -321,6 +329,10 @@ fn screenshot_request() -> Option<(String, String, obs_rs_ui::UiLocale)> {
         .and_then(|code| obs_rs_ui::UiLocale::from_code(&code))
         .unwrap_or(obs_rs_ui::UiLocale::English);
     Some((page, path, locale))
+}
+
+fn restored_project_loaded(message: Option<&str>) -> bool {
+    message.is_some_and(|message| message.starts_with("Restored project from "))
 }
 
 /// Reopens the stored project file, returning the message to show for it.

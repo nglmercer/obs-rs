@@ -624,6 +624,32 @@ fn keyed_project_switch_restores_each_documents_scene_selection() {
 }
 
 #[test]
+fn project_scene_selection_snapshots_restore_after_a_restart() {
+    let key = "/tmp/obs-rs-persisted-selection.obsrproj";
+    let mut state = DesktopState::new(project());
+    state.set_project_selection_key(key);
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("preview selection");
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("program selection");
+    let snapshots = state.project_scene_selections();
+
+    let mut restarted = DesktopState::new(project());
+    restarted.set_project_selection_key(key);
+    restarted.restore_project_selections(&snapshots);
+    restarted.restore_project_selection_for_current_key();
+
+    assert_eq!(restarted.preview_scene(), Some("source_scene"));
+    assert_eq!(restarted.program_scene(), Some("program"));
+}
+
+#[test]
 fn console_parser_covers_state_and_output_commands() {
     assert_eq!(
         parse_console_command("preview program"),

@@ -134,6 +134,7 @@ impl SettingsController {
                 .program_scene()
                 .unwrap_or_default()
                 .clone_into(&mut settings.last_program_scene);
+            settings.project_scene_selections = state.project_scene_selections();
         }
         let dock_tree = self.docks.tree_snapshot();
         settings.layout.panel_order = dock_tree.leaf_order();

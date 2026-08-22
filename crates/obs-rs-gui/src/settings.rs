@@ -17,7 +17,7 @@ use obs_rs_output::{
     RistConfig, RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol,
     StreamTarget, VideoCodec, VideoEncoderConfig, WhipConfig,
 };
-use obs_rs_ui::{Shortcut, UiLocale};
+use obs_rs_ui::{ProjectSceneSelection, Shortcut, UiLocale};
 use slint::{Brush, Color, Model, ModelRc, VecModel};
 
 use crate::dock_tree::{DockNode, DOCK_IDS};
@@ -32,6 +32,9 @@ const SETTINGS_FILE: &str = "obs-rs-settings.toml";
 /// Default file names inside the per-user directory.
 const PROJECT_FILE: &str = "obs-rs-project.json";
 const DIAGNOSTICS_FILE: &str = "obs-rs-diagnostics.obsrdg";
+const PROJECT_SCENE_SELECTIONS_KEY: &str = "project_scene_selections";
+const MAX_PERSISTED_PROJECT_SCENE_SELECTIONS: usize = 16;
+const MAX_PERSISTED_SELECTION_KEY_BYTES: usize = 384;
 
 /// Whether the first-run setup should be shown at startup.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -337,6 +340,8 @@ pub(crate) struct AppSettings {
     /// Last Program scene selected in the desktop session; empty means use the
     /// first scene after a project is restored.
     pub(crate) last_program_scene: String,
+    /// Bounded per-document Preview/Program choices restored across sessions.
+    pub(crate) project_scene_selections: Vec<ProjectSceneSelection>,
     /// Reopen the project file from [`AppSettings::project_path`] at startup.
     pub(crate) restore_project: bool,
     /// Write the project back to the same file when the window closes.
@@ -646,6 +651,7 @@ impl Default for AppSettings {
             audio_input_id: String::new(),
             last_preview_scene: String::new(),
             last_program_scene: String::new(),
+            project_scene_selections: Vec::new(),
             restore_project: true,
             save_project_on_exit: true,
             setup_state: SetupState::Pending,
@@ -950,6 +956,10 @@ impl AppSettings {
             audio_input_id: text(config, "audio_input_id", &defaults.audio_input_id),
             last_preview_scene: text(config, "last_preview_scene", &defaults.last_preview_scene),
             last_program_scene: text(config, "last_program_scene", &defaults.last_program_scene),
+            project_scene_selections: config
+                .get(PROJECT_SCENE_SELECTIONS_KEY)
+                .map(parse_project_scene_selections)
+                .unwrap_or_default(),
             restore_project: flag(config, "restore_project", defaults.restore_project),
             save_project_on_exit: flag(
                 config,
@@ -1063,6 +1073,13 @@ impl AppSettings {
             ("audio_input_id", self.audio_input_id.clone()),
             ("last_preview_scene", self.last_preview_scene.clone()),
             ("last_program_scene", self.last_program_scene.clone()),
+            (
+                PROJECT_SCENE_SELECTIONS_KEY,
+                serialize_project_scene_selections(
+                    &self.project_scene_selections,
+                    Some(&self.project_path),
+                ),
+            ),
             ("restore_project", self.restore_project.to_string()),
             (
                 "save_project_on_exit",
@@ -1737,6 +1754,121 @@ fn hotkey(config: &Config, key: &str, fallback: &str) -> String {
     validated_hotkey(config.get(key).unwrap_or(fallback), fallback)
 }
 
+fn serialize_project_scene_selections(
+    selections: &[ProjectSceneSelection],
+    preferred_key: Option<&str>,
+) -> String {
+    let mut unique = BTreeMap::new();
+    for selection in selections {
+        let key = selection.key();
+        if key.is_empty() || key.len() > MAX_PERSISTED_SELECTION_KEY_BYTES {
+            continue;
+        }
+        unique.insert(key.to_owned(), selection);
+    }
+
+    let mut encoded = String::from("v1");
+    let preferred = preferred_key.and_then(|key| unique.remove(key));
+    let ordered = preferred
+        .into_iter()
+        .chain(unique.into_values())
+        .take(MAX_PERSISTED_PROJECT_SCENE_SELECTIONS);
+    for selection in ordered {
+        let record = [
+            selection_component(selection.key()),
+            selection_component(selection.profile()),
+            selection_component(selection.preview().unwrap_or_default()),
+            selection_component(selection.program().unwrap_or_default()),
+        ]
+        .join("|");
+        let required = 1_usize.saturating_add(record.len());
+        if encoded.len().saturating_add(required) > obs_rs_config::MAX_VALUE_BYTES {
+            break;
+        }
+        encoded.push(';');
+        encoded.push_str(&record);
+    }
+    encoded
+}
+
+fn parse_project_scene_selections(value: &str) -> Vec<ProjectSceneSelection> {
+    let mut records = BTreeMap::new();
+    let mut parts = value.split(';');
+    if parts.next() != Some("v1") {
+        return Vec::new();
+    }
+    for record in parts {
+        if records.len() == MAX_PERSISTED_PROJECT_SCENE_SELECTIONS || record.is_empty() {
+            break;
+        }
+        let mut fields = record.split('|');
+        let (Some(key), Some(profile), Some(preview), Some(program)) = (
+            fields.next().and_then(selection_component_decode),
+            fields.next().and_then(selection_component_decode),
+            fields.next().and_then(selection_component_decode),
+            fields.next().and_then(selection_component_decode),
+        ) else {
+            continue;
+        };
+        if fields.next().is_some()
+            || key.is_empty()
+            || key.len() > MAX_PERSISTED_SELECTION_KEY_BYTES
+            || profile.is_empty()
+        {
+            continue;
+        }
+        records.insert(
+            key.clone(),
+            ProjectSceneSelection::new(
+                key,
+                profile,
+                (!preview.is_empty()).then_some(preview),
+                (!program.is_empty()).then_some(program),
+            ),
+        );
+    }
+    records.into_values().collect()
+}
+
+fn selection_component(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if (b' '..=b'~').contains(&byte) && !matches!(byte, b'%' | b';' | b'|') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0x0F)]));
+        }
+    }
+    encoded
+}
+
+fn selection_component_decode(value: &str) -> Option<String> {
+    let mut decoded = Vec::with_capacity(value.len());
+    let mut bytes = value.bytes();
+    while let Some(byte) = bytes.next() {
+        if byte != b'%' {
+            decoded.push(byte);
+            continue;
+        }
+        let high = bytes.next().and_then(hex_digit)?;
+        let low = bytes.next().and_then(hex_digit)?;
+        decoded.push((high << 4) | low);
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn bounded_text(config: &Config, key: &str, fallback: &str, maximum: usize) -> String {
     let mut value = text(config, key, fallback);
     value.truncate(maximum);
@@ -1911,6 +2043,12 @@ mod tests {
             preview_border_color: "#00FF88".to_owned(),
             last_preview_scene: "source_scene".to_owned(),
             last_program_scene: "program".to_owned(),
+            project_scene_selections: vec![ProjectSceneSelection::new(
+                "/tmp/a|b;c%ñ.obsrproj",
+                "live",
+                Some("source_scene".to_owned()),
+                Some("program".to_owned()),
+            )],
             recording_format: RecordingFormat::ReferencePacket,
             recording_path: "/tmp/reference.obsr".to_owned(),
             stream_protocol: StreamProtocol::Rtmps,

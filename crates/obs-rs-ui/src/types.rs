@@ -14,6 +14,62 @@ pub enum SceneView {
     Program,
 }
 
+/// The last Preview/Program choices associated with one project document.
+///
+/// This is a desktop-session snapshot rather than project content. Frontends
+/// may persist a bounded collection of these records in their own settings
+/// document and feed them back into [`DesktopState`](crate::DesktopState) at
+/// startup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectSceneSelection {
+    key: String,
+    profile: String,
+    preview: Option<String>,
+    program: Option<String>,
+}
+
+impl ProjectSceneSelection {
+    /// Creates a snapshot from the document key and active profile.
+    #[must_use]
+    pub fn new(
+        key: impl Into<String>,
+        profile: impl Into<String>,
+        preview: Option<String>,
+        program: Option<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            profile: profile.into(),
+            preview,
+            program,
+        }
+    }
+
+    /// Returns the document key used to associate this snapshot.
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the active profile at the time of the snapshot.
+    #[must_use]
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// Returns the selected Preview scene, if one was selected.
+    #[must_use]
+    pub fn preview(&self) -> Option<&str> {
+        self.preview.as_deref()
+    }
+
+    /// Returns the selected Program scene, if one was selected.
+    #[must_use]
+    pub fn program(&self) -> Option<&str> {
+        self.program.as_deref()
+    }
+}
+
 /// Supported labels for toolkit-neutral state surfaces.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiLocale {

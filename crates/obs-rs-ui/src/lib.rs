@@ -30,5 +30,8 @@ mod tests;
 pub use console::{parse_console_command, ConsoleCommand, ConsoleCommandError};
 pub use error::UiError;
 pub use state::DesktopState;
-pub use types::{MixerChannel, SceneView, Shortcut, UiAction, UiCommand, UiLocale, UiNotice};
+pub use types::{
+    MixerChannel, ProjectSceneSelection, SceneView, Shortcut, UiAction, UiCommand, UiLocale,
+    UiNotice,
+};
 pub use web::{parse_web_request, WebRequestError, WebRoute};
