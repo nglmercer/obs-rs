@@ -75,6 +75,7 @@ pub(crate) struct OutputRuntime {
     auto_remux_requested: bool,
     auto_remux_enabled: bool,
     remux_recovery: Option<mpsc::Receiver<Result<RemuxRecovery, String>>>,
+    remux_candidates: Option<mpsc::Receiver<Result<Vec<PathBuf>, String>>>,
     recording_profile: Option<OutputProfile>,
     /// A canvas change accepted while an output was running.
     ///
@@ -161,6 +162,7 @@ impl OutputRuntime {
             auto_remux_requested: false,
             auto_remux_enabled: false,
             remux_recovery: None,
+            remux_candidates: None,
             recording_profile: None,
             staged_video_format: None,
             scaler: None,
@@ -456,10 +458,42 @@ impl OutputRuntime {
 
     /// Returns whether one recovery request is currently being processed.
     pub(crate) const fn remux_recovery_running(&self) -> bool {
-        self.remux_recovery.is_some()
+        self.remux_recovery.is_some() || self.remux_candidates.is_some()
     }
 
-    /// Enqueues recovery for the exact final MP4 path shown by the GUI.
+    /// Enqueues a bounded scan of the final recording's directory.
+    ///
+    /// Discovery is kept separate from remuxing so the GUI can present every
+    /// recoverable artifact and never guess which recording the operator meant.
+    pub(crate) fn request_discover_interrupted_remux_candidates(
+        &mut self,
+        path: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        if !self.remux_recovery_supported() {
+            return Err("interrupted remux recovery is unavailable on this host".into());
+        }
+        if self.remux_recovery_running() {
+            return Err("interrupted remux recovery is already in progress".into());
+        }
+        let (recording, streaming) = self.lifecycles();
+        if !recording.is_stopped() || !streaming.is_stopped() {
+            return Err("stop recording and streaming before recovering a recording".into());
+        }
+        validate_auto_remux_path(path)?;
+        let path = Path::new(path);
+        let directory = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        self.remux_candidates = Some(
+            self.worker
+                .try_discover_interrupted_remux_candidates(directory)?,
+        );
+        Ok(())
+    }
+
+    /// Enqueues recovery for one candidate selected by the GUI.
     ///
     /// The worker owns the potentially long native demux/remux operation; the
     /// GUI receives a one-shot result during its normal bounded refresh.
@@ -480,6 +514,25 @@ impl OutputRuntime {
         validate_auto_remux_path(path)?;
         self.remux_recovery = Some(self.worker.try_recover_interrupted_remux_recording(path)?);
         Ok(())
+    }
+
+    /// Takes the completed candidate-discovery result without waiting for
+    /// filesystem work.
+    pub(crate) fn take_remux_candidate_result(&mut self) -> Option<Result<Vec<PathBuf>, String>> {
+        let receiver = self.remux_candidates.as_ref()?;
+        match receiver.try_recv() {
+            Ok(result) => {
+                self.remux_candidates = None;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.remux_candidates = None;
+                Some(Err(
+                    "candidate-discovery worker disconnected before reporting a result".to_owned(),
+                ))
+            }
+        }
     }
 
     /// Takes the completed recovery result without waiting for native work.

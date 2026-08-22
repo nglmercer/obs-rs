@@ -15,6 +15,7 @@ import {
     OutputDialog,
     ProjectDialog,
     RecoveryDialog,
+    RemuxRecoveryDialog,
     RenameSceneDialog,
     RenameSourceDialog,
     SceneDialog,
@@ -51,6 +52,8 @@ export component MainWindow inherits Window {
         in property <bool> replay-saving;
         in property <bool> remux-recovery-supported;
         in property <bool> remux-recovery-running;
+        in property <[string]> remux-recovery-candidates;
+        in-out property <string> remux-recovery-path;
         in property <bool> dirty;
         in property <string> status-message;
         in property <string> recovery-status;
@@ -159,7 +162,8 @@ export component MainWindow inherits Window {
         in-out property <bool> meters-paused: false;
         // 1 project/save/export/import · 2 add scene · 3 add source · 4 output
         // · 5 rename scene · 6 source properties · 7 source filters
-        // · 9 new collection · 10 about · 12 rename source
+        // · 9 new collection · 10 about · 11 output failure · 12 rename source
+        // · 13 interrupted-remux candidate chooser
         in-out property <int> active-modal: 0;
         // 0 none · 1 start stream · 2 stop stream · 3 stop recording
         property <int> pending-confirm: 0;
@@ -185,6 +189,7 @@ export component MainWindow inherits Window {
         callback toggle-replay-buffer();
         callback save-replay-buffer();
         callback recover-recording();
+        callback recover-remux-candidate(string);
         callback cut-transition();
         callback fade-transition();
         callback fade-transition-duration(string);
@@ -911,5 +916,15 @@ export component MainWindow inherits Window {
             root.active-modal = 0;
             root.open-settings-window();
         }
+    }
+    RemuxRecoveryDialog {
+        open: root.active-modal == 13;
+        candidates: root.remux-recovery-candidates;
+        candidate-path <=> root.remux-recovery-path;
+        recover(path) => {
+            root.active-modal = 0;
+            root.recover-remux-candidate(path);
+        }
+        close => { root.active-modal = 0; }
     }
 }

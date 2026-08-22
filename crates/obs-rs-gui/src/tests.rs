@@ -1205,6 +1205,44 @@ fn output_runtime_requests_interrupted_remux_recovery_without_blocking_the_gui()
 }
 
 #[test]
+fn output_runtime_discovers_interrupted_remux_candidates_without_blocking_the_gui() {
+    let format = VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+    if !output.remux_recovery_supported() {
+        return;
+    }
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("obs-rs-gui-candidates-{token}"));
+    std::fs::create_dir(&directory).expect("candidate directory");
+    std::fs::write(directory.join("zeta.mkv.part"), [1_u8]).expect("zeta candidate");
+    std::fs::write(directory.join("alpha.mkv.part"), [2_u8]).expect("alpha candidate");
+    let final_path = directory.join("configured.mp4");
+
+    output
+        .request_discover_interrupted_remux_candidates(final_path.to_str().expect("UTF-8 path"))
+        .expect("candidate discovery request should be accepted");
+    let result = (0..100).find_map(|_| {
+        let result = output.take_remux_candidate_result();
+        if result.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        result
+    });
+    let candidates = result
+        .expect("worker must report candidate discovery")
+        .expect("candidate discovery must succeed");
+    assert_eq!(
+        candidates,
+        vec![directory.join("alpha.mp4"), directory.join("zeta.mp4")]
+    );
+    assert!(!output.remux_recovery_running());
+    std::fs::remove_dir_all(directory).expect("remove candidate fixture");
+}
+
+#[test]
 fn output_runtime_routes_reference_split_recording_to_numbered_files() {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
     let token = std::time::SystemTime::now()

@@ -169,7 +169,26 @@ fn install_remux_recovery_callback(ui: &MainWindow, output: &Rc<RefCell<OutputRu
         let path = ui.get_recording_path().to_string();
         match recovery_output
             .borrow_mut()
-            .request_recover_interrupted_remux(&path)
+            .request_discover_interrupted_remux_candidates(&path)
+        {
+            Ok(()) => ui
+                .set_status_message("Scanning recording folder for interrupted recordings…".into()),
+            Err(error) => {
+                ui.set_status_message(format!("Recording recovery scan failed: {error}").into());
+            }
+        }
+        refresh_output_ui(&ui, &recovery_output);
+    });
+
+    let weak = ui.as_weak();
+    let recovery_output = Rc::clone(output);
+    ui.on_recover_remux_candidate(move |path| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match recovery_output
+            .borrow_mut()
+            .request_recover_interrupted_remux(path.as_str())
         {
             Ok(()) => ui.set_status_message(format!("Recording recovery requested: {path}").into()),
             Err(error) => {

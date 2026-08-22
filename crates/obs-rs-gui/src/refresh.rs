@@ -272,6 +272,31 @@ const fn nanos_to_micros(nanos: u64) -> u64 {
 }
 
 pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {
+    let candidates = output.borrow_mut().take_remux_candidate_result();
+    if let Some(result) = candidates {
+        match result {
+            Ok(candidates) if candidates.is_empty() => {
+                ui.set_status_message(
+                    "No interrupted automatic-remux recordings were found".into(),
+                );
+            }
+            Ok(candidates) => {
+                let rows = candidates
+                    .into_iter()
+                    .map(|path| path.to_string_lossy().into_owned().into())
+                    .collect::<Vec<SharedString>>();
+                if let Some(first) = rows.first() {
+                    ui.set_remux_recovery_path(first.clone());
+                }
+                ui.set_remux_recovery_candidates(ModelRc::new(VecModel::from(rows)));
+                ui.set_active_modal(13);
+                ui.set_status_message("Select an interrupted recording to recover".into());
+            }
+            Err(error) => {
+                ui.set_status_message(format!("Recording recovery scan failed: {error}").into());
+            }
+        }
+    }
     let recovery = output.borrow_mut().take_remux_recovery_result();
     if let Some(result) = recovery {
         match result {

@@ -1,4 +1,4 @@
-import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
+import { Button, ComboBox, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 import { FieldHeading, ModalShell, MutedText } from "theme.slint";
 import { I18n } from "i18n.slint";
 
@@ -263,4 +263,33 @@ export component RecoveryDialog inherits ModalShell {
     panel-height: 240px;
 
     Rectangle { }
+}
+
+// Lets the operator choose one of the bounded interrupted-remux candidates
+// discovered beside the configured recording path. The Rust output boundary
+// still validates the selected path before starting native recovery.
+export component RemuxRecoveryDialog inherits ModalShell {
+    in property <[string]> candidates;
+    in-out property <string> candidate-path;
+    callback recover(string);
+
+    title: I18n.text.output_recovery_title;
+    subtitle: I18n.text.recovery_candidates_hint;
+    accept-label: I18n.text.recover_recording;
+    cancel-label: I18n.text.dismiss;
+    panel-height: 280px;
+    accepted => {
+        if candidates.length > 0 && candidate-path != "" {
+            recover(candidate-path);
+        }
+    }
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: I18n.text.recording_file; }
+        ComboBox {
+            model: root.candidates;
+            selected(value) => { root.candidate-path = value; }
+        }
+    }
 }

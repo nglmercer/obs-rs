@@ -595,6 +595,9 @@ fn english() -> UiText {
         output_recovery_steps: s(
             "Check the recording folder has room and the stream address is reachable, then start the output again. If it keeps failing, export diagnostics from Tools and include them in the report.",
         ),
+        recovery_candidates_hint: s(
+            "Interrupted automatic-remux recordings found in the configured folder:",
+        ),
         open_settings: s("Open Settings"),
         dismiss: s("Dismiss"),
         camera_unsupported: s("Camera"),
@@ -1151,6 +1154,9 @@ fn spanish() -> UiText {
         output_recovery_title: s("La salida necesita atención"),
         output_recovery_steps: s(
             "Comprueba que la carpeta de grabación tenga espacio y que la dirección de transmisión responda, y vuelve a iniciar la salida. Si sigue fallando, exporta el diagnóstico desde Herramientas e inclúyelo en el informe.",
+        ),
+        recovery_candidates_hint: s(
+            "Grabaciones de remux automático interrumpidas encontradas en la carpeta configurada:",
         ),
         open_settings: s("Abrir ajustes"),
         dismiss: s("Descartar"),
