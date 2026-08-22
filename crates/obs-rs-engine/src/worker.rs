@@ -17,7 +17,7 @@ use obs_rs_project::Project;
 
 use crate::{
     DesktopAudioSource, EngineAudioChannel, EngineError, EngineSession, EngineSnapshot,
-    EngineStats, OutputEvent, OutputLifecycle,
+    EngineStats, OutputEvent, OutputLifecycle, ReplaySaveStatus,
 };
 
 const DEFAULT_FRAME_QUEUE: usize = 8;
@@ -182,6 +182,11 @@ impl EngineWorker {
                     // so both outputs are reported as failed rather than idle.
                     recording_lifecycle: OutputLifecycle::Failed,
                     streaming_lifecycle: OutputLifecycle::Failed,
+                    replay_lifecycle: OutputLifecycle::Failed,
+                    replay_save_status: ReplaySaveStatus::Failed {
+                        reason: "engine worker status lock poisoned".to_owned(),
+                    },
+                    replay_buffer_packets: 0,
                     stream_state: None,
                     audio_backend: "worker unavailable".to_owned(),
                     audio_fallback: true,
@@ -345,9 +350,56 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Enqueues replay capture without waiting for worker-side allocation.
+    ///
+    /// The replay lifecycle is published as `Starting` immediately and is
+    /// settled by the worker after it validates the bounded buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the bounded worker queue is full or closed.
+    pub fn try_start_replay_buffer(
+        &self,
+        capacity_bytes: usize,
+        duration: Duration,
+    ) -> Result<(), EngineError> {
+        set_replay_lifecycle(&self.snapshot, OutputLifecycle::Starting);
+        let (reply, _receive) = mpsc::channel();
+        match self.sender.try_send(WorkerCommand::StartReplayBuffer(
+            capacity_bytes,
+            duration,
+            reply,
+        )) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_replay_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                Err(error)
+            }
+        }
+    }
+
     /// Stops replay capture and discards its worker-owned history.
     pub fn stop_replay_buffer(&self) {
         let _ = self.sender.send(WorkerCommand::StopReplayBuffer);
+    }
+
+    /// Enqueues replay teardown without waiting for worker-side cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the bounded worker queue is full or closed.
+    pub fn try_stop_replay_buffer(&self) -> Result<(), EngineError> {
+        let previous = self.snapshot().engine.replay_lifecycle;
+        set_replay_lifecycle(&self.snapshot, OutputLifecycle::Stopping);
+        match self.sender.try_send(WorkerCommand::StopReplayBuffer) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_replay_lifecycle(&self.snapshot, previous);
+                Err(error)
+            }
+        }
     }
 
     /// Saves the worker-owned replay history without moving packet data onto
@@ -366,6 +418,35 @@ impl EngineWorker {
             .recv()
             .map_err(|_| worker_closed())?
             .map_err(EngineError::Worker)
+    }
+
+    /// Enqueues an atomic replay save without waiting for snapshot or file I/O.
+    ///
+    /// The save status is published as `Saving` immediately and settles to
+    /// `Saved` or `Failed` when the worker finishes the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the bounded worker queue is full or closed.
+    pub fn try_save_replay_buffer(&self, path: impl Into<PathBuf>) -> Result<(), EngineError> {
+        set_replay_save_status(&self.snapshot, ReplaySaveStatus::Saving);
+        let (reply, _receive) = mpsc::channel();
+        match self
+            .sender
+            .try_send(WorkerCommand::SaveReplayBuffer(path.into(), reply))
+        {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_replay_save_status(
+                    &self.snapshot,
+                    ReplaySaveStatus::Failed {
+                        reason: error.to_string(),
+                    },
+                );
+                Err(error)
+            }
+        }
     }
 
     /// Enqueues a stream start without waiting for transport or encoder setup.
@@ -1165,6 +1246,18 @@ fn set_recording_lifecycle(
     }
 }
 
+fn set_replay_lifecycle(snapshot: &Arc<Mutex<EngineWorkerSnapshot>>, lifecycle: OutputLifecycle) {
+    if let Ok(mut snapshot) = snapshot.lock() {
+        snapshot.engine.replay_lifecycle = lifecycle;
+    }
+}
+
+fn set_replay_save_status(snapshot: &Arc<Mutex<EngineWorkerSnapshot>>, status: ReplaySaveStatus) {
+    if let Ok(mut snapshot) = snapshot.lock() {
+        snapshot.engine.replay_save_status = status;
+    }
+}
+
 fn push_output_event(events: &Arc<Mutex<VecDeque<OutputEvent>>>, event: OutputEvent) {
     if let Ok(mut events) = events.lock() {
         if events.len() == OUTPUT_EVENT_CAPACITY {
@@ -1354,6 +1447,136 @@ mod tests {
         );
         assert!(path.exists(), "the worker finalized the requested path");
         std::fs::remove_file(path).expect("remove recording fixture");
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the barrier test covers the complete replay request lifecycle"
+    )]
+    fn replay_requests_return_without_waiting_for_worker_or_file_work() {
+        let worker = Arc::new(worker(1));
+        let (entered_send, entered_receive) = mpsc::channel();
+        let (release_send, release_receive) = mpsc::channel();
+        worker
+            .sender
+            .send(WorkerCommand::TestBlock(entered_send, release_receive))
+            .expect("block command");
+        entered_receive.recv().expect("worker entered barrier");
+
+        let requesting_worker = Arc::clone(&worker);
+        let (result_send, result_receive) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = result_send.send(
+                requesting_worker.try_start_replay_buffer(1024 * 1024, Duration::from_secs(5)),
+            );
+        });
+        result_receive
+            .recv_timeout(Duration::from_millis(250))
+            .expect("replay start must return while worker is blocked")
+            .expect("replay start request accepted");
+        assert_eq!(
+            worker.snapshot().engine.replay_lifecycle,
+            OutputLifecycle::Starting
+        );
+        release_send.send(()).expect("release worker");
+        for _ in 0..100 {
+            if worker.snapshot().engine.replay_lifecycle == OutputLifecycle::Running {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            worker.snapshot().engine.replay_lifecycle,
+            OutputLifecycle::Running
+        );
+
+        let format =
+            VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+        assert!(worker.try_push_frame(VideoFrame::solid(
+            format,
+            Timestamp::ZERO,
+            [0x20, 0x40, 0x80, 0xFF],
+        )));
+        for _ in 0..100 {
+            if worker.snapshot().queued_frames == 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let path =
+            std::env::temp_dir().join(format!("obs-rs-replay-async-{}.obsr", std::process::id()));
+        let (entered_send, entered_receive) = mpsc::channel();
+        let (release_send, release_receive) = mpsc::channel();
+        worker
+            .sender
+            .send(WorkerCommand::TestBlock(entered_send, release_receive))
+            .expect("block save command");
+        entered_receive.recv().expect("worker entered save barrier");
+
+        let requesting_worker = Arc::clone(&worker);
+        let save_path = path.clone();
+        let (result_send, result_receive) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = result_send.send(requesting_worker.try_save_replay_buffer(save_path));
+        });
+        result_receive
+            .recv_timeout(Duration::from_millis(250))
+            .expect("replay save must return while worker is blocked")
+            .expect("replay save request accepted");
+        assert!(matches!(
+            worker.snapshot().engine.replay_save_status,
+            ReplaySaveStatus::Saving
+        ));
+        release_send.send(()).expect("release save worker");
+        for _ in 0..100 {
+            if matches!(
+                worker.snapshot().engine.replay_save_status,
+                ReplaySaveStatus::Saved { .. }
+            ) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(matches!(
+            worker.snapshot().engine.replay_save_status,
+            ReplaySaveStatus::Saved { .. }
+        ));
+        assert!(path.exists());
+
+        let (entered_send, entered_receive) = mpsc::channel();
+        let (release_send, release_receive) = mpsc::channel();
+        worker
+            .sender
+            .send(WorkerCommand::TestBlock(entered_send, release_receive))
+            .expect("block stop command");
+        entered_receive.recv().expect("worker entered stop barrier");
+        let requesting_worker = Arc::clone(&worker);
+        let (result_send, result_receive) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = result_send.send(requesting_worker.try_stop_replay_buffer());
+        });
+        result_receive
+            .recv_timeout(Duration::from_millis(250))
+            .expect("replay stop must return while worker is blocked")
+            .expect("replay stop request accepted");
+        assert_eq!(
+            worker.snapshot().engine.replay_lifecycle,
+            OutputLifecycle::Stopping
+        );
+        release_send.send(()).expect("release stop worker");
+        for _ in 0..100 {
+            if worker.snapshot().engine.replay_lifecycle == OutputLifecycle::Idle {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            worker.snapshot().engine.replay_lifecycle,
+            OutputLifecycle::Idle
+        );
+        std::fs::remove_file(path).expect("remove replay fixture");
     }
 
     #[test]

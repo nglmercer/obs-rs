@@ -348,6 +348,12 @@ pub struct EngineSnapshot {
     pub recording_lifecycle: OutputLifecycle,
     /// Explicit streaming phase, including a failed connect or a lost peer.
     pub streaming_lifecycle: OutputLifecycle,
+    /// Explicit replay-capture phase, including a failed start request.
+    pub replay_lifecycle: OutputLifecycle,
+    /// Result of the most recent asynchronous replay save request.
+    pub replay_save_status: ReplaySaveStatus,
+    /// Number of packetized entries currently retained for replay.
+    pub replay_buffer_packets: usize,
     pub stream_state: Option<StreamState>,
     pub audio_backend: String,
     pub audio_fallback: bool,
@@ -359,6 +365,19 @@ pub struct EngineSnapshot {
     pub stream_queued_bytes: usize,
     pub last_error: Option<String>,
     pub stats: EngineStats,
+}
+
+/// Status of the latest replay-buffer save request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReplaySaveStatus {
+    /// No save has been requested since replay capture was started.
+    Idle,
+    /// The worker owns the snapshot and atomic file write.
+    Saving,
+    /// The last save committed this many bytes.
+    Saved { bytes: usize },
+    /// The last save failed without stopping replay capture.
+    Failed { reason: String },
 }
 
 /// Protocol-independent telemetry copied from a native production adapter.
@@ -892,6 +911,8 @@ pub struct EngineSession {
     /// Phases the handles alone cannot express, notably a failed start.
     recording_lifecycle: OutputLifecycle,
     streaming_lifecycle: OutputLifecycle,
+    replay_lifecycle: OutputLifecycle,
+    replay_save_status: ReplaySaveStatus,
     stats: EngineStats,
     last_error: Option<String>,
     #[cfg(test)]
@@ -989,6 +1010,8 @@ impl EngineSession {
             streaming: None,
             recording_lifecycle: OutputLifecycle::Idle,
             streaming_lifecycle: OutputLifecycle::Idle,
+            replay_lifecycle: OutputLifecycle::Idle,
+            replay_save_status: ReplaySaveStatus::Idle,
             stats: EngineStats::default(),
             last_error: None,
             #[cfg(test)]
@@ -1640,13 +1663,28 @@ impl EngineSession {
         if self.replay_buffer.is_some() {
             return Err(EngineError::Busy("start replay buffer"));
         }
-        self.replay_buffer = Some(ReplayBuffer::new(capacity_bytes, duration)?);
-        Ok(())
+        self.replay_lifecycle = OutputLifecycle::Starting;
+        self.replay_save_status = ReplaySaveStatus::Idle;
+        match ReplayBuffer::new(capacity_bytes, duration) {
+            Ok(buffer) => {
+                self.replay_buffer = Some(buffer);
+                self.replay_lifecycle = OutputLifecycle::Running;
+                Ok(())
+            }
+            Err(error) => {
+                self.replay_lifecycle = OutputLifecycle::Failed;
+                self.last_error = Some(error.to_string());
+                Err(error.into())
+            }
+        }
     }
 
     /// Stops replay capture and discards its retained packet history.
     pub fn stop_replay_buffer(&mut self) {
+        self.replay_lifecycle = OutputLifecycle::Stopping;
         self.replay_buffer = None;
+        self.replay_lifecycle = OutputLifecycle::Idle;
+        self.replay_save_status = ReplaySaveStatus::Idle;
     }
 
     /// Saves the retained replay packets through the atomic packet writer.
@@ -1655,13 +1693,30 @@ impl EngineSession {
     /// OBS workflow where saving a replay does not stop capture. The packet
     /// container is the inspectable OBS-RS reference container; production
     /// remuxing remains a separate output capability.
-    pub fn save_replay_buffer(&self, path: impl Into<PathBuf>) -> Result<usize, EngineError> {
+    pub fn save_replay_buffer(&mut self, path: impl Into<PathBuf>) -> Result<usize, EngineError> {
+        self.replay_save_status = ReplaySaveStatus::Saving;
+        let result = self.write_replay_buffer(path.into());
+        match result {
+            Ok(bytes) => {
+                self.replay_save_status = ReplaySaveStatus::Saved { bytes };
+                Ok(bytes)
+            }
+            Err(error) => {
+                self.replay_save_status = ReplaySaveStatus::Failed {
+                    reason: error.to_string(),
+                };
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    fn write_replay_buffer(&self, final_path: PathBuf) -> Result<usize, EngineError> {
         let Some(buffer) = self.replay_buffer.as_ref() else {
             return Err(EngineError::InvalidConfiguration(
                 "replay buffer is not running".to_owned(),
             ));
         };
-        let final_path = path.into();
         let file_name = final_path
             .file_name()
             .and_then(|name| name.to_str())
@@ -1685,6 +1740,18 @@ impl EngineSession {
     #[must_use]
     pub const fn is_replay_buffer_active(&self) -> bool {
         self.replay_buffer.is_some()
+    }
+
+    /// Returns the explicit replay-capture phase.
+    #[must_use]
+    pub const fn replay_lifecycle(&self) -> OutputLifecycle {
+        self.replay_lifecycle
+    }
+
+    /// Returns the latest replay save status.
+    #[must_use]
+    pub const fn replay_save_status(&self) -> &ReplaySaveStatus {
+        &self.replay_save_status
     }
 
     /// Returns the number of packetized entries retained for replay.
@@ -1907,6 +1974,9 @@ impl EngineSession {
             } else {
                 self.streaming_lifecycle
             },
+            replay_lifecycle: self.replay_lifecycle,
+            replay_save_status: self.replay_save_status.clone(),
+            replay_buffer_packets: self.replay_buffer_packet_count(),
             stream_state: self.stream_state(),
             audio_backend: self.audio_backend.clone(),
             audio_fallback: self.audio_fallback,
@@ -2701,6 +2771,8 @@ mod tests {
             .start_replay_buffer(4 * 1024 * 1024, Duration::from_secs(30))
             .expect("start replay buffer");
         assert!(engine.is_replay_buffer_active());
+        assert_eq!(engine.replay_lifecycle(), OutputLifecycle::Running);
+        assert_eq!(engine.replay_save_status(), &ReplaySaveStatus::Idle);
         for _ in 0..3 {
             engine.tick(None, Some("program")).expect("replay tick");
         }
@@ -2709,6 +2781,10 @@ mod tests {
             .save_replay_buffer(&final_path)
             .expect("save replay buffer");
         assert!(bytes > 16);
+        assert_eq!(
+            engine.replay_save_status(),
+            &ReplaySaveStatus::Saved { bytes }
+        );
         let packets = obs_rs_output::MemoryMuxer::decode(
             &std::fs::read(&final_path).expect("read replay file"),
         )
@@ -2718,9 +2794,15 @@ mod tests {
 
         engine.stop_replay_buffer();
         assert!(!engine.is_replay_buffer_active());
+        assert_eq!(engine.replay_lifecycle(), OutputLifecycle::Idle);
+        assert_eq!(engine.replay_save_status(), &ReplaySaveStatus::Idle);
         assert!(matches!(
             engine.save_replay_buffer(&final_path),
             Err(EngineError::InvalidConfiguration(reason)) if reason.contains("not running")
+        ));
+        assert!(matches!(
+            engine.replay_save_status(),
+            ReplaySaveStatus::Failed { reason } if reason.contains("not running")
         ));
         std::fs::remove_file(final_path).expect("remove replay file");
     }
