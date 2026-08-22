@@ -272,6 +272,22 @@ const fn nanos_to_micros(nanos: u64) -> u64 {
 }
 
 pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {
+    let recovery = output.borrow_mut().take_remux_recovery_result();
+    if let Some(result) = recovery {
+        match result {
+            Ok(obs_rs_engine::RemuxRecovery::Recovered { bytes }) => {
+                ui.set_status_message(
+                    format!("Interrupted recording recovered ({bytes} bytes)").into(),
+                );
+            }
+            Ok(obs_rs_engine::RemuxRecovery::NoCandidate) => {
+                ui.set_status_message("No interrupted automatic-remux recording was found".into());
+            }
+            Err(error) => {
+                ui.set_status_message(format!("Recording recovery failed: {error}").into());
+            }
+        }
+    }
     let output = output.borrow();
     let status = output.output_status();
     let metrics = output.output_metrics();
@@ -284,6 +300,8 @@ pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRunti
     let (replay_buffering, replay_saving) = output.replay_controls();
     ui.set_replay_buffering(replay_buffering);
     ui.set_replay_saving(replay_saving);
+    ui.set_remux_recovery_supported(output.remux_recovery_supported());
+    ui.set_remux_recovery_running(output.remux_recovery_running());
     ui.set_recording_elapsed(output.recording_elapsed().into());
 }
 

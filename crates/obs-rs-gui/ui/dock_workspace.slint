@@ -36,6 +36,8 @@ export component DockWorkspace inherits Rectangle {
     in property <bool> streaming;
     in property <bool> replay-buffering;
     in property <bool> replay-saving;
+    in property <bool> remux-recovery-supported;
+    in property <bool> remux-recovery-running;
     in property <bool> meters-paused;
     in property <bool> show-scenes;
     in property <bool> show-sources;
@@ -88,6 +90,7 @@ export component DockWorkspace inherits Rectangle {
     callback toggle-streaming();
     callback toggle-replay-buffer();
     callback save-replay-buffer();
+    callback recover-recording();
     callback open-settings-window();
 
     background: Palette.tokens.window-bg;
@@ -238,6 +241,8 @@ export component DockWorkspace inherits Rectangle {
             streaming: root.streaming;
             replay-buffering: root.replay-buffering;
             replay-saving: root.replay-saving;
+            remux-recovery-supported: root.remux-recovery-supported;
+            remux-recovery-running: root.remux-recovery-running;
             meters-paused: root.meters-paused;
             dock-drag-start(kind, x, y) => {
                 root.dock-drag-start(kind, root.normalized-x(x), root.normalized-y(y));
@@ -287,6 +292,7 @@ export component DockWorkspace inherits Rectangle {
             toggle-streaming() => { root.toggle-streaming(); }
             toggle-replay-buffer() => { root.toggle-replay-buffer(); }
             save-replay-buffer() => { root.save-replay-buffer(); }
+            recover-recording() => { root.recover-recording(); }
             open-settings-window() => { root.open-settings-window(); }
         }
     }

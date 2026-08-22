@@ -1172,6 +1172,39 @@ fn output_runtime_routes_matroska_auto_remux_to_the_mp4_final_path() {
 }
 
 #[test]
+fn output_runtime_requests_interrupted_remux_recovery_without_blocking_the_gui() {
+    let format = VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+    if !output.remux_recovery_supported() {
+        return;
+    }
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let final_path = std::env::temp_dir().join(format!("obs-rs-gui-recovery-{token}.mp4"));
+    output
+        .request_recover_interrupted_remux(final_path.to_str().expect("UTF-8 temp path"))
+        .expect("recovery request should be accepted");
+
+    let result = (0..100).find_map(|_| {
+        let result = output.take_remux_recovery_result();
+        if result.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        result
+    });
+    assert_eq!(
+        result
+            .expect("worker must report recovery")
+            .expect("recovery check must succeed"),
+        obs_rs_engine::RemuxRecovery::NoCandidate
+    );
+    assert!(!output.remux_recovery_running());
+    assert!(!final_path.exists());
+}
+
+#[test]
 fn output_runtime_routes_reference_split_recording_to_numbered_files() {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
     let token = std::time::SystemTime::now()

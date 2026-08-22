@@ -33,6 +33,8 @@ export component FloatingDockWindow inherits Window {
     in property <string> transition;
     in property <bool> recording;
     in property <bool> streaming;
+    in property <bool> remux-recovery-supported;
+    in property <bool> remux-recovery-running;
     in property <bool> meters-paused;
 
     callback open-modal(int);
@@ -68,6 +70,7 @@ export component FloatingDockWindow inherits Window {
     callback set-view-mode(int);
     callback toggle-recording();
     callback toggle-streaming();
+    callback recover-recording();
     callback open-settings-window();
     callback redock-panel(int);
 
@@ -94,6 +97,8 @@ export component FloatingDockWindow inherits Window {
         transition: root.transition;
         recording: root.recording;
         streaming: root.streaming;
+        remux-recovery-supported: root.remux-recovery-supported;
+        remux-recovery-running: root.remux-recovery-running;
         meters-paused: root.meters-paused;
         // A floating dock cannot be reordered, and its header button returns it
         // to the row instead of detaching it again.
@@ -133,6 +138,7 @@ export component FloatingDockWindow inherits Window {
         fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
         toggle-recording() => { root.toggle-recording(); }
         toggle-streaming() => { root.toggle-streaming(); }
+        recover-recording() => { root.recover-recording(); }
         open-settings-window() => { root.open-settings-window(); }
         set-view-mode(mode) => { root.set-view-mode(mode); }
     }

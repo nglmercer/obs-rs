@@ -21,6 +21,7 @@ pub(crate) fn install_output_callbacks(
     install_recording_callback(ui, state, surface, output);
     install_streaming_callback(ui, state, surface, output);
     install_replay_callbacks(ui, output);
+    install_remux_recovery_callback(ui, output);
     install_transition_callbacks(ui, state, surface);
 }
 
@@ -155,6 +156,27 @@ fn install_replay_callbacks(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>
             Err(error) => ui.set_status_message(format!("Replay save failed: {error}").into()),
         }
         refresh_output_ui(&ui, &replay_output);
+    });
+}
+
+fn install_remux_recovery_callback(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {
+    let weak = ui.as_weak();
+    let recovery_output = Rc::clone(output);
+    ui.on_recover_recording(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let path = ui.get_recording_path().to_string();
+        match recovery_output
+            .borrow_mut()
+            .request_recover_interrupted_remux(&path)
+        {
+            Ok(()) => ui.set_status_message(format!("Recording recovery requested: {path}").into()),
+            Err(error) => {
+                ui.set_status_message(format!("Recording recovery failed: {error}").into());
+            }
+        }
+        refresh_output_ui(&ui, &recovery_output);
     });
 }
 

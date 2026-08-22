@@ -10,6 +10,8 @@ export component ControlsDock inherits Rectangle {
     in property <bool> streaming;
     in property <bool> replay-buffering;
     in property <bool> replay-saving;
+    in property <bool> remux-recovery-supported;
+    in property <bool> remux-recovery-running;
     in property <int> panel-kind;
 
     in property <bool> floating;
@@ -25,6 +27,7 @@ export component ControlsDock inherits Rectangle {
     callback toggle-streaming();
     callback toggle-replay-buffer();
     callback save-replay-buffer();
+    callback recover-recording();
     callback set-view-mode(int);
     callback open-settings-window();
 
@@ -75,6 +78,12 @@ export component ControlsDock inherits Rectangle {
                 height: 30px;
                 enabled: replay-buffering && !replay-saving;
                 clicked => save-replay-buffer();
+            }
+            if root.remux-recovery-supported : Button {
+                text: I18n.text.recover_recording;
+                height: 30px;
+                enabled: !recording && !streaming && !remux-recovery-running;
+                clicked => recover-recording();
             }
             // OBS-RS has no virtual camera backend yet. The control keeps its
             // place in the dock but stays disabled, and clicking it explains

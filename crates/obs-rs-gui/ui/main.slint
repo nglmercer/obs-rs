@@ -49,6 +49,8 @@ export component MainWindow inherits Window {
         in property <bool> streaming;
         in property <bool> replay-buffering;
         in property <bool> replay-saving;
+        in property <bool> remux-recovery-supported;
+        in property <bool> remux-recovery-running;
         in property <bool> dirty;
         in property <string> status-message;
         in property <string> recovery-status;
@@ -182,6 +184,7 @@ export component MainWindow inherits Window {
         callback toggle-streaming();
         callback toggle-replay-buffer();
         callback save-replay-buffer();
+        callback recover-recording();
         callback cut-transition();
         callback fade-transition();
         callback fade-transition-duration(string);
@@ -677,6 +680,8 @@ export component MainWindow inherits Window {
                 streaming: root.streaming;
                 replay-buffering: root.replay-buffering;
                 replay-saving: root.replay-saving;
+                remux-recovery-supported: root.remux-recovery-supported;
+                remux-recovery-running: root.remux-recovery-running;
                 meters-paused: root.meters-paused;
                 show-scenes: root.show-scenes;
                 show-sources: root.show-sources;
@@ -741,6 +746,7 @@ export component MainWindow inherits Window {
                 toggle-streaming() => { root.request-streaming(); }
                 toggle-replay-buffer() => { root.toggle-replay-buffer(); }
                 save-replay-buffer() => { root.save-replay-buffer(); }
+                recover-recording() => { root.recover-recording(); }
                 open-settings-window() => { root.open-settings-window(); }
                 set-view-mode(mode) => { root.apply-view-mode(mode); }
                 float-panel(kind) => { root.float-panel(kind); }

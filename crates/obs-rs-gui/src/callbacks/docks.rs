@@ -73,6 +73,8 @@ impl DockController {
             window.set_transition(ui.get_transition());
             window.set_recording(ui.get_recording());
             window.set_streaming(ui.get_streaming());
+            window.set_remux_recovery_supported(ui.get_remux_recovery_supported());
+            window.set_remux_recovery_running(ui.get_remux_recovery_running());
             window.set_meters_paused(ui.get_meters_paused());
         }
     }
@@ -747,6 +749,7 @@ fn forward_to_studio(
     forward!(on_fade_to_color, invoke_fade_to_color, color, duration);
     forward!(on_toggle_recording, invoke_toggle_recording);
     forward!(on_toggle_streaming, invoke_toggle_streaming);
+    forward!(on_recover_recording, invoke_recover_recording);
     forward!(on_open_settings_window, invoke_open_settings_window);
 
     let weak = ui.as_weak();

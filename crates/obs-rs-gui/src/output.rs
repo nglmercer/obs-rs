@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{mpsc, Arc},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -9,7 +9,7 @@ use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProv
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
 use obs_rs_engine::{
     output_capabilities_snapshot, EngineAudioChannel, EngineConfig, EngineSession, EngineWorker,
-    OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle, ReplaySaveStatus,
+    OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle, RemuxRecovery, ReplaySaveStatus,
 };
 use obs_rs_media::{FrameScaler, RawVideoFrame, ScaleFilter, VideoFormat, VideoFrame};
 use obs_rs_output::{
@@ -74,6 +74,7 @@ pub(crate) struct OutputRuntime {
     segmented_recording_requested: bool,
     auto_remux_requested: bool,
     auto_remux_enabled: bool,
+    remux_recovery: Option<mpsc::Receiver<Result<RemuxRecovery, String>>>,
     recording_profile: Option<OutputProfile>,
     /// A canvas change accepted while an output was running.
     ///
@@ -159,6 +160,7 @@ impl OutputRuntime {
             segmented_recording_requested: false,
             auto_remux_requested: false,
             auto_remux_enabled: false,
+            remux_recovery: None,
             recording_profile: None,
             staged_video_format: None,
             scaler: None,
@@ -444,6 +446,58 @@ impl OutputRuntime {
         self.worker.try_finish_recording()?;
         self.recording_started_at = None;
         Ok(())
+    }
+
+    /// Returns whether this host can perform the native H.264/AAC remux
+    /// boundary used by the explicit recovery action.
+    pub(crate) const fn remux_recovery_supported(&self) -> bool {
+        self.capabilities.supports_remux()
+    }
+
+    /// Returns whether one recovery request is currently being processed.
+    pub(crate) const fn remux_recovery_running(&self) -> bool {
+        self.remux_recovery.is_some()
+    }
+
+    /// Enqueues recovery for the exact final MP4 path shown by the GUI.
+    ///
+    /// The worker owns the potentially long native demux/remux operation; the
+    /// GUI receives a one-shot result during its normal bounded refresh.
+    pub(crate) fn request_recover_interrupted_remux(
+        &mut self,
+        path: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        if !self.remux_recovery_supported() {
+            return Err("interrupted remux recovery is unavailable on this host".into());
+        }
+        if self.remux_recovery_running() {
+            return Err("interrupted remux recovery is already in progress".into());
+        }
+        let (recording, streaming) = self.lifecycles();
+        if !recording.is_stopped() || !streaming.is_stopped() {
+            return Err("stop recording and streaming before recovering a recording".into());
+        }
+        validate_auto_remux_path(path)?;
+        self.remux_recovery = Some(self.worker.try_recover_interrupted_remux_recording(path)?);
+        Ok(())
+    }
+
+    /// Takes the completed recovery result without waiting for native work.
+    pub(crate) fn take_remux_recovery_result(&mut self) -> Option<Result<RemuxRecovery, String>> {
+        let receiver = self.remux_recovery.as_ref()?;
+        match receiver.try_recv() {
+            Ok(result) => {
+                self.remux_recovery = None;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.remux_recovery = None;
+                Some(Err(
+                    "recovery worker disconnected before reporting a result".to_owned(),
+                ))
+            }
+        }
     }
 
     pub(crate) fn abort_recording(&mut self) {
