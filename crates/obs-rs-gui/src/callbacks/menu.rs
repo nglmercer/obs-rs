@@ -517,13 +517,20 @@ fn collection_file_name(name: &str) -> Option<String> {
 /// Returns the directory that holds this session's scene collections.
 ///
 /// A bare file name has no parent, so the folder resolves against the working
-/// directory rather than against the filesystem root.
+/// directory rather than against the filesystem root. Once a collection is
+/// active, its parent is already the managed directory; keep using that
+/// sibling directory instead of creating a nested `collections/collections`
+/// path on the next operation.
 fn collections_root(project_path: &str) -> PathBuf {
-    Path::new(project_path.trim())
+    let parent = Path::new(project_path.trim())
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
-        .join(COLLECTION_DIRECTORY)
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    if parent.file_name().and_then(|name| name.to_str()) == Some(COLLECTION_DIRECTORY) {
+        parent
+    } else {
+        parent.join(COLLECTION_DIRECTORY)
+    }
 }
 
 /// Lists the collections on disk plus the open document, newest name order.
@@ -620,6 +627,18 @@ mod tests {
         assert_eq!(
             collections_root("obs-rs-project.json"),
             PathBuf::from("./collections")
+        );
+    }
+
+    #[test]
+    fn collections_keep_one_root_after_switching_to_a_collection() {
+        assert_eq!(
+            collections_root("/home/user/studio/collections/evening.obsrproj"),
+            PathBuf::from("/home/user/studio/collections")
+        );
+        assert_eq!(
+            collections_root("collections/evening.obsrproj"),
+            PathBuf::from("collections")
         );
     }
 
