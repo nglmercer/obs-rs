@@ -27,6 +27,15 @@ pub enum NativeOutputState {
     Closed,
 }
 
+/// Result of an explicit recovery attempt for an interrupted automatic remux.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RemuxRecovery {
+    /// No hidden Matroska source exists beside the requested MP4 path.
+    NoCandidate,
+    /// The hidden source was remuxed and the MP4 was published atomically.
+    Recovered { bytes: usize },
+}
+
 /// Remuxes the native H.264/AAC Matroska recording into MP4 without decoding
 /// or re-encoding either stream.
 ///
@@ -226,6 +235,62 @@ pub fn remux_matroska_to_mp4(
             Err(error)
         }
     }
+}
+
+/// Recovers an interrupted automatic remux without replacing an existing MP4.
+///
+/// Automatic remux recordings keep their Matroska source at the exact hidden
+/// path `<final>.mkv.part` until publication succeeds. Startup cleanup removes
+/// that path only when a new recording session claims the destination; this
+/// explicit operation lets a control-plane caller recover it first.
+///
+/// The operation remains bounded by the native remux timeout and must stay off
+/// UI, capture, audio, and render threads.
+///
+/// # Errors
+///
+/// Returns a typed endpoint, filesystem, or native pipeline error. A missing
+/// hidden source is an ordinary [`RemuxRecovery::NoCandidate`] result.
+pub fn recover_interrupted_remux_recording(
+    final_path: impl AsRef<Path>,
+) -> Result<RemuxRecovery, GStreamerError> {
+    gst::init().map_err(native_error)?;
+    let final_path = final_path.as_ref();
+    if !final_path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"))
+    {
+        return Err(GStreamerError::InvalidEndpoint(
+            "interrupted remux recovery requires a final .mp4 path".to_owned(),
+        ));
+    }
+    if final_path.exists() {
+        return Err(GStreamerError::Native(
+            "refusing to recover over an existing MP4 destination".to_owned(),
+        ));
+    }
+    let source_path = final_path.with_extension("mkv.part");
+    let source_bytes = match fs::metadata(&source_path) {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RemuxRecovery::NoCandidate);
+        }
+        Err(error) => {
+            return Err(GStreamerError::Native(format!(
+                "inspect interrupted remux source: {error}"
+            )));
+        }
+    };
+    if source_bytes == 0 {
+        return Err(GStreamerError::Native(
+            "refusing to recover an empty Matroska source".to_owned(),
+        ));
+    }
+    let bytes = remux_matroska_to_mp4(&source_path, final_path)?;
+    fs::remove_file(&source_path).map_err(|error| {
+        GStreamerError::Native(format!("remove recovered Matroska source: {error}"))
+    })?;
+    Ok(RemuxRecovery::Recovered { bytes })
 }
 
 /// Timestamp, queue/drop, reconnect, drift, keyframe, and submit timing data.
@@ -2044,6 +2109,92 @@ mod tests {
         );
         assert!(!final_path.with_extension("mp4.part").exists());
         std::fs::remove_file(final_path).expect("remove remuxed MP4");
+    }
+
+    #[test]
+    fn interrupted_remux_recovery_publishes_mp4_and_consumes_source() {
+        gst::init().expect("GStreamer runtime");
+        if [
+            "matroskamux",
+            "matroskademux",
+            "mp4mux",
+            "h264parse",
+            "aacparse",
+            "queue",
+            "openh264enc",
+            "avenc_aac",
+            "filesrc",
+            "filesink",
+        ]
+        .iter()
+        .any(|element| gst::ElementFactory::find(element).is_none())
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let final_path = std::env::temp_dir().join(format!("obs-rs-remux-recovery-{token}.mp4"));
+        let completed_source = final_path.with_extension("mkv");
+        let interrupted_source = final_path.with_extension("mkv.part");
+        let plan = plan(OutputProfile::matroska_h264_aac());
+        let video = VideoFormat::new(
+            64,
+            64,
+            obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+        )
+        .expect("video format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let source_destination = ProductionDestination::Recording(completed_source.clone());
+        let mut session = GStreamerOutputSession::start(&plan, &source_destination, video, audio)
+            .expect("Matroska source session");
+        for index in 0_u64..30 {
+            let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
+            session
+                .push_video(VideoFrame::solid(video, timestamp, [24, 96, 180, 255]))
+                .expect("video submission");
+            session
+                .push_audio(AudioBuffer::silence(audio, timestamp, 1_600).expect("silence"))
+                .expect("audio submission");
+        }
+        session.close().expect("Matroska source close");
+        std::fs::rename(&completed_source, &interrupted_source).expect("hide source");
+
+        assert_eq!(
+            recover_interrupted_remux_recording(&final_path).expect("recover remux"),
+            RemuxRecovery::Recovered {
+                bytes:
+                    usize::try_from(std::fs::metadata(&final_path).expect("MP4 metadata").len(),)
+                        .expect("MP4 size")
+            }
+        );
+        assert_eq!(
+            std::fs::read(&final_path)
+                .expect("read recovered MP4")
+                .get(4..8),
+            Some(&b"ftyp"[..])
+        );
+        assert!(!interrupted_source.exists());
+        assert!(!final_path.with_extension("mp4.part").exists());
+        std::fs::remove_file(final_path).expect("remove recovered MP4");
+    }
+
+    #[test]
+    fn interrupted_remux_recovery_reports_missing_source_without_creating_output() {
+        gst::init().expect("GStreamer runtime");
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let final_path =
+            std::env::temp_dir().join(format!("obs-rs-remux-no-candidate-{token}.mp4"));
+        assert_eq!(
+            recover_interrupted_remux_recording(&final_path).expect("recovery check"),
+            RemuxRecovery::NoCandidate
+        );
+        assert!(!final_path.exists());
+        assert!(!final_path.with_extension("mkv.part").exists());
     }
 
     #[test]

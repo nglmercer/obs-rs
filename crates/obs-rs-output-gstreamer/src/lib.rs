@@ -1502,7 +1502,8 @@ mod native;
 
 #[cfg(feature = "native")]
 pub use native::{
-    remux_matroska_to_mp4, GStreamerOutputSession, NativeOutputState, OutputSessionTelemetry,
+    recover_interrupted_remux_recording, remux_matroska_to_mp4, GStreamerOutputSession,
+    NativeOutputState, OutputSessionTelemetry, RemuxRecovery,
 };
 
 #[cfg(test)]

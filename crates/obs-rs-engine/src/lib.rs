@@ -43,14 +43,14 @@ use obs_rs_output::{
     VideoInputRequirement, WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
-pub use obs_rs_output_gstreamer::{
-    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
-    VideoEncoderCapability,
+use obs_rs_output_gstreamer::{
+    recover_interrupted_remux_recording, GStreamerCapabilitySnapshot, GStreamerError,
+    GStreamerOutputSession, NativeOutputState, ProductionDestination, ProductionPipelinePlan,
 };
 #[cfg(feature = "production-gstreamer")]
-use obs_rs_output_gstreamer::{
-    GStreamerCapabilitySnapshot, GStreamerError, GStreamerOutputSession, NativeOutputState,
-    ProductionDestination, ProductionPipelinePlan,
+pub use obs_rs_output_gstreamer::{
+    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
+    RemuxRecovery, VideoEncoderCapability,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Project, ProjectError, SourceFilterCategory, SourceFilterSpec};
@@ -1614,6 +1614,27 @@ impl EngineSession {
     ) -> Result<(), EngineError> {
         let encoder_config = (video, audio);
         self.start_remux_recording_with_config(path.into(), Some(&encoder_config))
+    }
+
+    /// Recovers an interrupted automatic remux beside an exact MP4 path.
+    ///
+    /// Recovery consumes `<final>.mkv.part` only after the native bounded
+    /// remux publishes the MP4. It refuses to replace an existing destination
+    /// and is unavailable while this session is carrying media output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Busy`] while recording or streaming, or a
+    /// production-output error when the candidate cannot be remuxed.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn recover_interrupted_remux_recording(
+        &mut self,
+        path: impl Into<PathBuf>,
+    ) -> Result<RemuxRecovery, EngineError> {
+        if self.recording.is_some() || self.streaming.is_some() {
+            return Err(EngineError::Busy("recover an interrupted recording"));
+        }
+        recover_interrupted_remux_recording(path.into()).map_err(Into::into)
     }
 
     /// Starts a production recording using an explicit versioned output

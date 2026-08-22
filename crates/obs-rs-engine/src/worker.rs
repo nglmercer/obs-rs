@@ -19,6 +19,8 @@ use obs_rs_output::{
 
 use obs_rs_project::Project;
 
+#[cfg(feature = "production-gstreamer")]
+use crate::RemuxRecovery;
 use crate::{
     DesktopAudioSource, EngineAudioChannel, EngineError, EngineSession, EngineSnapshot,
     EngineStats, OutputEvent, OutputLifecycle, ReplaySaveStatus,
@@ -52,6 +54,8 @@ enum WorkerCommand {
         Option<(VideoEncoderConfig, AudioEncoderConfig)>,
         mpsc::Sender<Result<(), String>>,
     ),
+    #[cfg(feature = "production-gstreamer")]
+    RecoverInterruptedRemux(PathBuf, mpsc::Sender<Result<RemuxRecovery, String>>),
     #[cfg(feature = "production-gstreamer")]
     StartRecordingProfile(
         PathBuf,
@@ -336,6 +340,49 @@ impl EngineWorker {
         audio: AudioEncoderConfig,
     ) -> Result<(), EngineError> {
         self.start_remux_recording_with_config(path.into(), Some((video, audio)))
+    }
+
+    /// Recovers an interrupted automatic remux on the worker thread.
+    ///
+    /// This synchronous convenience method is for control-plane callers that
+    /// are already off the UI and media submission paths. GUI callers should
+    /// use [`Self::try_recover_interrupted_remux_recording`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker closes or the native recovery
+    /// rejects the path or candidate.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn recover_interrupted_remux_recording(
+        &self,
+        path: impl Into<PathBuf>,
+    ) -> Result<RemuxRecovery, EngineError> {
+        let receive = self.try_recover_interrupted_remux_recording(path)?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
+    /// Enqueues an interrupted automatic-remux recovery without waiting for
+    /// native demuxing or file publication.
+    ///
+    /// The returned one-shot receiver is bounded to one result. The request
+    /// itself is accepted only when the worker command queue has capacity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the bounded worker queue is full or closed.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn try_recover_interrupted_remux_recording(
+        &self,
+        path: impl Into<PathBuf>,
+    ) -> Result<mpsc::Receiver<Result<RemuxRecovery, String>>, EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .try_send(WorkerCommand::RecoverInterruptedRemux(path.into(), reply))
+            .map_err(|error| command_enqueue_error(&error))?;
+        Ok(receive)
     }
 
     /// Requests a production recording using an explicit versioned profile.
@@ -1182,6 +1229,14 @@ fn worker_loop(
                 false
             }
             #[cfg(feature = "production-gstreamer")]
+            WorkerCommand::RecoverInterruptedRemux(path, reply) => {
+                let result = session
+                    .recover_interrupted_remux_recording(path)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            #[cfg(feature = "production-gstreamer")]
             WorkerCommand::StartRecordingProfile(path, profile, encoder_config, reply) => {
                 let result = start_recording_profile(&mut session, path, profile, encoder_config);
                 let _ = reply.send(result);
@@ -1805,6 +1860,57 @@ mod tests {
         assert_eq!(persisted.get(4..8), Some(&b"ftyp"[..]));
         assert!(!source_path.exists());
         std::fs::remove_file(path).expect("remove remux recording");
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn worker_recovers_interrupted_remux_on_the_worker_thread() {
+        let capabilities = obs_rs_output_gstreamer::GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(obs_rs_output::OutputProfileKind::MatroskaH264Aac)
+            || !capabilities.supports_remux()
+        {
+            return;
+        }
+        let format =
+            VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let final_path = std::env::temp_dir().join(format!("obs-rs-worker-recovery-{token}.mp4"));
+        let completed_source = final_path.with_extension("mkv");
+        let interrupted_source = final_path.with_extension("mkv.part");
+        let mut source_session =
+            EngineSession::for_format(format, EngineConfig::new(audio)).expect("source session");
+        source_session
+            .start_recording(&completed_source)
+            .expect("Matroska source recording");
+        for index in 0_u64..4 {
+            let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
+            source_session
+                .push_program_frame(&VideoFrame::solid(format, timestamp, [24, 96, 180, 255]))
+                .expect("media frame");
+        }
+        source_session
+            .finish_recording()
+            .expect("close Matroska source");
+        std::fs::rename(&completed_source, &interrupted_source).expect("hide source");
+
+        let worker = worker(2);
+        let receive = worker
+            .try_recover_interrupted_remux_recording(&final_path)
+            .expect("enqueue recovery");
+        let recovered = receive
+            .recv_timeout(Duration::from_mins(1))
+            .expect("recovery result")
+            .expect("recover remux");
+        assert!(matches!(recovered, RemuxRecovery::Recovered { bytes } if bytes > 0));
+        assert!(final_path.is_file());
+        assert!(!interrupted_source.exists());
+        std::fs::remove_file(final_path).expect("remove recovered MP4");
     }
 
     #[test]
