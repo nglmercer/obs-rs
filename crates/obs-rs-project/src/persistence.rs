@@ -47,6 +47,22 @@ impl ProjectFileStore {
     /// left untouched when writing or synchronization fails.
     pub fn save(&self, session: &mut ProjectSession) -> Result<usize, ProjectError> {
         let document = session.document();
+        let bytes = self.save_document(&document)?;
+        session.mark_saved();
+        Ok(bytes)
+    }
+
+    /// Writes an already serialized document without changing any session state.
+    ///
+    /// This is used for exports: the destination receives a crash-safe copy of
+    /// the current document, while the active session remains open and dirty or
+    /// clean exactly as it was before the export.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Io`] for filesystem failures. The final path is
+    /// left untouched when writing or synchronization fails.
+    pub fn save_document(&self, document: &str) -> Result<usize, ProjectError> {
         let write_result = (|| {
             let mut file = OpenOptions::new()
                 .create(true)
@@ -76,7 +92,6 @@ impl ProjectFileStore {
             let _ = fs::remove_file(&self.temp_path);
             return Err(error);
         }
-        session.mark_saved();
         Ok(document.len())
     }
 

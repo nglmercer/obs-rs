@@ -225,6 +225,20 @@ impl DesktopState {
         Ok(bytes)
     }
 
+    /// Writes the current project document without changing its dirty state.
+    ///
+    /// This is the persistence boundary used by collection export. Exporting
+    /// is a copy operation, so it must not make the active project appear
+    /// saved or alter its undo history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when persistence fails.
+    pub fn save_project_document(&self, store: &ProjectFileStore) -> Result<usize, UiError> {
+        let document = self.project.document();
+        Ok(store.save_document(&document)?)
+    }
+
     /// Loads a project through the crash-safe project-file store.
     ///
     /// The current project is replaced only after the file has been read and

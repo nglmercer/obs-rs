@@ -117,7 +117,9 @@ export component MainWindow inherits Window {
         in property <string> source-settings-version;
         in-out property <string> source-settings;
         in-out property <string> project-path;
+        in-out property <string> collection-transfer-path;
         in-out property <string> diagnostics-path;
+        in-out property <int> project-dialog-mode: 0;
         in-out property <string> recording-path;
         in-out property <string> streaming-address;
         in-out property <string> new-scene-id;
@@ -242,6 +244,7 @@ export component MainWindow inherits Window {
         callback create-collection(string);
         callback duplicate-collection(string);
         callback rename-collection(string);
+        callback export-collection(string);
         callback save-collection();
         // Reports the desktop portal's answer back onto the UI thread.
         // Includes the source that initiated the request so a selection
@@ -491,6 +494,10 @@ export component MainWindow inherits Window {
                         root.rename-collection-dialog = true;
                         root.collection-name = root.active-collection;
                         root.active-modal = 9;
+                    } else if action == "export-collection" {
+                        root.project-dialog-mode = 1;
+                        root.collection-transfer-path = "obs-rs-collection-export.obsrproj";
+                        root.active-modal = 1;
                     } else if action == "save-collection" {
                         root.save-collection();
                     } else if action == "documentation" {
@@ -733,11 +740,25 @@ export component MainWindow inherits Window {
     ProjectDialog {
         open: root.active-modal == 1;
         locale: root.locale;
+        mode: root.project-dialog-mode;
         project-path <=> root.project-path;
+        collection-path <=> root.collection-transfer-path;
         diagnostics-path <=> root.diagnostics-path;
-        save-project() => { root.save-project(); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
+        save-project() => {
+            if root.project-dialog-mode == 1 {
+                root.export-collection(root.collection-transfer-path);
+            } else {
+                root.save-project();
+            }
+        }
+        close => {
+            root.project-dialog-mode = 0;
+            root.active-modal = 0;
+        }
+        accepted => {
+            root.project-dialog-mode = 0;
+            root.active-modal = 0;
+        }
     }
     SceneDialog {
         open: root.active-modal == 2;

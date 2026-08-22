@@ -4,25 +4,36 @@ import { I18n } from "i18n.slint";
 
 export component ProjectDialog inherits ModalShell {
     in property <string> locale;
+    in property <int> mode: 0;
     in-out property <string> project-path;
+    in-out property <string> collection-path;
     in-out property <string> diagnostics-path;
     callback save-project();
 
-    title: I18n.text.project_dialog_title;
-    subtitle: I18n.text.project_dialog_description;
-    accept-label: I18n.text.menu_save;
+    title: mode == 1
+        ? I18n.text.collection_export_dialog_title
+        : I18n.text.project_dialog_title;
+    subtitle: mode == 1
+        ? I18n.text.collection_export_dialog_description
+        : I18n.text.project_dialog_description;
+    accept-label: mode == 1 ? I18n.text.menu_export_collection : I18n.text.menu_save;
     cancel-label: I18n.text.cancel;
     accepted => save-project();
 
     VerticalBox {
         spacing: 8px;
-        FieldHeading { text: I18n.text.project_file; }
-        LineEdit {
+        if mode == 1 : FieldHeading { text: I18n.text.collection_export_path; }
+        if mode == 1 : LineEdit {
+            text <=> collection-path;
+            placeholder-text: "obs-rs-collection.obsrproj";
+        }
+        if mode != 1 : FieldHeading { text: I18n.text.project_file; }
+        if mode != 1 : LineEdit {
             text <=> project-path;
             placeholder-text: "obs-rs-project.json";
         }
-        FieldHeading { text: I18n.text.diagnostics_file; }
-        LineEdit {
+        if mode != 1 : FieldHeading { text: I18n.text.diagnostics_file; }
+        if mode != 1 : LineEdit {
             text <=> diagnostics-path;
             placeholder-text: "obs-rs-diagnostics.obsrdg";
         }

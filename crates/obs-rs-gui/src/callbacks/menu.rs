@@ -396,6 +396,7 @@ fn install_collections(
     });
 
     install_rename_collection(ui, state, surface);
+    install_export_collection(ui, state);
 
     let weak = ui.as_weak();
     let save_state = Rc::clone(state);
@@ -443,6 +444,28 @@ fn install_rename_collection(
                 ui.set_status_message(format!("Renamed collection to {path}").into());
             }
             Err(error) => ui.set_status_message(format!("Collection: {error}").into()),
+        }
+    });
+}
+
+fn install_export_collection(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    let weak = ui.as_weak();
+    let export_state = Rc::clone(state);
+    ui.on_export_collection(move |path| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match export_collection(&export_state, path.as_str()) {
+            Ok((path, bytes)) => {
+                let path = path.to_string_lossy().into_owned();
+                ui.set_collection_transfer_path("".into());
+                crate::refresh::invalidate_recovery_cache();
+                refresh_menu_models(&ui, &export_state);
+                ui.set_status_message(
+                    format!("Exported collection to {path} ({bytes} bytes)").into(),
+                );
+            }
+            Err(error) => ui.set_status_message(format!("Collection export: {error}").into()),
         }
     });
 }
@@ -547,6 +570,41 @@ fn rename_collection(
     Ok(target)
 }
 
+/// Writes the active in-memory document to an explicit portable collection
+/// path without changing the active project or its collection selection.
+fn export_collection(
+    state: &Rc<RefCell<DesktopState>>,
+    target: &str,
+) -> Result<(PathBuf, usize), Box<dyn Error>> {
+    let path = collection_transfer_path(target)?;
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let path_text = path
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("the export path is not valid UTF-8"))?;
+    let store = project_store(path_text)?;
+    let bytes = state.borrow().save_project_document(&store)?;
+    Ok((path, bytes))
+}
+
+fn collection_transfer_path(target: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = PathBuf::from(target.trim());
+    if path.as_os_str().is_empty()
+        || path.file_name().is_none()
+        || path.extension().and_then(|extension| extension.to_str()) != Some(COLLECTION_EXTENSION)
+    {
+        return Err(std::io::Error::other(format!(
+            "export path must name a .{COLLECTION_EXTENSION} file"
+        ))
+        .into());
+    }
+    Ok(path)
+}
+
 /// Turns a typed name into a bounded, separator-free file name.
 ///
 /// The name reaches the filesystem, so path separators and traversal segments
@@ -640,6 +698,7 @@ fn collection_row(path: &Path, current: &Path) -> Option<ProfileRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obs_rs_project::ProjectCommand;
 
     #[test]
     fn a_collection_name_becomes_a_bounded_separator_free_file_name() {
@@ -819,5 +878,61 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).expect("remove collection fixture");
+    }
+
+    #[test]
+    fn exporting_a_collection_writes_the_current_document_without_switching_it() {
+        let root =
+            std::env::temp_dir().join(format!("obs-rs-collection-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("collection fixture directory");
+        let current = root.join("current.obsrproj");
+        let target = root.join("portable").join("export.obsrproj");
+        let state = Rc::new(RefCell::new(DesktopState::new(
+            initial_project().expect("initial project"),
+        )));
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneName {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                name: "Edited preview".to_owned(),
+            }))
+            .expect("edit current collection before export");
+        assert!(state.borrow().is_dirty());
+        let expected = state.borrow().project_document().clone();
+
+        let (exported, bytes) = export_collection(&state, target.to_str().expect("export path"))
+            .expect("collection export");
+
+        assert_eq!(exported, target);
+        assert_eq!(bytes, expected.len());
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("exported document"),
+            expected
+        );
+        assert_eq!(state.borrow().project_document(), expected);
+        assert!(
+            state.borrow().is_dirty(),
+            "export must not mark the active project clean"
+        );
+        assert!(
+            !current.exists(),
+            "export must not create or switch the active path"
+        );
+
+        std::fs::remove_dir_all(root).expect("remove collection fixture");
+    }
+
+    #[test]
+    fn collection_export_rejects_non_collection_paths() {
+        let state = Rc::new(RefCell::new(DesktopState::new(
+            initial_project().expect("initial project"),
+        )));
+
+        let error = export_collection(&state, "portable.json")
+            .expect_err("exports must keep the collection extension");
+
+        assert!(error.to_string().contains(".obsrproj"));
     }
 }
