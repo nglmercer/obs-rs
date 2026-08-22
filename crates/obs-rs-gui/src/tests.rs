@@ -14,7 +14,7 @@ use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
     FrameRate, FrameTransform, FrameTransition, ScaleFilter, Timestamp, VideoFormat, VideoFrame,
 };
-use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
+use obs_rs_output::{encode_png, MemoryMuxer, OutputProfileKind, PacketKind};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, ProjectSceneSelection, Shortcut, UiAction, UiCommand, UiLocale};
@@ -1080,6 +1080,48 @@ fn output_runtime_finalizes_an_atomic_av_recording() {
         .iter()
         .any(|packet| packet.kind() == PacketKind::Audio));
     std::fs::remove_file(final_path).expect("remove output fixture");
+}
+
+#[test]
+fn output_runtime_routes_fragmented_mp4_settings_to_the_explicit_profile() {
+    let format = VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let final_path = std::env::temp_dir().join(format!("obs-rs-gui-fragmented-{token}.mp4"));
+    let mut output = OutputRuntime::new(format);
+    if !output
+        .capabilities()
+        .recording_formats()
+        .contains(&OutputProfileKind::FragmentedMp4H264Aac)
+    {
+        return;
+    }
+    let settings = AppSettings {
+        recording_format: super::settings::RecordingFormat::FragmentedMp4,
+        ..AppSettings::default()
+    };
+    output.configure_stream(&settings);
+    output.configure_recording(&settings);
+    assert_eq!(
+        output.recording_profile_kind(),
+        Some(OutputProfileKind::FragmentedMp4H264Aac)
+    );
+    output
+        .start_recording(final_path.to_str().expect("UTF-8 temp path"))
+        .expect("fragmented MP4 recording should open");
+    for timestamp in [0, 33_333_333, 66_666_666, 99_999_999] {
+        let frame = VideoFrame::solid(format, Timestamp::from_nanos(timestamp), [20, 30, 40, 255]);
+        output.push_frame(&frame);
+    }
+    let bytes = output
+        .finish_recording()
+        .expect("fragmented MP4 recording should finalize");
+    let persisted = std::fs::read(&final_path).expect("fragmented MP4 should be persisted");
+    assert_eq!(persisted.len(), bytes);
+    assert!(persisted.windows(4).any(|chunk| chunk == b"moof"));
+    std::fs::remove_file(final_path).expect("remove fragmented output fixture");
 }
 
 #[test]

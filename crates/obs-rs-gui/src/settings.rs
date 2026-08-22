@@ -77,15 +77,17 @@ pub(crate) enum RecordingFormat {
     #[default]
     Matroska,
     Mp4,
+    FragmentedMp4,
     Mov,
     Flv,
     ReferencePacket,
 }
 
 impl RecordingFormat {
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Matroska,
         Self::Mp4,
+        Self::FragmentedMp4,
         Self::Mov,
         Self::Flv,
         Self::ReferencePacket,
@@ -95,6 +97,7 @@ impl RecordingFormat {
         match self {
             Self::Matroska => "matroska",
             Self::Mp4 => "mp4",
+            Self::FragmentedMp4 => "fragmented-mp4",
             Self::Mov => "mov",
             Self::Flv => "flv",
             Self::ReferencePacket => "obsr-packet",
@@ -105,6 +108,7 @@ impl RecordingFormat {
         match value {
             "matroska" | "mkv" => Some(Self::Matroska),
             "mp4" => Some(Self::Mp4),
+            "fragmented-mp4" => Some(Self::FragmentedMp4),
             "mov" => Some(Self::Mov),
             "flv" => Some(Self::Flv),
             "obsr-packet" | "obsr" => Some(Self::ReferencePacket),
@@ -115,7 +119,7 @@ impl RecordingFormat {
     pub(crate) const fn extension(self) -> &'static str {
         match self {
             Self::Matroska => "mkv",
-            Self::Mp4 => "mp4",
+            Self::Mp4 | Self::FragmentedMp4 => "mp4",
             Self::Mov => "mov",
             Self::Flv => "flv",
             Self::ReferencePacket => "obsr",
@@ -126,6 +130,7 @@ impl RecordingFormat {
         match self {
             Self::Matroska => "Matroska (.mkv)",
             Self::Mp4 => "MPEG-4 (.mp4)",
+            Self::FragmentedMp4 => "Fragmented MPEG-4 (.mp4)",
             Self::Mov => "QuickTime Movie (.mov)",
             Self::Flv => "Flash Video (.flv)",
             Self::ReferencePacket => "OBS-RS Packet (.obsr)",
@@ -2659,6 +2664,22 @@ mod tests {
         assert_eq!(
             settings.recording_file_path("2024-02-29 12-30-45"),
             format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
+        );
+    }
+
+    #[test]
+    fn fragmented_mp4_recording_format_selects_the_same_container_extension() {
+        let settings = AppSettings {
+            recording_format: RecordingFormat::FragmentedMp4,
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            settings.recording_file_path("2024-02-29 12-30-45"),
+            format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
+        );
+        assert_eq!(
+            RecordingFormat::from_id("fragmented-mp4"),
+            Some(RecordingFormat::FragmentedMp4)
         );
     }
 

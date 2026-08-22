@@ -641,6 +641,9 @@ fn recording_format_available(format: RecordingFormat, profiles: &[OutputProfile
             )
         }),
         RecordingFormat::Mp4 => profiles.contains(&OutputProfileKind::Mp4H264Aac),
+        RecordingFormat::FragmentedMp4 => {
+            profiles.contains(&OutputProfileKind::FragmentedMp4H264Aac)
+        }
         RecordingFormat::Mov => profiles.contains(&OutputProfileKind::MovH264Aac),
         RecordingFormat::Flv => profiles.contains(&OutputProfileKind::FlvH264Aac),
     }

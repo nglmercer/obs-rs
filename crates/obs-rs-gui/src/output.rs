@@ -13,8 +13,9 @@ use obs_rs_engine::{
 };
 use obs_rs_media::{FrameScaler, RawVideoFrame, ScaleFilter, VideoFormat, VideoFrame};
 use obs_rs_output::{
-    AudioCodec, AudioEncoderConfig, EncoderImplementation, RtmpConfig, SegmentedRecordingPolicy,
-    StreamProtocol, StreamState, StreamTarget, VideoCodec, VideoEncoderConfig,
+    AudioCodec, AudioEncoderConfig, EncoderImplementation, OutputProfile, RtmpConfig,
+    SegmentedRecordingPolicy, StreamProtocol, StreamState, StreamTarget, VideoCodec,
+    VideoEncoderConfig,
 };
 use obs_rs_project::Project;
 
@@ -70,6 +71,7 @@ pub(crate) struct OutputRuntime {
     replay_buffer_capacity_bytes: usize,
     replay_buffer_duration: Duration,
     segmented_recording_policy: Option<SegmentedRecordingPolicy>,
+    recording_profile: Option<OutputProfile>,
     /// A canvas change accepted while an output was running.
     ///
     /// Rebuilding the encoders mid-recording would break the container's frame
@@ -151,6 +153,7 @@ impl OutputRuntime {
             replay_buffer_capacity_bytes: replay_capacity_bytes(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT),
             replay_buffer_duration: Duration::from_secs(u64::from(REPLAY_BUFFER_DURATION_DEFAULT)),
             segmented_recording_policy: None,
+            recording_profile: None,
             staged_video_format: None,
             scaler: None,
             output_format: format,
@@ -322,6 +325,15 @@ impl OutputRuntime {
         if let Some(policy) = self.segmented_recording_policy {
             validate_segmented_recording_path(path)?;
             self.worker.start_segmented_recording(path, policy)?;
+        } else if let Some(profile) = self.recording_profile {
+            self.worker.start_recording_profile(
+                path,
+                profile,
+                Some((
+                    self.recording_video_encoder.clone(),
+                    self.recording_audio_encoder.clone(),
+                )),
+            )?;
         } else if is_production_recording_path(path) {
             self.worker.start_recording_configured(
                 path,
@@ -340,6 +352,15 @@ impl OutputRuntime {
         if let Some(policy) = self.segmented_recording_policy {
             validate_segmented_recording_path(path)?;
             self.worker.try_start_segmented_recording(path, policy)?;
+        } else if let Some(profile) = self.recording_profile {
+            self.worker.try_start_recording_profile(
+                path,
+                profile,
+                Some((
+                    self.recording_video_encoder.clone(),
+                    self.recording_audio_encoder.clone(),
+                )),
+            )?;
         } else {
             let encoder_config = is_production_recording_path(path).then(|| {
                 (
@@ -406,6 +427,9 @@ impl OutputRuntime {
     /// container rollover protocol, so the GUI disables this control instead
     /// of silently routing a production recording into `.obsr` files.
     pub(crate) fn configure_recording(&mut self, settings: &AppSettings) {
+        self.recording_profile = (settings.effective_recording_format()
+            == RecordingFormat::FragmentedMp4)
+            .then_some(OutputProfile::fragmented_mp4_h264_aac());
         let enabled = settings.recording_split_enabled
             && settings.effective_recording_format() == RecordingFormat::ReferencePacket;
         self.segmented_recording_policy = enabled.then(|| {
@@ -434,6 +458,14 @@ impl OutputRuntime {
     #[cfg(test)]
     pub(crate) const fn segmented_recording_policy(&self) -> Option<SegmentedRecordingPolicy> {
         self.segmented_recording_policy
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn recording_profile_kind(&self) -> Option<obs_rs_output::OutputProfileKind> {
+        match self.recording_profile {
+            Some(profile) => Some(profile.kind()),
+            None => None,
+        }
     }
 
     /// Returns the operator-facing replay configuration label.
@@ -1073,6 +1105,7 @@ fn is_production_recording_path(path: &str) -> bool {
     Path::new(path).extension().is_some_and(|extension| {
         extension.eq_ignore_ascii_case("mkv")
             || extension.eq_ignore_ascii_case("mp4")
+            || extension.eq_ignore_ascii_case("mov")
             || extension.eq_ignore_ascii_case("flv")
     })
 }
