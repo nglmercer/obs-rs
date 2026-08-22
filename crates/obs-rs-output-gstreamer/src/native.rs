@@ -334,6 +334,7 @@ impl GStreamerOutputSession {
             self.transport,
             OutputTransport::Matroska
                 | OutputTransport::Mp4
+                | OutputTransport::Mov
                 | OutputTransport::Flv
                 | OutputTransport::Hls
         ) {
@@ -394,6 +395,7 @@ impl GStreamerOutputSession {
             self.transport,
             OutputTransport::Matroska
                 | OutputTransport::Mp4
+                | OutputTransport::Mov
                 | OutputTransport::Flv
                 | OutputTransport::Hls
         ) {
@@ -421,6 +423,7 @@ impl GStreamerOutputSession {
             self.transport,
             OutputTransport::Matroska
                 | OutputTransport::Mp4
+                | OutputTransport::Mov
                 | OutputTransport::Flv
                 | OutputTransport::Hls
         ) {
@@ -550,7 +553,10 @@ fn configure_sources(
         source.set_format(gst::Format::Time);
         source.set_is_live(!matches!(
             plan.profile().transport(),
-            OutputTransport::Matroska | OutputTransport::Mp4 | OutputTransport::Flv
+            OutputTransport::Matroska
+                | OutputTransport::Mp4
+                | OutputTransport::Mov
+                | OutputTransport::Flv
         ));
         source.set_max_bytes(plan.bounded_queue_bytes() as u64);
         source.set_block(false);
@@ -636,6 +642,15 @@ fn pipeline_description(
             }
             let temp = final_path.with_extension("mp4.part");
             Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. mp4mux name=mux faststart=true ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+        }
+        (OutputTransport::Mov, ProductionDestination::Recording(final_path)) => {
+            if plan.video_config().codec != VideoCodec::H264 {
+                return Err(GStreamerError::Native(
+                    "MOV production recording currently requires H.264 video".to_owned(),
+                ));
+            }
+            let temp = final_path.with_extension("mov.part");
+            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. qtmux name=mux faststart=true ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
         }
         (OutputTransport::Flv, ProductionDestination::Recording(final_path)) => {
             if plan.video_config().codec != VideoCodec::H264 {
@@ -1099,6 +1114,23 @@ mod tests {
         assert_eq!(video.property::<u32>("max-bitrate"), 8_000_000);
         assert_eq!(video.property::<u32>("gop-size"), 90);
         assert_eq!(audio.property::<i32>("bitrate"), 192_000);
+    }
+
+    #[test]
+    fn mov_recording_uses_qtmux_and_a_hidden_atomic_path() {
+        gst::init().expect("GStreamer runtime");
+        if gst::ElementFactory::find("qtmux").is_none() {
+            return;
+        }
+        let plan = plan(OutputProfile::mov_h264_aac());
+        let destination = ProductionDestination::Recording(PathBuf::from("capture.mov"));
+        let (description, final_path, temp_path) =
+            pipeline_description(&plan, &destination).expect("MOV graph");
+        assert!(description.contains("qtmux name=mux"));
+        assert_eq!(final_path, Some(PathBuf::from("capture.mov")));
+        assert_eq!(temp_path, Some(PathBuf::from("capture.mov.part")));
+        gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
+            .expect("MOV pipeline parses");
     }
 
     #[test]

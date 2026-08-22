@@ -8,6 +8,7 @@ fn production_profile_presets_are_versioned_and_bounded() {
         OutputProfile::matroska_hevc_aac(),
         OutputProfile::matroska_av1_aac(),
         OutputProfile::mp4_h264_aac(),
+        OutputProfile::mov_h264_aac(),
         OutputProfile::flv_h264_aac(),
         OutputProfile::rtmp_h264_aac(),
         OutputProfile::rtmps_h264_aac(),
@@ -24,10 +25,11 @@ fn production_profile_presets_are_versioned_and_bounded() {
         .all(|profile| profile.queue_bytes() > 0 && profile.latency_millis() > 0));
     assert_eq!(profiles[1].transport(), OutputTransport::Matroska);
     assert_eq!(profiles[4].transport(), OutputTransport::Mp4);
-    assert_eq!(profiles[5].transport(), OutputTransport::Flv);
-    assert_eq!(profiles[8].transport(), OutputTransport::SrtMpegTs);
-    assert_eq!(profiles[9].video_codec(), OutputVideoCodec::Vp8);
-    assert_eq!(profiles[9].audio_codec(), OutputAudioCodec::Opus);
+    assert_eq!(profiles[5].transport(), OutputTransport::Mov);
+    assert_eq!(profiles[6].transport(), OutputTransport::Flv);
+    assert_eq!(profiles[9].transport(), OutputTransport::SrtMpegTs);
+    assert_eq!(profiles[10].video_codec(), OutputVideoCodec::Vp8);
+    assert_eq!(profiles[10].audio_codec(), OutputAudioCodec::Opus);
     assert_eq!(profiles[2].video_codec(), OutputVideoCodec::Hevc);
     assert_eq!(profiles[3].video_codec(), OutputVideoCodec::Av1);
     for profile in profiles {

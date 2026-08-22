@@ -577,33 +577,10 @@ fn populate_encoder_models(
     window.set_recording_codec_index(index_of(&recording_codecs, &settings.recording_codec));
     *controller.recording_codec_ids.borrow_mut() = recording_codecs;
 
+    let recording_profiles = output.capabilities().recording_formats();
     let recording_formats = RecordingFormat::ALL
         .into_iter()
-        .filter(|format| match format {
-            RecordingFormat::ReferencePacket => true,
-            RecordingFormat::Matroska => {
-                output
-                    .capabilities()
-                    .recording_formats()
-                    .iter()
-                    .any(|profile| {
-                        matches!(
-                            profile,
-                            OutputProfileKind::MatroskaH264Aac
-                                | OutputProfileKind::MatroskaHevcAac
-                                | OutputProfileKind::MatroskaAv1Aac
-                        )
-                    })
-            }
-            RecordingFormat::Mp4 => output
-                .capabilities()
-                .recording_formats()
-                .contains(&OutputProfileKind::Mp4H264Aac),
-            RecordingFormat::Flv => output
-                .capabilities()
-                .recording_formats()
-                .contains(&OutputProfileKind::FlvH264Aac),
-        })
+        .filter(|format| recording_format_available(*format, recording_profiles))
         .collect::<Vec<_>>();
     window.set_recording_format_names(string_model(
         recording_formats
@@ -644,6 +621,23 @@ fn populate_encoder_models(
         &controller.recording_audio_encoder_ids.borrow(),
         &settings.recording_audio_encoder.id().to_owned(),
     ));
+}
+
+fn recording_format_available(format: RecordingFormat, profiles: &[OutputProfileKind]) -> bool {
+    match format {
+        RecordingFormat::ReferencePacket => true,
+        RecordingFormat::Matroska => profiles.iter().any(|profile| {
+            matches!(
+                profile,
+                OutputProfileKind::MatroskaH264Aac
+                    | OutputProfileKind::MatroskaHevcAac
+                    | OutputProfileKind::MatroskaAv1Aac
+            )
+        }),
+        RecordingFormat::Mp4 => profiles.contains(&OutputProfileKind::Mp4H264Aac),
+        RecordingFormat::Mov => profiles.contains(&OutputProfileKind::MovH264Aac),
+        RecordingFormat::Flv => profiles.contains(&OutputProfileKind::FlvH264Aac),
+    }
 }
 
 fn show_protocol_fields(window: &SettingsWindow, protocol: StreamProtocol) {
