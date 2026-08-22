@@ -1049,6 +1049,34 @@ fn transform_for_rect(base: FrameTransform, rect: ItemRect, canvas: (u32, u32)) 
     .unwrap_or(base)
 }
 
+/// Rotates a canvas-space delta into or out of the source-local frame.
+///
+/// The media transform uses the same clockwise matrix as the renderer. Crop
+/// handles need the inverse mapping for pointer movement, while the retained
+/// opposite edge needs the forward mapping when its local translation changes.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "pointer deltas are bounded canvas coordinates and the rotation matrix is intentionally evaluated in f64"
+)]
+fn rotate_canvas_delta(dx: i64, dy: i64, rotation_milli_degrees: i32, inverse: bool) -> (i64, i64) {
+    let angle = f64::from(rotation_milli_degrees) / 180_000.0 * std::f64::consts::PI;
+    let (sin, cos) = angle.sin_cos();
+    let (x, y) = if inverse {
+        (
+            cos * dx as f64 + sin * dy as f64,
+            -sin * dx as f64 + cos * dy as f64,
+        )
+    } else {
+        (
+            cos * dx as f64 - sin * dy as f64,
+            sin * dx as f64 + cos * dy as f64,
+        )
+    };
+    (x.round() as i64, y.round() as i64)
+}
+
 /// Applies an Alt-drag on one of the eight transform handles as a source
 /// crop. The handle number is the ordinary 1-8 clockwise handle number.
 fn crop_transform(
@@ -1058,12 +1086,6 @@ fn crop_transform(
     dy: i64,
     canvas: (u32, u32),
 ) -> FrameTransform {
-    // Axis-aligned crop handles are unambiguous before rotation. The dialog
-    // remains the explicit editing path for a rotated item until a rotated
-    // handle overlay is added.
-    if base.is_rotated() {
-        return base;
-    }
     let scale_source_delta = |delta: i64, scale: u32| {
         delta
             .saturating_mul(UNIT_SCALE_MILLI)
@@ -1073,33 +1095,34 @@ fn crop_transform(
     let mut top = i64::from(base.crop_top());
     let mut right = i64::from(base.crop_right());
     let mut bottom = i64::from(base.crop_bottom());
-    let delta_x = scale_source_delta(dx, base.scale_x_milli());
-    let delta_y = scale_source_delta(dy, base.scale_y_milli());
+    let (pointer_local_x, pointer_local_y) = if base.is_rotated() {
+        rotate_canvas_delta(dx, dy, base.rotation_milli_degrees(), true)
+    } else {
+        (dx, dy)
+    };
+    let delta_x = scale_source_delta(pointer_local_x, base.scale_x_milli());
+    let delta_y = scale_source_delta(pointer_local_y, base.scale_y_milli());
     let max_left = (i64::from(canvas.0) - right - 1).max(0);
     let max_right = (i64::from(canvas.0) - left - 1).max(0);
     let max_top = (i64::from(canvas.1) - bottom - 1).max(0);
     let max_bottom = (i64::from(canvas.1) - top - 1).max(0);
-    let mut translate_x = i64::from(base.translate_x());
-    let mut translate_y = i64::from(base.translate_y());
+    let mut local_translate_x = 0;
+    let mut local_translate_y = 0;
     if matches!(handle, 1 | 7 | 8) {
         let next = (left + delta_x).clamp(0, max_left);
         let actual = next - left;
         left = next;
-        translate_x = translate_x.saturating_add(
-            actual
-                .saturating_mul(i64::from(base.scale_x_milli()))
-                .div_euclid(UNIT_SCALE_MILLI),
-        );
+        local_translate_x = actual
+            .saturating_mul(i64::from(base.scale_x_milli()))
+            .div_euclid(UNIT_SCALE_MILLI);
     }
     if matches!(handle, 1..=3) {
         let next = (top + delta_y).clamp(0, max_top);
         let actual = next - top;
         top = next;
-        translate_y = translate_y.saturating_add(
-            actual
-                .saturating_mul(i64::from(base.scale_y_milli()))
-                .div_euclid(UNIT_SCALE_MILLI),
-        );
+        local_translate_y = actual
+            .saturating_mul(i64::from(base.scale_y_milli()))
+            .div_euclid(UNIT_SCALE_MILLI);
     }
     if matches!(handle, 3..=5) {
         right = (right - delta_x).clamp(0, max_right);
@@ -1107,6 +1130,18 @@ fn crop_transform(
     if matches!(handle, 5..=7) {
         bottom = (bottom - delta_y).clamp(0, max_bottom);
     }
+    let (translation_delta_x, translation_delta_y) = if base.is_rotated() {
+        rotate_canvas_delta(
+            local_translate_x,
+            local_translate_y,
+            base.rotation_milli_degrees(),
+            false,
+        )
+    } else {
+        (local_translate_x, local_translate_y)
+    };
+    let translate_x = i64::from(base.translate_x()).saturating_add(translation_delta_x);
+    let translate_y = i64::from(base.translate_y()).saturating_add(translation_delta_y);
     let Ok(transform) = FrameTransform::new(
         base.scale_x_milli(),
         base.scale_y_milli(),
@@ -2207,6 +2242,28 @@ mod tests {
         assert_eq!(right.crop_right(), 100);
         assert_eq!(right.translate_x(), 0);
         assert_eq!(item_rect(right, CANVAS).width, 1_820);
+    }
+
+    #[test]
+    fn rotated_alt_crop_maps_pointer_deltas_into_source_axes() {
+        let base = FrameTransform::new(1_000, 1_000, 100, 50, false, false, 255)
+            .expect("transform")
+            .with_rotation_degrees(90)
+            .expect("rotation");
+
+        // At 90 degrees, source-local +X points down on the canvas. Moving
+        // the left crop edge down therefore retains the opposite edge by
+        // moving the visible rectangle down in canvas space.
+        let left = crop_transform(base, 8, 0, 100, CANVAS);
+        assert_eq!(left.crop_left(), 100);
+        assert_eq!(left.crop_top(), 0);
+        assert_eq!((left.translate_x(), left.translate_y()), (100, 150));
+
+        // Source-local +Y points left on the canvas at the same rotation.
+        let top = crop_transform(base, 2, -100, 0, CANVAS);
+        assert_eq!(top.crop_left(), 0);
+        assert_eq!(top.crop_top(), 100);
+        assert_eq!((top.translate_x(), top.translate_y()), (0, 50));
     }
 
     #[test]
