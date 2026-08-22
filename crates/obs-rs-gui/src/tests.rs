@@ -107,7 +107,7 @@ fn output_runtime_applies_bounded_replay_configuration() {
 }
 
 #[test]
-fn output_runtime_applies_split_configuration_only_to_reference_recordings() {
+fn output_runtime_applies_split_configuration_to_supported_recordings() {
     let format = initial_project()
         .expect("project")
         .active_profile_spec()
@@ -136,9 +136,15 @@ fn output_runtime_applies_split_configuration_only_to_reference_recordings() {
         ..AppSettings::default()
     };
     output.configure_recording(&production);
-    assert!(
-        output.segmented_recording_policy().is_none(),
-        "production containers must not silently use packet-file splitting"
+    let production_split_supported = output.capabilities().supports_segmented_recording()
+        && output
+            .capabilities()
+            .recording_formats()
+            .contains(&OutputProfileKind::MatroskaH264Aac);
+    assert_eq!(
+        output.segmented_recording_policy().is_some(),
+        production_split_supported,
+        "production split must follow the native capability boundary"
     );
 }
 
@@ -1160,6 +1166,70 @@ fn output_runtime_routes_reference_split_recording_to_numbered_files() {
     );
     assert!(MemoryMuxer::decode(&std::fs::read(&segment).expect("read segment")).is_ok());
     std::fs::remove_file(segment).expect("remove split fixture");
+}
+
+#[test]
+fn output_runtime_routes_production_split_recording_to_native_segments() {
+    let format = VideoFormat::new(64, 64, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+    if !output.capabilities().supports_segmented_recording()
+        || !output
+            .capabilities()
+            .recording_formats()
+            .contains(&OutputProfileKind::Mp4H264Aac)
+    {
+        return;
+    }
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("obs-rs-gui-native-split-{token}.mp4"));
+    output.configure_recording(&AppSettings {
+        recording_format: super::settings::RecordingFormat::Mp4,
+        recording_split_enabled: true,
+        recording_split_size_mib: 1,
+        recording_split_max_segments: 3,
+        ..AppSettings::default()
+    });
+    output
+        .start_recording(base.to_str().expect("UTF-8 temp path"))
+        .expect("native split recording should open");
+    for index in 0..90 {
+        let timestamp = u64::try_from(index).expect("index") * 33_333_333;
+        output.push_frame(&VideoFrame::solid(
+            format,
+            Timestamp::from_nanos(timestamp),
+            [20, 30, 40, 255],
+        ));
+    }
+    let bytes = output
+        .finish_recording()
+        .expect("native split recording should finalize");
+    assert!(bytes > 0);
+
+    let stem = base
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .expect("stem");
+    let mut published = 0_usize;
+    for index in 1..=3 {
+        let segment = base.with_file_name(format!("{stem}-{index:05}.mp4"));
+        if segment.is_file() {
+            published = published.saturating_add(1);
+            assert!(std::fs::metadata(&segment).expect("segment metadata").len() > 0);
+            std::fs::remove_file(segment).expect("remove native segment");
+        }
+        let temporary = base.with_file_name(format!("{stem}-{index:05}.mp4.part"));
+        assert!(
+            !temporary.exists(),
+            "native temporary segment must be cleaned"
+        );
+    }
+    assert!(
+        published > 0,
+        "GUI must publish at least one native segment"
+    );
 }
 
 #[test]

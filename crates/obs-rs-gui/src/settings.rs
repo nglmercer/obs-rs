@@ -382,8 +382,8 @@ pub(crate) struct AppSettings {
     pub(crate) replay_buffer_duration_seconds: u32,
     /// Maximum encoded replay history retained, in mebibytes.
     pub(crate) replay_buffer_capacity_mib: u32,
-    /// Publish numbered packet files instead of one packet file when the
-    /// effective recording format is the OBS-RS reference container.
+    /// Publish bounded numbered segments instead of one recording file when
+    /// the effective format has a supported split-muxer boundary.
     pub(crate) recording_split_enabled: bool,
     /// Target wall-clock duration for one split segment, in minutes.
     pub(crate) recording_split_duration_minutes: u32,

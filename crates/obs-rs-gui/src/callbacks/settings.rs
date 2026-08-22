@@ -68,6 +68,7 @@ pub(crate) struct SettingsController {
     recording_codec_ids: RefCell<Vec<VideoCodec>>,
     recording_format_ids: RefCell<Vec<RecordingFormat>>,
     recording_audio_encoder_ids: RefCell<Vec<String>>,
+    segmented_recording_supported: bool,
     /// Whether each offered video encoder runs on dedicated hardware, which is
     /// what decides whether the double-software-encode warning applies.
     video_encoder_hardware: RefCell<Vec<bool>>,
@@ -310,6 +311,10 @@ pub(crate) fn install_settings_window(
         recording_codec_ids: RefCell::new(Vec::new()),
         recording_format_ids: RefCell::new(Vec::new()),
         recording_audio_encoder_ids: RefCell::new(Vec::new()),
+        segmented_recording_supported: output
+            .borrow()
+            .capabilities()
+            .supports_segmented_recording(),
         video_encoder_hardware: RefCell::new(Vec::new()),
         draft_video: RefCell::new(VideoSettings::default()),
         browse_tool: detect_browse_tool(),
@@ -888,9 +893,10 @@ fn load_recording_page_draft(
         i32::try_from(settings.recording_split_max_segments)
             .unwrap_or(i32::try_from(RECORDING_SPLIT_SEGMENTS_DEFAULT).unwrap_or(64)),
     );
-    window.set_recording_split_supported(
-        settings.effective_recording_format() == RecordingFormat::ReferencePacket,
-    );
+    window.set_recording_split_supported(recording_split_available(
+        settings.effective_recording_format(),
+        controller.segmented_recording_supported,
+    ));
 }
 
 /// Copies the Video page's values into the draft.
@@ -1262,7 +1268,10 @@ fn refresh_recording_page(controller: &Rc<SettingsController>, quality: Recordin
             .copied()
             .unwrap_or_default()
     };
-    window.set_recording_split_supported(format == RecordingFormat::ReferencePacket);
+    window.set_recording_split_supported(recording_split_available(
+        format,
+        controller.segmented_recording_supported,
+    ));
     let settings = AppSettings {
         recording_directory: window.get_recording_directory().to_string(),
         recording_filename_without_spaces: window.get_recording_filename_without_spaces(),
@@ -1287,6 +1296,10 @@ fn refresh_recording_page(controller: &Rc<SettingsController>, quality: Recordin
     window.set_software_encoding_warning(
         software_stream && quality != RecordingQuality::SameAsStream,
     );
+}
+
+fn recording_split_available(format: RecordingFormat, native_supported: bool) -> bool {
+    format == RecordingFormat::ReferencePacket || native_supported
 }
 
 fn install_commit(

@@ -13,8 +13,8 @@ use obs_rs_engine::{
 };
 use obs_rs_media::{FrameScaler, RawVideoFrame, ScaleFilter, VideoFormat, VideoFrame};
 use obs_rs_output::{
-    AudioCodec, AudioEncoderConfig, EncoderImplementation, OutputProfile, RtmpConfig,
-    SegmentedRecordingPolicy, StreamProtocol, StreamState, StreamTarget, VideoCodec,
+    AudioCodec, AudioEncoderConfig, EncoderImplementation, OutputProfile, OutputProfileKind,
+    RtmpConfig, SegmentedRecordingPolicy, StreamProtocol, StreamState, StreamTarget, VideoCodec,
     VideoEncoderConfig,
 };
 use obs_rs_project::Project;
@@ -71,6 +71,7 @@ pub(crate) struct OutputRuntime {
     replay_buffer_capacity_bytes: usize,
     replay_buffer_duration: Duration,
     segmented_recording_policy: Option<SegmentedRecordingPolicy>,
+    segmented_recording_requested: bool,
     recording_profile: Option<OutputProfile>,
     /// A canvas change accepted while an output was running.
     ///
@@ -153,6 +154,7 @@ impl OutputRuntime {
             replay_buffer_capacity_bytes: replay_capacity_bytes(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT),
             replay_buffer_duration: Duration::from_secs(u64::from(REPLAY_BUFFER_DURATION_DEFAULT)),
             segmented_recording_policy: None,
+            segmented_recording_requested: false,
             recording_profile: None,
             staged_video_format: None,
             scaler: None,
@@ -325,6 +327,12 @@ impl OutputRuntime {
         if let Some(policy) = self.segmented_recording_policy {
             validate_segmented_recording_path(path)?;
             self.worker.start_segmented_recording(path, policy)?;
+        } else if self.segmented_recording_requested && is_production_recording_path(path) {
+            return Err(
+                "configured production split recording is unavailable on this host"
+                    .to_owned()
+                    .into(),
+            );
         } else if let Some(profile) = self.recording_profile {
             self.worker.start_recording_profile(
                 path,
@@ -352,6 +360,12 @@ impl OutputRuntime {
         if let Some(policy) = self.segmented_recording_policy {
             validate_segmented_recording_path(path)?;
             self.worker.try_start_segmented_recording(path, policy)?;
+        } else if self.segmented_recording_requested && is_production_recording_path(path) {
+            return Err(
+                "configured production split recording is unavailable on this host"
+                    .to_owned()
+                    .into(),
+            );
         } else if let Some(profile) = self.recording_profile {
             self.worker.try_start_recording_profile(
                 path,
@@ -422,16 +436,18 @@ impl OutputRuntime {
 
     /// Applies the bounded split policy for the next recording.
     ///
-    /// Split output is intentionally enabled only for the reference packet
-    /// format in this packet. Production muxers need their own keyframe and
-    /// container rollover protocol, so the GUI disables this control instead
-    /// of silently routing a production recording into `.obsr` files.
+    /// Reference recordings use the portable packet writer. Production
+    /// containers use the native bounded split-muxer boundary when the host
+    /// advertises it; the two paths share only this policy, not a container or
+    /// a second source of recording state.
     pub(crate) fn configure_recording(&mut self, settings: &AppSettings) {
-        self.recording_profile = (settings.effective_recording_format()
-            == RecordingFormat::FragmentedMp4)
-            .then_some(OutputProfile::fragmented_mp4_h264_aac());
+        let format = settings.effective_recording_format();
+        self.segmented_recording_requested =
+            settings.recording_split_enabled && format != RecordingFormat::ReferencePacket;
         let enabled = settings.recording_split_enabled
-            && settings.effective_recording_format() == RecordingFormat::ReferencePacket;
+            && segmented_recording_format_available(&self.capabilities, format);
+        self.recording_profile = (format == RecordingFormat::FragmentedMp4 && !enabled)
+            .then_some(OutputProfile::fragmented_mp4_h264_aac());
         self.segmented_recording_policy = enabled.then(|| {
             let duration = settings.recording_split_duration_minutes.clamp(
                 *RECORDING_SPLIT_DURATION_MINUTES_RANGE.start(),
@@ -1110,14 +1126,35 @@ fn is_production_recording_path(path: &str) -> bool {
     })
 }
 
+fn segmented_recording_format_available(
+    capabilities: &OutputCapabilitiesSnapshot,
+    format: RecordingFormat,
+) -> bool {
+    if format == RecordingFormat::ReferencePacket {
+        return true;
+    }
+    if !capabilities.supports_segmented_recording() {
+        return false;
+    }
+    let profile = match format {
+        RecordingFormat::Matroska => OutputProfileKind::MatroskaH264Aac,
+        RecordingFormat::Mp4 | RecordingFormat::FragmentedMp4 => OutputProfileKind::Mp4H264Aac,
+        RecordingFormat::Mov => OutputProfileKind::MovH264Aac,
+        RecordingFormat::Flv => OutputProfileKind::FlvH264Aac,
+        RecordingFormat::ReferencePacket => return true,
+    };
+    capabilities.recording_formats().contains(&profile)
+}
+
 fn validate_segmented_recording_path(path: &str) -> Result<(), Box<dyn Error>> {
-    if Path::new(path)
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("obsr"))
-    {
+    if Path::new(path).extension().is_some_and(|extension| {
+        ["obsr", "mkv", "mp4", "mov", "flv"]
+            .into_iter()
+            .any(|expected| extension.eq_ignore_ascii_case(expected))
+    }) {
         Ok(())
     } else {
-        Err("split recording requires the OBS-RS packet (.obsr) format".into())
+        Err("split recording requires .obsr, .mkv, .mp4, .mov, or .flv".into())
     }
 }
 

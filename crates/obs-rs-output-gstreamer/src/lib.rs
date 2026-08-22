@@ -263,6 +263,7 @@ pub struct OutputCapabilitiesSnapshot {
     audio_encoders: Vec<AudioEncoderCapability>,
     recording_codecs: Vec<VideoCodec>,
     recording_formats: Vec<OutputProfileKind>,
+    segmented_recording: bool,
 }
 
 impl OutputCapabilitiesSnapshot {
@@ -289,6 +290,12 @@ impl OutputCapabilitiesSnapshot {
     #[must_use]
     pub fn recording_formats(&self) -> &[OutputProfileKind] {
         &self.recording_formats
+    }
+
+    /// Reports whether the native bounded split-muxer boundary is available.
+    #[must_use]
+    pub const fn supports_segmented_recording(&self) -> bool {
+        self.segmented_recording
     }
 }
 
@@ -440,6 +447,7 @@ impl GStreamerCapabilitySnapshot {
             .into_iter()
             .filter(|profile| self.output.supports(*profile))
             .collect(),
+            segmented_recording: self.supports_segmented_recording(),
         }
     }
 }
