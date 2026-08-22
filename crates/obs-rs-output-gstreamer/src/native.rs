@@ -34,6 +34,8 @@ pub struct OutputSessionTelemetry {
     dropped: u64,
     reconnects: u64,
     keyframes: u64,
+    video_queue_bytes: u64,
+    audio_queue_bytes: u64,
     last_video_timestamp: Option<Timestamp>,
     last_audio_timestamp: Option<Timestamp>,
     audio_drift_nanos: i128,
@@ -61,6 +63,14 @@ impl OutputSessionTelemetry {
     #[must_use]
     pub const fn keyframes(self) -> u64 {
         self.keyframes
+    }
+    #[must_use]
+    pub const fn video_queue_bytes(self) -> u64 {
+        self.video_queue_bytes
+    }
+    #[must_use]
+    pub const fn audio_queue_bytes(self) -> u64 {
+        self.audio_queue_bytes
     }
     #[must_use]
     pub const fn audio_drift_nanos(self) -> i128 {
@@ -268,6 +278,7 @@ impl GStreamerOutputSession {
         }
         self.telemetry.video_submitted = self.telemetry.video_submitted.saturating_add(1);
         self.telemetry.last_video_timestamp = Some(timestamp);
+        self.refresh_queue_levels();
         self.record_latency(started.elapsed().as_nanos());
         self.update_drift();
         Ok(())
@@ -317,6 +328,7 @@ impl GStreamerOutputSession {
         }
         self.telemetry.audio_submitted = self.telemetry.audio_submitted.saturating_add(1);
         self.telemetry.last_audio_timestamp = Some(timestamp);
+        self.refresh_queue_levels();
         self.record_latency(started.elapsed().as_nanos());
         self.update_drift();
         Ok(())
@@ -388,6 +400,7 @@ impl GStreamerOutputSession {
     ///
     /// Returns the pipeline error when a recording fails or live recovery fails.
     pub fn poll_health(&mut self) -> Result<(), GStreamerError> {
+        self.refresh_queue_levels();
         let failed = self.pipeline.bus().is_some_and(|bus| {
             bus.pop_filtered(&[gst::MessageType::Error])
                 .is_some_and(|message| matches!(message.view(), gst::MessageView::Error(_)))
@@ -491,6 +504,11 @@ impl GStreamerOutputSession {
             self.telemetry.audio_drift_nanos =
                 i128::from(audio.as_nanos()) - i128::from(video.as_nanos());
         }
+    }
+
+    fn refresh_queue_levels(&mut self) {
+        self.telemetry.video_queue_bytes = self.video.property::<u64>("current-level-bytes");
+        self.telemetry.audio_queue_bytes = self.audio.property::<u64>("current-level-bytes");
     }
 
     fn schedule_reconnect(&mut self, now: Instant) {

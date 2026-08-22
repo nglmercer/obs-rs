@@ -389,6 +389,8 @@ pub struct ProductionStreamMetrics {
     pub audio_submitted: u64,
     pub dropped: u64,
     pub reconnects: u64,
+    pub video_queue_bytes: u64,
+    pub audio_queue_bytes: u64,
     pub max_submit_latency_nanos: u128,
 }
 
@@ -827,6 +829,8 @@ impl StreamOutput {
                 audio_submitted: telemetry.audio_submitted(),
                 dropped: telemetry.dropped(),
                 reconnects: telemetry.reconnects(),
+                video_queue_bytes: telemetry.video_queue_bytes(),
+                audio_queue_bytes: telemetry.audio_queue_bytes(),
                 max_submit_latency_nanos: telemetry.max_submit_latency_nanos(),
             });
         }
@@ -4227,6 +4231,8 @@ mod tests {
                 .expect("production telemetry");
             assert_eq!(metrics.video_submitted, 1, "{endpoint}");
             assert_eq!(metrics.audio_submitted, 1, "{endpoint}");
+            assert!(metrics.video_queue_bytes <= 1_048_576, "{endpoint}");
+            assert!(metrics.audio_queue_bytes <= 1_048_576, "{endpoint}");
         }
     }
 
