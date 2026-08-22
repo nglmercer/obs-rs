@@ -18,6 +18,8 @@ pub enum OutputProfileKind {
     MatroskaAv1Aac,
     /// MP4 recording with H.264 video and AAC audio.
     Mp4H264Aac,
+    /// Fragmented MP4 recording with H.264 video and AAC audio.
+    FragmentedMp4H264Aac,
     /// MOV recording with H.264 video and AAC audio.
     MovH264Aac,
     /// FLV recording with H.264 video and AAC audio.
@@ -46,6 +48,7 @@ impl OutputProfileKind {
             Self::MatroskaHevcAac => "matroska-hevc-aac",
             Self::MatroskaAv1Aac => "matroska-av1-aac",
             Self::Mp4H264Aac => "mp4-h264-aac",
+            Self::FragmentedMp4H264Aac => "fragmented-mp4-h264-aac",
             Self::MovH264Aac => "mov-h264-aac",
             Self::FlvH264Aac => "flv-h264-aac",
             Self::RtmpH264Aac => "rtmp-h264-aac",
@@ -66,6 +69,7 @@ impl OutputProfileKind {
             "matroska-hevc-aac" => Some(Self::MatroskaHevcAac),
             "matroska-av1-aac" => Some(Self::MatroskaAv1Aac),
             "mp4-h264-aac" => Some(Self::Mp4H264Aac),
+            "fragmented-mp4-h264-aac" => Some(Self::FragmentedMp4H264Aac),
             "mov-h264-aac" => Some(Self::MovH264Aac),
             "flv-h264-aac" => Some(Self::FlvH264Aac),
             "rtmp-h264-aac" => Some(Self::RtmpH264Aac),
@@ -183,6 +187,19 @@ impl OutputProfile {
     pub const fn mp4_h264_aac() -> Self {
         Self::new(
             OutputProfileKind::Mp4H264Aac,
+            OutputVideoCodec::H264,
+            OutputAudioCodec::Aac,
+            OutputTransport::Mp4,
+            32 * 1_024 * 1_024,
+            4_000,
+        )
+    }
+
+    /// Fragmented MP4 recording with H.264 and AAC.
+    #[must_use]
+    pub const fn fragmented_mp4_h264_aac() -> Self {
+        Self::new(
+            OutputProfileKind::FragmentedMp4H264Aac,
             OutputVideoCodec::H264,
             OutputAudioCodec::Aac,
             OutputTransport::Mp4,

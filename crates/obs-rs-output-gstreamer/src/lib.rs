@@ -408,6 +408,7 @@ impl GStreamerCapabilitySnapshot {
             recording_codecs: [
                 (OutputProfileKind::MatroskaH264Aac, VideoCodec::H264),
                 (OutputProfileKind::Mp4H264Aac, VideoCodec::H264),
+                (OutputProfileKind::FragmentedMp4H264Aac, VideoCodec::H264),
                 (OutputProfileKind::MovH264Aac, VideoCodec::H264),
                 (OutputProfileKind::FlvH264Aac, VideoCodec::H264),
                 (OutputProfileKind::MatroskaHevcAac, VideoCodec::Hevc),
@@ -426,6 +427,7 @@ impl GStreamerCapabilitySnapshot {
                 OutputProfileKind::MatroskaHevcAac,
                 OutputProfileKind::MatroskaAv1Aac,
                 OutputProfileKind::Mp4H264Aac,
+                OutputProfileKind::FragmentedMp4H264Aac,
                 OutputProfileKind::MovH264Aac,
                 OutputProfileKind::FlvH264Aac,
             ]
@@ -454,7 +456,10 @@ fn production_profiles(selected: &BTreeMap<&'static str, String>) -> Vec<OutputP
         profiles.push(OutputProfileKind::MatroskaAv1Aac);
     }
     if has("h264") && has("aac") && element_available("mp4mux") {
-        profiles.push(OutputProfileKind::Mp4H264Aac);
+        profiles.extend([
+            OutputProfileKind::Mp4H264Aac,
+            OutputProfileKind::FragmentedMp4H264Aac,
+        ]);
     }
     if has("h264") && has("aac") && element_available("qtmux") {
         profiles.push(OutputProfileKind::MovH264Aac);

@@ -10,8 +10,8 @@ use gstreamer_app as gst_app;
 use obs_rs_audio::{AudioBuffer, AudioFormat};
 use obs_rs_media::{PixelFormat, RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{
-    EncoderPreset, OutputTransport, RateControl, ReconnectOutcome, ReconnectPolicy,
-    StreamingTransport, VideoCodec,
+    EncoderPreset, OutputProfileKind, OutputTransport, RateControl, ReconnectOutcome,
+    ReconnectPolicy, StreamingTransport, VideoCodec,
 };
 
 use super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
@@ -664,7 +664,12 @@ fn pipeline_description(
                 ));
             }
             let temp = final_path.with_extension("mp4.part");
-            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. mp4mux name=mux faststart=true ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+            let mux = if plan.profile().kind() == OutputProfileKind::FragmentedMp4H264Aac {
+                "mp4mux name=mux fragment-duration=1000 streamable=true"
+            } else {
+                "mp4mux name=mux faststart=true"
+            };
+            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. {mux} ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
         }
         (OutputTransport::Mov, ProductionDestination::Recording(final_path)) => {
             if plan.video_config().codec != VideoCodec::H264 {
@@ -1167,6 +1172,24 @@ mod tests {
         assert_eq!(temp_path, Some(PathBuf::from("capture.mov.part")));
         gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
             .expect("MOV pipeline parses");
+    }
+
+    #[test]
+    fn fragmented_mp4_recording_uses_bounded_fragmented_muxing() {
+        gst::init().expect("GStreamer runtime");
+        if gst::ElementFactory::find("mp4mux").is_none() {
+            return;
+        }
+        let plan = plan(OutputProfile::fragmented_mp4_h264_aac());
+        let destination = ProductionDestination::Recording(PathBuf::from("capture.mp4"));
+        let (description, final_path, temp_path) =
+            pipeline_description(&plan, &destination).expect("fragmented MP4 graph");
+        assert!(description.contains("fragment-duration=1000"));
+        assert!(description.contains("streamable=true"));
+        assert_eq!(final_path, Some(PathBuf::from("capture.mp4")));
+        assert_eq!(temp_path, Some(PathBuf::from("capture.mp4.part")));
+        gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
+            .expect("fragmented MP4 pipeline parses");
     }
 
     #[test]
