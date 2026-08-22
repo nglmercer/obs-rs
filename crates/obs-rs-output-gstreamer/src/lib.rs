@@ -7,8 +7,8 @@ use std::{collections::BTreeMap, fmt, path::PathBuf, process::Command};
 
 use obs_rs_output::{
     AudioCodec, AudioEncoderConfig, EncoderPreset, OutputAudioCodec, OutputCapabilities,
-    OutputProfile, OutputProfileKind, OutputTransport, OutputVideoCodec, RateControl, StreamTarget,
-    VideoCodec, VideoEncoderConfig,
+    OutputProfile, OutputProfileKind, OutputTransport, OutputVideoCodec, RateControl,
+    SegmentedRecordingPolicy, StreamTarget, VideoCodec, VideoEncoderConfig,
 };
 use url::Url;
 
@@ -675,6 +675,15 @@ fn audio_encoder_capability(element: &str) -> AudioEncoderCapability {
 #[derive(Clone, Eq, PartialEq)]
 pub enum ProductionDestination {
     Recording(PathBuf),
+    /// A bounded rolling set of native muxer segments.
+    ///
+    /// The native adapter retains at most the policy's segment count while a
+    /// session is active. Engine/UI routing is intentionally separate from
+    /// this native boundary.
+    SegmentedRecording {
+        base_path: PathBuf,
+        policy: SegmentedRecordingPolicy,
+    },
     Rtmp {
         endpoint: String,
     },
@@ -707,6 +716,11 @@ impl fmt::Debug for ProductionDestination {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Recording(path) => formatter.debug_tuple("Recording").field(path).finish(),
+            Self::SegmentedRecording { base_path, policy } => formatter
+                .debug_struct("SegmentedRecording")
+                .field("base_path", base_path)
+                .field("policy", policy)
+                .finish(),
             Self::Rtmp { .. } => formatter
                 .debug_struct("Rtmp")
                 .field("endpoint", &"[REDACTED]")
@@ -863,14 +877,26 @@ impl ProductionDestination {
             (OutputTransport::Matroska, Self::Recording(path)) => {
                 recording_path_has_extension(path, "mkv")
             }
+            (OutputTransport::Matroska, Self::SegmentedRecording { base_path, .. }) => {
+                recording_path_has_extension(base_path, "mkv")
+            }
             (OutputTransport::Mp4, Self::Recording(path)) => {
                 recording_path_has_extension(path, "mp4")
+            }
+            (OutputTransport::Mp4, Self::SegmentedRecording { base_path, .. }) => {
+                recording_path_has_extension(base_path, "mp4")
             }
             (OutputTransport::Mov, Self::Recording(path)) => {
                 recording_path_has_extension(path, "mov")
             }
+            (OutputTransport::Mov, Self::SegmentedRecording { base_path, .. }) => {
+                recording_path_has_extension(base_path, "mov")
+            }
             (OutputTransport::Flv, Self::Recording(path)) => {
                 recording_path_has_extension(path, "flv")
+            }
+            (OutputTransport::Flv, Self::SegmentedRecording { base_path, .. }) => {
+                recording_path_has_extension(base_path, "flv")
             }
             (OutputTransport::Rtmp, Self::Rtmp { endpoint }) => {
                 valid_stream_url(endpoint, "rtmp", true)
@@ -1136,7 +1162,11 @@ impl ProductionPipelinePlan {
             video_encoder,
             audio_encoder,
             bounded_queue_bytes: profile.queue_bytes(),
-            atomic_recording: matches!(destination, ProductionDestination::Recording(_)),
+            atomic_recording: matches!(
+                destination,
+                ProductionDestination::Recording(_)
+                    | ProductionDestination::SegmentedRecording { .. }
+            ),
             video_config,
             audio_config,
             rtmp_sink: selected_rtmp_sink(profile, capabilities)?,
@@ -1200,7 +1230,11 @@ impl ProductionPipelinePlan {
             video_encoder: video.implementation.id().to_owned(),
             audio_encoder: audio.implementation.id().to_owned(),
             bounded_queue_bytes: profile.queue_bytes(),
-            atomic_recording: matches!(destination, ProductionDestination::Recording(_)),
+            atomic_recording: matches!(
+                destination,
+                ProductionDestination::Recording(_)
+                    | ProductionDestination::SegmentedRecording { .. }
+            ),
             video_config: video.clone(),
             audio_config: audio.clone(),
             rtmp_sink: selected_rtmp_sink(profile, capabilities)?,
@@ -1600,6 +1634,19 @@ mod tests {
                 .validate_for(OutputProfile::mp4_h264_aac())
                 .is_err()
         );
+        let policy = SegmentedRecordingPolicy::new(1_000_000, std::time::Duration::from_secs(5), 3)
+            .expect("segment policy");
+        let segmented = ProductionDestination::SegmentedRecording {
+            base_path: std::path::Path::new("capture.mp4").to_owned(),
+            policy,
+        };
+        assert!(segmented
+            .validate_for(OutputProfile::mp4_h264_aac())
+            .is_ok());
+        assert!(segmented
+            .validate_for(OutputProfile::matroska_h264_aac())
+            .is_err());
+        assert!(format!("{segmented:?}").contains("segments"));
     }
 
     #[test]

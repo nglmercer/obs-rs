@@ -11,7 +11,7 @@ use obs_rs_audio::{AudioBuffer, AudioFormat};
 use obs_rs_media::{PixelFormat, RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::{
     EncoderPreset, OutputProfileKind, OutputTransport, RateControl, ReconnectOutcome,
-    ReconnectPolicy, StreamingTransport, VideoCodec,
+    ReconnectPolicy, SegmentedRecordingPolicy, StreamingTransport, VideoCodec,
 };
 
 use super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
@@ -96,6 +96,7 @@ pub struct GStreamerOutputSession {
     telemetry: OutputSessionTelemetry,
     final_path: Option<PathBuf>,
     temp_path: Option<PathBuf>,
+    segmented_policy: Option<SegmentedRecordingPolicy>,
     transport: OutputTransport,
     video_duration: gst::ClockTime,
     reconnect_policy: ReconnectPolicy,
@@ -155,8 +156,17 @@ impl GStreamerOutputSession {
     ) -> Result<Self, GStreamerError> {
         gst::init().map_err(native_error)?;
         destination.validate_for(plan.profile())?;
-        let (description, final_path, temp_path) = pipeline_description(plan, destination)?;
+        let pipeline_description = pipeline_description(plan, destination)?;
+        let PipelineDescription {
+            description,
+            final_path,
+            temp_path,
+            segmented_policy,
+        } = pipeline_description;
         recover_stale_recording_artifact(temp_path.as_deref())?;
+        if let (Some(base_path), Some(policy)) = (final_path.as_deref(), segmented_policy) {
+            recover_stale_segment_artifacts(base_path, policy)?;
+        }
         let element = gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
             .map_err(native_error)?;
         let pipeline = element.downcast::<gst::Pipeline>().map_err(|_| {
@@ -166,6 +176,9 @@ impl GStreamerOutputSession {
             configure_encoders(&pipeline, plan, video_format)?;
         }
         configure_sink(&pipeline, destination, temp_path.as_deref())?;
+        if let (Some(base_path), Some(policy)) = (final_path.as_deref(), segmented_policy) {
+            configure_segmented_location_callback(&pipeline, base_path, policy)?;
+        }
         let video = appsrc(&pipeline, "video_source")?;
         let audio = appsrc(&pipeline, "audio_source")?;
         configure_sources(&video, &audio, plan, video_format, audio_format)?;
@@ -184,6 +197,7 @@ impl GStreamerOutputSession {
             telemetry: OutputSessionTelemetry::default(),
             final_path,
             temp_path,
+            segmented_policy,
             transport: plan.profile().transport(),
             video_duration,
             reconnect_policy,
@@ -384,7 +398,9 @@ impl GStreamerOutputSession {
         self.pipeline
             .set_state(gst::State::Null)
             .map_err(native_error)?;
-        if let (Some(temp), Some(final_path)) = (&self.temp_path, &self.final_path) {
+        if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
+            publish_segmented_recording(base_path, policy)?;
+        } else if let (Some(temp), Some(final_path)) = (&self.temp_path, &self.final_path) {
             publish_recording_artifact(temp, final_path)?;
         }
         self.state = NativeOutputState::Closed;
@@ -540,6 +556,9 @@ impl Drop for GStreamerOutputSession {
             if let Some(temp) = &self.temp_path {
                 let _ = fs::remove_file(temp);
             }
+            if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
+                let _ = recover_stale_segment_artifacts(base_path, policy);
+            }
         }
     }
 }
@@ -619,10 +638,50 @@ fn video_caps(
         .build())
 }
 
+struct PipelineDescription {
+    description: String,
+    final_path: Option<PathBuf>,
+    temp_path: Option<PathBuf>,
+    segmented_policy: Option<SegmentedRecordingPolicy>,
+}
+
+impl PipelineDescription {
+    fn live(description: String) -> Self {
+        Self {
+            description,
+            final_path: None,
+            temp_path: None,
+            segmented_policy: None,
+        }
+    }
+
+    fn recording(description: String, final_path: PathBuf, temp_path: PathBuf) -> Self {
+        Self {
+            description,
+            final_path: Some(final_path),
+            temp_path: Some(temp_path),
+            segmented_policy: None,
+        }
+    }
+
+    fn segmented(
+        description: String,
+        base_path: PathBuf,
+        policy: SegmentedRecordingPolicy,
+    ) -> Self {
+        Self {
+            description,
+            final_path: Some(base_path),
+            temp_path: None,
+            segmented_policy: Some(policy),
+        }
+    }
+}
+
 fn pipeline_description(
     plan: &ProductionPipelinePlan,
     destination: &ProductionDestination,
-) -> Result<(String, Option<PathBuf>, Option<PathBuf>), GStreamerError> {
+) -> Result<PipelineDescription, GStreamerError> {
     let queue = plan.bounded_queue_bytes();
     let video = plan.video_encoder();
     let audio = plan.audio_encoder();
@@ -640,70 +699,170 @@ fn pipeline_description(
     let audio_rate = audio_config.sample_rate;
     let audio_channels = audio_config.channels;
     let a = format!("appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream ! audioconvert ! audioresample ! audio/x-raw,rate={audio_rate},channels={audio_channels} ! {audio} name=audio_encoder ! ");
-    match (plan.profile().transport(), destination) {
-        (OutputTransport::Matroska, ProductionDestination::Recording(final_path)) => {
-            let temp = final_path.with_extension("mkv.part");
-            let parser = match plan.video_config().codec {
-                VideoCodec::H264 => "h264parse",
-                VideoCodec::Hevc => "h265parse",
-                VideoCodec::Av1 => "av1parse",
-                codec => {
-                    return Err(GStreamerError::Native(format!(
-                        "unsupported Matroska video codec {codec:?}"
-                    )))
-                }
-            };
-            Ok((format!("{v}{parser} ! mux. {a}aacparse ! mux. matroskamux name=mux ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+    match destination {
+        ProductionDestination::Recording(final_path) => {
+            recording_pipeline_description(plan, &v, &a, final_path)
         }
-        (OutputTransport::Mp4, ProductionDestination::Recording(final_path)) => {
-            if plan.video_config().codec != VideoCodec::H264 {
-                return Err(GStreamerError::Native(
-                    "MP4 production recording currently requires H.264 video".to_owned(),
-                ));
-            }
-            let temp = final_path.with_extension("mp4.part");
+        ProductionDestination::SegmentedRecording { base_path, policy } => {
+            segmented_recording_pipeline_description(plan, &v, &a, base_path, *policy)
+        }
+        _ => live_pipeline_description(plan, &v, &a, destination),
+    }
+}
+
+fn recording_pipeline_description(
+    plan: &ProductionPipelinePlan,
+    video: &str,
+    audio: &str,
+    final_path: &Path,
+) -> Result<PipelineDescription, GStreamerError> {
+    let (description, extension) = match plan.profile().transport() {
+        OutputTransport::Matroska => {
+            let parser = matroska_parser(plan.video_config().codec)?;
+            (
+                format!(
+                    "{video}{parser} ! mux. {audio}aacparse ! mux. matroskamux name=mux ! filesink name=output_sink"
+                ),
+                "mkv",
+            )
+        }
+        OutputTransport::Mp4 => {
+            require_h264(plan.video_config().codec, "MP4")?;
             let mux = if plan.profile().kind() == OutputProfileKind::FragmentedMp4H264Aac {
                 "mp4mux name=mux fragment-duration=1000 streamable=true"
             } else {
                 "mp4mux name=mux faststart=true"
             };
-            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. {mux} ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+            (
+                format!("{video}h264parse ! mux. {audio}aacparse ! mux. {mux} ! filesink name=output_sink"),
+                "mp4",
+            )
         }
-        (OutputTransport::Mov, ProductionDestination::Recording(final_path)) => {
-            if plan.video_config().codec != VideoCodec::H264 {
-                return Err(GStreamerError::Native(
-                    "MOV production recording currently requires H.264 video".to_owned(),
-                ));
-            }
-            let temp = final_path.with_extension("mov.part");
-            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. qtmux name=mux faststart=true ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+        OutputTransport::Mov => {
+            require_h264(plan.video_config().codec, "MOV")?;
+            (
+                format!(
+                    "{video}h264parse ! mux. {audio}aacparse ! mux. qtmux name=mux faststart=true ! filesink name=output_sink"
+                ),
+                "mov",
+            )
         }
-        (OutputTransport::Flv, ProductionDestination::Recording(final_path)) => {
-            if plan.video_config().codec != VideoCodec::H264 {
-                return Err(GStreamerError::Native(
-                    "FLV production recording currently requires H.264 video".to_owned(),
-                ));
-            }
-            let temp = final_path.with_extension("flv.part");
-            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. flvmux name=mux streamable=false ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+        OutputTransport::Flv => {
+            require_h264(plan.video_config().codec, "FLV")?;
+            (
+                format!(
+                    "{video}h264parse ! mux. {audio}aacparse ! mux. flvmux name=mux streamable=false ! filesink name=output_sink"
+                ),
+                "flv",
+            )
         }
+        _ => {
+            return Err(GStreamerError::InvalidEndpoint(
+                "destination does not match pipeline".to_owned(),
+            ))
+        }
+    };
+    Ok(PipelineDescription::recording(
+        description,
+        final_path.to_owned(),
+        final_path.with_extension(format!("{extension}.part")),
+    ))
+}
+
+fn segmented_recording_pipeline_description(
+    plan: &ProductionPipelinePlan,
+    video: &str,
+    audio: &str,
+    base_path: &Path,
+    policy: SegmentedRecordingPolicy,
+) -> Result<PipelineDescription, GStreamerError> {
+    let (parser, muxer) = match plan.profile().transport() {
+        OutputTransport::Matroska => (matroska_parser(plan.video_config().codec)?, "matroskamux"),
+        OutputTransport::Mp4 => {
+            require_h264(plan.video_config().codec, "MP4")?;
+            ("h264parse", "mp4mux")
+        }
+        OutputTransport::Mov => {
+            require_h264(plan.video_config().codec, "MOV")?;
+            ("h264parse", "qtmux")
+        }
+        OutputTransport::Flv => {
+            require_h264(plan.video_config().codec, "FLV")?;
+            ("h264parse", "flvmux")
+        }
+        _ => {
+            return Err(GStreamerError::InvalidEndpoint(
+                "destination does not match pipeline".to_owned(),
+            ))
+        }
+    };
+    Ok(PipelineDescription::segmented(
+        segmented_pipeline_description(video, audio, parser, muxer, policy),
+        base_path.to_owned(),
+        policy,
+    ))
+}
+
+fn live_pipeline_description(
+    plan: &ProductionPipelinePlan,
+    video: &str,
+    audio: &str,
+    destination: &ProductionDestination,
+) -> Result<PipelineDescription, GStreamerError> {
+    match (plan.profile().transport(), destination) {
         (OutputTransport::Rtmp, ProductionDestination::Rtmp { .. })
         | (OutputTransport::Rtmps, ProductionDestination::Rtmps { .. }) => {
             let sink = plan.rtmp_sink().ok_or_else(|| {
                 GStreamerError::Native("negotiated RTMP sink is missing".to_owned())
             })?;
-            Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. flvmux name=mux streamable=true ! {sink} name=output_sink"), None, None))
+            Ok(PipelineDescription::live(format!("{video}h264parse config-interval=-1 ! mux. {audio}aacparse ! mux. flvmux name=mux streamable=true ! {sink} name=output_sink")))
         }
         (OutputTransport::SrtMpegTs, ProductionDestination::Srt { .. }) =>
-            Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. mpegtsmux name=mux ! srtsink name=output_sink"), None, None)),
+            Ok(PipelineDescription::live(format!("{video}h264parse config-interval=-1 ! mux. {audio}aacparse ! mux. mpegtsmux name=mux ! srtsink name=output_sink"))),
         (OutputTransport::WebRtc, ProductionDestination::WebRtc { .. }) =>
-            Ok((format!("whipclientsink name=output_sink appsrc name=video_source ! queue max-size-bytes={queue} leaky=downstream ! videoconvert ! output_sink. appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream ! audioconvert ! audioresample ! output_sink."), None, None)),
+            Ok(PipelineDescription::live(format!("whipclientsink name=output_sink appsrc name=video_source ! queue max-size-bytes={} leaky=downstream ! videoconvert ! output_sink. appsrc name=audio_source ! queue max-size-bytes={} leaky=downstream ! audioconvert ! audioresample ! output_sink.", plan.bounded_queue_bytes(), plan.bounded_queue_bytes()))),
         (OutputTransport::Hls, ProductionDestination::Hls { .. }) =>
-            Ok((format!("hlssink2 name=output_sink {v}h264parse ! output_sink.video {a}aacparse ! output_sink.audio"), None, None)),
+            Ok(PipelineDescription::live(format!("hlssink2 name=output_sink {video}h264parse ! output_sink.video {audio}aacparse ! output_sink.audio"))),
         (OutputTransport::RistMpegTs, ProductionDestination::Rist { .. }) =>
-            Ok((format!("{v}h264parse config-interval=-1 ! mux. {a}aacparse ! mux. mpegtsmux name=mux ! rtpmp2tpay ! ristsink name=output_sink"), None, None)),
+            Ok(PipelineDescription::live(format!("{video}h264parse config-interval=-1 ! mux. {audio}aacparse ! mux. mpegtsmux name=mux ! rtpmp2tpay ! ristsink name=output_sink"))),
         _ => Err(GStreamerError::InvalidEndpoint("destination does not match pipeline".to_owned())),
     }
+}
+
+fn matroska_parser(codec: VideoCodec) -> Result<&'static str, GStreamerError> {
+    match codec {
+        VideoCodec::H264 => Ok("h264parse"),
+        VideoCodec::Hevc => Ok("h265parse"),
+        VideoCodec::Av1 => Ok("av1parse"),
+        codec => Err(GStreamerError::Native(format!(
+            "unsupported Matroska video codec {codec:?}"
+        ))),
+    }
+}
+
+fn require_h264(codec: VideoCodec, container: &str) -> Result<(), GStreamerError> {
+    if codec == VideoCodec::H264 {
+        Ok(())
+    } else {
+        Err(GStreamerError::Native(format!(
+            "{container} production recording currently requires H.264 video"
+        )))
+    }
+}
+
+fn segmented_pipeline_description(
+    video: &str,
+    audio: &str,
+    parser: &str,
+    muxer: &str,
+    policy: SegmentedRecordingPolicy,
+) -> String {
+    let duration = u64::try_from(policy.max_segment_duration().as_nanos()).unwrap_or(u64::MAX);
+    let bytes = u64::try_from(policy.max_segment_bytes()).unwrap_or(u64::MAX);
+    format!(
+        "splitmuxsink name=output_sink muxer-factory={muxer} max-size-time={duration} max-size-bytes={bytes} max-files={} start-index=1 {video}{parser} ! output_sink.video {audio}aacparse ! output_sink.audio_0",
+        policy.max_segments()
+    )
 }
 
 fn configure_encoders(
@@ -951,6 +1110,10 @@ fn configure_sink(
             })?;
             sink.set_property("location", location);
         }
+        ProductionDestination::SegmentedRecording { base_path, .. } => {
+            let location = segmented_recording_pattern(base_path)?;
+            sink.set_property("location", location.to_string_lossy().as_ref());
+        }
         ProductionDestination::Rtmp { endpoint } | ProductionDestination::Rtmps { endpoint } => {
             sink.set_property("location", endpoint);
         }
@@ -1006,6 +1169,28 @@ fn configure_sink(
     Ok(())
 }
 
+fn configure_segmented_location_callback(
+    pipeline: &gst::Pipeline,
+    base_path: &Path,
+    policy: SegmentedRecordingPolicy,
+) -> Result<(), GStreamerError> {
+    let sink = pipeline
+        .by_name("output_sink")
+        .ok_or_else(|| GStreamerError::Native("split sink is missing".to_owned()))?;
+    let base_path = base_path.to_owned();
+    sink.connect("format-location", false, move |values| {
+        let index = values
+            .get(1)
+            .and_then(|value| value.get::<u32>().ok())
+            .map_or(1, |value| usize::try_from(value).unwrap_or(1));
+        let slot = ((index.saturating_sub(1)) % policy.max_segments()).saturating_add(1);
+        let (_, temp_path) = segmented_recording_paths(&base_path, slot)
+            .expect("validated segmented recording path must remain representable");
+        Some(temp_path.to_string_lossy().to_string().to_value())
+    });
+    Ok(())
+}
+
 fn native_error(error: impl std::fmt::Display) -> GStreamerError {
     GStreamerError::Native(error.to_string())
 }
@@ -1014,13 +1199,112 @@ fn recover_stale_recording_artifact(temp_path: Option<&Path>) -> Result<(), GStr
     let Some(temp_path) = temp_path else {
         return Ok(());
     };
-    match fs::remove_file(temp_path) {
+    remove_stale_recording_path(temp_path)
+}
+
+fn recover_stale_segment_artifacts(
+    base_path: &Path,
+    policy: SegmentedRecordingPolicy,
+) -> Result<(), GStreamerError> {
+    for index in 1..=policy.max_segments() {
+        let (_, temp_path) = segmented_recording_paths(base_path, index)?;
+        remove_stale_recording_path(&temp_path)?;
+    }
+    Ok(())
+}
+
+fn remove_stale_recording_path(path: &Path) -> Result<(), GStreamerError> {
+    match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(GStreamerError::Native(format!(
             "remove stale production recording artifact: {error}"
         ))),
     }
+}
+
+fn segmented_recording_pattern(base_path: &Path) -> Result<PathBuf, GStreamerError> {
+    let file_name = base_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| GStreamerError::InvalidEndpoint("recording path is not UTF-8".to_owned()))?;
+    let stem = base_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            GStreamerError::InvalidEndpoint("recording path has no UTF-8 stem".to_owned())
+        })?;
+    let extension = base_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            GStreamerError::InvalidEndpoint("recording path has no UTF-8 extension".to_owned())
+        })?;
+    if file_name.contains('%') {
+        return Err(GStreamerError::InvalidEndpoint(
+            "segmented recording path cannot contain '%'".to_owned(),
+        ));
+    }
+    Ok(base_path.with_file_name(format!("{stem}-%05d.{extension}.part")))
+}
+
+fn segmented_recording_paths(
+    base_path: &Path,
+    index: usize,
+) -> Result<(PathBuf, PathBuf), GStreamerError> {
+    let file_name = base_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| GStreamerError::InvalidEndpoint("recording path is not UTF-8".to_owned()))?;
+    let stem = base_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            GStreamerError::InvalidEndpoint("recording path has no UTF-8 stem".to_owned())
+        })?;
+    let extension = base_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            GStreamerError::InvalidEndpoint("recording path has no UTF-8 extension".to_owned())
+        })?;
+    if file_name.contains('%') || index == 0 || index > 99_999 {
+        return Err(GStreamerError::InvalidEndpoint(
+            "segmented recording path or index is invalid".to_owned(),
+        ));
+    }
+    let stem = format!("{stem}-{index:05}.{extension}");
+    let final_path = base_path.with_file_name(&stem);
+    let temp_path = base_path.with_file_name(format!("{stem}.part"));
+    Ok((final_path, temp_path))
+}
+
+fn publish_segmented_recording(
+    base_path: &Path,
+    policy: SegmentedRecordingPolicy,
+) -> Result<(), GStreamerError> {
+    let mut published = 0_usize;
+    for index in 1..=policy.max_segments() {
+        let (final_path, temp_path) = segmented_recording_paths(base_path, index)?;
+        match fs::metadata(&temp_path) {
+            Ok(_) => {
+                publish_recording_artifact(&temp_path, &final_path)?;
+                published = published.saturating_add(1);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(GStreamerError::Native(format!(
+                    "inspect production recording segment: {error}"
+                )))
+            }
+        }
+    }
+    if published == 0 {
+        return Err(GStreamerError::Native(
+            "production segment muxer produced no recording artifacts".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn publish_recording_artifact(temp: &Path, final_path: &Path) -> Result<(), GStreamerError> {
@@ -1109,14 +1393,21 @@ mod tests {
             ),
         ];
         for (plan, destination, mux, sink) in cases {
-            let (description, final_path, temp_path) =
+            let pipeline_description =
                 pipeline_description(&plan, &destination).expect("pipeline description");
-            assert!(description.contains(mux));
-            assert!(description.contains(sink));
-            assert!(final_path.is_none() && temp_path.is_none());
-            let element =
-                gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
-                    .expect("pipeline parses");
+            assert!(pipeline_description.description.contains(mux));
+            assert!(pipeline_description.description.contains(sink));
+            assert!(
+                pipeline_description.final_path.is_none()
+                    && pipeline_description.temp_path.is_none()
+                    && pipeline_description.segmented_policy.is_none()
+            );
+            let element = gst::parse::launch_full(
+                &pipeline_description.description,
+                None,
+                gst::ParseFlags::FATAL_ERRORS,
+            )
+            .expect("pipeline parses");
             let pipeline = element.downcast::<gst::Pipeline>().expect("pipeline");
             configure_sink(&pipeline, &destination, None).expect("sink endpoint");
             let output_sink = pipeline.by_name("output_sink").expect("named sink");
@@ -1157,8 +1448,8 @@ mod tests {
         plan.video_config.preset = EncoderPreset::Quality;
         plan.audio_config.bitrate_kbps = 192;
         let destination = ProductionDestination::Recording(PathBuf::from("configured.mkv"));
-        let (description, _, _) = pipeline_description(&plan, &destination).expect("description");
-        let pipeline = gst::parse::launch(&description)
+        let pipeline_description = pipeline_description(&plan, &destination).expect("description");
+        let pipeline = gst::parse::launch(&pipeline_description.description)
             .expect("pipeline")
             .downcast::<gst::Pipeline>()
             .expect("pipeline type");
@@ -1185,13 +1476,23 @@ mod tests {
         }
         let plan = plan(OutputProfile::mov_h264_aac());
         let destination = ProductionDestination::Recording(PathBuf::from("capture.mov"));
-        let (description, final_path, temp_path) =
-            pipeline_description(&plan, &destination).expect("MOV graph");
-        assert!(description.contains("qtmux name=mux"));
-        assert_eq!(final_path, Some(PathBuf::from("capture.mov")));
-        assert_eq!(temp_path, Some(PathBuf::from("capture.mov.part")));
-        gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
-            .expect("MOV pipeline parses");
+        let pipeline_description = pipeline_description(&plan, &destination).expect("MOV graph");
+        assert!(pipeline_description.description.contains("qtmux name=mux"));
+        assert_eq!(
+            pipeline_description.final_path,
+            Some(PathBuf::from("capture.mov"))
+        );
+        assert_eq!(
+            pipeline_description.temp_path,
+            Some(PathBuf::from("capture.mov.part"))
+        );
+        assert!(pipeline_description.segmented_policy.is_none());
+        gst::parse::launch_full(
+            &pipeline_description.description,
+            None,
+            gst::ParseFlags::FATAL_ERRORS,
+        )
+        .expect("MOV pipeline parses");
     }
 
     #[test]
@@ -1202,14 +1503,144 @@ mod tests {
         }
         let plan = plan(OutputProfile::fragmented_mp4_h264_aac());
         let destination = ProductionDestination::Recording(PathBuf::from("capture.mp4"));
-        let (description, final_path, temp_path) =
+        let pipeline_description =
             pipeline_description(&plan, &destination).expect("fragmented MP4 graph");
-        assert!(description.contains("fragment-duration=1000"));
-        assert!(description.contains("streamable=true"));
-        assert_eq!(final_path, Some(PathBuf::from("capture.mp4")));
-        assert_eq!(temp_path, Some(PathBuf::from("capture.mp4.part")));
-        gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
-            .expect("fragmented MP4 pipeline parses");
+        assert!(pipeline_description
+            .description
+            .contains("fragment-duration=1000"));
+        assert!(pipeline_description.description.contains("streamable=true"));
+        assert_eq!(
+            pipeline_description.final_path,
+            Some(PathBuf::from("capture.mp4"))
+        );
+        assert_eq!(
+            pipeline_description.temp_path,
+            Some(PathBuf::from("capture.mp4.part"))
+        );
+        assert!(pipeline_description.segmented_policy.is_none());
+        gst::parse::launch_full(
+            &pipeline_description.description,
+            None,
+            gst::ParseFlags::FATAL_ERRORS,
+        )
+        .expect("fragmented MP4 pipeline parses");
+    }
+
+    #[test]
+    fn segmented_mp4_recording_uses_bounded_split_muxing_and_hidden_paths() {
+        gst::init().expect("GStreamer runtime");
+        if gst::ElementFactory::find("splitmuxsink").is_none()
+            || gst::ElementFactory::find("mp4mux").is_none()
+        {
+            return;
+        }
+        let policy = SegmentedRecordingPolicy::new(1_000_000, std::time::Duration::from_secs(5), 3)
+            .expect("segment policy");
+        let base_path = std::env::temp_dir().join("obs-rs-segmented-capture.mp4");
+        let destination = ProductionDestination::SegmentedRecording {
+            base_path: base_path.clone(),
+            policy,
+        };
+        let plan = plan(OutputProfile::mp4_h264_aac());
+        let pipeline_description =
+            pipeline_description(&plan, &destination).expect("segmented MP4 graph");
+        assert!(pipeline_description
+            .description
+            .contains("splitmuxsink name=output_sink"));
+        assert!(pipeline_description
+            .description
+            .contains("muxer-factory=mp4mux"));
+        assert!(pipeline_description
+            .description
+            .contains("max-size-time=5000000000"));
+        assert!(pipeline_description
+            .description
+            .contains("max-size-bytes=1000000"));
+        assert!(pipeline_description.description.contains("max-files=3"));
+        assert_eq!(pipeline_description.final_path, Some(base_path.clone()));
+        assert!(pipeline_description.temp_path.is_none());
+        assert_eq!(pipeline_description.segmented_policy, Some(policy));
+
+        let element = gst::parse::launch_full(
+            &pipeline_description.description,
+            None,
+            gst::ParseFlags::FATAL_ERRORS,
+        )
+        .expect("segmented MP4 pipeline parses");
+        let pipeline = element.downcast::<gst::Pipeline>().expect("pipeline type");
+        configure_sink(&pipeline, &destination, None).expect("segmented sink path");
+        let sink = pipeline.by_name("output_sink").expect("split sink");
+        assert_eq!(
+            sink.property::<String>("location"),
+            std::env::temp_dir()
+                .join("obs-rs-segmented-capture-%05d.mp4.part")
+                .to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn native_segmented_mp4_rolls_over_and_publishes_bounded_files() {
+        gst::init().expect("GStreamer runtime");
+        if ["splitmuxsink", "mp4mux", "openh264enc", "avenc_aac"]
+            .iter()
+            .any(|element| gst::ElementFactory::find(element).is_none())
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let base_path = std::env::temp_dir().join(format!("obs-rs-native-segmented-{token}.mp4"));
+        let policy =
+            SegmentedRecordingPolicy::new(1_000_000, std::time::Duration::from_millis(500), 3)
+                .expect("segment policy");
+        let destination = ProductionDestination::SegmentedRecording {
+            base_path: base_path.clone(),
+            policy,
+        };
+        let mut plan = plan(OutputProfile::mp4_h264_aac());
+        plan.video_config.keyframe_interval_secs = 1;
+        let video = VideoFormat::new(
+            64,
+            64,
+            obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+        )
+        .expect("video format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let mut session = GStreamerOutputSession::start(&plan, &destination, video, audio)
+            .expect("segmented native session");
+        for index in 0_u64..180 {
+            let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
+            session
+                .push_video(VideoFrame::solid(video, timestamp, [24, 96, 180, 255]))
+                .expect("video submission");
+            session
+                .push_audio(AudioBuffer::silence(audio, timestamp, 1_600).expect("silence"))
+                .expect("audio submission");
+        }
+        session.close().expect("segmented close");
+
+        let mut published = 0_usize;
+        for index in 1..=policy.max_segments() {
+            let (final_path, temp_path) =
+                segmented_recording_paths(&base_path, index).expect("segment paths");
+            if final_path.exists() {
+                published = published.saturating_add(1);
+                assert!(
+                    std::fs::metadata(&final_path)
+                        .expect("segment metadata")
+                        .len()
+                        > 0
+                );
+            }
+            assert!(
+                !temp_path.exists(),
+                "temporary segment must be hidden/cleaned"
+            );
+            let _ = std::fs::remove_file(final_path);
+        }
+        assert!(published >= 2, "expected muxer rollover, got {published}");
     }
 
     #[test]
@@ -1280,8 +1711,8 @@ mod tests {
         };
         let mut hls_plan = plan(OutputProfile::hls_h264_aac());
         hls_plan.atomic_recording = false;
-        let (description, _, _) = pipeline_description(&hls_plan, &hls).expect("HLS graph");
-        assert!(description.contains("hlssink2"));
+        let hls_description = pipeline_description(&hls_plan, &hls).expect("HLS graph");
+        assert!(hls_description.description.contains("hlssink2"));
 
         let rist = ProductionDestination::Rist {
             host: "127.0.0.1".to_owned(),
@@ -1290,10 +1721,10 @@ mod tests {
             shared_secret: None,
         };
         let rist_plan = plan(OutputProfile::rist_mpeg_ts_h264_aac());
-        let (description, _, _) = pipeline_description(&rist_plan, &rist).expect("RIST graph");
-        assert!(description.contains("mpegtsmux"));
-        assert!(description.contains("rtpmp2tpay"));
-        let pipeline = gst::parse::launch(&description)
+        let rist_description = pipeline_description(&rist_plan, &rist).expect("RIST graph");
+        assert!(rist_description.description.contains("mpegtsmux"));
+        assert!(rist_description.description.contains("rtpmp2tpay"));
+        let pipeline = gst::parse::launch(&rist_description.description)
             .expect("RIST pipeline")
             .downcast::<gst::Pipeline>()
             .expect("pipeline type");
