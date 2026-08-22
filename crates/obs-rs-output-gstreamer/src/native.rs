@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf, time::Instant};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -142,6 +146,7 @@ impl GStreamerOutputSession {
         gst::init().map_err(native_error)?;
         destination.validate_for(plan.profile())?;
         let (description, final_path, temp_path) = pipeline_description(plan, destination)?;
+        recover_stale_recording_artifact(temp_path.as_deref())?;
         let element = gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
             .map_err(native_error)?;
         let pipeline = element.downcast::<gst::Pipeline>().map_err(|_| {
@@ -984,6 +989,19 @@ fn native_error(error: impl std::fmt::Display) -> GStreamerError {
     GStreamerError::Native(error.to_string())
 }
 
+fn recover_stale_recording_artifact(temp_path: Option<&Path>) -> Result<(), GStreamerError> {
+    let Some(temp_path) = temp_path else {
+        return Ok(());
+    };
+    match fs::remove_file(temp_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(GStreamerError::Native(format!(
+            "remove stale production recording artifact: {error}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1131,6 +1149,27 @@ mod tests {
         assert_eq!(temp_path, Some(PathBuf::from("capture.mov.part")));
         gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
             .expect("MOV pipeline parses");
+    }
+
+    #[test]
+    fn stale_recording_artifact_cleanup_is_bounded_and_typed() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let stale = std::env::temp_dir().join(format!("obs-rs-native-recovery-{token}.mkv.part"));
+        std::fs::write(&stale, [1, 2, 3]).expect("write stale artifact");
+        recover_stale_recording_artifact(Some(&stale)).expect("remove stale artifact");
+        assert!(!stale.exists());
+        recover_stale_recording_artifact(Some(&stale)).expect("missing artifact is harmless");
+
+        std::fs::create_dir(&stale).expect("create invalid artifact");
+        let error = recover_stale_recording_artifact(Some(&stale))
+            .expect_err("directory must not be treated as a recording artifact");
+        assert!(error
+            .to_string()
+            .contains("remove stale production recording artifact"));
+        std::fs::remove_dir(&stale).expect("remove invalid artifact");
     }
 
     #[test]
