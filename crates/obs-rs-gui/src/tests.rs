@@ -1219,6 +1219,10 @@ fn output_runtime_discovers_interrupted_remux_candidates_without_blocking_the_gu
     std::fs::create_dir(&directory).expect("candidate directory");
     std::fs::write(directory.join("zeta.mkv.part"), [1_u8]).expect("zeta candidate");
     std::fs::write(directory.join("alpha.mkv.part"), [2_u8]).expect("alpha candidate");
+    obs_rs_engine::write_interrupted_remux_manifest(directory.join("zeta.mp4"))
+        .expect("zeta manifest");
+    obs_rs_engine::write_interrupted_remux_manifest(directory.join("alpha.mp4"))
+        .expect("alpha manifest");
     let final_path = directory.join("configured.mp4");
 
     output

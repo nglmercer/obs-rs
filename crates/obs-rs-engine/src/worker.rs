@@ -1951,6 +1951,8 @@ mod tests {
             .finish_recording()
             .expect("close Matroska source");
         std::fs::rename(&completed_source, &interrupted_source).expect("hide source");
+        obs_rs_output_gstreamer::write_interrupted_remux_manifest(&final_path)
+            .expect("recovery manifest");
 
         let worker = worker(2);
         let receive = worker
@@ -1977,6 +1979,10 @@ mod tests {
         std::fs::create_dir(&directory).expect("candidate directory");
         std::fs::write(directory.join("zeta.mkv.part"), [1_u8]).expect("zeta candidate");
         std::fs::write(directory.join("alpha.mkv.part"), [2_u8]).expect("alpha candidate");
+        obs_rs_output_gstreamer::write_interrupted_remux_manifest(directory.join("zeta.mp4"))
+            .expect("zeta manifest");
+        obs_rs_output_gstreamer::write_interrupted_remux_manifest(directory.join("alpha.mp4"))
+            .expect("alpha manifest");
         std::fs::write(directory.join("published.mkv.part"), [3_u8]).expect("published source");
         std::fs::write(directory.join("published.mp4"), [4_u8]).expect("published destination");
 

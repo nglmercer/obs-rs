@@ -50,8 +50,8 @@ use obs_rs_output_gstreamer::{
 };
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
-    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
-    RemuxRecovery, VideoEncoderCapability,
+    write_interrupted_remux_manifest, AudioEncoderCapability, OutputCapabilitiesSnapshot,
+    ProductionProtocol, ProtocolCapability, RemuxRecovery, VideoEncoderCapability,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Project, ProjectError, SourceFilterCategory, SourceFilterSpec};
@@ -1619,9 +1619,10 @@ impl EngineSession {
 
     /// Recovers an interrupted automatic remux beside an exact MP4 path.
     ///
-    /// Recovery consumes `<final>.mkv.part` only after the native bounded
-    /// remux publishes the MP4. It refuses to replace an existing destination
-    /// and is unavailable while this session is carrying media output.
+    /// Recovery consumes a marked `<final>.mkv.part` only after the native
+    /// bounded remux publishes the MP4. It refuses to replace an existing
+    /// destination and is unavailable while this session is carrying media
+    /// output.
     ///
     /// # Errors
     ///

@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Instant,
@@ -14,6 +15,7 @@ use obs_rs_output::{
     EncoderPreset, OutputProfileKind, OutputTransport, RateControl, ReconnectOutcome,
     ReconnectPolicy, SegmentedRecordingPolicy, StreamingTransport, VideoCodec,
 };
+use obs_rs_util::Json;
 
 use super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
 
@@ -40,14 +42,18 @@ pub enum RemuxRecovery {
 pub const MAX_REMUX_RECOVERY_CANDIDATES: usize = 64;
 /// Maximum directory entries inspected by one remux candidate scan.
 pub const MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES: usize = 4_096;
+/// Maximum size of one durable remux manifest.
+pub const MAX_REMUX_MANIFEST_BYTES: usize = 4_096;
+
+const REMUX_MANIFEST_FORMAT: &str = "obs-rs-remux-manifest-v1";
 
 /// Finds recoverable automatic-remux destinations in a bounded directory scan.
 ///
-/// A native remux keeps its source at <final>.mkv.part until the MP4 is
-/// published. This function returns the corresponding final .mp4 paths for
-/// non-empty sources whose destination does not already exist. It performs no
-/// media work and is intended for the engine control plane, never a UI or
-/// real-time callback.
+/// A native remux keeps its source at <final>.mkv.part and writes a matching
+/// bounded sidecar until the MP4 is published. This function returns the
+/// corresponding final .mp4 paths for non-empty, marked sources whose
+/// destination does not already exist. It performs no media work and is
+/// intended for the engine control plane, never a UI or real-time callback.
 ///
 /// # Errors
 ///
@@ -100,6 +106,9 @@ pub fn discover_interrupted_remux_candidates(
         if source_bytes.len() == 0 || final_path.exists() {
             continue;
         }
+        if !remux_manifest_matches(&source_path, &final_path)? {
+            continue;
+        }
         candidates.push(final_path);
         if candidates.len() > MAX_REMUX_RECOVERY_CANDIDATES {
             return Err(GStreamerError::Native(format!(
@@ -109,6 +118,130 @@ pub fn discover_interrupted_remux_candidates(
     }
     candidates.sort_unstable();
     Ok(candidates)
+}
+
+/// Writes the durable marker for an automatic remux recording.
+///
+/// The manifest is a bounded, atomically published JSON sidecar. Its
+/// file-name-only payload lets recovery distinguish an automatic-remux
+/// Matroska source from an ordinary `.mkv.part` recording without exposing
+/// native paths or trusting an arbitrary manifest to choose a destination.
+///
+/// # Errors
+///
+/// Returns a typed filesystem or endpoint error when the final path is not an
+/// MP4 path or the sidecar cannot be published.
+pub fn write_interrupted_remux_manifest(
+    final_path: impl AsRef<Path>,
+) -> Result<(), GStreamerError> {
+    let final_path = final_path.as_ref();
+    if !final_path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"))
+    {
+        return Err(GStreamerError::InvalidEndpoint(
+            "remux manifest destination must use the .mp4 extension".to_owned(),
+        ));
+    }
+    let source_path = final_path.with_extension("mkv.part");
+    let source_name = source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| GStreamerError::InvalidEndpoint("remux source is not UTF-8".to_owned()))?;
+    let destination_name = final_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            GStreamerError::InvalidEndpoint("remux destination is not UTF-8".to_owned())
+        })?;
+    let document = Json::object([
+        ("destination", Json::string(destination_name)),
+        ("format", Json::string(REMUX_MANIFEST_FORMAT)),
+        ("source", Json::string(source_name)),
+    ])
+    .to_pretty_string();
+    if document.len() > MAX_REMUX_MANIFEST_BYTES {
+        return Err(GStreamerError::InvalidEndpoint(
+            "remux manifest exceeds its byte limit".to_owned(),
+        ));
+    }
+    recover_stale_remux_manifest(final_path)?;
+    let manifest_path = remux_manifest_path(final_path);
+    let temporary_path = manifest_path.with_extension("json.part");
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .map_err(|error| {
+                GStreamerError::Native(format!("create remux manifest temporary path: {error}"))
+            })?;
+        file.write_all(document.as_bytes())
+            .map_err(|error| GStreamerError::Native(format!("write remux manifest: {error}")))?;
+        file.sync_all()
+            .map_err(|error| GStreamerError::Native(format!("sync remux manifest: {error}")))?;
+        fs::hard_link(&temporary_path, &manifest_path).map_err(|error| {
+            GStreamerError::Native(format!(
+                "publish remux manifest without replacing an existing file: {error}"
+            ))
+        })?;
+        fs::remove_file(&temporary_path).map_err(|error| {
+            GStreamerError::Native(format!("remove remux manifest temporary path: {error}"))
+        })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    result
+}
+
+fn remux_manifest_path(final_path: &Path) -> PathBuf {
+    final_path.with_extension("remux.json")
+}
+
+fn recover_stale_remux_manifest(final_path: &Path) -> Result<(), GStreamerError> {
+    let manifest_path = remux_manifest_path(final_path);
+    remove_stale_recording_path(&manifest_path)?;
+    remove_stale_recording_path(&manifest_path.with_extension("json.part"))
+}
+
+fn remux_manifest_matches(source_path: &Path, final_path: &Path) -> Result<bool, GStreamerError> {
+    let manifest_path = remux_manifest_path(final_path);
+    let file = match fs::File::open(&manifest_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(GStreamerError::Native(format!(
+                "inspect remux manifest: {error}"
+            )))
+        }
+    };
+    let mut document = Vec::with_capacity(MAX_REMUX_MANIFEST_BYTES);
+    file.take((MAX_REMUX_MANIFEST_BYTES + 1) as u64)
+        .read_to_end(&mut document)
+        .map_err(|error| GStreamerError::Native(format!("read remux manifest: {error}")))?;
+    if document.len() > MAX_REMUX_MANIFEST_BYTES {
+        return Ok(false);
+    }
+    let Ok(document) = String::from_utf8(document) else {
+        return Ok(false);
+    };
+    let Ok(value) = Json::parse(&document) else {
+        return Ok(false);
+    };
+    let Some(format) = value.get("format").and_then(Json::as_str) else {
+        return Ok(false);
+    };
+    let Some(source) = value.get("source").and_then(Json::as_str) else {
+        return Ok(false);
+    };
+    let Some(destination) = value.get("destination").and_then(Json::as_str) else {
+        return Ok(false);
+    };
+    Ok(format == REMUX_MANIFEST_FORMAT
+        && source_path.file_name().and_then(|name| name.to_str()) == Some(source)
+        && final_path.file_name().and_then(|name| name.to_str()) == Some(destination))
 }
 
 fn remux_final_path_from_source(source_path: &Path) -> Option<PathBuf> {
@@ -332,9 +465,10 @@ pub fn remux_matroska_to_mp4(
 /// Recovers an interrupted automatic remux without replacing an existing MP4.
 ///
 /// Automatic remux recordings keep their Matroska source at the exact hidden
-/// path `<final>.mkv.part` until publication succeeds. Startup cleanup removes
-/// that path only when a new recording session claims the destination; this
-/// explicit operation lets a control-plane caller recover it first.
+/// path `<final>.mkv.part` with a matching durable manifest until publication
+/// succeeds. Startup cleanup removes those paths only when a new recording
+/// session claims the destination; this explicit operation lets a control-plane
+/// caller recover it first.
 ///
 /// The operation remains bounded by the native remux timeout and must stay off
 /// UI, capture, audio, and render threads.
@@ -362,6 +496,9 @@ pub fn recover_interrupted_remux_recording(
         ));
     }
     let source_path = final_path.with_extension("mkv.part");
+    if !remux_manifest_matches(&source_path, final_path)? {
+        return Ok(RemuxRecovery::NoCandidate);
+    }
     let source_bytes = match fs::metadata(&source_path) {
         Ok(metadata) => metadata.len(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -382,6 +519,7 @@ pub fn recover_interrupted_remux_recording(
     fs::remove_file(&source_path).map_err(|error| {
         GStreamerError::Native(format!("remove recovered Matroska source: {error}"))
     })?;
+    recover_stale_remux_manifest(final_path)?;
     Ok(RemuxRecovery::Recovered { bytes })
 }
 
@@ -528,6 +666,7 @@ impl GStreamerOutputSession {
         recover_stale_recording_artifact(temp_path.as_deref())?;
         if let Some(final_path) = remux_final_path.as_deref() {
             recover_stale_recording_artifact(Some(&final_path.with_extension("mp4.part")))?;
+            recover_stale_remux_manifest(final_path)?;
         }
         if let (Some(base_path), Some(policy)) = (final_path.as_deref(), segmented_policy) {
             recover_stale_segment_artifacts(base_path, policy)?;
@@ -554,6 +693,13 @@ impl GStreamerOutputSession {
         pipeline
             .set_state(gst::State::Playing)
             .map_err(native_error)?;
+        if let Some(final_path) = remux_final_path.as_deref() {
+            if let Err(error) = write_interrupted_remux_manifest(final_path) {
+                let _ = pipeline.set_state(gst::State::Null);
+                let _ = recover_stale_recording_artifact(temp_path.as_deref());
+                return Err(error);
+            }
+        }
         Ok(Self {
             pipeline,
             video,
@@ -779,6 +925,7 @@ impl GStreamerOutputSession {
             fs::remove_file(temp).map_err(|error| {
                 GStreamerError::Native(format!("remove remux source temporary recording: {error}"))
             })?;
+            recover_stale_remux_manifest(final_path)?;
             Some(bytes)
         } else if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
             Some(publish_segmented_recording(base_path, policy)?)
@@ -943,6 +1090,7 @@ impl Drop for GStreamerOutputSession {
             }
             if let Some(final_path) = &self.remux_final_path {
                 let _ = fs::remove_file(final_path.with_extension("mp4.part"));
+                let _ = recover_stale_remux_manifest(final_path);
             }
             if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
                 let _ = recover_stale_segment_artifacts(base_path, policy);
@@ -2187,6 +2335,11 @@ mod tests {
             source_path.exists(),
             "source must remain hidden while recording"
         );
+        let manifest_path = remux_manifest_path(&final_path);
+        assert!(
+            manifest_path.exists(),
+            "remux manifest must be durable while recording"
+        );
         session.close().expect("automatic remux close");
 
         let bytes = std::fs::metadata(&final_path).expect("published MP4").len();
@@ -2200,7 +2353,40 @@ mod tests {
             "hidden Matroska source must be consumed"
         );
         assert!(!final_path.with_extension("mp4.part").exists());
+        assert!(
+            !manifest_path.exists(),
+            "published recordings must remove the manifest"
+        );
         std::fs::remove_file(final_path).expect("remove remuxed MP4");
+    }
+
+    #[test]
+    fn remux_manifest_is_bounded_atomic_and_matches_only_its_recording() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("obs-rs-remux-manifest-{token}"));
+        std::fs::create_dir(&directory).expect("manifest directory");
+        let final_path = directory.join("capture.mp4");
+        let source_path = final_path.with_extension("mkv.part");
+        write_interrupted_remux_manifest(&final_path).expect("write remux manifest");
+        let manifest_path = remux_manifest_path(&final_path);
+        assert!(manifest_path.is_file());
+        assert!(!manifest_path.with_extension("json.part").exists());
+        assert!(remux_manifest_matches(&source_path, &final_path).expect("match manifest"));
+        assert!(
+            !remux_manifest_matches(&directory.join("other.mkv.part"), &final_path)
+                .expect("mismatched manifest")
+        );
+        let document = std::fs::read_to_string(&manifest_path).expect("read manifest");
+        assert!(document.len() <= MAX_REMUX_MANIFEST_BYTES);
+        assert!(document.contains(REMUX_MANIFEST_FORMAT));
+        std::fs::write(&manifest_path, [0xff_u8]).expect("corrupt manifest");
+        assert!(!remux_manifest_matches(&source_path, &final_path).expect("invalid manifest"));
+        recover_stale_remux_manifest(&final_path).expect("remove manifest");
+        assert!(!manifest_path.exists());
+        std::fs::remove_dir_all(directory).expect("remove manifest directory");
     }
 
     #[test]
@@ -2213,9 +2399,15 @@ mod tests {
         std::fs::create_dir(&directory).expect("candidate directory");
         std::fs::write(directory.join("zeta.mkv.part"), [1_u8, 2]).expect("zeta candidate");
         std::fs::write(directory.join("alpha.mkv.part"), [3_u8]).expect("alpha candidate");
+        write_interrupted_remux_manifest(directory.join("zeta.mp4")).expect("zeta manifest");
+        write_interrupted_remux_manifest(directory.join("alpha.mp4")).expect("alpha manifest");
         std::fs::write(directory.join("empty.mkv.part"), []).expect("empty candidate");
         std::fs::write(directory.join("published.mkv.part"), [4_u8]).expect("published source");
         std::fs::write(directory.join("published.mp4"), [5_u8]).expect("published destination");
+        write_interrupted_remux_manifest(directory.join("published.mp4"))
+            .expect("published manifest");
+        std::fs::write(directory.join("ordinary.mkv.part"), [7_u8])
+            .expect("ordinary Matroska source");
         std::fs::write(directory.join("ignore.txt"), [6_u8]).expect("unrelated file");
         std::fs::create_dir(directory.join("nested.mkv.part")).expect("nested directory");
 
@@ -2289,6 +2481,7 @@ mod tests {
         }
         session.close().expect("Matroska source close");
         std::fs::rename(&completed_source, &interrupted_source).expect("hide source");
+        write_interrupted_remux_manifest(&final_path).expect("recovery manifest");
 
         assert_eq!(
             recover_interrupted_remux_recording(&final_path).expect("recover remux"),
@@ -2306,6 +2499,7 @@ mod tests {
         );
         assert!(!interrupted_source.exists());
         assert!(!final_path.with_extension("mp4.part").exists());
+        assert!(!remux_manifest_path(&final_path).exists());
         std::fs::remove_file(final_path).expect("remove recovered MP4");
     }
 

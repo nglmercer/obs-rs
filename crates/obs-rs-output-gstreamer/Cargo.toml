@@ -15,4 +15,5 @@ gstreamer-app = { version = "0.24", features = ["v1_20"], optional = true }
 obs-rs-audio = { path = "../obs-rs-audio" }
 obs-rs-media = { path = "../obs-rs-media" }
 obs-rs-output = { path = "../obs-rs-output" }
+obs-rs-util = { path = "../obs-rs-util" }
 url = "2.5"
