@@ -5,9 +5,9 @@ use super::preview::PreviewRenderer;
 use super::refresh::{peak_db, transition_label_for_locale};
 use super::settings::AppSettings;
 use super::{
-    capture_devices, initial_project, install_canvas_callbacks, refresh_ui, restore_project,
-    source_settings, I18n, MainWindow, OutputRuntime, PreviewSurface, SettingsWindow,
-    SourcePropertiesWindow,
+    capture_devices, close_request_response, initial_project, install_canvas_callbacks, refresh_ui,
+    restore_project, source_settings, I18n, MainWindow, OutputRuntime, PreviewSurface,
+    SettingsWindow, SourcePropertiesWindow,
 };
 use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
@@ -18,8 +18,20 @@ use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, Model, ModelRc, VecModel};
+use slint::{CloseRequestResponse, ComponentHandle, LogicalPosition, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
+
+#[test]
+fn dirty_native_window_close_is_kept_for_discard_prompt() {
+    assert_eq!(
+        close_request_response(true),
+        CloseRequestResponse::KeepWindowShown
+    );
+    assert_eq!(
+        close_request_response(false),
+        CloseRequestResponse::HideWindow
+    );
+}
 
 #[test]
 fn stream_protocol_status_uses_redacted_scheme_labels() {

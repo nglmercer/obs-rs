@@ -168,7 +168,7 @@ export component MainWindow inherits Window {
         // discard prompt is answered. 0 none · 4 new project · 5 exit
         // · 6 switch collection · 7 import collection · 8 load project
         // · 9 recover project.
-        property <int> pending-discard: 0;
+        in-out property <int> pending-discard: 0;
         property <string> pending-collection;
         in-out property <length> dock-height: 248px;
         // The first-run wizard is a separate movable window, while this scrim

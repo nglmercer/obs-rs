@@ -13,7 +13,7 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_audio::AudioFormat;
 use obs_rs_ui::{DesktopState, UiCommand};
-use slint::ComponentHandle;
+use slint::{CloseRequestResponse, ComponentHandle};
 
 mod callbacks;
 mod dock_tree;
@@ -260,6 +260,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         setup_window.open();
     }
 
+    // The window-manager close request must use the same discard guard as the
+    // File -> Exit action. Without this boundary, a dirty project could be
+    // discarded by closing the native window even though the menu path asks
+    // for confirmation.
+    let close_state = Rc::clone(&state);
+    let close_ui = ui.as_weak();
+    ui.window().on_close_requested(move || {
+        let dirty = close_state.borrow().is_dirty();
+        if dirty {
+            if let Some(ui) = close_ui.upgrade() {
+                ui.set_pending_discard(5);
+            }
+        }
+        close_request_response(dirty)
+    });
+
     let _preview_timer = start_preview_timer(
         &ui,
         &state,
@@ -276,6 +292,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("obs-rs: could not persist the session: {error}");
     }
     Ok(())
+}
+
+fn close_request_response(dirty: bool) -> CloseRequestResponse {
+    if dirty {
+        CloseRequestResponse::KeepWindowShown
+    } else {
+        CloseRequestResponse::HideWindow
+    }
 }
 
 /// Parses `--settings-screenshot <page> [file] [locale]`.
