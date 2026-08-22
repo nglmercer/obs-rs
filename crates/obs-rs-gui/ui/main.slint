@@ -71,6 +71,7 @@ export component MainWindow inherits Window {
         in property <int> selection-box-height;
         in property <int> canvas-width: 1920;
         in property <int> canvas-height: 1080;
+        in property <bool> show-safe-areas: false;
         in property <[SceneRow]> scene-rows;
         in property <[SourceRow]> source-rows;
         in property <[ProfileRow]> profile-rows;
@@ -529,6 +530,7 @@ export component MainWindow inherits Window {
                 space-held: root.space-held;
                 canvas-width: root.canvas-width;
                 canvas-height: root.canvas-height;
+                show-safe-areas: root.show-safe-areas;
                 selected-source: root.selected-source;
                 selected-source-is-screen: root.selected-source-is-screen;
                 item-x: root.item-x;

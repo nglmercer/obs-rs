@@ -29,6 +29,7 @@ component StageCanvas inherits Rectangle {
     in property <int> selection-box-height;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
+    in property <bool> show-safe-areas: false;
     in property <int> item-x;
     in property <int> item-y;
     in property <int> item-width;
@@ -93,6 +94,7 @@ component StageCanvas inherits Rectangle {
         selection-box-height: root.selection-box-height;
         canvas-width: root.canvas-width;
         canvas-height: root.canvas-height;
+        show-safe-areas: root.show-safe-areas;
         transform-dragged(handle, dx, dy, modifiers) => {
             root.transform-dragged(handle, dx, dy, modifiers);
         }
@@ -147,6 +149,7 @@ export component StagePanel inherits Rectangle {
     in property <int> selection-box-height;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
+    in property <bool> show-safe-areas: false;
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
     in property <int> item-x;
@@ -207,6 +210,7 @@ export component StagePanel inherits Rectangle {
                     selection-box-height: root.selection-box-height;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
+                    show-safe-areas: root.show-safe-areas;
                     editable: true;
                     item-x: root.item-x;
                     item-y: root.item-y;
@@ -252,6 +256,7 @@ export component StagePanel inherits Rectangle {
                     selection-box-height: root.selection-box-height;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
+                    show-safe-areas: root.show-safe-areas;
                     editable: true;
                     item-x: root.item-x;
                     item-y: root.item-y;

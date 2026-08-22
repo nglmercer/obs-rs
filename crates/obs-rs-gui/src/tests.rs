@@ -985,6 +985,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(after_nudge.translate_x(), before_nudge.translate_x() + 3);
     assert_eq!(after_nudge.translate_y(), before_nudge.translate_y() - 2);
     refresh_ui(&ui, &state, &surface);
+    ui.set_show_safe_areas(true);
     ui.show().expect("testing window should show");
     exercise_navbar_popup(&ui);
     let snapshot = ui
@@ -1799,6 +1800,7 @@ fn exercise_settings_commit(
     window.set_recording_quality_index(2);
     window.set_recording_filename_without_spaces(true);
     window.set_snap_distance(24);
+    window.set_show_safe_areas(true);
     window.set_dirty(true);
     window.invoke_apply_settings();
 
@@ -1817,6 +1819,7 @@ fn exercise_settings_commit(
     assert_eq!(committed.video.scale_filter, ScaleFilter::Lanczos);
     assert!(committed.recording_filename_without_spaces);
     assert_eq!(committed.canvas_snap_distance, 24);
+    assert!(committed.show_safe_areas);
     assert_eq!(AppSettings::load(&path), committed, "Apply writes the file");
 
     // A field that cannot be parsed stops the commit entirely: nothing else on

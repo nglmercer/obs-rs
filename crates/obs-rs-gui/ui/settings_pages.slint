@@ -30,6 +30,7 @@ export component GeneralPage inherits VerticalLayout {
     in-out property <bool> confirm-stop-recording;
     in-out property <bool> auto-record-when-streaming;
     in-out property <int> snap-distance;
+    in-out property <bool> show-safe-areas;
     callback select-language(int);
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -80,6 +81,12 @@ export component GeneralPage inherits VerticalLayout {
             }
         }
         SettingHint { text: I18n.text.settings_ui.snap_distance_hint; }
+        CheckRow {
+            label: I18n.text.settings_ui.show_safe_areas;
+            checked <=> root.show-safe-areas;
+            toggled(value) => { root.changed(); }
+        }
+        SettingHint { text: I18n.text.settings_ui.show_safe_areas_hint; }
     }
     Rectangle { vertical-stretch: 1; }
 }

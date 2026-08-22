@@ -19,6 +19,7 @@ export component CanvasEditor inherits Rectangle {
     in property <float> view-scale;
     in property <int> canvas-width;
     in property <int> canvas-height;
+    in property <bool> show-safe-areas: false;
     in property <bool> space-held;
     in property <int> pointer-mode: 0; // 1 transform, 2 drag-box selection
     in property <bool> selection-box-active: false;
@@ -67,6 +68,21 @@ export component CanvasEditor inherits Rectangle {
     property <length> box-y: root.view-y + root.item-y * root.view-scale * 1px;
     property <length> box-width: root.item-width * root.view-scale * 1px;
     property <length> box-height: root.item-height * root.view-scale * 1px;
+
+    // Rec. ITU-R BT.1848-1 / EBU R 95 guide geometry. These are presentation
+    // lines only; the Rust canvas keeps the matching integer snap guides.
+    property <length> action-safe-x: root.view-x + root.canvas-width * 0.035 * root.view-scale * 1px;
+    property <length> action-safe-y: root.view-y + root.canvas-height * 0.035 * root.view-scale * 1px;
+    property <length> action-safe-width: root.canvas-width * 0.93 * root.view-scale * 1px;
+    property <length> action-safe-height: root.canvas-height * 0.93 * root.view-scale * 1px;
+    property <length> graphics-safe-x: root.view-x + root.canvas-width * 0.05 * root.view-scale * 1px;
+    property <length> graphics-safe-y: root.view-y + root.canvas-height * 0.05 * root.view-scale * 1px;
+    property <length> graphics-safe-width: root.canvas-width * 0.90 * root.view-scale * 1px;
+    property <length> graphics-safe-height: root.canvas-height * 0.90 * root.view-scale * 1px;
+    property <length> four-three-safe-x: root.view-x + root.canvas-width * 0.1625 * root.view-scale * 1px;
+    property <length> four-three-safe-y: root.view-y + root.canvas-height * 0.05 * root.view-scale * 1px;
+    property <length> four-three-safe-width: root.canvas-width * 0.675 * root.view-scale * 1px;
+    property <length> four-three-safe-height: root.canvas-height * 0.90 * root.view-scale * 1px;
 
     // The whole-canvas area handles selection clicks and dragging the item.
     surface := TouchArea {
@@ -157,6 +173,34 @@ export component CanvasEditor inherits Rectangle {
             }
             reject
         }
+    }
+
+    if root.show-safe-areas : Rectangle {
+        x: root.action-safe-x;
+        y: root.action-safe-y;
+        width: root.action-safe-width;
+        height: root.action-safe-height;
+        background: transparent;
+        border-width: 1px;
+        border-color: Palette.tokens.warning;
+    }
+    if root.show-safe-areas : Rectangle {
+        x: root.graphics-safe-x;
+        y: root.graphics-safe-y;
+        width: root.graphics-safe-width;
+        height: root.graphics-safe-height;
+        background: transparent;
+        border-width: 1px;
+        border-color: Palette.tokens.accent;
+    }
+    if root.show-safe-areas : Rectangle {
+        x: root.four-three-safe-x;
+        y: root.four-three-safe-y;
+        width: root.four-three-safe-width;
+        height: root.four-three-safe-height;
+        background: transparent;
+        border-width: 1px;
+        border-color: Palette.tokens.meter;
     }
 
     if root.active : Rectangle {

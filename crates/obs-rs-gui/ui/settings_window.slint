@@ -46,6 +46,7 @@ export component SettingsWindow inherits Window {
     in-out property <bool> confirm-stop-recording;
     in-out property <bool> auto-record-when-streaming;
     in-out property <int> snap-distance;
+    in-out property <bool> show-safe-areas;
     // Appearance
     in property <[string]> theme-names;
     in-out property <int> theme-index;
@@ -279,6 +280,7 @@ export component SettingsWindow inherits Window {
                         confirm-stop-recording <=> root.confirm-stop-recording;
                         auto-record-when-streaming <=> root.auto-record-when-streaming;
                         snap-distance <=> root.snap-distance;
+                        show-safe-areas <=> root.show-safe-areas;
                         select-language(index) => {
                             root.language-index = index;
                             root.dirty = true;

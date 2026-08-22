@@ -287,6 +287,8 @@ pub(crate) struct AppSettings {
     pub(crate) auto_record_when_streaming: bool,
     /// Canvas pixels within which a moving or resizing item snaps to a guide.
     pub(crate) canvas_snap_distance: u16,
+    /// Draw the OBS-style action, graphics, and 4:3 safe-area guides in preview.
+    pub(crate) show_safe_areas: bool,
     pub(crate) sample_rate: usize,
     pub(crate) channels: usize,
     pub(crate) hotkey_swap: String,
@@ -593,6 +595,7 @@ impl Default for AppSettings {
             confirm_stop_recording: true,
             auto_record_when_streaming: false,
             canvas_snap_distance: CANVAS_SNAP_DISTANCE_DEFAULT,
+            show_safe_areas: false,
             // 48 kHz stereo, matching the mixer the desktop state starts with.
             sample_rate: 1,
             channels: 0,
@@ -824,6 +827,7 @@ impl AppSettings {
                 .and_then(|value| value.parse::<u16>().ok())
                 .filter(|distance| CANVAS_SNAP_DISTANCE_RANGE.contains(distance))
                 .unwrap_or(defaults.canvas_snap_distance),
+            show_safe_areas: flag(config, "show_safe_areas", defaults.show_safe_areas),
             sample_rate: config
                 .get("audio_sample_rate")
                 .and_then(|value| value.parse::<u32>().ok())
@@ -963,6 +967,7 @@ impl AppSettings {
                 "canvas_snap_distance",
                 self.canvas_snap_distance.to_string(),
             ),
+            ("show_safe_areas", self.show_safe_areas.to_string()),
             ("audio_sample_rate", self.sample_rate_hz().to_string()),
             ("audio_channels", self.channel_count().to_string()),
             ("hotkey_swap", self.hotkey_swap.clone()),
@@ -1985,6 +1990,7 @@ mod tests {
             ("video_scale_filter", "nearest"),
             ("video_fps_mode", "smpte"),
             ("canvas_snap_distance", "0"),
+            ("show_safe_areas", "not-bool"),
             ("recording_quality", "perfect"),
             ("output_mode", "expert"),
         ] {
@@ -2000,6 +2006,7 @@ mod tests {
         assert_eq!(decoded.video, defaults.video);
         assert_eq!(decoded.recording_quality, defaults.recording_quality);
         assert_eq!(decoded.canvas_snap_distance, defaults.canvas_snap_distance);
+        assert_eq!(decoded.show_safe_areas, defaults.show_safe_areas);
         assert_eq!(decoded.output_mode, defaults.output_mode);
     }
 

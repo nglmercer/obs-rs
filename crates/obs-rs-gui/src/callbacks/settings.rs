@@ -680,6 +680,7 @@ fn load_draft(
     window.set_confirm_stop_recording(settings.confirm_stop_recording);
     window.set_auto_record_when_streaming(settings.auto_record_when_streaming);
     window.set_snap_distance(i32::from(settings.canvas_snap_distance));
+    window.set_show_safe_areas(settings.show_safe_areas);
     populate_stream_models(window, &output.borrow(), controller, &settings);
     window.set_rtmp_service(settings.rtmp.service.as_str().into());
     window.set_rtmp_server(settings.rtmp.server.as_str().into());
@@ -1379,12 +1380,7 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.confirm_stop_stream = window.get_confirm_stop_stream();
     settings.confirm_stop_recording = window.get_confirm_stop_recording();
     settings.auto_record_when_streaming = window.get_auto_record_when_streaming();
-    settings.canvas_snap_distance = u16::try_from(window.get_snap_distance())
-        .unwrap_or(CANVAS_SNAP_DISTANCE_DEFAULT)
-        .clamp(
-            *CANVAS_SNAP_DISTANCE_RANGE.start(),
-            *CANVAS_SNAP_DISTANCE_RANGE.end(),
-        );
+    read_canvas_draft(window, &mut settings);
     settings.sample_rate = usize::try_from(window.get_sample_rate_index())
         .unwrap_or(0)
         .min(SAMPLE_RATES.len() - 1);
@@ -1466,6 +1462,17 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
         locale.code().clone_into(&mut settings.locale);
     }
     settings
+}
+
+/// Reads the canvas-only settings as one validated presentation policy.
+fn read_canvas_draft(window: &SettingsWindow, settings: &mut AppSettings) {
+    settings.canvas_snap_distance = u16::try_from(window.get_snap_distance())
+        .unwrap_or(CANVAS_SNAP_DISTANCE_DEFAULT)
+        .clamp(
+            *CANVAS_SNAP_DISTANCE_RANGE.start(),
+            *CANVAS_SNAP_DISTANCE_RANGE.end(),
+        );
+    settings.show_safe_areas = window.get_show_safe_areas();
 }
 
 /// Reads the protocol-specific connection fields out of the draft.
@@ -1755,6 +1762,7 @@ fn apply_to_studio(ui: &MainWindow, settings: &AppSettings) {
     ui.set_confirm_stop_stream(settings.confirm_stop_stream);
     ui.set_confirm_stop_recording(settings.confirm_stop_recording);
     ui.set_auto_record_when_streaming(settings.auto_record_when_streaming);
+    ui.set_show_safe_areas(settings.show_safe_areas);
     ui.set_project_path(settings.project_path.as_str().into());
     ui.set_diagnostics_path(settings.diagnostics_path.as_str().into());
     ui.set_recording_path(settings.recording_path.as_str().into());
