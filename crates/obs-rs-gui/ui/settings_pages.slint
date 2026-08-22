@@ -165,6 +165,8 @@ export component StreamPage inherits VerticalLayout {
     in property <bool> show-reference;
     in property <[string]> rtmp-service-names;
     in-out property <int> rtmp-service-index;
+    in property <[string]> rtmp-server-names;
+    in-out property <int> rtmp-server-index;
     in-out property <string> rtmp-server;
     in-out property <string> rtmp-stream-key;
     in-out property <bool> reconnect;
@@ -193,6 +195,7 @@ export component StreamPage inherits VerticalLayout {
     in-out property <string> reference-address;
     callback select-protocol(int);
     callback select-service(int);
+    callback select-server(int);
     callback select-srt-mode(int);
     callback select-srt-key-length(int);
     callback changed();
@@ -214,6 +217,14 @@ export component StreamPage inherits VerticalLayout {
                 model: root.rtmp-service-names;
                 current-index: root.rtmp-service-index;
                 selected(value) => { root.select-service(self.current-index); }
+            }
+        }
+        if root.show-rtmp && root.rtmp-server-names.length > 1 : SettingRow {
+            label: I18n.text.settings_ui.stream_server;
+            SettingsCombo {
+                model: root.rtmp-server-names;
+                current-index: root.rtmp-server-index;
+                selected(value) => { root.select-server(self.current-index); }
             }
         }
         if root.show-rtmp : SettingRow {

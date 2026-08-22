@@ -48,8 +48,8 @@ pub use audio::{AudioEncoder, RawAudioEncoder, WavRecording, Y4mRecording};
 pub use config::{
     streaming_service_preset, AudioCodec, AudioEncoderConfig, EncoderImplementation, EncoderPreset,
     HlsConfig, RateControl, RistConfig, RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode,
-    StreamProtocol, StreamTarget, StreamingServicePreset, VideoCodec, VideoEncoderConfig,
-    WhipConfig, RTMP_SERVICE_PRESETS,
+    StreamProtocol, StreamTarget, StreamingServerPreset, StreamingServicePreset, VideoCodec,
+    VideoEncoderConfig, WhipConfig, RTMP_SERVICE_PRESETS,
 };
 pub use error::OutputError;
 pub use muxer::MemoryMuxer;

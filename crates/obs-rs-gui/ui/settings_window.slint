@@ -68,6 +68,8 @@ export component SettingsWindow inherits Window {
     in property <bool> stream-show-reference;
     in property <[string]> rtmp-service-names;
     in-out property <int> rtmp-service-index;
+    in property <[string]> rtmp-server-names;
+    in-out property <int> rtmp-server-index;
     in-out property <string> rtmp-server;
     in-out property <string> rtmp-stream-key;
     in-out property <bool> stream-reconnect;
@@ -204,6 +206,7 @@ export component SettingsWindow inherits Window {
     callback preview-language(int);
     callback select-stream-protocol(int);
     callback select-stream-service(int);
+    callback select-stream-server(int);
     callback select-output-mode(int);
     callback select-recording-quality(int);
     callback select-recording-format(int);
@@ -351,6 +354,8 @@ export component SettingsWindow inherits Window {
                         show-reference: root.stream-show-reference;
                         rtmp-service-names: root.rtmp-service-names;
                         rtmp-service-index: root.rtmp-service-index;
+                        rtmp-server-names: root.rtmp-server-names;
+                        rtmp-server-index: root.rtmp-server-index;
                         rtmp-server <=> root.rtmp-server;
                         rtmp-stream-key <=> root.rtmp-stream-key;
                         reconnect <=> root.stream-reconnect;
@@ -386,6 +391,11 @@ export component SettingsWindow inherits Window {
                             root.rtmp-service-index = index;
                             root.dirty = true;
                             root.select-stream-service(index);
+                        }
+                        select-server(index) => {
+                            root.rtmp-server-index = index;
+                            root.dirty = true;
+                            root.select-stream-server(index);
                         }
                         select-srt-mode(index) => {
                             root.srt-mode-index = index;

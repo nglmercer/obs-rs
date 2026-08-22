@@ -14,7 +14,7 @@ use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
     FrameRate, FrameTransform, FrameTransition, ScaleFilter, Timestamp, VideoFormat, VideoFrame,
 };
-use obs_rs_output::{encode_png, MemoryMuxer, OutputProfileKind, PacketKind};
+use obs_rs_output::{encode_png, MemoryMuxer, OutputProfileKind, PacketKind, RTMP_SERVICE_PRESETS};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, ProjectSceneSelection, Shortcut, UiAction, UiCommand, UiLocale};
@@ -2279,6 +2279,7 @@ fn exercise_settings_commit(
     // freshly opened window has nothing to apply.
     ui.invoke_open_settings_window();
     assert!(!window.get_dirty(), "a freshly loaded draft is not dirty");
+    exercise_stream_server_selection(window);
 
     // Apply: every draft is persisted and the button goes quiet again.
     window.set_density_index(3);
@@ -2351,6 +2352,19 @@ fn exercise_settings_commit(
         crate::settings_model::RecordingQuality::SameAsStream
     );
     std::fs::remove_file(&path).expect("remove settings fixture");
+}
+
+fn exercise_stream_server_selection(window: &SettingsWindow) {
+    let twitch_index = RTMP_SERVICE_PRESETS
+        .iter()
+        .position(|preset| preset.id() == "twitch")
+        .expect("Twitch service preset");
+    let twitch_index = i32::try_from(twitch_index).expect("service index");
+    window.set_rtmp_service_index(twitch_index);
+    window.invoke_select_stream_service(twitch_index);
+    assert_eq!(window.get_rtmp_server_names().row_count(), 46);
+    window.invoke_select_stream_server(1);
+    assert_eq!(window.get_rtmp_server(), "live-sel.twitch.tv/app");
 }
 
 /// Renders each settings category so a page that fails to lay out — an empty

@@ -139,6 +139,315 @@ pub struct StreamingServicePreset {
     stream_key_link: Option<&'static str>,
 }
 
+/// One additional pinned ingest server for a built-in service.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingServerPreset {
+    display_name: &'static str,
+    server: &'static str,
+}
+
+impl StreamingServerPreset {
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        self.display_name
+    }
+
+    #[must_use]
+    pub const fn server(self) -> &'static str {
+        self.server
+    }
+}
+
+const TWITCH_ADDITIONAL_SERVERS: [StreamingServerPreset; 45] = [
+    StreamingServerPreset {
+        display_name: "Asia: Seoul, South Korea",
+        server: "live-sel.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "Asia: Singapore",
+        server: "live-sin.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "Asia: Taipei, Taiwan",
+        server: "live-tpe.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "Asia: Tokyo, Japan",
+        server: "live-tyo.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "Australia: Sydney",
+        server: "live-syd.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Amsterdam, NL",
+        server: "live-ams.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Berlin, DE",
+        server: "live-ber.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "Europe: Copenhagen, DK",
+        server: "live-cph.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Frankfurt, DE",
+        server: "live-fra.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Helsinki, FI",
+        server: "live-hel.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Lisbon, Portugal",
+        server: "live-lis.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: London, UK",
+        server: "live-lhr.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Madrid, Spain",
+        server: "live-mad.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Marseille, FR",
+        server: "live-mrs.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Milan, Italy",
+        server: "live-mil.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Norway, Oslo",
+        server: "live-osl.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Paris, FR",
+        server: "live-cdg.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Prague, CZ",
+        server: "live-prg.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Stockholm, SE",
+        server: "live-arn.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Vienna, Austria",
+        server: "live-vie.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "EU: Warsaw, Poland",
+        server: "live-waw.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "NA: Mexico City",
+        server: "live-qro.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "NA: Quebec, Canada",
+        server: "live-ymq.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "NA: Toronto, Canada",
+        server: "live-yto.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "South America: Argentina",
+        server: "live-eze.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "South America: Chile",
+        server: "live-scl.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "South America: Lima, Peru",
+        server: "live-lim.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "South America: Medellin, Colombia",
+        server: "live-mde.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "South America: Rio de Janeiro, Brazil",
+        server: "live-rio.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "South America: Sao Paulo, Brazil",
+        server: "live-sao.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US Central: Dallas, TX",
+        server: "live-dfw.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US Central: Denver, CO",
+        server: "live-den.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US Central: Houston, TX",
+        server: "live-hou.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US Central: Salt Lake City, UT",
+        server: "live-slc.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US East: Ashburn, VA",
+        server: "live-iad.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US East: Atlanta, GA",
+        server: "live-atl.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US East: Chicago",
+        server: "live-ord.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US East: Miami, FL",
+        server: "live-mia.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US East: New York, NY",
+        server: "live-jfk.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US West: Los Angeles, CA",
+        server: "live-lax.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US West: Phoenix, AZ",
+        server: "live-phx.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US West: Portland, Oregon",
+        server: "live-pdx.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US West: San Francisco, CA",
+        server: "live-sfo.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US West: San Jose, CA",
+        server: "live-sjc.twitch.tv/app",
+    },
+    StreamingServerPreset {
+        display_name: "US West: Seattle, WA",
+        server: "live-sea.twitch.tv/app",
+    },
+];
+
+const YOUTUBE_RTMPS_ADDITIONAL_SERVERS: [StreamingServerPreset; 1] = [StreamingServerPreset {
+    display_name: "Backup YouTube ingest server",
+    server: "b.rtmps.youtube.com:443/live2?backup=1",
+}];
+
+const LOOLA_ADDITIONAL_SERVERS: [StreamingServerPreset; 4] = [
+    StreamingServerPreset {
+        display_name: "EU Central: Germany",
+        server: "rtmp-eu.loola.tv/push",
+    },
+    StreamingServerPreset {
+        display_name: "South America: Brazil",
+        server: "rtmp-sa.loola.tv/push",
+    },
+    StreamingServerPreset {
+        display_name: "Asia/Pacific: Singapore",
+        server: "rtmp-sg.loola.tv/push",
+    },
+    StreamingServerPreset {
+        display_name: "Middle East: Bahrain",
+        server: "rtmp-me.loola.tv/push",
+    },
+];
+
+const RESTREAM_ADDITIONAL_SERVERS: [StreamingServerPreset; 20] = [
+    StreamingServerPreset {
+        display_name: "EU-West (London, GB)",
+        server: "london.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "EU-West (Amsterdam, NL)",
+        server: "amsterdam.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "EU-West (Paris, FR)",
+        server: "paris.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "EU-Central (Frankfurt, DE)",
+        server: "frankfurt.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "EU-South (Madrid, Spain)",
+        server: "madrid.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "Turkey (Istanbul)",
+        server: "istanbul.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "US-West (Seattle, WA)",
+        server: "seattle.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "US-West (San Jose, CA)",
+        server: "sanjose.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "US-Central (Dallas, TX)",
+        server: "dallas.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "US-East (Chicago, IL)",
+        server: "chicago.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "US-East (New York, NY)",
+        server: "newyork.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "US-East (Washington, DC)",
+        server: "washington.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "NA-East (Toronto, Canada)",
+        server: "toronto.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "SA (Saint Paul, Brazil)",
+        server: "saopaulo.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "India (Bangalore)",
+        server: "bangalore.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "Asia (Hong Kong)",
+        server: "hongkong.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "Asia (Singapore)",
+        server: "singapore.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "Asia (Seoul, South Korea)",
+        server: "seoul.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "Asia (Tokyo, Japan)",
+        server: "tokyo.restream.io/live",
+    },
+    StreamingServerPreset {
+        display_name: "Australia (Sydney)",
+        server: "sydney.restream.io/live",
+    },
+];
+
 impl StreamingServicePreset {
     #[must_use]
     pub const fn id(self) -> &'static str {
@@ -169,6 +478,22 @@ impl StreamingServicePreset {
     pub fn matches(self, value: &str) -> bool {
         let value = value.trim();
         self.id.eq_ignore_ascii_case(value) || self.display_name.eq_ignore_ascii_case(value)
+    }
+
+    /// Returns additional pinned servers after the primary endpoint.
+    ///
+    /// The primary server remains in the preset itself so persisted/custom
+    /// server text has one canonical owner. Only services with a bounded
+    /// regional list expose additional choices here.
+    #[must_use]
+    pub fn additional_servers(self) -> &'static [StreamingServerPreset] {
+        match self.id {
+            "twitch" => &TWITCH_ADDITIONAL_SERVERS,
+            "youtube-rtmps" => &YOUTUBE_RTMPS_ADDITIONAL_SERVERS,
+            "loola-tv" => &LOOLA_ADDITIONAL_SERVERS,
+            "restream" => &RESTREAM_ADDITIONAL_SERVERS,
+            _ => &[],
+        }
     }
 }
 
@@ -811,6 +1136,26 @@ mod tests {
             streaming_service_preset("Amazon IVS").map(StreamingServicePreset::protocol),
             Some(StreamProtocol::Rtmps)
         );
+        let twitch = streaming_service_preset("Twitch").expect("Twitch preset");
+        assert_eq!(twitch.additional_servers().len(), 45);
+        assert_eq!(
+            twitch
+                .additional_servers()
+                .first()
+                .map(|server| server.display_name()),
+            Some("Asia: Seoul, South Korea")
+        );
+        assert_eq!(
+            streaming_service_preset("YouTube - RTMPS")
+                .expect("YouTube preset")
+                .additional_servers()
+                .len(),
+            1
+        );
+        assert!(streaming_service_preset("Custom")
+            .expect("custom preset")
+            .additional_servers()
+            .is_empty());
         assert!(streaming_service_preset("not-a-service").is_none());
     }
 
@@ -838,6 +1183,18 @@ mod tests {
                 "invalid endpoint for service: {}",
                 preset.id()
             );
+            for server in preset.additional_servers() {
+                let config = RtmpConfig {
+                    server: server.server().to_owned(),
+                    ..RtmpConfig::default()
+                };
+                assert!(
+                    config.endpoint(preset.protocol()).is_some(),
+                    "invalid additional endpoint for service: {} ({})",
+                    preset.id(),
+                    server.display_name()
+                );
+            }
         }
     }
 }
