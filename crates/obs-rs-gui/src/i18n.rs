@@ -387,6 +387,10 @@ fn english() -> UiText {
         duplicate_collection_dialog_description: s(
             "The current project is copied into a new collection and becomes the active document.",
         ),
+        rename_collection_dialog_title: s("Rename scene collection"),
+        rename_collection_dialog_description: s(
+            "The current project is saved and moved to a new collection name.",
+        ),
         collection_name: s("Collection name"),
         collection_active: s("Active collection"),
         discard_changes_title: s("Unsaved changes"),
@@ -886,6 +890,10 @@ fn spanish() -> UiText {
         duplicate_collection_dialog_title: s("Duplicar colección de escenas"),
         duplicate_collection_dialog_description: s(
             "El proyecto actual se copia en una nueva colección, que pasa a ser el documento activo.",
+        ),
+        rename_collection_dialog_title: s("Renombrar colección de escenas"),
+        rename_collection_dialog_description: s(
+            "El proyecto actual se guarda y se mueve al nuevo nombre de colección.",
         ),
         collection_name: s("Nombre de la colección"),
         collection_active: s("Colección activa"),

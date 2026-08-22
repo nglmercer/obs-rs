@@ -150,24 +150,31 @@ export component OutputDialog inherits ModalShell {
     }
 }
 
-// Names a new scene collection. The current scenes are written to the named
-// document before a clean set is started, so a rename is never a data loss.
+// Names, duplicates, or renames a scene collection. The Rust callback owns the
+// file operation so the dialog never invents a second collection state.
 export component CollectionDialog inherits ModalShell {
     in property <string> locale;
     in property <string> active-collection;
     in property <bool> duplicate-mode: false;
+    in property <bool> rename-mode: false;
     in-out property <string> collection-name;
     callback create-collection(string);
 
-    title: duplicate-mode
-        ? I18n.text.duplicate_collection_dialog_title
-        : I18n.text.collection_dialog_title;
-    subtitle: duplicate-mode
-        ? I18n.text.duplicate_collection_dialog_description
-        : I18n.text.collection_dialog_description;
-    accept-label: duplicate-mode
-        ? I18n.text.menu_duplicate_collection
-        : I18n.text.menu_new_collection;
+    title: rename-mode
+        ? I18n.text.rename_collection_dialog_title
+        : duplicate-mode
+            ? I18n.text.duplicate_collection_dialog_title
+            : I18n.text.collection_dialog_title;
+    subtitle: rename-mode
+        ? I18n.text.rename_collection_dialog_description
+        : duplicate-mode
+            ? I18n.text.duplicate_collection_dialog_description
+            : I18n.text.collection_dialog_description;
+    accept-label: rename-mode
+        ? I18n.text.menu_rename_collection
+        : duplicate-mode
+            ? I18n.text.menu_duplicate_collection
+            : I18n.text.menu_new_collection;
     cancel-label: I18n.text.cancel;
     panel-height: 280px;
     accepted => create-collection(collection-name);

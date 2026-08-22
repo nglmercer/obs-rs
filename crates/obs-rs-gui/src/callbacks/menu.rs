@@ -395,6 +395,8 @@ fn install_collections(
         }
     });
 
+    install_rename_collection(ui, state, surface);
+
     let weak = ui.as_weak();
     let save_state = Rc::clone(state);
     ui.on_save_collection(move || {
@@ -411,6 +413,34 @@ fn install_collections(
                 crate::refresh::invalidate_recovery_cache();
                 refresh_menu_models(&ui, &save_state);
                 ui.set_status_message(format!("Saved collection to {path} ({bytes} bytes)").into());
+            }
+            Err(error) => ui.set_status_message(format!("Collection: {error}").into()),
+        }
+    });
+}
+
+fn install_rename_collection(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let weak = ui.as_weak();
+    let rename_state = Rc::clone(state);
+    let rename_surface = Rc::clone(surface);
+    ui.on_rename_collection(move |name| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let current = ui.get_project_path().to_string();
+        match rename_collection(&rename_state, &current, name.as_str()) {
+            Ok(path) => {
+                let path = path.to_string_lossy().into_owned();
+                ui.set_project_path(path.as_str().into());
+                ui.set_collection_name("".into());
+                crate::refresh::invalidate_recovery_cache();
+                refresh_ui(&ui, &rename_state, &rename_surface);
+                refresh_menu_models(&ui, &rename_state);
+                ui.set_status_message(format!("Renamed collection to {path}").into());
             }
             Err(error) => ui.set_status_message(format!("Collection: {error}").into()),
         }
@@ -481,6 +511,40 @@ fn duplicate_collection(
     let store = project_store(&path_text)?;
     state.borrow_mut().save_project(&store)?;
     Ok(path)
+}
+
+/// Saves the current document and atomically moves it to a new collection name.
+///
+/// The target is always a sibling in the managed collection directory. This
+/// also gives the initial project file a stable collection location once it is
+/// renamed. Existing targets are never overwritten.
+fn rename_collection(
+    state: &Rc<RefCell<DesktopState>>,
+    current_path: &str,
+    name: &str,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let current = current_path.trim();
+    if current.is_empty() {
+        return Err(std::io::Error::other("there is no active collection to rename").into());
+    }
+    let current_path = Path::new(current);
+    let file_name = collection_file_name(name)
+        .ok_or_else(|| std::io::Error::other("a collection needs a name"))?;
+    let directory = collections_root(current);
+    let target = directory.join(file_name);
+    if target == current_path {
+        let store = project_store(current)?;
+        state.borrow_mut().save_project(&store)?;
+        return Ok(current_path.to_path_buf());
+    }
+    if target.exists() {
+        return Err(std::io::Error::other(format!("{} already exists", target.display())).into());
+    }
+    std::fs::create_dir_all(&directory)?;
+    let store = project_store(current)?;
+    state.borrow_mut().save_project(&store)?;
+    std::fs::rename(current_path, &target)?;
+    Ok(target)
 }
 
 /// Turns a typed name into a bounded, separator-free file name.
@@ -687,6 +751,71 @@ mod tests {
         assert_eq!(
             duplicate.file_name().and_then(|name| name.to_str()),
             Some("Broadcast copy.obsrproj")
+        );
+
+        std::fs::remove_dir_all(root).expect("remove collection fixture");
+    }
+
+    #[test]
+    fn renaming_a_collection_moves_the_saved_document_and_updates_no_project_state() {
+        let root =
+            std::env::temp_dir().join(format!("obs-rs-collection-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("collection fixture directory");
+        let current = root.join("current.obsrproj");
+        let state = Rc::new(RefCell::new(DesktopState::new(
+            initial_project().expect("initial project"),
+        )));
+
+        let renamed = rename_collection(
+            &state,
+            current.to_str().expect("current path"),
+            "Evening show",
+        )
+        .expect("collection rename");
+        let document = std::fs::read_to_string(&renamed).expect("renamed collection was saved");
+
+        assert!(!current.exists(), "the old collection path must be moved");
+        assert_eq!(
+            renamed,
+            root.join("collections").join("Evening show.obsrproj")
+        );
+        assert_eq!(state.borrow().project_document(), document);
+
+        std::fs::remove_dir_all(root).expect("remove collection fixture");
+    }
+
+    #[test]
+    fn renaming_a_collection_never_overwrites_an_existing_target() {
+        let root = std::env::temp_dir().join(format!(
+            "obs-rs-collection-rename-conflict-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("collections")).expect("collection fixture directory");
+        let current = root.join("current.obsrproj");
+        let target = root.join("collections").join("Evening show.obsrproj");
+        std::fs::write(&current, "current document").expect("current fixture");
+        std::fs::write(&target, "keep this document").expect("target fixture");
+        let state = Rc::new(RefCell::new(DesktopState::new(
+            initial_project().expect("initial project"),
+        )));
+
+        let error = rename_collection(
+            &state,
+            current.to_str().expect("current path"),
+            "Evening show",
+        )
+        .expect_err("existing collections must not be overwritten");
+
+        assert!(error.to_string().contains("already exists"));
+        assert_eq!(
+            std::fs::read_to_string(&current).expect("current fixture remains"),
+            "current document"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target).expect("target fixture remains"),
+            "keep this document"
         );
 
         std::fs::remove_dir_all(root).expect("remove collection fixture");

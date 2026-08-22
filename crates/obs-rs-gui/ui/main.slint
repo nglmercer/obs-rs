@@ -86,6 +86,7 @@ export component MainWindow inherits Window {
         in property <string> app-platform;
         in-out property <string> collection-name;
         in-out property <bool> duplicate-collection-dialog: false;
+        in-out property <bool> rename-collection-dialog: false;
         in property <string> source-scene;
         in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
@@ -240,6 +241,7 @@ export component MainWindow inherits Window {
         callback select-collection(string);
         callback create-collection(string);
         callback duplicate-collection(string);
+        callback rename-collection(string);
         callback save-collection();
         // Reports the desktop portal's answer back onto the UI thread.
         // Includes the source that initiated the request so a selection
@@ -476,9 +478,18 @@ export component MainWindow inherits Window {
                         root.reset-dock-layout();
                     } else if action == "new-collection" {
                         root.duplicate-collection-dialog = false;
+                        root.rename-collection-dialog = false;
+                        root.collection-name = "";
                         root.active-modal = 9;
                     } else if action == "duplicate-collection" {
                         root.duplicate-collection-dialog = true;
+                        root.rename-collection-dialog = false;
+                        root.collection-name = "";
+                        root.active-modal = 9;
+                    } else if action == "rename-collection" {
+                        root.duplicate-collection-dialog = false;
+                        root.rename-collection-dialog = true;
+                        root.collection-name = root.active-collection;
                         root.active-modal = 9;
                     } else if action == "save-collection" {
                         root.save-collection();
@@ -766,20 +777,25 @@ export component MainWindow inherits Window {
         locale: root.locale;
         active-collection: root.active-collection;
         duplicate-mode: root.duplicate-collection-dialog;
+        rename-mode: root.rename-collection-dialog;
         collection-name <=> root.collection-name;
         create-collection(name) => {
             if root.duplicate-collection-dialog {
                 root.duplicate-collection(name);
+            } else if root.rename-collection-dialog {
+                root.rename-collection(name);
             } else {
                 root.create-collection(name);
             }
         }
         close => {
             root.duplicate-collection-dialog = false;
+            root.rename-collection-dialog = false;
             root.active-modal = 0;
         }
         accepted => {
             root.duplicate-collection-dialog = false;
+            root.rename-collection-dialog = false;
             root.active-modal = 0;
         }
     }
