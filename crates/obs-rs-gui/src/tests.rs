@@ -2586,6 +2586,13 @@ fn exercise_recording_controls(
         .expect("program scene frame");
     crate::callbacks::push_program_frame(ui, None, None, Some(frame), &output);
     ui.invoke_toggle_recording();
+    for _ in 0..100 {
+        crate::callbacks::reconcile_output_lifecycle(ui, state, &output);
+        if !state.borrow().recording() && path.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     assert!(
         !state.borrow().recording(),
         "Record button must stop the state"

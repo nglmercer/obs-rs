@@ -245,6 +245,38 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Enqueues recording setup without waiting for file or encoder work.
+    ///
+    /// The GUI uses this boundary so opening a container or negotiating a
+    /// production encoder cannot block its event thread. The lifecycle is
+    /// published as `Starting` immediately; the worker publishes `Running` or
+    /// `Failed` after it processes the command.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] only when the bounded command queue rejects the
+    /// request or the worker has already closed.
+    pub fn try_start_recording(
+        &self,
+        path: impl Into<PathBuf>,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        set_recording_lifecycle(&self.snapshot, OutputLifecycle::Starting);
+        let (reply, _receive) = mpsc::channel();
+        match self.sender.try_send(WorkerCommand::StartRecording(
+            path.into(),
+            encoder_config,
+            reply,
+        )) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_recording_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                Err(error)
+            }
+        }
+    }
+
     /// Requests recording finalization on the worker thread.
     ///
     /// # Errors
@@ -259,6 +291,28 @@ impl EngineWorker {
             .recv()
             .map_err(|_| worker_closed())?
             .map_err(EngineError::Worker)
+    }
+
+    /// Enqueues recording finalization without waiting for container work.
+    ///
+    /// The lifecycle becomes `Stopping` immediately and settles to `Idle` or
+    /// `Failed` when the worker has finalized the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] only when the bounded command queue rejects the
+    /// request or the worker has already closed.
+    pub fn try_finish_recording(&self) -> Result<(), EngineError> {
+        set_recording_lifecycle(&self.snapshot, OutputLifecycle::Stopping);
+        let (reply, _receive) = mpsc::channel();
+        match self.sender.try_send(WorkerCommand::FinishRecording(reply)) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_recording_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                Err(error)
+            }
+        }
     }
 
     /// Cancels an open recording without doing file work on the caller.
@@ -1102,6 +1156,15 @@ fn set_streaming_lifecycle(
     }
 }
 
+fn set_recording_lifecycle(
+    snapshot: &Arc<Mutex<EngineWorkerSnapshot>>,
+    lifecycle: OutputLifecycle,
+) {
+    if let Ok(mut snapshot) = snapshot.lock() {
+        snapshot.engine.recording_lifecycle = lifecycle;
+    }
+}
+
 fn push_output_event(events: &Arc<Mutex<VecDeque<OutputEvent>>>, event: OutputEvent) {
     if let Ok(mut events) = events.lock() {
         if events.len() == OUTPUT_EVENT_CAPACITY {
@@ -1210,6 +1273,87 @@ mod tests {
             OutputLifecycle::Idle
         );
         assert_eq!(worker.take_output_events(), vec![OutputEvent::Stopped]);
+    }
+
+    #[test]
+    fn recording_requests_return_without_waiting_for_file_work() {
+        let worker = Arc::new(worker(1));
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-engine-async-{token}.obsr"));
+
+        let (entered_send, entered_receive) = mpsc::channel();
+        let (release_send, release_receive) = mpsc::channel();
+        worker
+            .sender
+            .send(WorkerCommand::TestBlock(entered_send, release_receive))
+            .expect("block command");
+        entered_receive.recv().expect("worker entered barrier");
+
+        let requesting_worker = Arc::clone(&worker);
+        let requesting_path = path.clone();
+        let (result_send, result_receive) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = result_send.send(requesting_worker.try_start_recording(requesting_path, None));
+        });
+        result_receive
+            .recv_timeout(Duration::from_millis(250))
+            .expect("start must return while the worker remains blocked")
+            .expect("start request accepted");
+        assert_eq!(
+            worker.snapshot().engine.recording_lifecycle,
+            OutputLifecycle::Starting
+        );
+
+        release_send.send(()).expect("release worker");
+        for _ in 0..100 {
+            if worker.snapshot().engine.recording_lifecycle == OutputLifecycle::Running {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            worker.snapshot().engine.recording_lifecycle,
+            OutputLifecycle::Running
+        );
+
+        let (entered_send, entered_receive) = mpsc::channel();
+        let (release_send, release_receive) = mpsc::channel();
+        worker
+            .sender
+            .send(WorkerCommand::TestBlock(entered_send, release_receive))
+            .expect("block command");
+        entered_receive.recv().expect("worker entered barrier");
+
+        let requesting_worker = Arc::clone(&worker);
+        let (result_send, result_receive) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = result_send.send(requesting_worker.try_finish_recording());
+        });
+        result_receive
+            .recv_timeout(Duration::from_millis(250))
+            .expect("finish must return while the worker remains blocked")
+            .expect("finish request accepted");
+        assert_eq!(
+            worker.snapshot().engine.recording_lifecycle,
+            OutputLifecycle::Stopping
+        );
+
+        release_send.send(()).expect("release worker");
+        for _ in 0..100 {
+            if worker.snapshot().engine.recording_lifecycle == OutputLifecycle::Idle {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            worker.snapshot().engine.recording_lifecycle,
+            OutputLifecycle::Idle
+        );
+        assert!(path.exists(), "the worker finalized the requested path");
+        std::fs::remove_file(path).expect("remove recording fixture");
     }
 
     #[test]

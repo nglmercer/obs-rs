@@ -336,10 +336,9 @@ pub(crate) fn start_preview_timer(
 
 /// Brings the desktop's output booleans back in line with the engine's phases.
 ///
-/// The stream callback only enqueues lifecycle work. This bridge consumes the
-/// worker's bounded event queue and changes the desktop's streaming boolean
-/// once the worker reports `Running`, `Failed`, or `Stopped`. Recording remains
-/// synchronously validated by its existing worker command for now.
+/// The stream and recording callbacks enqueue lifecycle work. This bridge
+/// consumes the worker's bounded state/events and clears a desktop claim only
+/// after the worker reports a stopped or failed output.
 pub(crate) fn reconcile_output_lifecycle(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,

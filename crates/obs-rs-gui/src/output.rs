@@ -301,6 +301,7 @@ impl OutputRuntime {
             && self.output_format.height() == self.format.height()
     }
 
+    #[cfg(test)]
     pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
         if path.to_ascii_lowercase().ends_with(".mkv") {
             self.worker.start_recording_configured(
@@ -315,10 +316,31 @@ impl OutputRuntime {
         Ok(())
     }
 
+    /// Enqueues recording setup without waiting for container or encoder work.
+    pub(crate) fn request_start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
+        let encoder_config = path.to_ascii_lowercase().ends_with(".mkv").then(|| {
+            (
+                self.recording_video_encoder.clone(),
+                self.recording_audio_encoder.clone(),
+            )
+        });
+        self.worker.try_start_recording(path, encoder_config)?;
+        self.recording_started_at = Some(Instant::now());
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) fn finish_recording(&mut self) -> Result<usize, Box<dyn Error>> {
         let bytes = self.worker.finish_recording()?;
         self.recording_started_at = None;
         Ok(bytes)
+    }
+
+    /// Enqueues recording finalization without waiting for container work.
+    pub(crate) fn request_finish_recording(&mut self) -> Result<(), Box<dyn Error>> {
+        self.worker.try_finish_recording()?;
+        self.recording_started_at = None;
+        Ok(())
     }
 
     pub(crate) fn abort_recording(&mut self) {

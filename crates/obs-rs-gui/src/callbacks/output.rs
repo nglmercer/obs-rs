@@ -36,14 +36,13 @@ fn install_recording_callback(
         };
         let result: Result<String, Box<dyn Error>> = (|| {
             if recording_state.borrow().recording() {
-                let bytes = recording_output.borrow_mut().finish_recording()?;
-                recording_state
-                    .borrow_mut()
-                    .dispatch(UiCommand::StopRecording)?;
-                Ok(format!("Recording finalized: {bytes} bytes"))
+                recording_output.borrow_mut().request_finish_recording()?;
+                Ok("Recording stop requested".to_owned())
             } else {
                 let path = ui.get_recording_path().to_string();
-                recording_output.borrow_mut().start_recording(&path)?;
+                recording_output
+                    .borrow_mut()
+                    .request_start_recording(&path)?;
                 if let Err(error) = recording_state
                     .borrow_mut()
                     .dispatch(UiCommand::StartRecording)
@@ -51,7 +50,7 @@ fn install_recording_callback(
                     recording_output.borrow_mut().abort_recording();
                     return Err(error.into());
                 }
-                Ok(format!("Recording started: {path}"))
+                Ok(format!("Recording start requested: {path}"))
             }
         })();
         match result {
