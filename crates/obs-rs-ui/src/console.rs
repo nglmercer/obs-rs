@@ -203,7 +203,7 @@ fn parse_transition_value<'a>(
     command: &'static str,
     mut words: impl Iterator<Item = &'a str>,
 ) -> Result<FrameTransition, ConsoleCommandError> {
-    let kind = required_word(&mut words, "cut or fade")?;
+    let kind = required_word(&mut words, "cut, fade, or color")?;
     Ok(match kind {
         "cut" => {
             ensure_no_extra(command, words)?;
@@ -221,6 +221,21 @@ fn parse_transition_value<'a>(
                     })?;
             FrameTransition::cross_fade(progress).map_err(ConsoleCommandError::InvalidTransition)?
         }
+        "color" => {
+            let progress = required_word(&mut words, "color progress in 0..1000")?;
+            let color = required_word(&mut words, "color #RRGGBB or #RRGGBBAA")?;
+            ensure_no_extra(command, words)?;
+            let progress =
+                progress
+                    .parse::<u16>()
+                    .map_err(|_| ConsoleCommandError::InvalidArgument {
+                        command,
+                        value: progress.to_owned(),
+                    })?;
+            let color = parse_transition_color(command, color)?;
+            FrameTransition::fade_to_color(progress, color)
+                .map_err(ConsoleCommandError::InvalidTransition)?
+        }
         value => {
             return Err(ConsoleCommandError::InvalidArgument {
                 command,
@@ -228,6 +243,35 @@ fn parse_transition_value<'a>(
             });
         }
     })
+}
+
+fn parse_transition_color(
+    command: &'static str,
+    value: &str,
+) -> Result<[u8; 4], ConsoleCommandError> {
+    let value = value.strip_prefix('#').unwrap_or(value);
+    if value.len() != 6 && value.len() != 8 {
+        return Err(ConsoleCommandError::InvalidArgument {
+            command,
+            value: format!("#{value}"),
+        });
+    }
+    let mut color = [0_u8; 4];
+    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+        let pair = std::str::from_utf8(pair).map_err(|_| ConsoleCommandError::InvalidArgument {
+            command,
+            value: format!("#{value}"),
+        })?;
+        color[index] =
+            u8::from_str_radix(pair, 16).map_err(|_| ConsoleCommandError::InvalidArgument {
+                command,
+                value: format!("#{value}"),
+            })?;
+    }
+    if value.len() == 6 {
+        color[3] = 255;
+    }
+    Ok(color)
 }
 
 fn parse_mixer_command<'a>(

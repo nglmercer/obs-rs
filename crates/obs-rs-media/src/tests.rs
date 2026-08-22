@@ -662,6 +662,36 @@ fn transitions_are_deterministic_and_validate_progress() {
 }
 
 #[test]
+fn fade_to_color_covers_then_reveals_destination() {
+    let source = VideoFrame::solid(format(), Timestamp::ZERO, [255, 0, 0, 255]);
+    let destination = VideoFrame::solid(format(), Timestamp::from_millis(10), [0, 0, 255, 255]);
+    let color = [0, 255, 0, 255];
+
+    let covered = VideoFrame::transitioned(
+        &source,
+        destination.clone(),
+        FrameTransition::fade_to_color(500, color).expect("valid transition"),
+    )
+    .expect("covered frame");
+    assert_eq!(covered.pixel(0, 0), Some(color));
+
+    let revealed = VideoFrame::transitioned(
+        &source,
+        destination,
+        FrameTransition::fade_to_color(750, color).expect("valid transition"),
+    )
+    .expect("revealed frame");
+    assert_eq!(revealed.pixel(0, 0), Some([0, 128, 128, 255]));
+
+    assert_eq!(
+        FrameTransition::fade_to_color(1_001, color),
+        Err(MediaError::InvalidTransition {
+            progress_milli: 1_001,
+        })
+    );
+}
+
+#[test]
 fn fast_division_by_255_matches_integer_division() {
     // Blending feeds this at most `255 * 255 * 2`, so the identity is checked
     // across the whole range a composite can produce.

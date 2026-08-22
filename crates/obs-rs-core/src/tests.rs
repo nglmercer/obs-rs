@@ -414,6 +414,17 @@ fn scene_transition_renders_cut_and_cross_fade() {
 
     assert_eq!(cut.pixel(0, 0), Some([0, 0, 255, 255]));
     assert_eq!(fade.pixel(0, 0), Some([128, 0, 128, 255]));
+
+    let color_fade = runtime
+        .render_scene_transition(
+            "from",
+            "to",
+            &request,
+            FrameTransition::fade_to_color(500, [0, 255, 0, 255]).expect("valid color fade"),
+        )
+        .expect("color fade succeeds")
+        .expect("both scenes have frames");
+    assert_eq!(color_fade.pixel(0, 0), Some([0, 255, 0, 255]));
 }
 
 #[test]

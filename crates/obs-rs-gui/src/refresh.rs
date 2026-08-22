@@ -565,6 +565,13 @@ pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTra
         FrameTransition::CrossFade { progress_milli } => {
             format!("{} {progress_milli}/1000", text.fade)
         }
+        FrameTransition::FadeToColor {
+            progress_milli,
+            color,
+        } => format!(
+            "{} {progress_milli}/1000 #{:02X}{:02X}{:02X}{:02X}",
+            text.fade_to_color, color[0], color[1], color[2], color[3]
+        ),
     })
 }
 

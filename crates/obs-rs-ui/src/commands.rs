@@ -228,8 +228,17 @@ impl DesktopState {
     }
 
     pub(crate) fn set_transition(&mut self, transition: FrameTransition) -> Result<(), UiError> {
-        if let FrameTransition::CrossFade { progress_milli } = transition {
-            FrameTransition::cross_fade(progress_milli).map_err(UiError::Media)?;
+        match transition {
+            FrameTransition::CrossFade { progress_milli } => {
+                FrameTransition::cross_fade(progress_milli).map_err(UiError::Media)?;
+            }
+            FrameTransition::FadeToColor {
+                progress_milli,
+                color,
+            } => {
+                FrameTransition::fade_to_color(progress_milli, color).map_err(UiError::Media)?;
+            }
+            FrameTransition::Cut => {}
         }
         self.transition = transition;
         Ok(())

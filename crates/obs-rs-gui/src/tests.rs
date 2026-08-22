@@ -134,6 +134,16 @@ fn transition_labels_are_user_facing() {
         ),
         "Fade 500/1000"
     );
+    assert_eq!(
+        transition_label_for_locale(
+            UiLocale::Spanish,
+            FrameTransition::FadeToColor {
+                progress_milli: 500,
+                color: [0, 255, 0, 255],
+            },
+        ),
+        "Desvanecer a color 500/1000 #00FF00FF"
+    );
 }
 
 #[test]

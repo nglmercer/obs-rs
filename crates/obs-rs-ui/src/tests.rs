@@ -839,6 +839,24 @@ fn console_parser_covers_state_and_output_commands() {
         }))
     );
     assert_eq!(
+        parse_console_command("transition color 500 #00FF00"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::FadeToColor {
+                progress_milli: 500,
+                color: [0, 255, 0, 255],
+            },
+        }))
+    );
+    assert_eq!(
+        parse_console_command("take color 750 #0000FF80"),
+        Ok(ConsoleCommand::Apply(UiCommand::TakePreview {
+            transition: FrameTransition::FadeToColor {
+                progress_milli: 750,
+                color: [0, 0, 255, 128],
+            },
+        }))
+    );
+    assert_eq!(
         parse_console_command("mixer desktop gain 1500"),
         Ok(ConsoleCommand::Apply(UiCommand::SetMixerGain {
             id: "desktop".to_owned(),
@@ -865,6 +883,13 @@ fn console_parser_covers_state_and_output_commands() {
             },
         ))
     );
+    assert!(matches!(
+        parse_console_command("transition color 500 green"),
+        Err(ConsoleCommandError::InvalidArgument {
+            command: "transition",
+            ..
+        })
+    ));
 }
 
 #[test]

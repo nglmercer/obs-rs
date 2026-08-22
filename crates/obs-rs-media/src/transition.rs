@@ -6,6 +6,13 @@ pub enum FrameTransition {
     Cut,
     /// Linearly interpolates source and destination bytes from 0 to 1000.
     CrossFade { progress_milli: u16 },
+    /// Fades from the source frame to a solid color and then into the
+    /// destination frame over progress 0..=1000.
+    ///
+    /// Progress 500 is the fully covered color frame. The color is RGBA8 so
+    /// the portable reference can represent transparent transition colors as
+    /// well as OBS's usual opaque color picker value.
+    FadeToColor { progress_milli: u16, color: [u8; 4] },
 }
 
 impl FrameTransition {
@@ -22,5 +29,24 @@ impl FrameTransition {
             return Err(MediaError::InvalidTransition { progress_milli });
         }
         Ok(Self::CrossFade { progress_milli })
+    }
+
+    /// Creates a fade-to-color transition at a validated progress value.
+    ///
+    /// Progress `0` selects the source frame, `500` selects the solid color,
+    /// and `1000` selects the destination frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransition`] when `progress_milli` is
+    /// greater than `1000`.
+    pub const fn fade_to_color(progress_milli: u16, color: [u8; 4]) -> Result<Self, MediaError> {
+        if progress_milli > 1_000 {
+            return Err(MediaError::InvalidTransition { progress_milli });
+        }
+        Ok(Self::FadeToColor {
+            progress_milli,
+            color,
+        })
     }
 }
