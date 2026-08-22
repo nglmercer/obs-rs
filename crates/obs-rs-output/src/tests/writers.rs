@@ -1,6 +1,7 @@
 use super::{format, unique_paths};
 use crate::*;
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+use std::time::Duration;
 
 #[test]
 fn recording_session_commits_or_aborts_as_one_lifecycle() {
@@ -111,6 +112,143 @@ fn atomic_packet_writer_streams_large_payloads_before_finalize() {
     assert!(!final_path.exists());
     writer.abort().expect("abort streamed packet writer");
     assert!(!temp_path.exists());
+}
+
+#[test]
+fn segmented_packet_writer_rotates_at_keyframes_and_publishes_each_file() {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("obs-rs-split-{token}.obsr"));
+    let policy =
+        SegmentedRecordingPolicy::new(128, Duration::from_millis(1), 4).expect("split policy");
+    let mut writer = SegmentedPacketFileWriter::new(&base, policy).expect("split writer");
+    writer
+        .push(
+            EncodedPacket::new(PacketKind::Video, Timestamp::ZERO, true, vec![1, 2, 3])
+                .expect("first video"),
+        )
+        .expect("push first video");
+    writer
+        .push(
+            EncodedPacket::new(
+                PacketKind::Audio,
+                Timestamp::from_millis(1),
+                false,
+                vec![4, 5],
+            )
+            .expect("audio"),
+        )
+        .expect("push audio");
+    writer
+        .push(
+            EncodedPacket::new(
+                PacketKind::Video,
+                Timestamp::from_millis(2),
+                true,
+                vec![6, 7, 8, 9],
+            )
+            .expect("second video"),
+        )
+        .expect("rotate at second keyframe");
+    let second_path = base.with_file_name(format!(
+        "{}-0002.obsr",
+        base.file_stem()
+            .and_then(|value| value.to_str())
+            .expect("stem")
+    ));
+    assert_eq!(writer.segments().len(), 1);
+    assert_eq!(writer.segments()[0].packets(), 2);
+    writer
+        .push(
+            EncodedPacket::new(
+                PacketKind::Audio,
+                Timestamp::from_millis(3),
+                false,
+                vec![10],
+            )
+            .expect("second audio"),
+        )
+        .expect("push second audio");
+
+    let bytes = writer.finalize().expect("finalize split writer");
+    assert_eq!(writer.state(), OutputState::Finalized);
+    assert_eq!(writer.segments().len(), 2);
+    assert_eq!(
+        bytes,
+        writer.segments().iter().map(RecordingSegment::bytes).sum()
+    );
+    assert_eq!(writer.segments()[0].packets(), 2);
+    assert_eq!(writer.segments()[1].packets(), 2);
+    assert_eq!(writer.segments()[1].path(), second_path);
+    assert!(!writer
+        .segments()
+        .iter()
+        .any(|segment| segment.path().with_extension("obsr.part").exists()));
+
+    for (index, segment) in writer.segments().iter().enumerate() {
+        let packets = MemoryMuxer::decode(&std::fs::read(segment.path()).expect("segment bytes"))
+            .expect("decode segment");
+        assert_eq!(packets.len(), segment.packets());
+        assert!(
+            packets[0].is_keyframe(),
+            "segment {index} must start at a keyframe"
+        );
+        std::fs::remove_file(segment.path()).expect("remove segment fixture");
+    }
+}
+
+#[test]
+fn segmented_packet_writer_bounds_segment_count_and_abort_removes_published_files() {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("obs-rs-split-abort-{token}.obsr"));
+    let policy =
+        SegmentedRecordingPolicy::new(128, Duration::from_millis(1), 1).expect("split policy");
+    let mut writer = SegmentedPacketFileWriter::new(&base, policy).expect("split writer");
+    for (timestamp, payload) in [(0, vec![1]), (2, vec![2])] {
+        let packet = EncodedPacket::new(
+            PacketKind::Video,
+            Timestamp::from_millis(timestamp),
+            true,
+            payload,
+        )
+        .expect("packet");
+        if timestamp == 0 {
+            writer.push(packet).expect("first keyframe");
+        } else {
+            assert_eq!(
+                writer.push(packet),
+                Err(OutputError::TooManySegments { segments: 1 })
+            );
+        }
+    }
+    writer.finalize().expect("finalize bounded split");
+    let published = writer.segments()[0].path().to_owned();
+    assert!(published.exists());
+
+    let base = std::env::temp_dir().join(format!("obs-rs-split-abort-{token}-open.obsr"));
+    let policy =
+        SegmentedRecordingPolicy::new(128, Duration::from_millis(1), 2).expect("split policy");
+    let mut open = SegmentedPacketFileWriter::new(&base, policy).expect("open split writer");
+    open.push(
+        EncodedPacket::new(PacketKind::Video, Timestamp::ZERO, true, vec![3]).expect("open packet"),
+    )
+    .expect("push open packet");
+    let first_temp = base.with_file_name(format!(
+        "{}-0001.obsr.part",
+        base.file_stem()
+            .and_then(|value| value.to_str())
+            .expect("stem")
+    ));
+    assert!(first_temp.exists());
+    open.abort().expect("abort split writer");
+    assert_eq!(open.state(), OutputState::Aborted);
+    assert!(!first_temp.exists());
+    std::fs::remove_file(published).expect("remove published fixture");
 }
 
 #[test]

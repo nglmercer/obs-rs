@@ -72,7 +72,11 @@ pub use types::{
 pub use video::{
     encode_png, PngVideoEncoder, RawVideoEncoder, RleVideoDecoder, RleVideoEncoder, VideoEncoder,
 };
-pub use writers::{AtomicPacketFileWriter, AtomicRawFileWriter, AtomicY4mFileWriter};
+pub use writers::{
+    AtomicPacketFileWriter, AtomicRawFileWriter, AtomicY4mFileWriter, RecordingSegment,
+    SegmentedPacketFileWriter, SegmentedRecordingPolicy, MAX_RECORDING_SEGMENTS,
+    MAX_SEGMENT_DURATION,
+};
 
 #[cfg(test)]
 pub(crate) use stream::{
