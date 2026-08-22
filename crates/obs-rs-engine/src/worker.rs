@@ -11,7 +11,9 @@ use std::{
 };
 
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFrame};
-use obs_rs_output::{AudioEncoderConfig, StreamTarget, VideoEncoderConfig};
+use obs_rs_output::{
+    AudioEncoderConfig, SegmentedRecordingPolicy, StreamTarget, VideoEncoderConfig,
+};
 
 use obs_rs_project::Project;
 
@@ -40,6 +42,11 @@ enum WorkerCommand {
     StartRecording(
         PathBuf,
         Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+        mpsc::Sender<Result<(), String>>,
+    ),
+    StartSegmentedRecording(
+        PathBuf,
+        SegmentedRecordingPolicy,
         mpsc::Sender<Result<(), String>>,
     ),
     FinishRecording(mpsc::Sender<Result<usize, String>>),
@@ -220,6 +227,32 @@ impl EngineWorker {
         self.start_recording_with_config(path.into(), None)
     }
 
+    /// Requests a bounded split recording start and waits for the worker to
+    /// validate the first segment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker is closed, the policy is
+    /// invalid, or the first segment cannot be opened.
+    pub fn start_segmented_recording(
+        &self,
+        path: impl Into<PathBuf>,
+        policy: SegmentedRecordingPolicy,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::StartSegmentedRecording(
+                path.into(),
+                policy,
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Requests a configured production recording start on the worker thread.
     ///
     /// # Errors
@@ -271,6 +304,34 @@ impl EngineWorker {
         match self.sender.try_send(WorkerCommand::StartRecording(
             path.into(),
             encoder_config,
+            reply,
+        )) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_recording_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                Err(error)
+            }
+        }
+    }
+
+    /// Enqueues a bounded split recording without waiting for segment-file
+    /// setup on the caller's thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] only when the bounded command queue rejects the
+    /// request or the worker has already closed.
+    pub fn try_start_segmented_recording(
+        &self,
+        path: impl Into<PathBuf>,
+        policy: SegmentedRecordingPolicy,
+    ) -> Result<(), EngineError> {
+        set_recording_lifecycle(&self.snapshot, OutputLifecycle::Starting);
+        let (reply, _receive) = mpsc::channel();
+        match self.sender.try_send(WorkerCommand::StartSegmentedRecording(
+            path.into(),
+            policy,
             reply,
         )) {
             Ok(()) => Ok(()),
@@ -906,6 +967,13 @@ fn worker_loop(
         let shutdown = match command {
             WorkerCommand::StartRecording(path, encoder_config, reply) => {
                 let result = start_recording(&mut session, path, encoder_config);
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::StartSegmentedRecording(path, policy, reply) => {
+                let result = session
+                    .start_segmented_recording(path, policy)
+                    .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
             }

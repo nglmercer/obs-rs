@@ -39,9 +39,10 @@ use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig, AudioInputRequirement, EncodedPacket,
     OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectOutcome, ReconnectPolicy,
-    ReplayBuffer, RleVideoEncoder, StreamMetrics, StreamSession, StreamState, StreamTarget,
-    StreamingTransport, TcpPacketTransport, VideoEncoder, VideoEncoderConfig,
-    VideoInputRequirement, WebSocketPacketTransport,
+    ReplayBuffer, RleVideoEncoder, SegmentedPacketFileWriter, SegmentedRecordingPolicy,
+    StreamMetrics, StreamSession, StreamState, StreamTarget, StreamingTransport,
+    TcpPacketTransport, VideoEncoder, VideoEncoderConfig, VideoInputRequirement,
+    WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
@@ -486,6 +487,7 @@ impl From<std::io::Error> for EngineError {
 
 enum RecordingOutput {
     Reference(AtomicPacketFileWriter),
+    SegmentedReference(SegmentedPacketFileWriter),
     #[cfg(feature = "production-gstreamer")]
     Production {
         session: GStreamerOutputSession,
@@ -496,7 +498,7 @@ enum RecordingOutput {
 impl RecordingOutput {
     const fn video_requirement(&self) -> VideoInputRequirement {
         match self {
-            Self::Reference(_) => VideoInputRequirement::Packetized,
+            Self::Reference(_) | Self::SegmentedReference(_) => VideoInputRequirement::Packetized,
             #[cfg(feature = "production-gstreamer")]
             Self::Production { .. } => VideoInputRequirement::Raw,
         }
@@ -504,7 +506,7 @@ impl RecordingOutput {
 
     const fn audio_requirement(&self) -> AudioInputRequirement {
         match self {
-            Self::Reference(_) => AudioInputRequirement::Packetized,
+            Self::Reference(_) | Self::SegmentedReference(_) => AudioInputRequirement::Packetized,
             #[cfg(feature = "production-gstreamer")]
             Self::Production { .. } => AudioInputRequirement::Raw,
         }
@@ -513,6 +515,7 @@ impl RecordingOutput {
     fn push_packet(&mut self, packet: EncodedPacket) -> Result<(), EngineError> {
         match self {
             Self::Reference(writer) => writer.push(packet).map_err(Into::into),
+            Self::SegmentedReference(writer) => writer.push(packet).map_err(Into::into),
             #[cfg(feature = "production-gstreamer")]
             Self::Production { .. } => Ok(()),
         }
@@ -526,7 +529,7 @@ impl RecordingOutput {
         #[cfg(not(feature = "production-gstreamer"))]
         let _ = frame;
         match self {
-            Self::Reference(_) => Ok(()),
+            Self::Reference(_) | Self::SegmentedReference(_) => Ok(()),
             #[cfg(feature = "production-gstreamer")]
             Self::Production { session, .. } => {
                 session.push_video(frame.clone()).map_err(Into::into)
@@ -538,7 +541,7 @@ impl RecordingOutput {
         #[cfg(not(feature = "production-gstreamer"))]
         let _ = frame;
         match self {
-            Self::Reference(_) => Ok(()),
+            Self::Reference(_) | Self::SegmentedReference(_) => Ok(()),
             #[cfg(feature = "production-gstreamer")]
             Self::Production { session, .. } => {
                 session.push_raw_video(frame.clone()).map_err(Into::into)
@@ -554,7 +557,7 @@ impl RecordingOutput {
         #[cfg(not(feature = "production-gstreamer"))]
         let _ = buffer;
         match self {
-            Self::Reference(_) => Ok(()),
+            Self::Reference(_) | Self::SegmentedReference(_) => Ok(()),
             #[cfg(feature = "production-gstreamer")]
             Self::Production { session, .. } => {
                 session.push_audio(buffer.clone()).map_err(Into::into)
@@ -565,6 +568,7 @@ impl RecordingOutput {
     fn finalize(&mut self) -> Result<usize, EngineError> {
         match self {
             Self::Reference(writer) => writer.finalize().map_err(Into::into),
+            Self::SegmentedReference(writer) => writer.finalize().map_err(Into::into),
             #[cfg(feature = "production-gstreamer")]
             Self::Production {
                 session,
@@ -583,6 +587,9 @@ impl RecordingOutput {
     fn abort(&mut self) {
         match self {
             Self::Reference(writer) => {
+                let _ = writer.abort();
+            }
+            Self::SegmentedReference(writer) => {
                 let _ = writer.abort();
             }
             #[cfg(feature = "production-gstreamer")]
@@ -1496,6 +1503,40 @@ impl EngineSession {
         self.start_recording_with_config(path.into(), None)
     }
 
+    /// Starts a bounded split recording in numbered `.obsr` packet files.
+    ///
+    /// The supplied path is used as the base name; the writer publishes
+    /// siblings such as `recording-0001.obsr` at keyframe boundaries. The
+    /// policy bounds total segment count, target size, and target duration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a recording is already open, the base path is not
+    /// an `.obsr` path, the policy is invalid, or the first segment cannot be
+    /// opened.
+    pub fn start_segmented_recording(
+        &mut self,
+        path: impl Into<PathBuf>,
+        policy: SegmentedRecordingPolicy,
+    ) -> Result<(), EngineError> {
+        if self.recording.is_some() {
+            return Err(EngineError::Busy("start recording"));
+        }
+        self.recording_lifecycle = OutputLifecycle::Starting;
+        let result = self.open_segmented_recording(path.into(), policy);
+        match result {
+            Ok(()) => {
+                self.recording_lifecycle = OutputLifecycle::Running;
+                Ok(())
+            }
+            Err(error) => {
+                self.recording_lifecycle = OutputLifecycle::Failed;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
     /// Starts a production recording with an explicit codec and encoder choice.
     ///
     /// # Errors
@@ -1624,6 +1665,26 @@ impl EngineSession {
         Err(EngineError::InvalidConfiguration(
             "production recording support was not compiled into this host".to_owned(),
         ))
+    }
+
+    fn open_segmented_recording(
+        &mut self,
+        base_path: PathBuf,
+        policy: SegmentedRecordingPolicy,
+    ) -> Result<(), EngineError> {
+        let extension = base_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if !extension.eq_ignore_ascii_case("obsr") {
+            return Err(EngineError::InvalidConfiguration(
+                "segmented recording base path must use the .obsr extension".to_owned(),
+            ));
+        }
+        self.recording = Some(RecordingOutput::SegmentedReference(
+            SegmentedPacketFileWriter::new(base_path, policy)?,
+        ));
+        Ok(())
     }
 
     /// Finalizes a recording and returns its committed byte count.
@@ -3723,6 +3784,53 @@ mod tests {
     }
 
     #[test]
+    fn segmented_recording_publishes_numbered_packet_files() {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("obs-rs-engine-segmented-{token}.obsr"));
+        let policy = SegmentedRecordingPolicy::new(2_000_000, Duration::from_nanos(1), 4)
+            .expect("split policy");
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine
+            .start_segmented_recording(&base, policy)
+            .expect("segmented recording");
+        for _ in 0..3 {
+            engine.tick(None, Some("program")).expect("media tick");
+        }
+        let bytes = engine.finish_recording().expect("finalize split recording");
+
+        let paths: Vec<_> = (1..=3)
+            .map(|index| {
+                base.with_file_name(format!("obs-rs-engine-segmented-{token}-{index:04}.obsr"))
+            })
+            .collect();
+        assert!(paths.iter().all(|path| path.is_file()));
+        assert!(!base.exists(), "the base path is only a naming anchor");
+        assert!(!base
+            .with_file_name(format!("obs-rs-engine-segmented-{token}-0004.obsr"))
+            .exists());
+        let persisted_bytes: usize = paths
+            .iter()
+            .map(|path| {
+                usize::try_from(std::fs::metadata(path).expect("segment metadata").len())
+                    .expect("segment size fits usize")
+            })
+            .sum();
+        assert_eq!(persisted_bytes, bytes);
+        for path in &paths {
+            let packets =
+                obs_rs_output::MemoryMuxer::decode(&std::fs::read(path).expect("read segment"))
+                    .expect("decode segment");
+            assert!(packets.iter().any(|packet| {
+                packet.kind() == obs_rs_output::PacketKind::Video && packet.is_keyframe()
+            }));
+            std::fs::remove_file(path).expect("remove segment");
+        }
+    }
+
+    #[test]
     fn recording_rejects_extensions_that_do_not_select_a_known_container() {
         let path = std::env::temp_dir().join("obs-rs-unknown-recording.bin");
         let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
@@ -3894,6 +4002,50 @@ mod tests {
             .any(|packet| packet.kind() == obs_rs_output::PacketKind::Audio));
         assert!(bytes > 0);
         std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[test]
+    fn worker_accepts_segmented_recording_and_finalizes_numbered_files() {
+        let format = project()
+            .active_profile_spec()
+            .expect("profile")
+            .video_format();
+        let session = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        let worker = EngineWorker::spawn_with_capacity(session, 4).expect("worker");
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let base =
+            std::env::temp_dir().join(format!("obs-rs-engine-worker-segmented-{token}.obsr"));
+        let policy = SegmentedRecordingPolicy::new(10_000, Duration::from_nanos(1), 3)
+            .expect("split policy");
+
+        worker
+            .start_segmented_recording(&base, policy)
+            .expect("segmented recording");
+        assert!(worker.try_push_frame(VideoFrame::solid(format, Timestamp::ZERO, [1, 2, 3, 255],)));
+        assert!(worker.try_push_frame(VideoFrame::solid(
+            format,
+            Timestamp::from_millis(33),
+            [4, 5, 6, 255],
+        )));
+        let bytes = worker.finish_recording().expect("finalize split recording");
+        assert!(bytes > 0);
+
+        for index in 1..=2 {
+            let path = base.with_file_name(format!(
+                "obs-rs-engine-worker-segmented-{token}-{index:04}.obsr"
+            ));
+            assert!(path.is_file(), "missing segment {index}");
+            let packets =
+                obs_rs_output::MemoryMuxer::decode(&std::fs::read(&path).expect("read segment"))
+                    .expect("decode segment");
+            assert!(packets
+                .iter()
+                .any(|packet| packet.kind() == obs_rs_output::PacketKind::Video));
+            std::fs::remove_file(path).expect("remove segment");
+        }
     }
 
     #[test]
