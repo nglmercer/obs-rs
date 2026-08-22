@@ -384,6 +384,12 @@ impl GStreamerCapabilitySnapshot {
         }
     }
 
+    /// Reports whether the native split-muxer boundary is available.
+    #[must_use]
+    pub fn supports_segmented_recording(&self) -> bool {
+        self.runtime_version.is_some() && element_available("splitmuxsink")
+    }
+
     #[must_use]
     pub fn runtime_version(&self) -> Option<&str> {
         self.runtime_version.as_deref()
@@ -1120,6 +1126,15 @@ impl ProductionPipelinePlan {
         capabilities: &GStreamerCapabilitySnapshot,
     ) -> Result<Self, GStreamerError> {
         destination.validate_for(profile)?;
+        if matches!(
+            destination,
+            ProductionDestination::SegmentedRecording { .. }
+        ) && !capabilities.supports_segmented_recording()
+        {
+            return Err(GStreamerError::Native(
+                "GStreamer splitmuxsink is unavailable for segmented recording".to_owned(),
+            ));
+        }
         capabilities
             .output
             .negotiate(profile)
@@ -1187,6 +1202,15 @@ impl ProductionPipelinePlan {
         audio: &AudioEncoderConfig,
     ) -> Result<Self, GStreamerError> {
         destination.validate_for(profile)?;
+        if matches!(
+            destination,
+            ProductionDestination::SegmentedRecording { .. }
+        ) && !capabilities.supports_segmented_recording()
+        {
+            return Err(GStreamerError::Native(
+                "GStreamer splitmuxsink is unavailable for segmented recording".to_owned(),
+            ));
+        }
         capabilities
             .output
             .negotiate(profile)

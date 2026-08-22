@@ -94,6 +94,7 @@ pub struct GStreamerOutputSession {
     audio: gst_app::AppSrc,
     state: NativeOutputState,
     telemetry: OutputSessionTelemetry,
+    committed_bytes: Option<usize>,
     final_path: Option<PathBuf>,
     temp_path: Option<PathBuf>,
     segmented_policy: Option<SegmentedRecordingPolicy>,
@@ -195,6 +196,7 @@ impl GStreamerOutputSession {
             audio,
             state: NativeOutputState::Ready,
             telemetry: OutputSessionTelemetry::default(),
+            committed_bytes: None,
             final_path,
             temp_path,
             segmented_policy,
@@ -216,6 +218,12 @@ impl GStreamerOutputSession {
     #[must_use]
     pub const fn telemetry(&self) -> OutputSessionTelemetry {
         self.telemetry
+    }
+
+    /// Returns the total bytes published by the last successful local close.
+    #[must_use]
+    pub const fn committed_bytes(&self) -> Option<usize> {
+        self.committed_bytes
     }
 
     /// Moves an owned RGBA frame into the bounded video queue.
@@ -398,11 +406,15 @@ impl GStreamerOutputSession {
         self.pipeline
             .set_state(gst::State::Null)
             .map_err(native_error)?;
-        if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
-            publish_segmented_recording(base_path, policy)?;
-        } else if let (Some(temp), Some(final_path)) = (&self.temp_path, &self.final_path) {
-            publish_recording_artifact(temp, final_path)?;
-        }
+        let committed_bytes =
+            if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
+                Some(publish_segmented_recording(base_path, policy)?)
+            } else if let (Some(temp), Some(final_path)) = (&self.temp_path, &self.final_path) {
+                Some(publish_recording_artifact(temp, final_path)?)
+            } else {
+                None
+            };
+        self.committed_bytes = committed_bytes;
         self.state = NativeOutputState::Closed;
         Ok(())
     }
@@ -1282,14 +1294,20 @@ fn segmented_recording_paths(
 fn publish_segmented_recording(
     base_path: &Path,
     policy: SegmentedRecordingPolicy,
-) -> Result<(), GStreamerError> {
+) -> Result<usize, GStreamerError> {
     let mut published = 0_usize;
+    let mut total_bytes = 0_usize;
     for index in 1..=policy.max_segments() {
         let (final_path, temp_path) = segmented_recording_paths(base_path, index)?;
         match fs::metadata(&temp_path) {
             Ok(_) => {
-                publish_recording_artifact(&temp_path, &final_path)?;
+                let bytes = publish_recording_artifact(&temp_path, &final_path)?;
                 published = published.saturating_add(1);
+                total_bytes = total_bytes.checked_add(bytes).ok_or_else(|| {
+                    GStreamerError::Native(
+                        "published production segment size exceeds platform limits".to_owned(),
+                    )
+                })?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
@@ -1304,13 +1322,16 @@ fn publish_segmented_recording(
             "production segment muxer produced no recording artifacts".to_owned(),
         ));
     }
-    Ok(())
+    Ok(total_bytes)
 }
 
-fn publish_recording_artifact(temp: &Path, final_path: &Path) -> Result<(), GStreamerError> {
+fn publish_recording_artifact(temp: &Path, final_path: &Path) -> Result<usize, GStreamerError> {
     let bytes = fs::metadata(temp)
         .map_err(|error| GStreamerError::Native(format!("inspect production recording: {error}")))?
         .len();
+    let bytes = usize::try_from(bytes).map_err(|_| {
+        GStreamerError::Native("production recording size exceeds platform limits".to_owned())
+    })?;
     if bytes == 0 {
         return Err(GStreamerError::Native(
             "refusing to publish an empty production recording".to_owned(),
@@ -1326,7 +1347,7 @@ fn publish_recording_artifact(temp: &Path, final_path: &Path) -> Result<(), GStr
             "remove published production recording temporary path: {error}"
         ))
     })?;
-    Ok(())
+    Ok(bytes)
 }
 
 #[cfg(test)]

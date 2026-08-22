@@ -491,7 +491,6 @@ enum RecordingOutput {
     #[cfg(feature = "production-gstreamer")]
     Production {
         session: GStreamerOutputSession,
-        final_path: PathBuf,
     },
 }
 
@@ -570,14 +569,11 @@ impl RecordingOutput {
             Self::Reference(writer) => writer.finalize().map_err(Into::into),
             Self::SegmentedReference(writer) => writer.finalize().map_err(Into::into),
             #[cfg(feature = "production-gstreamer")]
-            Self::Production {
-                session,
-                final_path,
-            } => {
+            Self::Production { session } => {
                 session.close()?;
-                usize::try_from(std::fs::metadata(final_path)?.len()).map_err(|_| {
+                session.committed_bytes().ok_or_else(|| {
                     EngineError::InvalidConfiguration(
-                        "recording size does not fit this platform".to_owned(),
+                        "native recording did not report committed bytes".to_owned(),
                     )
                 })
             }
@@ -1724,10 +1720,7 @@ impl EngineSession {
                 self.format,
                 self.config.audio_format,
             )?;
-            self.recording = Some(RecordingOutput::Production {
-                session,
-                final_path,
-            });
+            self.recording = Some(RecordingOutput::Production { session });
             Ok(())
         }
         #[cfg(not(feature = "production-gstreamer"))]
@@ -1747,16 +1740,53 @@ impl EngineSession {
             .extension()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
-        if !extension.eq_ignore_ascii_case("obsr") {
-            return Err(EngineError::InvalidConfiguration(
-                "segmented recording base path must use the .obsr extension".to_owned(),
+        if extension.eq_ignore_ascii_case("obsr") {
+            recover_stale_packet_files(&base_path)?;
+            self.recording = Some(RecordingOutput::SegmentedReference(
+                SegmentedPacketFileWriter::new(base_path, policy)?,
             ));
+            return Ok(());
         }
-        recover_stale_packet_files(&base_path)?;
-        self.recording = Some(RecordingOutput::SegmentedReference(
-            SegmentedPacketFileWriter::new(base_path, policy)?,
-        ));
-        Ok(())
+        #[cfg(feature = "production-gstreamer")]
+        {
+            let is_mp4 = extension.eq_ignore_ascii_case("mp4");
+            let is_mov = extension.eq_ignore_ascii_case("mov");
+            let is_flv = extension.eq_ignore_ascii_case("flv");
+            let is_matroska = extension.eq_ignore_ascii_case("mkv");
+            if !is_matroska && !is_mp4 && !is_mov && !is_flv {
+                return Err(EngineError::InvalidConfiguration(
+                    "segmented recording base path must use .mkv, .mp4, .mov, .flv, or .obsr"
+                        .to_owned(),
+                ));
+            }
+            let destination = ProductionDestination::SegmentedRecording { base_path, policy };
+            let profile = if is_mp4 {
+                OutputProfile::mp4_h264_aac()
+            } else if is_mov {
+                OutputProfile::mov_h264_aac()
+            } else if is_flv {
+                OutputProfile::flv_h264_aac()
+            } else {
+                OutputProfile::matroska_h264_aac()
+            };
+            let capabilities = GStreamerCapabilitySnapshot::probe();
+            let plan = ProductionPipelinePlan::negotiate(profile, &destination, &capabilities)?;
+            let session = GStreamerOutputSession::start(
+                &plan,
+                &destination,
+                self.format,
+                self.config.audio_format,
+            )?;
+            self.recording = Some(RecordingOutput::Production { session });
+            Ok(())
+        }
+        #[cfg(not(feature = "production-gstreamer"))]
+        {
+            let _ = (base_path, policy);
+            Err(EngineError::InvalidConfiguration(
+                "production segmented recording support was not compiled into this host".to_owned(),
+            ))
+        }
     }
 
     /// Finalizes a recording and returns its committed byte count.
@@ -4015,6 +4045,57 @@ mod tests {
         assert!(persisted.windows(4).any(|chunk| chunk == b"moof"));
         assert!(!temp_path.exists());
         std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn segmented_mp4_recording_reaches_the_engine_native_boundary() {
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(obs_rs_output::OutputProfileKind::Mp4H264Aac)
+            || !capabilities.supports_segmented_recording()
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let base_path = std::env::temp_dir().join(format!("obs-rs-engine-segmented-{token}.mp4"));
+        let policy =
+            SegmentedRecordingPolicy::new(1_000_000, std::time::Duration::from_millis(500), 3)
+                .expect("segment policy");
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine
+            .start_segmented_recording(&base_path, policy)
+            .expect("segmented MP4 recording");
+        for _ in 0..90 {
+            engine.tick(None, Some("program")).expect("media tick");
+        }
+        assert_eq!(engine.reference_video_encode_calls, 0);
+        assert_eq!(engine.reference_audio_encode_calls, 0);
+        let bytes = engine
+            .finish_recording()
+            .expect("finalize segmented MP4 recording");
+        assert!(bytes > 0);
+
+        let mut published = 0_usize;
+        let stem = base_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .expect("base stem");
+        for index in 1..=policy.max_segments() {
+            let path = base_path.with_file_name(format!("{stem}-{index:05}.mp4"));
+            if path.exists() {
+                published = published.saturating_add(1);
+                assert!(std::fs::metadata(&path).expect("segment metadata").len() > 0);
+                std::fs::remove_file(path).expect("remove segment");
+            }
+            let temp = base_path.with_file_name(format!("{stem}-{index:05}.mp4.part"));
+            assert!(!temp.exists(), "temporary segment must be cleaned");
+        }
+        assert!(published > 0, "engine must publish at least one segment");
     }
 
     #[cfg(feature = "production-gstreamer")]
