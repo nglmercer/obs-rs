@@ -62,7 +62,7 @@ pub use recording::{RawRecording, RawRecordingSession};
 pub use replay::{ReplayBuffer, ReplayPushOutcome, MAX_REPLAY_DURATION};
 pub use stream::{
     validate_websocket_handshake, MemoryPacketTransport, PacketMuxer, PacketTransport,
-    StreamSession, TcpPacketTransport, WebSocketPacketTransport,
+    StreamSession, StreamingTransport, TcpPacketTransport, WebSocketPacketTransport,
 };
 pub use types::{
     AudioInputRequirement, EncodedPacket, OutputState, PacketDropPolicy, PacketKind,

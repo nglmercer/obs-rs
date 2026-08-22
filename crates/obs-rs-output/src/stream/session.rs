@@ -279,3 +279,20 @@ impl<T: PacketTransport> StreamSession<T> {
         }
     }
 }
+
+impl<T: PacketTransport> super::StreamingTransport for StreamSession<T> {
+    type Error = OutputError;
+
+    fn poll(&mut self) -> Result<usize, Self::Error> {
+        self.flush()
+    }
+
+    fn reconnect(&mut self) -> Result<(), Self::Error> {
+        Self::reconnect(self)
+    }
+
+    fn close(&mut self) -> Result<(), Self::Error> {
+        Self::close(self);
+        Ok(())
+    }
+}

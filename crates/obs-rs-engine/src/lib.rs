@@ -39,8 +39,9 @@ use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig, AudioInputRequirement, EncodedPacket,
     OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, ReplayBuffer, RleVideoEncoder,
-    StreamMetrics, StreamSession, StreamState, StreamTarget, TcpPacketTransport, VideoEncoder,
-    VideoEncoderConfig, VideoInputRequirement, WebSocketPacketTransport,
+    StreamMetrics, StreamSession, StreamState, StreamTarget, StreamingTransport,
+    TcpPacketTransport, VideoEncoder, VideoEncoderConfig, VideoInputRequirement,
+    WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
@@ -741,22 +742,19 @@ impl StreamOutput {
 
     fn pump(&mut self) -> Result<usize, EngineError> {
         match self {
-            Self::Tcp(stream) => Ok(stream.flush()?),
-            Self::WebSocket(stream) => Ok(stream.flush()?),
+            Self::Tcp(stream) => Ok(StreamingTransport::poll(stream)?),
+            Self::WebSocket(stream) => Ok(StreamingTransport::poll(stream)?),
             #[cfg(feature = "production-gstreamer")]
-            Self::Production(stream) => {
-                stream.poll_health()?;
-                Ok(0)
-            }
+            Self::Production(stream) => Ok(StreamingTransport::poll(stream)?),
         }
     }
 
     fn reconnect(&mut self) -> Result<(), EngineError> {
         match self {
-            Self::Tcp(stream) => stream.reconnect()?,
-            Self::WebSocket(stream) => stream.reconnect()?,
+            Self::Tcp(stream) => StreamingTransport::reconnect(stream)?,
+            Self::WebSocket(stream) => StreamingTransport::reconnect(stream)?,
             #[cfg(feature = "production-gstreamer")]
-            Self::Production(stream) => stream.reconnect_live()?,
+            Self::Production(stream) => StreamingTransport::reconnect(stream)?,
         }
         Ok(())
     }
@@ -783,10 +781,10 @@ impl StreamOutput {
     )]
     fn close(&mut self) -> Result<(), EngineError> {
         match self {
-            Self::Tcp(stream) => stream.close(),
-            Self::WebSocket(stream) => stream.close(),
+            Self::Tcp(stream) => StreamingTransport::close(stream)?,
+            Self::WebSocket(stream) => StreamingTransport::close(stream)?,
             #[cfg(feature = "production-gstreamer")]
-            Self::Production(stream) => stream.close()?,
+            Self::Production(stream) => StreamingTransport::close(stream)?,
         }
         Ok(())
     }

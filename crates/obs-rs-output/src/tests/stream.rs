@@ -52,6 +52,25 @@ fn stream_requeues_failed_packets_and_reconnects_without_loss() {
 }
 
 #[test]
+fn reference_stream_implements_the_shared_transport_lifecycle() {
+    let mut stream = StreamSession::new(
+        MemoryPacketTransport::new(),
+        32,
+        PacketDropPolicy::DropNewest,
+        ReconnectPolicy::new(1),
+    )
+    .expect("stream");
+    stream.connect().expect("connect stream");
+
+    assert_eq!(
+        StreamingTransport::poll(&mut stream).expect("poll stream"),
+        0
+    );
+    StreamingTransport::close(&mut stream).expect("close stream");
+    assert_eq!(stream.state(), StreamState::Closed);
+}
+
+#[test]
 fn cloning_a_packet_shares_its_payload_instead_of_copying_it() {
     // The engine hands the same packet to the recorder and the stream when both
     // outputs are live. That fan-out is a refcount bump, not a second copy of

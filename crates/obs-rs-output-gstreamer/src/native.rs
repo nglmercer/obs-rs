@@ -5,7 +5,7 @@ use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use obs_rs_audio::{AudioBuffer, AudioFormat};
 use obs_rs_media::{PixelFormat, RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
-use obs_rs_output::{EncoderPreset, OutputTransport, RateControl, VideoCodec};
+use obs_rs_output::{EncoderPreset, OutputTransport, RateControl, StreamingTransport, VideoCodec};
 
 use super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
 
@@ -436,6 +436,22 @@ impl GStreamerOutputSession {
             self.telemetry.audio_drift_nanos =
                 i128::from(audio.as_nanos()) - i128::from(video.as_nanos());
         }
+    }
+}
+
+impl StreamingTransport for GStreamerOutputSession {
+    type Error = GStreamerError;
+
+    fn poll(&mut self) -> Result<usize, Self::Error> {
+        self.poll_health().map(|()| 0)
+    }
+
+    fn reconnect(&mut self) -> Result<(), Self::Error> {
+        self.reconnect_live()
+    }
+
+    fn close(&mut self) -> Result<(), Self::Error> {
+        GStreamerOutputSession::close(self)
     }
 }
 
@@ -1090,9 +1106,9 @@ mod tests {
 
         assert!(session.video.is_live());
         assert!(session.audio.is_live());
-        session.reconnect_live().expect("first reconnect");
+        StreamingTransport::reconnect(&mut session).expect("first reconnect");
         assert_eq!(session.telemetry().reconnects(), 1);
-        assert!(session.reconnect_live().is_err());
+        assert!(StreamingTransport::reconnect(&mut session).is_err());
         assert_eq!(session.state(), NativeOutputState::Failed);
     }
 }
