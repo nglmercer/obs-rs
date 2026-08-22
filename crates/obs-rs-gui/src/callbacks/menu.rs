@@ -89,6 +89,14 @@ impl ProjectorController {
         self.slot(program).borrow().is_some()
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_fullscreen(&self, program: bool) -> bool {
+        self.slot(program)
+            .borrow()
+            .as_ref()
+            .is_some_and(|window| window.window().is_fullscreen())
+    }
+
     const fn slot(&self, program: bool) -> &RefCell<Option<ProjectorWindow>> {
         if program {
             &self.program
@@ -265,6 +273,11 @@ fn open_projector(
     } else {
         ui.get_preview_image()
     });
+    // OBS presents the program projector as a borderless fullscreen feed. The
+    // preview projector remains windowed so the operator can keep it beside
+    // the studio UI. Set this before showing the window so the native backend
+    // creates the correct geometry instead of visibly resizing after launch.
+    window.window().set_fullscreen(program);
 
     let projectors = Rc::clone(projectors);
     window.on_close_requested(move || close_projector(&projectors, program));

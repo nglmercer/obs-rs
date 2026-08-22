@@ -1458,6 +1458,10 @@ fn exercise_menu_actions(
     assert!(!projectors.is_open(true));
     ui.invoke_open_projector(true);
     assert!(projectors.is_open(true), "the program projector opened");
+    assert!(
+        projectors.is_fullscreen(true),
+        "the program projector uses fullscreen geometry"
+    );
     assert!(!projectors.is_open(false), "only one feed was requested");
     ui.invoke_open_projector(true);
     assert!(!projectors.is_open(true), "selecting it again closed it");
