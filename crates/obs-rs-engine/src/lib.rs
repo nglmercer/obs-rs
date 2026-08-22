@@ -37,12 +37,12 @@ use obs_rs_media::{
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
 use obs_rs_output::{
-    AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig, AudioInputRequirement, EncodedPacket,
-    OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectOutcome, ReconnectPolicy,
-    ReplayBuffer, RleVideoEncoder, SegmentedPacketFileWriter, SegmentedRecordingPolicy,
-    StreamMetrics, StreamSession, StreamState, StreamTarget, StreamingTransport,
-    TcpPacketTransport, VideoEncoder, VideoEncoderConfig, VideoInputRequirement,
-    WebSocketPacketTransport,
+    recover_stale_packet_files, AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig,
+    AudioInputRequirement, EncodedPacket, OutputError, PacketDropPolicy, RawAudioEncoder,
+    ReconnectOutcome, ReconnectPolicy, ReplayBuffer, RleVideoEncoder, SegmentedPacketFileWriter,
+    SegmentedRecordingPolicy, StreamMetrics, StreamSession, StreamState, StreamTarget,
+    StreamingTransport, TcpPacketTransport, VideoEncoder, VideoEncoderConfig,
+    VideoInputRequirement, WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
@@ -1681,6 +1681,7 @@ impl EngineSession {
                 "segmented recording base path must use the .obsr extension".to_owned(),
             ));
         }
+        recover_stale_packet_files(&base_path)?;
         self.recording = Some(RecordingOutput::SegmentedReference(
             SegmentedPacketFileWriter::new(base_path, policy)?,
         ));
@@ -3792,10 +3793,13 @@ mod tests {
         let base = std::env::temp_dir().join(format!("obs-rs-engine-segmented-{token}.obsr"));
         let policy = SegmentedRecordingPolicy::new(2_000_000, Duration::from_nanos(1), 4)
             .expect("split policy");
+        let stale = base.with_file_name(format!("obs-rs-engine-segmented-{token}-0002.obsr.part"));
+        std::fs::write(&stale, [1, 2, 3]).expect("write stale segment artifact");
         let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
         engine
             .start_segmented_recording(&base, policy)
             .expect("segmented recording");
+        assert!(!stale.exists(), "startup removes stale segment artifact");
         for _ in 0..3 {
             engine.tick(None, Some("program")).expect("media tick");
         }

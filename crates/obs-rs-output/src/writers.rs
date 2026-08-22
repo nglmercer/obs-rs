@@ -1,7 +1,7 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::{BufWriter, Seek, SeekFrom, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -576,6 +576,87 @@ pub const MAX_RECORDING_SEGMENTS: usize = 1_024;
 
 /// Largest duration accepted by one split-recording policy.
 pub const MAX_SEGMENT_DURATION: Duration = Duration::from_hours(24);
+
+/// Result of removing bounded incomplete recording artifacts after a crash.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RecordingRecoveryReport {
+    removed_files: usize,
+    removed_bytes: usize,
+}
+
+impl RecordingRecoveryReport {
+    /// Returns the number of incomplete artifacts removed.
+    #[must_use]
+    pub const fn removed_files(self) -> usize {
+        self.removed_files
+    }
+
+    /// Returns the total size of incomplete artifacts removed.
+    #[must_use]
+    pub const fn removed_bytes(self) -> usize {
+        self.removed_bytes
+    }
+}
+
+/// Removes only known hidden packet-recording artifacts for one base path.
+///
+/// Published recordings are never touched. The scan is bounded by
+/// [`MAX_RECORDING_SEGMENTS`], so a malformed directory cannot turn startup
+/// recovery into an unbounded directory walk.
+///
+/// # Errors
+///
+/// Returns [`OutputError::InvalidPaths`] when the base path does not name a
+/// UTF-8 file, or [`OutputError::Write`] when an artifact cannot be inspected
+/// or removed.
+pub fn recover_stale_packet_files(
+    base_path: impl AsRef<Path>,
+) -> Result<RecordingRecoveryReport, OutputError> {
+    let base_path = base_path.as_ref();
+    if base_path.as_os_str().is_empty() || base_path.file_name().is_none() {
+        return Err(OutputError::InvalidPaths {
+            reason: "recovery base path must name a file".to_owned(),
+        });
+    }
+    let file_name = base_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| OutputError::InvalidPaths {
+            reason: "recovery base path must have a UTF-8 file name".to_owned(),
+        })?;
+    let mut report = RecordingRecoveryReport::default();
+    remove_recovery_artifact(
+        &base_path.with_file_name(format!("{file_name}.tmp")),
+        &mut report,
+    )?;
+    for index in 1..=MAX_RECORDING_SEGMENTS {
+        let (_, temp_path) = segment_paths(base_path, index)?;
+        remove_recovery_artifact(&temp_path, &mut report)?;
+    }
+    Ok(report)
+}
+
+fn remove_recovery_artifact(
+    path: &Path,
+    report: &mut RecordingRecoveryReport,
+) -> Result<(), OutputError> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(OutputError::Write(format!(
+                "inspect stale recording artifact: {error}"
+            )))
+        }
+    };
+    fs::remove_file(path)
+        .map_err(|error| OutputError::Write(format!("remove stale recording artifact: {error}")))?;
+    report.removed_files = report.removed_files.saturating_add(1);
+    report.removed_bytes = report
+        .removed_bytes
+        .saturating_add(usize::try_from(metadata.len()).unwrap_or(usize::MAX));
+    Ok(())
+}
 
 /// Policy for bounded keyframe-aligned packet recording segments.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

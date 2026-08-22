@@ -88,6 +88,33 @@ fn atomic_packet_writer_abort_removes_temp_and_rejects_equal_paths() {
 }
 
 #[test]
+fn recovery_removes_only_known_incomplete_packet_artifacts() {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("obs-rs-recovery-{token}.obsr"));
+    let base_temp = base.with_file_name(format!("obs-rs-recovery-{token}.obsr.tmp"));
+    let first_temp = base.with_file_name(format!("obs-rs-recovery-{token}-0001.obsr.part"));
+    let second_temp = base.with_file_name(format!("obs-rs-recovery-{token}-0002.obsr.part"));
+    let published = base.with_file_name(format!("obs-rs-recovery-{token}-0001.obsr"));
+    std::fs::write(&base_temp, [1, 2, 3]).expect("write base artifact");
+    std::fs::write(&first_temp, [4, 5, 6, 7]).expect("write first artifact");
+    std::fs::write(&second_temp, [8, 9, 10, 11, 12]).expect("write second artifact");
+    std::fs::write(&published, [13, 14]).expect("write published segment");
+
+    let report = recover_stale_packet_files(&base).expect("recover artifacts");
+    assert_eq!(report.removed_files(), 3);
+    assert_eq!(report.removed_bytes(), 3 + 4 + 5);
+    assert!(!base_temp.exists());
+    assert!(!first_temp.exists());
+    assert!(!second_temp.exists());
+    assert!(published.exists());
+
+    std::fs::remove_file(published).expect("remove published fixture");
+}
+
+#[test]
 fn atomic_packet_writer_streams_large_payloads_before_finalize() {
     let (final_path, temp_path) = unique_paths("packet-streaming");
     let mut writer =
