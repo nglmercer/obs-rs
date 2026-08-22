@@ -710,6 +710,7 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-stop-recording;
     in-out property <string> hotkey-start-streaming;
     in-out property <string> hotkey-stop-streaming;
+    in property <string> conflict-warning;
     callback changed();
     spacing: Metrics.ui.page-spacing;
 
@@ -754,6 +755,9 @@ export component HotkeysPage inherits VerticalLayout {
                 placeholder-text: "Ctrl+Shift+B";
                 edited => { root.changed(); }
             }
+        }
+        if root.conflict-warning != "" : SettingsWarning {
+            text: I18n.text.settings_ui.hotkeys_conflict + ": " + root.conflict-warning;
         }
         SettingHint { text: I18n.text.settings_ui.hotkeys_hint; }
     }

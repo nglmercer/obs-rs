@@ -27,9 +27,9 @@ use crate::{
     callbacks::source_transform::SourceTransformController,
     refresh_ui,
     settings::{
-        recording_stamp, AppSettings, RecordingFormat, CANVAS_SNAP_DISTANCE_DEFAULT,
-        CANVAS_SNAP_DISTANCE_RANGE, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES,
-        THEMES,
+        hotkey_conflicts, recording_stamp, AppSettings, RecordingFormat,
+        CANVAS_SNAP_DISTANCE_DEFAULT, CANVAS_SNAP_DISTANCE_RANGE, CHANNEL_LAYOUTS, FRAME_RATES,
+        RESOLUTIONS, SAMPLE_RATES, THEMES,
     },
     settings_model::{
         aspect_ratio_text, parse_resolution, resolution_text, FpsMode, OutputMode,
@@ -753,6 +753,7 @@ fn load_draft(
     window.set_hotkey_stop_recording(settings.hotkey_stop_recording.as_str().into());
     window.set_hotkey_start_streaming(settings.hotkey_start_streaming.as_str().into());
     window.set_hotkey_stop_streaming(settings.hotkey_stop_streaming.as_str().into());
+    window.set_hotkeys_conflict(hotkey_conflicts(&settings).join(", ").into());
     window.set_preview_border_color(settings.preview_border_color.as_str().into());
     window.set_program_border_color(settings.program_border_color.as_str().into());
     window.set_preview_swatch(settings.tokens().preview_border);
@@ -1342,6 +1343,9 @@ pub(crate) fn settings_category(page: &str) -> Option<i32> {
 /// user is looking at the row that stopped the commit.
 const SETTINGS_CATEGORY_VIDEO: i32 = 5;
 
+/// The Hotkeys category's index in the settings window's sidebar.
+const SETTINGS_CATEGORY_HOTKEYS: i32 = 6;
+
 /// Applies an output-scaling change that was staged while an output was
 /// running.
 ///
@@ -1652,6 +1656,20 @@ fn commit(
         return;
     }
     let settings = read_draft(controller);
+    let conflicts = hotkey_conflicts(&settings);
+    if !conflicts.is_empty() {
+        let conflict_list = conflicts.join(", ");
+        window.set_category(SETTINGS_CATEGORY_HOTKEYS);
+        window.set_hotkeys_conflict(conflict_list.as_str().into());
+        ui.set_status_message(
+            crate::i18n::with_catalog(controller.settings.borrow().ui_locale(), |text| {
+                format!("{}: {conflict_list}", text.settings_ui.hotkeys_conflict)
+            })
+            .into(),
+        );
+        return;
+    }
+    window.set_hotkeys_conflict("".into());
     apply_settings_snapshot(ui, state, surface, output, controller, &settings);
 }
 

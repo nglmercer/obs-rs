@@ -5,7 +5,10 @@
 //! format the rest of OBS-RS uses and a malformed file degrades to defaults
 //! rather than failing startup.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use obs_rs_config::Config;
 use obs_rs_media::{ScaleFilter, VideoFormat};
@@ -1673,6 +1676,32 @@ pub(crate) fn validated_hotkey(value: &str, fallback: &str) -> String {
     }
 }
 
+/// Returns canonical hotkeys that are assigned to more than one local action.
+///
+/// Empty values are intentional unbindings and are ignored. Parsing here also
+/// makes conflict detection agree with runtime matching when users type aliases
+/// such as `Option+F9` and `Alt+F9` into different fields.
+#[must_use]
+pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
+    let values = [
+        settings.hotkey_swap.as_str(),
+        settings.hotkey_start_recording.as_str(),
+        settings.hotkey_stop_recording.as_str(),
+        settings.hotkey_start_streaming.as_str(),
+        settings.hotkey_stop_streaming.as_str(),
+    ];
+    let mut counts = BTreeMap::new();
+    for value in values {
+        if let Ok(Some(shortcut)) = Shortcut::parse(value) {
+            *counts.entry(shortcut).or_insert(0usize) += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .filter_map(|(shortcut, count)| (count > 1).then(|| shortcut.to_string()))
+        .collect()
+}
+
 fn hotkey(config: &Config, key: &str, fallback: &str) -> String {
     validated_hotkey(config.get(key).unwrap_or(fallback), fallback)
 }
@@ -1920,6 +1949,18 @@ mod tests {
         assert!(decoded.hotkey_stop_recording.is_empty());
         assert_eq!(validated_hotkey("ctrl + r", "F1"), "Ctrl+R");
         assert_eq!(validated_hotkey("Ctrl+", "F1"), "F1");
+    }
+
+    #[test]
+    fn hotkey_conflicts_use_canonical_shortcuts_and_ignore_unbindings() {
+        let settings = AppSettings {
+            hotkey_start_recording: "Ctrl+R".to_owned(),
+            hotkey_stop_recording: " control + r ".to_owned(),
+            hotkey_start_streaming: String::new(),
+            ..AppSettings::default()
+        };
+
+        assert_eq!(hotkey_conflicts(&settings), vec!["Ctrl+R"]);
     }
 
     #[test]
