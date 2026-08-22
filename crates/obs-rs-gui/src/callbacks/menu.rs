@@ -178,6 +178,9 @@ fn install_session(
                 // `DesktopState::new` also resets the history, which is what a
                 // new document should do: undo must not reach the old project.
                 *new_state.borrow_mut() = DesktopState::new(project);
+                new_state
+                    .borrow_mut()
+                    .set_project_selection_key(ui.get_project_path().as_str());
                 refresh_ui(&ui, &new_state, &new_surface);
                 refresh_menu_models(&ui, &new_state);
                 ui.set_status_message("Started a new project".into());
@@ -336,7 +339,9 @@ fn install_collections(
         let path = id.to_string();
         let result: Result<(), Box<dyn Error>> = (|| {
             let store = project_store(&path)?;
-            select_state.borrow_mut().load_project(&store)?;
+            select_state
+                .borrow_mut()
+                .load_project_for_key(&store, &path)?;
             Ok(())
         })();
         match result {
@@ -362,6 +367,7 @@ fn install_collections(
         match create_collection(&create_state, &current, name.as_str()) {
             Ok(path) => {
                 let path = path.to_string_lossy().into_owned();
+                create_state.borrow_mut().set_project_selection_key(&path);
                 ui.set_project_path(path.as_str().into());
                 ui.set_collection_name("".into());
                 crate::refresh::invalidate_recovery_cache();
@@ -384,6 +390,9 @@ fn install_collections(
         match duplicate_collection(&duplicate_state, &current, name.as_str()) {
             Ok(path) => {
                 let path = path.to_string_lossy().into_owned();
+                duplicate_state
+                    .borrow_mut()
+                    .set_project_selection_key(&path);
                 ui.set_project_path(path.as_str().into());
                 ui.set_collection_name("".into());
                 crate::refresh::invalidate_recovery_cache();
@@ -437,6 +446,7 @@ fn install_rename_collection(
         match rename_collection(&rename_state, &current, name.as_str()) {
             Ok(path) => {
                 let path = path.to_string_lossy().into_owned();
+                rename_state.borrow_mut().set_project_selection_key(&path);
                 ui.set_project_path(path.as_str().into());
                 ui.set_collection_name("".into());
                 crate::refresh::invalidate_recovery_cache();
@@ -520,15 +530,20 @@ fn create_collection(
     // collection is never the action that loses the previous one's edits.
     if !current_path.trim().is_empty() {
         let store = project_store(current_path)?;
-        state.borrow_mut().save_project(&store)?;
+        let mut state = state.borrow_mut();
+        state.set_project_selection_key(current_path);
+        state.save_project(&store)?;
     }
     let path_text = path
         .to_str()
         .ok_or_else(|| std::io::Error::other("the collection path is not valid UTF-8"))?
         .to_owned();
-    *state.borrow_mut() = DesktopState::new(initial_project()?);
+    let initial_document = DesktopState::new(initial_project()?).project_document();
     let store = project_store(&path_text)?;
-    state.borrow_mut().save_project(&store)?;
+    store.save_document(&initial_document)?;
+    state
+        .borrow_mut()
+        .load_project_for_key(&store, &path_text)?;
     Ok(path)
 }
 
@@ -688,7 +703,9 @@ fn import_collection(
         .ok_or_else(|| std::io::Error::other("the target path is not valid UTF-8"))?;
     let store = project_store(target_text)?;
     store.save_document(&document)?;
-    state.borrow_mut().load_project(&store)?;
+    state
+        .borrow_mut()
+        .load_project_for_key(&store, target_text)?;
     Ok(target)
 }
 
@@ -850,6 +867,53 @@ mod tests {
             collections_root("collections/evening.obsrproj"),
             PathBuf::from("collections")
         );
+    }
+
+    #[test]
+    fn creating_a_collection_preserves_the_previous_document_scene_selection() {
+        let root = std::env::temp_dir().join(format!(
+            "obs-rs-collection-create-selection-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("collection fixture directory");
+        let current = root.join("current.obsrproj");
+        let current_text = current.to_str().expect("current path");
+        let state = Rc::new(RefCell::new(DesktopState::new(
+            initial_project().expect("initial project"),
+        )));
+        state.borrow_mut().set_project_selection_key(current_text);
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectPreviewScene {
+                id: "intermission".to_owned(),
+            })
+            .expect("preview selection");
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectProgramScene {
+                id: "program".to_owned(),
+            })
+            .expect("program selection");
+
+        let created =
+            create_collection(&state, current_text, "Fresh show").expect("collection creation");
+        assert_eq!(
+            created,
+            root.join("collections").join("Fresh show.obsrproj")
+        );
+        assert_eq!(state.borrow().preview_scene(), Some("preview"));
+        assert_eq!(state.borrow().program_scene(), Some("preview"));
+
+        let current_store = project_store(current_text).expect("current store");
+        state
+            .borrow_mut()
+            .load_project_for_key(&current_store, current_text)
+            .expect("return to current collection");
+        assert_eq!(state.borrow().preview_scene(), Some("intermission"));
+        assert_eq!(state.borrow().program_scene(), Some("program"));
+
+        std::fs::remove_dir_all(root).expect("remove collection fixture");
     }
 
     #[test]

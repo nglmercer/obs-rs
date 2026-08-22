@@ -140,6 +140,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         ui.set_canvas_height(i32::try_from(format.height()).unwrap_or(1080));
     }
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    state
+        .borrow_mut()
+        .set_project_selection_key(settings.project_path.as_str());
     // The stored project is reopened before anything renders, so a session
     // resumes with the scenes and sources it was left with rather than with the
     // starter fixture.
@@ -309,7 +312,7 @@ fn restore_project(state: &Rc<RefCell<DesktopState>>, settings: &AppSettings) ->
         return None;
     }
     let result = project_store(path).and_then(|store| {
-        state.borrow_mut().load_project(&store)?;
+        state.borrow_mut().load_project_for_key(&store, path)?;
         let preview = (!settings.last_preview_scene.is_empty())
             .then_some(settings.last_preview_scene.as_str());
         let program = (!settings.last_program_scene.is_empty())

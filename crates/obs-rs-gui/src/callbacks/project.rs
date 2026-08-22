@@ -149,7 +149,7 @@ fn load_and_refresh(
     let path = ui.get_project_path().to_string();
     let result: Result<(), Box<dyn Error>> = (|| {
         let store = project_store(&path)?;
-        state.borrow_mut().load_project(&store)?;
+        state.borrow_mut().load_project_for_key(&store, &path)?;
         Ok(())
     })();
     match result {
@@ -173,7 +173,7 @@ fn recover_and_refresh(
     let path = ui.get_project_path().to_string();
     let result: Result<bool, Box<dyn Error>> = (|| {
         let store = project_store(&path)?;
-        Ok(state.borrow_mut().recover_project(&store)?)
+        Ok(state.borrow_mut().recover_project_for_key(&store, &path)?)
     })();
     match result {
         Ok(true) => {

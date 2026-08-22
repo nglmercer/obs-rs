@@ -22,15 +22,29 @@ struct SceneSelection {
     program: Option<Identifier>,
 }
 
+/// The scene choices associated with one loaded project document.
+#[derive(Clone, Debug)]
+struct ProjectSceneSelection {
+    profile: Identifier,
+    selection: SceneSelection,
+}
+
 /// The selection cache is session state, not project data. Keep it bounded so
 /// repeatedly opening profiles cannot grow the UI state without limit.
 const MAX_PROFILE_SCENE_SELECTIONS: usize = 64;
+/// Keep collection-switch keys bounded even when a frontend supplies a bad path.
+const MAX_PROJECT_SELECTION_KEY_BYTES: usize = 4_096;
+/// A studio session can visit many collections, but never needs an unbounded
+/// history of their last visible scenes.
+const MAX_PROJECT_SCENE_SELECTIONS: usize = 32;
 
 pub struct DesktopState {
     pub(crate) project: ProjectSession,
     pub(crate) preview_scene: Option<Identifier>,
     pub(crate) program_scene: Option<Identifier>,
     profile_scene_selections: BTreeMap<Identifier, SceneSelection>,
+    project_selection_key: Option<String>,
+    project_scene_selections: BTreeMap<String, ProjectSceneSelection>,
     /// Ordered transient canvas selection. The last item is the active item
     /// used by property dialogs and single-row source actions.
     pub(crate) selected_sources: Vec<Identifier>,
@@ -64,6 +78,8 @@ impl DesktopState {
             preview_scene: first_scene.clone(),
             program_scene: first_scene,
             profile_scene_selections: BTreeMap::new(),
+            project_selection_key: None,
+            project_scene_selections: BTreeMap::new(),
             selected_sources: selected_sources.into_iter().collect(),
             clipboard: None,
             locale: UiLocale::English,
@@ -266,7 +282,33 @@ impl DesktopState {
     /// Returns [`UiError::Project`] when the file cannot be read or parsed.
     pub fn load_project(&mut self, store: &ProjectFileStore) -> Result<(), UiError> {
         let project = store.load()?;
+        self.project_selection_key = None;
+        self.project_scene_selections.clear();
         self.replace_project(project);
+        self.notice("project loaded")?;
+        Ok(())
+    }
+
+    /// Loads a project while retaining its session-scoped Preview/Program
+    /// choices under `selection_key`.
+    ///
+    /// The key is normally the active project path. It is deliberately kept
+    /// outside the project document so exchanging the file cannot change
+    /// project history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when the file cannot be read or parsed.
+    pub fn load_project_for_key(
+        &mut self,
+        store: &ProjectFileStore,
+        selection_key: &str,
+    ) -> Result<(), UiError> {
+        let project = store.load()?;
+        self.remember_project_selection();
+        self.replace_project(project);
+        self.project_selection_key = project_selection_key(selection_key);
+        self.restore_project_selection();
         self.notice("project loaded")?;
         Ok(())
     }
@@ -284,7 +326,32 @@ impl DesktopState {
         let Some(project) = store.recover()? else {
             return Ok(false);
         };
+        self.project_selection_key = None;
+        self.project_scene_selections.clear();
         self.replace_project(project);
+        self.project.mark_dirty();
+        self.notice("project recovered from interrupted save")?;
+        Ok(true)
+    }
+
+    /// Recovers a project and restores the last session selection for its key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when the recovery artifact cannot be read or
+    /// parsed.
+    pub fn recover_project_for_key(
+        &mut self,
+        store: &ProjectFileStore,
+        selection_key: &str,
+    ) -> Result<bool, UiError> {
+        let Some(project) = store.recover()? else {
+            return Ok(false);
+        };
+        self.remember_project_selection();
+        self.replace_project(project);
+        self.project_selection_key = project_selection_key(selection_key);
+        self.restore_project_selection();
         self.project.mark_dirty();
         self.notice("project recovered from interrupted save")?;
         Ok(true)
@@ -374,6 +441,18 @@ impl DesktopState {
         }
     }
 
+    /// Sets the current document key without changing the loaded project or
+    /// scene selection. A later keyed load uses this key to remember the
+    /// current selection before replacing the project.
+    pub fn set_project_selection_key(&mut self, selection_key: &str) {
+        let selection_key = project_selection_key(selection_key);
+        if self.project_selection_key == selection_key {
+            return;
+        }
+        self.remember_project_selection();
+        self.project_selection_key = selection_key;
+    }
+
     fn scene_selection(&self) -> SceneSelection {
         SceneSelection {
             preview: self.preview_scene.clone(),
@@ -412,6 +491,41 @@ impl DesktopState {
                 selection.program.as_ref().map(Identifier::as_str),
             );
         }
+    }
+
+    fn remember_project_selection(&mut self) {
+        let Some(key) = self.project_selection_key.as_ref() else {
+            return;
+        };
+        let profile = self.project.project().active_profile().clone();
+        let selection = ProjectSceneSelection {
+            profile,
+            selection: self.scene_selection(),
+        };
+        if self.project_scene_selections.len() == MAX_PROJECT_SCENE_SELECTIONS
+            && !self.project_scene_selections.contains_key(key)
+        {
+            if let Some(oldest) = self.project_scene_selections.keys().next().cloned() {
+                self.project_scene_selections.remove(&oldest);
+            }
+        }
+        self.project_scene_selections.insert(key.clone(), selection);
+    }
+
+    fn restore_project_selection(&mut self) {
+        let Some(key) = self.project_selection_key.as_ref() else {
+            return;
+        };
+        let Some(saved) = self.project_scene_selections.get(key).cloned() else {
+            return;
+        };
+        if self.project.project().active_profile() != &saved.profile {
+            return;
+        }
+        self.restore_scene_selection(
+            saved.selection.preview.as_ref().map(Identifier::as_str),
+            saved.selection.program.as_ref().map(Identifier::as_str),
+        );
     }
 
     /// Returns the project session used by persistence and rendering adapters.
@@ -790,6 +904,14 @@ impl DesktopState {
         self.selected_sources = next;
         Ok(())
     }
+}
+
+fn project_selection_key(selection_key: &str) -> Option<String> {
+    let selection_key = selection_key.trim();
+    if selection_key.is_empty() || selection_key.len() > MAX_PROJECT_SELECTION_KEY_BYTES {
+        return None;
+    }
+    Some(selection_key.to_owned())
 }
 
 const MAX_SCENE_ITEM_PATH_DEPTH: usize = 64;

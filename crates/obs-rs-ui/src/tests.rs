@@ -567,6 +567,63 @@ fn desktop_state_persists_project_editor_changes() {
 }
 
 #[test]
+fn keyed_project_switch_restores_each_documents_scene_selection() {
+    let first_path = std::env::temp_dir().join(format!(
+        "obs-rs-ui-selection-first-{}.project",
+        std::process::id()
+    ));
+    let first_temp = first_path.with_file_name("obs-rs-ui-selection-first.project.tmp");
+    let second_path = std::env::temp_dir().join(format!(
+        "obs-rs-ui-selection-second-{}.project",
+        std::process::id()
+    ));
+    let second_temp = second_path.with_file_name("obs-rs-ui-selection-second.project.tmp");
+    let first_store = ProjectFileStore::new(&first_path, &first_temp).expect("first store");
+    let second_store = ProjectFileStore::new(&second_path, &second_temp).expect("second store");
+
+    let mut first_seed = DesktopState::new(project());
+    first_seed
+        .save_project(&first_store)
+        .expect("save first project");
+    let mut second_seed = DesktopState::new(project());
+    second_seed
+        .save_project(&second_store)
+        .expect("save second project");
+
+    let first_key = first_path.to_string_lossy().into_owned();
+    let second_key = second_path.to_string_lossy().into_owned();
+    let mut state = DesktopState::new(project());
+    state.set_project_selection_key(&first_key);
+    state
+        .load_project_for_key(&first_store, &first_key)
+        .expect("load first project");
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("first preview selection");
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("first program selection");
+
+    state
+        .load_project_for_key(&second_store, &second_key)
+        .expect("load second project");
+    assert_eq!(state.preview_scene(), Some("preview"));
+    assert_eq!(state.program_scene(), Some("preview"));
+    state
+        .load_project_for_key(&first_store, &first_key)
+        .expect("return to first project");
+    assert_eq!(state.preview_scene(), Some("source_scene"));
+    assert_eq!(state.program_scene(), Some("program"));
+
+    std::fs::remove_file(first_path).expect("remove first project fixture");
+    std::fs::remove_file(second_path).expect("remove second project fixture");
+}
+
+#[test]
 fn console_parser_covers_state_and_output_commands() {
     assert_eq!(
         parse_console_command("preview program"),
