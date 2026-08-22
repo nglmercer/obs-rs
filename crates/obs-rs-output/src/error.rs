@@ -59,6 +59,8 @@ pub enum OutputError {
     ZeroCapacity,
     /// A replay buffer duration is zero or exceeds the bounded limit.
     InvalidReplayDuration { nanos: u128 },
+    /// A replay snapshot has no retained video keyframe from which decoding can start.
+    NoKeyframe,
     /// An encoded reference-codec payload is structurally invalid.
     InvalidCodecPayload(String),
     /// A packet cannot fit in the configured queue capacity.
@@ -143,6 +145,9 @@ impl fmt::Display for OutputError {
                 formatter,
                 "replay buffer duration must be between 1 nanosecond and the bounded limit: {nanos} ns"
             ),
+            Self::NoKeyframe => {
+                formatter.write_str("replay buffer has no retained video keyframe")
+            }
             Self::InvalidCodecPayload(reason) => {
                 write!(formatter, "invalid reference codec payload: {reason}")
             }

@@ -1669,7 +1669,7 @@ impl EngineSession {
                 EngineError::InvalidConfiguration("replay path must name a file".to_owned())
             })?;
         let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
-        let packets = buffer.snapshot();
+        let packets = buffer.keyframe_aligned_snapshot()?;
         let mut writer = AtomicPacketFileWriter::new(final_path, temp_path)?;
         if let Err(error) = packets
             .into_iter()

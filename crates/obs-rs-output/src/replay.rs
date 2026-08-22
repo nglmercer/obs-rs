@@ -2,7 +2,11 @@ use std::{collections::VecDeque, time::Duration};
 
 use obs_rs_media::Timestamp;
 
-use super::{error::OutputError, types::EncodedPacket, MAX_RECORDING_BYTES, MAX_RECORDING_FRAMES};
+use super::{
+    error::OutputError,
+    types::{EncodedPacket, PacketKind},
+    MAX_RECORDING_BYTES, MAX_RECORDING_FRAMES,
+};
 
 /// Maximum replay history retained by the portable packet buffer.
 pub const MAX_REPLAY_DURATION: Duration = Duration::from_hours(1);
@@ -134,6 +138,29 @@ impl ReplayBuffer {
         self.packets.iter().cloned().collect()
     }
 
+    /// Clones a replay snapshot starting at the first retained video keyframe.
+    ///
+    /// Audio and interframes older than that keyframe are intentionally omitted:
+    /// a saved replay must have a random-access video packet at its beginning so
+    /// a decoder does not depend on packets that were already evicted. The
+    /// returned vector remains bounded by the same byte and packet limits as the
+    /// live history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OutputError::NoKeyframe`] when the retained history has no video
+    /// keyframe yet.
+    pub fn keyframe_aligned_snapshot(&self) -> Result<Vec<EncodedPacket>, OutputError> {
+        let Some(start) = self
+            .packets
+            .iter()
+            .position(|packet| packet.kind() == PacketKind::Video && packet.is_keyframe())
+        else {
+            return Err(OutputError::NoKeyframe);
+        };
+        Ok(self.packets.iter().skip(start).cloned().collect())
+    }
+
     /// Removes all retained history.
     pub fn clear(&mut self) {
         self.packets.clear();
@@ -259,9 +286,74 @@ mod tests {
         let original = packet(0, 4);
         let original_payload = original.payload().as_ptr();
         buffer.push(original).expect("packet");
-        let snapshot = buffer.snapshot();
+        let snapshot = buffer
+            .keyframe_aligned_snapshot()
+            .expect("keyframe-aligned snapshot");
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].payload().as_ptr(), original_payload);
+    }
+
+    #[test]
+    fn replay_snapshot_starts_at_first_retained_video_keyframe() {
+        let mut buffer = ReplayBuffer::new(128, Duration::from_secs(1)).expect("buffer");
+        buffer
+            .push(
+                EncodedPacket::new(
+                    PacketKind::Audio,
+                    Timestamp::from_millis(0),
+                    false,
+                    vec![0x01; 3],
+                )
+                .expect("audio packet"),
+            )
+            .expect("audio history");
+        buffer
+            .push(
+                EncodedPacket::new(
+                    PacketKind::Video,
+                    Timestamp::from_millis(10),
+                    false,
+                    vec![0x02; 3],
+                )
+                .expect("interframe"),
+            )
+            .expect("interframe history");
+        buffer.push(packet(20, 3)).expect("keyframe history");
+        buffer
+            .push(
+                EncodedPacket::new(
+                    PacketKind::Audio,
+                    Timestamp::from_millis(20),
+                    false,
+                    vec![0x03; 3],
+                )
+                .expect("audio packet"),
+            )
+            .expect("audio after keyframe");
+
+        let snapshot = buffer
+            .keyframe_aligned_snapshot()
+            .expect("keyframe-aligned snapshot");
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].kind(), PacketKind::Video);
+        assert!(snapshot[0].is_keyframe());
+        assert_eq!(snapshot[0].timestamp(), Timestamp::from_millis(20));
+        assert_eq!(snapshot[1].kind(), PacketKind::Audio);
+    }
+
+    #[test]
+    fn replay_snapshot_requires_a_video_keyframe() {
+        let mut buffer = ReplayBuffer::new(64, Duration::from_secs(1)).expect("buffer");
+        buffer
+            .push(
+                EncodedPacket::new(PacketKind::Audio, Timestamp::ZERO, false, vec![0x01; 4])
+                    .expect("audio packet"),
+            )
+            .expect("audio history");
+        assert!(matches!(
+            buffer.keyframe_aligned_snapshot(),
+            Err(OutputError::NoKeyframe)
+        ));
     }
 
     #[test]
