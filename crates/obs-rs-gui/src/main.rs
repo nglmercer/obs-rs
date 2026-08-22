@@ -235,6 +235,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             monitor: monitor_window,
             docks: Rc::clone(&docks),
             projectors: Rc::clone(&projectors),
+            canvas: Rc::clone(&canvas),
         },
     )?;
     let setup_window = install_setup_window(&ui, &state, &surface, &output, &settings_window)?;

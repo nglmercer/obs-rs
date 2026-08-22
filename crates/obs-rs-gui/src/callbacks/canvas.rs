@@ -16,6 +16,7 @@ use slint::ComponentHandle;
 
 use crate::{
     preview::{TransformDraft, TransformDraftItem},
+    settings::{CANVAS_SNAP_DISTANCE_DEFAULT, CANVAS_SNAP_DISTANCE_RANGE},
     MainWindow, PreviewSurface,
 };
 
@@ -142,7 +143,7 @@ impl Default for SnapSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            distance: 10,
+            distance: i64::from(CANVAS_SNAP_DISTANCE_DEFAULT),
         }
     }
 }
@@ -261,12 +262,25 @@ impl CanvasState {
         self.selection_additive
     }
 
-    #[allow(
-        dead_code,
-        reason = "the future snap-distance control will update this transient policy"
-    )]
     pub(crate) const fn with_snapping(self, snapping: SnapSettings) -> Self {
         Self { snapping, ..self }
+    }
+
+    /// Updates the transient snap policy from the validated settings value.
+    ///
+    /// The setting is stored as an unsigned canvas-pixel count, while the
+    /// geometry path uses a signed distance for saturating arithmetic. Clamp at
+    /// this boundary as well as in settings loading so a runtime caller cannot
+    /// bypass the same resource and interaction bounds.
+    pub(crate) fn with_snap_distance(self, distance: u16) -> Self {
+        let distance = distance.clamp(
+            *CANVAS_SNAP_DISTANCE_RANGE.start(),
+            *CANVAS_SNAP_DISTANCE_RANGE.end(),
+        );
+        self.with_snapping(SnapSettings {
+            distance: i64::from(distance),
+            ..self.snapping
+        })
     }
 
     /// Applies a bounded pointer delta in canvas pixels.
@@ -1146,6 +1160,14 @@ impl CanvasController {
         state
     }
 
+    /// Applies the persisted canvas snap distance to the one transient canvas
+    /// policy shared by move and resize gestures.
+    pub(crate) fn set_snap_distance(&self, distance: u16) -> CanvasState {
+        let state = self.canvas_state().with_snap_distance(distance);
+        self.state.replace(state);
+        state
+    }
+
     fn begin_selection(&self, x: i64, y: i64, additive: bool) -> CanvasState {
         let state = self.canvas_state().begin_selection(x, y, additive);
         self.state.replace(state);
@@ -1864,6 +1886,34 @@ mod tests {
 
         let bounded = state.panned(i32::MAX, i32::MIN);
         assert_eq!(bounded.pan(), (MAX_PAN_PIXELS, -MAX_PAN_PIXELS));
+    }
+
+    #[test]
+    fn snap_distance_is_bounded_at_the_canvas_boundary() {
+        assert_eq!(
+            CanvasState::default()
+                .with_snap_distance(0)
+                .snapping
+                .distance,
+            i64::from(*CANVAS_SNAP_DISTANCE_RANGE.start())
+        );
+        assert_eq!(
+            CanvasState::default()
+                .with_snap_distance(u16::MAX)
+                .snapping
+                .distance,
+            i64::from(*CANVAS_SNAP_DISTANCE_RANGE.end())
+        );
+
+        let controller = CanvasController {
+            draft: RefCell::new(None),
+            state: RefCell::new(CanvasState::default()),
+        };
+        assert_eq!(
+            controller.set_snap_distance(24).snapping.distance,
+            24,
+            "the controller applies the settings snapshot to its one live policy"
+        );
     }
 
     #[test]

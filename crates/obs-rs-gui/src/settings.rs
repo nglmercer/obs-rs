@@ -165,6 +165,16 @@ pub(crate) const SAMPLE_RATES: [u32; 3] = [44_100, 48_000, 96_000];
 /// Channel layouts offered on the Audio page.
 pub(crate) const CHANNEL_LAYOUTS: [u16; 2] = [2, 1];
 
+/// The smallest and largest canvas-space distance accepted by source snapping.
+///
+/// OBS stores this as a pixel distance in its `BasicWindow` configuration. The
+/// Rust settings document keeps the same user-facing unit while bounding the
+/// value before it reaches the interactive geometry path.
+pub(crate) const CANVAS_SNAP_DISTANCE_RANGE: std::ops::RangeInclusive<u16> = 1..=100;
+
+/// The default source-snapping distance used by the canvas and settings page.
+pub(crate) const CANVAS_SNAP_DISTANCE_DEFAULT: u16 = 10;
+
 /// An sRGB colour as `[red, green, blue]`.
 type Rgb = [u8; 3];
 
@@ -275,6 +285,8 @@ pub(crate) struct AppSettings {
     pub(crate) confirm_stop_stream: bool,
     pub(crate) confirm_stop_recording: bool,
     pub(crate) auto_record_when_streaming: bool,
+    /// Canvas pixels within which a moving or resizing item snaps to a guide.
+    pub(crate) canvas_snap_distance: u16,
     pub(crate) sample_rate: usize,
     pub(crate) channels: usize,
     pub(crate) hotkey_swap: String,
@@ -580,6 +592,7 @@ impl Default for AppSettings {
             confirm_stop_stream: true,
             confirm_stop_recording: true,
             auto_record_when_streaming: false,
+            canvas_snap_distance: CANVAS_SNAP_DISTANCE_DEFAULT,
             // 48 kHz stereo, matching the mixer the desktop state starts with.
             sample_rate: 1,
             channels: 0,
@@ -806,6 +819,11 @@ impl AppSettings {
                 "auto_record_when_streaming",
                 defaults.auto_record_when_streaming,
             ),
+            canvas_snap_distance: config
+                .get("canvas_snap_distance")
+                .and_then(|value| value.parse::<u16>().ok())
+                .filter(|distance| CANVAS_SNAP_DISTANCE_RANGE.contains(distance))
+                .unwrap_or(defaults.canvas_snap_distance),
             sample_rate: config
                 .get("audio_sample_rate")
                 .and_then(|value| value.parse::<u32>().ok())
@@ -940,6 +958,10 @@ impl AppSettings {
             (
                 "auto_record_when_streaming",
                 self.auto_record_when_streaming.to_string(),
+            ),
+            (
+                "canvas_snap_distance",
+                self.canvas_snap_distance.to_string(),
             ),
             ("audio_sample_rate", self.sample_rate_hz().to_string()),
             ("audio_channels", self.channel_count().to_string()),
@@ -1962,6 +1984,7 @@ mod tests {
             ("video_output_height", "99999"),
             ("video_scale_filter", "nearest"),
             ("video_fps_mode", "smpte"),
+            ("canvas_snap_distance", "0"),
             ("recording_quality", "perfect"),
             ("output_mode", "expert"),
         ] {
@@ -1976,6 +1999,7 @@ mod tests {
         assert_eq!(decoded.style, defaults.style);
         assert_eq!(decoded.video, defaults.video);
         assert_eq!(decoded.recording_quality, defaults.recording_quality);
+        assert_eq!(decoded.canvas_snap_distance, defaults.canvas_snap_distance);
         assert_eq!(decoded.output_mode, defaults.output_mode);
     }
 

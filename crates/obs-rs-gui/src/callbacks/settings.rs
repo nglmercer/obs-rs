@@ -20,14 +20,16 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
     callbacks::add_source::AddSourceController,
+    callbacks::canvas::CanvasController,
     callbacks::monitor::MonitorController,
     callbacks::source_filters::SourceFiltersController,
     callbacks::source_properties::SourcePropertiesController,
     callbacks::source_transform::SourceTransformController,
     refresh_ui,
     settings::{
-        recording_stamp, AppSettings, RecordingFormat, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS,
-        SAMPLE_RATES, THEMES,
+        recording_stamp, AppSettings, RecordingFormat, CANVAS_SNAP_DISTANCE_DEFAULT,
+        CANVAS_SNAP_DISTANCE_RANGE, CHANNEL_LAYOUTS, FRAME_RATES, RESOLUTIONS, SAMPLE_RATES,
+        THEMES,
     },
     settings_model::{
         aspect_ratio_text, parse_resolution, resolution_text, FpsMode, OutputMode,
@@ -49,6 +51,7 @@ pub(crate) struct SettingsController {
     monitor: Rc<MonitorController>,
     docks: Rc<crate::callbacks::docks::DockController>,
     projectors: Rc<crate::ProjectorController>,
+    canvas: Rc<CanvasController>,
     /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_device_ids: RefCell<Vec<String>>,
     protocol_ids: RefCell<Vec<StreamProtocol>>,
@@ -240,7 +243,8 @@ impl SettingsController {
     }
 }
 
-/// The other top-level windows the settings window repaints on a theme change.
+/// The other controllers and surfaces the settings window coordinates on a
+/// theme or runtime-setting change.
 pub(crate) struct PeerWindows {
     pub(crate) add_source: Rc<AddSourceController>,
     pub(crate) properties: Rc<SourcePropertiesController>,
@@ -249,6 +253,7 @@ pub(crate) struct PeerWindows {
     pub(crate) monitor: Rc<MonitorController>,
     pub(crate) docks: Rc<crate::callbacks::docks::DockController>,
     pub(crate) projectors: Rc<crate::ProjectorController>,
+    pub(crate) canvas: Rc<CanvasController>,
 }
 
 /// Creates the settings window and wires it to the studio window.
@@ -276,6 +281,7 @@ pub(crate) fn install_settings_window(
         monitor: Rc::clone(&peers.monitor),
         docks: Rc::clone(&peers.docks),
         projectors: Rc::clone(&peers.projectors),
+        canvas: Rc::clone(&peers.canvas),
         audio_device_ids: RefCell::new(Vec::new()),
         protocol_ids: RefCell::new(Vec::new()),
         video_encoder_ids: RefCell::new(Vec::new()),
@@ -286,6 +292,13 @@ pub(crate) fn install_settings_window(
         draft_video: RefCell::new(VideoSettings::default()),
         browse_tool: detect_browse_tool(),
     });
+
+    // The settings document is the persisted source of truth; the canvas
+    // receives one validated runtime snapshot before any pointer gesture can
+    // start.
+    controller
+        .canvas
+        .set_snap_distance(controller.settings.borrow().canvas_snap_distance);
 
     populate_static_models(&controller.window);
     install_stream_protocol_switch(&controller);
@@ -666,6 +679,7 @@ fn load_draft(
     window.set_confirm_stop_stream(settings.confirm_stop_stream);
     window.set_confirm_stop_recording(settings.confirm_stop_recording);
     window.set_auto_record_when_streaming(settings.auto_record_when_streaming);
+    window.set_snap_distance(i32::from(settings.canvas_snap_distance));
     populate_stream_models(window, &output.borrow(), controller, &settings);
     window.set_rtmp_service(settings.rtmp.service.as_str().into());
     window.set_rtmp_server(settings.rtmp.server.as_str().into());
@@ -1365,6 +1379,12 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.confirm_stop_stream = window.get_confirm_stop_stream();
     settings.confirm_stop_recording = window.get_confirm_stop_recording();
     settings.auto_record_when_streaming = window.get_auto_record_when_streaming();
+    settings.canvas_snap_distance = u16::try_from(window.get_snap_distance())
+        .unwrap_or(CANVAS_SNAP_DISTANCE_DEFAULT)
+        .clamp(
+            *CANVAS_SNAP_DISTANCE_RANGE.start(),
+            *CANVAS_SNAP_DISTANCE_RANGE.end(),
+        );
     settings.sample_rate = usize::try_from(window.get_sample_rate_index())
         .unwrap_or(0)
         .min(SAMPLE_RATES.len() - 1);
@@ -1696,6 +1716,9 @@ pub(crate) fn apply_settings_snapshot(
     }
 
     *controller.settings.borrow_mut() = settings.clone();
+    controller
+        .canvas
+        .set_snap_distance(settings.canvas_snap_distance);
     apply_to_studio(ui, settings);
     push_palette(ui, controller, settings);
     // The previewed geometry becomes the committed geometry, so a later Cancel

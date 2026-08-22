@@ -29,6 +29,7 @@ export component GeneralPage inherits VerticalLayout {
     in-out property <bool> confirm-stop-stream;
     in-out property <bool> confirm-stop-recording;
     in-out property <bool> auto-record-when-streaming;
+    in-out property <int> snap-distance;
     callback select-language(int);
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -66,6 +67,19 @@ export component GeneralPage inherits VerticalLayout {
             checked <=> root.auto-record-when-streaming;
             toggled(value) => { root.changed(); }
         }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_canvas;
+        SettingRow {
+            label: I18n.text.settings_ui.snap_distance;
+            SettingsSpinBox {
+                value <=> root.snap-distance;
+                minimum: 1;
+                maximum: 100;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.snap_distance_hint; }
     }
     Rectangle { vertical-stretch: 1; }
 }

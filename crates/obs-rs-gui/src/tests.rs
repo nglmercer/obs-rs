@@ -1011,7 +1011,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     exercise_layout_restore(&ui);
     exercise_dock_layout(&ui, &docks);
     render_every_settings_category();
-    exercise_settings_commit(&ui, &state, &surface);
+    exercise_settings_commit(&ui, &state, &surface, &canvas);
     render_source_properties_window();
     render_source_filters_window(&ui, &state, &surface);
     exercise_source_transform_window(&ui, &state, &surface);
@@ -1749,6 +1749,7 @@ fn exercise_settings_commit(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
+    canvas: &Rc<crate::callbacks::CanvasController>,
 ) {
     let token = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1778,6 +1779,7 @@ fn exercise_settings_commit(
             monitor: crate::install_monitor_window(ui, state, surface).expect("monitor controller"),
             docks,
             projectors,
+            canvas: Rc::clone(canvas),
         },
     )
     .expect("settings controller should install");
@@ -1796,6 +1798,7 @@ fn exercise_settings_commit(
     window.set_scale_filter_index(2);
     window.set_recording_quality_index(2);
     window.set_recording_filename_without_spaces(true);
+    window.set_snap_distance(24);
     window.set_dirty(true);
     window.invoke_apply_settings();
 
@@ -1813,6 +1816,7 @@ fn exercise_settings_commit(
     assert_eq!(committed.video.output_width, 1_280);
     assert_eq!(committed.video.scale_filter, ScaleFilter::Lanczos);
     assert!(committed.recording_filename_without_spaces);
+    assert_eq!(committed.canvas_snap_distance, 24);
     assert_eq!(AppSettings::load(&path), committed, "Apply writes the file");
 
     // A field that cannot be parsed stops the commit entirely: nothing else on
