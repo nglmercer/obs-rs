@@ -469,10 +469,12 @@ export component SettingsWindow inherits Window {
                         select-recording-codec(index) => {
                             root.recording-codec-index = index;
                             root.dirty = true;
+                            root.refresh-recording-page();
                         }
                         select-recording-audio-encoder(index) => {
                             root.recording-audio-encoder-index = index;
                             root.dirty = true;
+                            root.refresh-recording-page();
                         }
                         browse-recording-directory() => { root.browse-recording-directory(); }
                         changed => { root.dirty = true; }

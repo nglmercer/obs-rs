@@ -13,7 +13,7 @@ use std::{
 use obs_rs_engine::ProductionProtocol;
 use obs_rs_media::{FrameRate, ScaleFilter, VideoFormat};
 use obs_rs_output::{
-    EncoderImplementation, EncoderPreset, OutputProfileKind, RateControl, VideoCodec,
+    AudioCodec, EncoderImplementation, EncoderPreset, OutputProfileKind, RateControl, VideoCodec,
     RTMP_SERVICE_PRESETS,
 };
 use obs_rs_output::{SecretString, SrtKeyLength, SrtMode, StreamProtocol};
@@ -68,6 +68,7 @@ pub(crate) struct SettingsController {
     recording_codec_ids: RefCell<Vec<VideoCodec>>,
     recording_format_ids: RefCell<Vec<RecordingFormat>>,
     recording_audio_encoder_ids: RefCell<Vec<String>>,
+    recording_audio_encoder_codecs: RefCell<Vec<AudioCodec>>,
     segmented_recording_supported: bool,
     remux_supported: bool,
     /// Whether each offered video encoder runs on dedicated hardware, which is
@@ -312,6 +313,7 @@ pub(crate) fn install_settings_window(
         recording_codec_ids: RefCell::new(Vec::new()),
         recording_format_ids: RefCell::new(Vec::new()),
         recording_audio_encoder_ids: RefCell::new(Vec::new()),
+        recording_audio_encoder_codecs: RefCell::new(Vec::new()),
         segmented_recording_supported: output
             .borrow()
             .capabilities()
@@ -625,6 +627,10 @@ fn populate_encoder_models(
         .iter()
         .map(|encoder| encoder.id().to_owned())
         .collect();
+    *controller.recording_audio_encoder_codecs.borrow_mut() = audio
+        .iter()
+        .map(obs_rs_engine::AudioEncoderCapability::codec)
+        .collect();
     window.set_recording_audio_encoder_names(string_model(
         audio
             .iter()
@@ -902,6 +908,8 @@ fn load_recording_page_draft(
     ));
     window.set_recording_auto_remux_supported(recording_auto_remux_available(
         settings.effective_recording_format(),
+        settings.effective_recording_codec(),
+        recording_audio_codec(controller, settings.recording_audio_encoder.id()),
         controller.remux_supported,
     ));
 }
@@ -1289,6 +1297,8 @@ fn refresh_recording_page(controller: &Rc<SettingsController>, quality: Recordin
     ));
     window.set_recording_auto_remux_supported(recording_auto_remux_available(
         format,
+        draft_recording_codec(controller, quality),
+        draft_recording_audio_codec(controller),
         controller.remux_supported,
     ));
     let settings = AppSettings {
@@ -1323,8 +1333,53 @@ fn recording_split_available(format: RecordingFormat, native_supported: bool) ->
     format == RecordingFormat::ReferencePacket || native_supported
 }
 
-fn recording_auto_remux_available(format: RecordingFormat, native_supported: bool) -> bool {
-    format == RecordingFormat::Matroska && native_supported
+fn recording_auto_remux_available(
+    format: RecordingFormat,
+    video_codec: VideoCodec,
+    audio_codec: AudioCodec,
+    native_supported: bool,
+) -> bool {
+    format == RecordingFormat::Matroska
+        && video_codec == VideoCodec::H264
+        && audio_codec == AudioCodec::Aac
+        && native_supported
+}
+
+fn recording_audio_codec(controller: &SettingsController, encoder_id: &str) -> AudioCodec {
+    controller
+        .recording_audio_encoder_ids
+        .borrow()
+        .iter()
+        .position(|id| id == encoder_id)
+        .and_then(|index| {
+            controller
+                .recording_audio_encoder_codecs
+                .borrow()
+                .get(index)
+                .copied()
+        })
+        .unwrap_or(AudioCodec::Pcm)
+}
+
+fn draft_recording_codec(controller: &SettingsController, quality: RecordingQuality) -> VideoCodec {
+    if quality.is_lossless() {
+        return VideoCodec::ReferenceRle;
+    }
+    controller
+        .recording_codec_ids
+        .borrow()
+        .get(usize::try_from(controller.window.get_recording_codec_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn draft_recording_audio_codec(controller: &SettingsController) -> AudioCodec {
+    controller
+        .recording_audio_encoder_codecs
+        .borrow()
+        .get(usize::try_from(controller.window.get_recording_audio_encoder_index()).unwrap_or(0))
+        .copied()
+        .unwrap_or(AudioCodec::Pcm)
 }
 
 fn install_commit(
