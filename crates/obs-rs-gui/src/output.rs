@@ -314,7 +314,7 @@ impl OutputRuntime {
 
     #[cfg(test)]
     pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
-        if path.to_ascii_lowercase().ends_with(".mkv") {
+        if is_production_recording_path(path) {
             self.worker.start_recording_configured(
                 path,
                 self.recording_video_encoder.clone(),
@@ -329,7 +329,7 @@ impl OutputRuntime {
 
     /// Enqueues recording setup without waiting for container or encoder work.
     pub(crate) fn request_start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
-        let encoder_config = path.to_ascii_lowercase().ends_with(".mkv").then(|| {
+        let encoder_config = is_production_recording_path(path).then(|| {
             (
                 self.recording_video_encoder.clone(),
                 self.recording_audio_encoder.clone(),
@@ -1007,6 +1007,12 @@ impl OutputRuntime {
             (OutputLifecycle::Failed, OutputLifecycle::Failed)
         }
     }
+}
+
+fn is_production_recording_path(path: &str) -> bool {
+    Path::new(path).extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("mkv") || extension.eq_ignore_ascii_case("mp4")
+    })
 }
 
 fn replay_save_path(recording_path: &str) -> PathBuf {

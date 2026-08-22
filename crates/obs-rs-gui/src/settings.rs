@@ -76,15 +76,17 @@ pub(crate) struct SettingsLoad {
 pub(crate) enum RecordingFormat {
     #[default]
     Matroska,
+    Mp4,
     ReferencePacket,
 }
 
 impl RecordingFormat {
-    pub(crate) const ALL: [Self; 2] = [Self::Matroska, Self::ReferencePacket];
+    pub(crate) const ALL: [Self; 3] = [Self::Matroska, Self::Mp4, Self::ReferencePacket];
 
     const fn id(self) -> &'static str {
         match self {
             Self::Matroska => "matroska",
+            Self::Mp4 => "mp4",
             Self::ReferencePacket => "obsr-packet",
         }
     }
@@ -92,6 +94,7 @@ impl RecordingFormat {
     fn from_id(value: &str) -> Option<Self> {
         match value {
             "matroska" | "mkv" => Some(Self::Matroska),
+            "mp4" => Some(Self::Mp4),
             "obsr-packet" | "obsr" => Some(Self::ReferencePacket),
             _ => None,
         }
@@ -100,6 +103,7 @@ impl RecordingFormat {
     pub(crate) const fn extension(self) -> &'static str {
         match self {
             Self::Matroska => "mkv",
+            Self::Mp4 => "mp4",
             Self::ReferencePacket => "obsr",
         }
     }
@@ -107,6 +111,7 @@ impl RecordingFormat {
     pub(crate) const fn display_name(self) -> &'static str {
         match self {
             Self::Matroska => "Matroska (.mkv)",
+            Self::Mp4 => "MPEG-4 (.mp4)",
             Self::ReferencePacket => "OBS-RS Packet (.obsr)",
         }
     }
@@ -2540,6 +2545,18 @@ mod tests {
                 .extension()
                 .and_then(|value| value.to_str()),
             Some("mkv")
+        );
+    }
+
+    #[test]
+    fn mp4_recording_format_selects_a_production_extension() {
+        let settings = AppSettings {
+            recording_format: RecordingFormat::Mp4,
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            settings.recording_file_path("2024-02-29 12-30-45"),
+            format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
         );
     }
 

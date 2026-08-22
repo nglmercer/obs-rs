@@ -304,7 +304,7 @@ impl GStreamerOutputSession {
         // UI cannot hang for the recording-only finalization timeout.
         if !matches!(
             self.transport,
-            OutputTransport::Matroska | OutputTransport::Hls
+            OutputTransport::Matroska | OutputTransport::Mp4 | OutputTransport::Hls
         ) {
             self.pipeline
                 .set_state(gst::State::Null)
@@ -361,7 +361,7 @@ impl GStreamerOutputSession {
         self.state = NativeOutputState::Lost;
         if matches!(
             self.transport,
-            OutputTransport::Matroska | OutputTransport::Hls
+            OutputTransport::Matroska | OutputTransport::Mp4 | OutputTransport::Hls
         ) {
             self.state = NativeOutputState::Failed;
             return Err(GStreamerError::Native(
@@ -379,7 +379,7 @@ impl GStreamerOutputSession {
     pub fn reconnect_live(&mut self) -> Result<(), GStreamerError> {
         if matches!(
             self.transport,
-            OutputTransport::Matroska | OutputTransport::Hls
+            OutputTransport::Matroska | OutputTransport::Mp4 | OutputTransport::Hls
         ) {
             return Err(GStreamerError::Native(
                 "file outputs cannot reconnect".to_owned(),
@@ -469,7 +469,10 @@ fn configure_sources(
     for (source, caps) in [(video, &video_caps), (audio, &audio_caps)] {
         source.set_caps(Some(caps));
         source.set_format(gst::Format::Time);
-        source.set_is_live(plan.profile().transport() != OutputTransport::Matroska);
+        source.set_is_live(!matches!(
+            plan.profile().transport(),
+            OutputTransport::Matroska | OutputTransport::Mp4
+        ));
         source.set_max_bytes(plan.bounded_queue_bytes() as u64);
         source.set_block(false);
         source.set_leaky_type(gst_app::AppLeakyType::Downstream);
@@ -545,6 +548,15 @@ fn pipeline_description(
                 }
             };
             Ok((format!("{v}{parser} ! mux. {a}aacparse ! mux. matroskamux name=mux ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+        }
+        (OutputTransport::Mp4, ProductionDestination::Recording(final_path)) => {
+            if plan.video_config().codec != VideoCodec::H264 {
+                return Err(GStreamerError::Native(
+                    "MP4 production recording currently requires H.264 video".to_owned(),
+                ));
+            }
+            let temp = final_path.with_extension("mp4.part");
+            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. mp4mux name=mux faststart=true ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
         }
         (OutputTransport::Rtmp, ProductionDestination::Rtmp { .. })
         | (OutputTransport::Rtmps, ProductionDestination::Rtmps { .. }) => {

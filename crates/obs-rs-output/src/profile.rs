@@ -16,6 +16,8 @@ pub enum OutputProfileKind {
     MatroskaHevcAac,
     /// Matroska recording with AV1 video and AAC audio.
     MatroskaAv1Aac,
+    /// MP4 recording with H.264 video and AAC audio.
+    Mp4H264Aac,
     /// RTMP stream carrying H.264 and AAC.
     RtmpH264Aac,
     /// TLS-protected RTMPS stream carrying H.264 and AAC.
@@ -39,6 +41,7 @@ impl OutputProfileKind {
             Self::MatroskaH264Aac => "matroska-h264-aac",
             Self::MatroskaHevcAac => "matroska-hevc-aac",
             Self::MatroskaAv1Aac => "matroska-av1-aac",
+            Self::Mp4H264Aac => "mp4-h264-aac",
             Self::RtmpH264Aac => "rtmp-h264-aac",
             Self::RtmpsH264Aac => "rtmps-h264-aac",
             Self::SrtMpegTsH264Aac => "srt-mpegts-h264-aac",
@@ -56,6 +59,7 @@ impl OutputProfileKind {
             "matroska-h264-aac" => Some(Self::MatroskaH264Aac),
             "matroska-hevc-aac" => Some(Self::MatroskaHevcAac),
             "matroska-av1-aac" => Some(Self::MatroskaAv1Aac),
+            "mp4-h264-aac" => Some(Self::Mp4H264Aac),
             "rtmp-h264-aac" => Some(Self::RtmpH264Aac),
             "rtmps-h264-aac" => Some(Self::RtmpsH264Aac),
             "srt-mpegts-h264-aac" => Some(Self::SrtMpegTsH264Aac),
@@ -90,6 +94,7 @@ pub enum OutputAudioCodec {
 pub enum OutputTransport {
     ObsrPkt1,
     Matroska,
+    Mp4,
     Rtmp,
     Rtmps,
     SrtMpegTs,
@@ -158,6 +163,19 @@ impl OutputProfile {
             OutputVideoCodec::Av1,
             OutputAudioCodec::Aac,
             OutputTransport::Matroska,
+            32 * 1_024 * 1_024,
+            4_000,
+        )
+    }
+
+    /// MP4 recording with H.264 and AAC.
+    #[must_use]
+    pub const fn mp4_h264_aac() -> Self {
+        Self::new(
+            OutputProfileKind::Mp4H264Aac,
+            OutputVideoCodec::H264,
+            OutputAudioCodec::Aac,
+            OutputTransport::Mp4,
             32 * 1_024 * 1_024,
             4_000,
         )

@@ -262,6 +262,7 @@ pub struct OutputCapabilitiesSnapshot {
     video_encoders: Vec<VideoEncoderCapability>,
     audio_encoders: Vec<AudioEncoderCapability>,
     recording_codecs: Vec<VideoCodec>,
+    recording_formats: Vec<OutputProfileKind>,
 }
 
 impl OutputCapabilitiesSnapshot {
@@ -283,6 +284,11 @@ impl OutputCapabilitiesSnapshot {
     #[must_use]
     pub fn recording_codecs(&self) -> &[VideoCodec] {
         &self.recording_codecs
+    }
+
+    #[must_use]
+    pub fn recording_formats(&self) -> &[OutputProfileKind] {
+        &self.recording_formats
     }
 }
 
@@ -401,11 +407,26 @@ impl GStreamerCapabilitySnapshot {
             audio_encoders: self.audio_encoders.clone(),
             recording_codecs: [
                 (OutputProfileKind::MatroskaH264Aac, VideoCodec::H264),
+                (OutputProfileKind::Mp4H264Aac, VideoCodec::H264),
                 (OutputProfileKind::MatroskaHevcAac, VideoCodec::Hevc),
                 (OutputProfileKind::MatroskaAv1Aac, VideoCodec::Av1),
             ]
             .into_iter()
             .filter_map(|(profile, codec)| self.output.supports(profile).then_some(codec))
+            .fold(Vec::new(), |mut codecs, codec| {
+                if !codecs.contains(&codec) {
+                    codecs.push(codec);
+                }
+                codecs
+            }),
+            recording_formats: [
+                OutputProfileKind::MatroskaH264Aac,
+                OutputProfileKind::MatroskaHevcAac,
+                OutputProfileKind::MatroskaAv1Aac,
+                OutputProfileKind::Mp4H264Aac,
+            ]
+            .into_iter()
+            .filter(|profile| self.output.supports(*profile))
             .collect(),
         }
     }
@@ -427,6 +448,9 @@ fn production_profiles(selected: &BTreeMap<&'static str, String>) -> Vec<OutputP
     if has("av1") && has("aac") && element_available("av1parse") && element_available("matroskamux")
     {
         profiles.push(OutputProfileKind::MatroskaAv1Aac);
+    }
+    if has("h264") && has("aac") && element_available("mp4mux") {
+        profiles.push(OutputProfileKind::Mp4H264Aac);
     }
     if has("h264") && has("aac") && element_available("flvmux") && has("rtmp_sink") {
         profiles.extend([
@@ -821,7 +845,12 @@ impl ProductionDestination {
     /// WebRTC signaling.
     pub fn validate_for(&self, profile: OutputProfile) -> Result<(), GStreamerError> {
         let valid = match (profile.transport(), self) {
-            (OutputTransport::Matroska, Self::Recording(path)) => !path.as_os_str().is_empty(),
+            (OutputTransport::Matroska, Self::Recording(path)) => {
+                recording_path_has_extension(path, "mkv")
+            }
+            (OutputTransport::Mp4, Self::Recording(path)) => {
+                recording_path_has_extension(path, "mp4")
+            }
             (OutputTransport::Rtmp, Self::Rtmp { endpoint }) => {
                 valid_stream_url(endpoint, "rtmp", true)
             }
@@ -885,6 +914,12 @@ impl ProductionDestination {
             ))
         }
     }
+}
+
+fn recording_path_has_extension(path: &std::path::Path, extension: &str) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case(extension))
 }
 
 /// Application-driven WebRTC signaling lifecycle. Network exchange remains in
@@ -1515,7 +1550,7 @@ mod tests {
     }
 
     #[test]
-    fn recording_paths_are_typed_and_must_match_matroska() {
+    fn recording_paths_are_typed_and_must_match_the_container() {
         let destination =
             ProductionDestination::Recording(std::path::Path::new("capture.mkv").to_owned());
         assert!(destination
@@ -1524,6 +1559,16 @@ mod tests {
         assert!(destination
             .validate_for(OutputProfile::rtmp_h264_aac())
             .is_err());
+        assert!(
+            ProductionDestination::Recording(std::path::Path::new("capture.mp4").to_owned())
+                .validate_for(OutputProfile::mp4_h264_aac())
+                .is_ok()
+        );
+        assert!(
+            ProductionDestination::Recording(std::path::Path::new("capture.mkv").to_owned())
+                .validate_for(OutputProfile::mp4_h264_aac())
+                .is_err()
+        );
     }
 
     #[test]

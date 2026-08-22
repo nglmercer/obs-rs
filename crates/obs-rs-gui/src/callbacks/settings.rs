@@ -12,7 +12,9 @@ use std::{
 
 use obs_rs_engine::ProductionProtocol;
 use obs_rs_media::{FrameRate, ScaleFilter, VideoFormat};
-use obs_rs_output::{EncoderImplementation, EncoderPreset, RateControl, VideoCodec};
+use obs_rs_output::{
+    EncoderImplementation, EncoderPreset, OutputProfileKind, RateControl, VideoCodec,
+};
 use obs_rs_output::{SecretString, SrtKeyLength, SrtMode, StreamProtocol};
 use obs_rs_project::ProjectCommand;
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
@@ -60,6 +62,7 @@ pub(crate) struct SettingsController {
     video_encoder_ids: RefCell<Vec<String>>,
     audio_encoder_ids: RefCell<Vec<String>>,
     recording_codec_ids: RefCell<Vec<VideoCodec>>,
+    recording_format_ids: RefCell<Vec<RecordingFormat>>,
     recording_audio_encoder_ids: RefCell<Vec<String>>,
     /// Whether each offered video encoder runs on dedicated hardware, which is
     /// what decides whether the double-software-encode warning applies.
@@ -301,6 +304,7 @@ pub(crate) fn install_settings_window(
         video_encoder_ids: RefCell::new(Vec::new()),
         audio_encoder_ids: RefCell::new(Vec::new()),
         recording_codec_ids: RefCell::new(Vec::new()),
+        recording_format_ids: RefCell::new(Vec::new()),
         recording_audio_encoder_ids: RefCell::new(Vec::new()),
         video_encoder_hardware: RefCell::new(Vec::new()),
         draft_video: RefCell::new(VideoSettings::default()),
@@ -546,6 +550,38 @@ fn populate_encoder_models(
     window.set_recording_codec_index(index_of(&recording_codecs, &settings.recording_codec));
     *controller.recording_codec_ids.borrow_mut() = recording_codecs;
 
+    let recording_formats = RecordingFormat::ALL
+        .into_iter()
+        .filter(|format| match format {
+            RecordingFormat::ReferencePacket => true,
+            RecordingFormat::Matroska => {
+                output
+                    .capabilities()
+                    .recording_formats()
+                    .iter()
+                    .any(|profile| {
+                        matches!(
+                            profile,
+                            OutputProfileKind::MatroskaH264Aac
+                                | OutputProfileKind::MatroskaHevcAac
+                                | OutputProfileKind::MatroskaAv1Aac
+                        )
+                    })
+            }
+            RecordingFormat::Mp4 => output
+                .capabilities()
+                .recording_formats()
+                .contains(&OutputProfileKind::Mp4H264Aac),
+        })
+        .collect::<Vec<_>>();
+    window.set_recording_format_names(string_model(
+        recording_formats
+            .iter()
+            .map(|format| SharedString::from(format.display_name())),
+    ));
+    window.set_recording_format_index(index_of(&recording_formats, &settings.recording_format));
+    *controller.recording_format_ids.borrow_mut() = recording_formats;
+
     let audio = output.capabilities().audio_encoders();
     *controller.audio_encoder_ids.borrow_mut() = audio
         .iter()
@@ -735,21 +771,7 @@ fn load_draft(
     load_connection_draft(window, &settings);
     window.set_whip_endpoint(settings.whip_endpoint.as_str().into());
     window.set_reference_address(settings.reference_address.as_str().into());
-    window.set_recording_directory(settings.recording_directory.as_str().into());
-    window.set_recording_filename_without_spaces(settings.recording_filename_without_spaces);
-    window.set_recording_quality_index(index_of(
-        &RecordingQuality::ALL,
-        &settings.recording_quality,
-    ));
-    window.set_recording_format_index(index_of(&RecordingFormat::ALL, &settings.recording_format));
-    window.set_replay_buffer_duration(
-        i32::try_from(settings.replay_buffer_duration_seconds)
-            .unwrap_or(i32::try_from(REPLAY_BUFFER_DURATION_DEFAULT).unwrap_or(20)),
-    );
-    window.set_replay_buffer_capacity(
-        i32::try_from(settings.replay_buffer_capacity_mib)
-            .unwrap_or(i32::try_from(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT).unwrap_or(64)),
-    );
+    load_recording_page_draft(window, controller, &settings);
     window.set_browse_enabled(controller.browse_tool.is_some());
     window.set_browse_hint(
         window
@@ -786,6 +808,31 @@ fn load_draft(
     populate_audio_devices(window, state, output, controller, &settings);
 
     load_video_draft(surface, controller, &settings);
+}
+
+fn load_recording_page_draft(
+    window: &SettingsWindow,
+    controller: &SettingsController,
+    settings: &AppSettings,
+) {
+    window.set_recording_directory(settings.recording_directory.as_str().into());
+    window.set_recording_filename_without_spaces(settings.recording_filename_without_spaces);
+    window.set_recording_quality_index(index_of(
+        &RecordingQuality::ALL,
+        &settings.recording_quality,
+    ));
+    window.set_recording_format_index(index_of(
+        &controller.recording_format_ids.borrow(),
+        &settings.recording_format,
+    ));
+    window.set_replay_buffer_duration(
+        i32::try_from(settings.replay_buffer_duration_seconds)
+            .unwrap_or(i32::try_from(REPLAY_BUFFER_DURATION_DEFAULT).unwrap_or(20)),
+    );
+    window.set_replay_buffer_capacity(
+        i32::try_from(settings.replay_buffer_capacity_mib)
+            .unwrap_or(i32::try_from(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT).unwrap_or(64)),
+    );
 }
 
 /// Copies the Video page's values into the draft.
@@ -1142,7 +1189,9 @@ fn refresh_recording_page(controller: &Rc<SettingsController>, quality: Recordin
     let format = if quality.is_lossless() {
         RecordingFormat::ReferencePacket
     } else {
-        RecordingFormat::ALL
+        controller
+            .recording_format_ids
+            .borrow()
             .get(usize::try_from(window.get_recording_format_index()).unwrap_or(0))
             .copied()
             .unwrap_or_default()
@@ -1623,7 +1672,9 @@ fn read_extended_stream_draft(window: &SettingsWindow, settings: &mut AppSetting
 fn read_recording_draft(controller: &SettingsController, settings: &mut AppSettings) {
     let window = &controller.window;
     settings.recording_quality = draft_recording_quality(window);
-    settings.recording_format = RecordingFormat::ALL
+    settings.recording_format = controller
+        .recording_format_ids
+        .borrow()
         .get(usize::try_from(window.get_recording_format_index()).unwrap_or(0))
         .copied()
         .unwrap_or_default();
