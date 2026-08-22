@@ -15,10 +15,22 @@ use super::{
     MAX_UI_NOTICES,
 };
 
+/// The last Preview/Program choices for one in-memory profile.
+#[derive(Clone, Debug, Default)]
+struct SceneSelection {
+    preview: Option<Identifier>,
+    program: Option<Identifier>,
+}
+
+/// The selection cache is session state, not project data. Keep it bounded so
+/// repeatedly opening profiles cannot grow the UI state without limit.
+const MAX_PROFILE_SCENE_SELECTIONS: usize = 64;
+
 pub struct DesktopState {
     pub(crate) project: ProjectSession,
     pub(crate) preview_scene: Option<Identifier>,
     pub(crate) program_scene: Option<Identifier>,
+    profile_scene_selections: BTreeMap<Identifier, SceneSelection>,
     /// Ordered transient canvas selection. The last item is the active item
     /// used by property dialogs and single-row source actions.
     pub(crate) selected_sources: Vec<Identifier>,
@@ -51,6 +63,7 @@ impl DesktopState {
             project: session,
             preview_scene: first_scene.clone(),
             program_scene: first_scene,
+            profile_scene_selections: BTreeMap::new(),
             selected_sources: selected_sources.into_iter().collect(),
             clipboard: None,
             locale: UiLocale::English,
@@ -85,23 +98,26 @@ impl DesktopState {
                 "preview and program scenes swapped"
             }
             UiCommand::Project(command) => {
+                let previous_profile = self.project.project().active_profile().clone();
+                let previous_selection = self.scene_selection();
                 self.project.dispatch(command)?;
-                self.sync_selections_after_project_update();
+                if self.project.project().active_profile() == &previous_profile {
+                    self.sync_selections_after_project_update();
+                } else {
+                    self.remember_profile_selection(previous_profile, previous_selection);
+                    self.restore_active_profile_selection();
+                }
                 "project updated"
             }
             UiCommand::Undo => self.step_history(true),
             UiCommand::Redo => self.step_history(false),
             UiCommand::SelectProfile { id } => {
+                let previous_profile = self.project.project().active_profile().clone();
+                let previous_selection = self.scene_selection();
                 self.project
                     .dispatch(ProjectCommand::SetActiveProfile { id })?;
-                self.preview_scene = first_scene_id(self.project.project());
-                self.program_scene = self.preview_scene.clone();
-                self.selected_sources = self
-                    .preview_scene
-                    .as_ref()
-                    .and_then(|scene| first_source_id(self.project.project(), scene))
-                    .into_iter()
-                    .collect();
+                self.remember_profile_selection(previous_profile, previous_selection);
+                self.restore_active_profile_selection();
                 "profile selected"
             }
             UiCommand::SelectPreviewScene { id } => {
@@ -280,6 +296,8 @@ impl DesktopState {
     /// user asked for something that is simply unavailable, not for something
     /// invalid.
     fn step_history(&mut self, backwards: bool) -> &'static str {
+        let previous_profile = self.project.project().active_profile().clone();
+        let previous_selection = self.scene_selection();
         let moved = if backwards {
             self.project.undo()
         } else {
@@ -295,7 +313,12 @@ impl DesktopState {
         // A restored project may not contain the scene or item that was
         // selected, so the selections are reconciled the same way an ordinary
         // project command reconciles them.
-        self.sync_selections_after_project_update();
+        if self.project.project().active_profile() == &previous_profile {
+            self.sync_selections_after_project_update();
+        } else {
+            self.remember_profile_selection(previous_profile, previous_selection);
+            self.restore_active_profile_selection();
+        }
         if backwards {
             "edit undone"
         } else {
@@ -306,6 +329,7 @@ impl DesktopState {
     fn replace_project(&mut self, project: Project) {
         self.project.replace(project);
         self.clipboard = None;
+        self.profile_scene_selections.clear();
         let first_scene = first_scene_id(self.project.project());
         self.preview_scene.clone_from(&first_scene);
         self.program_scene.clone_from(&first_scene);
@@ -347,6 +371,46 @@ impl DesktopState {
         }
         if let Some(program) = program {
             self.program_scene = Some(program);
+        }
+    }
+
+    fn scene_selection(&self) -> SceneSelection {
+        SceneSelection {
+            preview: self.preview_scene.clone(),
+            program: self.program_scene.clone(),
+        }
+    }
+
+    fn remember_profile_selection(&mut self, profile: Identifier, selection: SceneSelection) {
+        if self.profile_scene_selections.len() == MAX_PROFILE_SCENE_SELECTIONS
+            && !self.profile_scene_selections.contains_key(&profile)
+        {
+            if let Some(oldest) = self.profile_scene_selections.keys().next().cloned() {
+                self.profile_scene_selections.remove(&oldest);
+            }
+        }
+        self.profile_scene_selections.insert(profile, selection);
+    }
+
+    fn restore_active_profile_selection(&mut self) {
+        let fallback = first_scene_id(self.project.project());
+        self.preview_scene.clone_from(&fallback);
+        self.program_scene = fallback;
+        self.selected_sources = self
+            .preview_scene
+            .as_ref()
+            .and_then(|scene| first_source_id(self.project.project(), scene))
+            .into_iter()
+            .collect();
+        let selection = self
+            .profile_scene_selections
+            .get(self.project.project().active_profile())
+            .cloned();
+        if let Some(selection) = selection {
+            self.restore_scene_selection(
+                selection.preview.as_ref().map(Identifier::as_str),
+                selection.program.as_ref().map(Identifier::as_str),
+            );
         }
     }
 

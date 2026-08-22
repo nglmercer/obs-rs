@@ -69,6 +69,79 @@ fn persisted_scene_selection_restores_without_project_history() {
 }
 
 #[test]
+fn profile_switch_restores_each_profiles_scene_choices() {
+    let mut project = project();
+    let format = project
+        .profile("live")
+        .expect("live profile")
+        .video_format();
+    let mut alternate = Profile::new("alternate", "Alternate", format).expect("profile");
+    alternate
+        .add_scene(SceneSpec::new("alternate_preview", "Alternate preview").expect("scene"))
+        .expect("scene");
+    alternate
+        .add_scene(SceneSpec::new("alternate_program", "Alternate program").expect("scene"))
+        .expect("scene");
+    project.add_profile(alternate).expect("profile");
+
+    let mut state = DesktopState::new(project);
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("live preview selection");
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("live program selection");
+    state
+        .dispatch(UiCommand::SelectProfile {
+            id: "alternate".to_owned(),
+        })
+        .expect("alternate profile selection");
+    assert_eq!(state.preview_scene(), Some("alternate_preview"));
+    assert_eq!(state.program_scene(), Some("alternate_preview"));
+
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "alternate_program".to_owned(),
+        })
+        .expect("alternate program selection");
+    state
+        .dispatch(UiCommand::SelectProfile {
+            id: "live".to_owned(),
+        })
+        .expect("return to live profile");
+    assert_eq!(state.preview_scene(), Some("source_scene"));
+    assert_eq!(state.program_scene(), Some("program"));
+
+    state
+        .dispatch(UiCommand::SelectProfile {
+            id: "alternate".to_owned(),
+        })
+        .expect("return to alternate profile");
+    assert_eq!(state.preview_scene(), Some("alternate_preview"));
+    assert_eq!(state.program_scene(), Some("alternate_program"));
+
+    state
+        .dispatch(UiCommand::SelectProfile {
+            id: "live".to_owned(),
+        })
+        .expect("switch before history check");
+    state
+        .dispatch(UiCommand::Undo)
+        .expect("undo profile switch");
+    assert_eq!(state.preview_scene(), Some("alternate_preview"));
+    assert_eq!(state.program_scene(), Some("alternate_program"));
+    state
+        .dispatch(UiCommand::Redo)
+        .expect("redo profile switch");
+    assert_eq!(state.preview_scene(), Some("source_scene"));
+    assert_eq!(state.program_scene(), Some("program"));
+}
+
+#[test]
 fn desktop_state_selects_source_items_in_preview_scene() {
     let mut state = DesktopState::new(project());
     assert_eq!(state.selected_source(), None);
