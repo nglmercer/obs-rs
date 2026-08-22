@@ -47,6 +47,8 @@ export component MainWindow inherits Window {
         in property <string> transition;
         in property <bool> recording;
         in property <bool> streaming;
+        in property <bool> replay-buffering;
+        in property <bool> replay-saving;
         in property <bool> dirty;
         in property <string> status-message;
         in property <string> recovery-status;
@@ -178,6 +180,8 @@ export component MainWindow inherits Window {
         callback trigger-shortcut(string) -> int;
         callback toggle-recording();
         callback toggle-streaming();
+        callback toggle-replay-buffer();
+        callback save-replay-buffer();
         callback cut-transition();
         callback fade-transition();
         // Display-only menu labels. Runtime matching uses the typed table.
@@ -659,6 +663,8 @@ export component MainWindow inherits Window {
                 transition: root.transition;
                 recording: root.recording;
                 streaming: root.streaming;
+                replay-buffering: root.replay-buffering;
+                replay-saving: root.replay-saving;
                 meters-paused: root.meters-paused;
                 show-scenes: root.show-scenes;
                 show-sources: root.show-sources;
@@ -719,6 +725,8 @@ export component MainWindow inherits Window {
                 fade-transition() => { root.fade-transition(); }
                 toggle-recording() => { root.request-recording(); }
                 toggle-streaming() => { root.request-streaming(); }
+                toggle-replay-buffer() => { root.toggle-replay-buffer(); }
+                save-replay-buffer() => { root.save-replay-buffer(); }
                 open-settings-window() => { root.open-settings-window(); }
                 set-view-mode(mode) => { root.apply-view-mode(mode); }
                 float-panel(kind) => { root.float-panel(kind); }

@@ -27,6 +27,8 @@ export component DockSlot inherits Rectangle {
     in property <string> transition;
     in property <bool> recording;
     in property <bool> streaming;
+    in property <bool> replay-buffering;
+    in property <bool> replay-saving;
     in property <bool> meters-paused;
     // A floating dock fills its own window instead of a share of the row.
     in property <bool> floating;
@@ -71,6 +73,8 @@ export component DockSlot inherits Rectangle {
     callback set-view-mode(int);
     callback toggle-recording();
     callback toggle-streaming();
+    callback toggle-replay-buffer();
+    callback save-replay-buffer();
     callback open-settings-window();
 
     // The row hands each dock a share of the width, which the splitters between
@@ -177,12 +181,16 @@ export component DockSlot inherits Rectangle {
         panel-kind: root.panel-kind;
         recording: root.recording;
         streaming: root.streaming;
+        replay-buffering: root.replay-buffering;
+        replay-saving: root.replay-saving;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
         dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
         dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
         dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         toggle-recording() => { root.toggle-recording(); }
         toggle-streaming() => { root.toggle-streaming(); }
+        toggle-replay-buffer() => { root.toggle-replay-buffer(); }
+        save-replay-buffer() => { root.save-replay-buffer(); }
         set-view-mode(mode) => { root.set-view-mode(mode); }
         open-settings-window() => { root.open-settings-window(); }
     }

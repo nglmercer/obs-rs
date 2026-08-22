@@ -17,6 +17,7 @@ pub(crate) fn install_output_callbacks(
 ) {
     install_recording_callback(ui, state, surface, output);
     install_streaming_callback(ui, state, surface, output);
+    install_replay_callbacks(ui, output);
     install_transition_callbacks(ui, state, surface);
 }
 
@@ -99,6 +100,57 @@ fn install_streaming_callback(
             Err(error) => ui.set_status_message(format!("Streaming failed: {error}").into()),
         }
         refresh_output_ui(&ui, &streaming_output);
+    });
+}
+
+fn install_replay_callbacks(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {
+    let weak = ui.as_weak();
+    let replay_output = Rc::clone(output);
+    ui.on_toggle_replay_buffer(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let buffering = replay_output.borrow().replay_controls().0;
+        let result = if buffering {
+            replay_output
+                .borrow_mut()
+                .request_stop_replay_buffer()
+                .map(|()| "Replay buffer stop requested".to_owned())
+        } else {
+            replay_output
+                .borrow_mut()
+                .request_start_replay_buffer()
+                .map(|()| "Replay buffer start requested (20 s / 64 MiB)".to_owned())
+        };
+        match result {
+            Ok(message) => ui.set_status_message(message.into()),
+            Err(error) => ui.set_status_message(format!("Replay buffer failed: {error}").into()),
+        }
+        refresh_output_ui(&ui, &replay_output);
+    });
+
+    let weak = ui.as_weak();
+    let replay_output = Rc::clone(output);
+    ui.on_save_replay_buffer(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let (buffering, saving) = replay_output.borrow().replay_controls();
+        let result: Result<String, Box<dyn Error>> = if !buffering {
+            Err("Replay buffer is not running".into())
+        } else if saving {
+            Err("Replay save is already in progress".into())
+        } else {
+            let recording_path = ui.get_recording_path();
+            replay_output
+                .borrow_mut()
+                .request_save_replay_buffer(recording_path.as_ref())
+        };
+        match result {
+            Ok(path) => ui.set_status_message(format!("Replay save requested: {path}").into()),
+            Err(error) => ui.set_status_message(format!("Replay save failed: {error}").into()),
+        }
+        refresh_output_ui(&ui, &replay_output);
     });
 }
 

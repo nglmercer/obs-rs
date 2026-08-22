@@ -2609,7 +2609,83 @@ fn exercise_recording_controls(
         .any(|packet| packet.kind() == PacketKind::Audio));
     std::fs::remove_file(path).expect("remove GUI recording fixture");
 
+    exercise_replay_controls(ui, state, surface);
     exercise_output_reconciliation(ui, state, &output);
+}
+
+/// Drives the actual Controls-dock replay actions and verifies that the
+/// worker-owned history survives an asynchronous save without stopping until
+/// the explicit stop action.
+fn exercise_replay_controls(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("obs-rs-gui-replay-{token}"));
+    std::fs::create_dir(&directory).expect("replay fixture directory");
+    let recording_path = directory.join("recording.obsr");
+    ui.set_recording_path(recording_path.to_string_lossy().into_owned().into());
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
+
+    ui.invoke_toggle_replay_buffer();
+    assert!(
+        ui.get_replay_buffering(),
+        "Replay control must expose the accepted start request"
+    );
+    let frame = PreviewRenderer::new(state.borrow().project_session().project(), 0)
+        .expect("preview renderer")
+        .render("program")
+        .expect("program frame")
+        .expect("program scene frame");
+    crate::callbacks::push_program_frame(ui, None, None, Some(frame), &output);
+
+    ui.invoke_save_replay_buffer();
+    let replay_path = (0..100).find_map(|_| {
+        crate::refresh_output_ui(ui, &output);
+        let path = std::fs::read_dir(&directory)
+            .expect("read replay fixture directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "obsr")
+                    && path
+                        .file_name()
+                        .is_some_and(|name| name != "recording.obsr")
+            });
+        if path.is_some() {
+            path
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            None
+        }
+    });
+    let replay_path = replay_path.expect("replay save should commit asynchronously");
+    let bytes = std::fs::read(&replay_path).expect("replay file");
+    assert!(!bytes.is_empty());
+    assert!(
+        ui.get_replay_buffering(),
+        "saving a replay must not stop the capture history"
+    );
+
+    ui.invoke_toggle_replay_buffer();
+    for _ in 0..100 {
+        crate::refresh_output_ui(ui, &output);
+        if !ui.get_replay_buffering() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        !ui.get_replay_buffering(),
+        "Replay control must stop capture"
+    );
+    std::fs::remove_dir_all(directory).expect("remove replay fixture directory");
 }
 
 /// Checks the desktop stops claiming an output the engine is not running.

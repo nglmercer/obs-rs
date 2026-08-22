@@ -1,14 +1,15 @@
 use std::{
     error::Error,
+    path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
 use obs_rs_engine::{
     output_capabilities_snapshot, EngineAudioChannel, EngineConfig, EngineSession, EngineWorker,
-    OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle,
+    OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle, ReplaySaveStatus,
 };
 use obs_rs_media::{FrameScaler, RawVideoFrame, ScaleFilter, VideoFormat, VideoFrame};
 use obs_rs_output::{
@@ -17,7 +18,10 @@ use obs_rs_output::{
 };
 use obs_rs_project::Project;
 
-use crate::AppSettings;
+use crate::{settings::recording_stamp, AppSettings};
+
+const REPLAY_BUFFER_CAPACITY_BYTES: usize = 64 * 1024 * 1024;
+const REPLAY_BUFFER_DURATION: Duration = Duration::from_secs(20);
 
 /// One entry in the settings window's audio-input picker.
 ///
@@ -348,6 +352,44 @@ impl OutputRuntime {
         self.recording_started_at = None;
     }
 
+    /// Enqueues the bounded replay capture configuration without waiting for
+    /// worker-side allocation.
+    pub(crate) fn request_start_replay_buffer(&mut self) -> Result<(), Box<dyn Error>> {
+        self.worker
+            .try_start_replay_buffer(REPLAY_BUFFER_CAPACITY_BYTES, REPLAY_BUFFER_DURATION)?;
+        Ok(())
+    }
+
+    /// Enqueues replay teardown without waiting for the worker.
+    pub(crate) fn request_stop_replay_buffer(&mut self) -> Result<(), Box<dyn Error>> {
+        self.worker.try_stop_replay_buffer()?;
+        Ok(())
+    }
+
+    /// Enqueues an atomic replay save into the recording directory and returns
+    /// the concrete path for the operator-facing status message.
+    pub(crate) fn request_save_replay_buffer(
+        &mut self,
+        recording_path: &str,
+    ) -> Result<String, Box<dyn Error>> {
+        let path = replay_save_path(recording_path);
+        self.worker.try_save_replay_buffer(path.clone())?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// Returns the two projections the Controls dock needs from one snapshot.
+    pub(crate) fn replay_controls(&self) -> (bool, bool) {
+        let snapshot = self.worker.snapshot();
+        let buffering = snapshot.alive
+            && matches!(
+                snapshot.engine.replay_lifecycle,
+                OutputLifecycle::Starting | OutputLifecycle::Running | OutputLifecycle::Stopping
+            );
+        let saving = snapshot.alive
+            && matches!(snapshot.engine.replay_save_status, ReplaySaveStatus::Saving);
+        (buffering, saving)
+    }
+
     #[cfg(test)]
     pub(crate) fn start_streaming(&mut self, address: &str) -> Result<(), Box<dyn Error>> {
         self.worker.start_streaming(address)?;
@@ -622,6 +664,7 @@ impl OutputRuntime {
         } else {
             "audio live"
         };
+        let replay_save = replay_save_label(&engine.replay_save_status);
         let worker = if snapshot.alive {
             "worker live"
         } else {
@@ -636,7 +679,9 @@ impl OutputRuntime {
             .collect::<Vec<_>>()
             .join("/");
         format!(
-            "Output: recording {recording} · stream {streaming} · {audio} · {worker} · available {protocols}"
+            "Output: recording {recording} · stream {streaming} · replay {} ({} packets) · replay save {replay_save} · {audio} · {worker} · available {protocols}",
+            engine.replay_lifecycle.label(),
+            engine.replay_buffer_packets,
         )
     }
 
@@ -693,11 +738,12 @@ impl OutputRuntime {
         let engine = snapshot.engine;
         MultiviewTelemetry {
             metrics: format!(
-                "frames={} · dropped={} · audio blocks={} · queued={} B",
+                "frames={} · dropped={} · audio blocks={} · queued={} B · replay={} packets",
                 engine.stats.video_frames,
                 snapshot.dropped_frames,
                 engine.stats.audio_blocks,
                 engine.stream_queued_bytes,
+                engine.replay_buffer_packets,
             ),
             audio_peak_milli: engine.stats.audio_peak_milli,
         }
@@ -755,12 +801,16 @@ impl OutputRuntime {
             reconnects = metrics.reconnects;
             native_submit_max = metrics.max_submit_latency_nanos;
         }
+        let replay_save = replay_save_label(&engine.replay_save_status);
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} replay_lifecycle={} replay_save={} replay_packets={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
             engine.streaming,
+            engine.replay_lifecycle.label(),
+            replay_save,
+            engine.replay_buffer_packets,
             self.stream_protocol.unwrap_or("none"),
             engine.recording_lifecycle.label(),
             engine.streaming_lifecycle.label(),
@@ -921,6 +971,27 @@ impl OutputRuntime {
         } else {
             (OutputLifecycle::Failed, OutputLifecycle::Failed)
         }
+    }
+}
+
+fn replay_save_path(recording_path: &str) -> PathBuf {
+    let recording_path = Path::new(recording_path);
+    let directory = recording_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    directory.join(format!(
+        "Replay-{}.obsr",
+        recording_stamp(SystemTime::now())
+    ))
+}
+
+fn replay_save_label(status: &ReplaySaveStatus) -> String {
+    match status {
+        ReplaySaveStatus::Idle => "idle".to_owned(),
+        ReplaySaveStatus::Saving => "saving".to_owned(),
+        ReplaySaveStatus::Saved { bytes } => format!("saved {bytes} B"),
+        ReplaySaveStatus::Failed { reason } => format!("failed: {reason}"),
     }
 }
 

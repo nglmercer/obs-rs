@@ -281,6 +281,9 @@ pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRunti
     ui.set_multiview_status(status.into());
     ui.set_multiview_metrics(multiview.metrics.into());
     ui.set_multiview_audio_db(peak_db(multiview.audio_peak_milli));
+    let (replay_buffering, replay_saving) = output.replay_controls();
+    ui.set_replay_buffering(replay_buffering);
+    ui.set_replay_saving(replay_saving);
     ui.set_recording_elapsed(output.recording_elapsed().into());
 }
 

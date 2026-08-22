@@ -8,6 +8,8 @@ import { Palette } from "palette.slint";
 export component ControlsDock inherits Rectangle {
     in property <bool> recording;
     in property <bool> streaming;
+    in property <bool> replay-buffering;
+    in property <bool> replay-saving;
     in property <int> panel-kind;
 
     in property <bool> floating;
@@ -21,6 +23,8 @@ export component ControlsDock inherits Rectangle {
     callback close-panel(int);
     callback toggle-recording();
     callback toggle-streaming();
+    callback toggle-replay-buffer();
+    callback save-replay-buffer();
     callback set-view-mode(int);
     callback open-settings-window();
 
@@ -58,6 +62,19 @@ export component ControlsDock inherits Rectangle {
                     : I18n.text.start_recording;
                 height: 30px;
                 clicked => toggle-recording();
+            }
+            Button {
+                text: replay-buffering
+                    ? I18n.text.stop_replay_buffer
+                    : I18n.text.start_replay_buffer;
+                height: 30px;
+                clicked => toggle-replay-buffer();
+            }
+            Button {
+                text: I18n.text.save_replay_buffer;
+                height: 30px;
+                enabled: replay-buffering && !replay-saving;
+                clicked => save-replay-buffer();
             }
             // OBS-RS has no virtual camera backend yet. The control keeps its
             // place in the dock but stays disabled, and clicking it explains
