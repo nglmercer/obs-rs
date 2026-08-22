@@ -304,7 +304,10 @@ impl GStreamerOutputSession {
         // UI cannot hang for the recording-only finalization timeout.
         if !matches!(
             self.transport,
-            OutputTransport::Matroska | OutputTransport::Mp4 | OutputTransport::Hls
+            OutputTransport::Matroska
+                | OutputTransport::Mp4
+                | OutputTransport::Flv
+                | OutputTransport::Hls
         ) {
             self.pipeline
                 .set_state(gst::State::Null)
@@ -337,7 +340,7 @@ impl GStreamerOutputSession {
             .map_err(native_error)?;
         if let (Some(temp), Some(final_path)) = (&self.temp_path, &self.final_path) {
             fs::rename(temp, final_path).map_err(|error| {
-                GStreamerError::Native(format!("publish Matroska recording: {error}"))
+                GStreamerError::Native(format!("publish production recording: {error}"))
             })?;
         }
         self.state = NativeOutputState::Closed;
@@ -361,7 +364,10 @@ impl GStreamerOutputSession {
         self.state = NativeOutputState::Lost;
         if matches!(
             self.transport,
-            OutputTransport::Matroska | OutputTransport::Mp4 | OutputTransport::Hls
+            OutputTransport::Matroska
+                | OutputTransport::Mp4
+                | OutputTransport::Flv
+                | OutputTransport::Hls
         ) {
             self.state = NativeOutputState::Failed;
             return Err(GStreamerError::Native(
@@ -379,7 +385,10 @@ impl GStreamerOutputSession {
     pub fn reconnect_live(&mut self) -> Result<(), GStreamerError> {
         if matches!(
             self.transport,
-            OutputTransport::Matroska | OutputTransport::Mp4 | OutputTransport::Hls
+            OutputTransport::Matroska
+                | OutputTransport::Mp4
+                | OutputTransport::Flv
+                | OutputTransport::Hls
         ) {
             return Err(GStreamerError::Native(
                 "file outputs cannot reconnect".to_owned(),
@@ -471,7 +480,7 @@ fn configure_sources(
         source.set_format(gst::Format::Time);
         source.set_is_live(!matches!(
             plan.profile().transport(),
-            OutputTransport::Matroska | OutputTransport::Mp4
+            OutputTransport::Matroska | OutputTransport::Mp4 | OutputTransport::Flv
         ));
         source.set_max_bytes(plan.bounded_queue_bytes() as u64);
         source.set_block(false);
@@ -557,6 +566,15 @@ fn pipeline_description(
             }
             let temp = final_path.with_extension("mp4.part");
             Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. mp4mux name=mux faststart=true ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
+        }
+        (OutputTransport::Flv, ProductionDestination::Recording(final_path)) => {
+            if plan.video_config().codec != VideoCodec::H264 {
+                return Err(GStreamerError::Native(
+                    "FLV production recording currently requires H.264 video".to_owned(),
+                ));
+            }
+            let temp = final_path.with_extension("flv.part");
+            Ok((format!("{v}h264parse ! mux. {a}aacparse ! mux. flvmux name=mux streamable=false ! filesink name=output_sink"), Some(final_path.clone()), Some(temp)))
         }
         (OutputTransport::Rtmp, ProductionDestination::Rtmp { .. })
         | (OutputTransport::Rtmps, ProductionDestination::Rtmps { .. }) => {

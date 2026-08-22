@@ -572,6 +572,10 @@ fn populate_encoder_models(
                 .capabilities()
                 .recording_formats()
                 .contains(&OutputProfileKind::Mp4H264Aac),
+            RecordingFormat::Flv => output
+                .capabilities()
+                .recording_formats()
+                .contains(&OutputProfileKind::FlvH264Aac),
         })
         .collect::<Vec<_>>();
     window.set_recording_format_names(string_model(

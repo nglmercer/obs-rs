@@ -77,16 +77,18 @@ pub(crate) enum RecordingFormat {
     #[default]
     Matroska,
     Mp4,
+    Flv,
     ReferencePacket,
 }
 
 impl RecordingFormat {
-    pub(crate) const ALL: [Self; 3] = [Self::Matroska, Self::Mp4, Self::ReferencePacket];
+    pub(crate) const ALL: [Self; 4] = [Self::Matroska, Self::Mp4, Self::Flv, Self::ReferencePacket];
 
     const fn id(self) -> &'static str {
         match self {
             Self::Matroska => "matroska",
             Self::Mp4 => "mp4",
+            Self::Flv => "flv",
             Self::ReferencePacket => "obsr-packet",
         }
     }
@@ -95,6 +97,7 @@ impl RecordingFormat {
         match value {
             "matroska" | "mkv" => Some(Self::Matroska),
             "mp4" => Some(Self::Mp4),
+            "flv" => Some(Self::Flv),
             "obsr-packet" | "obsr" => Some(Self::ReferencePacket),
             _ => None,
         }
@@ -104,6 +107,7 @@ impl RecordingFormat {
         match self {
             Self::Matroska => "mkv",
             Self::Mp4 => "mp4",
+            Self::Flv => "flv",
             Self::ReferencePacket => "obsr",
         }
     }
@@ -112,6 +116,7 @@ impl RecordingFormat {
         match self {
             Self::Matroska => "Matroska (.mkv)",
             Self::Mp4 => "MPEG-4 (.mp4)",
+            Self::Flv => "Flash Video (.flv)",
             Self::ReferencePacket => "OBS-RS Packet (.obsr)",
         }
     }
@@ -2557,6 +2562,18 @@ mod tests {
         assert_eq!(
             settings.recording_file_path("2024-02-29 12-30-45"),
             format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
+        );
+    }
+
+    #[test]
+    fn flv_recording_format_selects_a_production_extension() {
+        let settings = AppSettings {
+            recording_format: RecordingFormat::Flv,
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            settings.recording_file_path("2024-02-29 12-30-45"),
+            format!("{}/2024-02-29 12-30-45.flv", settings.recording_directory)
         );
     }
 

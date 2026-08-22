@@ -1489,7 +1489,7 @@ impl EngineSession {
         Ok(())
     }
 
-    /// Starts an atomic Matroska/MP4 or `OBSRPKT1` recording based on `path`.
+    /// Starts an atomic Matroska/MP4/FLV or `OBSRPKT1` recording based on `path`.
     ///
     /// The phase moves to `Starting` before any file work and settles on
     /// `Running` or `Failed`, so a caller that only sees the error still leaves
@@ -1560,9 +1560,10 @@ impl EngineSession {
             return Ok(());
         }
         let is_mp4 = extension.eq_ignore_ascii_case("mp4");
-        if !extension.eq_ignore_ascii_case("mkv") && !is_mp4 {
+        let is_flv = extension.eq_ignore_ascii_case("flv");
+        if !extension.eq_ignore_ascii_case("mkv") && !is_mp4 && !is_flv {
             return Err(EngineError::InvalidConfiguration(
-                "recording extension must be .mkv, .mp4, or .obsr".to_owned(),
+                "recording extension must be .mkv, .mp4, .flv, or .obsr".to_owned(),
             ));
         }
         #[cfg(feature = "production-gstreamer")]
@@ -1577,8 +1578,18 @@ impl EngineSession {
                     "MP4 recording currently requires H.264 video".to_owned(),
                 ));
             }
+            if is_flv
+                && encoder_config
+                    .is_some_and(|(video, _)| video.codec != obs_rs_output::VideoCodec::H264)
+            {
+                return Err(EngineError::InvalidConfiguration(
+                    "FLV recording currently requires H.264 video".to_owned(),
+                ));
+            }
             let profile = if is_mp4 {
                 OutputProfile::mp4_h264_aac()
+            } else if is_flv {
+                OutputProfile::flv_h264_aac()
             } else {
                 encoder_config.map_or_else(OutputProfile::matroska_h264_aac, |config| match config
                     .0
@@ -3717,7 +3728,7 @@ mod tests {
         let error = engine
             .start_recording(path)
             .expect_err("unknown extension must be rejected");
-        assert!(error.to_string().contains(".mkv, .mp4, or .obsr"));
+        assert!(error.to_string().contains(".mkv, .mp4, .flv, or .obsr"));
         assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Failed);
     }
 
@@ -3781,6 +3792,38 @@ mod tests {
         let persisted = std::fs::read(&path).expect("read MP4");
         assert_eq!(persisted.len(), bytes);
         assert_eq!(persisted.get(4..8), Some(&b"ftyp"[..]));
+        assert!(!temp_path.exists());
+        std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn flv_recording_uses_raw_production_media_and_publishes_atomically() {
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(obs_rs_output::OutputProfileKind::FlvH264Aac)
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-engine-{token}.flv"));
+        let temp_path = path.with_extension("flv.part");
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine.start_recording(&path).expect("FLV recording");
+        assert!(!path.exists(), "the final path stays hidden until EOS");
+        for _ in 0..4 {
+            engine.tick(None, Some("program")).expect("media tick");
+        }
+        assert_eq!(engine.reference_video_encode_calls, 0);
+        assert_eq!(engine.reference_audio_encode_calls, 0);
+        let bytes = engine.finish_recording().expect("finalize FLV");
+        let persisted = std::fs::read(&path).expect("read FLV");
+        assert_eq!(persisted.len(), bytes);
+        assert_eq!(persisted.get(..3), Some(&b"FLV"[..]));
         assert!(!temp_path.exists());
         std::fs::remove_file(path).expect("remove recording");
     }

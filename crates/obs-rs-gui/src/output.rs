@@ -1011,7 +1011,9 @@ impl OutputRuntime {
 
 fn is_production_recording_path(path: &str) -> bool {
     Path::new(path).extension().is_some_and(|extension| {
-        extension.eq_ignore_ascii_case("mkv") || extension.eq_ignore_ascii_case("mp4")
+        extension.eq_ignore_ascii_case("mkv")
+            || extension.eq_ignore_ascii_case("mp4")
+            || extension.eq_ignore_ascii_case("flv")
     })
 }
 

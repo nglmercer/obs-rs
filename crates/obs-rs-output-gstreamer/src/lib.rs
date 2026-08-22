@@ -408,6 +408,7 @@ impl GStreamerCapabilitySnapshot {
             recording_codecs: [
                 (OutputProfileKind::MatroskaH264Aac, VideoCodec::H264),
                 (OutputProfileKind::Mp4H264Aac, VideoCodec::H264),
+                (OutputProfileKind::FlvH264Aac, VideoCodec::H264),
                 (OutputProfileKind::MatroskaHevcAac, VideoCodec::Hevc),
                 (OutputProfileKind::MatroskaAv1Aac, VideoCodec::Av1),
             ]
@@ -424,6 +425,7 @@ impl GStreamerCapabilitySnapshot {
                 OutputProfileKind::MatroskaHevcAac,
                 OutputProfileKind::MatroskaAv1Aac,
                 OutputProfileKind::Mp4H264Aac,
+                OutputProfileKind::FlvH264Aac,
             ]
             .into_iter()
             .filter(|profile| self.output.supports(*profile))
@@ -451,6 +453,9 @@ fn production_profiles(selected: &BTreeMap<&'static str, String>) -> Vec<OutputP
     }
     if has("h264") && has("aac") && element_available("mp4mux") {
         profiles.push(OutputProfileKind::Mp4H264Aac);
+    }
+    if has("h264") && has("aac") && element_available("flvmux") {
+        profiles.push(OutputProfileKind::FlvH264Aac);
     }
     if has("h264") && has("aac") && element_available("flvmux") && has("rtmp_sink") {
         profiles.extend([
@@ -850,6 +855,9 @@ impl ProductionDestination {
             }
             (OutputTransport::Mp4, Self::Recording(path)) => {
                 recording_path_has_extension(path, "mp4")
+            }
+            (OutputTransport::Flv, Self::Recording(path)) => {
+                recording_path_has_extension(path, "flv")
             }
             (OutputTransport::Rtmp, Self::Rtmp { endpoint }) => {
                 valid_stream_url(endpoint, "rtmp", true)
@@ -1562,6 +1570,11 @@ mod tests {
         assert!(
             ProductionDestination::Recording(std::path::Path::new("capture.mp4").to_owned())
                 .validate_for(OutputProfile::mp4_h264_aac())
+                .is_ok()
+        );
+        assert!(
+            ProductionDestination::Recording(std::path::Path::new("capture.flv").to_owned())
+                .validate_for(OutputProfile::flv_h264_aac())
                 .is_ok()
         );
         assert!(
