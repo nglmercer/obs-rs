@@ -6,6 +6,15 @@ fn format() -> VideoFormat {
 }
 
 #[test]
+fn parses_bounded_rgba_hex_colors() {
+    assert_eq!(parse_rgba8_hex("#00FF00"), Some([0, 255, 0, 255]));
+    assert_eq!(parse_rgba8_hex("0000FF80"), Some([0, 0, 255, 128]));
+    assert_eq!(parse_rgba8_hex("#12345"), None);
+    assert_eq!(parse_rgba8_hex("#GG0000"), None);
+    assert_eq!(parse_rgba8_hex("#000000000"), None);
+}
+
+#[test]
 fn reduces_rates_and_reports_period() {
     let rate = FrameRate::new(60, 2).expect("valid rate");
 

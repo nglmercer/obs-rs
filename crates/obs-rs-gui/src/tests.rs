@@ -2651,6 +2651,36 @@ fn exercise_recording_controls(
 
     exercise_replay_controls(ui, state, surface);
     exercise_output_reconciliation(ui, state, &output);
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "preview".to_owned(),
+        })
+        .expect("transition fixture should select a preview scene");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("transition fixture should select a program scene");
+    ui.invoke_fade_to_color("#00FF0080".into(), "450".into());
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("Fade to Color callback should start a transition");
+    assert!(matches!(
+        transition.transition(),
+        FrameTransition::FadeToColor {
+            progress_milli,
+            color: [0, 255, 0, 128],
+        } if progress_milli < 1_000
+    ));
+
+    ui.invoke_fade_to_color("green".into(), "450".into());
+    assert!(ui
+        .get_status_message()
+        .contains("Transition color must be #RRGGBB or #RRGGBBAA"));
 }
 
 /// Drives the actual Controls-dock replay actions and verifies that the

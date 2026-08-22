@@ -1,6 +1,6 @@
 use std::fmt;
 
-use obs_rs_media::{FrameTransition, MediaError};
+use obs_rs_media::{parse_rgba8_hex, FrameTransition, MediaError};
 
 use super::{
     types::{UiCommand, UiLocale},
@@ -250,29 +250,10 @@ fn parse_transition_color(
     command: &'static str,
     value: &str,
 ) -> Result<[u8; 4], ConsoleCommandError> {
-    let value = value.strip_prefix('#').unwrap_or(value);
-    if value.len() != 6 && value.len() != 8 {
-        return Err(ConsoleCommandError::InvalidArgument {
-            command,
-            value: format!("#{value}"),
-        });
-    }
-    let mut color = [0_u8; 4];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        let pair = std::str::from_utf8(pair).map_err(|_| ConsoleCommandError::InvalidArgument {
-            command,
-            value: format!("#{value}"),
-        })?;
-        color[index] =
-            u8::from_str_radix(pair, 16).map_err(|_| ConsoleCommandError::InvalidArgument {
-                command,
-                value: format!("#{value}"),
-            })?;
-    }
-    if value.len() == 6 {
-        color[3] = 255;
-    }
-    Ok(color)
+    parse_rgba8_hex(value).ok_or_else(|| ConsoleCommandError::InvalidArgument {
+        command,
+        value: value.to_owned(),
+    })
 }
 
 fn parse_mixer_command<'a>(

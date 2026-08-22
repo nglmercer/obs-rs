@@ -744,6 +744,7 @@ fn forward_to_studio(
         invoke_fade_transition_duration,
         duration
     );
+    forward!(on_fade_to_color, invoke_fade_to_color, color, duration);
     forward!(on_toggle_recording, invoke_toggle_recording);
     forward!(on_toggle_streaming, invoke_toggle_streaming);
     forward!(on_open_settings_window, invoke_open_settings_window);

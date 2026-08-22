@@ -17,7 +17,9 @@ export component TransitionDock inherits Rectangle {
     callback cut-transition();
     callback fade-transition();
     callback fade-transition-duration(string);
+    callback fade-to-color(string, string);
     property <string> duration: "300";
+    property <string> fade-color: "#000000FF";
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -66,6 +68,25 @@ export component TransitionDock inherits Rectangle {
                         font-size: 10px;
                         vertical-alignment: center;
                     }
+                }
+                HorizontalBox {
+                    spacing: 5px;
+                    Text {
+                        text: I18n.text.property_ui.color;
+                        color: Palette.tokens.text-muted;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    LineEdit {
+                        text <=> fade-color;
+                        width: 104px;
+                        height: 28px;
+                    }
+                }
+                Button {
+                    text: I18n.text.fade_to_color;
+                    height: 30px;
+                    clicked => fade-to-color(root.fade-color, root.duration);
                 }
                 Rectangle { vertical-stretch: 1; }
                 HorizontalBox {

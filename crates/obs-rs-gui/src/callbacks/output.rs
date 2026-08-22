@@ -1,7 +1,7 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_engine::OutputLifecycle;
-use obs_rs_media::{FrameTransition, RawVideoFrame, VideoFrame};
+use obs_rs_media::{parse_rgba8_hex, FrameTransition, RawVideoFrame, VideoFrame};
 use obs_rs_ui::{
     DesktopState, UiCommand, DEFAULT_TRANSITION_DURATION_MILLIS, MAX_TRANSITION_DURATION_MILLIS,
     MIN_TRANSITION_DURATION_MILLIS,
@@ -218,6 +218,42 @@ fn install_transition_callbacks(
             },
             duration,
         );
+    });
+
+    let weak = ui.as_weak();
+    let color_state = Rc::clone(state);
+    let color_surface = Rc::clone(surface);
+    ui.on_fade_to_color(move |color, duration| {
+        let duration = match duration.trim().parse::<u32>() {
+            Ok(duration)
+                if (MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS)
+                    .contains(&duration) =>
+            {
+                duration
+            }
+            _ => {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_status_message("Transition duration must be 1–60000 ms".into());
+                }
+                return;
+            }
+        };
+        let Some(color) = parse_rgba8_hex(color.trim()) else {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message("Transition color must be #RRGGBB or #RRGGBBAA".into());
+            }
+            return;
+        };
+        let transition = match FrameTransition::fade_to_color(500, color) {
+            Ok(transition) => transition,
+            Err(error) => {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_status_message(format!("Transition failed: {error}").into());
+                }
+                return;
+            }
+        };
+        take_transition_and_refresh(&weak, &color_state, &color_surface, transition, duration);
     });
 }
 
