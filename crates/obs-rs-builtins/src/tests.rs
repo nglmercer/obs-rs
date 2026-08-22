@@ -1,4 +1,8 @@
 use super::*;
+use ::image::{
+    codecs::gif::{GifEncoder, Repeat},
+    Delay, Frame as ImageFrame, RgbaImage,
+};
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat};
 use obs_rs_plugin_api::{Plugin, SourceError, VideoRequest};
@@ -49,6 +53,29 @@ fn text_settings(text: &str, color: &str, font_size: &str) -> Config {
     config.set("text", text).expect("valid text");
     config.set("font_size", font_size).expect("valid font size");
     config
+}
+
+fn write_two_frame_gif(path: &std::path::Path) {
+    let red = ImageFrame::from_parts(
+        RgbaImage::from_raw(1, 1, vec![0xFF, 0, 0, 0xFF]).expect("red image"),
+        0,
+        0,
+        Delay::from_numer_denom_ms(40, 1),
+    );
+    let blue = ImageFrame::from_parts(
+        RgbaImage::from_raw(1, 1, vec![0, 0, 0xFF, 0xFF]).expect("blue image"),
+        0,
+        0,
+        Delay::from_numer_denom_ms(40, 1),
+    );
+    let file = std::fs::File::create(path).expect("create GIF fixture");
+    let mut encoder = GifEncoder::new(file);
+    encoder
+        .set_repeat(Repeat::Infinite)
+        .expect("set GIF repeat");
+    encoder
+        .encode_frames([red, blue])
+        .expect("encode GIF fixture");
 }
 
 #[test]
@@ -182,6 +209,48 @@ fn image_source_decodes_and_keeps_the_last_frame_on_failed_update() {
         .expect("empty image render succeeds")
         .is_none());
     std::fs::remove_file(path).expect("remove image fixture");
+}
+
+#[test]
+fn image_source_plays_animated_gif_by_timestamp() {
+    let path = std::env::temp_dir().join(format!(
+        "obs-rs-animated-image-source-{}.gif",
+        std::process::id()
+    ));
+    write_two_frame_gif(&path);
+
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == IMAGE_SOURCE_KIND)
+        .expect("image factory");
+    let format =
+        VideoFormat::new(1, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let mut source = factory
+        .create(
+            "animated",
+            &image_settings(path.to_str().expect("GIF path is UTF-8"), "1", "1"),
+        )
+        .expect("valid animated image source");
+
+    let first = source
+        .render(&VideoRequest::new(Timestamp::ZERO, format))
+        .expect("first GIF render")
+        .expect("first GIF frame");
+    let second = source
+        .render(&VideoRequest::new(Timestamp::from_millis(40), format))
+        .expect("second GIF render")
+        .expect("second GIF frame");
+    let wrapped = source
+        .render(&VideoRequest::new(Timestamp::from_millis(80), format))
+        .expect("wrapped GIF render")
+        .expect("wrapped GIF frame");
+
+    assert_eq!(first.pixel(0, 0), Some([0xFF, 0, 0, 0xFF]));
+    assert_eq!(second.pixel(0, 0), Some([0, 0, 0xFF, 0xFF]));
+    assert_eq!(wrapped.pixel(0, 0), first.pixel(0, 0));
+    std::fs::remove_file(path).expect("remove GIF fixture");
 }
 
 #[test]

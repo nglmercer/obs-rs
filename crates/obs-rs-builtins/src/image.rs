@@ -5,7 +5,10 @@ use std::{
 };
 
 use crate::{portable::parse_format, IMAGE_SOURCE_KIND};
-use image::{imageops::FilterType, ImageReader, Limits};
+use image::{
+    codecs::gif::GifDecoder, imageops::FilterType, AnimationDecoder, ImageDecoder, ImageFormat,
+    ImageReader, Limits,
+};
 use obs_rs_config::Config;
 use obs_rs_media::{FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
@@ -17,6 +20,12 @@ const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_IMAGE_DIMENSION: u32 = 16_384;
 /// Maximum decoder allocation budget, including the decoded image buffer.
 const MAX_IMAGE_DECODE_BYTES: u64 = 128 * 1024 * 1024;
+/// Maximum decoded frames retained by one animated image source.
+const MAX_ANIMATED_IMAGE_FRAMES: usize = 256;
+/// Maximum resized RGBA storage retained by one animated image source.
+const MAX_ANIMATED_IMAGE_MEMORY_BYTES: usize = 256 * 1024 * 1024;
+/// GIFs with a zero delay still advance at a bounded visible cadence.
+const MIN_ANIMATED_FRAME_TIME_NANOS: u64 = 10_000_000;
 /// Maximum number of entries held by the portable slideshow source.
 const MAX_SLIDESHOW_FILES: usize = 64;
 /// Maximum directory entries inspected while expanding one slideshow path.
@@ -51,11 +60,17 @@ impl SourceFactory for ImageSourceFactory {
     }
 }
 
+struct AnimatedImageFrame {
+    frame: VideoFrame,
+    duration_nanos: u64,
+}
+
 struct ImageSource {
     kind: Identifier,
     name: String,
     format: VideoFormat,
-    frame: Option<VideoFrame>,
+    frames: Vec<AnimatedImageFrame>,
+    animation_duration_nanos: u64,
 }
 
 impl ImageSource {
@@ -64,12 +79,14 @@ impl ImageSource {
             return Err(SourceError::invalid_setting("name", "source name is empty"));
         }
         let format = parse_format(settings)?;
-        let frame = load_frame(format, settings.get("path").unwrap_or(""))?;
+        let (frames, animation_duration_nanos) =
+            load_image_frames(format, settings.get("path").unwrap_or(""))?;
         Ok(Self {
             kind,
             name: name.to_owned(),
             format,
-            frame,
+            frames,
+            animation_duration_nanos,
         })
     }
 }
@@ -87,9 +104,11 @@ impl Source for ImageSource {
         // Decode before changing the live frame, so a failed file update leaves
         // the last valid image visible instead of tearing the source down.
         let format = parse_format(settings)?;
-        let frame = load_frame(format, settings.get("path").unwrap_or(""))?;
+        let (frames, animation_duration_nanos) =
+            load_image_frames(format, settings.get("path").unwrap_or(""))?;
         self.format = format;
-        self.frame = frame;
+        self.frames = frames;
+        self.animation_duration_nanos = animation_duration_nanos;
         Ok(())
     }
 
@@ -100,10 +119,31 @@ impl Source for ImageSource {
                 requested: request.format(),
             });
         }
-        Ok(self
-            .frame
-            .as_ref()
-            .map(|frame| frame.at_timestamp(request.timestamp())))
+        if self.frames.is_empty() {
+            return Ok(None);
+        }
+        let position = if self.frames.len() == 1 || self.animation_duration_nanos == 0 {
+            0
+        } else {
+            request.timestamp().as_nanos() % self.animation_duration_nanos
+        };
+        let mut remaining = position;
+        let Some(last) = self.frames.last() else {
+            return Ok(None);
+        };
+        let selected = self
+            .frames
+            .iter()
+            .find(|frame| {
+                if remaining < frame.duration_nanos {
+                    true
+                } else {
+                    remaining = remaining.saturating_sub(frame.duration_nanos);
+                    false
+                }
+            })
+            .unwrap_or(last);
+        Ok(Some(selected.frame.at_timestamp(request.timestamp())))
     }
 }
 
@@ -437,6 +477,92 @@ fn shuffle_slideshow_paths(paths: &mut [PathBuf]) {
     }
 }
 
+fn load_image_frames(
+    format: VideoFormat,
+    path: &str,
+) -> Result<(Vec<AnimatedImageFrame>, u64), SourceError> {
+    if path.trim().is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+
+    let bytes = read_bounded_file(path)?;
+    let reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|error| SourceError::invalid_setting("path", error.to_string()))?;
+    if reader.format() != Some(ImageFormat::Gif) {
+        let frame = decode_static_frame(format, reader)?
+            .ok_or_else(|| SourceError::invalid_setting("path", "image has no frame"))?;
+        return Ok((
+            vec![AnimatedImageFrame {
+                frame,
+                duration_nanos: 0,
+            }],
+            0,
+        ));
+    }
+
+    let mut decoder = GifDecoder::new(reader.into_inner())
+        .map_err(|error| SourceError::invalid_setting("path", error.to_string()))?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_IMAGE_DECODE_BYTES);
+    decoder
+        .set_limits(limits)
+        .map_err(|error| SourceError::invalid_setting("path", error.to_string()))?;
+
+    let mut frames = Vec::new();
+    let mut resident_bytes = 0_usize;
+    let mut animation_duration_nanos = 0_u64;
+    for (index, frame_result) in decoder.into_frames().enumerate() {
+        if index >= MAX_ANIMATED_IMAGE_FRAMES {
+            return Err(SourceError::invalid_setting(
+                "path",
+                format!("animated image is limited to {MAX_ANIMATED_IMAGE_FRAMES} frames"),
+            ));
+        }
+        let gif_frame = frame_result
+            .map_err(|error| SourceError::invalid_setting("path", error.to_string()))?;
+        let duration_nanos = animated_frame_duration_nanos(gif_frame.delay());
+        let rgba = image::DynamicImage::ImageRgba8(gif_frame.into_buffer())
+            .resize_exact(format.width(), format.height(), FilterType::Triangle)
+            .into_rgba8();
+        resident_bytes = resident_bytes.saturating_add(rgba.as_raw().len());
+        if resident_bytes > MAX_ANIMATED_IMAGE_MEMORY_BYTES {
+            return Err(SourceError::invalid_setting(
+                "path",
+                format!(
+                    "decoded animated frames exceed the {MAX_ANIMATED_IMAGE_MEMORY_BYTES}-byte limit"
+                ),
+            ));
+        }
+        let frame = VideoFrame::new(format, Timestamp::ZERO, rgba.into_raw())
+            .map_err(|error| SourceError::invalid_setting("path", error.to_string()))?;
+        animation_duration_nanos = animation_duration_nanos.saturating_add(duration_nanos);
+        frames.push(AnimatedImageFrame {
+            frame,
+            duration_nanos,
+        });
+    }
+
+    if frames.is_empty() {
+        return Err(SourceError::invalid_setting(
+            "path",
+            "animated image has no frames",
+        ));
+    }
+    Ok((frames, animation_duration_nanos))
+}
+
+fn animated_frame_duration_nanos(delay: image::Delay) -> u64 {
+    let (numerator, denominator) = delay.numer_denom_ms();
+    u64::from(numerator)
+        .saturating_mul(1_000_000)
+        .checked_div(u64::from(denominator))
+        .unwrap_or(0)
+        .max(MIN_ANIMATED_FRAME_TIME_NANOS)
+}
+
 fn load_frame(format: VideoFormat, path: &str) -> Result<Option<VideoFrame>, SourceError> {
     if path.trim().is_empty() {
         // An empty path is a valid newly-created placeholder. The source stays
@@ -445,9 +571,16 @@ fn load_frame(format: VideoFormat, path: &str) -> Result<Option<VideoFrame>, Sou
     }
 
     let bytes = read_bounded_file(path)?;
-    let mut reader = ImageReader::new(Cursor::new(bytes))
+    let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|error| SourceError::invalid_setting("path", error.to_string()))?;
+    decode_static_frame(format, reader)
+}
+
+fn decode_static_frame(
+    format: VideoFormat,
+    mut reader: ImageReader<Cursor<Vec<u8>>>,
+) -> Result<Option<VideoFrame>, SourceError> {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
     limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
