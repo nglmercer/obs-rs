@@ -35,7 +35,7 @@ component StageCanvas inherits Rectangle {
     in property <int> item-height;
     in property <bool> item-active;
     in property <bool> item-locked;
-    callback transform-dragged(int, int, int);
+    callback transform-dragged(int, int, int, int);
     callback transform-committed();
     callback canvas-pointer-pressed(int, int, bool);
     callback canvas-selection-dragged(int, int);
@@ -93,7 +93,9 @@ component StageCanvas inherits Rectangle {
         selection-box-height: root.selection-box-height;
         canvas-width: root.canvas-width;
         canvas-height: root.canvas-height;
-        transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+        transform-dragged(handle, dx, dy, modifiers) => {
+            root.transform-dragged(handle, dx, dy, modifiers);
+        }
         transform-committed() => { root.transform-committed(); }
         canvas-pointer-pressed(x, y, additive) => {
             root.canvas-pointer-pressed(x, y, additive);
@@ -156,7 +158,7 @@ export component StagePanel inherits Rectangle {
     callback open-source-properties();
     callback open-source-filters();
     callback open-monitor-window();
-    callback transform-dragged(int, int, int);
+    callback transform-dragged(int, int, int, int);
     callback transform-committed();
     callback canvas-pointer-pressed(int, int, bool);
     callback canvas-selection-dragged(int, int);
@@ -212,7 +214,9 @@ export component StagePanel inherits Rectangle {
                     item-height: root.item-height;
                     item-active: root.item-active;
                     item-locked: root.item-locked;
-                    transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+                    transform-dragged(handle, dx, dy, modifiers) => {
+                        root.transform-dragged(handle, dx, dy, modifiers);
+                    }
                     transform-committed() => { root.transform-committed(); }
                     canvas-pointer-pressed(x, y, additive) => {
                         root.canvas-pointer-pressed(x, y, additive);
@@ -255,7 +259,9 @@ export component StagePanel inherits Rectangle {
                     item-height: root.item-height;
                     item-active: root.item-active;
                     item-locked: root.item-locked;
-                    transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+                    transform-dragged(handle, dx, dy, modifiers) => {
+                        root.transform-dragged(handle, dx, dy, modifiers);
+                    }
                     transform-committed() => { root.transform-committed(); }
                     canvas-pointer-pressed(x, y, additive) => {
                         root.canvas-pointer-pressed(x, y, additive);

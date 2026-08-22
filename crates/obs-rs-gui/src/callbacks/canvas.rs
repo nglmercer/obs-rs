@@ -31,6 +31,8 @@ const MAX_ZOOM_PERCENT: u16 = 800;
 const WHEEL_ZOOM_FACTOR_MILLI: i64 = 1_250;
 const SCALE_MICROS_PER_PERCENT: i64 = 10_000;
 const SCALE_MICROS_PER_UNIT: i64 = 1_000_000;
+const RESIZE_MODIFIER_SHIFT: i32 = 1;
+const RESIZE_MODIFIER_CONTROL: i32 = 2;
 
 /// The scale a transform stores for a source that fills the canvas.
 const UNIT_SCALE_MILLI: i64 = 1_000;
@@ -141,6 +143,27 @@ impl Default for SnapSettings {
         Self {
             enabled: true,
             distance: 10,
+        }
+    }
+}
+
+/// Modifier policy captured when a resize/move gesture starts.
+///
+/// OBS keeps ordinary scene-item resizing aspect-preserving and uses Shift to
+/// opt into free resizing. Ctrl suppresses snapping for the gesture. The
+/// policy is copied out of the toolkit event at the boundary so the geometry
+/// functions remain deterministic and testable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CanvasResizeModifiers {
+    preserve_aspect: bool,
+    snapping: bool,
+}
+
+impl CanvasResizeModifiers {
+    fn from_mask(mask: i32) -> Self {
+        Self {
+            preserve_aspect: mask & RESIZE_MODIFIER_SHIFT == 0,
+            snapping: mask & RESIZE_MODIFIER_CONTROL == 0,
         }
     }
 }
@@ -637,6 +660,135 @@ pub(crate) fn item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRe
             width,
             height,
         }
+    }
+}
+
+/// Rounds a positive fixed-point ratio without using floating point geometry.
+fn rounded_ratio(value: i64, numerator: i64, denominator: i64) -> i64 {
+    let product = i128::from(value.max(1)).saturating_mul(i128::from(numerator.max(1)));
+    let rounded =
+        product.saturating_add(i128::from(denominator.max(1) / 2)) / i128::from(denominator.max(1));
+    i64::try_from(rounded).unwrap_or(i64::MAX).max(1)
+}
+
+/// Returns the aspect-preserving size selected by one OBS resize handle.
+fn aspect_preserved_size(
+    raw: ItemRect,
+    handle: i32,
+    aspect_width: i64,
+    aspect_height: i64,
+) -> (i64, i64) {
+    let aspect_width = aspect_width.max(1);
+    let aspect_height = aspect_height.max(1);
+    let raw_width = raw.width.max(MINIMUM_ITEM_PIXELS);
+    let raw_height = raw.height.max(MINIMUM_ITEM_PIXELS);
+    let (mut width, mut height) = match handle {
+        2 | 6 => (
+            rounded_ratio(raw_height, aspect_width, aspect_height),
+            raw_height,
+        ),
+        4 | 8 => (
+            raw_width,
+            rounded_ratio(raw_width, aspect_height, aspect_width),
+        ),
+        _ => {
+            // For a corner, preserve the dimension that is currently the
+            // stronger part of the drag, matching OBS's ClampAspect rule.
+            if i128::from(raw_width) * i128::from(aspect_height)
+                < i128::from(raw_height) * i128::from(aspect_width)
+            {
+                (
+                    rounded_ratio(raw_height, aspect_width, aspect_height),
+                    raw_height,
+                )
+            } else {
+                (
+                    raw_width,
+                    rounded_ratio(raw_width, aspect_height, aspect_width),
+                )
+            }
+        }
+    };
+    if width < MINIMUM_ITEM_PIXELS {
+        width = MINIMUM_ITEM_PIXELS;
+        height = rounded_ratio(width, aspect_height, aspect_width);
+    }
+    if height < MINIMUM_ITEM_PIXELS {
+        height = MINIMUM_ITEM_PIXELS;
+        width = rounded_ratio(height, aspect_width, aspect_height);
+    }
+    (
+        width.max(MINIMUM_ITEM_PIXELS),
+        height.max(MINIMUM_ITEM_PIXELS),
+    )
+}
+
+/// Applies OBS's default aspect-preserving resize around the fixed edge(s).
+fn preserve_resize_aspect(
+    base: ItemRect,
+    raw: ItemRect,
+    handle: i32,
+    aspect_width: i64,
+    aspect_height: i64,
+) -> ItemRect {
+    if handle == 0 {
+        return raw;
+    }
+    let (width, height) = aspect_preserved_size(raw, handle, aspect_width, aspect_height);
+    let right = base.x.saturating_add(base.width);
+    let bottom = base.y.saturating_add(base.height);
+    let center_x = base.x.saturating_add(base.width / 2);
+    let center_y = base.y.saturating_add(base.height / 2);
+    match handle {
+        1 => ItemRect {
+            x: right.saturating_sub(width),
+            y: bottom.saturating_sub(height),
+            width,
+            height,
+        },
+        2 => ItemRect {
+            x: center_x.saturating_sub(width / 2),
+            y: bottom.saturating_sub(height),
+            width,
+            height,
+        },
+        3 => ItemRect {
+            x: base.x,
+            y: bottom.saturating_sub(height),
+            width,
+            height,
+        },
+        4 => ItemRect {
+            x: base.x,
+            y: center_y.saturating_sub(height / 2),
+            width,
+            height,
+        },
+        5 => ItemRect {
+            x: base.x,
+            y: base.y,
+            width,
+            height,
+        },
+        6 => ItemRect {
+            x: center_x.saturating_sub(width / 2),
+            y: base.y,
+            width,
+            height,
+        },
+        7 => ItemRect {
+            x: right.saturating_sub(width),
+            y: base.y,
+            width,
+            height,
+        },
+        8 => ItemRect {
+            x: right.saturating_sub(width),
+            y: center_y.saturating_sub(height / 2),
+            width,
+            height,
+        },
+        _ => raw,
     }
 }
 
@@ -1250,7 +1402,7 @@ pub(crate) fn install_canvas_callbacks(
     let weak = ui.as_weak();
     let drag_state = Rc::clone(state);
     let drag_controller = Rc::clone(&controller);
-    ui.on_transform_dragged(move |handle, dx, dy| {
+    ui.on_transform_dragged(move |handle, dx, dy, modifier_mask| {
         let Some(ui) = weak.upgrade() else {
             return;
         };
@@ -1276,6 +1428,7 @@ pub(crate) fn install_canvas_callbacks(
         let Some(group) = draft_rect(draft, canvas) else {
             return;
         };
+        let modifiers = CanvasResizeModifiers::from_mask(modifier_mask);
         if (9..=16).contains(&handle) {
             if draft.items.len() != 1 {
                 return;
@@ -1289,12 +1442,26 @@ pub(crate) fn install_canvas_callbacks(
                 canvas,
             );
         } else {
-            let rect = snap_rect(
+            let snapped = snap_rect(
                 drag_rect(group, handle, i64::from(dx), i64::from(dy)),
                 handle,
                 &scene_snap_guides(&drag_state, &draft.scene, &draft.items, canvas),
-                drag_controller.canvas_state().snapping(),
+                SnapSettings {
+                    enabled: drag_controller.canvas_state().snapping().enabled
+                        && modifiers.snapping,
+                    ..drag_controller.canvas_state().snapping()
+                },
             );
+            let (aspect_width, aspect_height) = if draft.items.len() == 1 {
+                visible_source_extent(draft.items[0].transform, canvas)
+            } else {
+                (group.width, group.height)
+            };
+            let rect = if modifiers.preserve_aspect {
+                preserve_resize_aspect(group, snapped, handle, aspect_width, aspect_height)
+            } else {
+                snapped
+            };
             for item in &mut draft.items {
                 let old_rect = item_rect(item.transform, canvas);
                 let next_rect = if handle == 0 {
@@ -1799,6 +1966,58 @@ mod tests {
         let edited = drag_rect(rect(), 5, 20, 15);
         assert_eq!((edited.x, edited.y), (100, 50));
         assert_eq!((edited.width, edited.height), (420, 315));
+    }
+
+    #[test]
+    fn ordinary_resize_preserves_aspect_and_shift_allows_free_resize() {
+        let base = rect();
+        let raw = drag_rect(base, 5, 100, 10);
+        let preserved = preserve_resize_aspect(base, raw, 5, 4, 3);
+        assert_eq!(
+            preserved,
+            ItemRect {
+                x: 100,
+                y: 50,
+                width: 500,
+                height: 375,
+            }
+        );
+
+        let raw_side = drag_rect(base, 4, 100, 0);
+        let preserved_side = preserve_resize_aspect(base, raw_side, 4, 4, 3);
+        assert_eq!(
+            preserved_side,
+            ItemRect {
+                x: 100,
+                y: 13,
+                width: 500,
+                height: 375,
+            }
+        );
+
+        let free = raw;
+        assert_eq!((free.width, free.height), (500, 310));
+        assert_eq!(
+            CanvasResizeModifiers::from_mask(0),
+            CanvasResizeModifiers {
+                preserve_aspect: true,
+                snapping: true,
+            }
+        );
+        assert_eq!(
+            CanvasResizeModifiers::from_mask(RESIZE_MODIFIER_SHIFT),
+            CanvasResizeModifiers {
+                preserve_aspect: false,
+                snapping: true,
+            }
+        );
+        assert_eq!(
+            CanvasResizeModifiers::from_mask(RESIZE_MODIFIER_CONTROL),
+            CanvasResizeModifiers {
+                preserve_aspect: true,
+                snapping: false,
+            }
+        );
     }
 
     #[test]
