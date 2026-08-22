@@ -716,6 +716,13 @@ fn audio_encoder_capability(element: &str) -> AudioEncoderCapability {
 #[derive(Clone, Eq, PartialEq)]
 pub enum ProductionDestination {
     Recording(PathBuf),
+    /// A Matroska recording that is finalized as an MP4 without re-encoding.
+    ///
+    /// The native session keeps the Matroska source hidden until the remux has
+    /// successfully published the requested MP4 destination.
+    RemuxRecording {
+        final_path: PathBuf,
+    },
     /// A bounded rolling set of native muxer segments.
     ///
     /// The native adapter retains at most the policy's segment count while a
@@ -757,6 +764,10 @@ impl fmt::Debug for ProductionDestination {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Recording(path) => formatter.debug_tuple("Recording").field(path).finish(),
+            Self::RemuxRecording { final_path } => formatter
+                .debug_struct("RemuxRecording")
+                .field("final_path", final_path)
+                .finish(),
             Self::SegmentedRecording { base_path, policy } => formatter
                 .debug_struct("SegmentedRecording")
                 .field("base_path", base_path)
@@ -917,6 +928,9 @@ impl ProductionDestination {
         let valid = match (profile.transport(), self) {
             (OutputTransport::Matroska, Self::Recording(path)) => {
                 recording_path_has_extension(path, "mkv")
+            }
+            (OutputTransport::Matroska, Self::RemuxRecording { final_path }) => {
+                recording_path_has_extension(final_path, "mp4")
             }
             (OutputTransport::Matroska, Self::SegmentedRecording { base_path, .. }) => {
                 recording_path_has_extension(base_path, "mkv")
@@ -1170,6 +1184,13 @@ impl ProductionPipelinePlan {
                 "GStreamer splitmuxsink is unavailable for segmented recording".to_owned(),
             ));
         }
+        if matches!(destination, ProductionDestination::RemuxRecording { .. })
+            && !capabilities.supports_remux()
+        {
+            return Err(GStreamerError::Native(
+                "GStreamer Matroska-to-MP4 remux is unavailable".to_owned(),
+            ));
+        }
         capabilities
             .output
             .negotiate(profile)
@@ -1215,6 +1236,7 @@ impl ProductionPipelinePlan {
             atomic_recording: matches!(
                 destination,
                 ProductionDestination::Recording(_)
+                    | ProductionDestination::RemuxRecording { .. }
                     | ProductionDestination::SegmentedRecording { .. }
             ),
             video_config,
@@ -1244,6 +1266,13 @@ impl ProductionPipelinePlan {
         {
             return Err(GStreamerError::Native(
                 "GStreamer splitmuxsink is unavailable for segmented recording".to_owned(),
+            ));
+        }
+        if matches!(destination, ProductionDestination::RemuxRecording { .. })
+            && !capabilities.supports_remux()
+        {
+            return Err(GStreamerError::Native(
+                "GStreamer Matroska-to-MP4 remux is unavailable".to_owned(),
             ));
         }
         capabilities
@@ -1292,6 +1321,7 @@ impl ProductionPipelinePlan {
             atomic_recording: matches!(
                 destination,
                 ProductionDestination::Recording(_)
+                    | ProductionDestination::RemuxRecording { .. }
                     | ProductionDestination::SegmentedRecording { .. }
             ),
             video_config: video.clone(),
@@ -1672,6 +1702,18 @@ mod tests {
         assert!(destination
             .validate_for(OutputProfile::matroska_h264_aac())
             .is_ok());
+        let remux = ProductionDestination::RemuxRecording {
+            final_path: std::path::Path::new("capture.mp4").to_owned(),
+        };
+        assert!(remux
+            .validate_for(OutputProfile::matroska_h264_aac())
+            .is_ok());
+        assert!(remux.validate_for(OutputProfile::mp4_h264_aac()).is_err());
+        assert!(ProductionDestination::RemuxRecording {
+            final_path: std::path::Path::new("capture.mkv").to_owned(),
+        }
+        .validate_for(OutputProfile::matroska_h264_aac())
+        .is_err());
         assert!(destination
             .validate_for(OutputProfile::rtmp_h264_aac())
             .is_err());

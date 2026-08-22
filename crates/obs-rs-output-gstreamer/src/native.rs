@@ -55,12 +55,16 @@ pub fn remux_matroska_to_mp4(
             "remux source and destination must differ".to_owned(),
         ));
     }
+    let source_name = source_path.file_name().and_then(|name| name.to_str());
+    let is_hidden_mkv_source =
+        source_name.is_some_and(|name| name.to_ascii_lowercase().ends_with(".mkv.part"));
     if !source_path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("mkv"))
+        && !is_hidden_mkv_source
     {
         return Err(GStreamerError::InvalidEndpoint(
-            "remux source must use the .mkv extension".to_owned(),
+            "remux source must use the .mkv or .mkv.part extension".to_owned(),
         ));
     }
     if !final_path
@@ -295,6 +299,7 @@ pub struct GStreamerOutputSession {
     committed_bytes: Option<usize>,
     final_path: Option<PathBuf>,
     temp_path: Option<PathBuf>,
+    remux_final_path: Option<PathBuf>,
     segmented_policy: Option<SegmentedRecordingPolicy>,
     transport: OutputTransport,
     video_duration: gst::ClockTime,
@@ -360,9 +365,13 @@ impl GStreamerOutputSession {
             description,
             final_path,
             temp_path,
+            remux_final_path,
             segmented_policy,
         } = pipeline_description;
         recover_stale_recording_artifact(temp_path.as_deref())?;
+        if let Some(final_path) = remux_final_path.as_deref() {
+            recover_stale_recording_artifact(Some(&final_path.with_extension("mp4.part")))?;
+        }
         if let (Some(base_path), Some(policy)) = (final_path.as_deref(), segmented_policy) {
             recover_stale_segment_artifacts(base_path, policy)?;
         }
@@ -397,6 +406,7 @@ impl GStreamerOutputSession {
             committed_bytes: None,
             final_path,
             temp_path,
+            remux_final_path,
             segmented_policy,
             transport: plan.profile().transport(),
             video_duration,
@@ -604,14 +614,22 @@ impl GStreamerOutputSession {
         self.pipeline
             .set_state(gst::State::Null)
             .map_err(native_error)?;
-        let committed_bytes =
-            if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
-                Some(publish_segmented_recording(base_path, policy)?)
-            } else if let (Some(temp), Some(final_path)) = (&self.temp_path, &self.final_path) {
-                Some(publish_recording_artifact(temp, final_path)?)
-            } else {
-                None
-            };
+        let committed_bytes = if let Some(final_path) = &self.remux_final_path {
+            let temp = self.temp_path.as_ref().ok_or_else(|| {
+                GStreamerError::Native("remux source temporary path is missing".to_owned())
+            })?;
+            let bytes = remux_matroska_to_mp4(temp, final_path)?;
+            fs::remove_file(temp).map_err(|error| {
+                GStreamerError::Native(format!("remove remux source temporary recording: {error}"))
+            })?;
+            Some(bytes)
+        } else if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
+            Some(publish_segmented_recording(base_path, policy)?)
+        } else if let (Some(temp), Some(final_path)) = (&self.temp_path, &self.final_path) {
+            Some(publish_recording_artifact(temp, final_path)?)
+        } else {
+            None
+        };
         self.committed_bytes = committed_bytes;
         self.state = NativeOutputState::Closed;
         Ok(())
@@ -766,6 +784,9 @@ impl Drop for GStreamerOutputSession {
             if let Some(temp) = &self.temp_path {
                 let _ = fs::remove_file(temp);
             }
+            if let Some(final_path) = &self.remux_final_path {
+                let _ = fs::remove_file(final_path.with_extension("mp4.part"));
+            }
             if let (Some(base_path), Some(policy)) = (&self.final_path, self.segmented_policy) {
                 let _ = recover_stale_segment_artifacts(base_path, policy);
             }
@@ -852,6 +873,7 @@ struct PipelineDescription {
     description: String,
     final_path: Option<PathBuf>,
     temp_path: Option<PathBuf>,
+    remux_final_path: Option<PathBuf>,
     segmented_policy: Option<SegmentedRecordingPolicy>,
 }
 
@@ -861,6 +883,7 @@ impl PipelineDescription {
             description,
             final_path: None,
             temp_path: None,
+            remux_final_path: None,
             segmented_policy: None,
         }
     }
@@ -870,6 +893,17 @@ impl PipelineDescription {
             description,
             final_path: Some(final_path),
             temp_path: Some(temp_path),
+            remux_final_path: None,
+            segmented_policy: None,
+        }
+    }
+
+    fn remux(description: String, final_path: PathBuf) -> Self {
+        Self {
+            description,
+            final_path: Some(final_path.clone()),
+            temp_path: Some(final_path.with_extension("mkv.part")),
+            remux_final_path: Some(final_path),
             segmented_policy: None,
         }
     }
@@ -883,6 +917,7 @@ impl PipelineDescription {
             description,
             final_path: Some(base_path),
             temp_path: None,
+            remux_final_path: None,
             segmented_policy: Some(policy),
         }
     }
@@ -911,7 +946,10 @@ fn pipeline_description(
     let a = format!("appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream ! audioconvert ! audioresample ! audio/x-raw,rate={audio_rate},channels={audio_channels} ! {audio} name=audio_encoder ! ");
     match destination {
         ProductionDestination::Recording(final_path) => {
-            recording_pipeline_description(plan, &v, &a, final_path)
+            recording_pipeline_description(plan, &v, &a, final_path, false)
+        }
+        ProductionDestination::RemuxRecording { final_path } => {
+            recording_pipeline_description(plan, &v, &a, final_path, true)
         }
         ProductionDestination::SegmentedRecording { base_path, policy } => {
             segmented_recording_pipeline_description(plan, &v, &a, base_path, *policy)
@@ -925,6 +963,7 @@ fn recording_pipeline_description(
     video: &str,
     audio: &str,
     final_path: &Path,
+    remux: bool,
 ) -> Result<PipelineDescription, GStreamerError> {
     let (description, extension) = match plan.profile().transport() {
         OutputTransport::Matroska => {
@@ -972,11 +1011,18 @@ fn recording_pipeline_description(
             ))
         }
     };
-    Ok(PipelineDescription::recording(
-        description,
-        final_path.to_owned(),
-        final_path.with_extension(format!("{extension}.part")),
-    ))
+    if remux {
+        Ok(PipelineDescription::remux(
+            description,
+            final_path.to_owned(),
+        ))
+    } else {
+        Ok(PipelineDescription::recording(
+            description,
+            final_path.to_owned(),
+            final_path.with_extension(format!("{extension}.part")),
+        ))
+    }
 }
 
 fn segmented_recording_pipeline_description(
@@ -1314,7 +1360,7 @@ fn configure_sink(
         .by_name("output_sink")
         .ok_or_else(|| GStreamerError::Native("output sink is missing".to_owned()))?;
     match destination {
-        ProductionDestination::Recording(_) => {
+        ProductionDestination::Recording(_) | ProductionDestination::RemuxRecording { .. } => {
             let location = temp_path.and_then(std::path::Path::to_str).ok_or_else(|| {
                 GStreamerError::InvalidEndpoint("recording path is not UTF-8".to_owned())
             })?;
@@ -1930,6 +1976,74 @@ mod tests {
         assert!(!temporary.exists());
         std::fs::remove_file(source).expect("remove Matroska source");
         std::fs::remove_file(destination).expect("remove remuxed MP4");
+    }
+
+    #[test]
+    fn native_remux_recording_session_keeps_source_hidden_until_mp4_is_published() {
+        gst::init().expect("GStreamer runtime");
+        if [
+            "matroskamux",
+            "matroskademux",
+            "mp4mux",
+            "h264parse",
+            "aacparse",
+            "queue",
+            "openh264enc",
+            "avenc_aac",
+            "filesrc",
+            "filesink",
+        ]
+        .iter()
+        .any(|element| gst::ElementFactory::find(element).is_none())
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let final_path = std::env::temp_dir().join(format!("obs-rs-auto-remux-{token}.mp4"));
+        let source_path = final_path.with_extension("mkv.part");
+        let destination = ProductionDestination::RemuxRecording {
+            final_path: final_path.clone(),
+        };
+        let plan = plan(OutputProfile::matroska_h264_aac());
+        let video = VideoFormat::new(
+            64,
+            64,
+            obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+        )
+        .expect("video format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let mut session = GStreamerOutputSession::start(&plan, &destination, video, audio)
+            .expect("remux recording session");
+        for index in 0_u64..30 {
+            let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
+            session
+                .push_video(VideoFrame::solid(video, timestamp, [24, 96, 180, 255]))
+                .expect("video submission");
+            session
+                .push_audio(AudioBuffer::silence(audio, timestamp, 1_600).expect("silence"))
+                .expect("audio submission");
+        }
+        assert!(
+            source_path.exists(),
+            "source must remain hidden while recording"
+        );
+        session.close().expect("automatic remux close");
+
+        let bytes = std::fs::metadata(&final_path).expect("published MP4").len();
+        assert!(bytes > 0);
+        assert_eq!(
+            session.committed_bytes(),
+            Some(usize::try_from(bytes).expect("size"))
+        );
+        assert!(
+            !source_path.exists(),
+            "hidden Matroska source must be consumed"
+        );
+        assert!(!final_path.with_extension("mp4.part").exists());
+        std::fs::remove_file(final_path).expect("remove remuxed MP4");
     }
 
     #[test]
