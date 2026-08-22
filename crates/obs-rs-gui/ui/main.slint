@@ -162,7 +162,8 @@ export component MainWindow inherits Window {
         property <int> pending-confirm: 0;
         // Actions that would throw away unsaved project edits, held until the
         // discard prompt is answered. 0 none · 4 new project · 5 exit
-        // · 6 switch collection · 7 import collection.
+        // · 6 switch collection · 7 import collection · 8 load project
+        // · 9 recover project.
         property <int> pending-discard: 0;
         property <string> pending-collection;
         in-out property <length> dock-height: 248px;
@@ -324,6 +325,12 @@ export component MainWindow inherits Window {
             root.collection-transfer-path = "";
             root.request-discarding-action(7);
         }
+        function request-load-project() {
+            root.request-discarding-action(8);
+        }
+        function request-recover-project() {
+            root.request-discarding-action(9);
+        }
         function resolve-discard(action: int) {
             if (action == 4) {
                 root.new-project();
@@ -333,6 +340,10 @@ export component MainWindow inherits Window {
                 root.select-collection(root.pending-collection);
             } else if (action == 7) {
                 root.open-import-collection();
+            } else if (action == 8) {
+                root.load-project();
+            } else if (action == 9) {
+                root.recover-project();
             }
             root.pending-discard = 0;
         }
@@ -520,9 +531,9 @@ export component MainWindow inherits Window {
                     } else if action == "save-project" {
                         root.save-project();
                     } else if action == "load-project" {
-                        root.load-project();
+                        root.request-load-project();
                     } else if action == "recover-project" {
-                        root.recover-project();
+                        root.request-recover-project();
                     } else if action == "export-diagnostics" {
                         root.export-diagnostics();
                     } else if action == "settings" {
