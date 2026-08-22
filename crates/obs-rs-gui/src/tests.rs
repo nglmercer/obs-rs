@@ -1247,6 +1247,48 @@ fn output_runtime_discovers_interrupted_remux_candidates_without_blocking_the_gu
 }
 
 #[test]
+fn output_runtime_startup_discovery_uses_the_configured_directory() {
+    let format = VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+    if !output.remux_recovery_supported() {
+        return;
+    }
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("obs-rs-gui-startup-recovery-{token}"));
+    std::fs::create_dir(&directory).expect("startup recovery directory");
+    std::fs::write(directory.join("alpha.mkv.part"), [1_u8]).expect("alpha source");
+    obs_rs_engine::write_interrupted_remux_manifest(directory.join("alpha.mp4"))
+        .expect("alpha manifest");
+
+    output
+        .request_startup_remux_discovery(
+            directory
+                .join("configured.mkv")
+                .to_str()
+                .expect("UTF-8 configured path"),
+        )
+        .expect("startup discovery request should accept the configured format");
+    let result = (0..100).find_map(|_| {
+        let result = output.take_remux_candidate_result();
+        if result.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        result
+    });
+    assert_eq!(
+        result
+            .expect("worker must report startup candidates")
+            .expect("startup candidate discovery must succeed"),
+        vec![directory.join("alpha.mp4")]
+    );
+    assert!(!output.remux_recovery_running());
+    std::fs::remove_dir_all(directory).expect("remove startup recovery fixture");
+}
+
+#[test]
 fn output_runtime_routes_reference_split_recording_to_numbered_files() {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
     let token = std::time::SystemTime::now()

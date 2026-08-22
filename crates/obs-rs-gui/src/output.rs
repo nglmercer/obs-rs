@@ -469,6 +469,43 @@ impl OutputRuntime {
         &mut self,
         path: &str,
     ) -> Result<(), Box<dyn Error>> {
+        validate_auto_remux_path(path)?;
+        let path = Path::new(path);
+        let directory = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        self.request_discover_interrupted_remux_directory(directory)
+    }
+
+    /// Queues the one startup scan for interrupted automatic-remux artifacts.
+    ///
+    /// Startup recovery is deliberately explicit: a matching durable manifest
+    /// can open the existing chooser, but the GUI never remuxes a recording or
+    /// claims a configured `.mkv` path was a final destination on its own.
+    /// The configured path is used only to select its output directory, so this
+    /// remains useful after the user changes the recording format or filename.
+    pub(crate) fn request_startup_remux_discovery(
+        &mut self,
+        configured_path: &str,
+    ) -> Result<(), Box<dyn Error>> {
+        if configured_path.trim().is_empty() {
+            return Err("startup remux recovery requires a configured recording path".into());
+        }
+        let path = Path::new(configured_path);
+        let directory = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        self.request_discover_interrupted_remux_directory(directory)
+    }
+
+    fn request_discover_interrupted_remux_directory(
+        &mut self,
+        directory: PathBuf,
+    ) -> Result<(), Box<dyn Error>> {
         if !self.remux_recovery_supported() {
             return Err("interrupted remux recovery is unavailable on this host".into());
         }
@@ -479,13 +516,6 @@ impl OutputRuntime {
         if !recording.is_stopped() || !streaming.is_stopped() {
             return Err("stop recording and streaming before recovering a recording".into());
         }
-        validate_auto_remux_path(path)?;
-        let path = Path::new(path);
-        let directory = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
         self.remux_candidates = Some(
             self.worker
                 .try_discover_interrupted_remux_candidates(directory)?,

@@ -242,6 +242,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let properties_window = install_source_properties_window(&ui, &state, &surface)?;
     let filters_window = install_source_filters_window(&ui, &state, &surface)?;
     let transform_window = install_source_transform_window(&ui, &state, &surface)?;
+    let startup_recording_path = settings.recording_path.clone();
     let settings_window = install_settings_window(
         &ui,
         &state,
@@ -273,6 +274,27 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if smoke {
         return Ok(());
+    }
+
+    // A previous automatic-remux session may have left a marked Matroska
+    // source behind. Scan once after the normal callbacks are installed so
+    // the bounded result can reach the existing chooser on the first timer
+    // tick; recovery remains an operator choice rather than a silent startup
+    // write.
+    if !show_setup && output.borrow().remux_recovery_supported() {
+        match output
+            .borrow_mut()
+            .request_startup_remux_discovery(&startup_recording_path)
+        {
+            Ok(()) => {
+                ui.set_status_message(
+                    "Checking for interrupted automatic-remux recordings…".into(),
+                );
+            }
+            Err(error) => {
+                ui.set_status_message(format!("Startup recovery scan failed: {error}").into());
+            }
+        }
     }
 
     if show_setup {
