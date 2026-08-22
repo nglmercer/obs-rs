@@ -1185,13 +1185,15 @@ fn output_runtime_routes_production_split_recording_to_native_segments() {
         .expect("clock")
         .as_nanos();
     let base = std::env::temp_dir().join(format!("obs-rs-gui-native-split-{token}.mp4"));
-    output.configure_recording(&AppSettings {
+    let settings = AppSettings {
         recording_format: super::settings::RecordingFormat::Mp4,
         recording_split_enabled: true,
         recording_split_size_mib: 1,
         recording_split_max_segments: 3,
         ..AppSettings::default()
-    });
+    };
+    output.configure_stream(&settings);
+    output.configure_recording(&settings);
     output
         .start_recording(base.to_str().expect("UTF-8 temp path"))
         .expect("native split recording should open");

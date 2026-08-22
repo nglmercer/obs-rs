@@ -1501,27 +1501,60 @@ impl EngineSession {
         self.start_recording_with_config(path.into(), None)
     }
 
-    /// Starts a bounded split recording in numbered `.obsr` packet files.
+    /// Starts a bounded split recording in numbered reference or native
+    /// production container files.
     ///
-    /// The supplied path is used as the base name; the writer publishes
-    /// siblings such as `recording-0001.obsr` at keyframe boundaries. The
-    /// policy bounds total segment count, target size, and target duration.
+    /// The supplied path is used as the base name; the reference writer
+    /// publishes siblings such as `recording-0001.obsr`, while native
+    /// production muxers publish fixed slots such as `recording-00001.mp4`.
+    /// The policy bounds total segment count, target size, and target duration.
     ///
     /// # Errors
     ///
-    /// Returns an error when a recording is already open, the base path is not
-    /// an `.obsr` path, the policy is invalid, or the first segment cannot be
-    /// opened.
+    /// Returns an error when a recording is already open, the base path does
+    /// not match a supported container, the policy is invalid, or the first
+    /// segment cannot be opened.
     pub fn start_segmented_recording(
         &mut self,
         path: impl Into<PathBuf>,
         policy: SegmentedRecordingPolicy,
     ) -> Result<(), EngineError> {
+        self.start_segmented_recording_with_config(path.into(), policy, None)
+    }
+
+    /// Starts a segmented recording with explicit production encoder choices.
+    ///
+    /// The reference packet writer has no production encoder boundary and
+    /// therefore ignores the pair. Native production containers negotiate it
+    /// before the first segment is opened.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the recording is already open, the policy or
+    /// destination is invalid, or the selected production configuration is
+    /// unavailable.
+    pub fn start_segmented_recording_configured(
+        &mut self,
+        path: impl Into<PathBuf>,
+        policy: SegmentedRecordingPolicy,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        let encoder_config = (video, audio);
+        self.start_segmented_recording_with_config(path.into(), policy, Some(&encoder_config))
+    }
+
+    fn start_segmented_recording_with_config(
+        &mut self,
+        path: PathBuf,
+        policy: SegmentedRecordingPolicy,
+        encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
         if self.recording.is_some() {
             return Err(EngineError::Busy("start recording"));
         }
         self.recording_lifecycle = OutputLifecycle::Starting;
-        let result = self.open_segmented_recording(path.into(), policy);
+        let result = self.open_segmented_recording(path, policy, encoder_config);
         match result {
             Ok(()) => {
                 self.recording_lifecycle = OutputLifecycle::Running;
@@ -1735,6 +1768,7 @@ impl EngineSession {
         &mut self,
         base_path: PathBuf,
         policy: SegmentedRecordingPolicy,
+        encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
     ) -> Result<(), EngineError> {
         let extension = base_path
             .extension()
@@ -1770,7 +1804,18 @@ impl EngineSession {
                 OutputProfile::matroska_h264_aac()
             };
             let capabilities = GStreamerCapabilitySnapshot::probe();
-            let plan = ProductionPipelinePlan::negotiate(profile, &destination, &capabilities)?;
+            let plan = encoder_config.map_or_else(
+                || ProductionPipelinePlan::negotiate(profile, &destination, &capabilities),
+                |(video, audio)| {
+                    ProductionPipelinePlan::negotiate_configured(
+                        profile,
+                        &destination,
+                        &capabilities,
+                        video,
+                        audio,
+                    )
+                },
+            )?;
             let session = GStreamerOutputSession::start(
                 &plan,
                 &destination,
@@ -1782,7 +1827,7 @@ impl EngineSession {
         }
         #[cfg(not(feature = "production-gstreamer"))]
         {
-            let _ = (base_path, policy);
+            let _ = (base_path, policy, encoder_config);
             Err(EngineError::InvalidConfiguration(
                 "production segmented recording support was not compiled into this host".to_owned(),
             ))
@@ -4066,9 +4111,31 @@ mod tests {
         let policy =
             SegmentedRecordingPolicy::new(1_000_000, std::time::Duration::from_millis(500), 3)
                 .expect("segment policy");
+        let available = capabilities.capabilities();
+        let video_encoder = available
+            .video_encoders()
+            .iter()
+            .find(|encoder| encoder.codec() == obs_rs_output::VideoCodec::H264);
+        let audio_encoder = available
+            .audio_encoders()
+            .iter()
+            .find(|encoder| encoder.codec() == obs_rs_output::AudioCodec::Aac);
+        let (Some(video_encoder), Some(audio_encoder)) = (video_encoder, audio_encoder) else {
+            return;
+        };
+        let video_config = VideoEncoderConfig {
+            implementation: obs_rs_output::EncoderImplementation::new(video_encoder.id()),
+            bitrate_kbps: 2_000,
+            ..VideoEncoderConfig::default()
+        };
+        let audio_config = AudioEncoderConfig {
+            implementation: obs_rs_output::EncoderImplementation::new(audio_encoder.id()),
+            bitrate_kbps: 160,
+            ..AudioEncoderConfig::default()
+        };
         let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
         engine
-            .start_segmented_recording(&base_path, policy)
+            .start_segmented_recording_configured(&base_path, policy, video_config, audio_config)
             .expect("segmented MP4 recording");
         for _ in 0..90 {
             engine.tick(None, Some("program")).expect("media tick");

@@ -56,6 +56,7 @@ enum WorkerCommand {
     StartSegmentedRecording(
         PathBuf,
         SegmentedRecordingPolicy,
+        Option<(VideoEncoderConfig, AudioEncoderConfig)>,
         mpsc::Sender<Result<(), String>>,
     ),
     FinishRecording(mpsc::Sender<Result<usize, String>>),
@@ -248,11 +249,38 @@ impl EngineWorker {
         path: impl Into<PathBuf>,
         policy: SegmentedRecordingPolicy,
     ) -> Result<(), EngineError> {
+        self.start_segmented_recording_with_config(path.into(), policy, None)
+    }
+
+    /// Requests a segmented recording with explicit production encoder
+    /// choices. The reference packet path ignores the pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker is closed or the selected
+    /// production configuration cannot open the first segment.
+    pub fn start_segmented_recording_configured(
+        &self,
+        path: impl Into<PathBuf>,
+        policy: SegmentedRecordingPolicy,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        self.start_segmented_recording_with_config(path.into(), policy, Some((video, audio)))
+    }
+
+    fn start_segmented_recording_with_config(
+        &self,
+        path: PathBuf,
+        policy: SegmentedRecordingPolicy,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
         let (reply, receive) = mpsc::channel();
         self.sender
             .send(WorkerCommand::StartSegmentedRecording(
-                path.into(),
+                path,
                 policy,
+                encoder_config,
                 reply,
             ))
             .map_err(|_| worker_closed())?;
@@ -395,11 +423,38 @@ impl EngineWorker {
         path: impl Into<PathBuf>,
         policy: SegmentedRecordingPolicy,
     ) -> Result<(), EngineError> {
+        self.try_start_segmented_recording_with_config(path.into(), policy, None)
+    }
+
+    /// Enqueues a segmented recording with explicit production encoder
+    /// choices without waiting for worker-side setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the bounded command queue rejects the
+    /// request or the worker has already closed.
+    pub fn try_start_segmented_recording_configured(
+        &self,
+        path: impl Into<PathBuf>,
+        policy: SegmentedRecordingPolicy,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        self.try_start_segmented_recording_with_config(path.into(), policy, Some((video, audio)))
+    }
+
+    fn try_start_segmented_recording_with_config(
+        &self,
+        path: PathBuf,
+        policy: SegmentedRecordingPolicy,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
         set_recording_lifecycle(&self.snapshot, OutputLifecycle::Starting);
         let (reply, _receive) = mpsc::channel();
         match self.sender.try_send(WorkerCommand::StartSegmentedRecording(
-            path.into(),
+            path,
             policy,
+            encoder_config,
             reply,
         )) {
             Ok(()) => Ok(()),
@@ -1044,10 +1099,14 @@ fn worker_loop(
                 let _ = reply.send(result);
                 false
             }
-            WorkerCommand::StartSegmentedRecording(path, policy, reply) => {
-                let result = session
-                    .start_segmented_recording(path, policy)
-                    .map_err(|error| error.to_string());
+            WorkerCommand::StartSegmentedRecording(path, policy, encoder_config, reply) => {
+                let result = match encoder_config {
+                    Some((video, audio)) => {
+                        session.start_segmented_recording_configured(path, policy, video, audio)
+                    }
+                    None => session.start_segmented_recording(path, policy),
+                }
+                .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
             }

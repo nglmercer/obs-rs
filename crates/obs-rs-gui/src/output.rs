@@ -326,7 +326,12 @@ impl OutputRuntime {
     pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
         if let Some(policy) = self.segmented_recording_policy {
             validate_segmented_recording_path(path)?;
-            self.worker.start_segmented_recording(path, policy)?;
+            self.worker.start_segmented_recording_configured(
+                path,
+                policy,
+                self.recording_video_encoder.clone(),
+                self.recording_audio_encoder.clone(),
+            )?;
         } else if self.segmented_recording_requested && is_production_recording_path(path) {
             return Err(
                 "configured production split recording is unavailable on this host"
@@ -359,7 +364,12 @@ impl OutputRuntime {
     pub(crate) fn request_start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
         if let Some(policy) = self.segmented_recording_policy {
             validate_segmented_recording_path(path)?;
-            self.worker.try_start_segmented_recording(path, policy)?;
+            self.worker.try_start_segmented_recording_configured(
+                path,
+                policy,
+                self.recording_video_encoder.clone(),
+                self.recording_audio_encoder.clone(),
+            )?;
         } else if self.segmented_recording_requested && is_production_recording_path(path) {
             return Err(
                 "configured production split recording is unavailable on this host"
