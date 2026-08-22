@@ -14,7 +14,7 @@ use obs_rs_output::{
     RistConfig, RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol,
     StreamTarget, VideoCodec, VideoEncoderConfig, WhipConfig,
 };
-use obs_rs_ui::UiLocale;
+use obs_rs_ui::{Shortcut, UiLocale};
 use slint::{Brush, Color, Model, ModelRc, VecModel};
 
 use crate::dock_tree::{DockNode, DOCK_IDS};
@@ -846,23 +846,23 @@ impl AppSettings {
                 .and_then(|value| value.parse::<u16>().ok())
                 .and_then(|count| CHANNEL_LAYOUTS.iter().position(|value| *value == count))
                 .unwrap_or(defaults.channels),
-            hotkey_swap: text(config, "hotkey_swap", &defaults.hotkey_swap),
-            hotkey_start_recording: text(
+            hotkey_swap: hotkey(config, "hotkey_swap", &defaults.hotkey_swap),
+            hotkey_start_recording: hotkey(
                 config,
                 "hotkey_start_recording",
                 &defaults.hotkey_start_recording,
             ),
-            hotkey_stop_recording: text(
+            hotkey_stop_recording: hotkey(
                 config,
                 "hotkey_stop_recording",
                 &defaults.hotkey_stop_recording,
             ),
-            hotkey_start_streaming: text(
+            hotkey_start_streaming: hotkey(
                 config,
                 "hotkey_start_streaming",
                 &defaults.hotkey_start_streaming,
             ),
-            hotkey_stop_streaming: text(
+            hotkey_stop_streaming: hotkey(
                 config,
                 "hotkey_stop_streaming",
                 &defaults.hotkey_stop_streaming,
@@ -1662,6 +1662,21 @@ fn text(config: &Config, key: &str, fallback: &str) -> String {
         .map_or_else(|| fallback.to_owned(), str::to_owned)
 }
 
+/// Reads a shortcut through the shared structured parser and stores its
+/// canonical display form. Empty input intentionally remains an unbinding;
+/// malformed input falls back to the last known-good setting.
+pub(crate) fn validated_hotkey(value: &str, fallback: &str) -> String {
+    match Shortcut::parse(value) {
+        Ok(Some(shortcut)) => shortcut.to_string(),
+        Ok(None) => String::new(),
+        Err(_) => fallback.to_owned(),
+    }
+}
+
+fn hotkey(config: &Config, key: &str, fallback: &str) -> String {
+    validated_hotkey(config.get(key).unwrap_or(fallback), fallback)
+}
+
 fn bounded_text(config: &Config, key: &str, fallback: &str, maximum: usize) -> String {
     let mut value = text(config, key, fallback);
     value.truncate(maximum);
@@ -1881,6 +1896,30 @@ mod tests {
         assert_eq!(decoded, settings);
         assert_eq!(decoded.sample_rate_hz(), 96_000);
         assert_eq!(decoded.channel_count(), 1);
+    }
+
+    #[test]
+    fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
+        let defaults = AppSettings::default();
+        let mut config = defaults.to_config();
+        config
+            .set("hotkey_swap", " option + shift + f9 ")
+            .expect("hotkey key");
+        config
+            .set("hotkey_start_recording", "Ctrl+Ctrl+R")
+            .expect("hotkey key");
+        config.set("hotkey_stop_recording", "").expect("hotkey key");
+
+        let decoded = AppSettings::from_config(&config);
+
+        assert_eq!(decoded.hotkey_swap, "Shift+Alt+F9");
+        assert_eq!(
+            decoded.hotkey_start_recording,
+            defaults.hotkey_start_recording
+        );
+        assert!(decoded.hotkey_stop_recording.is_empty());
+        assert_eq!(validated_hotkey("ctrl + r", "F1"), "Ctrl+R");
+        assert_eq!(validated_hotkey("Ctrl+", "F1"), "F1");
     }
 
     #[test]

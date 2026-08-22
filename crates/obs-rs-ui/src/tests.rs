@@ -285,6 +285,31 @@ fn shortcuts_trigger_actions_and_reject_duplicates() {
 }
 
 #[test]
+fn shortcut_text_is_bounded_and_canonical() {
+    let shortcut = Shortcut::parse(" option + shift + f9 ")
+        .expect("shortcut syntax")
+        .expect("shortcut is bound");
+    assert_eq!(shortcut.modifiers(), Shortcut::SHIFT | Shortcut::ALT);
+    assert_eq!(shortcut.key(), "F9");
+    assert_eq!(shortcut.to_string(), "Shift+Alt+F9");
+
+    assert_eq!(Shortcut::parse(""), Ok(None));
+    assert_eq!(
+        Shortcut::parse("Ctrl+Ctrl+R"),
+        Err(UiError::InvalidShortcut)
+    );
+    assert_eq!(
+        Shortcut::parse("Ctrl+R+Shift"),
+        Err(UiError::InvalidShortcut)
+    );
+    assert_eq!(Shortcut::parse("Ctrl+"), Err(UiError::InvalidShortcut));
+    assert_eq!(
+        Shortcut::parse(&"A".repeat(MAX_SHORTCUT_TEXT_BYTES + 1)),
+        Err(UiError::InvalidShortcut)
+    );
+}
+
+#[test]
 fn project_commands_keep_dirty_state_and_transitions_validate() {
     let mut state = DesktopState::new(project());
     state

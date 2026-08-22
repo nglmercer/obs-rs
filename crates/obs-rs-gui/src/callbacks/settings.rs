@@ -1398,11 +1398,7 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.channels = usize::try_from(window.get_channel_index())
         .unwrap_or(0)
         .min(CHANNEL_LAYOUTS.len() - 1);
-    settings.hotkey_swap = window.get_hotkey_swap().to_string();
-    settings.hotkey_start_recording = window.get_hotkey_start_recording().to_string();
-    settings.hotkey_stop_recording = window.get_hotkey_stop_recording().to_string();
-    settings.hotkey_start_streaming = window.get_hotkey_start_streaming().to_string();
-    settings.hotkey_stop_streaming = window.get_hotkey_stop_streaming().to_string();
+    read_hotkey_draft(window, &mut settings);
     settings.preview_border_color = window.get_preview_border_color().to_string();
     settings.program_border_color = window.get_program_border_color().to_string();
     settings.project_path = window.get_project_path().to_string();
@@ -1473,6 +1469,29 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
         locale.code().clone_into(&mut settings.locale);
     }
     settings
+}
+
+/// Reads the hotkey fields through the shared typed parser before Apply can
+/// publish them to the persistent settings document.
+fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSettings) {
+    settings.hotkey_swap =
+        crate::settings::validated_hotkey(window.get_hotkey_swap().as_str(), &settings.hotkey_swap);
+    settings.hotkey_start_recording = crate::settings::validated_hotkey(
+        window.get_hotkey_start_recording().as_str(),
+        &settings.hotkey_start_recording,
+    );
+    settings.hotkey_stop_recording = crate::settings::validated_hotkey(
+        window.get_hotkey_stop_recording().as_str(),
+        &settings.hotkey_stop_recording,
+    );
+    settings.hotkey_start_streaming = crate::settings::validated_hotkey(
+        window.get_hotkey_start_streaming().as_str(),
+        &settings.hotkey_start_streaming,
+    );
+    settings.hotkey_stop_streaming = crate::settings::validated_hotkey(
+        window.get_hotkey_stop_streaming().as_str(),
+        &settings.hotkey_stop_streaming,
+    );
 }
 
 /// Reads the canvas-only settings as one validated presentation policy.

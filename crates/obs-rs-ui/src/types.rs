@@ -1,7 +1,9 @@
+use std::fmt;
+
 use obs_rs_media::FrameTransition;
 use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 
-use super::{error::UiError, MAX_SHORTCUT_KEY_BYTES};
+use super::{error::UiError, MAX_SHORTCUT_KEY_BYTES, MAX_SHORTCUT_TEXT_BYTES};
 
 /// Which scene view a desktop surface is showing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,20 +141,74 @@ pub struct Shortcut {
 }
 
 impl Shortcut {
+    /// Control modifier bit.
+    pub const CONTROL: u8 = 1 << 0;
+    /// Shift modifier bit.
+    pub const SHIFT: u8 = 1 << 1;
+    /// Alt/Option modifier bit.
+    pub const ALT: u8 = 1 << 2;
+
+    const MODIFIER_MASK: u8 = Self::CONTROL | Self::SHIFT | Self::ALT;
+
     /// Creates a shortcut from a modifier bitset and key name.
     ///
     /// # Errors
     ///
     /// Returns [`UiError::InvalidShortcut`] for an empty or oversized key.
     pub fn new(modifiers: u8, key: &str) -> Result<Self, UiError> {
-        let key = key.trim();
-        if key.is_empty() || key.len() > MAX_SHORTCUT_KEY_BYTES {
+        if modifiers & !Self::MODIFIER_MASK != 0 {
             return Err(UiError::InvalidShortcut);
         }
-        Ok(Self {
-            modifiers,
-            key: key.to_owned(),
-        })
+        let key = normalize_key(key)?;
+        Ok(Self { modifiers, key })
+    }
+
+    /// Parses the canonical display form used by the settings document.
+    ///
+    /// An empty value is a valid unbinding and returns `Ok(None)`. Modifier
+    /// order is normalized on output, while duplicate, misplaced, or empty
+    /// components are rejected before they can reach runtime matching.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::InvalidShortcut`] for malformed, oversized, or
+    /// unsupported modifier input.
+    pub fn parse(text: &str) -> Result<Option<Self>, UiError> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(None);
+        }
+        if text.len() > MAX_SHORTCUT_TEXT_BYTES {
+            return Err(UiError::InvalidShortcut);
+        }
+
+        let parts = text.split('+').collect::<Vec<_>>();
+        let mut modifiers = 0;
+        let mut key = None;
+        for (index, part) in parts.iter().enumerate() {
+            let part = part.trim();
+            if part.is_empty() {
+                return Err(UiError::InvalidShortcut);
+            }
+            let modifier = match part.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => Some(Self::CONTROL),
+                "shift" => Some(Self::SHIFT),
+                "alt" | "option" => Some(Self::ALT),
+                _ => None,
+            };
+            if let Some(modifier) = modifier {
+                if key.is_some() || modifiers & modifier != 0 {
+                    return Err(UiError::InvalidShortcut);
+                }
+                modifiers |= modifier;
+            } else if index + 1 == parts.len() && key.is_none() {
+                key = Some(part);
+            } else {
+                return Err(UiError::InvalidShortcut);
+            }
+        }
+
+        Self::new(modifiers, key.ok_or(UiError::InvalidShortcut)?).map(Some)
     }
 
     /// Returns the modifier bitset chosen by the frontend.
@@ -166,6 +222,47 @@ impl Shortcut {
     pub fn key(&self) -> &str {
         &self.key
     }
+}
+
+impl fmt::Display for Shortcut {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut has_modifier = false;
+        for (modifier, name) in [
+            (Self::CONTROL, "Ctrl"),
+            (Self::SHIFT, "Shift"),
+            (Self::ALT, "Alt"),
+        ] {
+            if self.modifiers & modifier != 0 {
+                if has_modifier {
+                    formatter.write_str("+")?;
+                }
+                formatter.write_str(name)?;
+                has_modifier = true;
+            }
+        }
+        if has_modifier {
+            formatter.write_str("+")?;
+        }
+        formatter.write_str(&self.key)
+    }
+}
+
+fn normalize_key(key: &str) -> Result<String, UiError> {
+    let key = key.trim();
+    if key.is_empty() || key.len() > MAX_SHORTCUT_KEY_BYTES || key.contains('+') {
+        return Err(UiError::InvalidShortcut);
+    }
+    let lower = key.to_ascii_lowercase();
+    let canonical = match lower.as_str() {
+        "space" | "spacebar" => "Space".to_owned(),
+        "return" | "enter" => "Enter".to_owned(),
+        "tab" => "Tab".to_owned(),
+        _ => key.to_uppercase(),
+    };
+    if canonical.len() > MAX_SHORTCUT_KEY_BYTES {
+        return Err(UiError::InvalidShortcut);
+    }
+    Ok(canonical)
 }
 
 /// A bounded user-visible diagnostic notice.
