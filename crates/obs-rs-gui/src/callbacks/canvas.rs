@@ -27,6 +27,13 @@ use crate::{
 const MINIMUM_ITEM_PIXELS: i64 = 16;
 const MAX_PAN_PIXELS: i32 = 16_384;
 const MAX_SNAP_GUIDES: usize = 64;
+// Rec. ITU-R BT.1848-1 / EBU R 95 safe-area margins, represented as
+// numerator / SAFE_AREA_DENOMINATOR so snapping stays deterministic and does
+// not introduce floating-point geometry into pointer gestures.
+const SAFE_AREA_DENOMINATOR: i64 = 2_000;
+const ACTION_SAFE_INSET: i64 = 70; // 3.5%
+const GRAPHICS_SAFE_INSET: i64 = 100; // 5.0%
+const FOUR_BY_THREE_SAFE_X_INSET: i64 = 325; // 16.25%
 const MIN_ZOOM_PERCENT: u16 = 10;
 const MAX_ZOOM_PERCENT: u16 = 800;
 const WHEEL_ZOOM_FACTOR_MILLI: i64 = 1_250;
@@ -412,6 +419,17 @@ impl SnapGuides {
         guides.push_y(0);
         guides.push_y(i64::from(canvas.1) / 2);
         guides.push_y(i64::from(canvas.1));
+        guides.push_rect(safe_area_rect(canvas, ACTION_SAFE_INSET, ACTION_SAFE_INSET));
+        guides.push_rect(safe_area_rect(
+            canvas,
+            GRAPHICS_SAFE_INSET,
+            GRAPHICS_SAFE_INSET,
+        ));
+        guides.push_rect(safe_area_rect(
+            canvas,
+            FOUR_BY_THREE_SAFE_X_INSET,
+            GRAPHICS_SAFE_INSET,
+        ));
         guides
     }
 
@@ -436,6 +454,35 @@ impl SnapGuides {
         self.push_y(rect.y);
         self.push_y(rect.y.saturating_add(rect.height));
         self.push_y(rect.y.saturating_add(rect.height / 2));
+    }
+}
+
+/// Returns one bounded safe-area rectangle using the margins from EBU R 95.
+///
+/// The 4:3 rectangle has a wider horizontal inset on a 16:9 canvas while its
+/// vertical inset remains the graphics-safe margin. Clamping the inset keeps
+/// the helper well-defined for tiny test canvases as well as normal video
+/// resolutions.
+fn safe_area_rect(canvas: (u32, u32), x_numerator: i64, y_numerator: i64) -> ItemRect {
+    let width = i64::from(canvas.0);
+    let height = i64::from(canvas.1);
+    let rounded_inset = |extent: i64, numerator: i64| {
+        let numerator = numerator.clamp(0, SAFE_AREA_DENOMINATOR);
+        let rounded = i128::from(extent)
+            .saturating_mul(i128::from(numerator))
+            .saturating_add(i128::from(SAFE_AREA_DENOMINATOR / 2))
+            / i128::from(SAFE_AREA_DENOMINATOR);
+        i64::try_from(rounded)
+            .unwrap_or(i64::MAX)
+            .clamp(0, extent / 2)
+    };
+    let x = rounded_inset(width, x_numerator);
+    let y = rounded_inset(height, y_numerator);
+    ItemRect {
+        x,
+        y,
+        width: width.saturating_sub(x.saturating_mul(2)).max(1),
+        height: height.saturating_sub(y.saturating_mul(2)).max(1),
     }
 }
 
@@ -1917,6 +1964,24 @@ mod tests {
     }
 
     #[test]
+    fn safe_area_guides_match_ebu_r95_reference_margins() {
+        let guides = SnapGuides::with_canvas(CANVAS);
+        let x = &guides.x[..guides.x_len];
+        let y = &guides.y[..guides.y_len];
+
+        assert!(x.contains(&67), "3.5% action-safe left edge");
+        assert!(x.contains(&1_853), "3.5% action-safe right edge");
+        assert!(x.contains(&96), "5% graphics-safe left edge");
+        assert!(x.contains(&1_824), "5% graphics-safe right edge");
+        assert!(x.contains(&312), "16.25% 4:3-safe left edge");
+        assert!(x.contains(&1_608), "16.25% 4:3-safe right edge");
+        assert!(y.contains(&38), "3.5% action-safe top edge");
+        assert!(y.contains(&1_042), "3.5% action-safe bottom edge");
+        assert!(y.contains(&54), "5% graphics-safe top edge");
+        assert!(y.contains(&1_026), "5% graphics-safe bottom edge");
+    }
+
+    #[test]
     fn snapping_aligns_moves_and_resizes_to_bounded_guides() {
         let mut guides = SnapGuides::with_canvas(CANVAS);
         guides.push_rect(ItemRect {
@@ -1939,6 +2004,22 @@ mod tests {
             settings,
         );
         assert_eq!(near_edge.x, 0, "the left edge should snap to the canvas");
+
+        let near_safe_area = snap_rect(
+            ItemRect {
+                x: 90,
+                y: 100,
+                width: 200,
+                height: 100,
+            },
+            0,
+            &SnapGuides::with_canvas(CANVAS),
+            settings,
+        );
+        assert_eq!(
+            near_safe_area.x, 96,
+            "the left edge should snap to the graphics-safe area"
+        );
 
         let near_other = snap_rect(
             ItemRect {
