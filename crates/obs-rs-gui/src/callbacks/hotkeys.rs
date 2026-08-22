@@ -24,6 +24,8 @@ const REDO: i32 = 7;
 const SAVE_PROJECT: i32 = 8;
 const FADE_TRANSITION: i32 = 9;
 const SAVE_REPLAY_BUFFER: i32 = 10;
+const START_REPLAY_BUFFER: i32 = 11;
+const STOP_REPLAY_BUFFER: i32 = 12;
 
 pub(crate) fn install_shortcut_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let shortcut_state = Rc::clone(state);
@@ -50,6 +52,8 @@ fn action_code(action: UiAction) -> i32 {
         UiAction::SaveProject => SAVE_PROJECT,
         UiAction::FadeTransition => FADE_TRANSITION,
         UiAction::SaveReplayBuffer => SAVE_REPLAY_BUFFER,
+        UiAction::StartReplayBuffer => START_REPLAY_BUFFER,
+        UiAction::StopReplayBuffer => STOP_REPLAY_BUFFER,
     }
 }
 
@@ -70,13 +74,15 @@ mod tests {
             UiAction::SaveProject,
             UiAction::FadeTransition,
             UiAction::SaveReplayBuffer,
+            UiAction::StartReplayBuffer,
+            UiAction::StopReplayBuffer,
         ];
         let mut codes = actions.into_iter().map(action_code).collect::<Vec<_>>();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(
             codes,
-            (SWAP_PREVIEW_PROGRAM..=SAVE_REPLAY_BUFFER).collect::<Vec<_>>()
+            (SWAP_PREVIEW_PROGRAM..=STOP_REPLAY_BUFFER).collect::<Vec<_>>()
         );
         assert!(!codes.contains(&NO_ACTION));
     }

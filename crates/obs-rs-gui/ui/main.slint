@@ -351,6 +351,12 @@ export component MainWindow inherits Window {
             } else if (action == 10) {
                 root.save-replay-buffer();
                 true
+            } else if (action == 11 && !root.replay-buffering) {
+                root.toggle-replay-buffer();
+                true
+            } else if (action == 12 && root.replay-buffering) {
+                root.toggle-replay-buffer();
+                true
             } else {
                 false
             }

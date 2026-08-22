@@ -772,6 +772,8 @@ fn load_draft(
     window.set_hotkey_save_project(settings.hotkey_save_project.as_str().into());
     window.set_hotkey_fade_transition(settings.hotkey_fade_transition.as_str().into());
     window.set_hotkey_save_replay(settings.hotkey_save_replay.as_str().into());
+    window.set_hotkey_start_replay(settings.hotkey_start_replay.as_str().into());
+    window.set_hotkey_stop_replay(settings.hotkey_stop_replay.as_str().into());
     window.set_hotkeys_conflict(hotkey_conflicts(&settings).join(", ").into());
     window.set_preview_border_color(settings.preview_border_color.as_str().into());
     window.set_program_border_color(settings.program_border_color.as_str().into());
@@ -1530,6 +1532,14 @@ fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSettings) {
     settings.hotkey_save_replay = crate::settings::validated_hotkey(
         window.get_hotkey_save_replay().as_str(),
         &settings.hotkey_save_replay,
+    );
+    settings.hotkey_start_replay = crate::settings::validated_hotkey(
+        window.get_hotkey_start_replay().as_str(),
+        &settings.hotkey_start_replay,
+    );
+    settings.hotkey_stop_replay = crate::settings::validated_hotkey(
+        window.get_hotkey_stop_replay().as_str(),
+        &settings.hotkey_stop_replay,
     );
 }
 

@@ -419,6 +419,36 @@ fn save_replay_shortcut_is_a_frontend_action() {
 }
 
 #[test]
+fn replay_start_and_stop_shortcuts_are_frontend_actions() {
+    let mut state = DesktopState::new(project());
+    let start = Shortcut::new(0, "F9").expect("shortcut");
+    let stop = Shortcut::new(0, "F10").expect("shortcut");
+    state
+        .replace_shortcuts(&[
+            (start.clone(), UiAction::StartReplayBuffer),
+            (stop.clone(), UiAction::StopReplayBuffer),
+        ])
+        .expect("replay shortcuts");
+
+    assert_eq!(
+        state.shortcut_action(&start),
+        Some(UiAction::StartReplayBuffer)
+    );
+    assert_eq!(
+        state.shortcut_action(&stop),
+        Some(UiAction::StopReplayBuffer)
+    );
+    assert_eq!(
+        state.dispatch_action(UiAction::StartReplayBuffer),
+        Err(UiError::FrontendActionRequired(UiAction::StartReplayBuffer))
+    );
+    assert_eq!(
+        state.dispatch_action(UiAction::StopReplayBuffer),
+        Err(UiError::FrontendActionRequired(UiAction::StopReplayBuffer))
+    );
+}
+
+#[test]
 fn shortcut_text_is_bounded_and_canonical() {
     let shortcut = Shortcut::parse(" option + shift + f9 ")
         .expect("shortcut syntax")

@@ -739,6 +739,8 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-save-project;
     in-out property <string> hotkey-fade-transition;
     in-out property <string> hotkey-save-replay;
+    in-out property <string> hotkey-start-replay;
+    in-out property <string> hotkey-stop-replay;
     in property <string> conflict-warning;
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -822,6 +824,22 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-save-replay;
                 placeholder-text: "F8";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_start_replay;
+            SettingsField {
+                text <=> root.hotkey-start-replay;
+                placeholder-text: "Ctrl+Shift+F8";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_stop_replay;
+            SettingsField {
+                text <=> root.hotkey-stop-replay;
+                placeholder-text: "Ctrl+Alt+F8";
                 edited => { root.changed(); }
             }
         }

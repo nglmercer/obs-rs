@@ -194,6 +194,10 @@ pub enum UiAction {
     FadeTransition,
     /// Save the active replay buffer through the frontend's output boundary.
     SaveReplayBuffer,
+    /// Start replay capture through the frontend's output boundary.
+    StartReplayBuffer,
+    /// Stop replay capture through the frontend's output boundary.
+    StopReplayBuffer,
 }
 
 /// A validated, sortable keyboard shortcut description.
