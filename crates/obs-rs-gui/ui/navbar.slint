@@ -225,7 +225,7 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         // The discovered collections are listed inline the way the profile
         // menu lists profiles, so switching is one click rather than a dialog.
-        height: 195px + (root.collection-rows.length * 29px);
+        height: 224px + (root.collection-rows.length * 29px);
         width: 260px;
         VerticalBox {
             padding: 6px;
@@ -241,6 +241,7 @@ export component AppNavbar inherits Rectangle {
             MenuEntry { label: I18n.text.menu_duplicate_collection; clicked => { root.menu-action("duplicate-collection"); collection-popup.close(); } }
             MenuEntry { label: I18n.text.menu_rename_collection; clicked => { root.menu-action("rename-collection"); collection-popup.close(); } }
             MenuEntry { label: I18n.text.menu_export_collection; clicked => { root.menu-action("export-collection"); collection-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_import_collection; clicked => { root.menu-action("import-collection"); collection-popup.close(); } }
             MenuEntry { label: I18n.text.menu_save_collection; clicked => { root.menu-action("save-collection"); collection-popup.close(); } }
         }
     }

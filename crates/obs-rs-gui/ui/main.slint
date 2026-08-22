@@ -154,15 +154,15 @@ export component MainWindow inherits Window {
         in-out property <bool> show-controls: true;
         // Pausing freezes the last measured levels without stopping capture.
         in-out property <bool> meters-paused: false;
-        // 1 project · 2 add scene · 3 add source · 4 output · 5 rename scene
-        // · 6 source properties · 7 source filters · 9 new collection
-        // · 10 about · 12 rename source
+        // 1 project/save/export/import · 2 add scene · 3 add source · 4 output
+        // · 5 rename scene · 6 source properties · 7 source filters
+        // · 9 new collection · 10 about · 12 rename source
         in-out property <int> active-modal: 0;
         // 0 none · 1 start stream · 2 stop stream · 3 stop recording
         property <int> pending-confirm: 0;
         // Actions that would throw away unsaved project edits, held until the
         // discard prompt is answered. 0 none · 4 new project · 5 exit
-        // · 6 switch collection.
+        // · 6 switch collection · 7 import collection.
         property <int> pending-discard: 0;
         property <string> pending-collection;
         in-out property <length> dock-height: 248px;
@@ -245,6 +245,7 @@ export component MainWindow inherits Window {
         callback duplicate-collection(string);
         callback rename-collection(string);
         callback export-collection(string);
+        callback import-collection(string);
         callback save-collection();
         // Reports the desktop portal's answer back onto the UI thread.
         // Includes the source that initiated the request so a selection
@@ -315,6 +316,14 @@ export component MainWindow inherits Window {
             root.pending-collection = id;
             root.request-discarding-action(6);
         }
+        function open-import-collection() {
+            root.project-dialog-mode = 2;
+            root.active-modal = 1;
+        }
+        function request-import-collection() {
+            root.collection-transfer-path = "";
+            root.request-discarding-action(7);
+        }
         function resolve-discard(action: int) {
             if (action == 4) {
                 root.new-project();
@@ -322,6 +331,8 @@ export component MainWindow inherits Window {
                 root.quit-app();
             } else if (action == 6) {
                 root.select-collection(root.pending-collection);
+            } else if (action == 7) {
+                root.open-import-collection();
             }
             root.pending-discard = 0;
         }
@@ -498,6 +509,8 @@ export component MainWindow inherits Window {
                         root.project-dialog-mode = 1;
                         root.collection-transfer-path = "obs-rs-collection-export.obsrproj";
                         root.active-modal = 1;
+                    } else if action == "import-collection" {
+                        root.request-import-collection();
                     } else if action == "save-collection" {
                         root.save-collection();
                     } else if action == "documentation" {
@@ -747,6 +760,8 @@ export component MainWindow inherits Window {
         save-project() => {
             if root.project-dialog-mode == 1 {
                 root.export-collection(root.collection-transfer-path);
+            } else if root.project-dialog-mode == 2 {
+                root.import-collection(root.collection-transfer-path);
             } else {
                 root.save-project();
             }

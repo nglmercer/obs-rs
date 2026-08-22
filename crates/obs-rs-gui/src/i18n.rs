@@ -366,6 +366,7 @@ fn english() -> UiText {
         menu_duplicate_collection: s("Duplicate collection"),
         menu_load_collection: s("Load collection"),
         menu_export_collection: s("Export collection..."),
+        menu_import_collection: s("Import collection..."),
         menu_save_collection: s("Save collection"),
         menu_source_properties: s("Source properties"),
         menu_source_filters: s("Source filters"),
@@ -389,6 +390,11 @@ fn english() -> UiText {
             "Write the current project to a portable OBS-RS scene-collection file.",
         ),
         collection_export_path: s("Export file"),
+        collection_import_dialog_title: s("Import scene collection"),
+        collection_import_dialog_description: s(
+            "Copy an OBS-RS scene-collection file into the managed collections folder and open it.",
+        ),
+        collection_import_path: s("Collection file"),
         duplicate_collection_dialog_title: s("Duplicate scene collection"),
         duplicate_collection_dialog_description: s(
             "The current project is copied into a new collection and becomes the active document.",
@@ -874,6 +880,7 @@ fn spanish() -> UiText {
         menu_duplicate_collection: s("Duplicar colección"),
         menu_load_collection: s("Cargar colección"),
         menu_export_collection: s("Exportar colección..."),
+        menu_import_collection: s("Importar colección..."),
         menu_save_collection: s("Guardar colección"),
         menu_source_properties: s("Propiedades de fuente"),
         menu_source_filters: s("Filtros de fuente"),
@@ -899,6 +906,11 @@ fn spanish() -> UiText {
             "Escribe el proyecto actual en un archivo portable de colección de escenas de OBS-RS.",
         ),
         collection_export_path: s("Archivo de exportación"),
+        collection_import_dialog_title: s("Importar colección de escenas"),
+        collection_import_dialog_description: s(
+            "Copia un archivo de colección de escenas de OBS-RS a la carpeta administrada y ábrelo.",
+        ),
+        collection_import_path: s("Archivo de colección"),
         duplicate_collection_dialog_title: s("Duplicar colección de escenas"),
         duplicate_collection_dialog_description: s(
             "El proyecto actual se copia en una nueva colección, que pasa a ser el documento activo.",

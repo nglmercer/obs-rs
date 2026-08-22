@@ -397,6 +397,7 @@ fn install_collections(
 
     install_rename_collection(ui, state, surface);
     install_export_collection(ui, state);
+    install_import_collection(ui, state, surface);
 
     let weak = ui.as_weak();
     let save_state = Rc::clone(state);
@@ -466,6 +467,34 @@ fn install_export_collection(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>)
                 );
             }
             Err(error) => ui.set_status_message(format!("Collection export: {error}").into()),
+        }
+    });
+}
+
+fn install_import_collection(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let weak = ui.as_weak();
+    let import_state = Rc::clone(state);
+    let import_surface = Rc::clone(surface);
+    ui.on_import_collection(move |source| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let current = ui.get_project_path().to_string();
+        match import_collection(&import_state, &current, source.as_str()) {
+            Ok(path) => {
+                let path = path.to_string_lossy().into_owned();
+                ui.set_project_path(path.as_str().into());
+                ui.set_collection_transfer_path("".into());
+                crate::refresh::invalidate_recovery_cache();
+                refresh_ui(&ui, &import_state, &import_surface);
+                refresh_menu_models(&ui, &import_state);
+                ui.set_status_message(format!("Imported collection to {path}").into());
+            }
+            Err(error) => ui.set_status_message(format!("Collection import: {error}").into()),
         }
     });
 }
@@ -592,17 +621,75 @@ fn export_collection(
 }
 
 fn collection_transfer_path(target: &str) -> Result<PathBuf, Box<dyn Error>> {
+    collection_path(target, "export")
+}
+
+fn collection_path(target: &str, operation: &str) -> Result<PathBuf, Box<dyn Error>> {
     let path = PathBuf::from(target.trim());
     if path.as_os_str().is_empty()
         || path.file_name().is_none()
         || path.extension().and_then(|extension| extension.to_str()) != Some(COLLECTION_EXTENSION)
     {
         return Err(std::io::Error::other(format!(
-            "export path must name a .{COLLECTION_EXTENSION} file"
+            "{operation} path must name a .{COLLECTION_EXTENSION} file"
         ))
         .into());
     }
     Ok(path)
+}
+
+/// Validates an external collection, copies its parsed document atomically
+/// into the managed collection directory, and makes that copy active.
+///
+/// Parsing happens before the target directory is created, and an existing
+/// managed collection is never overwritten. The caller owns the unsaved-change
+/// confirmation before invoking this replacing operation.
+fn import_collection(
+    state: &Rc<RefCell<DesktopState>>,
+    current_path: &str,
+    source: &str,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let source = collection_path(source, "import")?;
+    if !source.is_file() {
+        return Err(std::io::Error::other(format!(
+            "the import file does not exist: {}",
+            source.display()
+        ))
+        .into());
+    }
+    let source_name = source
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(collection_file_name)
+        .ok_or_else(|| std::io::Error::other("the import file needs a valid collection name"))?;
+    let target = collections_root(current_path).join(source_name);
+    if target == source {
+        return Err(std::io::Error::other(
+            "the collection is already in the managed collections directory",
+        )
+        .into());
+    }
+    if target.exists() {
+        return Err(std::io::Error::other(format!("{} already exists", target.display())).into());
+    }
+
+    let source_text = source
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("the import path is not valid UTF-8"))?;
+    let project = project_store(source_text)?.load()?;
+    let document = project.serialize();
+    let directory = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| std::io::Error::other("the managed collection directory is invalid"))?;
+    std::fs::create_dir_all(directory)?;
+    let target_text = target
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("the target path is not valid UTF-8"))?;
+    let store = project_store(target_text)?;
+    store.save_document(&document)?;
+    state.borrow_mut().load_project(&store)?;
+    Ok(target)
 }
 
 /// Turns a typed name into a bounded, separator-free file name.
@@ -920,6 +1007,81 @@ mod tests {
             !current.exists(),
             "export must not create or switch the active path"
         );
+
+        std::fs::remove_dir_all(root).expect("remove collection fixture");
+    }
+
+    #[test]
+    fn importing_a_collection_copies_validated_document_and_switches_to_managed_copy() {
+        let root =
+            std::env::temp_dir().join(format!("obs-rs-collection-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let source_directory = root.join("portable");
+        std::fs::create_dir_all(&source_directory).expect("import fixture directory");
+        let current = root.join("current.json");
+        let source = source_directory.join("Evening show.obsrproj");
+        let state = Rc::new(RefCell::new(DesktopState::new(
+            initial_project().expect("initial project"),
+        )));
+        let expected = state.borrow().project_document();
+        std::fs::write(&source, &expected).expect("write external collection");
+
+        let imported = import_collection(
+            &state,
+            current.to_str().expect("current path"),
+            source.to_str().expect("source path"),
+        )
+        .expect("collection import");
+
+        assert_eq!(
+            imported,
+            root.join("collections").join("Evening show.obsrproj")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&imported).expect("managed collection"),
+            expected
+        );
+        assert_eq!(
+            std::fs::read_to_string(&source).expect("source remains"),
+            expected
+        );
+        assert_eq!(state.borrow().project_document(), expected);
+        assert!(
+            !state.borrow().is_dirty(),
+            "an imported document starts clean"
+        );
+        assert!(
+            !current.exists(),
+            "import must not create the old active path"
+        );
+
+        std::fs::remove_dir_all(root).expect("remove collection fixture");
+    }
+
+    #[test]
+    fn importing_a_collection_rejects_invalid_documents_without_creating_target() {
+        let root = std::env::temp_dir().join(format!(
+            "obs-rs-collection-import-invalid-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("import fixture directory");
+        let source = root.join("broken.obsrproj");
+        std::fs::write(&source, "not a project").expect("invalid collection fixture");
+        let state = Rc::new(RefCell::new(DesktopState::new(
+            initial_project().expect("initial project"),
+        )));
+
+        let error = import_collection(
+            &state,
+            root.join("current.json").to_str().expect("current path"),
+            source.to_str().expect("source path"),
+        )
+        .expect_err("invalid collections must be rejected");
+
+        assert!(error.to_string().contains("invalid") || error.to_string().contains("project"));
+        assert!(!root.join("collections").exists());
+        assert!(!state.borrow().is_dirty());
 
         std::fs::remove_dir_all(root).expect("remove collection fixture");
     }

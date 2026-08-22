@@ -12,28 +12,39 @@ export component ProjectDialog inherits ModalShell {
 
     title: mode == 1
         ? I18n.text.collection_export_dialog_title
-        : I18n.text.project_dialog_title;
+        : mode == 2
+            ? I18n.text.collection_import_dialog_title
+            : I18n.text.project_dialog_title;
     subtitle: mode == 1
         ? I18n.text.collection_export_dialog_description
-        : I18n.text.project_dialog_description;
-    accept-label: mode == 1 ? I18n.text.menu_export_collection : I18n.text.menu_save;
+        : mode == 2
+            ? I18n.text.collection_import_dialog_description
+            : I18n.text.project_dialog_description;
+    accept-label: mode == 1
+        ? I18n.text.menu_export_collection
+        : mode == 2
+            ? I18n.text.menu_import_collection
+            : I18n.text.menu_save;
     cancel-label: I18n.text.cancel;
     accepted => save-project();
 
     VerticalBox {
         spacing: 8px;
         if mode == 1 : FieldHeading { text: I18n.text.collection_export_path; }
-        if mode == 1 : LineEdit {
+        if mode == 2 : FieldHeading { text: I18n.text.collection_import_path; }
+        if mode == 1 || mode == 2 : LineEdit {
             text <=> collection-path;
-            placeholder-text: "obs-rs-collection.obsrproj";
+            placeholder-text: mode == 1
+                ? "obs-rs-collection.obsrproj"
+                : "/path/to/collection.obsrproj";
         }
-        if mode != 1 : FieldHeading { text: I18n.text.project_file; }
-        if mode != 1 : LineEdit {
+        if mode != 1 && mode != 2 : FieldHeading { text: I18n.text.project_file; }
+        if mode != 1 && mode != 2 : LineEdit {
             text <=> project-path;
             placeholder-text: "obs-rs-project.json";
         }
-        if mode != 1 : FieldHeading { text: I18n.text.diagnostics_file; }
-        if mode != 1 : LineEdit {
+        if mode != 1 && mode != 2 : FieldHeading { text: I18n.text.diagnostics_file; }
+        if mode != 1 && mode != 2 : LineEdit {
             text <=> diagnostics-path;
             placeholder-text: "obs-rs-diagnostics.obsrdg";
         }
