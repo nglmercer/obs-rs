@@ -34,14 +34,12 @@ use obs_rs_media::{
     MAX_RENDER_DELAY_MILLISECONDS, MAX_SCROLL_SPEED, MIN_RENDER_DELAY_MILLISECONDS,
     MIN_SCROLL_SPEED,
 };
-#[cfg(feature = "production-gstreamer")]
-use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     recover_stale_packet_files, AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig,
-    AudioInputRequirement, EncodedPacket, OutputError, PacketDropPolicy, RawAudioEncoder,
-    ReconnectOutcome, ReconnectPolicy, ReplayBuffer, RleVideoEncoder, SegmentedPacketFileWriter,
-    SegmentedRecordingPolicy, StreamMetrics, StreamSession, StreamState, StreamTarget,
-    StreamingTransport, TcpPacketTransport, VideoEncoder, VideoEncoderConfig,
+    AudioInputRequirement, EncodedPacket, OutputError, OutputProfile, PacketDropPolicy,
+    RawAudioEncoder, ReconnectOutcome, ReconnectPolicy, ReplayBuffer, RleVideoEncoder,
+    SegmentedPacketFileWriter, SegmentedRecordingPolicy, StreamMetrics, StreamSession, StreamState,
+    StreamTarget, StreamingTransport, TcpPacketTransport, VideoEncoder, VideoEncoderConfig,
     VideoInputRequirement, WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
@@ -1557,6 +1555,42 @@ impl EngineSession {
         self.start_recording_with_config(path.into(), Some(&encoder_config))
     }
 
+    /// Starts a production recording using an explicit versioned output
+    /// profile. This is the engine boundary for profiles that share a file
+    /// extension, such as normal and fragmented MP4.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the profile is unavailable, does not match the
+    /// destination, or a recording is already open.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn start_recording_profile(
+        &mut self,
+        path: impl Into<PathBuf>,
+        profile: OutputProfile,
+    ) -> Result<(), EngineError> {
+        self.start_recording_profile_with_config(path.into(), profile, None)
+    }
+
+    /// Starts a production recording using an explicit profile and encoder
+    /// implementations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the profile, codec, or encoder implementation is
+    /// unavailable, the destination does not match, or a recording is open.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn start_recording_profile_configured(
+        &mut self,
+        path: impl Into<PathBuf>,
+        profile: OutputProfile,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        let encoder_config = (video, audio);
+        self.start_recording_profile_with_config(path.into(), profile, Some(&encoder_config))
+    }
+
     fn start_recording_with_config(
         &mut self,
         path: PathBuf,
@@ -1566,7 +1600,32 @@ impl EngineSession {
             return Err(EngineError::Busy("start recording"));
         }
         self.recording_lifecycle = OutputLifecycle::Starting;
-        let result = self.open_recording(path, encoder_config);
+        let result = self.open_recording(path, encoder_config, None);
+        match result {
+            Ok(()) => {
+                self.recording_lifecycle = OutputLifecycle::Running;
+                Ok(())
+            }
+            Err(error) => {
+                self.recording_lifecycle = OutputLifecycle::Failed;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    fn start_recording_profile_with_config(
+        &mut self,
+        path: PathBuf,
+        profile: OutputProfile,
+        encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        if self.recording.is_some() {
+            return Err(EngineError::Busy("start recording"));
+        }
+        self.recording_lifecycle = OutputLifecycle::Starting;
+        let result = self.open_recording(path, encoder_config, Some(profile));
         match result {
             Ok(()) => {
                 self.recording_lifecycle = OutputLifecycle::Running;
@@ -1584,6 +1643,7 @@ impl EngineSession {
         &mut self,
         final_path: PathBuf,
         encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
+        profile_override: Option<OutputProfile>,
     ) -> Result<(), EngineError> {
         let file_name = final_path
             .file_name()
@@ -1596,6 +1656,12 @@ impl EngineSession {
             .and_then(|value| value.to_str())
             .unwrap_or_default();
         if extension.eq_ignore_ascii_case("obsr") {
+            if profile_override.is_some() {
+                return Err(EngineError::InvalidConfiguration(
+                    "production output profiles cannot target the .obsr reference container"
+                        .to_owned(),
+                ));
+            }
             let temp_path = final_path.with_file_name(format!("{file_name}.tmp"));
             self.recording = Some(RecordingOutput::Reference(AtomicPacketFileWriter::new(
                 final_path, temp_path,
@@ -1622,23 +1688,24 @@ impl EngineSession {
                     "MP4, MOV, and FLV recording currently require H.264 video".to_owned(),
                 ));
             }
-            let profile = if is_mp4 {
-                OutputProfile::mp4_h264_aac()
-            } else if is_mov {
-                OutputProfile::mov_h264_aac()
-            } else if is_flv {
-                OutputProfile::flv_h264_aac()
-            } else {
-                encoder_config.map_or_else(OutputProfile::matroska_h264_aac, |config| match config
-                    .0
-                    .codec
-                {
-                    obs_rs_output::VideoCodec::H264 => OutputProfile::matroska_h264_aac(),
-                    obs_rs_output::VideoCodec::Hevc => OutputProfile::matroska_hevc_aac(),
-                    obs_rs_output::VideoCodec::Av1 => OutputProfile::matroska_av1_aac(),
-                    _ => OutputProfile::reference(),
-                })
-            };
+            let profile = profile_override.unwrap_or_else(|| {
+                if is_mp4 {
+                    OutputProfile::mp4_h264_aac()
+                } else if is_mov {
+                    OutputProfile::mov_h264_aac()
+                } else if is_flv {
+                    OutputProfile::flv_h264_aac()
+                } else {
+                    encoder_config.map_or_else(OutputProfile::matroska_h264_aac, |config| {
+                        match config.0.codec {
+                            obs_rs_output::VideoCodec::H264 => OutputProfile::matroska_h264_aac(),
+                            obs_rs_output::VideoCodec::Hevc => OutputProfile::matroska_hevc_aac(),
+                            obs_rs_output::VideoCodec::Av1 => OutputProfile::matroska_av1_aac(),
+                            _ => OutputProfile::reference(),
+                        }
+                    })
+                }
+            });
             let plan = encoder_config.map_or_else(
                 || ProductionPipelinePlan::negotiate(profile, &destination, &capabilities),
                 |(video, audio)| {
@@ -1664,7 +1731,7 @@ impl EngineSession {
             Ok(())
         }
         #[cfg(not(feature = "production-gstreamer"))]
-        let _ = encoder_config;
+        let _ = (encoder_config, profile_override);
         #[cfg(not(feature = "production-gstreamer"))]
         Err(EngineError::InvalidConfiguration(
             "production recording support was not compiled into this host".to_owned(),
@@ -3911,6 +3978,41 @@ mod tests {
         let persisted = std::fs::read(&path).expect("read MP4");
         assert_eq!(persisted.len(), bytes);
         assert_eq!(persisted.get(4..8), Some(&b"ftyp"[..]));
+        assert!(!temp_path.exists());
+        std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn explicit_fragmented_mp4_profile_reaches_the_engine_recording_boundary() {
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(obs_rs_output::OutputProfileKind::FragmentedMp4H264Aac)
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-engine-{token}.mp4"));
+        let temp_path = path.with_extension("mp4.part");
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine
+            .start_recording_profile(&path, OutputProfile::fragmented_mp4_h264_aac())
+            .expect("fragmented MP4 recording");
+        assert!(!path.exists(), "the final path stays hidden until EOS");
+        for _ in 0..4 {
+            engine.tick(None, Some("program")).expect("media tick");
+        }
+        assert_eq!(engine.reference_video_encode_calls, 0);
+        assert_eq!(engine.reference_audio_encode_calls, 0);
+        let bytes = engine.finish_recording().expect("finalize fragmented MP4");
+        let persisted = std::fs::read(&path).expect("read fragmented MP4");
+        assert_eq!(persisted.len(), bytes);
+        assert_eq!(persisted.get(4..8), Some(&b"ftyp"[..]));
+        assert!(persisted.windows(4).any(|chunk| chunk == b"moof"));
         assert!(!temp_path.exists());
         std::fs::remove_file(path).expect("remove recording");
     }

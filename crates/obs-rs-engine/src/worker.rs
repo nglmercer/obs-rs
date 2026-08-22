@@ -11,6 +11,8 @@ use std::{
 };
 
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFrame};
+#[cfg(feature = "production-gstreamer")]
+use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     AudioEncoderConfig, SegmentedRecordingPolicy, StreamTarget, VideoEncoderConfig,
 };
@@ -41,6 +43,13 @@ pub struct EngineWorkerSnapshot {
 enum WorkerCommand {
     StartRecording(
         PathBuf,
+        Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+        mpsc::Sender<Result<(), String>>,
+    ),
+    #[cfg(feature = "production-gstreamer")]
+    StartRecordingProfile(
+        PathBuf,
+        OutputProfile,
         Option<(VideoEncoderConfig, AudioEncoderConfig)>,
         mpsc::Sender<Result<(), String>>,
     ),
@@ -268,6 +277,34 @@ impl EngineWorker {
         self.start_recording_with_config(path.into(), Some((video, audio)))
     }
 
+    /// Requests a production recording using an explicit versioned profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker is closed or the selected
+    /// profile cannot be opened by the engine.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn start_recording_profile(
+        &self,
+        path: impl Into<PathBuf>,
+        profile: OutputProfile,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::StartRecordingProfile(
+                path.into(),
+                profile,
+                encoder_config,
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     fn start_recording_with_config(
         &self,
         path: PathBuf,
@@ -303,6 +340,37 @@ impl EngineWorker {
         let (reply, _receive) = mpsc::channel();
         match self.sender.try_send(WorkerCommand::StartRecording(
             path.into(),
+            encoder_config,
+            reply,
+        )) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_recording_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                Err(error)
+            }
+        }
+    }
+
+    /// Enqueues a production recording with an explicit profile without
+    /// waiting for container or encoder setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] only when the bounded command queue rejects the
+    /// request or the worker has already closed.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn try_start_recording_profile(
+        &self,
+        path: impl Into<PathBuf>,
+        profile: OutputProfile,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        set_recording_lifecycle(&self.snapshot, OutputLifecycle::Starting);
+        let (reply, _receive) = mpsc::channel();
+        match self.sender.try_send(WorkerCommand::StartRecordingProfile(
+            path.into(),
+            profile,
             encoder_config,
             reply,
         )) {
@@ -970,6 +1038,12 @@ fn worker_loop(
                 let _ = reply.send(result);
                 false
             }
+            #[cfg(feature = "production-gstreamer")]
+            WorkerCommand::StartRecordingProfile(path, profile, encoder_config, reply) => {
+                let result = start_recording_profile(&mut session, path, profile, encoder_config);
+                let _ = reply.send(result);
+                false
+            }
             WorkerCommand::StartSegmentedRecording(path, policy, reply) => {
                 let result = session
                     .start_segmented_recording(path, policy)
@@ -1231,6 +1305,22 @@ fn start_recording(
     match encoder_config {
         Some((video, audio)) => session.start_recording_configured(path, video, audio),
         None => session.start_recording(path),
+    }
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(feature = "production-gstreamer")]
+fn start_recording_profile(
+    session: &mut EngineSession,
+    path: PathBuf,
+    profile: OutputProfile,
+    encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+) -> Result<(), String> {
+    match encoder_config {
+        Some((video, audio)) => {
+            session.start_recording_profile_configured(path, profile, video, audio)
+        }
+        None => session.start_recording_profile(path, profile),
     }
     .map_err(|error| error.to_string())
 }
