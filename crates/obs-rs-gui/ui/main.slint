@@ -135,6 +135,8 @@ export component MainWindow inherits Window {
         in property <string> hotkey-stop-recording;
         in property <string> hotkey-start-streaming;
         in property <string> hotkey-stop-streaming;
+        in property <string> hotkey-undo;
+        in property <string> hotkey-redo;
         in property <bool> confirm-start-stream;
         in property <bool> confirm-stop-stream;
         in property <bool> confirm-stop-recording;
@@ -414,6 +416,14 @@ export component MainWindow inherits Window {
                 root.request-streaming();
                 return accept;
             }
+            if (root.hotkey-undo != "" && root.hotkey-label(event) == root.hotkey-undo) {
+                root.undo-edit();
+                return accept;
+            }
+            if (root.hotkey-redo != "" && root.hotkey-label(event) == root.hotkey-redo) {
+                root.redo-edit();
+                return accept;
+            }
             if (event.text == " ") {
                 root.space-held = true;
                 return accept;
@@ -458,15 +468,6 @@ export component MainWindow inherits Window {
             keys: @keys(Control + Shift + F);
             activated => fade-transition();
         }
-        KeyBinding {
-            keys: @keys(Control + Z);
-            activated => undo-edit();
-        }
-        KeyBinding {
-            keys: @keys(Control + Y);
-            activated => redo-edit();
-        }
-
         VerticalBox {
             padding: 0px;
             spacing: 0px;
@@ -484,6 +485,8 @@ export component MainWindow inherits Window {
                 show-mixer: root.show-mixer;
                 show-transitions: root.show-transitions;
                 show-controls: root.show-controls;
+                hotkey-undo: root.hotkey-undo;
+                hotkey-redo: root.hotkey-redo;
                 set-locale(code) => { root.set-locale(code); }
                 select-collection(id) => { root.request-collection(id); }
                 menu-action(action) => {

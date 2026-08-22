@@ -710,6 +710,8 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-stop-recording;
     in-out property <string> hotkey-start-streaming;
     in-out property <string> hotkey-stop-streaming;
+    in-out property <string> hotkey-undo;
+    in-out property <string> hotkey-redo;
     in property <string> conflict-warning;
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -753,6 +755,22 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-stop-streaming;
                 placeholder-text: "Ctrl+Shift+B";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_undo;
+            SettingsField {
+                text <=> root.hotkey-undo;
+                placeholder-text: "Ctrl+Z";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_redo;
+            SettingsField {
+                text <=> root.hotkey-redo;
+                placeholder-text: "Ctrl+Y";
                 edited => { root.changed(); }
             }
         }

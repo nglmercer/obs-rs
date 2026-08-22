@@ -753,6 +753,8 @@ fn load_draft(
     window.set_hotkey_stop_recording(settings.hotkey_stop_recording.as_str().into());
     window.set_hotkey_start_streaming(settings.hotkey_start_streaming.as_str().into());
     window.set_hotkey_stop_streaming(settings.hotkey_stop_streaming.as_str().into());
+    window.set_hotkey_undo(settings.hotkey_undo.as_str().into());
+    window.set_hotkey_redo(settings.hotkey_redo.as_str().into());
     window.set_hotkeys_conflict(hotkey_conflicts(&settings).join(", ").into());
     window.set_preview_border_color(settings.preview_border_color.as_str().into());
     window.set_program_border_color(settings.program_border_color.as_str().into());
@@ -1496,6 +1498,10 @@ fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSettings) {
         window.get_hotkey_stop_streaming().as_str(),
         &settings.hotkey_stop_streaming,
     );
+    settings.hotkey_undo =
+        crate::settings::validated_hotkey(window.get_hotkey_undo().as_str(), &settings.hotkey_undo);
+    settings.hotkey_redo =
+        crate::settings::validated_hotkey(window.get_hotkey_redo().as_str(), &settings.hotkey_redo);
 }
 
 /// Reads the canvas-only settings as one validated presentation policy.
@@ -1806,6 +1812,8 @@ fn apply_to_studio(ui: &MainWindow, settings: &AppSettings) {
     ui.set_hotkey_stop_recording(settings.hotkey_stop_recording.as_str().into());
     ui.set_hotkey_start_streaming(settings.hotkey_start_streaming.as_str().into());
     ui.set_hotkey_stop_streaming(settings.hotkey_stop_streaming.as_str().into());
+    ui.set_hotkey_undo(settings.hotkey_undo.as_str().into());
+    ui.set_hotkey_redo(settings.hotkey_redo.as_str().into());
     ui.set_confirm_start_stream(settings.confirm_start_stream);
     ui.set_confirm_stop_stream(settings.confirm_stop_stream);
     ui.set_confirm_stop_recording(settings.confirm_stop_recording);

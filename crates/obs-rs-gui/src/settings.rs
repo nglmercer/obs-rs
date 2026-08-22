@@ -299,6 +299,8 @@ pub(crate) struct AppSettings {
     pub(crate) hotkey_stop_recording: String,
     pub(crate) hotkey_start_streaming: String,
     pub(crate) hotkey_stop_streaming: String,
+    pub(crate) hotkey_undo: String,
+    pub(crate) hotkey_redo: String,
     pub(crate) preview_border_color: String,
     pub(crate) program_border_color: String,
     pub(crate) project_path: String,
@@ -613,6 +615,8 @@ impl Default for AppSettings {
             hotkey_stop_recording: "Ctrl+Shift+R".to_owned(),
             hotkey_start_streaming: "Ctrl+B".to_owned(),
             hotkey_stop_streaming: "Ctrl+Shift+B".to_owned(),
+            hotkey_undo: "Ctrl+Z".to_owned(),
+            hotkey_redo: "Ctrl+Y".to_owned(),
             preview_border_color: "#60A5FA".to_owned(),
             program_border_color: "#F87171".to_owned(),
             project_path: user_file(PROJECT_FILE),
@@ -870,6 +874,8 @@ impl AppSettings {
                 "hotkey_stop_streaming",
                 &defaults.hotkey_stop_streaming,
             ),
+            hotkey_undo: hotkey(config, "hotkey_undo", &defaults.hotkey_undo),
+            hotkey_redo: hotkey(config, "hotkey_redo", &defaults.hotkey_redo),
             preview_border_color: colour_text(
                 config,
                 "preview_border_color",
@@ -994,6 +1000,8 @@ impl AppSettings {
                 self.hotkey_start_streaming.clone(),
             ),
             ("hotkey_stop_streaming", self.hotkey_stop_streaming.clone()),
+            ("hotkey_undo", self.hotkey_undo.clone()),
+            ("hotkey_redo", self.hotkey_redo.clone()),
             ("preview_border_color", self.preview_border_color.clone()),
             ("program_border_color", self.program_border_color.clone()),
             ("project_path", self.project_path.clone()),
@@ -1689,6 +1697,8 @@ pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
         settings.hotkey_stop_recording.as_str(),
         settings.hotkey_start_streaming.as_str(),
         settings.hotkey_stop_streaming.as_str(),
+        settings.hotkey_undo.as_str(),
+        settings.hotkey_redo.as_str(),
     ];
     let mut counts = BTreeMap::new();
     for value in values {
@@ -1873,6 +1883,8 @@ mod tests {
             sample_rate: 2,
             channels: 1,
             hotkey_swap: "F1".to_owned(),
+            hotkey_undo: "Alt+U".to_owned(),
+            hotkey_redo: "Alt+Y".to_owned(),
             preview_border_color: "#00FF88".to_owned(),
             last_preview_scene: "source_scene".to_owned(),
             last_program_scene: "program".to_owned(),
@@ -1955,8 +1967,10 @@ mod tests {
     fn hotkey_conflicts_use_canonical_shortcuts_and_ignore_unbindings() {
         let settings = AppSettings {
             hotkey_start_recording: "Ctrl+R".to_owned(),
-            hotkey_stop_recording: " control + r ".to_owned(),
+            hotkey_stop_recording: "Alt+R".to_owned(),
             hotkey_start_streaming: String::new(),
+            hotkey_undo: " control + r ".to_owned(),
+            hotkey_redo: String::new(),
             ..AppSettings::default()
         };
 

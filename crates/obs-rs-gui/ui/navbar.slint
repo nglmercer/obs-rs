@@ -36,6 +36,8 @@ export component AppNavbar inherits Rectangle {
     in property <bool> show-mixer;
     in property <bool> show-transitions;
     in property <bool> show-controls;
+    in property <string> hotkey-undo;
+    in property <string> hotkey-redo;
     in property <bool> studio-mode;
     callback menu-action(string);
     callback select-view-mode(int);
@@ -129,13 +131,13 @@ export component AppNavbar inherits Rectangle {
             spacing: 1px;
             MenuEntry {
                 label: I18n.text.menu_undo;
-                shortcut: "Ctrl+Z";
+                shortcut: root.hotkey-undo;
                 enabled: root.can-undo;
                 clicked => { root.menu-action("undo"); edit-popup.close(); }
             }
             MenuEntry {
                 label: I18n.text.menu_redo;
-                shortcut: "Ctrl+Y";
+                shortcut: root.hotkey-redo;
                 enabled: root.can-redo;
                 clicked => { root.menu-action("redo"); edit-popup.close(); }
             }

@@ -163,6 +163,8 @@ export component SettingsWindow inherits Window {
     in-out property <string> hotkey-stop-recording;
     in-out property <string> hotkey-start-streaming;
     in-out property <string> hotkey-stop-streaming;
+    in-out property <string> hotkey-undo;
+    in-out property <string> hotkey-redo;
     in-out property <string> hotkeys-conflict;
     // Accessibility
     in-out property <string> preview-border-color;
@@ -515,6 +517,8 @@ export component SettingsWindow inherits Window {
                         hotkey-stop-recording <=> root.hotkey-stop-recording;
                         hotkey-start-streaming <=> root.hotkey-start-streaming;
                         hotkey-stop-streaming <=> root.hotkey-stop-streaming;
+                        hotkey-undo <=> root.hotkey-undo;
+                        hotkey-redo <=> root.hotkey-redo;
                         conflict-warning: root.hotkeys-conflict;
                         changed => { root.dirty = true; }
                     }
