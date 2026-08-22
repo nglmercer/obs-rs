@@ -363,6 +363,7 @@ fn english() -> UiText {
         menu_controls: s("Controls"),
         menu_manage_profiles: s("Manage profiles"),
         menu_new_collection: s("New collection"),
+        menu_duplicate_collection: s("Duplicate collection"),
         menu_load_collection: s("Load collection"),
         menu_save_collection: s("Save collection"),
         menu_source_properties: s("Source properties"),
@@ -381,6 +382,10 @@ fn english() -> UiText {
         collection_dialog_title: s("Scene collection"),
         collection_dialog_description: s(
             "A collection is one project document. Naming a new one saves the current scenes and starts a fresh set.",
+        ),
+        duplicate_collection_dialog_title: s("Duplicate scene collection"),
+        duplicate_collection_dialog_description: s(
+            "The current project is copied into a new collection and becomes the active document.",
         ),
         collection_name: s("Collection name"),
         collection_active: s("Active collection"),
@@ -856,6 +861,7 @@ fn spanish() -> UiText {
         menu_controls: s("Controles"),
         menu_manage_profiles: s("Administrar perfiles"),
         menu_new_collection: s("Nueva colección"),
+        menu_duplicate_collection: s("Duplicar colección"),
         menu_load_collection: s("Cargar colección"),
         menu_save_collection: s("Guardar colección"),
         menu_source_properties: s("Propiedades de fuente"),
@@ -876,6 +882,10 @@ fn spanish() -> UiText {
         collection_dialog_title: s("Colección de escenas"),
         collection_dialog_description: s(
             "Una colección es un documento de proyecto. Nombrar una nueva guarda las escenas actuales y empieza un conjunto limpio.",
+        ),
+        duplicate_collection_dialog_title: s("Duplicar colección de escenas"),
+        duplicate_collection_dialog_description: s(
+            "El proyecto actual se copia en una nueva colección, que pasa a ser el documento activo.",
         ),
         collection_name: s("Nombre de la colección"),
         collection_active: s("Colección activa"),

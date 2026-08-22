@@ -374,6 +374,28 @@ fn install_collections(
     });
 
     let weak = ui.as_weak();
+    let duplicate_state = Rc::clone(state);
+    let duplicate_surface = Rc::clone(surface);
+    ui.on_duplicate_collection(move |name| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let current = ui.get_project_path().to_string();
+        match duplicate_collection(&duplicate_state, &current, name.as_str()) {
+            Ok(path) => {
+                let path = path.to_string_lossy().into_owned();
+                ui.set_project_path(path.as_str().into());
+                ui.set_collection_name("".into());
+                crate::refresh::invalidate_recovery_cache();
+                refresh_ui(&ui, &duplicate_state, &duplicate_surface);
+                refresh_menu_models(&ui, &duplicate_state);
+                ui.set_status_message(format!("Duplicated collection to {path}").into());
+            }
+            Err(error) => ui.set_status_message(format!("Collection: {error}").into()),
+        }
+    });
+
+    let weak = ui.as_weak();
     let save_state = Rc::clone(state);
     ui.on_save_collection(move || {
         let Some(ui) = weak.upgrade() else {
@@ -411,17 +433,51 @@ fn create_collection(
     if path.exists() {
         return Err(std::io::Error::other(format!("{} already exists", path.display())).into());
     }
+    std::fs::create_dir_all(&directory)?;
     // The in-progress document is committed before the switch, so naming a new
     // collection is never the action that loses the previous one's edits.
-    if let Ok(store) = project_store(current_path) {
-        let _ = state.borrow_mut().save_project(&store);
+    if !current_path.trim().is_empty() {
+        let store = project_store(current_path)?;
+        state.borrow_mut().save_project(&store)?;
     }
-    std::fs::create_dir_all(&directory)?;
     let path_text = path
         .to_str()
         .ok_or_else(|| std::io::Error::other("the collection path is not valid UTF-8"))?
         .to_owned();
     *state.borrow_mut() = DesktopState::new(initial_project()?);
+    let store = project_store(&path_text)?;
+    state.borrow_mut().save_project(&store)?;
+    Ok(path)
+}
+
+/// Copies the current project document into a new collection and makes that
+/// copy the active document.
+///
+/// The current project is saved first, so the duplicate includes edits that
+/// have not yet been written to the original collection. Both writes use the
+/// crash-safe project store; a failed target write leaves the in-memory
+/// document and original file intact.
+fn duplicate_collection(
+    state: &Rc<RefCell<DesktopState>>,
+    current_path: &str,
+    name: &str,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let file_name = collection_file_name(name)
+        .ok_or_else(|| std::io::Error::other("a collection needs a name"))?;
+    let directory = collections_root(current_path);
+    let path = directory.join(file_name);
+    if path.exists() {
+        return Err(std::io::Error::other(format!("{} already exists", path.display())).into());
+    }
+    std::fs::create_dir_all(&directory)?;
+    if !current_path.trim().is_empty() {
+        let store = project_store(current_path)?;
+        state.borrow_mut().save_project(&store)?;
+    }
+    let path_text = path
+        .to_str()
+        .ok_or_else(|| std::io::Error::other("the collection path is not valid UTF-8"))?
+        .to_owned();
     let store = project_store(&path_text)?;
     state.borrow_mut().save_project(&store)?;
     Ok(path)
@@ -448,7 +504,13 @@ fn collection_file_name(name: &str) -> Option<String> {
         return None;
     }
     let mut cleaned = cleaned.to_owned();
-    cleaned.truncate(MAX_COLLECTION_NAME);
+    if cleaned.len() > MAX_COLLECTION_NAME {
+        let mut end = MAX_COLLECTION_NAME;
+        while !cleaned.is_char_boundary(end) {
+            end -= 1;
+        }
+        cleaned.truncate(end);
+    }
     Some(format!("{}.{COLLECTION_EXTENSION}", cleaned.trim()))
 }
 
@@ -536,6 +598,18 @@ mod tests {
     }
 
     #[test]
+    fn a_long_unicode_collection_name_is_truncated_on_a_character_boundary() {
+        let file_name =
+            collection_file_name(&"é".repeat(MAX_COLLECTION_NAME)).expect("unicode name");
+        let stem = file_name
+            .strip_suffix(&format!(".{COLLECTION_EXTENSION}"))
+            .expect("collection extension");
+
+        assert!(stem.len() <= MAX_COLLECTION_NAME);
+        assert!(stem.chars().all(|character| character == 'é'));
+    }
+
+    #[test]
     fn collections_live_beside_the_configured_project_file() {
         assert_eq!(
             collections_root("/home/user/studio/obs-rs-project.json"),
@@ -556,5 +630,46 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "obs-rs-project");
         assert!(rows[0].active, "the open document is the active collection");
+    }
+
+    #[test]
+    fn duplicating_a_collection_copies_the_current_project_document() {
+        let root = std::env::temp_dir().join(format!(
+            "obs-rs-collection-duplicate-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("collection fixture directory");
+        let current = root.join("current.obsrproj");
+        let state = Rc::new(RefCell::new(DesktopState::new(
+            initial_project().expect("initial project"),
+        )));
+
+        let duplicate = duplicate_collection(
+            &state,
+            current.to_str().expect("current path"),
+            "Broadcast copy",
+        )
+        .expect("collection duplicate");
+        let current_document =
+            std::fs::read_to_string(&current).expect("current collection was saved");
+        let duplicate_document =
+            std::fs::read_to_string(&duplicate).expect("duplicate collection was saved");
+
+        assert_eq!(
+            current_document, duplicate_document,
+            "the duplicate must contain the same serialized project"
+        );
+        assert_eq!(
+            state.borrow().project_document(),
+            duplicate_document,
+            "the active in-memory project remains the copied document"
+        );
+        assert_eq!(
+            duplicate.file_name().and_then(|name| name.to_str()),
+            Some("Broadcast copy.obsrproj")
+        );
+
+        std::fs::remove_dir_all(root).expect("remove collection fixture");
     }
 }

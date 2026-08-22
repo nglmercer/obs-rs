@@ -85,6 +85,7 @@ export component MainWindow inherits Window {
         in property <string> app-version;
         in property <string> app-platform;
         in-out property <string> collection-name;
+        in-out property <bool> duplicate-collection-dialog: false;
         in property <string> source-scene;
         in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
@@ -238,6 +239,7 @@ export component MainWindow inherits Window {
         callback open-projector(bool);
         callback select-collection(string);
         callback create-collection(string);
+        callback duplicate-collection(string);
         callback save-collection();
         // Reports the desktop portal's answer back onto the UI thread.
         // Includes the source that initiated the request so a selection
@@ -473,6 +475,10 @@ export component MainWindow inherits Window {
                     } else if action == "reset-layout" {
                         root.reset-dock-layout();
                     } else if action == "new-collection" {
+                        root.duplicate-collection-dialog = false;
+                        root.active-modal = 9;
+                    } else if action == "duplicate-collection" {
+                        root.duplicate-collection-dialog = true;
                         root.active-modal = 9;
                     } else if action == "save-collection" {
                         root.save-collection();
@@ -759,10 +765,23 @@ export component MainWindow inherits Window {
         open: root.active-modal == 9;
         locale: root.locale;
         active-collection: root.active-collection;
+        duplicate-mode: root.duplicate-collection-dialog;
         collection-name <=> root.collection-name;
-        create-collection(name) => { root.create-collection(name); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
+        create-collection(name) => {
+            if root.duplicate-collection-dialog {
+                root.duplicate-collection(name);
+            } else {
+                root.create-collection(name);
+            }
+        }
+        close => {
+            root.duplicate-collection-dialog = false;
+            root.active-modal = 0;
+        }
+        accepted => {
+            root.duplicate-collection-dialog = false;
+            root.active-modal = 0;
+        }
     }
     AboutDialog {
         open: root.active-modal == 10;
