@@ -63,6 +63,7 @@ export component FloatingDockWindow inherits Window {
     callback toggle-meters-paused();
     callback cut-transition();
     callback fade-transition();
+    callback fade-transition-duration(string);
     callback set-view-mode(int);
     callback toggle-recording();
     callback toggle-streaming();
@@ -127,6 +128,7 @@ export component FloatingDockWindow inherits Window {
         toggle-meters-paused() => { root.toggle-meters-paused(); }
         cut-transition() => { root.cut-transition(); }
         fade-transition() => { root.fade-transition(); }
+        fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
         toggle-recording() => { root.toggle-recording(); }
         toggle-streaming() => { root.toggle-streaming(); }
         open-settings-window() => { root.open-settings-window(); }

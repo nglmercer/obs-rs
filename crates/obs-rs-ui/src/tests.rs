@@ -8,6 +8,7 @@ use obs_rs_project::{
     Profile, Project, ProjectCommand, ProjectFileStore, SceneItemDuplicateMode, SceneItemSpec,
     SceneSpec, SourceSpec,
 };
+use std::time::{Duration, Instant};
 
 fn project() -> Project {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
@@ -506,9 +507,64 @@ fn project_commands_keep_dirty_state_and_transitions_validate() {
     state
         .dispatch(UiCommand::TakePreview {
             transition: FrameTransition::Cut,
+            duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
         })
         .expect("take preview");
     assert_eq!(state.program_scene(), state.preview_scene());
+}
+
+#[test]
+fn take_preview_exposes_a_bounded_transient_transition() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("program scene");
+    state
+        .dispatch(UiCommand::TakePreview {
+            transition: FrameTransition::CrossFade {
+                progress_milli: 500,
+            },
+            duration_ms: 100,
+        })
+        .expect("take preview");
+
+    let snapshot = state
+        .transition_snapshot(Instant::now())
+        .expect("transition is active");
+    assert_eq!(snapshot.source_scene(), "program");
+    assert_eq!(snapshot.destination_scene(), "preview");
+    assert!(matches!(
+        snapshot.transition(),
+        FrameTransition::CrossFade { progress_milli } if progress_milli < 1_000
+    ));
+
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("restore program scene");
+    state
+        .dispatch(UiCommand::TakePreview {
+            transition: FrameTransition::CrossFade {
+                progress_milli: 500,
+            },
+            duration_ms: 1,
+        })
+        .expect("short take preview");
+    std::thread::sleep(Duration::from_millis(5));
+    assert!(
+        state.transition_snapshot(Instant::now()).is_none(),
+        "the transient transition retires at its duration boundary"
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::TakePreview {
+            transition: FrameTransition::Cut,
+            duration_ms: 0,
+        }),
+        Err(UiError::InvalidTransitionDuration(0))
+    );
 }
 
 #[test]
@@ -836,6 +892,7 @@ fn console_parser_covers_state_and_output_commands() {
             transition: FrameTransition::CrossFade {
                 progress_milli: 500,
             },
+            duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
         }))
     );
     assert_eq!(
@@ -854,6 +911,7 @@ fn console_parser_covers_state_and_output_commands() {
                 progress_milli: 750,
                 color: [0, 0, 255, 128],
             },
+            duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
         }))
     );
     assert_eq!(

@@ -4,7 +4,7 @@ use obs_rs_media::{FrameTransition, MediaError};
 
 use super::{
     types::{UiCommand, UiLocale},
-    MAX_CONSOLE_COMMAND_BYTES,
+    DEFAULT_TRANSITION_DURATION_MILLIS, MAX_CONSOLE_COMMAND_BYTES,
 };
 
 /// A command understood by the safe terminal frontend.
@@ -196,6 +196,7 @@ fn parse_take_command<'a>(
 ) -> Result<ConsoleCommand, ConsoleCommandError> {
     Ok(ConsoleCommand::Apply(UiCommand::TakePreview {
         transition: parse_transition_value(command, words)?,
+        duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
     }))
 }
 

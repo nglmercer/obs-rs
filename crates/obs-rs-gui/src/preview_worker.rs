@@ -10,6 +10,7 @@ use std::{
 
 use obs_rs_media::{LatencyMetrics, RawVideoFrame, VideoFormat, VideoFrame};
 use obs_rs_project::Project;
+use obs_rs_ui::TransitionSnapshot;
 
 use crate::preview::{PreviewRenderer, RuntimeDiagnostics, TransformDraft};
 
@@ -23,6 +24,7 @@ struct PreviewRequest {
     preview_scene: Option<String>,
     preview_format: VideoFormat,
     program_scene: Option<String>,
+    program_transition: Option<TransitionSnapshot>,
     program_preview_format: VideoFormat,
     multiview_scenes: Vec<String>,
     multiview_format: VideoFormat,
@@ -84,6 +86,7 @@ pub(crate) struct RenderTargets<'a> {
     pub(crate) preview_scene: Option<&'a str>,
     pub(crate) preview_format: VideoFormat,
     pub(crate) program_scene: Option<&'a str>,
+    pub(crate) program_transition: Option<TransitionSnapshot>,
     pub(crate) program_preview_format: VideoFormat,
     /// Ordered scene IDs for the bounded multiview grid.
     pub(crate) multiview_scenes: Vec<String>,
@@ -181,6 +184,7 @@ impl PreviewWorker {
             preview_scene: targets.preview_scene.map(str::to_owned),
             preview_format: targets.preview_format,
             program_scene: targets.program_scene.map(str::to_owned),
+            program_transition: targets.program_transition,
             program_preview_format: targets.program_preview_format,
             multiview_scenes,
             multiview_format: targets.multiview_format,
@@ -318,6 +322,10 @@ fn wait_for_request(request: &SharedRequest, queue_depth: &AtomicUsize) -> Optio
     request
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one worker request keeps preview, program, multiview, and output consumers aligned"
+)]
 fn render_request(
     renderer: &mut PreviewRenderer,
     request: PreviewRequest,
@@ -338,6 +346,7 @@ fn render_request(
             renderer,
             request.program_scene.as_deref(),
             request.program_preview_format,
+            request.program_transition.as_ref(),
         );
         if let Ok(mut performance) = performance.lock() {
             performance.program_render.record(program_started.elapsed());
@@ -384,10 +393,22 @@ fn render_request(
         });
     let (output, output_frame) = if request.prepare_output {
         match request.program_scene.as_deref() {
+            Some(_) if request.prepare_output_rgba && request.program_transition.is_some() => {
+                match render_program_transition(renderer, request.program_transition.as_ref()) {
+                    Ok(frame) => (Ok(None), frame),
+                    Err(error) => (Err(error), None),
+                }
+            }
             Some(scene) if request.prepare_output_rgba => match renderer.render_program(scene) {
                 Ok(frame) => (Ok(None), frame),
                 Err(error) => (Err(error), None),
             },
+            Some(_) if request.program_transition.is_some() => {
+                match render_program_transition(renderer, request.program_transition.as_ref()) {
+                    Ok(frame) => (Ok(None), frame),
+                    Err(error) => (Err(error), None),
+                }
+            }
             Some(scene) => match renderer.encoder_frame(scene) {
                 Ok(Some(frame)) => (Ok(Some(frame)), None),
                 Ok(None) => match renderer.render_program(scene) {
@@ -506,13 +527,41 @@ fn render_program_scene(
     renderer: &mut PreviewRenderer,
     scene: Option<&str>,
     format: VideoFormat,
+    transition: Option<&TransitionSnapshot>,
 ) -> Result<Option<VideoFrame>, String> {
     let Some(scene) = scene else {
         return Ok(None);
     };
+    if let Some(transition) = transition {
+        if transition.destination_scene() != scene {
+            return Err("program transition destination does not match program scene".to_owned());
+        }
+        return renderer
+            .render_transition_preview(
+                transition.source_scene(),
+                transition.destination_scene(),
+                format,
+                transition.transition(),
+            )
+            .map_err(|error| error.to_string());
+    }
     renderer
         .render_program_preview(scene, format)
         .map_err(|error| error.to_string())
+}
+
+fn render_program_transition(
+    renderer: &mut PreviewRenderer,
+    transition: Option<&TransitionSnapshot>,
+) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+    let Some(transition) = transition else {
+        return Ok(None);
+    };
+    renderer.render_transition(
+        transition.source_scene(),
+        transition.destination_scene(),
+        transition.transition(),
+    )
 }
 
 fn renderer_error(
@@ -584,6 +633,7 @@ mod tests {
             )
             .expect("preview format"),
             program_scene: None,
+            program_transition: None,
             program_preview_format: VideoFormat::new(
                 16,
                 16,
@@ -668,6 +718,33 @@ mod tests {
     }
 
     #[test]
+    fn program_transition_uses_the_same_worker_renderer_for_preview_and_output() {
+        let project = crate::initial_project().expect("project");
+        let canvas = project
+            .active_profile_spec()
+            .expect("profile")
+            .video_format();
+        let format = PreviewRenderer::preview_format_for_canvas(canvas);
+        let snapshot = TransitionSnapshot::new(
+            "preview",
+            "program",
+            obs_rs_media::FrameTransition::CrossFade {
+                progress_milli: 500,
+            },
+        );
+        let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
+        let preview = render_program_scene(&mut renderer, Some("program"), format, Some(&snapshot))
+            .expect("preview transition")
+            .expect("preview frame");
+        assert_eq!(preview.pixel(0, 0), Some([0x18, 0x28, 0x38, 0xff]));
+
+        let output = render_program_transition(&mut renderer, Some(&snapshot))
+            .expect("output transition")
+            .expect("output frame");
+        assert_eq!(output.pixel(0, 0), Some([0x18, 0x28, 0x38, 0xff]));
+    }
+
+    #[test]
     fn multiview_render_timing_report() {
         let project = crate::initial_project().expect("project");
         let profile = project.active_profile_spec().expect("profile");
@@ -727,6 +804,7 @@ mod tests {
                         .video_format(),
                 ),
                 program_scene: Some(&scene),
+                program_transition: None,
                 program_preview_format: PreviewRenderer::preview_format_for_canvas(
                     project
                         .active_profile_spec()

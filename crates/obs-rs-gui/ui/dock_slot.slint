@@ -70,6 +70,7 @@ export component DockSlot inherits Rectangle {
     callback toggle-meters-paused();
     callback cut-transition();
     callback fade-transition();
+    callback fade-transition-duration(string);
     callback set-view-mode(int);
     callback toggle-recording();
     callback toggle-streaming();
@@ -173,6 +174,7 @@ export component DockSlot inherits Rectangle {
         dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         cut-transition() => { root.cut-transition(); }
         fade-transition() => { root.fade-transition(); }
+        fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
     }
     if panel-kind == 4 : ControlsDock {
         floating: root.floating;

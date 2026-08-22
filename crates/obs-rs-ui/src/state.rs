@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use obs_rs_audio::{AudioBuffer, AudioFormat, AudioMixer, AudioSourceId};
 use obs_rs_media::{FrameTransition, Timestamp};
@@ -30,6 +31,14 @@ struct ProjectSceneSelectionState {
     selections: BTreeMap<Identifier, SceneSelection>,
 }
 
+pub(crate) struct ActiveTransition {
+    pub(crate) source_scene: Identifier,
+    pub(crate) destination_scene: Identifier,
+    pub(crate) transition: FrameTransition,
+    pub(crate) started_at: Instant,
+    pub(crate) duration: Duration,
+}
+
 /// The selection cache is session state, not project data. Keep it bounded so
 /// repeatedly opening profiles cannot grow the UI state without limit.
 const MAX_PROFILE_SCENE_SELECTIONS: usize = 64;
@@ -59,6 +68,7 @@ pub struct DesktopState {
     pub(crate) clipboard: Option<SceneItemSpec>,
     pub(crate) locale: UiLocale,
     pub(crate) transition: FrameTransition,
+    pub(crate) active_transition: Option<ActiveTransition>,
     pub(crate) recording: bool,
     pub(crate) streaming: bool,
     pub(crate) audio_mixer: AudioMixer,
@@ -90,6 +100,7 @@ impl DesktopState {
             clipboard: None,
             locale: UiLocale::English,
             transition: FrameTransition::Cut,
+            active_transition: None,
             recording: false,
             streaming: false,
             audio_mixer,
@@ -117,6 +128,7 @@ impl DesktopState {
         let message = match command {
             UiCommand::SwapPreviewProgram => {
                 std::mem::swap(&mut self.preview_scene, &mut self.program_scene);
+                self.active_transition = None;
                 "preview and program scenes swapped"
             }
             UiCommand::Project(command) => {
@@ -129,10 +141,19 @@ impl DesktopState {
                     self.remember_profile_selection(previous_profile, previous_selection);
                     self.restore_active_profile_selection();
                 }
+                self.active_transition = None;
                 "project updated"
             }
-            UiCommand::Undo => self.step_history(true),
-            UiCommand::Redo => self.step_history(false),
+            UiCommand::Undo => {
+                let message = self.step_history(true);
+                self.active_transition = None;
+                message
+            }
+            UiCommand::Redo => {
+                let message = self.step_history(false);
+                self.active_transition = None;
+                message
+            }
             UiCommand::SelectProfile { id } => {
                 let previous_profile = self.project.project().active_profile().clone();
                 let previous_selection = self.scene_selection();
@@ -140,11 +161,13 @@ impl DesktopState {
                     .dispatch(ProjectCommand::SetActiveProfile { id })?;
                 self.remember_profile_selection(previous_profile, previous_selection);
                 self.restore_active_profile_selection();
+                self.active_transition = None;
                 "profile selected"
             }
             UiCommand::SelectPreviewScene { id } => {
                 self.ensure_scene(&id)?;
                 self.preview_scene = Some(identifier(&id, "scene")?);
+                self.active_transition = None;
                 self.selected_sources = self
                     .preview_scene
                     .as_ref()
@@ -156,6 +179,7 @@ impl DesktopState {
             UiCommand::SelectProgramScene { id } => {
                 self.ensure_scene(&id)?;
                 self.program_scene = Some(identifier(&id, "scene")?);
+                self.active_transition = None;
                 "program scene selected"
             }
             UiCommand::SelectSource { id } => {
@@ -201,7 +225,10 @@ impl DesktopState {
                 self.set_transition(transition)?;
                 "transition updated"
             }
-            UiCommand::TakePreview { transition } => self.take_preview(transition)?,
+            UiCommand::TakePreview {
+                transition,
+                duration_ms,
+            } => self.take_preview(transition, duration_ms)?,
             UiCommand::SetMixerGain { id, gain_milli } => {
                 self.set_mixer_gain(&id, gain_milli)?;
                 "mixer gain updated"
@@ -405,6 +432,7 @@ impl DesktopState {
     fn replace_project(&mut self, project: Project) {
         self.project.replace(project);
         self.clipboard = None;
+        self.active_transition = None;
         self.profile_scene_selections.clear();
         let first_scene = first_scene_id(self.project.project());
         self.preview_scene.clone_from(&first_scene);
@@ -425,6 +453,7 @@ impl DesktopState {
     /// a project always retains the first-scene fallback established by
     /// [`Self::replace_project`].
     pub fn restore_scene_selection(&mut self, preview: Option<&str>, program: Option<&str>) {
+        self.active_transition = None;
         let (preview, program) = {
             let project = self.project.project();
             let preview = preview

@@ -9,6 +9,12 @@ pub const MAX_SHORTCUT_TEXT_BYTES: usize = 64;
 pub const MAX_SHORTCUT_BINDINGS: usize = 64;
 pub const MAX_CONSOLE_COMMAND_BYTES: usize = 256;
 pub const MAX_WEB_REQUEST_BYTES: usize = 64 * 1024;
+/// Smallest accepted scene-transition duration in milliseconds.
+pub const MIN_TRANSITION_DURATION_MILLIS: u32 = 1;
+/// Largest accepted scene-transition duration in milliseconds.
+pub const MAX_TRANSITION_DURATION_MILLIS: u32 = 60_000;
+/// Default scene-transition duration in milliseconds.
+pub const DEFAULT_TRANSITION_DURATION_MILLIS: u32 = 300;
 /// Maximum number of scene items a desktop canvas selection retains.
 ///
 /// Selection is transient UI state, but it still crosses frontend boundaries
@@ -32,7 +38,7 @@ pub use console::{parse_console_command, ConsoleCommand, ConsoleCommandError};
 pub use error::UiError;
 pub use state::DesktopState;
 pub use types::{
-    MixerChannel, ProjectSceneSelection, SceneView, Shortcut, UiAction, UiCommand, UiLocale,
-    UiNotice,
+    MixerChannel, ProjectSceneSelection, SceneView, Shortcut, TransitionSnapshot, UiAction,
+    UiCommand, UiLocale, UiNotice,
 };
 pub use web::{parse_web_request, WebRequestError, WebRoute};

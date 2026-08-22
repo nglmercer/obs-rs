@@ -2,7 +2,10 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_engine::OutputLifecycle;
 use obs_rs_media::{FrameTransition, RawVideoFrame, VideoFrame};
-use obs_rs_ui::{DesktopState, UiCommand};
+use obs_rs_ui::{
+    DesktopState, UiCommand, DEFAULT_TRANSITION_DURATION_MILLIS, MAX_TRANSITION_DURATION_MILLIS,
+    MIN_TRANSITION_DURATION_MILLIS,
+};
 use slint::{ComponentHandle, Weak};
 
 use crate::{
@@ -164,7 +167,13 @@ fn install_transition_callbacks(
     let cut_state = Rc::clone(state);
     let cut_surface = Rc::clone(surface);
     ui.on_cut_transition(move || {
-        take_transition_and_refresh(&weak, &cut_state, &cut_surface, FrameTransition::Cut);
+        take_transition_and_refresh(
+            &weak,
+            &cut_state,
+            &cut_surface,
+            FrameTransition::Cut,
+            DEFAULT_TRANSITION_DURATION_MILLIS,
+        );
     });
 
     let weak = ui.as_weak();
@@ -178,6 +187,36 @@ fn install_transition_callbacks(
             FrameTransition::CrossFade {
                 progress_milli: 500,
             },
+            DEFAULT_TRANSITION_DURATION_MILLIS,
+        );
+    });
+
+    let weak = ui.as_weak();
+    let duration_state = Rc::clone(state);
+    let duration_surface = Rc::clone(surface);
+    ui.on_fade_transition_duration(move |duration| {
+        let duration = match duration.trim().parse::<u32>() {
+            Ok(duration)
+                if (MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS)
+                    .contains(&duration) =>
+            {
+                duration
+            }
+            _ => {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_status_message("Transition duration must be 1–60000 ms".into());
+                }
+                return;
+            }
+        };
+        take_transition_and_refresh(
+            &weak,
+            &duration_state,
+            &duration_surface,
+            FrameTransition::CrossFade {
+                progress_milli: 500,
+            },
+            duration,
         );
     });
 }
@@ -187,6 +226,7 @@ pub(crate) fn take_transition_and_refresh(
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
     transition: FrameTransition,
+    duration_ms: u32,
 ) {
     let target = state.borrow().preview_scene().map(str::to_owned);
     if target.is_none() {
@@ -196,9 +236,10 @@ pub(crate) fn take_transition_and_refresh(
         return;
     }
     let result: Result<(), Box<dyn Error>> = (|| {
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::TakePreview { transition })?;
+        state.borrow_mut().dispatch(UiCommand::TakePreview {
+            transition,
+            duration_ms,
+        })?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {

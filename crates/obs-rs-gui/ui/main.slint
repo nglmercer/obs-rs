@@ -184,6 +184,7 @@ export component MainWindow inherits Window {
         callback save-replay-buffer();
         callback cut-transition();
         callback fade-transition();
+        callback fade-transition-duration(string);
         // Display-only menu labels. Runtime matching uses the typed table.
         in property <string> hotkey-undo;
         in property <string> hotkey-redo;
@@ -733,6 +734,7 @@ export component MainWindow inherits Window {
                 toggle-meters-paused() => { root.toggle-meters-paused(); }
                 cut-transition() => { root.cut-transition(); }
                 fade-transition() => { root.fade-transition(); }
+                fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
                 toggle-recording() => { root.request-recording(); }
                 toggle-streaming() => { root.request-streaming(); }
                 toggle-replay-buffer() => { root.toggle-replay-buffer(); }

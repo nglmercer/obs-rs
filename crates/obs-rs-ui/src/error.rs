@@ -34,6 +34,8 @@ pub enum UiError {
     StreamingNotActive,
     /// The scene transition is invalid.
     Media(MediaError),
+    /// A scene-transition duration is outside the supported range.
+    InvalidTransitionDuration(u32),
     /// An audio mixer operation failed.
     Audio(AudioError),
     /// A mixer channel ID is not present.
@@ -72,6 +74,10 @@ impl fmt::Display for UiError {
             Self::StreamingAlreadyActive => formatter.write_str("streaming is already active"),
             Self::StreamingNotActive => formatter.write_str("streaming is not active"),
             Self::Media(error) => error.fmt(formatter),
+            Self::InvalidTransitionDuration(duration_ms) => write!(
+                formatter,
+                "scene transition duration {duration_ms} ms is outside 1..=60000"
+            ),
             Self::Audio(error) => error.fmt(formatter),
             Self::UnknownMixerChannel(id) => write!(formatter, "mixer channel {id} does not exist"),
             Self::InvalidMixerGain(gain_milli) => {

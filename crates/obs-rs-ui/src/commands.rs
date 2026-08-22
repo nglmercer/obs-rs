@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use obs_rs_audio::{AudioFormat, AudioMixer};
 use obs_rs_audio::{MAX_GAIN_MILLI, MAX_PAN_MILLI, MIN_PAN_MILLI};
@@ -7,9 +8,9 @@ use obs_rs_media::FrameTransition;
 use super::{
     error::UiError,
     helpers::{first_scene_id, first_source_id, project_has_scene, project_has_source},
-    state::DesktopState,
-    types::{UiAction, UiCommand, UiNotice},
-    MAX_UI_NOTICES,
+    state::{ActiveTransition, DesktopState},
+    types::{TransitionSnapshot, UiAction, UiCommand, UiNotice},
+    MAX_TRANSITION_DURATION_MILLIS, MAX_UI_NOTICES, MIN_TRANSITION_DURATION_MILLIS,
 };
 
 impl DesktopState {
@@ -112,6 +113,7 @@ impl DesktopState {
         match action {
             UiAction::SwapPreviewProgram => {
                 std::mem::swap(&mut self.preview_scene, &mut self.program_scene);
+                self.active_transition = None;
                 Ok(())
             }
             UiAction::StartRecording => self.dispatch(UiCommand::StartRecording),
@@ -247,7 +249,12 @@ impl DesktopState {
     pub(crate) fn take_preview(
         &mut self,
         transition: FrameTransition,
+        duration_ms: u32,
     ) -> Result<&'static str, UiError> {
+        if !(MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS).contains(&duration_ms)
+        {
+            return Err(UiError::InvalidTransitionDuration(duration_ms));
+        }
         let preview = self
             .preview_scene
             .clone()
@@ -255,9 +262,61 @@ impl DesktopState {
                 kind: "preview scene",
                 id: "none".to_owned(),
             })?;
+        let source = self.program_scene.clone();
         self.set_transition(transition)?;
         self.program_scene = Some(preview);
+        self.active_transition = match (source, self.program_scene.clone(), transition) {
+            (Some(source_scene), Some(destination_scene), FrameTransition::Cut)
+                if source_scene != destination_scene =>
+            {
+                None
+            }
+            (Some(source_scene), Some(destination_scene), transition)
+                if source_scene != destination_scene =>
+            {
+                Some(ActiveTransition {
+                    source_scene,
+                    destination_scene,
+                    transition,
+                    started_at: Instant::now(),
+                    duration: Duration::from_millis(u64::from(duration_ms)),
+                })
+            }
+            _ => None,
+        };
         Ok("preview sent to program")
+    }
+
+    /// Returns the current renderer-facing transition sample, retiring it at
+    /// the exact duration boundary.
+    pub fn transition_snapshot(&mut self, now: Instant) -> Option<TransitionSnapshot> {
+        let active = self.active_transition.as_ref()?;
+        let elapsed = now.saturating_duration_since(active.started_at);
+        if elapsed >= active.duration {
+            self.active_transition = None;
+            return None;
+        }
+        let elapsed_nanos = elapsed.as_nanos();
+        let duration_nanos = active.duration.as_nanos().max(1);
+        let progress = elapsed_nanos
+            .saturating_mul(1_000)
+            .checked_div(duration_nanos)
+            .unwrap_or(1_000)
+            .min(999);
+        let progress_milli = u16::try_from(progress).unwrap_or(999);
+        let transition = match active.transition {
+            FrameTransition::Cut => return None,
+            FrameTransition::CrossFade { .. } => FrameTransition::CrossFade { progress_milli },
+            FrameTransition::FadeToColor { color, .. } => FrameTransition::FadeToColor {
+                progress_milli,
+                color,
+            },
+        };
+        Some(TransitionSnapshot::new(
+            active.source_scene.as_str(),
+            active.destination_scene.as_str(),
+            transition,
+        ))
     }
 
     pub(crate) fn toggle_mixer_mute(&mut self, id: &str) -> Result<&'static str, UiError> {

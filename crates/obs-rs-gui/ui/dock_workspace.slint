@@ -81,6 +81,7 @@ export component DockWorkspace inherits Rectangle {
     callback toggle-meters-paused();
     callback cut-transition();
     callback fade-transition();
+    callback fade-transition-duration(string);
     callback set-view-mode(int);
     callback toggle-recording();
     callback toggle-streaming();
@@ -278,6 +279,7 @@ export component DockWorkspace inherits Rectangle {
             toggle-meters-paused() => { root.toggle-meters-paused(); }
             cut-transition() => { root.cut-transition(); }
             fade-transition() => { root.fade-transition(); }
+            fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
             set-view-mode(mode) => { root.set-view-mode(mode); }
             toggle-recording() => { root.toggle-recording(); }
             toggle-streaming() => { root.toggle-streaming(); }

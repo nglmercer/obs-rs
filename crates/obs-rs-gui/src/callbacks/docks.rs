@@ -739,6 +739,11 @@ fn forward_to_studio(
     forward!(on_toggle_meters_paused, invoke_toggle_meters_paused);
     forward!(on_cut_transition, invoke_cut_transition);
     forward!(on_fade_transition, invoke_fade_transition);
+    forward!(
+        on_fade_transition_duration,
+        invoke_fade_transition_duration,
+        duration
+    );
     forward!(on_toggle_recording, invoke_toggle_recording);
     forward!(on_toggle_streaming, invoke_toggle_streaming);
     forward!(on_open_settings_window, invoke_open_settings_window);

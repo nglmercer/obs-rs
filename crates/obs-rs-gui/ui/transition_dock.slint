@@ -16,6 +16,7 @@ export component TransitionDock inherits Rectangle {
     callback close-panel(int);
     callback cut-transition();
     callback fade-transition();
+    callback fade-transition-duration(string);
     property <string> duration: "300";
 
     background: Palette.tokens.panel-bg;
@@ -44,7 +45,7 @@ export component TransitionDock inherits Rectangle {
                 Button {
                     text: I18n.text.fade;
                     height: 30px;
-                    clicked => fade-transition();
+                    clicked => fade-transition-duration(root.duration);
                 }
                 HorizontalBox {
                     spacing: 5px;

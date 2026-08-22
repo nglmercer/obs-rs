@@ -29,6 +29,51 @@ pub struct ProjectSceneSelection {
     program: Option<String>,
 }
 
+/// A transient scene transition that a renderer should display between two
+/// scene IDs. It is intentionally not part of the project document: the
+/// active transition is a live presentation effect and disappears at its
+/// duration boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransitionSnapshot {
+    source_scene: String,
+    destination_scene: String,
+    transition: FrameTransition,
+}
+
+impl TransitionSnapshot {
+    /// Creates a renderer-facing transition snapshot.
+    #[must_use]
+    pub fn new(
+        source_scene: impl Into<String>,
+        destination_scene: impl Into<String>,
+        transition: FrameTransition,
+    ) -> Self {
+        Self {
+            source_scene: source_scene.into(),
+            destination_scene: destination_scene.into(),
+            transition,
+        }
+    }
+
+    /// Returns the scene being transitioned away from.
+    #[must_use]
+    pub fn source_scene(&self) -> &str {
+        &self.source_scene
+    }
+
+    /// Returns the scene being transitioned to.
+    #[must_use]
+    pub fn destination_scene(&self) -> &str {
+        &self.destination_scene
+    }
+
+    /// Returns the bounded transition sample for this render tick.
+    #[must_use]
+    pub const fn transition(&self) -> FrameTransition {
+        self.transition
+    }
+}
+
 impl ProjectSceneSelection {
     /// Creates a snapshot from the document key, profile, and scene choices.
     #[must_use]
@@ -388,8 +433,11 @@ pub enum UiCommand {
     SetLocale { locale: UiLocale },
     /// Replace the current scene transition policy.
     SetTransition { transition: FrameTransition },
-    /// Send the selected preview scene to program using one transition.
-    TakePreview { transition: FrameTransition },
+    /// Send the selected preview scene to program using one bounded transition.
+    TakePreview {
+        transition: FrameTransition,
+        duration_ms: u32,
+    },
     /// Set one mixer channel's linear gain in thousandths.
     SetMixerGain { id: String, gain_milli: u16 },
     /// Set one mixer channel's stereo pan in thousandths (`-1000..1000`).

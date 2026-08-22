@@ -8,9 +8,7 @@ use std::{
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::{CompositorMetrics, Runtime, RuntimeLimits, RuntimeUsage, SourceId};
 use obs_rs_engine::compile_filter;
-#[cfg(test)]
-use obs_rs_media::FrameTransition;
-use obs_rs_media::{FrameScaler, FrameTransform, ScaleFilter};
+use obs_rs_media::{FrameScaler, FrameTransform, FrameTransition, ScaleFilter};
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::Plugin;
 use obs_rs_plugin_api::VideoRequest;
@@ -696,6 +694,62 @@ impl PreviewRenderer {
         )
     }
 
+    /// Renders one transition into the full program target.
+    pub(crate) fn render_transition(
+        &mut self,
+        source_scene: &str,
+        destination_scene: &str,
+        transition: FrameTransition,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        self.render_transition_target(
+            source_scene,
+            destination_scene,
+            RenderTarget::new(RenderTargetRole::Program, self.format),
+            transition,
+        )
+    }
+
+    /// Renders one transition into a bounded GUI program target.
+    pub(crate) fn render_transition_preview(
+        &mut self,
+        source_scene: &str,
+        destination_scene: &str,
+        format: VideoFormat,
+        transition: FrameTransition,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        self.render_transition_target(
+            source_scene,
+            destination_scene,
+            RenderTarget::new(RenderTargetRole::ProgramPreview, format),
+            transition,
+        )
+    }
+
+    fn render_transition_target(
+        &mut self,
+        source_scene: &str,
+        destination_scene: &str,
+        target: RenderTarget,
+        transition: FrameTransition,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        let source = self.render_target(source_scene, target)?;
+        let destination = self.render_target(destination_scene, target)?;
+        match (source, destination) {
+            (None, None) => Ok(None),
+            (source, destination) => {
+                let source = source.unwrap_or_else(|| {
+                    VideoFrame::solid(target.format(), self.timestamp, [0, 0, 0, 0])
+                });
+                let destination = destination.unwrap_or_else(|| {
+                    VideoFrame::solid(target.format(), self.timestamp, [0, 0, 0, 0])
+                });
+                VideoFrame::transitioned(&source, destination, transition)
+                    .map(Some)
+                    .map_err(Into::into)
+            }
+        }
+    }
+
     fn render_target(
         &mut self,
         scene: &str,
@@ -854,24 +908,6 @@ impl PreviewRenderer {
             .readback_nv12(target)
             .map(Some)
             .map_err(Into::into)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn render_transition(
-        &mut self,
-        source_scene: &str,
-        destination_scene: &str,
-        transition: FrameTransition,
-    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
-        let request = VideoRequest::new(self.timestamp, self.format);
-        let frame = self.runtime.render_scene_transition(
-            source_scene,
-            destination_scene,
-            &request,
-            transition,
-        )?;
-        self.advance_timestamp();
-        Ok(frame)
     }
 
     pub(crate) fn advance_timestamp(&mut self) {

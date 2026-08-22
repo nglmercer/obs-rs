@@ -174,12 +174,13 @@ pub(crate) fn start_preview_timer(
             return;
         };
         let callback_started = Instant::now();
-        let (revision, preview_scene, program_scene, output_active) = {
-            let state = state.borrow();
+        let (revision, preview_scene, program_scene, program_transition, output_active) = {
+            let mut state = state.borrow_mut();
             (
                 state.project_session().revision(),
                 state.preview_scene().map(str::to_owned),
                 state.program_scene().map(str::to_owned),
+                state.transition_snapshot(Instant::now()),
                 state.recording() || state.streaming(),
             )
         };
@@ -271,6 +272,7 @@ pub(crate) fn start_preview_timer(
                         program_scene: (output_active || demand.request_program_view)
                             .then_some(program_scene.as_deref())
                             .flatten(),
+                        program_transition,
                         program_preview_format: PreviewRenderer::preview_format_for_canvas(
                             profile.video_format(),
                         ),
