@@ -104,6 +104,12 @@ pub enum ProjectCommand {
         scene: String,
         name: String,
     },
+    /// Moves one scene to an existing position in the profile scene order.
+    MoveScene {
+        profile: String,
+        scene: String,
+        target_index: usize,
+    },
     /// Duplicates one source definition without attaching it to a scene.
     DuplicateSource { profile: String, source: String },
     /// Replaces one source's display name.
@@ -354,6 +360,11 @@ impl Project {
                     .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
                 scene.set_name(&name)
             }
+            ProjectCommand::MoveScene {
+                profile,
+                scene,
+                target_index,
+            } => move_scene(self, &profile, &scene, target_index),
             ProjectCommand::DuplicateSource { profile, source } => {
                 duplicate_source(self, &profile, &source)
             }
@@ -531,6 +542,20 @@ fn add_scene(project: &mut Project, profile: &str, scene: SceneSpec) -> Result<(
         validate_scene_item(profile, scene.id(), item, 0)?;
     }
     profile.add_scene(scene)
+}
+
+fn move_scene(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    target_index: usize,
+) -> Result<(), ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?
+        .move_scene(&scene_id, target_index)
 }
 
 fn duplicate_scene(

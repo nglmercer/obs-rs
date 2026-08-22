@@ -945,6 +945,7 @@ pub struct Profile {
     pub(crate) output_kind: OutputProfileKind,
     pub(crate) sources: BTreeMap<Identifier, SourceSpec>,
     pub(crate) scenes: BTreeMap<Identifier, SceneSpec>,
+    pub(crate) scene_order: Vec<Identifier>,
 }
 
 impl Profile {
@@ -965,6 +966,7 @@ impl Profile {
             output_kind: OutputProfileKind::ReferencePacket,
             sources: BTreeMap::new(),
             scenes: BTreeMap::new(),
+            scene_order: Vec::new(),
         })
     }
 
@@ -1110,6 +1112,7 @@ impl Profile {
         if self.scenes.contains_key(scene.id()) {
             return Err(ProjectError::DuplicateScene(scene.id().clone()));
         }
+        self.scene_order.push(scene.id().clone());
         self.scenes.insert(scene.id().clone(), scene);
         Ok(())
     }
@@ -1271,14 +1274,64 @@ impl Profile {
         if self.scene_in_use(id) {
             return Err(ProjectError::SceneInUse(id.clone()));
         }
-        self.scenes
+        let scene = self
+            .scenes
             .remove(id)
-            .ok_or_else(|| ProjectError::UnknownScene(id.clone()))
+            .ok_or_else(|| ProjectError::UnknownScene(id.clone()))?;
+        self.scene_order.retain(|scene_id| scene_id != id);
+        Ok(scene)
     }
 
-    /// Returns scenes in deterministic ID order.
+    /// Moves one scene to an existing position in the profile's scene order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::UnknownScene`] for an unknown scene ID or
+    /// [`ProjectError::InvalidSceneOrder`] for an out-of-range position.
+    pub fn move_scene(&mut self, id: &Identifier, target_index: usize) -> Result<(), ProjectError> {
+        let current_index = self
+            .scene_order
+            .iter()
+            .position(|scene_id| scene_id == id)
+            .ok_or_else(|| ProjectError::UnknownScene(id.clone()))?;
+        if target_index >= self.scene_order.len() {
+            return Err(ProjectError::InvalidSceneOrder {
+                index: target_index,
+            });
+        }
+        let scene_id = self.scene_order.remove(current_index);
+        self.scene_order.insert(target_index, scene_id);
+        Ok(())
+    }
+
+    /// Replaces the persisted scene order after validating every scene ID.
+    pub(crate) fn restore_scene_order(
+        &mut self,
+        order: Vec<Identifier>,
+    ) -> Result<(), ProjectError> {
+        if order.len() != self.scenes.len() {
+            return Err(ProjectError::InvalidSceneOrder { index: order.len() });
+        }
+        let mut seen = HashSet::with_capacity(order.len());
+        for (index, scene_id) in order.iter().enumerate() {
+            if !self.scenes.contains_key(scene_id) || !seen.insert(scene_id.clone()) {
+                return Err(ProjectError::InvalidSceneOrder { index });
+            }
+        }
+        self.scene_order = order;
+        Ok(())
+    }
+
+    /// Returns the persistent profile scene order as stable IDs.
+    pub fn scene_order(&self) -> impl Iterator<Item = &Identifier> {
+        self.scene_order.iter()
+    }
+
+    /// Returns scenes in their persistent user order.
     pub fn scenes(&self) -> impl Iterator<Item = &SceneSpec> {
-        self.scenes.values()
+        self.scene_order
+            .iter()
+            .filter_map(|scene_id| self.scenes.get(scene_id))
     }
 
     /// Returns a scene by ID.

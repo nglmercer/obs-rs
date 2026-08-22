@@ -676,10 +676,10 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
         Err(ProjectError::InvalidDocument { .. })
     ));
 
-    let future = encoded.replace(r#""version": 5"#, r#""version": 6"#);
+    let future = encoded.replace(r#""version": 6"#, r#""version": 7"#);
     let error = Project::parse(&future).expect_err("a newer schema is not guessed at");
     assert!(
-        format!("{error}").contains("unsupported project schema version 6"),
+        format!("{error}").contains("unsupported project schema version 7"),
         "{error}"
     );
 }
@@ -688,7 +688,7 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
 fn parser_reports_the_line_a_syntax_error_is_on() {
     let broken = project()
         .serialize()
-        .replace(r#""version": 5"#, r#""version": ?"#);
+        .replace(r#""version": 6"#, r#""version": ?"#);
 
     let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
     match error {
@@ -1354,6 +1354,92 @@ fn remove_scene_command_updates_project_without_partial_mutation() {
 }
 
 #[test]
+fn scene_order_command_is_persisted_and_rejects_invalid_destinations() {
+    let mut project = project();
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: SceneSpec::new("zulu", "Zulu").expect("scene"),
+        })
+        .expect("add zulu scene");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: SceneSpec::new("alpha", "Alpha").expect("scene"),
+        })
+        .expect("add alpha scene");
+
+    let scene_ids = |project: &Project| {
+        project
+            .profile("live")
+            .expect("profile")
+            .scenes()
+            .map(|scene| scene.id().as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(scene_ids(&project), vec!["main", "zulu", "alpha"]);
+
+    project
+        .apply(ProjectCommand::MoveScene {
+            profile: "live".to_owned(),
+            scene: "alpha".to_owned(),
+            target_index: 0,
+        })
+        .expect("move alpha scene");
+    assert_eq!(scene_ids(&project), vec!["alpha", "main", "zulu"]);
+
+    let before_invalid = project.clone();
+    assert_eq!(
+        project.apply(ProjectCommand::MoveScene {
+            profile: "live".to_owned(),
+            scene: "alpha".to_owned(),
+            target_index: 99,
+        }),
+        Err(ProjectError::InvalidSceneOrder { index: 99 })
+    );
+    assert_eq!(project, before_invalid);
+
+    let encoded = project.serialize();
+    assert!(encoded.contains(r#""scene_order": ["#), "{encoded}");
+    assert_eq!(Project::parse(&encoded).expect("ordered project"), project);
+}
+
+#[test]
+fn previous_schema_preserves_serialized_scene_array_order_without_scene_order_member() {
+    let mut project = project();
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: SceneSpec::new("zulu", "Zulu").expect("scene"),
+        })
+        .expect("add zulu scene");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: SceneSpec::new("alpha", "Alpha").expect("scene"),
+        })
+        .expect("add alpha scene");
+    let encoded = project.serialize();
+    let order_start = encoded.find("      \"scene_order\":").expect("scene order");
+    let order_end = encoded[order_start..]
+        .find("      ],\n")
+        .map(|offset| order_start + offset + "      ],\n".len())
+        .expect("scene order end");
+    let mut previous = encoded;
+    previous.replace_range(order_start..order_end, "");
+    previous = previous.replace(r#""version": 6"#, r#""version": 5"#);
+
+    let decoded = Project::parse(&previous).expect("version five project");
+    let scene_ids = decoded
+        .profile("live")
+        .expect("profile")
+        .scenes()
+        .map(|scene| scene.id().as_str().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(scene_ids, vec!["main", "zulu", "alpha"]);
+}
+
+#[test]
 fn parser_rejects_duplicate_records_and_preserves_plugin_filter_kinds() {
     // Two profile entries with the same id: the array preserves both, so the
     // duplicate is caught when the second one is attached.
@@ -1785,7 +1871,7 @@ fn version_one_scene_sources_migrate_to_registry_and_items() {
     assert_eq!(profile.source("camera").expect("source").filters().len(), 1);
 
     let encoded = migrated.serialize();
-    assert!(encoded.contains(r#""version": 5"#), "{encoded}");
+    assert!(encoded.contains(r#""version": 6"#), "{encoded}");
     assert!(encoded.contains(r#""items""#), "{encoded}");
     assert_eq!(
         Project::parse(&encoded).expect("new format parses"),

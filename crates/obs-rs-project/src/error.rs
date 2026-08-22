@@ -67,6 +67,8 @@ pub enum ProjectError {
     InvalidFilterOrder { index: usize },
     /// A scene-item move destination is outside the scene order.
     InvalidSceneItemOrder { index: usize },
+    /// A profile scene move or serialized scene order entry is invalid.
+    InvalidSceneOrder { index: usize },
     /// A source cannot be removed while a scene item references it.
     SourceInUse(Identifier),
 }
@@ -118,6 +120,9 @@ impl fmt::Display for ProjectError {
             }
             Self::InvalidSceneItemOrder { index } => {
                 write!(formatter, "scene item order index {index} is out of range")
+            }
+            Self::InvalidSceneOrder { index } => {
+                write!(formatter, "scene order index {index} is invalid")
             }
             Self::SourceInUse(id) => write!(formatter, "source {id} is still used by a scene"),
         }

@@ -4,9 +4,9 @@
 //! diffed, and merged with the same tools as any other configuration file.
 //! Two properties are load-bearing:
 //!
-//! * **Determinism.** Profiles, sources, and scenes live in `BTreeMap`s, while
-//!   scene items retain insertion order and settings serialize sorted, so saving
-//!   unchanged state twice produces byte-identical files.
+//! * **Determinism.** Profiles and sources live in `BTreeMap`s, while profile
+//!   scene order and scene items retain insertion order and settings serialize
+//!   sorted, so saving unchanged state twice produces byte-identical files.
 //! * **Explicit versioning.** Every document carries `format` and `version`
 //!   members, so a future schema change is a checked migration rather than a
 //!   silent misparse.
@@ -32,7 +32,9 @@ use crate::RenderBackendPreference;
 const FORMAT_TAG: &str = "obs-rs-project";
 
 /// Schema version this build writes.
-const FORMAT_VERSION: u32 = 5;
+const FORMAT_VERSION: u32 = 6;
+/// The previous format, which had no explicit scene-order member.
+const PREVIOUS_FORMAT_VERSION: u32 = 5;
 /// The format before group targets were persisted.
 const GROUP_FORMAT_VERSION: u32 = 4;
 /// The format before nested scene-item targets were persisted.
@@ -86,10 +88,11 @@ impl Project {
             Some(ROTATION_FORMAT_VERSION) => ROTATION_FORMAT_VERSION,
             Some(NESTED_SCENE_FORMAT_VERSION) => NESTED_SCENE_FORMAT_VERSION,
             Some(GROUP_FORMAT_VERSION) => GROUP_FORMAT_VERSION,
+            Some(PREVIOUS_FORMAT_VERSION) => PREVIOUS_FORMAT_VERSION,
             Some(FORMAT_VERSION) => FORMAT_VERSION,
             Some(version) => {
                 return Err(invalid(format!(
-                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {NESTED_SCENE_FORMAT_VERSION}, {GROUP_FORMAT_VERSION}, and {FORMAT_VERSION}"
+                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {NESTED_SCENE_FORMAT_VERSION}, {GROUP_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, and {FORMAT_VERSION}"
                 )))
             }
             None => return Err(invalid("missing or invalid `version`")),
@@ -143,7 +146,16 @@ fn encode_profile(profile: &Profile) -> Json {
         ),
         (
             "scenes",
-            Json::Array(profile.scenes.values().map(encode_scene).collect()),
+            Json::Array(profile.scenes().map(encode_scene).collect()),
+        ),
+        (
+            "scene_order",
+            Json::Array(
+                profile
+                    .scene_order()
+                    .map(|scene_id| Json::string(scene_id.as_str()))
+                    .collect(),
+            ),
         ),
     ])
 }
@@ -299,6 +311,22 @@ fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectErro
     }
     for scene in array_member(value, "scenes")? {
         profile.add_scene(decode_scene(scene, &profile)?)?;
+    }
+    if let Some(scene_order) = value.get("scene_order") {
+        let scene_order = scene_order
+            .as_array()
+            .ok_or_else(|| invalid("`scene_order` must be an array"))?;
+        let scene_order = scene_order
+            .iter()
+            .enumerate()
+            .map(|(index, scene_id)| {
+                let scene_id = scene_id
+                    .as_str()
+                    .ok_or_else(|| invalid(format!("scene order entry {index} is not a string")))?;
+                identifier(scene_id, "scene id")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        profile.restore_scene_order(scene_order)?;
     }
     validate_scene_references(&profile)?;
     project.add_profile(profile)

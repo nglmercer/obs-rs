@@ -43,6 +43,7 @@ export component DockSlot inherits Rectangle {
     callback select-preview(string);
     callback select-program(string);
     callback duplicate-scene(string);
+    callback move-scene(string, int);
     callback remove-scene(string);
     callback select-source(string);
     callback open-properties(string);
@@ -94,6 +95,7 @@ export component DockSlot inherits Rectangle {
         select-preview(id) => { root.select-preview(id); }
         select-program(id) => { root.select-program(id); }
         duplicate-scene(id) => { root.duplicate-scene(id); }
+        move-scene(id, delta) => { root.move-scene(id, delta); }
         remove-scene(id) => { root.remove-scene(id); }
     }
     if panel-kind == 1 : SourceDock {

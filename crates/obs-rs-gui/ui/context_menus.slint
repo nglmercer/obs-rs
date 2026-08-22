@@ -229,6 +229,7 @@ export component SceneContextMenuArea inherits Rectangle {
     callback add-scene();
     callback duplicate-scene(string);
     callback rename-scene(string);
+    callback move-scene(string, int);
     callback remove-scene(string);
 
     public function show-at(position: Point) {
@@ -258,6 +259,22 @@ export component SceneContextMenuArea inherits Rectangle {
                 activated => {
                     root.select-scene(root.scene-id);
                     root.rename-scene(root.scene-id);
+                }
+            }
+            MenuItem {
+                title: I18n.text.scene_move_up;
+                enabled: root.scene-id != "";
+                activated => {
+                    root.select-scene(root.scene-id);
+                    root.move-scene(root.scene-id, -1);
+                }
+            }
+            MenuItem {
+                title: I18n.text.scene_move_down;
+                enabled: root.scene-id != "";
+                activated => {
+                    root.select-scene(root.scene-id);
+                    root.move-scene(root.scene-id, 1);
                 }
             }
             MenuSeparator {}

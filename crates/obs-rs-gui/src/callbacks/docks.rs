@@ -708,6 +708,7 @@ fn forward_to_studio(
     forward!(on_select_preview, invoke_select_preview, id);
     forward!(on_select_program, invoke_select_program, id);
     forward!(on_duplicate_scene, invoke_duplicate_scene, id);
+    forward!(on_move_scene, invoke_move_scene, id, delta);
     forward!(on_remove_scene, invoke_remove_scene, id);
     forward!(on_select_source, invoke_select_source, id);
     forward!(on_open_properties, invoke_open_source_properties_for, id);

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use obs_rs_project::SceneItemDuplicateMode;
+use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::ComponentHandle;
 
@@ -79,6 +79,13 @@ fn install_scene_selection_callbacks(
     });
 
     let weak = ui.as_weak();
+    let move_state = Rc::clone(state);
+    let move_surface = Rc::clone(surface);
+    ui.on_move_scene(move |id, delta| {
+        move_scene_and_refresh(&weak, &move_state, &move_surface, id.as_str(), delta);
+    });
+
+    let weak = ui.as_weak();
     let rename_state = Rc::clone(state);
     let rename_surface = Rc::clone(surface);
     ui.on_rename_scene(move || {
@@ -124,6 +131,46 @@ fn install_scene_selection_callbacks(
             UiCommand::SetLocale { locale },
         );
     });
+}
+
+fn move_scene_and_refresh(
+    weak: &slint::Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    scene_id: &str,
+    delta: i32,
+) {
+    let result = (|| {
+        let state = state.borrow();
+        let profile = state.project_session().project().active_profile_spec()?;
+        let scenes = profile.scenes().collect::<Vec<_>>();
+        let current_index = scenes
+            .iter()
+            .position(|scene| scene.id().as_str() == scene_id)?;
+        let magnitude = usize::try_from(delta.unsigned_abs()).unwrap_or(usize::MAX);
+        let target_index = if delta < 0 {
+            current_index.saturating_sub(magnitude)
+        } else {
+            current_index.saturating_add(magnitude)
+        };
+        if target_index >= scenes.len() || target_index == current_index {
+            return None;
+        }
+        Some((profile.id().to_string(), target_index))
+    })();
+    let Some((profile, target_index)) = result else {
+        return;
+    };
+    dispatch_and_refresh(
+        weak,
+        state,
+        surface,
+        UiCommand::Project(ProjectCommand::MoveScene {
+            profile,
+            scene: scene_id.to_owned(),
+            target_index,
+        }),
+    );
 }
 
 #[allow(

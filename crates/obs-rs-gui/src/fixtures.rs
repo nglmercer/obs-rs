@@ -68,9 +68,9 @@ pub(crate) fn initial_project() -> Result<Project, Box<dyn Error>> {
     profile.add_source(program_source)?;
     profile.add_source(intermission_source)?;
     profile.add_source(pattern)?;
+    profile.add_scene(intermission)?;
     profile.add_scene(preview)?;
     profile.add_scene(program)?;
-    profile.add_scene(intermission)?;
     project.add_profile(profile)?;
     Ok(project)
 }

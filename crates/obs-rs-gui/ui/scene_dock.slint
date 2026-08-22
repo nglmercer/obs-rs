@@ -21,6 +21,7 @@ export component SceneDock inherits Rectangle {
     callback select-preview(string);
     callback select-program(string);
     callback duplicate-scene(string);
+    callback move-scene(string, int);
     callback remove-scene(string);
 
     background: Palette.tokens.panel-bg;
@@ -60,6 +61,7 @@ export component SceneDock inherits Rectangle {
                         add-scene() => { root.open-modal(2); }
                         duplicate-scene(id) => { root.select-preview(id); root.duplicate-scene(id); }
                         rename-scene(id) => { root.select-preview(id); root.open-modal(5); }
+                        move-scene(id, delta) => { root.select-preview(id); root.move-scene(id, delta); }
                         remove-scene(id) => { root.select-preview(id); root.remove-scene(id); }
                         background: scene.role != "" ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
                         border-width: 1px;
