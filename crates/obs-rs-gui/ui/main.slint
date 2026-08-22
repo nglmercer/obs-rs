@@ -59,6 +59,9 @@ export component MainWindow inherits Window {
         in property <image> preview-image;
         in property <image> program-image;
         in property <image> multiview-image;
+        in property <string> multiview-status;
+        in property <string> multiview-metrics;
+        in property <float> multiview-audio-db: -60.0;
         // Transient canvas viewport state is owned by the Rust canvas
         // controller; this property only presents its current zoom choice.
         in property <int> canvas-zoom: 0;
@@ -573,6 +576,9 @@ export component MainWindow inherits Window {
                 program-image: root.program-image;
                 multiview-image: root.multiview-image;
                 multiview-scenes: root.multiview-scenes;
+                multiview-status: root.multiview-status;
+                multiview-metrics: root.multiview-metrics;
+                multiview-audio-db: root.multiview-audio-db;
                 canvas-zoom: root.canvas-zoom;
                 canvas-pan-x: root.canvas-pan-x;
                 canvas-pan-y: root.canvas-pan-y;

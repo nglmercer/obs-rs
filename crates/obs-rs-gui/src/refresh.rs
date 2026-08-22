@@ -273,8 +273,14 @@ const fn nanos_to_micros(nanos: u64) -> u64 {
 
 pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {
     let output = output.borrow();
-    ui.set_output_status(output.output_status().into());
-    ui.set_output_metrics(output.output_metrics().into());
+    let status = output.output_status();
+    let metrics = output.output_metrics();
+    let multiview = output.multiview_telemetry();
+    ui.set_output_status(status.clone().into());
+    ui.set_output_metrics(metrics.into());
+    ui.set_multiview_status(status.into());
+    ui.set_multiview_metrics(multiview.metrics.into());
+    ui.set_multiview_audio_db(peak_db(multiview.audio_peak_milli));
     ui.set_recording_elapsed(output.recording_elapsed().into());
 }
 

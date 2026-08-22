@@ -30,6 +30,17 @@ pub(crate) struct AudioInputEntry {
     pub(crate) available: bool,
 }
 
+/// Bounded telemetry projected into the multiview overlay.
+///
+/// The preview worker does not inspect output state and the UI does not read
+/// the engine snapshot directly. Keeping this projection at the output
+/// boundary prevents a second status source while allowing the multiview to
+/// show operator-facing health without opening another runtime.
+pub(crate) struct MultiviewTelemetry {
+    pub(crate) metrics: String,
+    pub(crate) audio_peak_milli: u16,
+}
+
 /// GUI-owned handle over the portable engine output boundary.
 pub(crate) struct OutputRuntime {
     worker: EngineWorker,
@@ -652,6 +663,22 @@ impl OutputRuntime {
             self.unscalable_drops,
             engine.stats.audio_peak_milli
         )
+    }
+
+    /// Returns the small, bounded telemetry slice needed by multiview.
+    pub(crate) fn multiview_telemetry(&self) -> MultiviewTelemetry {
+        let snapshot = self.worker.snapshot();
+        let engine = snapshot.engine;
+        MultiviewTelemetry {
+            metrics: format!(
+                "frames={} · dropped={} · audio blocks={} · queued={} B",
+                engine.stats.video_frames,
+                snapshot.dropped_frames,
+                engine.stats.audio_blocks,
+                engine.stream_queued_bytes,
+            ),
+            audio_peak_milli: engine.stats.audio_peak_milli,
+        }
     }
 
     /// Returns the live recording duration in the status-bar format.

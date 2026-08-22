@@ -65,6 +65,21 @@ fn output_runtime_exposes_backend_protocol_capabilities() {
 }
 
 #[test]
+fn output_runtime_projects_bounded_multiview_telemetry() {
+    let format = initial_project()
+        .expect("project")
+        .active_profile_spec()
+        .expect("profile")
+        .video_format();
+    let output = OutputRuntime::new(format);
+    let telemetry = output.multiview_telemetry();
+    assert_eq!(telemetry.audio_peak_milli, 0);
+    assert!(telemetry.metrics.contains("frames=0"));
+    assert!(telemetry.metrics.contains("dropped=0"));
+    assert!(telemetry.metrics.contains("queued=0 B"));
+}
+
+#[test]
 fn gui_project_has_control_room_scenes() {
     let project = initial_project().expect("initial GUI project should validate");
     let profile = project
@@ -1086,8 +1101,18 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(after_nudge.translate_x(), before_nudge.translate_x() + 3);
     assert_eq!(after_nudge.translate_y(), before_nudge.translate_y() - 2);
     refresh_ui(&ui, &state, &surface);
+    ui.set_view_mode(2);
+    ui.set_multiview_status("Output: recording idle · stream idle".into());
+    ui.set_multiview_metrics("frames=12 · dropped=1 · audio blocks=24 · queued=0 B".into());
+    ui.set_multiview_audio_db(-12.0);
     ui.set_show_safe_areas(true);
     ui.show().expect("testing window should show");
+    let multiview_snapshot = ui
+        .window()
+        .take_snapshot()
+        .expect("multiview overlay should render");
+    assert!(multiview_snapshot.width() > 0 && multiview_snapshot.height() > 0);
+    ui.set_view_mode(1);
     exercise_navbar_popup(&ui);
     ui.set_pending_discard(5);
     let discard_snapshot = ui

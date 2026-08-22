@@ -135,6 +135,9 @@ component StageCanvas inherits Rectangle {
 component MultiviewCanvas inherits Rectangle {
     in property <image> frame;
     in property <[MultiviewScene]> scenes;
+    in property <string> status;
+    in property <string> metrics;
+    in property <float> audio-db: -60.0;
     callback select-preview(string);
     callback select-program(string);
 
@@ -187,6 +190,67 @@ component MultiviewCanvas inherits Rectangle {
             double-clicked => root.select-program(scene.id);
         }
     }
+
+    // Output/audio telemetry is projected once for the whole multiview. It
+    // updates at the existing 100 ms status cadence and never opens a second
+    // engine or creates per-tile media work.
+    Rectangle {
+        x: 0px;
+        y: root.height - 44px;
+        width: root.width;
+        height: 44px;
+        background: rgb(2, 6, 23, 225);
+
+        Text {
+            x: 8px;
+            y: 3px;
+            width: parent.width - 16px;
+            height: 13px;
+            text: root.status;
+            color: Palette.tokens.text;
+            font-size: 9px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 8px;
+            y: 16px;
+            width: parent.width - 16px;
+            height: 12px;
+            text: root.metrics;
+            color: Palette.tokens.text-muted;
+            font-size: 8px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Rectangle {
+            x: 8px;
+            y: 32px;
+            width: Math.max(80px, parent.width - 100px);
+            height: 6px;
+            background: Palette.tokens.meter-muted;
+            border-radius: 2px;
+            Rectangle {
+                width: Math.clamp((root.audio-db + 60) / 60, 0, 1) * parent.width;
+                height: parent.height;
+                background: root.audio-db > -6
+                    ? #ef4444
+                    : (root.audio-db > -18 ? #eab308 : Palette.tokens.meter);
+                border-radius: 2px;
+            }
+        }
+        Text {
+            x: parent.width - 86px;
+            y: 27px;
+            width: 78px;
+            height: 14px;
+            text: I18n.text.multiview_audio + " " + (round(root.audio-db * 10) / 10) + " dB";
+            color: root.audio-db > -6 ? #ef4444 : Palette.tokens.text-muted;
+            font-size: 8px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
 }
 
 // Canvas area, zoom strip, and source toolbar, stacked the way OBS stacks them
@@ -199,6 +263,9 @@ export component StagePanel inherits Rectangle {
     in property <image> program-image;
     in property <image> multiview-image;
     in property <[MultiviewScene]> multiview-scenes;
+    in property <string> multiview-status;
+    in property <string> multiview-metrics;
+    in property <float> multiview-audio-db: -60.0;
     in property <int> view-mode;
     in property <int> canvas-zoom: 0;
     in property <int> canvas-pan-x: 0;
@@ -307,6 +374,9 @@ export component StagePanel inherits Rectangle {
                 if view-mode == 2 : MultiviewCanvas {
                     frame: root.multiview-image;
                     scenes: root.multiview-scenes;
+                    status: root.multiview-status;
+                    metrics: root.multiview-metrics;
+                    audio-db: root.multiview-audio-db;
                     select-preview(id) => { root.multiview-select-preview(id); }
                     select-program(id) => { root.multiview-select-program(id); }
                 }
