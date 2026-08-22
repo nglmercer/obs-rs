@@ -306,6 +306,7 @@ pub(crate) struct AppSettings {
     pub(crate) hotkey_redo: String,
     pub(crate) hotkey_save_project: String,
     pub(crate) hotkey_fade_transition: String,
+    pub(crate) hotkey_save_replay: String,
     pub(crate) preview_border_color: String,
     pub(crate) program_border_color: String,
     pub(crate) project_path: String,
@@ -626,6 +627,7 @@ impl Default for AppSettings {
             hotkey_redo: "Ctrl+Y".to_owned(),
             hotkey_save_project: "Ctrl+S".to_owned(),
             hotkey_fade_transition: "Ctrl+Shift+F".to_owned(),
+            hotkey_save_replay: "F8".to_owned(),
             preview_border_color: "#60A5FA".to_owned(),
             program_border_color: "#F87171".to_owned(),
             project_path: user_file(PROJECT_FILE),
@@ -896,6 +898,7 @@ impl AppSettings {
                 "hotkey_fade_transition",
                 &defaults.hotkey_fade_transition,
             ),
+            hotkey_save_replay: hotkey(config, "hotkey_save_replay", &defaults.hotkey_save_replay),
             preview_border_color: colour_text(
                 config,
                 "preview_border_color",
@@ -1031,6 +1034,7 @@ impl AppSettings {
                 "hotkey_fade_transition",
                 self.hotkey_fade_transition.clone(),
             ),
+            ("hotkey_save_replay", self.hotkey_save_replay.clone()),
             ("preview_border_color", self.preview_border_color.clone()),
             ("program_border_color", self.program_border_color.clone()),
             ("project_path", self.project_path.clone()),
@@ -1755,6 +1759,10 @@ pub(crate) fn shortcut_bindings(
             settings.hotkey_fade_transition.as_str(),
             UiAction::FadeTransition,
         ),
+        (
+            settings.hotkey_save_replay.as_str(),
+            UiAction::SaveReplayBuffer,
+        ),
     ];
     let mut bindings = Vec::with_capacity(values.len());
     for (text, action) in values {
@@ -1782,6 +1790,7 @@ pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
         settings.hotkey_redo.as_str(),
         settings.hotkey_save_project.as_str(),
         settings.hotkey_fade_transition.as_str(),
+        settings.hotkey_save_replay.as_str(),
     ];
     let mut counts = BTreeMap::new();
     for value in values {
@@ -2111,6 +2120,7 @@ mod tests {
             hotkey_redo: "Alt+Y".to_owned(),
             hotkey_save_project: "Alt+S".to_owned(),
             hotkey_fade_transition: "Alt+F".to_owned(),
+            hotkey_save_replay: "Alt+R".to_owned(),
             preview_border_color: "#00FF88".to_owned(),
             last_preview_scene: "source_scene".to_owned(),
             last_program_scene: "program".to_owned(),
@@ -2213,6 +2223,7 @@ mod tests {
             hotkey_redo: String::new(),
             hotkey_save_project: "CTRL+R".to_owned(),
             hotkey_fade_transition: String::new(),
+            hotkey_save_replay: String::new(),
             ..AppSettings::default()
         };
 

@@ -167,6 +167,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> hotkey-redo;
     in-out property <string> hotkey-save-project;
     in-out property <string> hotkey-fade-transition;
+    in-out property <string> hotkey-save-replay;
     in-out property <string> hotkeys-conflict;
     // Accessibility
     in-out property <string> preview-border-color;
@@ -523,6 +524,7 @@ export component SettingsWindow inherits Window {
                         hotkey-redo <=> root.hotkey-redo;
                         hotkey-save-project <=> root.hotkey-save-project;
                         hotkey-fade-transition <=> root.hotkey-fade-transition;
+                        hotkey-save-replay <=> root.hotkey-save-replay;
                         conflict-warning: root.hotkeys-conflict;
                         changed => { root.dirty = true; }
                     }

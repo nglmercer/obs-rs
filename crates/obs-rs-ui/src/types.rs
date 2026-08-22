@@ -192,6 +192,8 @@ pub enum UiAction {
     SaveProject,
     /// Start a cross-fade through the frontend's transition/output boundary.
     FadeTransition,
+    /// Save the active replay buffer through the frontend's output boundary.
+    SaveReplayBuffer,
 }
 
 /// A validated, sortable keyboard shortcut description.

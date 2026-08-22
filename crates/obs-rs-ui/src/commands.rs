@@ -120,7 +120,7 @@ impl DesktopState {
             UiAction::StopStreaming => self.dispatch(UiCommand::StopStreaming),
             UiAction::Undo => self.dispatch(UiCommand::Undo),
             UiAction::Redo => self.dispatch(UiCommand::Redo),
-            UiAction::SaveProject | UiAction::FadeTransition => {
+            UiAction::SaveProject | UiAction::FadeTransition | UiAction::SaveReplayBuffer => {
                 Err(UiError::FrontendActionRequired(action))
             }
         }

@@ -402,6 +402,23 @@ fn shortcut_table_replaces_atomically_and_routes_frontend_actions() {
 }
 
 #[test]
+fn save_replay_shortcut_is_a_frontend_action() {
+    let mut state = DesktopState::new(project());
+    let shortcut = Shortcut::new(0, "F8").expect("replay shortcut");
+    state
+        .replace_shortcuts(&[(shortcut.clone(), UiAction::SaveReplayBuffer)])
+        .expect("replay shortcut table");
+    assert_eq!(
+        state.shortcut_action(&shortcut),
+        Some(UiAction::SaveReplayBuffer)
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::TriggerShortcut { shortcut }),
+        Err(UiError::FrontendActionRequired(UiAction::SaveReplayBuffer))
+    );
+}
+
+#[test]
 fn shortcut_text_is_bounded_and_canonical() {
     let shortcut = Shortcut::parse(" option + shift + f9 ")
         .expect("shortcut syntax")

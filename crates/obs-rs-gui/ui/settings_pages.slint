@@ -714,6 +714,7 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-redo;
     in-out property <string> hotkey-save-project;
     in-out property <string> hotkey-fade-transition;
+    in-out property <string> hotkey-save-replay;
     in property <string> conflict-warning;
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -789,6 +790,14 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-fade-transition;
                 placeholder-text: "Ctrl+Shift+F";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_save_replay;
+            SettingsField {
+                text <=> root.hotkey-save-replay;
+                placeholder-text: "F8";
                 edited => { root.changed(); }
             }
         }
