@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::Instant,
 };
 
@@ -24,6 +25,203 @@ pub enum NativeOutputState {
     Retrying,
     Failed,
     Closed,
+}
+
+/// Remuxes the native H.264/AAC Matroska recording into MP4 without decoding
+/// or re-encoding either stream.
+///
+/// The operation is intentionally a control-plane function. It streams through
+/// bounded `GStreamer` elements, writes a hidden destination, waits for EOS, and
+/// publishes the destination only after a non-empty file exists. The caller
+/// must keep it off the UI, capture, audio, and render threads.
+///
+/// # Errors
+///
+/// Returns a typed endpoint, `GStreamer`, or filesystem error when the source
+/// is invalid, the pipeline fails, or the destination cannot be published.
+#[allow(
+    clippy::too_many_lines,
+    reason = "native remux setup and teardown must keep the bounded pipeline lifecycle together"
+)]
+pub fn remux_matroska_to_mp4(
+    source_path: impl AsRef<Path>,
+    final_path: impl Into<PathBuf>,
+) -> Result<usize, GStreamerError> {
+    gst::init().map_err(native_error)?;
+    let source_path = source_path.as_ref();
+    let final_path = final_path.into();
+    if source_path == final_path {
+        return Err(GStreamerError::InvalidEndpoint(
+            "remux source and destination must differ".to_owned(),
+        ));
+    }
+    if !source_path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mkv"))
+    {
+        return Err(GStreamerError::InvalidEndpoint(
+            "remux source must use the .mkv extension".to_owned(),
+        ));
+    }
+    if !final_path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"))
+    {
+        return Err(GStreamerError::InvalidEndpoint(
+            "remux destination must use the .mp4 extension".to_owned(),
+        ));
+    }
+    let source = source_path
+        .to_str()
+        .ok_or_else(|| GStreamerError::InvalidEndpoint("remux source is not UTF-8".to_owned()))?;
+    let source_bytes = fs::metadata(source_path)
+        .map_err(|error| GStreamerError::Native(format!("inspect remux source: {error}")))?
+        .len();
+    if source_bytes == 0 {
+        return Err(GStreamerError::Native(
+            "refusing to remux an empty Matroska source".to_owned(),
+        ));
+    }
+    let temporary_path = final_path.with_extension("mp4.part");
+    recover_stale_recording_artifact(Some(&temporary_path))?;
+    let temporary = temporary_path.to_str().ok_or_else(|| {
+        GStreamerError::InvalidEndpoint("remux destination is not UTF-8".to_owned())
+    })?;
+
+    let source_element = gst::ElementFactory::make("filesrc")
+        .property("location", source)
+        .build()
+        .map_err(native_error)?;
+    let demuxer = gst::ElementFactory::make("matroskademux")
+        .build()
+        .map_err(native_error)?;
+    let video_queue = gst::ElementFactory::make("queue")
+        .property("max-size-buffers", 16_u32)
+        .property("max-size-bytes", 4_194_304_u32)
+        .build()
+        .map_err(native_error)?;
+    let audio_queue = gst::ElementFactory::make("queue")
+        .property("max-size-buffers", 16_u32)
+        .property("max-size-bytes", 4_194_304_u32)
+        .build()
+        .map_err(native_error)?;
+    let video_parser = gst::ElementFactory::make("h264parse")
+        .build()
+        .map_err(native_error)?;
+    let audio_parser = gst::ElementFactory::make("aacparse")
+        .build()
+        .map_err(native_error)?;
+    let muxer = gst::ElementFactory::make("mp4mux")
+        .property("faststart", true)
+        .build()
+        .map_err(native_error)?;
+    let sink = gst::ElementFactory::make("filesink")
+        .property("location", temporary)
+        .build()
+        .map_err(native_error)?;
+    let pipeline = gst::Pipeline::new();
+    pipeline
+        .add_many([
+            &source_element,
+            &demuxer,
+            &video_queue,
+            &audio_queue,
+            &video_parser,
+            &audio_parser,
+            &muxer,
+            &sink,
+        ])
+        .map_err(native_error)?;
+    gst::Element::link_many([&source_element, &demuxer]).map_err(native_error)?;
+    gst::Element::link_many([&video_queue, &video_parser]).map_err(native_error)?;
+    gst::Element::link_many([&audio_queue, &audio_parser]).map_err(native_error)?;
+
+    let video_mux_pad = muxer
+        .request_pad_simple("video_%u")
+        .ok_or_else(|| GStreamerError::Native("MP4 video pad is unavailable".to_owned()))?;
+    let audio_mux_pad = muxer
+        .request_pad_simple("audio_%u")
+        .ok_or_else(|| GStreamerError::Native("MP4 audio pad is unavailable".to_owned()))?;
+    video_parser
+        .static_pad("src")
+        .ok_or_else(|| GStreamerError::Native("H.264 parser source pad is unavailable".to_owned()))?
+        .link(&video_mux_pad)
+        .map_err(native_error)?;
+    audio_parser
+        .static_pad("src")
+        .ok_or_else(|| GStreamerError::Native("AAC parser source pad is unavailable".to_owned()))?
+        .link(&audio_mux_pad)
+        .map_err(native_error)?;
+    gst::Element::link_many([&muxer, &sink]).map_err(native_error)?;
+
+    let link_error = Arc::new(Mutex::new(None::<String>));
+    let link_error_for_callback = Arc::clone(&link_error);
+    let video_sink = video_queue.static_pad("sink").ok_or_else(|| {
+        GStreamerError::Native("remux video queue sink pad is unavailable".to_owned())
+    })?;
+    let audio_sink = audio_queue.static_pad("sink").ok_or_else(|| {
+        GStreamerError::Native("remux audio queue sink pad is unavailable".to_owned())
+    })?;
+    demuxer.connect_pad_added(move |_demuxer, source_pad| {
+        let caps = source_pad
+            .current_caps()
+            .unwrap_or_else(|| source_pad.query_caps(None));
+        let Some(structure) = caps.structure(0) else {
+            return;
+        };
+        let sink_pad = match structure.name().as_str() {
+            "video/x-h264" if !video_sink.is_linked() => &video_sink,
+            "audio/mpeg" if !audio_sink.is_linked() => &audio_sink,
+            _ => return,
+        };
+        if let Err(error) = source_pad.link(sink_pad) {
+            if let Ok(mut link_error) = link_error_for_callback.lock() {
+                *link_error = Some(error.to_string());
+            }
+        }
+    });
+
+    pipeline
+        .set_state(gst::State::Playing)
+        .map_err(native_error)?;
+    let bus = pipeline
+        .bus()
+        .ok_or_else(|| GStreamerError::Native("remux pipeline has no bus".to_owned()))?;
+    let message = bus.timed_pop_filtered(
+        gst::ClockTime::from_seconds(60 * 60),
+        &[gst::MessageType::Eos, gst::MessageType::Error],
+    );
+    let pipeline_result = match message.as_ref().map(|message| message.view()) {
+        Some(gst::MessageView::Eos(_)) => Ok(()),
+        Some(gst::MessageView::Error(error)) => Err(GStreamerError::Native(format!(
+            "remux pipeline reported an error: {}",
+            error.error()
+        ))),
+        _ => Err(GStreamerError::Native(
+            "remux pipeline timed out".to_owned(),
+        )),
+    };
+    let state_result = pipeline.set_state(gst::State::Null).map_err(native_error);
+    if let Err(error) = pipeline_result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+    state_result?;
+    if let Ok(link_error) = link_error.lock() {
+        if let Some(error) = link_error.as_ref() {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(GStreamerError::Native(format!(
+                "remux stream link failed: {error}"
+            )));
+        }
+    }
+    match publish_recording_artifact(&temporary_path, &final_path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary_path);
+            Err(error)
+        }
+    }
 }
 
 /// Timestamp, queue/drop, reconnect, drift, keyframe, and submit timing data.
@@ -1662,6 +1860,76 @@ mod tests {
             let _ = std::fs::remove_file(final_path);
         }
         assert!(published >= 2, "expected muxer rollover, got {published}");
+    }
+
+    #[test]
+    fn native_matroska_remux_publishes_mp4_without_replacing_existing_output() {
+        gst::init().expect("GStreamer runtime");
+        if [
+            "matroskamux",
+            "matroskademux",
+            "mp4mux",
+            "h264parse",
+            "aacparse",
+            "queue",
+            "openh264enc",
+            "avenc_aac",
+            "filesrc",
+            "filesink",
+        ]
+        .iter()
+        .any(|element| gst::ElementFactory::find(element).is_none())
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let source = std::env::temp_dir().join(format!("obs-rs-remux-source-{token}.mkv"));
+        let destination =
+            std::env::temp_dir().join(format!("obs-rs-remux-destination-{token}.mp4"));
+        let temporary = destination.with_extension("mp4.part");
+        let plan = plan(OutputProfile::matroska_h264_aac());
+        let video = VideoFormat::new(
+            64,
+            64,
+            obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+        )
+        .expect("video format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let source_destination = ProductionDestination::Recording(source.clone());
+        let mut session = GStreamerOutputSession::start(&plan, &source_destination, video, audio)
+            .expect("Matroska source session");
+        for index in 0_u64..60 {
+            let timestamp = Timestamp::from_nanos(index * 1_000_000_000 / 30);
+            session
+                .push_video(VideoFrame::solid(video, timestamp, [24, 96, 180, 255]))
+                .expect("video submission");
+            session
+                .push_audio(AudioBuffer::silence(audio, timestamp, 1_600).expect("silence"))
+                .expect("audio submission");
+        }
+        session.close().expect("Matroska source close");
+        assert!(source.is_file());
+
+        let bytes = remux_matroska_to_mp4(&source, &destination).expect("remux Matroska");
+        let persisted = std::fs::read(&destination).expect("read remuxed MP4");
+        assert_eq!(persisted.len(), bytes);
+        assert_eq!(persisted.get(4..8), Some(&b"ftyp"[..]));
+        assert!(!temporary.exists());
+
+        let existing = persisted.clone();
+        let error = remux_matroska_to_mp4(&source, &destination)
+            .expect_err("remux must not replace an existing destination");
+        assert!(error.to_string().contains("without replacing"));
+        assert_eq!(
+            std::fs::read(&destination).expect("read preserved MP4"),
+            existing
+        );
+        assert!(!temporary.exists());
+        std::fs::remove_file(source).expect("remove Matroska source");
+        std::fs::remove_file(destination).expect("remove remuxed MP4");
     }
 
     #[test]

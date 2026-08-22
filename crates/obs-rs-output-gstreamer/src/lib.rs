@@ -264,6 +264,7 @@ pub struct OutputCapabilitiesSnapshot {
     recording_codecs: Vec<VideoCodec>,
     recording_formats: Vec<OutputProfileKind>,
     segmented_recording: bool,
+    remux: bool,
 }
 
 impl OutputCapabilitiesSnapshot {
@@ -296,6 +297,13 @@ impl OutputCapabilitiesSnapshot {
     #[must_use]
     pub const fn supports_segmented_recording(&self) -> bool {
         self.segmented_recording
+    }
+
+    /// Reports whether the native H.264/AAC Matroska-to-MP4 remux boundary is
+    /// available.
+    #[must_use]
+    pub const fn supports_remux(&self) -> bool {
+        self.remux
     }
 }
 
@@ -397,6 +405,24 @@ impl GStreamerCapabilitySnapshot {
         self.runtime_version.is_some() && element_available("splitmuxsink")
     }
 
+    /// Reports whether the approved native elements can remux the production
+    /// Matroska profile without decoding or re-encoding media.
+    #[must_use]
+    pub fn supports_remux(&self) -> bool {
+        self.runtime_version.is_some()
+            && [
+                "filesrc",
+                "matroskademux",
+                "h264parse",
+                "aacparse",
+                "mp4mux",
+                "filesink",
+            ]
+            .into_iter()
+            .chain(["queue"])
+            .all(element_available)
+    }
+
     #[must_use]
     pub fn runtime_version(&self) -> Option<&str> {
         self.runtime_version.as_deref()
@@ -448,6 +474,7 @@ impl GStreamerCapabilitySnapshot {
             .filter(|profile| self.output.supports(*profile))
             .collect(),
             segmented_recording: self.supports_segmented_recording(),
+            remux: self.supports_remux(),
         }
     }
 }
@@ -1444,7 +1471,9 @@ fn srt_passphrase_valid(endpoint: &str, explicit: Option<&str>) -> bool {
 mod native;
 
 #[cfg(feature = "native")]
-pub use native::{GStreamerOutputSession, NativeOutputState, OutputSessionTelemetry};
+pub use native::{
+    remux_matroska_to_mp4, GStreamerOutputSession, NativeOutputState, OutputSessionTelemetry,
+};
 
 #[cfg(test)]
 mod tests {
