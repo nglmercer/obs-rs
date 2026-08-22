@@ -365,6 +365,11 @@ export component OutputPage inherits VerticalLayout {
     in property <bool> software-encoding-warning;
     in-out property <int> replay-buffer-duration;
     in-out property <int> replay-buffer-capacity;
+    in-out property <bool> recording-split-enabled;
+    in property <bool> recording-split-supported;
+    in-out property <int> recording-split-duration-minutes;
+    in-out property <int> recording-split-size-mib;
+    in-out property <int> recording-split-max-segments;
     callback select-output-mode(int);
     callback select-video-encoder(int);
     callback select-audio-encoder(int);
@@ -536,6 +541,51 @@ export component OutputPage inherits VerticalLayout {
             }
         }
         SettingHint { text: I18n.text.settings_ui.replay_buffer_hint; }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.recording_split;
+        CheckRow {
+            label: I18n.text.settings_ui.recording_split_enabled;
+            enabled: root.recording-split-supported;
+            checked <=> root.recording-split-enabled;
+            toggled(value) => { root.changed(); }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.recording_split_duration;
+            SettingsSpinBox {
+                value <=> root.recording-split-duration-minutes;
+                minimum: 1;
+                maximum: 1440;
+                enabled: root.recording-split-supported && root.recording-split-enabled;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.recording_split_size;
+            SettingsSpinBox {
+                value <=> root.recording-split-size-mib;
+                minimum: 1;
+                maximum: 256;
+                enabled: root.recording-split-supported && root.recording-split-enabled;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.recording_split_segments;
+            SettingsSpinBox {
+                value <=> root.recording-split-max-segments;
+                minimum: 1;
+                maximum: 1024;
+                enabled: root.recording-split-supported && root.recording-split-enabled;
+                edited(value) => { root.changed(); }
+            }
+        }
+        if root.recording-split-supported : SettingHint {
+            text: I18n.text.settings_ui.recording_split_hint;
+        }
+        if !root.recording-split-supported : SettingHint {
+            text: I18n.text.settings_ui.recording_split_unavailable;
+        }
     }
     Rectangle { vertical-stretch: 1; }
 }

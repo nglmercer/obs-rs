@@ -32,6 +32,9 @@ use crate::{
     settings::{
         hotkey_conflicts, recording_stamp, shortcut_bindings, AppSettings, RecordingFormat,
         CANVAS_SNAP_DISTANCE_DEFAULT, CANVAS_SNAP_DISTANCE_RANGE, CHANNEL_LAYOUTS, FRAME_RATES,
+        RECORDING_SPLIT_DURATION_MINUTES_DEFAULT, RECORDING_SPLIT_DURATION_MINUTES_RANGE,
+        RECORDING_SPLIT_SEGMENTS_DEFAULT, RECORDING_SPLIT_SEGMENTS_RANGE,
+        RECORDING_SPLIT_SIZE_MIB_DEFAULT, RECORDING_SPLIT_SIZE_MIB_RANGE,
         REPLAY_BUFFER_CAPACITY_MIB_DEFAULT, REPLAY_BUFFER_CAPACITY_MIB_RANGE,
         REPLAY_BUFFER_DURATION_DEFAULT, REPLAY_BUFFER_DURATION_RANGE, RESOLUTIONS, SAMPLE_RATES,
         THEMES,
@@ -327,6 +330,9 @@ pub(crate) fn install_settings_window(
     output
         .borrow_mut()
         .configure_replay(&controller.settings.borrow());
+    output
+        .borrow_mut()
+        .configure_recording(&controller.settings.borrow());
     apply_to_studio(ui, &controller.settings.borrow());
     push_palette(ui, &controller, &controller.settings.borrow());
     controller.sync_theme(state.borrow().locale());
@@ -866,6 +872,22 @@ fn load_recording_page_draft(
         i32::try_from(settings.replay_buffer_capacity_mib)
             .unwrap_or(i32::try_from(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT).unwrap_or(64)),
     );
+    window.set_recording_split_enabled(settings.recording_split_enabled);
+    window.set_recording_split_duration_minutes(
+        i32::try_from(settings.recording_split_duration_minutes)
+            .unwrap_or(i32::try_from(RECORDING_SPLIT_DURATION_MINUTES_DEFAULT).unwrap_or(60)),
+    );
+    window.set_recording_split_size_mib(
+        i32::try_from(settings.recording_split_size_mib)
+            .unwrap_or(i32::try_from(RECORDING_SPLIT_SIZE_MIB_DEFAULT).unwrap_or(64)),
+    );
+    window.set_recording_split_max_segments(
+        i32::try_from(settings.recording_split_max_segments)
+            .unwrap_or(i32::try_from(RECORDING_SPLIT_SEGMENTS_DEFAULT).unwrap_or(64)),
+    );
+    window.set_recording_split_supported(
+        settings.effective_recording_format() == RecordingFormat::ReferencePacket,
+    );
 }
 
 /// Copies the Video page's values into the draft.
@@ -1184,6 +1206,14 @@ fn install_output_page(controller: &Rc<SettingsController>) {
         refresh_recording_page(&quality_controller, quality);
     });
 
+    let format_controller = Rc::clone(controller);
+    controller.window.on_select_recording_format(move |_index| {
+        refresh_recording_page(
+            &format_controller,
+            draft_recording_quality(&format_controller.window),
+        );
+    });
+
     let browse_controller = Rc::clone(controller);
     controller.window.on_browse_recording_directory(move || {
         let Some(tool) = browse_controller.browse_tool else {
@@ -1229,6 +1259,7 @@ fn refresh_recording_page(controller: &Rc<SettingsController>, quality: Recordin
             .copied()
             .unwrap_or_default()
     };
+    window.set_recording_split_supported(format == RecordingFormat::ReferencePacket);
     let settings = AppSettings {
         recording_directory: window.get_recording_directory().to_string(),
         recording_filename_without_spaces: window.get_recording_filename_without_spaces(),
@@ -1725,6 +1756,21 @@ fn read_recording_draft(controller: &SettingsController, settings: &mut AppSetti
         .ok()
         .filter(|capacity| REPLAY_BUFFER_CAPACITY_MIB_RANGE.contains(capacity))
         .unwrap_or(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT);
+    settings.recording_split_enabled = window.get_recording_split_enabled();
+    settings.recording_split_duration_minutes =
+        u32::try_from(window.get_recording_split_duration_minutes())
+            .ok()
+            .filter(|duration| RECORDING_SPLIT_DURATION_MINUTES_RANGE.contains(duration))
+            .unwrap_or(RECORDING_SPLIT_DURATION_MINUTES_DEFAULT);
+    settings.recording_split_size_mib = u32::try_from(window.get_recording_split_size_mib())
+        .ok()
+        .filter(|capacity| RECORDING_SPLIT_SIZE_MIB_RANGE.contains(capacity))
+        .unwrap_or(RECORDING_SPLIT_SIZE_MIB_DEFAULT);
+    settings.recording_split_max_segments =
+        u32::try_from(window.get_recording_split_max_segments())
+            .ok()
+            .filter(|segments| RECORDING_SPLIT_SEGMENTS_RANGE.contains(segments))
+            .unwrap_or(RECORDING_SPLIT_SEGMENTS_DEFAULT);
     // The concrete file is derived here rather than typed, so the name, the
     // extension, and the container always agree. The studio's own start-
     // recording dialog can still edit the path afterwards.
@@ -1866,6 +1912,7 @@ pub(crate) fn apply_settings_snapshot(
 
     output.borrow_mut().configure_stream(settings);
     output.borrow_mut().configure_replay(settings);
+    output.borrow_mut().configure_recording(settings);
     // A selection the graph cannot resolve is kept rather than reset, so the
     // user has to be told the engine is on the fallback in the meantime;
     // silently recording from a different source would be worse.

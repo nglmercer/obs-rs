@@ -128,6 +128,11 @@ export component SettingsWindow inherits Window {
     in property <bool> software-encoding-warning;
     in-out property <int> replay-buffer-duration;
     in-out property <int> replay-buffer-capacity;
+    in-out property <bool> recording-split-enabled;
+    in property <bool> recording-split-supported;
+    in-out property <int> recording-split-duration-minutes;
+    in-out property <int> recording-split-size-mib;
+    in-out property <int> recording-split-max-segments;
     // Audio
     in property <[string]> sample-rate-names;
     in-out property <int> sample-rate-index;
@@ -199,6 +204,7 @@ export component SettingsWindow inherits Window {
     callback select-stream-service(int);
     callback select-output-mode(int);
     callback select-recording-quality(int);
+    callback select-recording-format(int);
     callback edit-base-resolution(string);
     callback edit-output-resolution(string);
     callback select-fps-mode(int);
@@ -422,6 +428,11 @@ export component SettingsWindow inherits Window {
                         software-encoding-warning: root.software-encoding-warning;
                         replay-buffer-duration <=> root.replay-buffer-duration;
                         replay-buffer-capacity <=> root.replay-buffer-capacity;
+                        recording-split-enabled <=> root.recording-split-enabled;
+                        recording-split-supported: root.recording-split-supported;
+                        recording-split-duration-minutes <=> root.recording-split-duration-minutes;
+                        recording-split-size-mib <=> root.recording-split-size-mib;
+                        recording-split-max-segments <=> root.recording-split-max-segments;
                         select-output-mode(index) => {
                             root.output-mode-index = index;
                             root.dirty = true;
@@ -447,6 +458,7 @@ export component SettingsWindow inherits Window {
                         select-recording-format(index) => {
                             root.recording-format-index = index;
                             root.dirty = true;
+                            root.select-recording-format(index);
                         }
                         select-recording-codec(index) => {
                             root.recording-codec-index = index;

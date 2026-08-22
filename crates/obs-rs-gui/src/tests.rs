@@ -4,6 +4,7 @@ use super::output::stream_protocol_label;
 use super::preview::PreviewRenderer;
 use super::refresh::{peak_db, transition_label_for_locale};
 use super::settings::AppSettings;
+use super::settings_model::RecordingQuality;
 use super::{
     capture_devices, close_request_response, initial_project, install_canvas_callbacks, refresh_ui,
     restore_project, source_settings, I18n, MainWindow, OutputRuntime, PreviewSurface,
@@ -103,6 +104,42 @@ fn output_runtime_applies_bounded_replay_configuration() {
     };
     output.configure_replay(&invalid);
     assert_eq!(output.replay_configuration_label(), "1 s / 256 MiB");
+}
+
+#[test]
+fn output_runtime_applies_split_configuration_only_to_reference_recordings() {
+    let format = initial_project()
+        .expect("project")
+        .active_profile_spec()
+        .expect("profile")
+        .video_format();
+    let mut output = OutputRuntime::new(format);
+    let settings = AppSettings {
+        recording_quality: RecordingQuality::Lossless,
+        recording_split_enabled: true,
+        recording_split_duration_minutes: 90,
+        recording_split_size_mib: 128,
+        recording_split_max_segments: 12,
+        ..AppSettings::default()
+    };
+
+    output.configure_recording(&settings);
+    let policy = output
+        .segmented_recording_policy()
+        .expect("reference recording should have a split policy");
+    assert_eq!(policy.max_segment_duration().as_secs(), 90 * 60);
+    assert_eq!(policy.max_segment_bytes(), 128 * 1024 * 1024);
+    assert_eq!(policy.max_segments(), 12);
+
+    let production = AppSettings {
+        recording_split_enabled: true,
+        ..AppSettings::default()
+    };
+    output.configure_recording(&production);
+    assert!(
+        output.segmented_recording_policy().is_none(),
+        "production containers must not silently use packet-file splitting"
+    );
 }
 
 #[test]
@@ -1043,6 +1080,44 @@ fn output_runtime_finalizes_an_atomic_av_recording() {
         .iter()
         .any(|packet| packet.kind() == PacketKind::Audio));
     std::fs::remove_file(final_path).expect("remove output fixture");
+}
+
+#[test]
+fn output_runtime_routes_reference_split_recording_to_numbered_files() {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!("obs-rs-gui-split-{token}.obsr"));
+    let mut output = OutputRuntime::new(format);
+    output.configure_recording(&AppSettings {
+        recording_quality: RecordingQuality::Lossless,
+        recording_split_enabled: true,
+        recording_split_size_mib: 1,
+        recording_split_max_segments: 2,
+        ..AppSettings::default()
+    });
+    output
+        .start_recording(base.to_str().expect("UTF-8 temp path"))
+        .expect("split recording should open");
+    output.push_frame(&VideoFrame::solid(
+        format,
+        Timestamp::ZERO,
+        [20, 30, 40, 255],
+    ));
+    let bytes = output
+        .finish_recording()
+        .expect("split recording should finalize");
+
+    let segment = base.with_file_name(format!("obs-rs-gui-split-{token}-0001.obsr"));
+    assert!(segment.is_file());
+    assert_eq!(
+        std::fs::metadata(&segment).expect("segment metadata").len(),
+        u64::try_from(bytes).expect("bytes fit u64")
+    );
+    assert!(MemoryMuxer::decode(&std::fs::read(&segment).expect("read segment")).is_ok());
+    std::fs::remove_file(segment).expect("remove split fixture");
 }
 
 #[test]

@@ -13,15 +13,18 @@ use obs_rs_engine::{
 };
 use obs_rs_media::{FrameScaler, RawVideoFrame, ScaleFilter, VideoFormat, VideoFrame};
 use obs_rs_output::{
-    AudioCodec, AudioEncoderConfig, EncoderImplementation, RtmpConfig, StreamProtocol, StreamState,
-    StreamTarget, VideoCodec, VideoEncoderConfig,
+    AudioCodec, AudioEncoderConfig, EncoderImplementation, RtmpConfig, SegmentedRecordingPolicy,
+    StreamProtocol, StreamState, StreamTarget, VideoCodec, VideoEncoderConfig,
 };
 use obs_rs_project::Project;
 
 use crate::{
     settings::{
-        recording_stamp, REPLAY_BUFFER_CAPACITY_MIB_DEFAULT, REPLAY_BUFFER_CAPACITY_MIB_RANGE,
-        REPLAY_BUFFER_DURATION_DEFAULT, REPLAY_BUFFER_DURATION_RANGE,
+        recording_stamp, RecordingFormat, RECORDING_SPLIT_DURATION_MINUTES_RANGE,
+        RECORDING_SPLIT_SEGMENTS_DEFAULT, RECORDING_SPLIT_SEGMENTS_RANGE,
+        RECORDING_SPLIT_SIZE_MIB_RANGE, REPLAY_BUFFER_CAPACITY_MIB_DEFAULT,
+        REPLAY_BUFFER_CAPACITY_MIB_RANGE, REPLAY_BUFFER_DURATION_DEFAULT,
+        REPLAY_BUFFER_DURATION_RANGE,
     },
     AppSettings,
 };
@@ -66,6 +69,7 @@ pub(crate) struct OutputRuntime {
     recording_audio_encoder: AudioEncoderConfig,
     replay_buffer_capacity_bytes: usize,
     replay_buffer_duration: Duration,
+    segmented_recording_policy: Option<SegmentedRecordingPolicy>,
     /// A canvas change accepted while an output was running.
     ///
     /// Rebuilding the encoders mid-recording would break the container's frame
@@ -146,6 +150,7 @@ impl OutputRuntime {
             recording_audio_encoder: AudioEncoderConfig::default(),
             replay_buffer_capacity_bytes: replay_capacity_bytes(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT),
             replay_buffer_duration: Duration::from_secs(u64::from(REPLAY_BUFFER_DURATION_DEFAULT)),
+            segmented_recording_policy: None,
             staged_video_format: None,
             scaler: None,
             output_format: format,
@@ -314,7 +319,10 @@ impl OutputRuntime {
 
     #[cfg(test)]
     pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
-        if is_production_recording_path(path) {
+        if let Some(policy) = self.segmented_recording_policy {
+            validate_segmented_recording_path(path)?;
+            self.worker.start_segmented_recording(path, policy)?;
+        } else if is_production_recording_path(path) {
             self.worker.start_recording_configured(
                 path,
                 self.recording_video_encoder.clone(),
@@ -329,13 +337,18 @@ impl OutputRuntime {
 
     /// Enqueues recording setup without waiting for container or encoder work.
     pub(crate) fn request_start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
-        let encoder_config = is_production_recording_path(path).then(|| {
-            (
-                self.recording_video_encoder.clone(),
-                self.recording_audio_encoder.clone(),
-            )
-        });
-        self.worker.try_start_recording(path, encoder_config)?;
+        if let Some(policy) = self.segmented_recording_policy {
+            validate_segmented_recording_path(path)?;
+            self.worker.try_start_segmented_recording(path, policy)?;
+        } else {
+            let encoder_config = is_production_recording_path(path).then(|| {
+                (
+                    self.recording_video_encoder.clone(),
+                    self.recording_audio_encoder.clone(),
+                )
+            });
+            self.worker.try_start_recording(path, encoder_config)?;
+        }
         self.recording_started_at = Some(Instant::now());
         Ok(())
     }
@@ -384,6 +397,43 @@ impl OutputRuntime {
         );
         self.replay_buffer_duration = Duration::from_secs(u64::from(duration));
         self.replay_buffer_capacity_bytes = replay_capacity_bytes(capacity);
+    }
+
+    /// Applies the bounded split policy for the next recording.
+    ///
+    /// Split output is intentionally enabled only for the reference packet
+    /// format in this packet. Production muxers need their own keyframe and
+    /// container rollover protocol, so the GUI disables this control instead
+    /// of silently routing a production recording into `.obsr` files.
+    pub(crate) fn configure_recording(&mut self, settings: &AppSettings) {
+        let enabled = settings.recording_split_enabled
+            && settings.effective_recording_format() == RecordingFormat::ReferencePacket;
+        self.segmented_recording_policy = enabled.then(|| {
+            let duration = settings.recording_split_duration_minutes.clamp(
+                *RECORDING_SPLIT_DURATION_MINUTES_RANGE.start(),
+                *RECORDING_SPLIT_DURATION_MINUTES_RANGE.end(),
+            );
+            let size = settings.recording_split_size_mib.clamp(
+                *RECORDING_SPLIT_SIZE_MIB_RANGE.start(),
+                *RECORDING_SPLIT_SIZE_MIB_RANGE.end(),
+            );
+            let segments = settings.recording_split_max_segments.clamp(
+                *RECORDING_SPLIT_SEGMENTS_RANGE.start(),
+                *RECORDING_SPLIT_SEGMENTS_RANGE.end(),
+            );
+            SegmentedRecordingPolicy::new(
+                replay_capacity_bytes(size),
+                Duration::from_secs(u64::from(duration).saturating_mul(60)),
+                usize::try_from(segments)
+                    .unwrap_or(usize::try_from(RECORDING_SPLIT_SEGMENTS_DEFAULT).unwrap_or(1_024)),
+            )
+            .expect("GUI split bounds must produce a valid output policy")
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn segmented_recording_policy(&self) -> Option<SegmentedRecordingPolicy> {
+        self.segmented_recording_policy
     }
 
     /// Returns the operator-facing replay configuration label.
@@ -1015,6 +1065,17 @@ fn is_production_recording_path(path: &str) -> bool {
             || extension.eq_ignore_ascii_case("mp4")
             || extension.eq_ignore_ascii_case("flv")
     })
+}
+
+fn validate_segmented_recording_path(path: &str) -> Result<(), Box<dyn Error>> {
+    if Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("obsr"))
+    {
+        Ok(())
+    } else {
+        Err("split recording requires the OBS-RS packet (.obsr) format".into())
+    }
 }
 
 fn replay_save_path(recording_path: &str) -> PathBuf {

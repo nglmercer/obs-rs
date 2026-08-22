@@ -214,6 +214,24 @@ pub(crate) const REPLAY_BUFFER_CAPACITY_MIB_RANGE: std::ops::RangeInclusive<u32>
 /// The default replay history byte budget shown by the Output page, in MiB.
 pub(crate) const REPLAY_BUFFER_CAPACITY_MIB_DEFAULT: u32 = 64;
 
+/// The split-recording target duration accepted by the Output page, in minutes.
+pub(crate) const RECORDING_SPLIT_DURATION_MINUTES_RANGE: std::ops::RangeInclusive<u32> = 1..=1_440;
+
+/// The default split-recording target duration shown by the Output page.
+pub(crate) const RECORDING_SPLIT_DURATION_MINUTES_DEFAULT: u32 = 60;
+
+/// The split-recording target size accepted by the Output page, in MiB.
+pub(crate) const RECORDING_SPLIT_SIZE_MIB_RANGE: std::ops::RangeInclusive<u32> = 1..=256;
+
+/// The default split-recording target size shown by the Output page, in MiB.
+pub(crate) const RECORDING_SPLIT_SIZE_MIB_DEFAULT: u32 = 64;
+
+/// The maximum split-recording segment count accepted by the Output page.
+pub(crate) const RECORDING_SPLIT_SEGMENTS_RANGE: std::ops::RangeInclusive<u32> = 1..=1_024;
+
+/// The default maximum split-recording segment count shown by the Output page.
+pub(crate) const RECORDING_SPLIT_SEGMENTS_DEFAULT: u32 = 64;
+
 /// An sRGB colour as `[red, green, blue]`.
 type Rgb = [u8; 3];
 
@@ -359,6 +377,15 @@ pub(crate) struct AppSettings {
     pub(crate) replay_buffer_duration_seconds: u32,
     /// Maximum encoded replay history retained, in mebibytes.
     pub(crate) replay_buffer_capacity_mib: u32,
+    /// Publish numbered packet files instead of one packet file when the
+    /// effective recording format is the OBS-RS reference container.
+    pub(crate) recording_split_enabled: bool,
+    /// Target wall-clock duration for one split segment, in minutes.
+    pub(crate) recording_split_duration_minutes: u32,
+    /// Target encoded size for one split segment, in mebibytes.
+    pub(crate) recording_split_size_mib: u32,
+    /// Maximum number of numbered split segments kept in one recording.
+    pub(crate) recording_split_max_segments: u32,
     pub(crate) output_mode: OutputMode,
     /// Show the detailed encoder controls inside Simple output mode.
     pub(crate) stream_custom_encoder: bool,
@@ -682,6 +709,10 @@ impl Default for AppSettings {
             recording_audio_encoder: EncoderImplementation::default(),
             replay_buffer_duration_seconds: REPLAY_BUFFER_DURATION_DEFAULT,
             replay_buffer_capacity_mib: REPLAY_BUFFER_CAPACITY_MIB_DEFAULT,
+            recording_split_enabled: false,
+            recording_split_duration_minutes: RECORDING_SPLIT_DURATION_MINUTES_DEFAULT,
+            recording_split_size_mib: RECORDING_SPLIT_SIZE_MIB_DEFAULT,
+            recording_split_max_segments: RECORDING_SPLIT_SEGMENTS_DEFAULT,
             output_mode: OutputMode::default(),
             stream_custom_encoder: false,
             video: VideoSettings::default(),
@@ -986,6 +1017,26 @@ impl AppSettings {
                 .and_then(|value| value.parse::<u32>().ok())
                 .filter(|capacity| REPLAY_BUFFER_CAPACITY_MIB_RANGE.contains(capacity))
                 .unwrap_or(defaults.replay_buffer_capacity_mib),
+            recording_split_enabled: flag(
+                config,
+                "recording_split_enabled",
+                defaults.recording_split_enabled,
+            ),
+            recording_split_duration_minutes: config
+                .get("recording_split_duration_minutes")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|duration| RECORDING_SPLIT_DURATION_MINUTES_RANGE.contains(duration))
+                .unwrap_or(defaults.recording_split_duration_minutes),
+            recording_split_size_mib: config
+                .get("recording_split_size_mib")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|capacity| RECORDING_SPLIT_SIZE_MIB_RANGE.contains(capacity))
+                .unwrap_or(defaults.recording_split_size_mib),
+            recording_split_max_segments: config
+                .get("recording_split_max_segments")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|segments| RECORDING_SPLIT_SEGMENTS_RANGE.contains(segments))
+                .unwrap_or(defaults.recording_split_max_segments),
             output_mode: config
                 .get("output_mode")
                 .and_then(OutputMode::from_id)
@@ -1118,6 +1169,22 @@ impl AppSettings {
             (
                 "replay_buffer_capacity_mib",
                 self.replay_buffer_capacity_mib.to_string(),
+            ),
+            (
+                "recording_split_enabled",
+                self.recording_split_enabled.to_string(),
+            ),
+            (
+                "recording_split_duration_minutes",
+                self.recording_split_duration_minutes.to_string(),
+            ),
+            (
+                "recording_split_size_mib",
+                self.recording_split_size_mib.to_string(),
+            ),
+            (
+                "recording_split_max_segments",
+                self.recording_split_max_segments.to_string(),
             ),
             ("output_mode", self.output_mode.id().to_owned()),
             (
@@ -2385,6 +2452,10 @@ mod tests {
             recording_audio_encoder: EncoderImplementation::new("avenc_aac"),
             replay_buffer_duration_seconds: 90,
             replay_buffer_capacity_mib: 128,
+            recording_split_enabled: true,
+            recording_split_duration_minutes: 90,
+            recording_split_size_mib: 128,
+            recording_split_max_segments: 12,
             video: VideoSettings {
                 base_width: 2_560,
                 base_height: 1_440,
@@ -2440,6 +2511,9 @@ mod tests {
             ("recording_quality", "perfect"),
             ("replay_buffer_duration_seconds", "0"),
             ("replay_buffer_capacity_mib", "999"),
+            ("recording_split_duration_minutes", "0"),
+            ("recording_split_size_mib", "999"),
+            ("recording_split_max_segments", "0"),
             ("output_mode", "expert"),
         ] {
             config.set(key, value).expect("settings key");
@@ -2462,6 +2536,18 @@ mod tests {
         assert_eq!(
             decoded.replay_buffer_capacity_mib,
             defaults.replay_buffer_capacity_mib
+        );
+        assert_eq!(
+            decoded.recording_split_duration_minutes,
+            defaults.recording_split_duration_minutes
+        );
+        assert_eq!(
+            decoded.recording_split_size_mib,
+            defaults.recording_split_size_mib
+        );
+        assert_eq!(
+            decoded.recording_split_max_segments,
+            defaults.recording_split_max_segments
         );
         assert_eq!(decoded.output_mode, defaults.output_mode);
     }
