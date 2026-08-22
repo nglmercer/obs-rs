@@ -371,7 +371,7 @@ pub(crate) struct LayoutSettings {
     pub(crate) show_mixer: bool,
     pub(crate) show_transitions: bool,
     pub(crate) show_controls: bool,
-    /// 0 is studio mode, 1 the single-canvas default.
+    /// 0 is studio mode, 1 the single-canvas default, and 2 is multiview.
     pub(crate) view_mode: i32,
     /// Height of the dock row in logical pixels.
     pub(crate) dock_height: u32,
@@ -696,7 +696,7 @@ impl LayoutSettings {
             view_mode: config
                 .get("layout_view_mode")
                 .and_then(|value| value.parse::<i32>().ok())
-                .filter(|mode| (0..=1).contains(mode))
+                .filter(|mode| (0..=2).contains(mode))
                 .unwrap_or(defaults.view_mode),
             dock_height: config
                 .get("layout_dock_height")
@@ -1424,7 +1424,7 @@ impl AppSettings {
             .filter(|(_, floating)| *floating)
             .filter_map(|(kind, _)| i32::try_from(kind).ok())
             .collect();
-        self.layout.view_mode = ui.get_view_mode().clamp(0, 1);
+        self.layout.view_mode = ui.get_view_mode().clamp(0, 2);
         #[allow(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,

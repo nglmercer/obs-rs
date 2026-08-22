@@ -4,6 +4,21 @@
         role: string,
     }
 
+    // One bounded multiview tile. Geometry is normalized so the same Rust
+    // layout drives both the compositor's tile order and the Slint labels.
+    export struct MultiviewScene {
+        id: string,
+        name: string,
+        role: string,
+        preview: bool,
+        program: bool,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        selected: bool,
+    }
+
     export struct SourceRow {
         id: string,
         // Stable action target: a top-level item ID or an outer-to-inner

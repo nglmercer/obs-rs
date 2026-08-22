@@ -748,12 +748,13 @@ fn forward_to_studio(
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        // -1 toggles studio mode, matching the studio window's own handling.
+        // -1 toggles studio mode, matching the studio window's own handling;
+        // explicit mode 2 selects the bounded multiview surface.
         let current = ui.get_view_mode();
         ui.set_view_mode(if mode == -1 {
             i32::from(current == 0)
         } else {
-            mode
+            mode.clamp(0, 2)
         });
     });
 

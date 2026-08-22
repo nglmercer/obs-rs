@@ -1,5 +1,5 @@
 import { VerticalBox } from "std-widgets.slint";
-import { DockPane, DockSplitter, LocaleOption, ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
+import { DockPane, DockSplitter, LocaleOption, MultiviewScene, ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
 import { I18n } from "i18n.slint";
 import { AppNavbar } from "navbar.slint";
 import { StagePanel } from "stage.slint";
@@ -31,7 +31,7 @@ export { SourceTransformWindow } from "source_transform_window.slint";
 export { MonitorWindow } from "monitor_window.slint";
 export { ProjectorWindow } from "projector_window.slint";
 export { FloatingDockWindow } from "floating_dock.slint";
-export { DockPane, DockSplitter, MonitorRow, PropertyRow, SourceCandidate, SourceFilterRow, SourceKindRow } from "models.slint";
+export { DockPane, DockSplitter, MonitorRow, MultiviewScene, PropertyRow, SourceCandidate, SourceFilterRow, SourceKindRow } from "models.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
@@ -58,6 +58,7 @@ export component MainWindow inherits Window {
         in property <string> snapshot;
         in property <image> preview-image;
         in property <image> program-image;
+        in property <image> multiview-image;
         // Transient canvas viewport state is owned by the Rust canvas
         // controller; this property only presents its current zoom choice.
         in property <int> canvas-zoom: 0;
@@ -73,6 +74,7 @@ export component MainWindow inherits Window {
         in property <int> canvas-height: 1080;
         in property <bool> show-safe-areas: false;
         in property <[SceneRow]> scene-rows;
+        in property <[MultiviewScene]> multiview-scenes;
         in property <[SourceRow]> source-rows;
         in property <[ProfileRow]> profile-rows;
         in property <[ProfileRow]> collection-rows;
@@ -134,7 +136,7 @@ export component MainWindow inherits Window {
         in property <bool> confirm-stop-recording;
         in property <bool> auto-record-when-streaming;
 
-        // 0 = studio mode (preview + program), 1 = the single-canvas default.
+        // 0 = studio mode, 1 = the single-canvas default, 2 = bounded multiview.
         in-out property <int> view-mode: 1;
         // Held while the spacebar temporarily turns the preview into a pan
         // surface, matching OBS's Space+drag navigation.
@@ -485,6 +487,7 @@ export component MainWindow inherits Window {
                 hotkey-redo: root.hotkey-redo;
                 hotkey-save-project: root.hotkey-save-project;
                 hotkey-fade-transition: root.hotkey-fade-transition;
+                view-mode: root.view-mode;
                 set-locale(code) => { root.set-locale(code); }
                 select-collection(id) => { root.request-collection(id); }
                 menu-action(action) => {
@@ -568,6 +571,8 @@ export component MainWindow inherits Window {
                 program-scene: root.program-scene;
                 preview-image: root.preview-image;
                 program-image: root.program-image;
+                multiview-image: root.multiview-image;
+                multiview-scenes: root.multiview-scenes;
                 canvas-zoom: root.canvas-zoom;
                 canvas-pan-x: root.canvas-pan-x;
                 canvas-pan-y: root.canvas-pan-y;
@@ -608,6 +613,8 @@ export component MainWindow inherits Window {
                     root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
                 }
                 canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+                multiview-select-preview(id) => { root.select-preview(id); }
+                multiview-select-program(id) => { root.select-program(id); }
             }
 
             HorizontalSplitter {

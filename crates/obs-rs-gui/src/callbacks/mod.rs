@@ -24,8 +24,9 @@ use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Timer, TimerMode};
 
 use crate::{
-    preview_worker::RenderTargets, refresh_output_ui, refresh_preview_frames_for_view, MainWindow,
-    OutputRuntime, PreviewRenderer, PreviewSurface, PreviewWorker,
+    preview_worker::{RenderTargets, MAX_MULTIVIEW_SCENES},
+    refresh_output_ui, refresh_preview_frames_for_view, MainWindow, OutputRuntime, PreviewRenderer,
+    PreviewSurface, PreviewWorker,
 };
 
 pub(crate) use add_source::install_add_source_window;
@@ -67,6 +68,7 @@ pub(crate) use source_transform::install_source_transform_window;
 struct RenderDemand {
     request_preview: bool,
     request_program_view: bool,
+    request_multiview: bool,
     interval: Option<Duration>,
 }
 
@@ -95,6 +97,7 @@ enum ProjectorRenderDemand {
 enum StudioView {
     Single,
     Studio,
+    Multiview,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,7 +115,7 @@ struct RenderDemandInput {
 fn render_demand(input: RenderDemandInput) -> RenderDemand {
     let main_interactive = input.window == WindowRenderState::Visible;
     let projector_open = input.projectors != ProjectorRenderDemand::None;
-    let request_preview = main_interactive
+    let request_preview = (main_interactive && input.view != StudioView::Multiview)
         || input.window == WindowRenderState::Minimized
         || matches!(
             input.projectors,
@@ -122,6 +125,7 @@ fn render_demand(input: RenderDemandInput) -> RenderDemand {
         input.projectors,
         ProjectorRenderDemand::Program | ProjectorRenderDemand::Both
     ) || (main_interactive && input.view == StudioView::Studio);
+    let request_multiview = main_interactive && input.view == StudioView::Multiview;
     let interval =
         if input.output == OutputRenderState::Active || projector_open || main_interactive {
             Some(Duration::from_millis(16))
@@ -133,6 +137,7 @@ fn render_demand(input: RenderDemandInput) -> RenderDemand {
     RenderDemand {
         request_preview,
         request_program_view,
+        request_multiview,
         interval,
     }
 }
@@ -199,10 +204,10 @@ pub(crate) fn start_preview_timer(
                 OutputRenderState::Idle
             },
             projectors: projector_demand,
-            view: if ui.get_view_mode() == 0 {
-                StudioView::Studio
-            } else {
-                StudioView::Single
+            view: match ui.get_view_mode() {
+                0 => StudioView::Studio,
+                2 => StudioView::Multiview,
+                _ => StudioView::Single,
             },
         });
         // A canvas change held back while recording is applied here, at the
@@ -268,6 +273,19 @@ pub(crate) fn start_preview_timer(
                             .flatten(),
                         program_preview_format: PreviewRenderer::preview_format_for_canvas(
                             profile.video_format(),
+                        ),
+                        multiview_scenes: if demand.request_multiview {
+                            profile
+                                .scenes()
+                                .take(MAX_MULTIVIEW_SCENES)
+                                .map(|scene| scene.id().as_str().to_owned())
+                                .collect()
+                        } else {
+                            Vec::new()
+                        },
+                        multiview_format: PreviewRenderer::multiview_format_for_canvas(
+                            profile.video_format(),
+                            profile.scenes().take(MAX_MULTIVIEW_SCENES).count().max(1),
                         ),
                         // A program projector is a third consumer of the program
                         // canvas, so single-canvas editing has to render it again
@@ -481,6 +499,7 @@ mod tests {
             RenderDemand {
                 request_preview: false,
                 request_program_view: false,
+                request_multiview: false,
                 interval: None,
             }
         );
@@ -498,6 +517,7 @@ mod tests {
             RenderDemand {
                 request_preview: true,
                 request_program_view: false,
+                request_multiview: false,
                 interval: Some(Duration::from_millis(200)),
             }
         );
@@ -515,6 +535,7 @@ mod tests {
             RenderDemand {
                 request_preview: false,
                 request_program_view: false,
+                request_multiview: false,
                 interval: Some(Duration::from_millis(16)),
             }
         );
@@ -532,6 +553,25 @@ mod tests {
             RenderDemand {
                 request_preview: true,
                 request_program_view: true,
+                request_multiview: false,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
+
+    #[test]
+    fn visible_multiview_requests_only_the_bounded_scene_grid() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Visible,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                view: StudioView::Multiview,
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: true,
                 interval: Some(Duration::from_millis(16)),
             }
         );

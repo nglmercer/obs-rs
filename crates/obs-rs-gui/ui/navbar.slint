@@ -41,6 +41,7 @@ export component AppNavbar inherits Rectangle {
     in property <string> hotkey-save-project;
     in property <string> hotkey-fade-transition;
     in property <bool> studio-mode;
+    in property <int> view-mode;
     callback menu-action(string);
     callback select-view-mode(int);
     callback select-profile(string);
@@ -150,7 +151,7 @@ export component AppNavbar inherits Rectangle {
         x: view-button.x;
         y: root.height;
         width: 260px;
-        height: 108px;
+        height: 140px;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -159,6 +160,12 @@ export component AppNavbar inherits Rectangle {
                 checkable: true;
                 checked: root.studio-mode;
                 clicked => { root.select-view-mode(-1); view-popup.close(); }
+            }
+            MenuEntry {
+                label: I18n.text.menu_multiview;
+                checkable: true;
+                checked: root.view-mode == 2;
+                clicked => { root.select-view-mode(2); view-popup.close(); }
             }
             MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("projector-preview"); view-popup.close(); } }
             MenuEntry { label: I18n.text.menu_program_projector; clicked => { root.menu-action("projector-program"); view-popup.close(); } }

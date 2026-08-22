@@ -594,6 +594,53 @@ impl PreviewRenderer {
         .expect("bounded preview dimensions are valid")
     }
 
+    /// Returns the bounded thumbnail format used by the multiview compositor.
+    /// One tile is deliberately much smaller than the interactive preview so a
+    /// collection of scenes cannot turn the GUI into a full-resolution fan-out.
+    #[must_use]
+    pub(crate) fn multiview_tile_format(canvas: VideoFormat) -> VideoFormat {
+        const MAX_TILE_WIDTH: u64 = 256;
+        const MAX_TILE_HEIGHT: u64 = 256;
+        let canvas_width = u64::from(canvas.width()).max(1);
+        let canvas_height = u64::from(canvas.height()).max(1);
+        let width = u64::from(canvas.width()).clamp(1, MAX_TILE_WIDTH);
+        let height = canvas_height
+            .saturating_mul(width)
+            .checked_div(canvas_width)
+            .unwrap_or(1)
+            .clamp(1, MAX_TILE_HEIGHT);
+        VideoFormat::new(
+            u32::try_from(width).unwrap_or(u32::MAX),
+            u32::try_from(height).unwrap_or(u32::MAX),
+            canvas.frame_rate(),
+        )
+        .expect("bounded multiview tile dimensions are valid")
+    }
+
+    /// Returns the composite dimensions for a bounded scene count.
+    #[must_use]
+    pub(crate) fn multiview_format_for_canvas(
+        canvas: VideoFormat,
+        scene_count: usize,
+    ) -> VideoFormat {
+        let tile = Self::multiview_tile_format(canvas);
+        let (columns, rows) = crate::preview_worker::multiview_grid_dimensions(scene_count);
+        VideoFormat::new(
+            tile.width()
+                .saturating_mul(u32::try_from(columns).unwrap_or(u32::MAX)),
+            tile.height()
+                .saturating_mul(u32::try_from(rows).unwrap_or(u32::MAX)),
+            canvas.frame_rate(),
+        )
+        .expect("bounded multiview composite dimensions are valid")
+    }
+
+    /// Returns the timestamp shared by all targets in the current render tick.
+    #[must_use]
+    pub(crate) const fn timestamp(&self) -> Timestamp {
+        self.timestamp
+    }
+
     fn invalidate_static_scene_cache(&mut self, scene: &str) {
         self.static_frames.remove(scene);
         self.static_preview_frames

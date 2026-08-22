@@ -2,6 +2,7 @@ import { Button, ComboBox, HorizontalBox, VerticalBox } from "std-widgets.slint"
 import { CompactButton } from "theme.slint";
 import { CanvasEditor } from "canvas_editor.slint";
 import { I18n } from "i18n.slint";
+import { MultiviewScene } from "models.slint";
 import { Palette } from "palette.slint";
 
 // The canvas widget OBS draws into: a flat dark surface with the rendered
@@ -128,6 +129,66 @@ component StageCanvas inherits Rectangle {
     }
 }
 
+// One bounded composite from the preview worker. Labels and role borders are
+// Rust-owned scene projections, so clicking a tile still routes through the
+// existing preview/program selection commands instead of inventing UI state.
+component MultiviewCanvas inherits Rectangle {
+    in property <image> frame;
+    in property <[MultiviewScene]> scenes;
+    callback select-preview(string);
+    callback select-program(string);
+
+    background: Palette.tokens.canvas-bg;
+    clip: true;
+
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.frame;
+        image-fit: contain;
+        image-rendering: smooth;
+    }
+
+    for scene in root.scenes : Rectangle {
+        x: scene.x * root.width;
+        y: scene.y * root.height;
+        width: scene.width * root.width;
+        height: scene.height * root.height;
+        border-width: scene.selected ? 3px : 2px;
+        border-color: scene.program
+            ? Palette.tokens.program-border
+            : (scene.preview ? Palette.tokens.preview-border : Palette.tokens.border-strong);
+        background: transparent;
+
+        Rectangle {
+            x: 4px;
+            y: 4px;
+            width: label.preferred-width + 14px;
+            height: 20px;
+            background: rgb(2, 6, 23, 190);
+            border-radius: 3px;
+            label := Text {
+                x: 7px;
+                width: parent.width - 14px;
+                height: parent.height;
+                text: scene.name + (scene.role == "" ? "" : " · " + scene.role);
+                color: scene.program
+                    ? Palette.tokens.program-border
+                    : (scene.preview ? Palette.tokens.preview-border : Palette.tokens.text);
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        TouchArea {
+            clicked => root.select-preview(scene.id);
+            double-clicked => root.select-program(scene.id);
+        }
+    }
+}
+
 // Canvas area, zoom strip, and source toolbar, stacked the way OBS stacks them
 // between the menu bar and the dock row.
 export component StagePanel inherits Rectangle {
@@ -136,6 +197,8 @@ export component StagePanel inherits Rectangle {
     in property <string> program-scene;
     in property <image> preview-image;
     in property <image> program-image;
+    in property <image> multiview-image;
+    in property <[MultiviewScene]> multiview-scenes;
     in property <int> view-mode;
     in property <int> canvas-zoom: 0;
     in property <int> canvas-pan-x: 0;
@@ -170,6 +233,8 @@ export component StagePanel inherits Rectangle {
     callback canvas-zoom-step(int);
     callback canvas-zoom-at(int, int, int, int, int, int, int, int);
     callback canvas-pan-dragged(int, int);
+    callback multiview-select-preview(string);
+    callback multiview-select-program(string);
 
     property <length> canvas-area-width: canvas-area.width - 24px;
     property <length> canvas-area-height: canvas-area.height - 24px;
@@ -239,7 +304,13 @@ export component StagePanel inherits Rectangle {
                     program: true;
                     labelled: true;
                 }
-                if view-mode != 0 : StageCanvas {
+                if view-mode == 2 : MultiviewCanvas {
+                    frame: root.multiview-image;
+                    scenes: root.multiview-scenes;
+                    select-preview(id) => { root.multiview-select-preview(id); }
+                    select-program(id) => { root.multiview-select-program(id); }
+                }
+                if view-mode != 0 && view-mode != 2 : StageCanvas {
                     frame: preview-image;
                     label: I18n.text.preview;
                     program: false;
@@ -284,6 +355,7 @@ export component StagePanel inherits Rectangle {
 
         Rectangle {
             height: 24px;
+            visible: root.view-mode != 2;
             background: Palette.tokens.panel-bg;
             border-width: 1px;
             border-color: Palette.tokens.border;
@@ -343,6 +415,7 @@ export component StagePanel inherits Rectangle {
 
         Rectangle {
             height: 38px;
+            visible: root.view-mode != 2;
             background: Palette.tokens.panel-bg;
             border-width: 1px;
             border-color: Palette.tokens.border;

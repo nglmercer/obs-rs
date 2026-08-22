@@ -13,6 +13,10 @@ use obs_rs_project::Project;
 
 use crate::preview::{PreviewRenderer, RuntimeDiagnostics, TransformDraft};
 
+/// Multiview is intentionally capped: a desktop preview must never turn a
+/// scene collection into an unbounded render fan-out.
+pub(crate) const MAX_MULTIVIEW_SCENES: usize = 16;
+
 struct PreviewRequest {
     project: Option<Project>,
     revision: u64,
@@ -20,6 +24,8 @@ struct PreviewRequest {
     preview_format: VideoFormat,
     program_scene: Option<String>,
     program_preview_format: VideoFormat,
+    multiview_scenes: Vec<String>,
+    multiview_format: VideoFormat,
     render_program: bool,
     prepare_output: bool,
     prepare_output_rgba: bool,
@@ -32,6 +38,7 @@ pub(crate) struct PreviewResult {
     pub(crate) preview_frame: Option<VideoFrame>,
     pub(crate) program_scene: Option<String>,
     pub(crate) program_frame: Option<VideoFrame>,
+    pub(crate) multiview_frame: Option<VideoFrame>,
     pub(crate) program_output: Option<RawVideoFrame>,
     /// Full-canvas RGBA is present only when the output cannot consume the
     /// accelerated raw path, such as CPU fallback or output scaling.
@@ -63,6 +70,7 @@ struct PreviewLoopShared<'a> {
 pub(crate) struct PreviewPerformanceSnapshot {
     pub(crate) preview_render: LatencyMetrics,
     pub(crate) program_render: LatencyMetrics,
+    pub(crate) multiview_render: LatencyMetrics,
     pub(crate) worker: LatencyMetrics,
     pub(crate) frame_copy: LatencyMetrics,
     pub(crate) frame_copy_bytes: u64,
@@ -71,12 +79,15 @@ pub(crate) struct PreviewPerformanceSnapshot {
 }
 
 /// What one render request asks the worker to produce.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct RenderTargets<'a> {
     pub(crate) preview_scene: Option<&'a str>,
     pub(crate) preview_format: VideoFormat,
     pub(crate) program_scene: Option<&'a str>,
     pub(crate) program_preview_format: VideoFormat,
+    /// Ordered scene IDs for the bounded multiview grid.
+    pub(crate) multiview_scenes: Vec<String>,
+    pub(crate) multiview_format: VideoFormat,
     /// Whether the bounded program view is wanted as well as the preview one.
     pub(crate) render_program: bool,
     /// Whether the program frame should also be converted for the encoder.
@@ -162,6 +173,8 @@ impl PreviewWorker {
     ) {
         let project =
             (self.applied_revision.load(Ordering::Acquire) != revision).then(|| project.clone());
+        let mut multiview_scenes = targets.multiview_scenes;
+        multiview_scenes.truncate(MAX_MULTIVIEW_SCENES);
         let request = PreviewRequest {
             project,
             revision,
@@ -169,6 +182,8 @@ impl PreviewWorker {
             preview_format: targets.preview_format,
             program_scene: targets.program_scene.map(str::to_owned),
             program_preview_format: targets.program_preview_format,
+            multiview_scenes,
+            multiview_format: targets.multiview_format,
             render_program: targets.render_program,
             prepare_output: targets.prepare_output,
             prepare_output_rgba: targets.prepare_output_rgba,
@@ -274,6 +289,7 @@ fn preview_loop(project: &Project, revision: u64, shared: PreviewLoopShared<'_>)
                 preview_frame: None,
                 program_scene: None,
                 program_frame: None,
+                multiview_frame: None,
                 program_output: None,
                 program_output_frame: None,
                 error: Some(error.clone()),
@@ -330,11 +346,28 @@ fn render_request(
     } else {
         Ok(None)
     };
+    let multiview = if request.multiview_scenes.is_empty() {
+        Ok(None)
+    } else {
+        let multiview_started = std::time::Instant::now();
+        let multiview = render_multiview_scene(
+            renderer,
+            &request.multiview_scenes,
+            request.multiview_format,
+        );
+        if let Ok(mut performance) = performance.lock() {
+            performance
+                .multiview_render
+                .record(multiview_started.elapsed());
+        }
+        multiview
+    };
     let error = preview
         .as_ref()
         .err()
         .cloned()
         .or_else(|| program.as_ref().err().cloned())
+        .or_else(|| multiview.as_ref().err().cloned())
         .or_else(|| {
             (request.preview_scene.is_some() && matches!(preview, Ok(None)))
                 .then(|| "preview scene produced no frame".to_owned())
@@ -344,6 +377,10 @@ fn render_request(
                 && request.program_scene.is_some()
                 && matches!(program, Ok(None)))
             .then(|| "program scene produced no frame".to_owned())
+        })
+        .or_else(|| {
+            (!request.multiview_scenes.is_empty() && matches!(multiview, Ok(None)))
+                .then(|| "multiview scenes produced no frame".to_owned())
         });
     let (output, output_frame) = if request.prepare_output {
         match request.program_scene.as_deref() {
@@ -366,6 +403,7 @@ fn render_request(
     };
     if request.preview_scene.is_some()
         || (request.render_program && request.program_scene.is_some())
+        || !request.multiview_scenes.is_empty()
         || (request.prepare_output && request.program_scene.is_some())
     {
         renderer.advance_timestamp();
@@ -376,6 +414,7 @@ fn render_request(
         preview_frame: preview.as_ref().ok().cloned().flatten(),
         program_scene: request.program_scene,
         program_frame: program.as_ref().ok().cloned().flatten(),
+        multiview_frame: multiview.as_ref().ok().cloned().flatten(),
         program_output: output.ok().flatten(),
         program_output_frame: output_frame,
         error,
@@ -383,6 +422,71 @@ fn render_request(
         #[cfg(test)]
         render_thread: thread::current().id(),
     }
+}
+
+fn render_multiview_scene(
+    renderer: &mut PreviewRenderer,
+    scenes: &[String],
+    format: VideoFormat,
+) -> Result<Option<VideoFrame>, String> {
+    if scenes.is_empty() {
+        return Ok(None);
+    }
+    let scenes = &scenes[..scenes.len().min(MAX_MULTIVIEW_SCENES)];
+    let (columns, rows) = multiview_grid_dimensions(scenes.len());
+    let tile_format = PreviewRenderer::multiview_tile_format(renderer.format);
+    let tile_width = usize::try_from(tile_format.width()).unwrap_or(usize::MAX);
+    let tile_height = usize::try_from(tile_format.height()).unwrap_or(usize::MAX);
+    let composite_width = tile_width.saturating_mul(columns);
+    let composite_height = tile_height.saturating_mul(rows);
+    let expected_format = VideoFormat::new(
+        u32::try_from(composite_width).map_err(|_| "multiview width is too large".to_owned())?,
+        u32::try_from(composite_height).map_err(|_| "multiview height is too large".to_owned())?,
+        renderer.format.frame_rate(),
+    )
+    .map_err(|error| error.to_string())?;
+    if format != expected_format {
+        return Err("multiview target format does not match the bounded grid".to_owned());
+    }
+    let composite_format = format;
+    let mut pixels = vec![0_u8; composite_format.rgba_bytes()];
+    for (index, scene) in scenes.iter().enumerate() {
+        let Some(frame) = renderer
+            .render_preview(scene, tile_format)
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
+        };
+        let column = index % columns;
+        let row = index / columns;
+        let source_row_bytes = tile_width.saturating_mul(4);
+        for tile_row in 0..tile_height {
+            let source_start = tile_row.saturating_mul(source_row_bytes);
+            let destination_start = (row.saturating_mul(tile_height).saturating_add(tile_row))
+                .saturating_mul(composite_width)
+                .saturating_mul(4)
+                .saturating_add(column.saturating_mul(source_row_bytes));
+            let destination_end = destination_start.saturating_add(source_row_bytes);
+            let source_end = source_start.saturating_add(source_row_bytes);
+            if source_end <= frame.pixels().len() && destination_end <= pixels.len() {
+                pixels[destination_start..destination_end]
+                    .copy_from_slice(&frame.pixels()[source_start..source_end]);
+            }
+        }
+    }
+    VideoFrame::new(composite_format, renderer.timestamp(), pixels)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// Returns a stable near-square grid for a bounded scene count.
+pub(crate) fn multiview_grid_dimensions(scene_count: usize) -> (usize, usize) {
+    let scene_count = scene_count.clamp(1, MAX_MULTIVIEW_SCENES);
+    let mut columns = 1_usize;
+    while columns.saturating_mul(columns) < scene_count {
+        columns = columns.saturating_add(1);
+    }
+    (columns, scene_count.div_ceil(columns))
 }
 
 fn render_preview_scene(
@@ -424,6 +528,7 @@ fn renderer_error(
             preview_frame: None,
             program_scene: None,
             program_frame: None,
+            multiview_frame: None,
             program_output: None,
             program_output_frame: None,
             error: Some(error),
@@ -485,6 +590,13 @@ mod tests {
                 obs_rs_media::FrameRate::new(30, 1).expect("rate"),
             )
             .expect("program preview format"),
+            multiview_scenes: Vec::new(),
+            multiview_format: VideoFormat::new(
+                256,
+                144,
+                obs_rs_media::FrameRate::new(30, 1).expect("rate"),
+            )
+            .expect("multiview format"),
             render_program: false,
             prepare_output: false,
             prepare_output_rgba: false,
@@ -537,6 +649,54 @@ mod tests {
     }
 
     #[test]
+    fn multiview_grid_and_tile_format_stay_bounded() {
+        assert_eq!(multiview_grid_dimensions(1), (1, 1));
+        assert_eq!(multiview_grid_dimensions(4), (2, 2));
+        assert_eq!(multiview_grid_dimensions(5), (3, 2));
+        assert_eq!(multiview_grid_dimensions(32), (4, 4));
+
+        let canvas = VideoFormat::new(
+            3_840,
+            2_160,
+            obs_rs_media::FrameRate::new(60, 1).expect("rate"),
+        )
+        .expect("canvas format");
+        let tile = PreviewRenderer::multiview_tile_format(canvas);
+        assert_eq!((tile.width(), tile.height()), (256, 144));
+        let composite = PreviewRenderer::multiview_format_for_canvas(canvas, 16);
+        assert_eq!((composite.width(), composite.height()), (1_024, 576));
+    }
+
+    #[test]
+    fn multiview_render_timing_report() {
+        let project = crate::initial_project().expect("project");
+        let profile = project.active_profile_spec().expect("profile");
+        let canvas = profile.video_format();
+        let scenes = profile
+            .scenes()
+            .take(MAX_MULTIVIEW_SCENES)
+            .map(|scene| scene.id().as_str().to_owned())
+            .collect::<Vec<_>>();
+        let format = PreviewRenderer::multiview_format_for_canvas(canvas, scenes.len());
+        let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
+        let started = std::time::Instant::now();
+        for _ in 0..20 {
+            let frame = render_multiview_scene(&mut renderer, &scenes, format)
+                .expect("multiview render")
+                .expect("composite frame");
+            assert_eq!(frame.format(), format);
+            renderer.advance_timestamp();
+        }
+        let elapsed = started.elapsed();
+        println!(
+            "multiview: {} scenes x 20 renders = {:?} ({:?}/render)",
+            scenes.len(),
+            elapsed,
+            elapsed / 20,
+        );
+    }
+
+    #[test]
     fn scene_composition_runs_on_the_preview_thread() {
         let project = crate::initial_project().expect("project");
         let scene = project
@@ -572,6 +732,14 @@ mod tests {
                         .active_profile_spec()
                         .expect("profile")
                         .video_format(),
+                ),
+                multiview_scenes: vec![scene.clone()],
+                multiview_format: PreviewRenderer::multiview_format_for_canvas(
+                    project
+                        .active_profile_spec()
+                        .expect("profile")
+                        .video_format(),
+                    1,
                 ),
                 render_program: true,
                 prepare_output: true,
@@ -612,6 +780,10 @@ mod tests {
                 .expect("full output fallback frame")
                 .format(),
             canvas_format
+        );
+        assert_eq!(
+            result.multiview_frame.expect("multiview frame").format(),
+            PreviewRenderer::multiview_format_for_canvas(canvas_format, 1)
         );
         assert_eq!(worker.queue_depth(), 0);
         let performance = worker.performance();

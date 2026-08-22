@@ -67,8 +67,8 @@ pub(crate) use refresh::{
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
     AddSourceText, AddSourceWindow, DockPane, DockSplitter, FloatingDockWindow, I18n, LocaleOption,
-    MainWindow, Metrics, MixerRow, MonitorRow, MonitorText, MonitorWindow, Palette, ProfileRow,
-    ProjectorWindow, PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow,
+    MainWindow, Metrics, MixerRow, MonitorRow, MonitorText, MonitorWindow, MultiviewScene, Palette,
+    ProfileRow, ProjectorWindow, PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow,
     SetupWindow, SourceCandidate, SourceFilterRow, SourceFiltersWindow, SourceKindRow,
     SourcePropertiesWindow, SourceRow, SourceTransformWindow, ThemeTokens, UiMetrics, UiText,
 };

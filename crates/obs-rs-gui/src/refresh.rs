@@ -5,9 +5,10 @@ use obs_rs_project::{Profile, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
+use crate::preview_worker::{multiview_grid_dimensions, MAX_MULTIVIEW_SCENES};
 use crate::{
     frame_to_image, project_store, selection_rect, LocaleOption, MainWindow, MixerRow,
-    OutputRuntime, PreviewSurface, PreviewWorker, ProfileRow, SceneRow, SourceRow,
+    MultiviewScene, OutputRuntime, PreviewSurface, PreviewWorker, ProfileRow, SceneRow, SourceRow,
 };
 
 thread_local! {
@@ -179,6 +180,7 @@ pub(crate) fn refresh_ui(
     let render_error = if let Some(error) = sync_error {
         ui.set_preview_image(Image::default());
         ui.set_program_image(Image::default());
+        ui.set_multiview_image(Image::default());
         Some(format!("Preview surface: {error}"))
     } else {
         None
@@ -226,10 +228,20 @@ pub(crate) fn refresh_preview_frames_for_view(
         (None, None) => ui.set_program_image(Image::default()),
         (Some(_), None) => {}
     }
+    if let Some(frame) = result.multiview_frame.as_ref() {
+        let copy_started = Instant::now();
+        let image = frame_to_image(frame);
+        worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
+        let update_started = Instant::now();
+        ui.set_multiview_image(image);
+        worker.record_slint_update(update_started.elapsed());
+    } else {
+        ui.set_multiview_image(Image::default());
+    }
     let performance = worker.performance();
     ui.set_preview_metrics(
         format!(
-            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · copy p95={} µs bytes={} · Slint p95={} µs · callback p95={} µs",
+            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · multiview p95={} µs · copy p95={} µs bytes={} · Slint p95={} µs · callback p95={} µs",
             result.metrics,
             worker.queue_depth(),
             worker.dropped_requests(),
@@ -238,6 +250,7 @@ pub(crate) fn refresh_preview_frames_for_view(
             nanos_to_micros(performance.preview_render.percentile_nanos(99)),
             nanos_to_micros(performance.preview_render.max_nanos()),
             nanos_to_micros(performance.program_render.percentile_nanos(95)),
+            nanos_to_micros(performance.multiview_render.percentile_nanos(95)),
             nanos_to_micros(performance.frame_copy.percentile_nanos(95)),
             performance.frame_copy_bytes,
             nanos_to_micros(performance.slint_update.percentile_nanos(95)),
@@ -320,6 +333,40 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     });
     if !model_matches(&ui.get_scene_rows(), &scene_rows) {
         ui.set_scene_rows(ModelRc::new(VecModel::from(scene_rows)));
+    }
+    let multiview_scenes = profile.map_or_else(Vec::new, |profile| {
+        let scenes = profile
+            .scenes()
+            .take(MAX_MULTIVIEW_SCENES)
+            .collect::<Vec<_>>();
+        let (columns, rows) = multiview_grid_dimensions(scenes.len().max(1));
+        let columns_f = f32::from(u16::try_from(columns).unwrap_or(u16::MAX));
+        let rows_f = f32::from(u16::try_from(rows).unwrap_or(u16::MAX));
+        let tile_width = 1.0_f32 / columns_f;
+        let tile_height = 1.0_f32 / rows_f;
+        scenes
+            .into_iter()
+            .enumerate()
+            .map(|(index, scene)| {
+                let preview = state.preview_scene() == Some(scene.id().as_str());
+                let program = state.program_scene() == Some(scene.id().as_str());
+                MultiviewScene {
+                    id: scene.id().as_str().into(),
+                    name: scene.name().into(),
+                    role: roles.role(state, scene.id().as_str()),
+                    preview,
+                    program,
+                    x: f32::from(u16::try_from(index % columns).unwrap_or(u16::MAX)) * tile_width,
+                    y: f32::from(u16::try_from(index / columns).unwrap_or(u16::MAX)) * tile_height,
+                    width: tile_width,
+                    height: tile_height,
+                    selected: preview || program,
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+    if !model_matches(&ui.get_multiview_scenes(), &multiview_scenes) {
+        ui.set_multiview_scenes(ModelRc::new(VecModel::from(multiview_scenes)));
     }
 
     let source_scene = state.preview_scene().unwrap_or("none");
