@@ -124,6 +124,17 @@ impl SettingsController {
     ) -> Result<(), String> {
         let mut settings = self.settings.borrow().clone();
         settings.capture_layout(ui);
+        {
+            let state = state.borrow();
+            state
+                .preview_scene()
+                .unwrap_or_default()
+                .clone_into(&mut settings.last_preview_scene);
+            state
+                .program_scene()
+                .unwrap_or_default()
+                .clone_into(&mut settings.last_program_scene);
+        }
         let dock_tree = self.docks.tree_snapshot();
         settings.layout.panel_order = dock_tree.leaf_order();
         settings.layout.dock_tree = dock_tree;

@@ -10,7 +10,7 @@ use obs_rs_util::Identifier;
 
 use super::{
     error::UiError,
-    helpers::{default_mixer, first_scene_id, first_source_id, identifier},
+    helpers::{default_mixer, first_scene_id, first_source_id, identifier, project_has_scene},
     types::{MixerChannel, Shortcut, UiAction, UiCommand, UiLocale, UiNotice},
     MAX_UI_NOTICES,
 };
@@ -301,6 +301,39 @@ impl DesktopState {
             .and_then(|scene| first_source_id(self.project.project(), scene))
             .into_iter()
             .collect();
+    }
+
+    /// Restores session-level preview/program scene choices without creating a
+    /// project-history entry.
+    ///
+    /// The choices live in the desktop session rather than in the project
+    /// document. A missing, malformed, or stale choice is ignored so loading
+    /// a project always retains the first-scene fallback established by
+    /// [`Self::replace_project`].
+    pub fn restore_scene_selection(&mut self, preview: Option<&str>, program: Option<&str>) {
+        let (preview, program) = {
+            let project = self.project.project();
+            let preview = preview
+                .and_then(|id| Identifier::new(id).ok())
+                .filter(|id| project_has_scene(project, id));
+            let program = program
+                .and_then(|id| Identifier::new(id).ok())
+                .filter(|id| project_has_scene(project, id));
+            (preview, program)
+        };
+
+        if let Some(preview) = preview {
+            self.preview_scene = Some(preview);
+            self.selected_sources = self
+                .preview_scene
+                .as_ref()
+                .and_then(|scene| first_source_id(self.project.project(), scene))
+                .into_iter()
+                .collect();
+        }
+        if let Some(program) = program {
+            self.program_scene = Some(program);
+        }
     }
 
     /// Returns the project session used by persistence and rendering adapters.

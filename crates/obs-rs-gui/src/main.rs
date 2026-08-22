@@ -310,6 +310,11 @@ fn restore_project(state: &Rc<RefCell<DesktopState>>, settings: &AppSettings) ->
     }
     let result = project_store(path).and_then(|store| {
         state.borrow_mut().load_project(&store)?;
+        let preview = (!settings.last_preview_scene.is_empty())
+            .then_some(settings.last_preview_scene.as_str());
+        let program = (!settings.last_program_scene.is_empty())
+            .then_some(settings.last_program_scene.as_str());
+        state.borrow_mut().restore_scene_selection(preview, program);
         Ok(())
     });
     match result {

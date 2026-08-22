@@ -324,6 +324,12 @@ pub(crate) struct AppSettings {
     /// Provider-stable `PipeWire` input ID; empty selects the first available
     /// input and keeps the deterministic fallback as a safe last resort.
     pub(crate) audio_input_id: String,
+    /// Last Preview scene selected in the desktop session; empty means use the
+    /// first scene after a project is restored.
+    pub(crate) last_preview_scene: String,
+    /// Last Program scene selected in the desktop session; empty means use the
+    /// first scene after a project is restored.
+    pub(crate) last_program_scene: String,
     /// Reopen the project file from [`AppSettings::project_path`] at startup.
     pub(crate) restore_project: bool,
     /// Write the project back to the same file when the window closes.
@@ -627,6 +633,8 @@ impl Default for AppSettings {
             rist: RistConfig::default(),
             reference_address: "127.0.0.1:9000".to_owned(),
             audio_input_id: String::new(),
+            last_preview_scene: String::new(),
+            last_program_scene: String::new(),
             restore_project: true,
             save_project_on_exit: true,
             setup_state: SetupState::Pending,
@@ -917,6 +925,8 @@ impl AppSettings {
             rist,
             reference_address: text(config, "reference_address", &defaults.reference_address),
             audio_input_id: text(config, "audio_input_id", &defaults.audio_input_id),
+            last_preview_scene: text(config, "last_preview_scene", &defaults.last_preview_scene),
+            last_program_scene: text(config, "last_program_scene", &defaults.last_program_scene),
             restore_project: flag(config, "restore_project", defaults.restore_project),
             save_project_on_exit: flag(
                 config,
@@ -1021,6 +1031,8 @@ impl AppSettings {
             ("recording_format", self.recording_format.id().to_owned()),
             ("recording_codec", self.recording_codec.id().to_owned()),
             ("audio_input_id", self.audio_input_id.clone()),
+            ("last_preview_scene", self.last_preview_scene.clone()),
+            ("last_program_scene", self.last_program_scene.clone()),
             ("restore_project", self.restore_project.to_string()),
             (
                 "save_project_on_exit",
@@ -1818,6 +1830,8 @@ mod tests {
             channels: 1,
             hotkey_swap: "F1".to_owned(),
             preview_border_color: "#00FF88".to_owned(),
+            last_preview_scene: "source_scene".to_owned(),
+            last_program_scene: "program".to_owned(),
             recording_format: RecordingFormat::ReferencePacket,
             recording_path: "/tmp/reference.obsr".to_owned(),
             stream_protocol: StreamProtocol::Rtmps,

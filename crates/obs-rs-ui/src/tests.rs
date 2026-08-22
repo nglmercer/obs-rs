@@ -52,6 +52,23 @@ fn desktop_state_selects_scenes_and_tracks_outputs() {
 }
 
 #[test]
+fn persisted_scene_selection_restores_without_project_history() {
+    let mut state = DesktopState::new(project());
+    state.restore_scene_selection(Some("source_scene"), Some("program"));
+
+    assert_eq!(state.preview_scene(), Some("source_scene"));
+    assert_eq!(state.program_scene(), Some("program"));
+    assert_eq!(state.selected_source(), Some("source"));
+
+    // Stale settings do not displace the valid fallback and do not create a
+    // user-visible project edit.
+    state.restore_scene_selection(Some("missing"), Some("bad id"));
+    assert_eq!(state.preview_scene(), Some("source_scene"));
+    assert_eq!(state.program_scene(), Some("program"));
+    assert!(!state.can_undo());
+}
+
+#[test]
 fn desktop_state_selects_source_items_in_preview_scene() {
     let mut state = DesktopState::new(project());
     assert_eq!(state.selected_source(), None);

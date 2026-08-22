@@ -5,8 +5,9 @@ use super::preview::PreviewRenderer;
 use super::refresh::{peak_db, transition_label_for_locale};
 use super::settings::AppSettings;
 use super::{
-    capture_devices, initial_project, install_canvas_callbacks, refresh_ui, source_settings, I18n,
-    MainWindow, OutputRuntime, PreviewSurface, SettingsWindow, SourcePropertiesWindow,
+    capture_devices, initial_project, install_canvas_callbacks, refresh_ui, restore_project,
+    source_settings, I18n, MainWindow, OutputRuntime, PreviewSurface, SettingsWindow,
+    SourcePropertiesWindow,
 };
 use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
@@ -445,6 +446,38 @@ fn app_settings_round_trip_the_selected_audio_input() {
         settings.audio_input_id
     );
     std::fs::remove_file(path).expect("remove settings fixture");
+}
+
+#[test]
+fn startup_restores_persisted_scene_selection_after_project_load() {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-scenes-{token}.json"));
+    let path_text = path.to_string_lossy().into_owned();
+    let state = Rc::new(RefCell::new(DesktopState::new(
+        initial_project().expect("initial project"),
+    )));
+    let store = crate::project_store(&path_text).expect("project store");
+    state
+        .borrow_mut()
+        .save_project(&store)
+        .expect("project fixture should save");
+
+    let settings = AppSettings {
+        project_path: path_text,
+        last_preview_scene: "intermission".to_owned(),
+        last_program_scene: "program".to_owned(),
+        ..AppSettings::default()
+    };
+    let message = restore_project(&state, &settings).expect("project should restore");
+
+    assert!(message.starts_with("Restored project"));
+    assert_eq!(state.borrow().preview_scene(), Some("intermission"));
+    assert_eq!(state.borrow().program_scene(), Some("program"));
+
+    std::fs::remove_file(path).expect("remove project fixture");
 }
 
 #[test]
