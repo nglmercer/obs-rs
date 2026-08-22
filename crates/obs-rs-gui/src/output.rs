@@ -72,6 +72,8 @@ pub(crate) struct OutputRuntime {
     replay_buffer_duration: Duration,
     segmented_recording_policy: Option<SegmentedRecordingPolicy>,
     segmented_recording_requested: bool,
+    auto_remux_requested: bool,
+    auto_remux_enabled: bool,
     recording_profile: Option<OutputProfile>,
     /// A canvas change accepted while an output was running.
     ///
@@ -155,6 +157,8 @@ impl OutputRuntime {
             replay_buffer_duration: Duration::from_secs(u64::from(REPLAY_BUFFER_DURATION_DEFAULT)),
             segmented_recording_policy: None,
             segmented_recording_requested: false,
+            auto_remux_requested: false,
+            auto_remux_enabled: false,
             recording_profile: None,
             staged_video_format: None,
             scaler: None,
@@ -338,6 +342,20 @@ impl OutputRuntime {
                     .to_owned()
                     .into(),
             );
+        } else if self.auto_remux_requested {
+            if !self.auto_remux_enabled {
+                return Err(
+                    "automatic Matroska-to-MP4 remux is unavailable on this host"
+                        .to_owned()
+                        .into(),
+                );
+            }
+            validate_auto_remux_path(path)?;
+            self.worker.start_remux_recording_configured(
+                path,
+                self.recording_video_encoder.clone(),
+                self.recording_audio_encoder.clone(),
+            )?;
         } else if let Some(profile) = self.recording_profile {
             self.worker.start_recording_profile(
                 path,
@@ -376,6 +394,22 @@ impl OutputRuntime {
                     .to_owned()
                     .into(),
             );
+        } else if self.auto_remux_requested {
+            if !self.auto_remux_enabled {
+                return Err(
+                    "automatic Matroska-to-MP4 remux is unavailable on this host"
+                        .to_owned()
+                        .into(),
+                );
+            }
+            validate_auto_remux_path(path)?;
+            self.worker.try_start_remux_recording(
+                path,
+                Some((
+                    self.recording_video_encoder.clone(),
+                    self.recording_audio_encoder.clone(),
+                )),
+            )?;
         } else if let Some(profile) = self.recording_profile {
             self.worker.try_start_recording_profile(
                 path,
@@ -454,6 +488,10 @@ impl OutputRuntime {
         let format = settings.effective_recording_format();
         self.segmented_recording_requested =
             settings.recording_split_enabled && format != RecordingFormat::ReferencePacket;
+        self.auto_remux_requested = settings.recording_auto_remux
+            && !settings.recording_split_enabled
+            && format == RecordingFormat::Matroska;
+        self.auto_remux_enabled = self.auto_remux_requested && self.capabilities.supports_remux();
         let enabled = settings.recording_split_enabled
             && segmented_recording_format_available(&self.capabilities, format);
         self.recording_profile = (format == RecordingFormat::FragmentedMp4 && !enabled)
@@ -1165,6 +1203,17 @@ fn validate_segmented_recording_path(path: &str) -> Result<(), Box<dyn Error>> {
         Ok(())
     } else {
         Err("split recording requires .obsr, .mkv, .mp4, .mov, or .flv".into())
+    }
+}
+
+fn validate_auto_remux_path(path: &str) -> Result<(), Box<dyn Error>> {
+    if Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"))
+    {
+        Ok(())
+    } else {
+        Err("automatic remux recording requires a final .mp4 path".into())
     }
 }
 

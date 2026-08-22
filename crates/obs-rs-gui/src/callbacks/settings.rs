@@ -69,6 +69,7 @@ pub(crate) struct SettingsController {
     recording_format_ids: RefCell<Vec<RecordingFormat>>,
     recording_audio_encoder_ids: RefCell<Vec<String>>,
     segmented_recording_supported: bool,
+    remux_supported: bool,
     /// Whether each offered video encoder runs on dedicated hardware, which is
     /// what decides whether the double-software-encode warning applies.
     video_encoder_hardware: RefCell<Vec<bool>>,
@@ -315,6 +316,7 @@ pub(crate) fn install_settings_window(
             .borrow()
             .capabilities()
             .supports_segmented_recording(),
+        remux_supported: output.borrow().capabilities().supports_remux(),
         video_encoder_hardware: RefCell::new(Vec::new()),
         draft_video: RefCell::new(VideoSettings::default()),
         browse_tool: detect_browse_tool(),
@@ -864,6 +866,7 @@ fn load_recording_page_draft(
 ) {
     window.set_recording_directory(settings.recording_directory.as_str().into());
     window.set_recording_filename_without_spaces(settings.recording_filename_without_spaces);
+    window.set_recording_auto_remux(settings.recording_auto_remux);
     window.set_recording_quality_index(index_of(
         &RecordingQuality::ALL,
         &settings.recording_quality,
@@ -896,6 +899,10 @@ fn load_recording_page_draft(
     window.set_recording_split_supported(recording_split_available(
         settings.effective_recording_format(),
         controller.segmented_recording_supported,
+    ));
+    window.set_recording_auto_remux_supported(recording_auto_remux_available(
+        settings.effective_recording_format(),
+        controller.remux_supported,
     ));
 }
 
@@ -1223,6 +1230,14 @@ fn install_output_page(controller: &Rc<SettingsController>) {
         );
     });
 
+    let refresh_controller = Rc::clone(controller);
+    controller.window.on_refresh_recording_page(move || {
+        refresh_recording_page(
+            &refresh_controller,
+            draft_recording_quality(&refresh_controller.window),
+        );
+    });
+
     let browse_controller = Rc::clone(controller);
     controller.window.on_browse_recording_directory(move || {
         let Some(tool) = browse_controller.browse_tool else {
@@ -1272,11 +1287,17 @@ fn refresh_recording_page(controller: &Rc<SettingsController>, quality: Recordin
         format,
         controller.segmented_recording_supported,
     ));
+    window.set_recording_auto_remux_supported(recording_auto_remux_available(
+        format,
+        controller.remux_supported,
+    ));
     let settings = AppSettings {
         recording_directory: window.get_recording_directory().to_string(),
         recording_filename_without_spaces: window.get_recording_filename_without_spaces(),
         recording_quality: quality,
         recording_format: format,
+        recording_auto_remux: window.get_recording_auto_remux(),
+        recording_split_enabled: window.get_recording_split_enabled(),
         ..controller.settings.borrow().clone()
     };
     // Only the path is pushed; the sentence around it is composed in the page
@@ -1300,6 +1321,10 @@ fn refresh_recording_page(controller: &Rc<SettingsController>, quality: Recordin
 
 fn recording_split_available(format: RecordingFormat, native_supported: bool) -> bool {
     format == RecordingFormat::ReferencePacket || native_supported
+}
+
+fn recording_auto_remux_available(format: RecordingFormat, native_supported: bool) -> bool {
+    format == RecordingFormat::Matroska && native_supported
 }
 
 fn install_commit(
@@ -1764,6 +1789,7 @@ fn read_recording_draft(controller: &SettingsController, settings: &mut AppSetti
         .unwrap_or_default();
     settings.recording_directory = window.get_recording_directory().to_string();
     settings.recording_filename_without_spaces = window.get_recording_filename_without_spaces();
+    settings.recording_auto_remux = window.get_recording_auto_remux();
     settings.replay_buffer_duration_seconds = u32::try_from(window.get_replay_buffer_duration())
         .ok()
         .filter(|duration| REPLAY_BUFFER_DURATION_RANGE.contains(duration))

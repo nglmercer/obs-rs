@@ -1131,6 +1131,47 @@ fn output_runtime_routes_fragmented_mp4_settings_to_the_explicit_profile() {
 }
 
 #[test]
+fn output_runtime_routes_matroska_auto_remux_to_the_mp4_final_path() {
+    let format = VideoFormat::new(64, 64, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+    if !output.capabilities().supports_remux() {
+        return;
+    }
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let final_path = std::env::temp_dir().join(format!("obs-rs-gui-remux-{token}.mp4"));
+    let settings = AppSettings {
+        recording_auto_remux: true,
+        ..AppSettings::default()
+    };
+    output.configure_stream(&settings);
+    output.configure_recording(&settings);
+    output
+        .start_recording(final_path.to_str().expect("UTF-8 temp path"))
+        .expect("automatic remux recording should open");
+    for index in 0..90 {
+        let timestamp = u64::try_from(index).expect("index") * 33_333_333;
+        output.push_frame(&VideoFrame::solid(
+            format,
+            Timestamp::from_nanos(timestamp),
+            [20, 30, 40, 255],
+        ));
+    }
+    let bytes = output
+        .finish_recording()
+        .expect("automatic remux recording should finalize");
+    assert!(bytes > 0);
+    let persisted = std::fs::read(&final_path).expect("remuxed MP4 should be persisted");
+    assert_eq!(persisted.len(), bytes);
+    assert!(persisted.windows(4).any(|chunk| chunk == b"ftyp"));
+    assert!(!final_path.with_extension("mkv.part").exists());
+    assert!(!final_path.with_extension("mp4.part").exists());
+    std::fs::remove_file(final_path).expect("remove remux fixture");
+}
+
+#[test]
 fn output_runtime_routes_reference_split_recording_to_numbered_files() {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
     let token = std::time::SystemTime::now()

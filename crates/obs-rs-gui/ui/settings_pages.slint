@@ -357,6 +357,8 @@ export component OutputPage inherits VerticalLayout {
     in property <[string]> recording-format-names;
     in property <int> recording-format-index;
     in property <bool> recording-format-locked;
+    in-out property <bool> recording-auto-remux;
+    in property <bool> recording-auto-remux-supported;
     in property <[string]> recording-codec-names;
     in property <int> recording-codec-index;
     in property <[string]> recording-audio-encoder-names;
@@ -376,6 +378,7 @@ export component OutputPage inherits VerticalLayout {
     callback select-encoder-preset(int);
     callback select-recording-quality(int);
     callback select-recording-format(int);
+    callback refresh-recording-page();
     callback select-recording-codec(int);
     callback select-recording-audio-encoder(int);
     callback browse-recording-directory();
@@ -500,6 +503,18 @@ export component OutputPage inherits VerticalLayout {
         if root.recording-format-locked : SettingHint {
             text: I18n.text.settings_ui.recording_format_locked_hint;
         }
+        CheckRow {
+            label: I18n.text.settings_ui.recording_auto_remux;
+            enabled: root.recording-auto-remux-supported && !root.recording-split-enabled;
+            checked <=> root.recording-auto-remux;
+            toggled(value) => {
+                root.changed();
+                root.refresh-recording-page();
+            }
+        }
+        if !root.recording-auto-remux-supported || root.recording-split-enabled : SettingHint {
+            text: I18n.text.settings_ui.recording_auto_remux_unavailable;
+        }
         if !root.recording-format-locked : SettingRow {
             label: I18n.text.settings_ui.video_encoder;
             SettingsCombo {
@@ -548,7 +563,10 @@ export component OutputPage inherits VerticalLayout {
             label: I18n.text.settings_ui.recording_split_enabled;
             enabled: root.recording-split-supported;
             checked <=> root.recording-split-enabled;
-            toggled(value) => { root.changed(); }
+            toggled(value) => {
+                root.changed();
+                root.refresh-recording-page();
+            }
         }
         SettingRow {
             label: I18n.text.settings_ui.recording_split_duration;

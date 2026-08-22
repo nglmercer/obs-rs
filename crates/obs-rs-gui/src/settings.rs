@@ -376,6 +376,8 @@ pub(crate) struct AppSettings {
     pub(crate) recording_filename_without_spaces: bool,
     pub(crate) recording_quality: RecordingQuality,
     pub(crate) recording_format: RecordingFormat,
+    /// Publish Matroska recordings as MP4 after the native bounded remux step.
+    pub(crate) recording_auto_remux: bool,
     pub(crate) recording_codec: VideoCodec,
     pub(crate) recording_audio_encoder: EncoderImplementation,
     /// Maximum wall-clock history retained by the replay buffer, in seconds.
@@ -710,6 +712,7 @@ impl Default for AppSettings {
             recording_filename_without_spaces: false,
             recording_quality: RecordingQuality::default(),
             recording_format: RecordingFormat::Matroska,
+            recording_auto_remux: false,
             recording_codec: VideoCodec::H264,
             recording_audio_encoder: EncoderImplementation::default(),
             replay_buffer_duration_seconds: REPLAY_BUFFER_DURATION_DEFAULT,
@@ -1007,6 +1010,11 @@ impl AppSettings {
                 .get("recording_quality")
                 .and_then(RecordingQuality::from_id)
                 .unwrap_or(defaults.recording_quality),
+            recording_auto_remux: flag(
+                config,
+                "recording_auto_remux",
+                defaults.recording_auto_remux,
+            ),
             recording_audio_encoder: EncoderImplementation::new(text(
                 config,
                 "recording_audio_encoder",
@@ -1163,6 +1171,10 @@ impl AppSettings {
                 self.recording_filename_without_spaces.to_string(),
             ),
             ("recording_quality", self.recording_quality.id().to_owned()),
+            (
+                "recording_auto_remux",
+                self.recording_auto_remux.to_string(),
+            ),
             (
                 "recording_audio_encoder",
                 self.recording_audio_encoder.id().to_owned(),
@@ -1598,6 +1610,14 @@ impl AppSettings {
         }
     }
 
+    /// Returns whether the next generated path is the final MP4 published by
+    /// the bounded native remux boundary.
+    pub(crate) fn recording_uses_auto_remux(&self) -> bool {
+        self.recording_auto_remux
+            && !self.recording_split_enabled
+            && self.effective_recording_format() == RecordingFormat::Matroska
+    }
+
     /// Returns the video codec the selected quality actually encodes with.
     pub(crate) const fn effective_recording_codec(&self) -> VideoCodec {
         if self.recording_quality.is_lossless() {
@@ -1619,10 +1639,12 @@ impl AppSettings {
             stamp.to_owned()
         };
         let mut path = PathBuf::from(self.recording_directory.trim());
-        path.push(format!(
-            "{name}.{}",
+        let extension = if self.recording_uses_auto_remux() {
+            "mp4"
+        } else {
             self.effective_recording_format().extension()
-        ));
+        };
+        path.push(format!("{name}.{extension}"));
         path.to_string_lossy().into_owned()
     }
 
@@ -2454,6 +2476,7 @@ mod tests {
             recording_quality: RecordingQuality::IndistinguishableQuality,
             recording_directory: "/tmp/obs-rs-recordings".to_owned(),
             recording_filename_without_spaces: true,
+            recording_auto_remux: true,
             recording_audio_encoder: EncoderImplementation::new("avenc_aac"),
             replay_buffer_duration_seconds: 90,
             replay_buffer_capacity_mib: 128,
@@ -2664,6 +2687,40 @@ mod tests {
         assert_eq!(
             settings.recording_file_path("2024-02-29 12-30-45"),
             format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
+        );
+    }
+
+    #[test]
+    fn automatic_remux_selects_an_mp4_final_path_only_for_unsplit_matroska() {
+        let settings = AppSettings {
+            recording_auto_remux: true,
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            settings.recording_file_path("2024-02-29 12-30-45"),
+            format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
+        );
+
+        let split = AppSettings {
+            recording_split_enabled: true,
+            ..settings.clone()
+        };
+        assert_eq!(
+            Path::new(&split.recording_file_path("stamp"))
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("mkv")
+        );
+
+        let lossless = AppSettings {
+            recording_quality: RecordingQuality::Lossless,
+            ..settings
+        };
+        assert_eq!(
+            Path::new(&lossless.recording_file_path("stamp"))
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("obsr")
         );
     }
 
