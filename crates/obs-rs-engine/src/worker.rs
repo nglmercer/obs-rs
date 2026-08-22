@@ -47,6 +47,12 @@ enum WorkerCommand {
         mpsc::Sender<Result<(), String>>,
     ),
     #[cfg(feature = "production-gstreamer")]
+    StartRemuxRecording(
+        PathBuf,
+        Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+        mpsc::Sender<Result<(), String>>,
+    ),
+    #[cfg(feature = "production-gstreamer")]
     StartRecordingProfile(
         PathBuf,
         OutputProfile,
@@ -305,6 +311,33 @@ impl EngineWorker {
         self.start_recording_with_config(path.into(), Some((video, audio)))
     }
 
+    /// Requests an automatic H.264/AAC Matroska-to-MP4 recording start.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker is closed or the native remux
+    /// boundary rejects the destination.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn start_remux_recording(&self, path: impl Into<PathBuf>) -> Result<(), EngineError> {
+        self.start_remux_recording_with_config(path.into(), None)
+    }
+
+    /// Requests automatic remux recording with explicit encoder choices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker is closed or the encoders do
+    /// not match the native H.264/AAC remux profile.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn start_remux_recording_configured(
+        &self,
+        path: impl Into<PathBuf>,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        self.start_remux_recording_with_config(path.into(), Some((video, audio)))
+    }
+
     /// Requests a production recording using an explicit versioned profile.
     ///
     /// # Errors
@@ -348,6 +381,26 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    #[cfg(feature = "production-gstreamer")]
+    fn start_remux_recording_with_config(
+        &self,
+        path: PathBuf,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::StartRemuxRecording(
+                path,
+                encoder_config,
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Enqueues recording setup without waiting for file or encoder work.
     ///
     /// The GUI uses this boundary so opening a container or negotiating a
@@ -367,6 +420,35 @@ impl EngineWorker {
         set_recording_lifecycle(&self.snapshot, OutputLifecycle::Starting);
         let (reply, _receive) = mpsc::channel();
         match self.sender.try_send(WorkerCommand::StartRecording(
+            path.into(),
+            encoder_config,
+            reply,
+        )) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_recording_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                Err(error)
+            }
+        }
+    }
+
+    /// Enqueues automatic Matroska-to-MP4 recording without waiting for
+    /// native pipeline setup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] only when the bounded command queue rejects the
+    /// request or the worker has already closed.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn try_start_remux_recording(
+        &self,
+        path: impl Into<PathBuf>,
+        encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        set_recording_lifecycle(&self.snapshot, OutputLifecycle::Starting);
+        let (reply, _receive) = mpsc::channel();
+        match self.sender.try_send(WorkerCommand::StartRemuxRecording(
             path.into(),
             encoder_config,
             reply,
@@ -1094,6 +1176,12 @@ fn worker_loop(
                 false
             }
             #[cfg(feature = "production-gstreamer")]
+            WorkerCommand::StartRemuxRecording(path, encoder_config, reply) => {
+                let result = start_remux_recording(&mut session, path, encoder_config);
+                let _ = reply.send(result);
+                false
+            }
+            #[cfg(feature = "production-gstreamer")]
             WorkerCommand::StartRecordingProfile(path, profile, encoder_config, reply) => {
                 let result = start_recording_profile(&mut session, path, profile, encoder_config);
                 let _ = reply.send(result);
@@ -1364,6 +1452,19 @@ fn start_recording(
     match encoder_config {
         Some((video, audio)) => session.start_recording_configured(path, video, audio),
         None => session.start_recording(path),
+    }
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(feature = "production-gstreamer")]
+fn start_remux_recording(
+    session: &mut EngineSession,
+    path: PathBuf,
+    encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+) -> Result<(), String> {
+    match encoder_config {
+        Some((video, audio)) => session.start_remux_recording_configured(path, video, audio),
+        None => session.start_remux_recording(path),
     }
     .map_err(|error| error.to_string())
 }
@@ -1664,6 +1765,46 @@ mod tests {
         );
         assert!(path.exists(), "the worker finalized the requested path");
         std::fs::remove_file(path).expect("remove recording fixture");
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn worker_accepts_remux_recording_and_finalizes_mp4() {
+        let capabilities = obs_rs_output_gstreamer::GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(obs_rs_output::OutputProfileKind::MatroskaH264Aac)
+            || !capabilities.supports_remux()
+        {
+            return;
+        }
+        let format =
+            VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let worker = EngineWorker::spawn_with_capacity(
+            EngineSession::for_format(
+                format,
+                EngineConfig::new(AudioFormat::new(48_000, 2).expect("audio format")),
+            )
+            .expect("session"),
+            2,
+        )
+        .expect("worker");
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-worker-auto-remux-{token}.mp4"));
+        let source_path = path.with_extension("mkv.part");
+        worker
+            .start_remux_recording(&path)
+            .expect("start remux recording");
+        assert!(worker.try_push_frame(VideoFrame::solid(format, Timestamp::ZERO, [1, 2, 3, 255],)));
+        let bytes = worker.finish_recording().expect("finish remux recording");
+        let persisted = std::fs::read(&path).expect("read remuxed recording");
+        assert_eq!(persisted.len(), bytes);
+        assert_eq!(persisted.get(4..8), Some(&b"ftyp"[..]));
+        assert!(!source_path.exists());
+        std::fs::remove_file(path).expect("remove remux recording");
     }
 
     #[test]

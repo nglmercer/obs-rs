@@ -1584,6 +1584,38 @@ impl EngineSession {
         self.start_recording_with_config(path.into(), Some(&encoder_config))
     }
 
+    /// Starts an H.264/AAC Matroska recording that is automatically remuxed
+    /// to the requested MP4 path when recording finishes.
+    ///
+    /// The active Matroska source remains in a hidden `.mkv.part` path until
+    /// the native no-clobber remux succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the native remux capability, selected encoders,
+    /// or destination path is unavailable.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn start_remux_recording(&mut self, path: impl Into<PathBuf>) -> Result<(), EngineError> {
+        self.start_remux_recording_with_config(path.into(), None)
+    }
+
+    /// Starts automatic Matroska-to-MP4 recording with explicit encoders.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selected encoders are unavailable or do not
+    /// match the H.264/AAC remux profile.
+    #[cfg(feature = "production-gstreamer")]
+    pub fn start_remux_recording_configured(
+        &mut self,
+        path: impl Into<PathBuf>,
+        video: VideoEncoderConfig,
+        audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        let encoder_config = (video, audio);
+        self.start_remux_recording_with_config(path.into(), Some(&encoder_config))
+    }
+
     /// Starts a production recording using an explicit versioned output
     /// profile. This is the engine boundary for profiles that share a file
     /// extension, such as normal and fragmented MP4.
@@ -1668,6 +1700,30 @@ impl EngineSession {
         }
     }
 
+    #[cfg(feature = "production-gstreamer")]
+    fn start_remux_recording_with_config(
+        &mut self,
+        path: PathBuf,
+        encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        if self.recording.is_some() {
+            return Err(EngineError::Busy("start recording"));
+        }
+        self.recording_lifecycle = OutputLifecycle::Starting;
+        let result = self.open_remux_recording(path, encoder_config);
+        match result {
+            Ok(()) => {
+                self.recording_lifecycle = OutputLifecycle::Running;
+                Ok(())
+            }
+            Err(error) => {
+                self.recording_lifecycle = OutputLifecycle::Failed;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
+    }
+
     fn open_recording(
         &mut self,
         final_path: PathBuf,
@@ -1708,7 +1764,6 @@ impl EngineSession {
         #[cfg(feature = "production-gstreamer")]
         {
             let destination = ProductionDestination::Recording(final_path.clone());
-            let capabilities = GStreamerCapabilitySnapshot::probe();
             if (is_mp4 || is_mov || is_flv)
                 && encoder_config
                     .is_some_and(|(video, _)| video.codec != obs_rs_output::VideoCodec::H264)
@@ -1735,26 +1790,7 @@ impl EngineSession {
                     })
                 }
             });
-            let plan = encoder_config.map_or_else(
-                || ProductionPipelinePlan::negotiate(profile, &destination, &capabilities),
-                |(video, audio)| {
-                    ProductionPipelinePlan::negotiate_configured(
-                        profile,
-                        &destination,
-                        &capabilities,
-                        video,
-                        audio,
-                    )
-                },
-            )?;
-            let session = GStreamerOutputSession::start(
-                &plan,
-                &destination,
-                self.format,
-                self.config.audio_format,
-            )?;
-            self.recording = Some(RecordingOutput::Production { session });
-            Ok(())
+            self.open_native_production_recording(&destination, profile, encoder_config)
         }
         #[cfg(not(feature = "production-gstreamer"))]
         let _ = (encoder_config, profile_override);
@@ -1762,6 +1798,59 @@ impl EngineSession {
         Err(EngineError::InvalidConfiguration(
             "production recording support was not compiled into this host".to_owned(),
         ))
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    fn open_remux_recording(
+        &mut self,
+        final_path: PathBuf,
+        encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        if !final_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"))
+        {
+            return Err(EngineError::InvalidConfiguration(
+                "automatic remux destination must use the .mp4 extension".to_owned(),
+            ));
+        }
+        let destination = ProductionDestination::RemuxRecording { final_path };
+        self.open_native_production_recording(
+            &destination,
+            OutputProfile::matroska_h264_aac(),
+            encoder_config,
+        )
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    fn open_native_production_recording(
+        &mut self,
+        destination: &ProductionDestination,
+        profile: OutputProfile,
+        encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        let plan = encoder_config.map_or_else(
+            || ProductionPipelinePlan::negotiate(profile, destination, &capabilities),
+            |(video, audio)| {
+                ProductionPipelinePlan::negotiate_configured(
+                    profile,
+                    destination,
+                    &capabilities,
+                    video,
+                    audio,
+                )
+            },
+        )?;
+        let session = GStreamerOutputSession::start(
+            &plan,
+            destination,
+            self.format,
+            self.config.audio_format,
+        )?;
+        self.recording = Some(RecordingOutput::Production { session });
+        Ok(())
     }
 
     fn open_segmented_recording(
@@ -4054,6 +4143,46 @@ mod tests {
         assert_eq!(persisted.len(), bytes);
         assert_eq!(persisted.get(4..8), Some(&b"ftyp"[..]));
         assert!(!temp_path.exists());
+        std::fs::remove_file(path).expect("remove recording");
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    #[test]
+    fn remux_recording_publishes_mp4_after_consuming_hidden_matroska_source() {
+        let capabilities = GStreamerCapabilitySnapshot::probe();
+        if !capabilities
+            .output_capabilities()
+            .supports(obs_rs_output::OutputProfileKind::MatroskaH264Aac)
+            || !capabilities.supports_remux()
+        {
+            return;
+        }
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("obs-rs-engine-auto-remux-{token}.mp4"));
+        let source_path = path.with_extension("mkv.part");
+        let remux_temp_path = path.with_extension("mp4.part");
+        let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+        engine
+            .start_remux_recording(&path)
+            .expect("automatic remux recording");
+        assert!(
+            !path.exists(),
+            "the final path stays hidden until remux EOS"
+        );
+        for _ in 0..4 {
+            engine.tick(None, Some("program")).expect("media tick");
+        }
+        assert_eq!(engine.reference_video_encode_calls, 0);
+        assert_eq!(engine.reference_audio_encode_calls, 0);
+        let bytes = engine.finish_recording().expect("finalize automatic remux");
+        let persisted = std::fs::read(&path).expect("read remuxed MP4");
+        assert_eq!(persisted.len(), bytes);
+        assert_eq!(persisted.get(4..8), Some(&b"ftyp"[..]));
+        assert!(!source_path.exists());
+        assert!(!remux_temp_path.exists());
         std::fs::remove_file(path).expect("remove recording");
     }
 
