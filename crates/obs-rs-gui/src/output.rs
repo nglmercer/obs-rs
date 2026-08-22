@@ -18,10 +18,13 @@ use obs_rs_output::{
 };
 use obs_rs_project::Project;
 
-use crate::{settings::recording_stamp, AppSettings};
-
-const REPLAY_BUFFER_CAPACITY_BYTES: usize = 64 * 1024 * 1024;
-const REPLAY_BUFFER_DURATION: Duration = Duration::from_secs(20);
+use crate::{
+    settings::{
+        recording_stamp, REPLAY_BUFFER_CAPACITY_MIB_DEFAULT, REPLAY_BUFFER_CAPACITY_MIB_RANGE,
+        REPLAY_BUFFER_DURATION_DEFAULT, REPLAY_BUFFER_DURATION_RANGE,
+    },
+    AppSettings,
+};
 
 /// One entry in the settings window's audio-input picker.
 ///
@@ -61,6 +64,8 @@ pub(crate) struct OutputRuntime {
     configured_audio_encoder: AudioEncoderConfig,
     recording_video_encoder: VideoEncoderConfig,
     recording_audio_encoder: AudioEncoderConfig,
+    replay_buffer_capacity_bytes: usize,
+    replay_buffer_duration: Duration,
     /// A canvas change accepted while an output was running.
     ///
     /// Rebuilding the encoders mid-recording would break the container's frame
@@ -139,6 +144,8 @@ impl OutputRuntime {
             configured_audio_encoder: AudioEncoderConfig::default(),
             recording_video_encoder: VideoEncoderConfig::default(),
             recording_audio_encoder: AudioEncoderConfig::default(),
+            replay_buffer_capacity_bytes: replay_capacity_bytes(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT),
+            replay_buffer_duration: Duration::from_secs(u64::from(REPLAY_BUFFER_DURATION_DEFAULT)),
             staged_video_format: None,
             scaler: None,
             output_format: format,
@@ -355,9 +362,37 @@ impl OutputRuntime {
     /// Enqueues the bounded replay capture configuration without waiting for
     /// worker-side allocation.
     pub(crate) fn request_start_replay_buffer(&mut self) -> Result<(), Box<dyn Error>> {
-        self.worker
-            .try_start_replay_buffer(REPLAY_BUFFER_CAPACITY_BYTES, REPLAY_BUFFER_DURATION)?;
+        self.worker.try_start_replay_buffer(
+            self.replay_buffer_capacity_bytes,
+            self.replay_buffer_duration,
+        )?;
         Ok(())
+    }
+
+    /// Applies the bounded replay settings for the next replay-buffer start.
+    ///
+    /// An active history is intentionally left untouched: changing its limits
+    /// in place would require an unbounded or blocking copy on the UI path.
+    pub(crate) fn configure_replay(&mut self, settings: &AppSettings) {
+        let duration = settings.replay_buffer_duration_seconds.clamp(
+            *REPLAY_BUFFER_DURATION_RANGE.start(),
+            *REPLAY_BUFFER_DURATION_RANGE.end(),
+        );
+        let capacity = settings.replay_buffer_capacity_mib.clamp(
+            *REPLAY_BUFFER_CAPACITY_MIB_RANGE.start(),
+            *REPLAY_BUFFER_CAPACITY_MIB_RANGE.end(),
+        );
+        self.replay_buffer_duration = Duration::from_secs(u64::from(duration));
+        self.replay_buffer_capacity_bytes = replay_capacity_bytes(capacity);
+    }
+
+    /// Returns the operator-facing replay configuration label.
+    pub(crate) fn replay_configuration_label(&self) -> String {
+        format!(
+            "{} s / {} MiB",
+            self.replay_buffer_duration.as_secs(),
+            self.replay_buffer_capacity_bytes / (1024 * 1024)
+        )
     }
 
     /// Enqueues replay teardown without waiting for the worker.
@@ -984,6 +1019,12 @@ fn replay_save_path(recording_path: &str) -> PathBuf {
         "Replay-{}.obsr",
         recording_stamp(SystemTime::now())
     ))
+}
+
+fn replay_capacity_bytes(capacity_mib: u32) -> usize {
+    usize::try_from(capacity_mib)
+        .unwrap_or(usize::MAX / (1024 * 1024))
+        .saturating_mul(1024 * 1024)
 }
 
 fn replay_save_label(status: &ReplaySaveStatus) -> String {

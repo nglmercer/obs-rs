@@ -29,7 +29,9 @@ use crate::{
     settings::{
         hotkey_conflicts, recording_stamp, shortcut_bindings, AppSettings, RecordingFormat,
         CANVAS_SNAP_DISTANCE_DEFAULT, CANVAS_SNAP_DISTANCE_RANGE, CHANNEL_LAYOUTS, FRAME_RATES,
-        RESOLUTIONS, SAMPLE_RATES, THEMES,
+        REPLAY_BUFFER_CAPACITY_MIB_DEFAULT, REPLAY_BUFFER_CAPACITY_MIB_RANGE,
+        REPLAY_BUFFER_DURATION_DEFAULT, REPLAY_BUFFER_DURATION_RANGE, RESOLUTIONS, SAMPLE_RATES,
+        THEMES,
     },
     settings_model::{
         aspect_ratio_text, parse_resolution, resolution_text, FpsMode, OutputMode,
@@ -317,6 +319,9 @@ pub(crate) fn install_settings_window(
     output
         .borrow_mut()
         .configure_stream(&controller.settings.borrow());
+    output
+        .borrow_mut()
+        .configure_replay(&controller.settings.borrow());
     apply_to_studio(ui, &controller.settings.borrow());
     push_palette(ui, &controller, &controller.settings.borrow());
     controller.sync_theme(state.borrow().locale());
@@ -737,6 +742,14 @@ fn load_draft(
         &settings.recording_quality,
     ));
     window.set_recording_format_index(index_of(&RecordingFormat::ALL, &settings.recording_format));
+    window.set_replay_buffer_duration(
+        i32::try_from(settings.replay_buffer_duration_seconds)
+            .unwrap_or(i32::try_from(REPLAY_BUFFER_DURATION_DEFAULT).unwrap_or(20)),
+    );
+    window.set_replay_buffer_capacity(
+        i32::try_from(settings.replay_buffer_capacity_mib)
+            .unwrap_or(i32::try_from(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT).unwrap_or(64)),
+    );
     window.set_browse_enabled(controller.browse_tool.is_some());
     window.set_browse_hint(
         window
@@ -1606,6 +1619,14 @@ fn read_recording_draft(controller: &SettingsController, settings: &mut AppSetti
         .unwrap_or_default();
     settings.recording_directory = window.get_recording_directory().to_string();
     settings.recording_filename_without_spaces = window.get_recording_filename_without_spaces();
+    settings.replay_buffer_duration_seconds = u32::try_from(window.get_replay_buffer_duration())
+        .ok()
+        .filter(|duration| REPLAY_BUFFER_DURATION_RANGE.contains(duration))
+        .unwrap_or(REPLAY_BUFFER_DURATION_DEFAULT);
+    settings.replay_buffer_capacity_mib = u32::try_from(window.get_replay_buffer_capacity())
+        .ok()
+        .filter(|capacity| REPLAY_BUFFER_CAPACITY_MIB_RANGE.contains(capacity))
+        .unwrap_or(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT);
     // The concrete file is derived here rather than typed, so the name, the
     // extension, and the container always agree. The studio's own start-
     // recording dialog can still edit the path afterwards.
@@ -1746,6 +1767,7 @@ pub(crate) fn apply_settings_snapshot(
     }
 
     output.borrow_mut().configure_stream(settings);
+    output.borrow_mut().configure_replay(settings);
     // A selection the graph cannot resolve is kept rather than reset, so the
     // user has to be told the engine is on the fallback in the meantime;
     // silently recording from a different source would be worse.

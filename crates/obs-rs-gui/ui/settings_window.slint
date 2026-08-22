@@ -125,6 +125,8 @@ export component SettingsWindow inherits Window {
     in-out property <int> recording-audio-encoder-index;
     in property <string> recording-file-preview;
     in property <bool> software-encoding-warning;
+    in-out property <int> replay-buffer-duration;
+    in-out property <int> replay-buffer-capacity;
     // Audio
     in property <[string]> sample-rate-names;
     in-out property <int> sample-rate-index;
@@ -408,6 +410,8 @@ export component SettingsWindow inherits Window {
                         recording-audio-encoder-index: root.recording-audio-encoder-index;
                         recording-file-preview: root.recording-file-preview;
                         software-encoding-warning: root.software-encoding-warning;
+                        replay-buffer-duration <=> root.replay-buffer-duration;
+                        replay-buffer-capacity <=> root.replay-buffer-capacity;
                         select-output-mode(index) => {
                             root.output-mode-index = index;
                             root.dirty = true;

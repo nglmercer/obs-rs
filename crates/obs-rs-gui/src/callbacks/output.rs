@@ -117,10 +117,11 @@ fn install_replay_callbacks(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>
                 .request_stop_replay_buffer()
                 .map(|()| "Replay buffer stop requested".to_owned())
         } else {
+            let configuration = replay_output.borrow().replay_configuration_label();
             replay_output
                 .borrow_mut()
                 .request_start_replay_buffer()
-                .map(|()| "Replay buffer start requested (20 s / 64 MiB)".to_owned())
+                .map(|()| format!("Replay buffer start requested ({configuration})"))
         };
         match result {
             Ok(message) => ui.set_status_message(message.into()),

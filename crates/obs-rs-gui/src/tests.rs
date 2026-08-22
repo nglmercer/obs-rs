@@ -80,6 +80,32 @@ fn output_runtime_projects_bounded_multiview_telemetry() {
 }
 
 #[test]
+fn output_runtime_applies_bounded_replay_configuration() {
+    let format = initial_project()
+        .expect("project")
+        .active_profile_spec()
+        .expect("profile")
+        .video_format();
+    let mut output = OutputRuntime::new(format);
+    let settings = AppSettings {
+        replay_buffer_duration_seconds: 90,
+        replay_buffer_capacity_mib: 128,
+        ..AppSettings::default()
+    };
+
+    output.configure_replay(&settings);
+    assert_eq!(output.replay_configuration_label(), "90 s / 128 MiB");
+
+    let invalid = AppSettings {
+        replay_buffer_duration_seconds: 0,
+        replay_buffer_capacity_mib: u32::MAX,
+        ..settings
+    };
+    output.configure_replay(&invalid);
+    assert_eq!(output.replay_configuration_label(), "1 s / 256 MiB");
+}
+
+#[test]
 fn gui_project_has_control_room_scenes() {
     let project = initial_project().expect("initial GUI project should validate");
     let profile = project

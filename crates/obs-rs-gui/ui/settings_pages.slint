@@ -357,6 +357,8 @@ export component OutputPage inherits VerticalLayout {
     in property <int> recording-audio-encoder-index;
     in property <string> recording-file-preview;
     in property <bool> software-encoding-warning;
+    in-out property <int> replay-buffer-duration;
+    in-out property <int> replay-buffer-capacity;
     callback select-output-mode(int);
     callback select-video-encoder(int);
     callback select-audio-encoder(int);
@@ -506,6 +508,28 @@ export component OutputPage inherits VerticalLayout {
         if root.software-encoding-warning : SettingsWarning {
             text: I18n.text.settings_ui.software_encoding_warning;
         }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.replay_buffer;
+        SettingRow {
+            label: I18n.text.settings_ui.replay_buffer_duration;
+            SettingsSpinBox {
+                value <=> root.replay-buffer-duration;
+                minimum: 1;
+                maximum: 3600;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.replay_buffer_capacity;
+            SettingsSpinBox {
+                value <=> root.replay-buffer-capacity;
+                minimum: 1;
+                maximum: 256;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.replay_buffer_hint; }
     }
     Rectangle { vertical-stretch: 1; }
 }

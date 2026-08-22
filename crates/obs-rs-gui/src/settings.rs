@@ -181,6 +181,18 @@ pub(crate) const CANVAS_SNAP_DISTANCE_RANGE: std::ops::RangeInclusive<u16> = 1..
 /// The default source-snapping distance used by the canvas and settings page.
 pub(crate) const CANVAS_SNAP_DISTANCE_DEFAULT: u16 = 10;
 
+/// The replay history duration accepted by the Output page, in seconds.
+pub(crate) const REPLAY_BUFFER_DURATION_RANGE: std::ops::RangeInclusive<u32> = 1..=3_600;
+
+/// The default replay history duration shown by the Output page.
+pub(crate) const REPLAY_BUFFER_DURATION_DEFAULT: u32 = 20;
+
+/// The replay history byte budget accepted by the Output page, in MiB.
+pub(crate) const REPLAY_BUFFER_CAPACITY_MIB_RANGE: std::ops::RangeInclusive<u32> = 1..=256;
+
+/// The default replay history byte budget shown by the Output page, in MiB.
+pub(crate) const REPLAY_BUFFER_CAPACITY_MIB_DEFAULT: u32 = 64;
+
 /// An sRGB colour as `[red, green, blue]`.
 type Rgb = [u8; 3];
 
@@ -320,6 +332,10 @@ pub(crate) struct AppSettings {
     pub(crate) recording_format: RecordingFormat,
     pub(crate) recording_codec: VideoCodec,
     pub(crate) recording_audio_encoder: EncoderImplementation,
+    /// Maximum wall-clock history retained by the replay buffer, in seconds.
+    pub(crate) replay_buffer_duration_seconds: u32,
+    /// Maximum encoded replay history retained, in mebibytes.
+    pub(crate) replay_buffer_capacity_mib: u32,
     pub(crate) output_mode: OutputMode,
     /// Show the detailed encoder controls inside Simple output mode.
     pub(crate) stream_custom_encoder: bool,
@@ -639,6 +655,8 @@ impl Default for AppSettings {
             recording_format: RecordingFormat::Matroska,
             recording_codec: VideoCodec::H264,
             recording_audio_encoder: EncoderImplementation::default(),
+            replay_buffer_duration_seconds: REPLAY_BUFFER_DURATION_DEFAULT,
+            replay_buffer_capacity_mib: REPLAY_BUFFER_CAPACITY_MIB_DEFAULT,
             output_mode: OutputMode::default(),
             stream_custom_encoder: false,
             video: VideoSettings::default(),
@@ -927,6 +945,16 @@ impl AppSettings {
                 "recording_audio_encoder",
                 defaults.recording_audio_encoder.id(),
             )),
+            replay_buffer_duration_seconds: config
+                .get("replay_buffer_duration_seconds")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|duration| REPLAY_BUFFER_DURATION_RANGE.contains(duration))
+                .unwrap_or(defaults.replay_buffer_duration_seconds),
+            replay_buffer_capacity_mib: config
+                .get("replay_buffer_capacity_mib")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|capacity| REPLAY_BUFFER_CAPACITY_MIB_RANGE.contains(capacity))
+                .unwrap_or(defaults.replay_buffer_capacity_mib),
             output_mode: config
                 .get("output_mode")
                 .and_then(OutputMode::from_id)
@@ -1049,6 +1077,14 @@ impl AppSettings {
             (
                 "recording_audio_encoder",
                 self.recording_audio_encoder.id().to_owned(),
+            ),
+            (
+                "replay_buffer_duration_seconds",
+                self.replay_buffer_duration_seconds.to_string(),
+            ),
+            (
+                "replay_buffer_capacity_mib",
+                self.replay_buffer_capacity_mib.to_string(),
             ),
             ("output_mode", self.output_mode.id().to_owned()),
             (
@@ -2300,6 +2336,8 @@ mod tests {
             recording_directory: "/tmp/obs-rs-recordings".to_owned(),
             recording_filename_without_spaces: true,
             recording_audio_encoder: EncoderImplementation::new("avenc_aac"),
+            replay_buffer_duration_seconds: 90,
+            replay_buffer_capacity_mib: 128,
             video: VideoSettings {
                 base_width: 2_560,
                 base_height: 1_440,
@@ -2353,6 +2391,8 @@ mod tests {
             ("canvas_snap_distance", "0"),
             ("show_safe_areas", "not-bool"),
             ("recording_quality", "perfect"),
+            ("replay_buffer_duration_seconds", "0"),
+            ("replay_buffer_capacity_mib", "999"),
             ("output_mode", "expert"),
         ] {
             config.set(key, value).expect("settings key");
@@ -2368,6 +2408,14 @@ mod tests {
         assert_eq!(decoded.recording_quality, defaults.recording_quality);
         assert_eq!(decoded.canvas_snap_distance, defaults.canvas_snap_distance);
         assert_eq!(decoded.show_safe_areas, defaults.show_safe_areas);
+        assert_eq!(
+            decoded.replay_buffer_duration_seconds,
+            defaults.replay_buffer_duration_seconds
+        );
+        assert_eq!(
+            decoded.replay_buffer_capacity_mib,
+            defaults.replay_buffer_capacity_mib
+        );
         assert_eq!(decoded.output_mode, defaults.output_mode);
     }
 
