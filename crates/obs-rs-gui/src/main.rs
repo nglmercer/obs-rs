@@ -143,6 +143,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     state
         .borrow_mut()
         .set_project_selection_key(settings.project_path.as_str());
+    let shortcut_status = match settings::shortcut_bindings(&settings) {
+        Ok(bindings) => state
+            .borrow_mut()
+            .replace_shortcuts(&bindings)
+            .err()
+            .map(|error| format!("Hotkeys disabled: {error}")),
+        Err(error) => Some(format!("Hotkeys disabled: {error}")),
+    };
     // The stored project is reopened before anything renders, so a session
     // resumes with the scenes and sources it was left with rather than with the
     // starter fixture.
@@ -216,6 +224,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     refresh_ui(&ui, &state, &surface);
     if let Some(message) = restored {
+        ui.set_status_message(message.into());
+    }
+    if let Some(message) = shortcut_status {
         ui.set_status_message(message.into());
     }
     refresh_output_ui(&ui, &output);

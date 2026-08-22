@@ -27,7 +27,7 @@ use crate::{
     callbacks::source_transform::SourceTransformController,
     refresh_ui,
     settings::{
-        hotkey_conflicts, recording_stamp, AppSettings, RecordingFormat,
+        hotkey_conflicts, recording_stamp, shortcut_bindings, AppSettings, RecordingFormat,
         CANVAS_SNAP_DISTANCE_DEFAULT, CANVAS_SNAP_DISTANCE_RANGE, CHANNEL_LAYOUTS, FRAME_RATES,
         RESOLUTIONS, SAMPLE_RATES, THEMES,
     },
@@ -1706,6 +1706,24 @@ pub(crate) fn apply_settings_snapshot(
 ) {
     let window = &controller.window;
 
+    // Publish the complete typed shortcut table first. This keeps the running
+    // event path and the persisted settings atomic: a malformed or conflicting
+    // map cannot leave the UI displaying one binding set while the state owns
+    // another.
+    let bindings = match shortcut_bindings(settings) {
+        Ok(bindings) => bindings,
+        Err(error) => {
+            ui.set_status_message(format!("Hotkeys could not be applied: {error}").into());
+            window.set_category(SETTINGS_CATEGORY_HOTKEYS);
+            return;
+        }
+    };
+    if let Err(error) = state.borrow_mut().replace_shortcuts(&bindings) {
+        ui.set_status_message(format!("Hotkeys could not be applied: {error}").into());
+        window.set_category(SETTINGS_CATEGORY_HOTKEYS);
+        return;
+    }
+
     let mut notes = Vec::new();
 
     // Audio: rebuild the mixer only when the format actually differs.
@@ -1818,11 +1836,6 @@ fn video_format_from(video: VideoSettings) -> Option<VideoFormat> {
 
 /// Pushes the values the studio window reads directly.
 fn apply_to_studio(ui: &MainWindow, settings: &AppSettings) {
-    ui.set_hotkey_swap(settings.hotkey_swap.as_str().into());
-    ui.set_hotkey_start_recording(settings.hotkey_start_recording.as_str().into());
-    ui.set_hotkey_stop_recording(settings.hotkey_stop_recording.as_str().into());
-    ui.set_hotkey_start_streaming(settings.hotkey_start_streaming.as_str().into());
-    ui.set_hotkey_stop_streaming(settings.hotkey_stop_streaming.as_str().into());
     ui.set_hotkey_undo(settings.hotkey_undo.as_str().into());
     ui.set_hotkey_redo(settings.hotkey_redo.as_str().into());
     ui.set_hotkey_save_project(settings.hotkey_save_project.as_str().into());

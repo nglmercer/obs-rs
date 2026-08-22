@@ -1,6 +1,7 @@
 pub(crate) mod add_source;
 pub(crate) mod canvas;
 pub(crate) mod docks;
+mod hotkeys;
 pub(crate) mod menu;
 pub(crate) mod monitor;
 mod output;
@@ -34,6 +35,7 @@ pub(crate) use canvas::{install_canvas_callbacks, selection_rect, CanvasControll
 #[cfg(test)]
 pub(crate) use docks::install_dock_callbacks;
 pub(crate) use docks::install_dock_callbacks_with_layout;
+pub(crate) use hotkeys::install_shortcut_callbacks;
 pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
@@ -460,6 +462,7 @@ pub(crate) fn install_callbacks(
     install_output_callbacks(ui, state, surface, output);
     install_mixer_callbacks(ui, state, surface, output);
     install_project_callbacks(ui, state, surface, output);
+    install_shortcut_callbacks(ui, state);
 }
 
 #[cfg(test)]

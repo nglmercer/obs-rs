@@ -358,6 +358,50 @@ fn shortcuts_trigger_actions_and_reject_duplicates() {
 }
 
 #[test]
+fn shortcut_table_replaces_atomically_and_routes_frontend_actions() {
+    let mut state = DesktopState::new(project());
+    let old = Shortcut::new(0, "F8").expect("old shortcut");
+    state
+        .dispatch(UiCommand::BindShortcut {
+            shortcut: old.clone(),
+            action: UiAction::Undo,
+        })
+        .expect("initial bind");
+
+    let save = Shortcut::new(1, "S").expect("save shortcut");
+    state
+        .replace_shortcuts(&[(save.clone(), UiAction::SaveProject)])
+        .expect("replace shortcuts");
+    assert_eq!(state.shortcut_action(&old), None);
+    assert_eq!(state.shortcut_action(&save), Some(UiAction::SaveProject));
+    assert_eq!(
+        state.dispatch(UiCommand::TriggerShortcut {
+            shortcut: save.clone(),
+        }),
+        Err(UiError::FrontendActionRequired(UiAction::SaveProject))
+    );
+
+    let duplicate = Shortcut::new(1, "S").expect("duplicate shortcut");
+    let result = state.replace_shortcuts(&[
+        (
+            Shortcut::new(0, "F9").expect("new shortcut"),
+            UiAction::Redo,
+        ),
+        (duplicate, UiAction::FadeTransition),
+        (
+            Shortcut::new(1, "S").expect("duplicate shortcut"),
+            UiAction::Undo,
+        ),
+    ]);
+    assert!(matches!(result, Err(UiError::DuplicateShortcut(_))));
+    assert_eq!(
+        state.shortcut_action(&save),
+        Some(UiAction::SaveProject),
+        "a rejected replacement must not partially update the live map"
+    );
+}
+
+#[test]
 fn shortcut_text_is_bounded_and_canonical() {
     let shortcut = Shortcut::parse(" option + shift + f9 ")
         .expect("shortcut syntax")

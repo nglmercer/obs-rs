@@ -4,7 +4,7 @@ use obs_rs_audio::AudioError;
 use obs_rs_media::MediaError;
 use obs_rs_project::ProjectError;
 
-use super::types::Shortcut;
+use super::types::{Shortcut, UiAction};
 
 /// Errors from the toolkit-neutral application state.
 #[derive(Debug, Eq, PartialEq)]
@@ -19,6 +19,11 @@ pub enum UiError {
     UnknownShortcut(Shortcut),
     /// A shortcut is already bound and must be explicitly replaced.
     DuplicateShortcut(Shortcut),
+    /// The frontend must execute this action because it owns the external
+    /// project/output boundary.
+    FrontendActionRequired(UiAction),
+    /// The bounded shortcut table has reached its capacity.
+    TooManyShortcuts,
     /// Recording is already active.
     RecordingAlreadyActive,
     /// Recording is not active.
@@ -55,6 +60,13 @@ impl fmt::Display for UiError {
             Self::DuplicateShortcut(shortcut) => {
                 write!(formatter, "shortcut {} is already bound", shortcut.key())
             }
+            Self::FrontendActionRequired(action) => {
+                write!(
+                    formatter,
+                    "shortcut action {action:?} requires the frontend"
+                )
+            }
+            Self::TooManyShortcuts => formatter.write_str("shortcut table is full"),
             Self::RecordingAlreadyActive => formatter.write_str("recording is already active"),
             Self::RecordingNotActive => formatter.write_str("recording is not active"),
             Self::StreamingAlreadyActive => formatter.write_str("streaming is already active"),

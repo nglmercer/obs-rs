@@ -187,6 +187,10 @@ pub enum UiAction {
     Undo,
     /// Reapply the most recently undone project state.
     Redo,
+    /// Save the current project through the frontend's project-file boundary.
+    SaveProject,
+    /// Start a cross-fade through the frontend's transition/output boundary.
+    FadeTransition,
 }
 
 /// A validated, sortable keyboard shortcut description.

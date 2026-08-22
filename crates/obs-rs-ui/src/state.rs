@@ -14,7 +14,7 @@ use super::{
     types::{
         MixerChannel, ProjectSceneSelection, Shortcut, UiAction, UiCommand, UiLocale, UiNotice,
     },
-    MAX_UI_NOTICES,
+    MAX_SHORTCUT_BINDINGS, MAX_UI_NOTICES,
 };
 
 /// The last Preview/Program choices for one in-memory profile.
@@ -221,6 +221,9 @@ impl DesktopState {
             UiCommand::BindShortcut { shortcut, action } => {
                 if self.shortcuts.contains_key(&shortcut) {
                     return Err(UiError::DuplicateShortcut(shortcut));
+                }
+                if self.shortcuts.len() >= MAX_SHORTCUT_BINDINGS {
+                    return Err(UiError::TooManyShortcuts);
                 }
                 self.shortcuts.insert(shortcut, action);
                 "shortcut bound"
@@ -832,6 +835,31 @@ impl DesktopState {
     #[must_use]
     pub fn shortcut_action(&self, shortcut: &Shortcut) -> Option<UiAction> {
         self.shortcuts.get(shortcut).copied()
+    }
+
+    /// Replaces the complete bounded shortcut table atomically.
+    ///
+    /// Settings Apply uses this rather than unbinding and rebinding one entry
+    /// at a time, so a failed validation never leaves a half-updated runtime
+    /// map. Duplicate and oversized input is rejected before the current map
+    /// is touched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::DuplicateShortcut`] for duplicate keys or
+    /// [`UiError::TooManyShortcuts`] when the bounded table would overflow.
+    pub fn replace_shortcuts(&mut self, bindings: &[(Shortcut, UiAction)]) -> Result<(), UiError> {
+        if bindings.len() > MAX_SHORTCUT_BINDINGS {
+            return Err(UiError::TooManyShortcuts);
+        }
+        let mut next = BTreeMap::new();
+        for (shortcut, action) in bindings {
+            if next.insert(shortcut.clone(), *action).is_some() {
+                return Err(UiError::DuplicateShortcut(shortcut.clone()));
+            }
+        }
+        self.shortcuts = next;
+        Ok(())
     }
 }
 

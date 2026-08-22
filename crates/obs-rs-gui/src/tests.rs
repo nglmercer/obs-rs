@@ -16,7 +16,7 @@ use obs_rs_media::{
 use obs_rs_output::{encode_png, MemoryMuxer, PacketKind};
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
-use obs_rs_ui::{DesktopState, ProjectSceneSelection, UiCommand, UiLocale};
+use obs_rs_ui::{DesktopState, ProjectSceneSelection, Shortcut, UiAction, UiCommand, UiLocale};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{CloseRequestResponse, ComponentHandle, LogicalPosition, Model, ModelRc, VecModel};
 use std::{cell::RefCell, rc::Rc};
@@ -1018,6 +1018,16 @@ fn ui_layout_can_render_a_reference_snapshot() {
         PreviewSurface::new(&project, 0).expect("preview surface"),
     ));
     let state = Rc::new(RefCell::new(DesktopState::new(project)));
+    let shortcut = Shortcut::parse("Ctrl+Z")
+        .expect("shortcut syntax")
+        .expect("shortcut binding");
+    state
+        .borrow_mut()
+        .replace_shortcuts(&[(shortcut, UiAction::Undo)])
+        .expect("shortcut table");
+    crate::callbacks::install_shortcut_callbacks(&ui, &state);
+    assert_eq!(ui.invoke_trigger_shortcut("ctrl+z".into()), 6);
+    assert_eq!(ui.invoke_trigger_shortcut("Ctrl+X".into()), 0);
     let persisted_tree = DockNode::Split {
         axis: super::dock_tree::DockAxis::Vertical,
         ratio_milli: 600,

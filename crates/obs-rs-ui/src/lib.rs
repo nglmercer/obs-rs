@@ -6,6 +6,7 @@
 pub const MAX_UI_NOTICES: usize = 256;
 pub const MAX_SHORTCUT_KEY_BYTES: usize = 32;
 pub const MAX_SHORTCUT_TEXT_BYTES: usize = 64;
+pub const MAX_SHORTCUT_BINDINGS: usize = 64;
 pub const MAX_CONSOLE_COMMAND_BYTES: usize = 256;
 pub const MAX_WEB_REQUEST_BYTES: usize = 64 * 1024;
 /// Maximum number of scene items a desktop canvas selection retains.

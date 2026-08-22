@@ -129,16 +129,6 @@ export component MainWindow inherits Window {
         in-out property <string> new-source-name;
         in-out property <string> source-name-draft;
 
-        // Driven by the settings window; empty means the action is unbound.
-        in property <string> hotkey-swap;
-        in property <string> hotkey-start-recording;
-        in property <string> hotkey-stop-recording;
-        in property <string> hotkey-start-streaming;
-        in property <string> hotkey-stop-streaming;
-        in property <string> hotkey-undo;
-        in property <string> hotkey-redo;
-        in property <string> hotkey-save-project;
-        in property <string> hotkey-fade-transition;
         in property <bool> confirm-start-stream;
         in property <bool> confirm-stop-stream;
         in property <bool> confirm-stop-recording;
@@ -177,10 +167,19 @@ export component MainWindow inherits Window {
         in-out property <bool> setup-active: false;
 
         callback swap-scenes();
+        // Returns a bounded action ID for the canonical key label supplied by
+        // the event bridge. Rust owns parsing and lookup; Slint only executes
+        // the already-resolved UI action.
+        callback trigger-shortcut(string) -> int;
         callback toggle-recording();
         callback toggle-streaming();
         callback cut-transition();
         callback fade-transition();
+        // Display-only menu labels. Runtime matching uses the typed table.
+        in property <string> hotkey-undo;
+        in property <string> hotkey-redo;
+        in property <string> hotkey-save-project;
+        in property <string> hotkey-fade-transition;
         callback select-preview(string);
         callback select-program(string);
         callback duplicate-scene(string);
@@ -309,6 +308,40 @@ export component MainWindow inherits Window {
                 root.toggle-recording();
             }
         }
+        // Keep confirmation dialogs and output callbacks on their established
+        // paths after Rust resolves the shortcut through DesktopState.
+        function execute-shortcut(action: int) -> bool {
+            if (action == 1) {
+                root.swap-scenes();
+                true
+            } else if (action == 2 && !root.recording) {
+                root.request-recording();
+                true
+            } else if (action == 3 && root.recording) {
+                root.request-recording();
+                true
+            } else if (action == 4 && !root.streaming) {
+                root.request-streaming();
+                true
+            } else if (action == 5 && root.streaming) {
+                root.request-streaming();
+                true
+            } else if (action == 6) {
+                root.undo-edit();
+                true
+            } else if (action == 7) {
+                root.redo-edit();
+                true
+            } else if (action == 8) {
+                root.save-project();
+                true
+            } else if (action == 9) {
+                root.fade-transition();
+                true
+            } else {
+                false
+            }
+        }
         // Discarding actions all share one prompt, and all skip it when there
         // is nothing to lose, so a clean session is never interrupted.
         function request-discarding-action(action: int) {
@@ -361,8 +394,9 @@ export component MainWindow inherits Window {
             root.pending-confirm = 0;
         }
 
-        // Rebuilds the "Ctrl+Shift+R" form the settings window stores, so a
-        // binding is compared as text rather than as a compiled key list.
+        // Converts Slint's key event into the compact label parsed by the
+        // toolkit-neutral shortcut type. This is only an event bridge; the
+        // running binding table lives in DesktopState.
         pure function key-name(text: string) -> string {
             text == " " ? "Space"
                 : text == Key.Return ? "Enter"
@@ -390,51 +424,8 @@ export component MainWindow inherits Window {
 
     FocusScope {
         key-pressed(event) => {
-            // An unbound action stores an empty string, which must never match.
-            if (root.hotkey-swap != "" && root.hotkey-label(event) == root.hotkey-swap) {
-                root.swap-scenes();
-                return accept;
-            }
-            if (root.hotkey-start-recording != ""
-                && root.hotkey-label(event) == root.hotkey-start-recording
-                && !root.recording) {
-                root.request-recording();
-                return accept;
-            }
-            if (root.hotkey-stop-recording != ""
-                && root.hotkey-label(event) == root.hotkey-stop-recording
-                && root.recording) {
-                root.request-recording();
-                return accept;
-            }
-            if (root.hotkey-start-streaming != ""
-                && root.hotkey-label(event) == root.hotkey-start-streaming
-                && !root.streaming) {
-                root.request-streaming();
-                return accept;
-            }
-            if (root.hotkey-stop-streaming != ""
-                && root.hotkey-label(event) == root.hotkey-stop-streaming
-                && root.streaming) {
-                root.request-streaming();
-                return accept;
-            }
-            if (root.hotkey-undo != "" && root.hotkey-label(event) == root.hotkey-undo) {
-                root.undo-edit();
-                return accept;
-            }
-            if (root.hotkey-redo != "" && root.hotkey-label(event) == root.hotkey-redo) {
-                root.redo-edit();
-                return accept;
-            }
-            if (root.hotkey-save-project != ""
-                && root.hotkey-label(event) == root.hotkey-save-project) {
-                root.save-project();
-                return accept;
-            }
-            if (root.hotkey-fade-transition != ""
-                && root.hotkey-label(event) == root.hotkey-fade-transition) {
-                root.fade-transition();
+            if (root.execute-shortcut(
+                root.trigger-shortcut(root.hotkey-label(event)))) {
                 return accept;
             }
             if (event.text == " ") {

@@ -17,7 +17,7 @@ use obs_rs_output::{
     RistConfig, RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol,
     StreamTarget, VideoCodec, VideoEncoderConfig, WhipConfig,
 };
-use obs_rs_ui::{ProjectSceneSelection, Shortcut, UiLocale};
+use obs_rs_ui::{ProjectSceneSelection, Shortcut, UiAction, UiError, UiLocale};
 use slint::{Brush, Color, Model, ModelRc, VecModel};
 
 use crate::dock_tree::{DockNode, DOCK_IDS};
@@ -1718,6 +1718,51 @@ pub(crate) fn validated_hotkey(value: &str, fallback: &str) -> String {
         Ok(None) => String::new(),
         Err(_) => fallback.to_owned(),
     }
+}
+
+/// Compiles the settings document into the bounded, toolkit-neutral shortcut
+/// table used by the running desktop state.
+///
+/// Empty values are intentional unbindings. Settings loading and draft
+/// validation already canonicalize each value, but parsing again here keeps
+/// the runtime boundary defensive if a caller constructs an `AppSettings`
+/// value directly.
+pub(crate) fn shortcut_bindings(
+    settings: &AppSettings,
+) -> Result<Vec<(Shortcut, UiAction)>, UiError> {
+    let values = [
+        (settings.hotkey_swap.as_str(), UiAction::SwapPreviewProgram),
+        (
+            settings.hotkey_start_recording.as_str(),
+            UiAction::StartRecording,
+        ),
+        (
+            settings.hotkey_stop_recording.as_str(),
+            UiAction::StopRecording,
+        ),
+        (
+            settings.hotkey_start_streaming.as_str(),
+            UiAction::StartStreaming,
+        ),
+        (
+            settings.hotkey_stop_streaming.as_str(),
+            UiAction::StopStreaming,
+        ),
+        (settings.hotkey_undo.as_str(), UiAction::Undo),
+        (settings.hotkey_redo.as_str(), UiAction::Redo),
+        (settings.hotkey_save_project.as_str(), UiAction::SaveProject),
+        (
+            settings.hotkey_fade_transition.as_str(),
+            UiAction::FadeTransition,
+        ),
+    ];
+    let mut bindings = Vec::with_capacity(values.len());
+    for (text, action) in values {
+        if let Some(shortcut) = Shortcut::parse(text)? {
+            bindings.push((shortcut, action));
+        }
+    }
+    Ok(bindings)
 }
 
 /// Returns canonical hotkeys that are assigned to more than one local action.
