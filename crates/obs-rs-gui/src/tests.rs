@@ -1288,6 +1288,10 @@ fn exercise_context_menus(
     let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
     crate::callbacks::install_callbacks(ui, state, surface, &output);
     ui.invoke_new_project();
+    ui.invoke_add_scene("intro".into(), "Intro".into());
+    assert_eq!(state.borrow().preview_scene(), Some("intro"));
+    ui.invoke_duplicate_scene("intro".into());
+    assert_eq!(state.borrow().preview_scene(), Some("intro_copy"));
     ui.invoke_select_preview("preview".into());
     let profile = "live".to_owned();
     for id in ["middle", "foreground"] {

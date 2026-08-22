@@ -277,6 +277,12 @@ fn add_scene_and_refresh(
                 profile,
                 scene,
             }))?;
+        // OBS makes a newly created scene the current preview scene. Keep the
+        // selection as a UI-state transition next to the project mutation so
+        // the project model does not gain a second active-scene field.
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectPreviewScene { id: id.to_owned() })?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -337,12 +343,29 @@ pub(crate) fn duplicate_scene_and_refresh(
         .project()
         .active_profile()
         .to_string();
-    let result = state
-        .borrow_mut()
-        .dispatch(UiCommand::Project(ProjectCommand::DuplicateScene {
-            profile,
-            scene: scene_id.to_owned(),
-        }));
+    let result: Result<(), Box<dyn Error>> = (|| {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::DuplicateScene {
+                profile,
+                scene: scene_id.to_owned(),
+            }))?;
+        // Profile::add_scene appends the validated duplicate to the persistent
+        // order. Read that result back from the project instead of rebuilding
+        // the command's identifier-suffix policy in the GUI.
+        let duplicate = state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scenes().last())
+            .map(|scene| scene.id().to_string())
+            .ok_or_else(|| std::io::Error::other("duplicated scene is unavailable"))?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectPreviewScene { id: duplicate })?;
+        Ok(())
+    })();
     let Some(ui) = weak.upgrade() else {
         return;
     };
