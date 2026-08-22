@@ -26,6 +26,10 @@ fn slideshow_settings(paths: &str, width: &str, height: &str, slide_time_ms: &st
     config
         .set("randomize", "false")
         .expect("valid slideshow randomization");
+    config.set("fade", "false").expect("valid slideshow fade");
+    config
+        .set("transition_ms", "0")
+        .expect("valid slideshow transition duration");
     config
 }
 
@@ -271,6 +275,62 @@ fn image_slideshow_advances_by_timestamp_and_updates_atomically() {
 }
 
 #[test]
+fn image_slideshow_cross_fades_between_looped_slides() {
+    let red_path = std::env::temp_dir().join(format!(
+        "obs-rs-image-slideshow-fade-red-{}.ppm",
+        std::process::id()
+    ));
+    let blue_path = std::env::temp_dir().join(format!(
+        "obs-rs-image-slideshow-fade-blue-{}.ppm",
+        std::process::id()
+    ));
+    std::fs::write(&red_path, b"P6\n1 1\n255\n\xFF\x00\x00").expect("write red fixture");
+    std::fs::write(&blue_path, b"P6\n1 1\n255\n\x00\x00\xFF").expect("write blue fixture");
+
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == IMAGE_SLIDESHOW_SOURCE_KIND)
+        .expect("slideshow factory");
+    let paths = format!(
+        "{}\n{}",
+        red_path.to_str().expect("red path is UTF-8"),
+        blue_path.to_str().expect("blue path is UTF-8")
+    );
+    let format =
+        VideoFormat::new(1, 1, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let mut config = slideshow_settings(&paths, "1", "1", "100");
+    config.set("fade", "true").expect("enable fade");
+    config
+        .set("transition_ms", "50")
+        .expect("set fade duration");
+    let mut source = factory
+        .create("slideshow", &config)
+        .expect("valid fading slideshow source");
+
+    let before_transition = source
+        .render(&VideoRequest::new(Timestamp::from_millis(49), format))
+        .expect("render before transition")
+        .expect("frame before transition");
+    let halfway = source
+        .render(&VideoRequest::new(Timestamp::from_millis(75), format))
+        .expect("render halfway through transition")
+        .expect("halfway frame");
+    let after_transition = source
+        .render(&VideoRequest::new(Timestamp::from_millis(100), format))
+        .expect("render after transition")
+        .expect("frame after transition");
+
+    assert_eq!(before_transition.pixel(0, 0), Some([0xFF, 0, 0, 0xFF]));
+    assert_eq!(halfway.pixel(0, 0), Some([0x80, 0, 0x80, 0xFF]));
+    assert_eq!(after_transition.pixel(0, 0), Some([0, 0, 0xFF, 0xFF]));
+
+    std::fs::remove_file(red_path).expect("remove red fixture");
+    std::fs::remove_file(blue_path).expect("remove blue fixture");
+}
+
+#[test]
 fn image_slideshow_expands_directories_and_randomizes_bounded_order() {
     let directory = std::env::temp_dir().join(format!(
         "obs-rs-image-slideshow-directory-{}",
@@ -362,6 +422,24 @@ fn image_slideshow_rejects_unbounded_interval_and_file_count() {
         Err(SourceError::InvalidSetting { key, .. }) if key == "slide_time_ms"
     ));
 
+    let mut invalid_transition = slideshow_settings("", "2", "2", "100");
+    invalid_transition
+        .set("fade", "yes")
+        .expect("write invalid fade setting");
+    assert!(matches!(
+        factory.create("slideshow", &invalid_transition),
+        Err(SourceError::InvalidSetting { key, .. }) if key == "fade"
+    ));
+
+    let mut too_long_transition = slideshow_settings("", "2", "2", "100");
+    too_long_transition
+        .set("transition_ms", "101")
+        .expect("write too-long transition");
+    assert!(matches!(
+        factory.create("slideshow", &too_long_transition),
+        Err(SourceError::InvalidSetting { key, .. }) if key == "transition_ms"
+    ));
+
     let path = std::env::temp_dir().join(format!(
         "obs-rs-image-slideshow-count-{}.ppm",
         std::process::id()
@@ -378,15 +456,24 @@ fn image_slideshow_rejects_unbounded_interval_and_file_count() {
 
 #[test]
 fn image_slideshow_render_timing_report() {
-    let path = std::env::temp_dir().join(format!(
+    let first_path = std::env::temp_dir().join(format!(
         "obs-rs-image-slideshow-timing-{}.ppm",
         std::process::id()
     ));
+    let second_path = std::env::temp_dir().join(format!(
+        "obs-rs-image-slideshow-timing-second-{}.ppm",
+        std::process::id()
+    ));
     std::fs::write(
-        &path,
+        &first_path,
         b"P6\n2 2\n255\n\x80\x40\x20\x80\x40\x20\x80\x40\x20\x80\x40\x20",
     )
-    .expect("write timing fixture");
+    .expect("write first timing fixture");
+    std::fs::write(
+        &second_path,
+        b"P6\n2 2\n255\n\x20\x40\x80\x20\x40\x80\x20\x40\x80\x20\x40\x80",
+    )
+    .expect("write second timing fixture");
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
     let factory = plugin
         .source_factories()
@@ -395,16 +482,18 @@ fn image_slideshow_render_timing_report() {
         .expect("slideshow factory");
     let format =
         VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("valid rate")).expect("format");
+    let paths = format!(
+        "{}\n{}",
+        first_path.to_str().expect("first timing path is UTF-8"),
+        second_path.to_str().expect("second timing path is UTF-8")
+    );
+    let mut config = slideshow_settings(&paths, "640", "360", "100");
+    config.set("fade", "true").expect("enable timing fade");
+    config
+        .set("transition_ms", "50")
+        .expect("set timing transition");
     let mut source = factory
-        .create(
-            "slideshow",
-            &slideshow_settings(
-                path.to_str().expect("timing path is UTF-8"),
-                "640",
-                "360",
-                "100",
-            ),
-        )
+        .create("slideshow", &config)
         .expect("valid slideshow source");
     let started = Instant::now();
     let mut checksum = 0_u64;
@@ -420,11 +509,12 @@ fn image_slideshow_render_timing_report() {
     assert!(checksum > 0);
     std::hint::black_box(checksum);
     println!(
-        "image slideshow: 100 x 640x360 renders = {:?} ({:?}/render)",
+        "fading image slideshow: 100 x 640x360 renders = {:?} ({:?}/render)",
         elapsed,
         elapsed / 100
     );
-    std::fs::remove_file(path).expect("remove timing fixture");
+    std::fs::remove_file(first_path).expect("remove first timing fixture");
+    std::fs::remove_file(second_path).expect("remove second timing fixture");
 }
 
 #[test]

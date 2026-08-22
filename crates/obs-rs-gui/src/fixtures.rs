@@ -116,6 +116,8 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
     if kind.trim() == "image_slideshow" {
         settings.set("paths", "")?;
         settings.set("slide_time_ms", "8000")?;
+        settings.set("fade", "false")?;
+        settings.set("transition_ms", "500")?;
         settings.set("loop", "true")?;
         settings.set("randomize", "false")?;
     }

@@ -110,6 +110,21 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
             maximum: 3_600_000,
         },
     };
+    static FADE: Field = Field {
+        key: "fade",
+        label: |text| text.property_ui.fade.clone(),
+        hint: |text| text.property_ui.fade_hint.clone(),
+        kind: FieldKind::Toggle,
+    };
+    static TRANSITION_TIME: Field = Field {
+        key: "transition_ms",
+        label: |text| text.property_ui.transition_ms.clone(),
+        hint: |text| text.property_ui.transition_hint.clone(),
+        kind: FieldKind::Number {
+            minimum: 0,
+            maximum: 60_000,
+        },
+    };
     static LOOP: Field = Field {
         key: "loop",
         label: |text| text.property_ui.loop_label.clone(),
@@ -185,7 +200,14 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
     let mut fields = match kind.trim() {
         "color_source" => vec![&COLOR],
         "image_source" => vec![&PATH],
-        "image_slideshow" => vec![&PATHS, &SLIDE_TIME, &LOOP, &RANDOMIZE],
+        "image_slideshow" => vec![
+            &PATHS,
+            &SLIDE_TIME,
+            &FADE,
+            &TRANSITION_TIME,
+            &LOOP,
+            &RANDOMIZE,
+        ],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         "screen_capture" | "window_capture" => vec![&DEVICE],
         "camera_capture" => {
@@ -569,7 +591,7 @@ mod tests {
     #[test]
     fn image_slideshows_expose_paths_interval_loop_and_video_size() {
         let document =
-            "height = 360\nloop = true\npaths = \"/tmp/a.png\\n/tmp/b.png\"\nrandomize = false\nslide_time_ms = 8000\nwidth = 640\n";
+            "fade = false\nheight = 360\nloop = true\npaths = \"/tmp/a.png\\n/tmp/b.png\"\nrandomize = false\nslide_time_ms = 8000\ntransition_ms = 500\nwidth = 640\n";
 
         let rows = rows("image_slideshow", document, UiLocale::English);
 
@@ -582,6 +604,8 @@ mod tests {
             [
                 "paths",
                 "slide_time_ms",
+                "fade",
+                "transition_ms",
                 "loop",
                 "randomize",
                 "width",
@@ -590,7 +614,8 @@ mod tests {
         );
         assert_eq!(rows[1].kind, KIND_NUMBER);
         assert_eq!(rows[1].number, 8_000);
-        assert!(rows[2].toggle);
+        assert!(!rows[2].toggle);
+        assert!(rows[4].toggle);
     }
 
     #[test]

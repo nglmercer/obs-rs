@@ -7,7 +7,7 @@ use std::{
 use crate::{portable::parse_format, IMAGE_SOURCE_KIND};
 use image::{imageops::FilterType, ImageReader, Limits};
 use obs_rs_config::Config;
-use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
+use obs_rs_media::{FrameTransition, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
 
@@ -26,6 +26,8 @@ const MAX_SLIDESHOW_MEMORY_BYTES: usize = 256 * 1024 * 1024;
 /// OBS's lower and upper automatic slideshow interval bounds.
 const MIN_SLIDE_TIME_MS: u64 = 50;
 const MAX_SLIDE_TIME_MS: u64 = 3_600_000;
+/// Maximum duration of the optional slideshow cross-fade.
+const MAX_SLIDE_TRANSITION_MS: u64 = 60_000;
 
 pub(crate) struct ImageSourceFactory {
     kind: Identifier,
@@ -138,6 +140,8 @@ struct ImageSlideshowSource {
     frames: Vec<VideoFrame>,
     slide_time_nanos: u64,
     loop_slides: bool,
+    fade_transition: bool,
+    transition_nanos: u64,
 }
 
 impl ImageSlideshowSource {
@@ -146,7 +150,8 @@ impl ImageSlideshowSource {
             return Err(SourceError::invalid_setting("name", "source name is empty"));
         }
         let format = parse_format(settings)?;
-        let (frames, slide_time_nanos, loop_slides) = load_slideshow(format, settings)?;
+        let (frames, slide_time_nanos, loop_slides, fade_transition, transition_nanos) =
+            load_slideshow(format, settings)?;
         Ok(Self {
             kind,
             name: name.to_owned(),
@@ -154,6 +159,8 @@ impl ImageSlideshowSource {
             frames,
             slide_time_nanos,
             loop_slides,
+            fade_transition,
+            transition_nanos,
         })
     }
 }
@@ -169,11 +176,14 @@ impl Source for ImageSlideshowSource {
 
     fn update(&mut self, settings: &Config) -> Result<(), SourceError> {
         let format = parse_format(settings)?;
-        let (frames, slide_time_nanos, loop_slides) = load_slideshow(format, settings)?;
+        let (frames, slide_time_nanos, loop_slides, fade_transition, transition_nanos) =
+            load_slideshow(format, settings)?;
         self.format = format;
         self.frames = frames;
         self.slide_time_nanos = slide_time_nanos;
         self.loop_slides = loop_slides;
+        self.fade_transition = fade_transition;
+        self.transition_nanos = transition_nanos;
         Ok(())
     }
 
@@ -190,24 +200,62 @@ impl Source for ImageSlideshowSource {
         if count == 0 {
             return Ok(None);
         }
-        let elapsed_slide = request.timestamp().as_nanos() / self.slide_time_nanos;
+        let timestamp = request.timestamp();
+        let elapsed_nanos = timestamp.as_nanos();
+        let elapsed_slide = elapsed_nanos / self.slide_time_nanos;
         let index = if self.loop_slides {
             elapsed_slide % count
         } else {
             elapsed_slide.min(count - 1)
         };
         let index = usize::try_from(index).unwrap_or(0);
-        Ok(self
-            .frames
-            .get(index)
-            .map(|frame| frame.at_timestamp(request.timestamp())))
+        let Some(current) = self.frames.get(index) else {
+            return Ok(None);
+        };
+        if !self.fade_transition || self.transition_nanos == 0 || count < 2 {
+            return Ok(Some(current.at_timestamp(timestamp)));
+        }
+
+        let position = elapsed_nanos % self.slide_time_nanos;
+        let transition_start = self.slide_time_nanos - self.transition_nanos;
+        let next_index = if position >= transition_start {
+            if self.loop_slides {
+                Some((index + 1) % self.frames.len())
+            } else if index + 1 < self.frames.len() {
+                Some(index + 1)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let Some(next_index) = next_index else {
+            return Ok(Some(current.at_timestamp(timestamp)));
+        };
+        let Some(next) = self.frames.get(next_index) else {
+            return Ok(Some(current.at_timestamp(timestamp)));
+        };
+        let progress_nanos = position.saturating_sub(transition_start);
+        let progress_milli = progress_nanos
+            .saturating_mul(1_000)
+            .checked_div(self.transition_nanos)
+            .unwrap_or(1_000)
+            .min(1_000);
+        let progress_milli = u16::try_from(progress_milli).unwrap_or(1_000);
+        VideoFrame::transitioned(
+            &current.at_timestamp(timestamp),
+            next.at_timestamp(timestamp),
+            FrameTransition::CrossFade { progress_milli },
+        )
+        .map(Some)
+        .map_err(|error| SourceError::Unavailable(format!("slideshow transition failed: {error}")))
     }
 }
 
 fn load_slideshow(
     format: VideoFormat,
     settings: &Config,
-) -> Result<(Vec<VideoFrame>, u64, bool), SourceError> {
+) -> Result<(Vec<VideoFrame>, u64, bool, bool, u64), SourceError> {
     let slide_time_ms = settings
         .get("slide_time_ms")
         .unwrap_or("8000")
@@ -218,6 +266,24 @@ fn load_slideshow(
             "slide_time_ms",
             format!(
                 "value must be between {MIN_SLIDE_TIME_MS} and {MAX_SLIDE_TIME_MS} milliseconds"
+            ),
+        ));
+    }
+    let fade_transition = settings
+        .get("fade")
+        .unwrap_or("false")
+        .parse::<bool>()
+        .map_err(|error| SourceError::invalid_setting("fade", error.to_string()))?;
+    let transition_ms = settings
+        .get("transition_ms")
+        .unwrap_or("500")
+        .parse::<u64>()
+        .map_err(|error| SourceError::invalid_setting("transition_ms", error.to_string()))?;
+    if transition_ms > MAX_SLIDE_TRANSITION_MS || transition_ms > slide_time_ms {
+        return Err(SourceError::invalid_setting(
+            "transition_ms",
+            format!(
+                "value must be between 0 and {MAX_SLIDE_TRANSITION_MS} milliseconds and no longer than slide_time_ms"
             ),
         ));
     }
@@ -256,7 +322,14 @@ fn load_slideshow(
         frames.push(frame);
     }
     let slide_time_nanos = slide_time_ms.saturating_mul(1_000_000);
-    Ok((frames, slide_time_nanos, loop_slides))
+    let transition_nanos = transition_ms.saturating_mul(1_000_000);
+    Ok((
+        frames,
+        slide_time_nanos,
+        loop_slides,
+        fade_transition,
+        transition_nanos,
+    ))
 }
 
 fn expand_slideshow_paths(settings: &Config) -> Result<Vec<PathBuf>, SourceError> {
