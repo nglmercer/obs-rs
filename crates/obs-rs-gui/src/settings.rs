@@ -301,6 +301,8 @@ pub(crate) struct AppSettings {
     pub(crate) hotkey_stop_streaming: String,
     pub(crate) hotkey_undo: String,
     pub(crate) hotkey_redo: String,
+    pub(crate) hotkey_save_project: String,
+    pub(crate) hotkey_fade_transition: String,
     pub(crate) preview_border_color: String,
     pub(crate) program_border_color: String,
     pub(crate) project_path: String,
@@ -617,6 +619,8 @@ impl Default for AppSettings {
             hotkey_stop_streaming: "Ctrl+Shift+B".to_owned(),
             hotkey_undo: "Ctrl+Z".to_owned(),
             hotkey_redo: "Ctrl+Y".to_owned(),
+            hotkey_save_project: "Ctrl+S".to_owned(),
+            hotkey_fade_transition: "Ctrl+Shift+F".to_owned(),
             preview_border_color: "#60A5FA".to_owned(),
             program_border_color: "#F87171".to_owned(),
             project_path: user_file(PROJECT_FILE),
@@ -876,6 +880,16 @@ impl AppSettings {
             ),
             hotkey_undo: hotkey(config, "hotkey_undo", &defaults.hotkey_undo),
             hotkey_redo: hotkey(config, "hotkey_redo", &defaults.hotkey_redo),
+            hotkey_save_project: hotkey(
+                config,
+                "hotkey_save_project",
+                &defaults.hotkey_save_project,
+            ),
+            hotkey_fade_transition: hotkey(
+                config,
+                "hotkey_fade_transition",
+                &defaults.hotkey_fade_transition,
+            ),
             preview_border_color: colour_text(
                 config,
                 "preview_border_color",
@@ -1002,6 +1016,11 @@ impl AppSettings {
             ("hotkey_stop_streaming", self.hotkey_stop_streaming.clone()),
             ("hotkey_undo", self.hotkey_undo.clone()),
             ("hotkey_redo", self.hotkey_redo.clone()),
+            ("hotkey_save_project", self.hotkey_save_project.clone()),
+            (
+                "hotkey_fade_transition",
+                self.hotkey_fade_transition.clone(),
+            ),
             ("preview_border_color", self.preview_border_color.clone()),
             ("program_border_color", self.program_border_color.clone()),
             ("project_path", self.project_path.clone()),
@@ -1699,6 +1718,8 @@ pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
         settings.hotkey_stop_streaming.as_str(),
         settings.hotkey_undo.as_str(),
         settings.hotkey_redo.as_str(),
+        settings.hotkey_save_project.as_str(),
+        settings.hotkey_fade_transition.as_str(),
     ];
     let mut counts = BTreeMap::new();
     for value in values {
@@ -1885,6 +1906,8 @@ mod tests {
             hotkey_swap: "F1".to_owned(),
             hotkey_undo: "Alt+U".to_owned(),
             hotkey_redo: "Alt+Y".to_owned(),
+            hotkey_save_project: "Alt+S".to_owned(),
+            hotkey_fade_transition: "Alt+F".to_owned(),
             preview_border_color: "#00FF88".to_owned(),
             last_preview_scene: "source_scene".to_owned(),
             last_program_scene: "program".to_owned(),
@@ -1971,6 +1994,8 @@ mod tests {
             hotkey_start_streaming: String::new(),
             hotkey_undo: " control + r ".to_owned(),
             hotkey_redo: String::new(),
+            hotkey_save_project: "CTRL+R".to_owned(),
+            hotkey_fade_transition: String::new(),
             ..AppSettings::default()
         };
 

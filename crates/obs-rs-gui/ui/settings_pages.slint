@@ -712,6 +712,8 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-stop-streaming;
     in-out property <string> hotkey-undo;
     in-out property <string> hotkey-redo;
+    in-out property <string> hotkey-save-project;
+    in-out property <string> hotkey-fade-transition;
     in property <string> conflict-warning;
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -771,6 +773,22 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-redo;
                 placeholder-text: "Ctrl+Y";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_save_project;
+            SettingsField {
+                text <=> root.hotkey-save-project;
+                placeholder-text: "Ctrl+S";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_fade_transition;
+            SettingsField {
+                text <=> root.hotkey-fade-transition;
+                placeholder-text: "Ctrl+Shift+F";
                 edited => { root.changed(); }
             }
         }

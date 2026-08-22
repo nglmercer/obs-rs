@@ -38,6 +38,8 @@ export component AppNavbar inherits Rectangle {
     in property <bool> show-controls;
     in property <string> hotkey-undo;
     in property <string> hotkey-redo;
+    in property <string> hotkey-save-project;
+    in property <string> hotkey-fade-transition;
     in property <bool> studio-mode;
     callback menu-action(string);
     callback select-view-mode(int);
@@ -113,7 +115,7 @@ export component AppNavbar inherits Rectangle {
             spacing: 1px;
             MenuEntry { label: I18n.text.menu_new_project; clicked => { root.menu-action("new-project"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_open_project; clicked => { root.menu-action("load-project"); file-popup.close(); } }
-            MenuEntry { label: I18n.text.menu_save; shortcut: "Ctrl+S"; clicked => { root.menu-action("save-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_save; shortcut: root.hotkey-save-project; clicked => { root.menu-action("save-project"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_recover_project; clicked => { root.menu-action("recover-project"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_export_diagnostics; clicked => { root.menu-action("export-diagnostics"); file-popup.close(); } }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
