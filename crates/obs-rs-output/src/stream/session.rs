@@ -2,11 +2,11 @@ use crate::{
     error::OutputError,
     queue::PacketQueue,
     types::{
-        EncodedPacket, OutputState, PacketDropPolicy, PacketPushOutcome, ReconnectPolicy,
-        StreamMetrics, StreamState,
+        EncodedPacket, OutputState, PacketDropPolicy, PacketPushOutcome, ReconnectOutcome,
+        ReconnectPolicy, StreamMetrics, StreamState,
     },
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 pub trait PacketMuxer {
     /// Accepts one packet in timestamp order.
@@ -85,6 +85,7 @@ pub struct StreamSession<T: PacketTransport> {
     queue: PacketQueue,
     reconnect_policy: ReconnectPolicy,
     reconnect_attempts: u32,
+    next_reconnect_at: Option<Instant>,
     state: StreamState,
     metrics: StreamMetrics,
 }
@@ -106,6 +107,7 @@ impl<T: PacketTransport> StreamSession<T> {
             queue: PacketQueue::new(capacity_bytes, drop_policy)?,
             reconnect_policy,
             reconnect_attempts: 0,
+            next_reconnect_at: None,
             state: StreamState::Disconnected,
             metrics: StreamMetrics::default(),
         })
@@ -120,6 +122,7 @@ impl<T: PacketTransport> StreamSession<T> {
     pub fn connect(&mut self) -> Result<(), OutputError> {
         self.ensure_connectable("connect")?;
         self.transport.connect()?;
+        self.next_reconnect_at = None;
         self.state = StreamState::Connected;
         Ok(())
     }
@@ -190,6 +193,7 @@ impl<T: PacketTransport> StreamSession<T> {
             for packet in batch.into_iter().skip(sent).rev() {
                 self.queue.push_front(packet)?;
             }
+            self.schedule_reconnect(Instant::now());
             return Err(error);
         }
         Ok(sent)
@@ -201,23 +205,36 @@ impl<T: PacketTransport> StreamSession<T> {
     ///
     /// Returns the transport error when this attempt fails, or
     /// [`OutputError::ReconnectExhausted`] after the limit is reached.
-    pub fn reconnect(&mut self) -> Result<(), OutputError> {
+    pub fn reconnect(&mut self) -> Result<ReconnectOutcome, OutputError> {
+        self.reconnect_at(Instant::now())
+    }
+
+    pub(crate) fn reconnect_at(&mut self, now: Instant) -> Result<ReconnectOutcome, OutputError> {
         self.ensure_connectable("reconnect")?;
-        if self.reconnect_attempts >= self.reconnect_policy.max_attempts {
+        if self.reconnect_attempts >= self.reconnect_policy.max_attempts() {
             self.state = StreamState::Failed;
             return Err(OutputError::ReconnectExhausted {
                 attempts: self.reconnect_attempts,
             });
         }
+        if let Some(deadline) = self.next_reconnect_at {
+            if now < deadline {
+                return Ok(ReconnectOutcome::Deferred {
+                    retry_after: deadline.duration_since(now),
+                });
+            }
+        }
         self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
         match self.transport.connect() {
             Ok(()) => {
+                self.next_reconnect_at = None;
                 self.state = StreamState::Connected;
                 self.metrics.reconnects = self.metrics.reconnects.saturating_add(1);
-                Ok(())
+                Ok(ReconnectOutcome::Reconnected)
             }
             Err(error) => {
-                if self.reconnect_attempts >= self.reconnect_policy.max_attempts {
+                self.schedule_reconnect(now);
+                if self.reconnect_attempts >= self.reconnect_policy.max_attempts() {
                     self.state = StreamState::Failed;
                 }
                 Err(error)
@@ -227,8 +244,13 @@ impl<T: PacketTransport> StreamSession<T> {
 
     /// Disconnects while preserving queued packets for a later reconnect.
     pub fn disconnect(&mut self) {
+        self.disconnect_at(Instant::now());
+    }
+
+    pub(crate) fn disconnect_at(&mut self, now: Instant) {
         if self.state != StreamState::Closed {
             self.transport.disconnect();
+            self.schedule_reconnect(now);
             self.state = StreamState::Disconnected;
         }
     }
@@ -278,6 +300,13 @@ impl<T: PacketTransport> StreamSession<T> {
             state => Err(OutputError::InvalidStreamState { operation, state }),
         }
     }
+
+    fn schedule_reconnect(&mut self, now: Instant) {
+        self.next_reconnect_at = now.checked_add(
+            self.reconnect_policy
+                .delay_for_attempt(self.reconnect_attempts),
+        );
+    }
 }
 
 impl<T: PacketTransport> super::StreamingTransport for StreamSession<T> {
@@ -287,7 +316,7 @@ impl<T: PacketTransport> super::StreamingTransport for StreamSession<T> {
         self.flush()
     }
 
-    fn reconnect(&mut self) -> Result<(), Self::Error> {
+    fn reconnect(&mut self) -> Result<ReconnectOutcome, Self::Error> {
         Self::reconnect(self)
     }
 

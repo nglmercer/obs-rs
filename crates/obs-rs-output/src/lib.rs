@@ -66,7 +66,8 @@ pub use stream::{
 };
 pub use types::{
     AudioInputRequirement, EncodedPacket, OutputState, PacketDropPolicy, PacketKind,
-    PacketPushOutcome, ReconnectPolicy, StreamMetrics, StreamState, VideoInputRequirement,
+    PacketPushOutcome, ReconnectOutcome, ReconnectPolicy, StreamMetrics, StreamState,
+    VideoInputRequirement, DEFAULT_RECONNECT_INITIAL_DELAY, DEFAULT_RECONNECT_MAX_DELAY,
 };
 pub use video::{
     encode_png, PngVideoEncoder, RawVideoEncoder, RleVideoDecoder, RleVideoEncoder, VideoEncoder,

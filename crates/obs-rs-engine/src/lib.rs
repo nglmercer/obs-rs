@@ -38,10 +38,10 @@ use obs_rs_media::{
 use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig, AudioInputRequirement, EncodedPacket,
-    OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectPolicy, ReplayBuffer, RleVideoEncoder,
-    StreamMetrics, StreamSession, StreamState, StreamTarget, StreamingTransport,
-    TcpPacketTransport, VideoEncoder, VideoEncoderConfig, VideoInputRequirement,
-    WebSocketPacketTransport,
+    OutputError, PacketDropPolicy, RawAudioEncoder, ReconnectOutcome, ReconnectPolicy,
+    ReplayBuffer, RleVideoEncoder, StreamMetrics, StreamSession, StreamState, StreamTarget,
+    StreamingTransport, TcpPacketTransport, VideoEncoder, VideoEncoderConfig,
+    VideoInputRequirement, WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
@@ -749,14 +749,13 @@ impl StreamOutput {
         }
     }
 
-    fn reconnect(&mut self) -> Result<(), EngineError> {
+    fn reconnect(&mut self) -> Result<ReconnectOutcome, EngineError> {
         match self {
-            Self::Tcp(stream) => StreamingTransport::reconnect(stream)?,
-            Self::WebSocket(stream) => StreamingTransport::reconnect(stream)?,
+            Self::Tcp(stream) => Ok(StreamingTransport::reconnect(stream)?),
+            Self::WebSocket(stream) => Ok(StreamingTransport::reconnect(stream)?),
             #[cfg(feature = "production-gstreamer")]
-            Self::Production(stream) => StreamingTransport::reconnect(stream)?,
+            Self::Production(stream) => Ok(StreamingTransport::reconnect(stream)?),
         }
-        Ok(())
     }
 
     fn state(&self) -> StreamState {
@@ -1889,7 +1888,10 @@ impl EngineSession {
         };
         if stream.state() == StreamState::Disconnected {
             match stream.reconnect() {
-                Ok(()) => self.streaming_lifecycle = OutputLifecycle::Running,
+                Ok(ReconnectOutcome::Reconnected) => {
+                    self.streaming_lifecycle = OutputLifecycle::Running;
+                }
+                Ok(ReconnectOutcome::Deferred { .. }) => return Ok(0),
                 Err(error) => {
                     self.last_error = Some(error.to_string());
                     self.streaming_lifecycle = OutputLifecycle::Failed;
@@ -1901,20 +1903,25 @@ impl EngineSession {
             Ok(sent) => Ok(sent),
             Err(error) => {
                 self.last_error = Some(error.to_string());
-                if let Err(reconnect) = stream.reconnect() {
-                    self.last_error = Some(format!("{error}; reconnect failed: {reconnect}"));
-                    // A pump error the transport could not recover from is the
-                    // point the stream stops carrying media, whether or not the
-                    // handle is still open.
-                    self.streaming_lifecycle = OutputLifecycle::Failed;
-                    return Err(error);
+                match stream.reconnect() {
+                    Ok(ReconnectOutcome::Reconnected) => {
+                        // The transport is carrying media again, so the phase
+                        // must say so. Leaving it at `Failed` from the attempt
+                        // that just recovered would show a stopped stream in
+                        // the UI while packets were flowing.
+                        self.streaming_lifecycle = OutputLifecycle::Running;
+                        Ok(0)
+                    }
+                    Ok(ReconnectOutcome::Deferred { .. }) => Ok(0),
+                    Err(reconnect) => {
+                        self.last_error = Some(format!("{error}; reconnect failed: {reconnect}"));
+                        // A pump error the transport could not recover from is
+                        // the point the stream stops carrying media, whether or
+                        // not the handle is still open.
+                        self.streaming_lifecycle = OutputLifecycle::Failed;
+                        Err(error)
+                    }
                 }
-                // The transport is carrying media again, so the phase must say
-                // so. Leaving it at `Failed` from the attempt that just
-                // recovered would show a stopped stream in the UI while packets
-                // were flowing.
-                self.streaming_lifecycle = OutputLifecycle::Running;
-                Ok(0)
             }
         }
     }

@@ -29,7 +29,7 @@ fn stream_requeues_failed_packets_and_reconnects_without_loss() {
         transport,
         32,
         PacketDropPolicy::DropNewest,
-        ReconnectPolicy::new(2),
+        ReconnectPolicy::immediate(2),
     )
     .expect("stream");
     stream.connect().expect("connect stream");
@@ -68,6 +68,42 @@ fn reference_stream_implements_the_shared_transport_lifecycle() {
     );
     StreamingTransport::close(&mut stream).expect("close stream");
     assert_eq!(stream.state(), StreamState::Closed);
+}
+
+#[test]
+fn reconnect_policy_is_capped_and_stream_reconnect_is_deferred_without_sleeping() {
+    let policy =
+        ReconnectPolicy::with_backoff(4, Duration::from_millis(100), Duration::from_millis(250));
+    assert_eq!(policy.delay_for_attempt(0), Duration::from_millis(100));
+    assert_eq!(policy.delay_for_attempt(1), Duration::from_millis(200));
+    assert_eq!(policy.delay_for_attempt(2), Duration::from_millis(250));
+    assert_eq!(policy.delay_for_attempt(3), Duration::from_millis(250));
+    assert_eq!(
+        ReconnectPolicy::immediate(4).delay_for_attempt(u32::MAX),
+        Duration::ZERO
+    );
+
+    let mut stream = StreamSession::new(
+        MemoryPacketTransport::new(),
+        32,
+        PacketDropPolicy::DropNewest,
+        policy,
+    )
+    .expect("stream");
+    stream.connect().expect("connect stream");
+    let now = std::time::Instant::now();
+    stream.disconnect_at(now);
+
+    assert_eq!(
+        stream.reconnect_at(now),
+        Ok(ReconnectOutcome::Deferred {
+            retry_after: Duration::from_millis(100),
+        })
+    );
+    assert_eq!(
+        stream.reconnect_at(now + Duration::from_millis(100)),
+        Ok(ReconnectOutcome::Reconnected)
+    );
 }
 
 #[test]
@@ -112,7 +148,7 @@ fn a_partially_sent_batch_is_requeued_in_timestamp_order() {
         transport,
         32,
         PacketDropPolicy::DropNewest,
-        ReconnectPolicy::new(2),
+        ReconnectPolicy::immediate(2),
     )
     .expect("stream");
     stream.connect().expect("connect stream");

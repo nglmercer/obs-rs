@@ -5,7 +5,10 @@ use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use obs_rs_audio::{AudioBuffer, AudioFormat};
 use obs_rs_media::{PixelFormat, RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
-use obs_rs_output::{EncoderPreset, OutputTransport, RateControl, StreamingTransport, VideoCodec};
+use obs_rs_output::{
+    EncoderPreset, OutputTransport, RateControl, ReconnectOutcome, ReconnectPolicy,
+    StreamingTransport, VideoCodec,
+};
 
 use super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
 
@@ -81,7 +84,9 @@ pub struct GStreamerOutputSession {
     temp_path: Option<PathBuf>,
     transport: OutputTransport,
     video_duration: gst::ClockTime,
-    maximum_reconnects: u32,
+    reconnect_policy: ReconnectPolicy,
+    reconnect_attempts: u32,
+    next_reconnect_at: Option<Instant>,
     video_format: VideoFormat,
     video_pixel_format: PixelFormat,
 }
@@ -112,6 +117,27 @@ impl GStreamerOutputSession {
         video_format: VideoFormat,
         audio_format: AudioFormat,
         maximum_reconnects: u32,
+    ) -> Result<Self, GStreamerError> {
+        Self::start_with_reconnect_policy(
+            plan,
+            destination,
+            video_format,
+            audio_format,
+            ReconnectPolicy::new(maximum_reconnects),
+        )
+    }
+
+    /// Builds a production pipeline with an explicit reconnect policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed runtime/pipeline error before accepting media.
+    pub fn start_with_reconnect_policy(
+        plan: &ProductionPipelinePlan,
+        destination: &ProductionDestination,
+        video_format: VideoFormat,
+        audio_format: AudioFormat,
+        reconnect_policy: ReconnectPolicy,
     ) -> Result<Self, GStreamerError> {
         gst::init().map_err(native_error)?;
         destination.validate_for(plan.profile())?;
@@ -145,7 +171,9 @@ impl GStreamerOutputSession {
             temp_path,
             transport: plan.profile().transport(),
             video_duration,
-            maximum_reconnects,
+            reconnect_policy,
+            reconnect_attempts: 0,
+            next_reconnect_at: None,
             video_format,
             video_pixel_format: PixelFormat::Rgba8,
         })
@@ -374,7 +402,9 @@ impl GStreamerOutputSession {
                 "recording pipeline reported an asynchronous error".to_owned(),
             ));
         }
-        self.reconnect_live()
+        let now = Instant::now();
+        self.schedule_reconnect(now);
+        self.reconnect_live_at(now).map(|_| ())
     }
 
     /// Rebuilds a live transport after an application/network loss signal.
@@ -382,7 +412,11 @@ impl GStreamerOutputSession {
     /// # Errors
     ///
     /// Rejects recording sessions and reports a failed `GStreamer` state change.
-    pub fn reconnect_live(&mut self) -> Result<(), GStreamerError> {
+    pub fn reconnect_live(&mut self) -> Result<ReconnectOutcome, GStreamerError> {
+        self.reconnect_live_at(Instant::now())
+    }
+
+    fn reconnect_live_at(&mut self, now: Instant) -> Result<ReconnectOutcome, GStreamerError> {
         if matches!(
             self.transport,
             OutputTransport::Matroska
@@ -394,12 +428,21 @@ impl GStreamerOutputSession {
                 "file outputs cannot reconnect".to_owned(),
             ));
         }
-        if self.telemetry.reconnects >= u64::from(self.maximum_reconnects) {
+        if self.reconnect_attempts >= self.reconnect_policy.max_attempts() {
             self.state = NativeOutputState::Failed;
             return Err(GStreamerError::Native(
                 "live output reconnect limit reached".to_owned(),
             ));
         }
+        if let Some(deadline) = self.next_reconnect_at {
+            if now < deadline {
+                self.state = NativeOutputState::Retrying;
+                return Ok(ReconnectOutcome::Deferred {
+                    retry_after: deadline.duration_since(now),
+                });
+            }
+        }
+        self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
         self.state = NativeOutputState::Retrying;
         self.pipeline
             .set_state(gst::State::Null)
@@ -408,15 +451,19 @@ impl GStreamerOutputSession {
             self.state = NativeOutputState::Failed;
             return Err(native_error(error));
         }
+        self.next_reconnect_at = None;
         self.telemetry.reconnects = self.telemetry.reconnects.saturating_add(1);
         self.state = NativeOutputState::Ready;
-        Ok(())
+        Ok(ReconnectOutcome::Reconnected)
     }
 
     fn ensure_ready(&self) -> Result<(), GStreamerError> {
-        (self.state == NativeOutputState::Ready)
-            .then_some(())
-            .ok_or_else(|| GStreamerError::Native(format!("output session is {:?}", self.state)))
+        matches!(
+            self.state,
+            NativeOutputState::Ready | NativeOutputState::Retrying
+        )
+        .then_some(())
+        .ok_or_else(|| GStreamerError::Native(format!("output session is {:?}", self.state)))
     }
 
     fn record_latency(&mut self, nanos: u128) {
@@ -437,6 +484,13 @@ impl GStreamerOutputSession {
                 i128::from(audio.as_nanos()) - i128::from(video.as_nanos());
         }
     }
+
+    fn schedule_reconnect(&mut self, now: Instant) {
+        self.next_reconnect_at = now.checked_add(
+            self.reconnect_policy
+                .delay_for_attempt(self.reconnect_attempts),
+        );
+    }
 }
 
 impl StreamingTransport for GStreamerOutputSession {
@@ -446,7 +500,7 @@ impl StreamingTransport for GStreamerOutputSession {
         self.poll_health().map(|()| 0)
     }
 
-    fn reconnect(&mut self) -> Result<(), Self::Error> {
+    fn reconnect(&mut self) -> Result<ReconnectOutcome, Self::Error> {
         self.reconnect_live()
     }
 
@@ -1095,12 +1149,12 @@ mod tests {
         )
         .expect("video format");
         let audio = AudioFormat::new(48_000, 2).expect("audio format");
-        let mut session = GStreamerOutputSession::start_with_reconnect_limit(
+        let mut session = GStreamerOutputSession::start_with_reconnect_policy(
             &plan,
             &destination,
             video,
             audio,
-            1,
+            ReconnectPolicy::immediate(1),
         )
         .expect("live session");
 
@@ -1110,5 +1164,48 @@ mod tests {
         assert_eq!(session.telemetry().reconnects(), 1);
         assert!(StreamingTransport::reconnect(&mut session).is_err());
         assert_eq!(session.state(), NativeOutputState::Failed);
+    }
+
+    #[test]
+    fn native_reconnect_honors_a_bounded_deferred_retry() {
+        let plan = plan(OutputProfile::rtmp_h264_aac());
+        let destination = ProductionDestination::Rtmp {
+            endpoint: "rtmp://127.0.0.1:9/live/key".to_owned(),
+        };
+        let video = VideoFormat::new(
+            16,
+            16,
+            obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+        )
+        .expect("video format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let policy = ReconnectPolicy::with_backoff(
+            2,
+            std::time::Duration::from_millis(100),
+            std::time::Duration::from_millis(250),
+        );
+        let mut session = GStreamerOutputSession::start_with_reconnect_policy(
+            &plan,
+            &destination,
+            video,
+            audio,
+            policy,
+        )
+        .expect("live session");
+        let now = Instant::now();
+        session.schedule_reconnect(now);
+
+        assert_eq!(
+            session.reconnect_live_at(now),
+            Ok(ReconnectOutcome::Deferred {
+                retry_after: std::time::Duration::from_millis(100),
+            })
+        );
+        assert_eq!(session.state(), NativeOutputState::Retrying);
+        assert_eq!(
+            session.reconnect_live_at(now + std::time::Duration::from_millis(100)),
+            Ok(ReconnectOutcome::Reconnected)
+        );
+        assert_eq!(session.state(), NativeOutputState::Ready);
     }
 }

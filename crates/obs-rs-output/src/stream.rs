@@ -2,6 +2,8 @@ mod session;
 mod transport;
 mod websocket;
 
+use crate::ReconnectOutcome;
+
 /// Lifecycle boundary shared by packet and native production transports.
 ///
 /// Construction and media submission remain transport-specific. This contract
@@ -17,12 +19,13 @@ pub trait StreamingTransport {
     /// Returns the transport-specific failure without growing the media queue.
     fn poll(&mut self) -> Result<usize, Self::Error>;
 
-    /// Attempts one reconnect under the transport's configured budget.
+    /// Attempts one reconnect under the transport's configured budget and
+    /// backoff schedule without sleeping.
     ///
     /// # Errors
     ///
     /// Returns the transport-specific failure when the attempt is rejected.
-    fn reconnect(&mut self) -> Result<(), Self::Error>;
+    fn reconnect(&mut self) -> Result<ReconnectOutcome, Self::Error>;
 
     /// Closes the transport and releases its bounded queues.
     ///
