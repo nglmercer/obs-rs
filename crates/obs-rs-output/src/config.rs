@@ -126,6 +126,104 @@ impl StreamTarget {
     }
 }
 
+/// One bounded built-in service entry for the RTMP/RTMPS settings page.
+///
+/// The server is the first usable ingest entry from the pinned OBS service
+/// catalog; the server field remains editable for regional or custom ingest.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingServicePreset {
+    id: &'static str,
+    display_name: &'static str,
+    protocol: StreamProtocol,
+    default_server: &'static str,
+    stream_key_link: Option<&'static str>,
+}
+
+impl StreamingServicePreset {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        self.id
+    }
+
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        self.display_name
+    }
+
+    #[must_use]
+    pub const fn protocol(self) -> StreamProtocol {
+        self.protocol
+    }
+
+    #[must_use]
+    pub const fn default_server(self) -> &'static str {
+        self.default_server
+    }
+
+    #[must_use]
+    pub const fn stream_key_link(self) -> Option<&'static str> {
+        self.stream_key_link
+    }
+
+    #[must_use]
+    pub fn matches(self, value: &str) -> bool {
+        let value = value.trim();
+        self.id.eq_ignore_ascii_case(value) || self.display_name.eq_ignore_ascii_case(value)
+    }
+}
+
+/// Small built-in service catalog for the settings workflow.
+///
+/// This is intentionally bounded and compile-time owned. A future signed
+/// catalog update can replace it without coupling service metadata to a native
+/// transport implementation.
+pub const RTMP_SERVICE_PRESETS: [StreamingServicePreset; 5] = [
+    StreamingServicePreset {
+        id: "custom",
+        display_name: "Custom",
+        protocol: StreamProtocol::Rtmp,
+        default_server: "127.0.0.1/live",
+        stream_key_link: None,
+    },
+    StreamingServicePreset {
+        id: "twitch",
+        display_name: "Twitch",
+        protocol: StreamProtocol::Rtmp,
+        default_server: "live-iad.twitch.tv/app",
+        stream_key_link: Some("https://dashboard.twitch.tv/settings/stream"),
+    },
+    StreamingServicePreset {
+        id: "youtube-rtmps",
+        display_name: "YouTube - RTMPS",
+        protocol: StreamProtocol::Rtmps,
+        default_server: "a.rtmps.youtube.com:443/live2",
+        stream_key_link: Some("https://www.youtube.com/live_dashboard"),
+    },
+    StreamingServicePreset {
+        id: "facebook-live",
+        display_name: "Facebook Live",
+        protocol: StreamProtocol::Rtmps,
+        default_server: "rtmp-api.facebook.com:443/rtmp",
+        stream_key_link: Some("https://www.facebook.com/live/producer?ref=OBS"),
+    },
+    StreamingServicePreset {
+        id: "restream",
+        display_name: "Restream.io",
+        protocol: StreamProtocol::Rtmp,
+        default_server: "live.restream.io/live",
+        stream_key_link: Some("https://restream.io/settings/streaming-setup?from=OBS"),
+    },
+];
+
+/// Resolves a persisted service ID or legacy display name to a bounded entry.
+#[must_use]
+pub fn streaming_service_preset(value: &str) -> Option<StreamingServicePreset> {
+    RTMP_SERVICE_PRESETS
+        .iter()
+        .copied()
+        .find(|preset| preset.matches(value))
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WhipConfig {
     pub endpoint: String,
@@ -636,5 +734,24 @@ mod tests {
         let endpoint = srt.endpoint().expect("valid SRT endpoint");
         assert!(endpoint.contains("passphrase=secret+phrase"));
         assert!(endpoint.contains("streamid=%23%21%3A%3Ar%3Dfeed%2Cm%3Dpublish"));
+    }
+
+    #[test]
+    fn built_in_service_catalog_is_bounded_and_resolves_legacy_names() {
+        assert_eq!(RTMP_SERVICE_PRESETS.len(), 5);
+        assert_eq!(
+            streaming_service_preset("Custom").map(StreamingServicePreset::id),
+            Some("custom")
+        );
+        assert_eq!(
+            streaming_service_preset("youtube-rtmps").map(StreamingServicePreset::protocol),
+            Some(StreamProtocol::Rtmps)
+        );
+        assert_eq!(
+            streaming_service_preset("Facebook Live")
+                .and_then(StreamingServicePreset::stream_key_link),
+            Some("https://www.facebook.com/live/producer?ref=OBS")
+        );
+        assert!(streaming_service_preset("not-a-service").is_none());
     }
 }

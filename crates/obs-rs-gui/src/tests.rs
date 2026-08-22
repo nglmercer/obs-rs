@@ -2095,6 +2095,7 @@ fn exercise_settings_commit(
 fn render_every_settings_category() {
     let window = SettingsWindow::new().expect("settings window should instantiate");
     crate::callbacks::populate_settings_models(&window);
+    assert_eq!(window.get_rtmp_service_names().row_count(), 5);
     window.show().expect("settings window should show");
     for locale in UiLocale::supported() {
         window

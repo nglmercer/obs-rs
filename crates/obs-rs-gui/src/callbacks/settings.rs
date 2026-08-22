@@ -14,6 +14,7 @@ use obs_rs_engine::ProductionProtocol;
 use obs_rs_media::{FrameRate, ScaleFilter, VideoFormat};
 use obs_rs_output::{
     EncoderImplementation, EncoderPreset, OutputProfileKind, RateControl, VideoCodec,
+    RTMP_SERVICE_PRESETS,
 };
 use obs_rs_output::{SecretString, SrtKeyLength, SrtMode, StreamProtocol};
 use obs_rs_project::ProjectCommand;
@@ -381,6 +382,11 @@ fn populate_static_models(window: &SettingsWindow) {
     window.set_encoder_preset_names(string_model(
         [text.preset_speed, text.preset_balanced, text.preset_quality].into_iter(),
     ));
+    window.set_rtmp_service_names(string_model(
+        RTMP_SERVICE_PRESETS
+            .iter()
+            .map(|preset| SharedString::from(preset.display_name())),
+    ));
     window.set_recording_quality_names(string_model(
         [
             text.quality_stream,
@@ -451,6 +457,27 @@ fn install_stream_protocol_switch(controller: &Rc<SettingsController>) {
             .copied()
             .unwrap_or(StreamProtocol::Reference);
         show_protocol_fields(&callback_controller.window, protocol);
+    });
+
+    let callback_controller = Rc::clone(controller);
+    controller.window.on_select_stream_service(move |index| {
+        let Some(preset) = RTMP_SERVICE_PRESETS.get(usize::try_from(index).unwrap_or(0)) else {
+            return;
+        };
+        if let Some(protocol_index) = callback_controller
+            .protocol_ids
+            .borrow()
+            .iter()
+            .position(|protocol| *protocol == preset.protocol())
+        {
+            callback_controller
+                .window
+                .set_protocol_index(i32::try_from(protocol_index).unwrap_or(0));
+            show_protocol_fields(&callback_controller.window, preset.protocol());
+        }
+        callback_controller
+            .window
+            .set_rtmp_server(preset.default_server().into());
     });
 }
 
@@ -739,7 +766,15 @@ fn load_draft(
     window.set_snap_distance(i32::from(settings.canvas_snap_distance));
     window.set_show_safe_areas(settings.show_safe_areas);
     populate_stream_models(window, &output.borrow(), controller, &settings);
-    window.set_rtmp_service(settings.rtmp.service.as_str().into());
+    window.set_rtmp_service_index(
+        i32::try_from(
+            RTMP_SERVICE_PRESETS
+                .iter()
+                .position(|preset| preset.matches(&settings.rtmp.service))
+                .unwrap_or(0),
+        )
+        .unwrap_or(0),
+    );
     window.set_rtmp_server(settings.rtmp.server.as_str().into());
     window.set_rtmp_stream_key(settings.rtmp.stream_key.expose_secret().into());
     window.set_stream_video_bitrate(
@@ -1488,7 +1523,11 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
         .get(usize::try_from(window.get_protocol_index()).unwrap_or(0))
         .copied()
         .unwrap_or(StreamProtocol::Reference);
-    settings.rtmp.service = window.get_rtmp_service().to_string();
+    if let Some(service) =
+        RTMP_SERVICE_PRESETS.get(usize::try_from(window.get_rtmp_service_index()).unwrap_or(0))
+    {
+        service.id().clone_into(&mut settings.rtmp.service);
+    }
     settings.rtmp.server = window.get_rtmp_server().to_string();
     settings.rtmp.stream_key = SecretString::new(window.get_rtmp_stream_key().to_string());
     if let Some(encoder) = controller

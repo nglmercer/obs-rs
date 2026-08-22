@@ -66,7 +66,8 @@ export component SettingsWindow inherits Window {
     in property <bool> stream-show-hls;
     in property <bool> stream-show-rist;
     in property <bool> stream-show-reference;
-    in-out property <string> rtmp-service;
+    in property <[string]> rtmp-service-names;
+    in-out property <int> rtmp-service-index;
     in-out property <string> rtmp-server;
     in-out property <string> rtmp-stream-key;
     in-out property <bool> stream-reconnect;
@@ -195,6 +196,7 @@ export component SettingsWindow inherits Window {
     callback preview-density(int);
     callback preview-language(int);
     callback select-stream-protocol(int);
+    callback select-stream-service(int);
     callback select-output-mode(int);
     callback select-recording-quality(int);
     callback edit-base-resolution(string);
@@ -338,7 +340,8 @@ export component SettingsWindow inherits Window {
                         show-hls: root.stream-show-hls;
                         show-rist: root.stream-show-rist;
                         show-reference: root.stream-show-reference;
-                        rtmp-service <=> root.rtmp-service;
+                        rtmp-service-names: root.rtmp-service-names;
+                        rtmp-service-index: root.rtmp-service-index;
                         rtmp-server <=> root.rtmp-server;
                         rtmp-stream-key <=> root.rtmp-stream-key;
                         reconnect <=> root.stream-reconnect;
@@ -369,6 +372,11 @@ export component SettingsWindow inherits Window {
                             root.protocol-index = index;
                             root.dirty = true;
                             root.select-stream-protocol(index);
+                        }
+                        select-service(index) => {
+                            root.rtmp-service-index = index;
+                            root.dirty = true;
+                            root.select-stream-service(index);
                         }
                         select-srt-mode(index) => {
                             root.srt-mode-index = index;
