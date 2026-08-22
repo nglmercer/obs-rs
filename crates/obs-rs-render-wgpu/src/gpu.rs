@@ -413,20 +413,24 @@ impl WgpuRenderBackend {
         clippy::too_many_lines,
         reason = "one encoder owns both ping-pong textures and every ordered layer pass"
     )]
-    fn composite_textures(
-        &self,
-        target: TextureId,
-        sources: &[(
-            &wgpu::Texture,
-            VideoFormat,
-            Timestamp,
-            FrameTransform,
-            &[FrameFilter],
-        )],
-    ) -> Result<(), RenderError> {
-        if sources.is_empty() {
+    fn composite_textures<'a, I>(&self, target: TextureId, sources: I) -> Result<(), RenderError>
+    where
+        I: IntoIterator<
+            Item = (
+                &'a wgpu::Texture,
+                VideoFormat,
+                Timestamp,
+                FrameTransform,
+                &'a [FrameFilter],
+            ),
+        >,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let sources = sources.into_iter();
+        if sources.len() == 0 {
             return Err(RenderError::EmptyComposition);
         }
+        let source_count = sources.len();
         let target_texture = self
             .textures
             .get(&target)
@@ -438,9 +442,7 @@ impl WgpuRenderBackend {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("obs-rs-gpu-composite"),
             });
-        for (index, (source, source_format, timestamp, transform, filters)) in
-            sources.iter().enumerate()
-        {
+        for (index, (source, source_format, timestamp, transform, filters)) in sources.enumerate() {
             let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
             let background = if index.is_multiple_of(2) {
                 if index == 0 {
@@ -459,10 +461,10 @@ impl WgpuRenderBackend {
             };
             let destination_view = destination.create_view(&wgpu::TextureViewDescriptor::default());
             let parameters = layer_parameters(
-                *source_format,
+                source_format,
                 target_texture.format,
-                *timestamp,
-                *transform,
+                timestamp,
+                transform,
                 filters,
             );
             let parameter_buffer =
@@ -512,7 +514,7 @@ impl WgpuRenderBackend {
             pass.set_bind_group(0, &bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
-        let completed = if sources.len().is_multiple_of(2) {
+        let completed = if source_count.is_multiple_of(2) {
             &scratch_b
         } else {
             &scratch_a
@@ -606,14 +608,14 @@ impl RenderBackend for WgpuRenderBackend {
                 layer.filters(),
             ));
         }
-        let sources = prepared
-            .iter()
-            .map(|(texture, source_format, timestamp, transform, filters)| {
-                (texture, *source_format, *timestamp, *transform, *filters)
-            })
-            .collect::<Vec<_>>();
-        self.composite_textures(target, &sources)?;
-        drop(sources);
+        self.composite_textures(
+            target,
+            prepared
+                .iter()
+                .map(|(texture, source_format, timestamp, transform, filters)| {
+                    (texture, *source_format, *timestamp, *transform, *filters)
+                }),
+        )?;
         for (texture, source_format, _, _, _) in prepared {
             self.recycle_texture(source_format, texture);
         }
@@ -713,9 +715,9 @@ impl RenderBackend for WgpuRenderBackend {
                 message: "GPU composition target aliases a source".to_owned(),
             });
         }
-        let sources = layers
-            .iter()
-            .map(|layer| {
+        self.composite_textures(
+            target,
+            layers.iter().map(|layer| {
                 let texture = self.textures.get(layer).expect("validated layer");
                 (
                     &texture.texture,
@@ -724,10 +726,8 @@ impl RenderBackend for WgpuRenderBackend {
                     FrameTransform::IDENTITY,
                     &[] as &[FrameFilter],
                 )
-            })
-            .collect::<Vec<_>>();
-        self.composite_textures(target, &sources)?;
-        drop(sources);
+            }),
+        )?;
         let target = self
             .textures
             .get_mut(&target)

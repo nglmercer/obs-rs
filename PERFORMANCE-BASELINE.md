@@ -2,7 +2,7 @@
 
 **Baseline date:** 2026-08-20  
 **Baseline commit:** `7afb7fa` (Phase 0 evidence)  
-**Latest measurement:** 2026-08-21 (bounded program/preview render-target split packet)
+**Latest measurement:** 2026-08-21 (bounded WGPU composition allocation packet)
 **Reference:** OBS Studio `32.2.2` is installed and reports that version.  
 **Machine:** Linux `x86_64`, AMD BC-250, 12 logical CPUs, 14 GiB RAM, Rust/Cargo `1.97.1`.
 
@@ -91,6 +91,27 @@ reference engine workload, not the GUI presentation copy. The GUI worker now
 requests separate 1048x590 preview and program-view targets for a 1920x1080
 canvas (and proportionally bounded targets for 4K), so their Slint copies are
 separated and counted as `frame_copy_bytes` in the live metrics string.
+
+The WGPU compositor allocation probe exercises 10,000 single-layer 1920x1080
+compositions with an explicit `wait_idle()` after each frame. Before the
+iterator change, the debug test profile reported:
+
+```text
+gpu_frames=10000 p95_ns=1298776 dropped=0 readbacks=0 gpu_bytes=33177600 pooled_textures=2
+```
+
+After removing the duplicate per-composition layer-descriptor `Vec` (the
+compositor now consumes the exact-size iterator directly), the same probe
+reported:
+
+```text
+gpu_frames=10000 p95_ns=1222958 dropped=0 readbacks=0 gpu_bytes=33177600 pooled_textures=2
+```
+
+Both runs completed all frames without readback or drops. This is a local
+allocation-path comparison in the debug WGPU test profile, not a hardware
+performance sign-off; end-to-end capture/audio/encoder allocation tracing is
+still required.
 
 ## Crop/Pad, key, color, Scroll, and Render Delay evidence
 
@@ -339,6 +360,12 @@ reserved for future fan-out). It remains bounded, although it still uses a
 CPU-compatible NV12 readback until native encoder texture import exists. A
 full-canvas RGBA readback is requested only for output scaling or when the
 accelerated compositor is unavailable.
+
+Within each WGPU composition, prepared layer ownership is retained for texture
+recycling while the compositor consumes an exact-size iterator over those
+layers. The former duplicate source-descriptor vector is no longer allocated
+per frame; parameter buffers and bind groups remain explicit GPU resources and
+are still a follow-up profiling target.
 
 `obs-rs-render-wgpu` also has a GPU NV12 conversion/readback path for encoder
 compatibility. The WGPU backend proves that readback is explicit, and the GUI
