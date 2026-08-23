@@ -55,6 +55,8 @@ mod tests;
 pub use adapter::PlatformCaptureAdapter;
 pub use device::{CaptureRequest, VideoCaptureDevice};
 pub use error::CaptureError;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub use factories::NokhwaCaptureFactory;
 pub use factories::{
     SimulatedCaptureFactory, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
     SCREEN_CAPTURE_SOURCE_KIND, TEST_PATTERN_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,

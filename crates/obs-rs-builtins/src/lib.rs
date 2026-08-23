@@ -62,13 +62,22 @@ impl BuiltinPlugin {
         })
     }
 
-    /// Discovers deterministic CPU fallback capture devices.
+    /// Discovers deterministic CPU fallback devices for portable sources.
+    ///
+    /// Cameras are intentionally excluded: the built-in camera source and its
+    /// device catalog are Nokhwa-backed on supported platforms. Call
+    /// [`Self::discover_platform_capture_devices_for_kind`] with
+    /// [`CaptureKind::Camera`] for that catalog.
     ///
     /// # Errors
     ///
     /// Returns [`CaptureError`] if the built-in device descriptors are invalid.
     pub fn discover_capture_devices(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
-        SimulatedCaptureProvider::new().discover()
+        Ok(SimulatedCaptureProvider::new()
+            .discover()?
+            .into_iter()
+            .filter(|device| device.kind() != CaptureKind::Camera)
+            .collect())
     }
 
     /// Discovers host-platform devices through the platform provider seam.

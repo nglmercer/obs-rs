@@ -43,8 +43,8 @@ control surfaces:
   direct no-shell process launch, fixed environment negotiation, bounded
   `OBSFRM01` frame packets, a two-frame handoff queue, and frame-delivery
   timeouts.
-- `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
-  camera CPU-fallback factories plus the Linux `x11_screen_capture` and
+- `obs-rs-builtins` provides the built-in color, test-pattern, screen, window,
+  and Nokhwa-backed camera factories plus the Linux `x11_screen_capture` and
   portal-backed `wayland_screen_capture` sources. A camera that is unplugged,
   busy, or missing leaves its source in the scene, reports why, and reconnects
   on its own instead of failing the project load.

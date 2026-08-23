@@ -610,14 +610,10 @@ fn builtins_expose_the_capture_source_kind() {
 }
 
 #[test]
-fn builtins_expose_simulated_platform_capture_kinds() {
+fn builtins_expose_platform_capture_kinds() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
-    for kind in [
-        BUILTIN_SCREEN_SOURCE_KIND,
-        BUILTIN_WINDOW_SOURCE_KIND,
-        BUILTIN_CAMERA_SOURCE_KIND,
-    ] {
+    for kind in [BUILTIN_SCREEN_SOURCE_KIND, BUILTIN_WINDOW_SOURCE_KIND] {
         let factory = plugin
             .source_factories()
             .iter()
@@ -631,6 +627,23 @@ fn builtins_expose_simulated_platform_capture_kinds() {
             .expect("render")
             .expect("frame");
         assert_eq!(frame.format(), format);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    {
+        let camera_factory = plugin
+            .source_factories()
+            .iter()
+            .find(|factory| factory.kind().as_str() == BUILTIN_CAMERA_SOURCE_KIND)
+            .expect("camera capture factory");
+        let mut settings = settings("#000000FF");
+        settings
+            .set("device_id", "camera-0")
+            .expect("camera device setting");
+        assert!(
+            camera_factory.create("camera", &settings).is_err(),
+            "built-in camera kind must not fall back to a simulated device"
+        );
     }
 }
 
@@ -684,7 +697,10 @@ fn builtins_expose_a_deterministic_capture_discovery_snapshot() {
     let devices = plugin
         .discover_capture_devices()
         .expect("discover fallbacks");
-    assert_eq!(devices.len(), 4);
+    assert_eq!(devices.len(), 3);
     assert_eq!(devices[0].id().as_str(), "test-pattern");
-    assert_eq!(devices[3].id().as_str(), "camera-0");
+    assert_eq!(devices[2].id().as_str(), "window-0");
+    assert!(devices
+        .iter()
+        .all(|device| device.kind() != CaptureKind::Camera));
 }

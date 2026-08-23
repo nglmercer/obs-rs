@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use obs_rs_capture::NokhwaCaptureFactory;
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+use obs_rs_capture::CAMERA_CAPTURE_SOURCE_KIND;
 use obs_rs_capture::{
-    CaptureKind, SimulatedCaptureFactory, TestPatternFactory, CAMERA_CAPTURE_SOURCE_KIND,
-    SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
+    CaptureKind, SimulatedCaptureFactory, TestPatternFactory, SCREEN_CAPTURE_SOURCE_KIND,
+    WINDOW_CAPTURE_SOURCE_KIND,
 };
 use obs_rs_plugin_api::{PluginError, SourceFactory};
 
@@ -24,6 +28,9 @@ pub(crate) fn build() -> Result<Vec<Arc<dyn SourceFactory>>, PluginError> {
         SimulatedCaptureFactory::new(SCREEN_CAPTURE_SOURCE_KIND, CaptureKind::Screen)?;
     let window_factory =
         SimulatedCaptureFactory::new(WINDOW_CAPTURE_SOURCE_KIND, CaptureKind::Window)?;
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    let camera_factory = NokhwaCaptureFactory::new()?;
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     let camera_factory =
         SimulatedCaptureFactory::new(CAMERA_CAPTURE_SOURCE_KIND, CaptureKind::Camera)?;
     let mut factories: Vec<Arc<dyn SourceFactory>> = vec![

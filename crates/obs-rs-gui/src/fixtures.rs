@@ -12,9 +12,8 @@ use obs_rs_media::{FrameRate, VideoFormat};
 use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 
 /// Platform discovery opens native camera descriptors and performs X11
-/// round-trips. Keep one short-lived snapshot so a camera properties dialog
-/// does not enumerate cameras once for its device list and again for its mode
-/// list, while still allowing hot-plug changes to appear promptly.
+/// round-trips. Keep one short-lived snapshot for repeated device-picker
+/// refreshes while still allowing hot-plug changes to appear promptly.
 const PLATFORM_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(1);
 const CAMERA_MODE_CACHE_TTL: Duration = Duration::from_secs(5);
 
@@ -131,7 +130,10 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
         let fallback = match kind {
             "screen_capture" => "screen-0",
             "window_capture" => "window-0",
-            "camera_capture" => "camera-0",
+            // Keep an unplugged camera source addressable without inventing a
+            // second camera backend. The runtime reports this Nokhwa ID as
+            // unavailable until the device is connected.
+            "camera_capture" => "nokhwa-camera-0",
             _ => unreachable!("kind was checked above"),
         };
         let devices = capture_devices(kind);
@@ -139,7 +141,6 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
             devices
                 .iter()
                 .find(|(id, _)| id.starts_with("v4l2-") || id.starts_with("nokhwa-camera-"))
-                .or_else(|| devices.first())
                 .map_or(fallback, |(id, _)| id.as_str())
         } else {
             devices.first().map_or(fallback, |(id, _)| id.as_str())
@@ -336,10 +337,10 @@ pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
 /// Returns the devices that a source-properties editor can select.
 ///
 /// The returned list matches the backend behind the source kind. The generic
-/// portable sources expose deterministic fallback devices; the Linux X11
-/// source exposes only its native screen adapter. This prevents an X11 device
-/// from appearing selectable in the simulated `screen_capture` factory where
-/// it would silently have no effect.
+/// portable screen/window sources expose deterministic fallback devices; the
+/// camera source and Linux X11 sources expose only their native adapters. This
+/// prevents a device from appearing selectable in a factory where it would
+/// silently have no effect.
 pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let kind = kind.trim();
     let wanted = match kind {
@@ -351,7 +352,9 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let Ok(plugin) = BuiltinPlugin::new() else {
         return Vec::new();
     };
-    let mut devices = if matches!(kind, "x11_screen_capture" | "x11_window_capture") {
+    let mut devices = if kind == "camera_capture"
+        || matches!(kind, "x11_screen_capture" | "x11_window_capture")
+    {
         platform_devices_for_kind(wanted)
             .into_iter()
             .filter(|device| device.kind() == wanted)
@@ -366,14 +369,6 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
             .map(|device| (device.id().to_string(), device.name().to_owned()))
             .collect::<Vec<_>>()
     };
-    if kind == "camera_capture" {
-        devices.extend(
-            platform_devices_for_kind(wanted)
-                .into_iter()
-                .filter(|device| device.kind() == wanted)
-                .map(|device| (device.id().to_string(), device.name().to_owned())),
-        );
-    }
     devices.sort_by(|left, right| left.0.cmp(&right.0));
     devices.dedup_by(|left, right| left.0 == right.0);
     devices
@@ -386,10 +381,8 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
 /// An unavailable device produces an empty list, so the properties form omits
 /// controls it cannot honour.
 pub(crate) fn camera_modes_for_device(device_id: &str) -> Vec<CameraMode> {
-    let devices = platform_devices_for_kind(CaptureKind::Camera);
-    if !devices
-        .iter()
-        .any(|device| device.kind() == CaptureKind::Camera && device.id().as_str() == device_id)
+    if device_id.trim().is_empty()
+        || (!device_id.starts_with("v4l2-") && !device_id.starts_with("nokhwa-camera-"))
     {
         return Vec::new();
     }
@@ -403,6 +396,8 @@ pub(crate) fn camera_modes_for_device(device_id: &str) -> Vec<CameraMode> {
             }
         }
     }
+    // The device list is cached separately. Mode lookup must open only the
+    // selected Nokhwa camera, not rediscover every camera first.
     let modes = BuiltinPlugin::new()
         .ok()
         .and_then(|plugin| plugin.discover_platform_camera_modes(device_id).ok())

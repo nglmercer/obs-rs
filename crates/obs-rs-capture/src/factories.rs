@@ -27,7 +27,7 @@ pub const WINDOW_CAPTURE_SOURCE_KIND: &str = "window_capture";
 /// Stable source kind for the direct Linux X11 window adapter.
 #[cfg(target_os = "linux")]
 pub const X11_WINDOW_CAPTURE_SOURCE_KIND: &str = "x11_window_capture";
-/// Stable source kind for a camera capture source with a Nokhwa/portable backend.
+/// Stable source kind for the Nokhwa-backed camera capture source.
 pub const CAMERA_CAPTURE_SOURCE_KIND: &str = "camera_capture";
 
 /// Factory that adapts [`TestPatternDevice`] to the Rust source API.
@@ -111,7 +111,11 @@ impl Source for TestPatternSource {
     }
 }
 
-/// Factory for a screen, window, or camera source with a deterministic fallback.
+/// Factory for a screen or window source with a deterministic fallback.
+///
+/// The shipped camera source uses a dedicated Nokhwa-backed factory. This
+/// generic factory still supports deterministic camera fixtures for low-level
+/// tests.
 pub struct SimulatedCaptureFactory {
     kind: Identifier,
     capture_kind: CaptureKind,
@@ -143,9 +147,7 @@ impl SourceFactory for SimulatedCaptureFactory {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(self.kind.as_str());
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        if self.capture_kind == CaptureKind::Camera
-            && (device_id.starts_with("v4l2-") || device_id.starts_with("nokhwa-camera-"))
-        {
+        if self.capture_kind == CaptureKind::Camera && is_nokhwa_camera_id(device_id) {
             let native_mode = parse_camera_mode(settings)?;
             let mut source = NativeCameraSource {
                 kind: self.kind.clone(),
@@ -175,6 +177,65 @@ impl SourceFactory for SimulatedCaptureFactory {
             capture_kind: self.capture_kind,
             device,
         }))
+    }
+}
+
+/// Factory for the real camera source.
+///
+/// Camera sources are deliberately separate from [`SimulatedCaptureFactory`]
+/// so a native camera ID can never silently fall back to a generated test
+/// pattern. Every camera opened through the built-in source kind therefore
+/// reaches [`crate::NokhwaCaptureDevice`].
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub struct NokhwaCaptureFactory {
+    kind: Identifier,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl NokhwaCaptureFactory {
+    /// Creates the Nokhwa-backed camera factory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PluginError::InvalidIdentifier`] only if the static source
+    /// kind is invalid.
+    pub fn new() -> Result<Self, PluginError> {
+        Ok(Self {
+            kind: Identifier::new(CAMERA_CAPTURE_SOURCE_KIND)
+                .map_err(PluginError::InvalidIdentifier)?,
+        })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl SourceFactory for NokhwaCaptureFactory {
+    fn kind(&self) -> &Identifier {
+        &self.kind
+    }
+
+    fn create(&self, name: &str, settings: &Config) -> Result<Box<dyn Source>, SourceError> {
+        let format = parse_format(settings)?;
+        let device_id = settings
+            .get("device_id")
+            .filter(|value| is_nokhwa_camera_id(value))
+            .ok_or_else(|| {
+                SourceError::invalid_setting("device_id", "expected a Nokhwa camera ID")
+            })?;
+        let native_mode = parse_camera_mode(settings)?;
+        let mut source = NativeCameraSource {
+            kind: self.kind.clone(),
+            name: name.to_owned(),
+            format,
+            device_id: device_id.to_owned(),
+            native_mode,
+            device: None,
+            failure: None,
+            retry_countdown: CAMERA_RETRY_FRAMES,
+        };
+        // Opening is asynchronous. A disconnected or busy camera remains a
+        // valid project source and reports its Nokhwa failure on render.
+        source.reopen();
+        Ok(Box::new(source))
     }
 }
 
@@ -308,7 +369,7 @@ impl Source for NativeCameraSource {
         let format = parse_format(settings)?;
         let device_id = settings
             .get("device_id")
-            .filter(|value| value.starts_with("v4l2-") || value.starts_with("nokhwa-camera-"))
+            .filter(|value| is_nokhwa_camera_id(value))
             .ok_or_else(|| {
                 SourceError::invalid_setting("device_id", "expected a native camera ID")
             })?;
@@ -393,4 +454,11 @@ impl Source for NativeCameraSource {
             }
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn is_nokhwa_camera_id(id: &str) -> bool {
+    // `v4l2-videoN` is retained as a project-file migration spelling, but it
+    // is still opened by Nokhwa and never by a separate V4L2 backend.
+    id.starts_with("v4l2-") || id.starts_with("nokhwa-camera-")
 }

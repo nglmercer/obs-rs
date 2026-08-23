@@ -6,9 +6,9 @@ use super::refresh::{peak_db, transition_label_for_locale};
 use super::settings::{AppSettings, ProjectorGeometry, ProjectorKind, ProjectorTarget};
 use super::settings_model::RecordingQuality;
 use super::{
-    capture_devices, close_request_response, initial_project, install_canvas_callbacks, refresh_ui,
-    restore_project, source_settings, I18n, MainWindow, OutputRuntime, PreviewSurface,
-    SettingsWindow, SourcePropertiesWindow,
+    capture_devices, close_request_response, initial_project, install_canvas_callbacks,
+    kind_selects_monitor, refresh_ui, restore_project, source_settings, I18n, MainWindow,
+    OutputRuntime, PreviewSurface, SettingsWindow, SourcePropertiesWindow,
 };
 use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
@@ -280,11 +280,24 @@ fn capture_source_defaults_have_a_real_selectable_device_id() {
         let settings = source_settings(kind).expect("capture defaults");
         let device_id = settings.get("device_id").expect("device id");
         assert!(!device_id.is_empty(), "{kind} must have a device id");
-        assert!(
-            capture_devices(kind).iter().any(|(id, _)| id == device_id),
-            "{kind} default must be in its device catalog"
-        );
+        let devices = capture_devices(kind);
+        if kind == "camera_capture" && devices.is_empty() {
+            assert_eq!(device_id, "nokhwa-camera-0");
+        } else {
+            assert!(
+                devices.iter().any(|(id, _)| id == device_id),
+                "{kind} default must be in its device catalog"
+            );
+        }
     }
+}
+
+#[test]
+fn only_screen_capture_kinds_offer_the_monitor_picker() {
+    assert!(kind_selects_monitor("x11_screen_capture"));
+    assert!(kind_selects_monitor("wayland_screen_capture"));
+    assert!(!kind_selects_monitor("camera_capture"));
+    assert!(!kind_selects_monitor("screen_capture"));
 }
 
 #[test]
@@ -3107,9 +3120,13 @@ fn exercise_capture_device_properties_window(
         .expect("preview scene")
         .to_owned();
     let mut settings = source_settings("camera_capture").expect("camera defaults");
+    let camera_id = crate::capture_devices("camera_capture")
+        .first()
+        .map(|(id, _)| id.clone())
+        .unwrap_or_else(|| "nokhwa-camera-0".to_owned());
     settings
-        .set("device_id", "camera-0")
-        .expect("portable camera selection");
+        .set("device_id", &camera_id)
+        .expect("Nokhwa camera selection");
     let source = SourceSpec::new("gui-camera", "camera_capture", "GUI camera", settings)
         .expect("camera source");
     state
@@ -3153,7 +3170,7 @@ fn exercise_capture_device_properties_window(
         .expect("camera source persisted");
     assert_eq!(
         source.settings().get("device_id"),
-        Some("camera-0"),
+        Some(camera_id.as_str()),
         "ComboBox selection must reach the project command"
     );
 }
