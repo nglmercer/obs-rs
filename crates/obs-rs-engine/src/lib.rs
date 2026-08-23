@@ -23,7 +23,7 @@ use std::{
 use obs_rs_audio::{
     AudioBuffer, AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioFilter, AudioFilterChain,
     AudioFormat, AudioInput, AudioInputProvider, AudioInputState, AudioMixer, AudioResampler,
-    AudioSourceId, SimulatedAudioProvider,
+    AudioSourceId, AvSyncMetrics, SimulatedAudioProvider,
 };
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
@@ -243,6 +243,8 @@ pub struct EngineStats {
     pub audio_encode_latency: LatencyMetrics,
     pub output_submit_latency: LatencyMetrics,
     pub audio_blocks_per_video_tick: u32,
+    /// Bounded cross-domain timestamp telemetry from the session timeline.
+    pub av_sync: AvSyncMetrics,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1076,6 +1078,7 @@ impl EngineSession {
             self.config.audio_format,
             self.config.timeline_tolerance_nanos,
         );
+        self.stats.av_sync = AvSyncMetrics::default();
         self.next_audio_deadline = None;
         self.render_timestamp = Timestamp::ZERO;
         self.video_encoder = Box::new(RleVideoEncoder::new(format));
@@ -1087,6 +1090,11 @@ impl EngineSession {
     #[must_use]
     pub const fn project(&self) -> &Project {
         &self.project
+    }
+
+    fn observe_av_sync(&mut self, video_timestamp: Timestamp, audio_timestamp: Timestamp) {
+        let _ = self.timeline.observe(video_timestamp, audio_timestamp);
+        self.stats.av_sync = self.timeline.metrics();
     }
 
     /// Returns the active canvas format.
@@ -1418,10 +1426,10 @@ impl EngineSession {
         self.stats.audio_blocks_per_video_tick =
             u32::try_from(audio_blocks.len()).unwrap_or(u32::MAX);
         self.stats.audio_peak_milli = audio_blocks.last().map_or(0, audio_peak_milli);
-        let _ = self.timeline.observe(
+        self.observe_av_sync(
             timestamp,
             audio_blocks
-                .first()
+                .last()
                 .map_or(timestamp, AudioBuffer::timestamp),
         );
 
@@ -1462,10 +1470,10 @@ impl EngineSession {
         self.stats.video_frames = self.stats.video_frames.saturating_add(1);
         self.stats.last_video_timestamp = Some(frame.timestamp());
         self.stats.audio_peak_milli = audio_blocks.last().map_or(0, audio_peak_milli);
-        let _ = self.timeline.observe(
+        self.observe_av_sync(
             frame.timestamp(),
             audio_blocks
-                .first()
+                .last()
                 .map_or(frame.timestamp(), AudioBuffer::timestamp),
         );
         Ok(())
@@ -1498,6 +1506,12 @@ impl EngineSession {
             u32::try_from(audio_blocks.len()).unwrap_or(u32::MAX);
         self.stats.video_frames = self.stats.video_frames.saturating_add(1);
         self.stats.last_video_timestamp = Some(frame.timestamp());
+        self.observe_av_sync(
+            frame.timestamp(),
+            audio_blocks
+                .last()
+                .map_or(frame.timestamp(), AudioBuffer::timestamp),
+        );
         Ok(())
     }
 
@@ -3716,6 +3730,9 @@ mod tests {
         assert!(engine.stats().audio_blocks >= 10);
         assert_eq!(engine.reference_video_encode_calls, 0);
         assert_eq!(engine.reference_audio_encode_calls, 0);
+        let sync = engine.stats().av_sync;
+        assert_eq!(sync.observations(), 5);
+        assert!(sync.max_abs_delta_nanos() > 0);
     }
 
     #[test]

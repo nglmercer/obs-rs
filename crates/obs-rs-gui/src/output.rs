@@ -1028,10 +1028,15 @@ impl OutputRuntime {
             native_submit_max = metrics.max_submit_latency_nanos;
         }
         format!(
-            "frames={} · audio_blocks={} · audio_per_tick={} · submitted={} · dropped={} · queued={} B · native_queue={} B · worker_queued={} · reconnects={} · submit p50/p95/p99/max={}/{}/{}/{} µs · native_submit_max={} µs · video_encode p50/p95/p99/max={}/{}/{}/{} µs · audio_encode p95={} µs · frame_drops={} · format_drops={} · unscalable_drops={} · peak={}‰",
+            "frames={} · audio_blocks={} · audio_per_tick={} · av_sync_obs={} · av_sync_in_sync={} · av_sync_behind={} · av_sync_ahead={} · av_sync_max_ns={} · submitted={} · dropped={} · queued={} B · native_queue={} B · worker_queued={} · reconnects={} · submit p50/p95/p99/max={}/{}/{}/{} µs · native_submit_max={} µs · video_encode p50/p95/p99/max={}/{}/{}/{} µs · audio_encode p95={} µs · frame_drops={} · format_drops={} · unscalable_drops={} · peak={}‰",
             engine.stats.video_frames,
             engine.stats.audio_blocks,
             engine.stats.audio_blocks_per_video_tick,
+            engine.stats.av_sync.observations(),
+            engine.stats.av_sync.in_sync(),
+            engine.stats.av_sync.audio_behind(),
+            engine.stats.av_sync.audio_ahead(),
+            engine.stats.av_sync.max_abs_delta_nanos(),
             sent,
             dropped,
             engine.stream_queued_bytes,
@@ -1130,7 +1135,7 @@ impl OutputRuntime {
         }
         let replay_save = replay_save_label(&engine.replay_save_status);
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} replay_lifecycle={} replay_save={} replay_packets={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_queue_bytes={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} replay_lifecycle={} replay_save={} replay_packets={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_queue_bytes={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} av_sync_obs={} av_sync_in_sync={} av_sync_behind={} av_sync_ahead={} av_sync_max_ns={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
@@ -1164,6 +1169,11 @@ impl OutputRuntime {
             engine.stats.video_encode_latency.max_nanos(),
             engine.stats.audio_encode_latency.percentile_nanos(95),
             engine.stats.audio_blocks_per_video_tick,
+            engine.stats.av_sync.observations(),
+            engine.stats.av_sync.in_sync(),
+            engine.stats.av_sync.audio_behind(),
+            engine.stats.av_sync.audio_ahead(),
+            engine.stats.av_sync.max_abs_delta_nanos(),
             snapshot.dropped_frames,
             self.format_drops,
             self.unscalable_drops,

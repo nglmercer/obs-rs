@@ -417,6 +417,10 @@ fn the_encoders_receive_the_scaled_output_resolution() {
         !output.output_metrics().contains("format_drops=1"),
         "a canvas frame must not be dropped while the output is scaled"
     );
+    assert!(
+        output.output_metrics().contains("av_sync_obs=1"),
+        "output diagnostics expose the engine's bounded A/V observations"
+    );
     std::fs::remove_file(path).expect("remove scaled fixture");
 }
 
