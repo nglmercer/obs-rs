@@ -156,8 +156,9 @@ impl EngineConfig {
     /// Selects the playback device whose monitor feeds the desktop channel.
     ///
     /// An empty value clears the selection, which makes the session pick the
-    /// first available playback route. Desktop capture has no deterministic
-    /// stand-in: when no monitor can be opened the channel stays silent rather
+    /// provider-declared default playback route, then the first available
+    /// route. Desktop capture has no deterministic stand-in: when no monitor
+    /// can be opened the channel stays silent rather
     /// than borrowing the microphone's test signal, so what the meter shows is
     /// what the recording contains.
     #[must_use]
@@ -3423,18 +3424,7 @@ fn discover_audio_input_device(
     requested_id: Option<&str>,
 ) -> Option<(String, String)> {
     let devices = provider.discover().ok()?;
-    let selected = if let Some(requested) = requested_id {
-        devices.into_iter().find(|device| {
-            device.kind() == AudioDeviceKind::Input
-                && device.id() == requested
-                && device.available()
-        })
-    } else {
-        devices
-            .into_iter()
-            .find(|device| device.kind() == AudioDeviceKind::Input && device.available())
-    }?;
-    Some((selected.id().to_owned(), selected.name().to_owned()))
+    select_audio_device(&devices, AudioDeviceKind::Input, requested_id)
 }
 
 /// Opens the playback monitor that feeds the desktop channel.
@@ -3452,7 +3442,7 @@ fn open_desktop_audio(
     let Ok(devices) = provider.discover() else {
         return (None, "unavailable".to_owned(), None);
     };
-    let selected = select_desktop_audio_device(devices, requested_id);
+    let selected = select_audio_device(&devices, AudioDeviceKind::Output, requested_id);
     let Some((device_id, device_name)) = selected else {
         return (None, "no playback monitor".to_owned(), None);
     };
@@ -3472,25 +3462,30 @@ fn open_live_desktop_audio(
     requested_id: Option<&str>,
 ) -> Option<(Box<dyn AudioInput>, String, String)> {
     let devices = provider.discover().ok()?;
-    let (device_id, device_name) = select_desktop_audio_device(devices, requested_id)?;
+    let (device_id, device_name) =
+        select_audio_device(&devices, AudioDeviceKind::Output, requested_id)?;
     let input = open_input_with_conversion(provider, &device_id, format)?;
     Some((input, device_name, device_id))
 }
 
-fn select_desktop_audio_device(
-    devices: Vec<AudioDeviceInfo>,
+fn select_audio_device(
+    devices: &[AudioDeviceInfo],
+    kind: AudioDeviceKind,
     requested_id: Option<&str>,
 ) -> Option<(String, String)> {
     let selected = if let Some(requested) = requested_id {
-        devices.into_iter().find(|device| {
-            device.kind() == AudioDeviceKind::Output
-                && device.id() == requested
-                && device.available()
-        })
+        devices
+            .iter()
+            .find(|device| device.kind() == kind && device.id() == requested && device.available())
     } else {
         devices
-            .into_iter()
-            .find(|device| device.kind() == AudioDeviceKind::Output && device.available())
+            .iter()
+            .find(|device| device.kind() == kind && device.available() && device.is_default())
+            .or_else(|| {
+                devices
+                    .iter()
+                    .find(|device| device.kind() == kind && device.available())
+            })
     }?;
     Some((selected.id().to_owned(), selected.name().to_owned()))
 }
@@ -4396,6 +4391,69 @@ mod tests {
             }
             SimulatedAudioProvider::new().open_input("test-audio", format)
         }
+    }
+
+    /// Provider whose default routes are deliberately not first in discovery
+    /// order, proving automatic selection does not depend on vector order.
+    #[derive(Debug)]
+    struct DefaultRouteProvider;
+
+    impl AudioInputProvider for DefaultRouteProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+            let mut default_input = AudioDeviceInfo::new(
+                "default-input",
+                "Default microphone",
+                AudioDeviceKind::Input,
+            )?;
+            default_input.set_default(true);
+            let mut default_output = AudioDeviceInfo::new(
+                "default-output",
+                "Default speakers",
+                AudioDeviceKind::Output,
+            )?;
+            default_output.set_default(true);
+            Ok(vec![
+                AudioDeviceInfo::new("other-input", "Other microphone", AudioDeviceKind::Input)?,
+                AudioDeviceInfo::new("other-output", "Other speakers", AudioDeviceKind::Output)?,
+                default_input,
+                default_output,
+            ])
+        }
+
+        fn open_input(
+            &self,
+            device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+            if !matches!(
+                device_id,
+                "default-input" | "other-input" | "default-output" | "other-output"
+            ) {
+                return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                    device_id.to_owned(),
+                ));
+            }
+            SimulatedAudioProvider::new().open_input("test-audio", format)
+        }
+    }
+
+    #[test]
+    fn automatic_audio_routes_prefer_provider_defaults_over_discovery_order() {
+        let config = EngineConfig::default().with_audio_provider(Arc::new(DefaultRouteProvider));
+        let engine = EngineSession::new(project(), config).expect("engine");
+
+        assert_eq!(
+            engine.audio_active_device_id.as_deref(),
+            Some("default-input")
+        );
+        assert_eq!(
+            engine.desktop_audio_active_device_id.as_deref(),
+            Some("default-output")
+        );
+        assert_eq!(
+            engine.snapshot().desktop_audio,
+            DesktopAudioSource::Monitor("Default speakers".to_owned())
+        );
     }
 
     #[derive(Debug)]

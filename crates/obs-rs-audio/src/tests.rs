@@ -69,6 +69,17 @@ fn validates_interleaved_buffers() {
 }
 
 #[test]
+fn audio_device_metadata_keeps_provider_default_route() {
+    let mut device =
+        AudioDeviceInfo::new("mic", "Microphone", AudioDeviceKind::Input).expect("device");
+    assert!(!device.is_default());
+
+    device.set_default(true);
+
+    assert!(device.is_default());
+}
+
+#[test]
 fn audio_formats_keep_standard_channel_layouts() {
     assert_eq!(
         AudioFormat::new(48_000, 1).expect("mono format").layout(),

@@ -20,6 +20,7 @@ pub struct AudioDeviceInfo {
     name: String,
     kind: AudioDeviceKind,
     available: bool,
+    default_route: bool,
 }
 
 impl AudioDeviceInfo {
@@ -45,6 +46,7 @@ impl AudioDeviceInfo {
             name,
             kind,
             available: true,
+            default_route: false,
         })
     }
 
@@ -72,9 +74,21 @@ impl AudioDeviceInfo {
         self.available
     }
 
+    /// Returns whether the provider identifies this as the system/default
+    /// route for its device kind.
+    #[must_use]
+    pub const fn is_default(&self) -> bool {
+        self.default_route
+    }
+
     /// Marks the descriptor unavailable without removing it from a catalog.
     pub const fn set_available(&mut self, available: bool) {
         self.available = available;
+    }
+
+    /// Marks the descriptor as the provider's default route.
+    pub const fn set_default(&mut self, default_route: bool) {
+        self.default_route = default_route;
     }
 }
 
@@ -246,11 +260,13 @@ impl SimulatedAudioProvider {
 
 impl AudioInputProvider for SimulatedAudioProvider {
     fn discover(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
-        Ok(vec![AudioDeviceInfo::new(
+        let mut device = AudioDeviceInfo::new(
             "test-audio",
             "Deterministic test signal",
             AudioDeviceKind::Input,
-        )?])
+        )?;
+        device.set_default(true);
+        Ok(vec![device])
     }
 
     fn open_input(
@@ -267,11 +283,13 @@ impl AudioInputProvider for SimulatedAudioProvider {
 
 impl AudioOutputProvider for SimulatedAudioProvider {
     fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
-        Ok(vec![AudioDeviceInfo::new(
+        let mut device = AudioDeviceInfo::new(
             "test-output",
             "Deterministic monitor sink",
             AudioDeviceKind::Output,
-        )?])
+        )?;
+        device.set_default(true);
+        Ok(vec![device])
     }
 
     fn open_output(

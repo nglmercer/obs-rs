@@ -308,7 +308,7 @@ fn english() -> UiText {
             microphone_sync_offset: s("Microphone sync offset (ms)"),
             desktop_audio_sync_offset: s("Desktop audio sync offset (ms)"),
             audio_sync_hint: s("Positive offsets delay that channel before mixing. Values are limited to 5,000 ms and quantized to audio sample frames."),
-            audio_input_auto: s("Automatic (first available / fallback)"),
+            audio_input_auto: s("Automatic (system default / fallback)"),
             audio_input_missing: s("(not connected)"),
             audio_input_missing_hint: s(
                 "The selected input is not in the audio graph right now. It stays selected and is used again as soon as it reappears; the deterministic fallback runs meanwhile.",
@@ -880,7 +880,7 @@ fn spanish() -> UiText {
             microphone_sync_offset: s("Desfase del micrófono (ms)"),
             desktop_audio_sync_offset: s("Desfase del audio del escritorio (ms)"),
             audio_sync_hint: s("Los desfases positivos retrasan ese canal antes de mezclarlo. Los valores se limitan a 5.000 ms y se cuantizan a fotogramas de audio."),
-            audio_input_auto: s("Automático (primera disponible / respaldo)"),
+            audio_input_auto: s("Automático (predeterminado del sistema / respaldo)"),
             audio_input_missing: s("(no conectada)"),
             audio_input_missing_hint: s(
                 "La entrada seleccionada no está en el grafo de audio ahora mismo. Sigue seleccionada y se usará en cuanto reaparezca; mientras tanto funciona el respaldo determinista.",

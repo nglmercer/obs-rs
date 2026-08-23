@@ -447,8 +447,9 @@ pub(crate) struct AppSettings {
     pub(crate) hls: HlsConfig,
     pub(crate) rist: RistConfig,
     pub(crate) reference_address: String,
-    /// Provider-stable `PipeWire` input ID; empty selects the first available
-    /// input and keeps the deterministic fallback as a safe last resort.
+    /// Provider-stable audio input ID; empty selects the provider-declared
+    /// default input and keeps the deterministic fallback as a safe last
+    /// resort.
     pub(crate) audio_input_id: String,
     /// Provider-stable local monitor-output ID; empty disables local playback.
     pub(crate) audio_monitor_output_id: String,
