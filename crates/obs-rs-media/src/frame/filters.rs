@@ -1,4 +1,4 @@
-//! CPU filter application methods and pixel kernels for VideoFrame.
+//! CPU filter application methods and pixel kernels for `VideoFrame`.
 
 use std::sync::Arc;
 
