@@ -23,7 +23,9 @@ use std::{
 use obs_rs_audio::{
     AudioBuffer, AudioDelayLine, AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioFilter,
     AudioFilterChain, AudioFormat, AudioInput, AudioInputProvider, AudioInputState, AudioMixer,
-    AudioResampler, AudioSourceId, AvSyncMetrics, SimulatedAudioProvider,
+    AudioMonitorMode, AudioOutputProvider, AudioOutputWorker, AudioOutputWorkerHandle,
+    AudioOutputWorkerSnapshot, AudioResampler, AudioSourceId, AvSyncMetrics,
+    SimulatedAudioProvider,
 };
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
@@ -60,6 +62,7 @@ const DEFAULT_AUDIO_BLOCK_FRAMES: usize = 480;
 const DEFAULT_TIMELINE_TOLERANCE_NANOS: u64 = 5_000_000;
 const DEFAULT_OUTPUT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
+const DEFAULT_MONITOR_OUTPUT_QUEUE_BLOCKS: usize = 8;
 const AUDIO_RECONNECT_INTERVAL_NANOS: u64 = 1_000_000_000;
 
 /// Probes the production backend once and returns its typed GUI-safe model.
@@ -80,7 +83,12 @@ pub struct EngineConfig {
     desktop_audio_id: Option<String>,
     audio_input_sync_offset_millis: u32,
     desktop_audio_sync_offset_millis: u32,
+    desktop_monitor_mode: AudioMonitorMode,
+    microphone_monitor_mode: AudioMonitorMode,
     audio_provider: Arc<dyn AudioInputProvider>,
+    audio_output_provider: Arc<dyn AudioOutputProvider>,
+    monitor_output_id: Option<String>,
+    monitor_output_queue_blocks: usize,
     video_encoder: Box<dyn VideoEncoder>,
 }
 
@@ -96,6 +104,10 @@ impl EngineConfig {
     /// cannot happen for the constants used here.
     #[must_use]
     pub fn new(audio_format: AudioFormat) -> Self {
+        let simulated_input_provider: Arc<dyn AudioInputProvider> =
+            Arc::new(SimulatedAudioProvider::new());
+        let simulated_output_provider: Arc<dyn AudioOutputProvider> =
+            Arc::new(SimulatedAudioProvider::new());
         Self {
             audio_format,
             audio_block_frames: DEFAULT_AUDIO_BLOCK_FRAMES,
@@ -106,7 +118,12 @@ impl EngineConfig {
             desktop_audio_id: None,
             audio_input_sync_offset_millis: 0,
             desktop_audio_sync_offset_millis: 0,
-            audio_provider: Arc::new(SimulatedAudioProvider::new()),
+            desktop_monitor_mode: AudioMonitorMode::Off,
+            microphone_monitor_mode: AudioMonitorMode::Off,
+            audio_provider: simulated_input_provider,
+            audio_output_provider: simulated_output_provider,
+            monitor_output_id: None,
+            monitor_output_queue_blocks: DEFAULT_MONITOR_OUTPUT_QUEUE_BLOCKS,
             video_encoder: Box::new(RleVideoEncoder::new(
                 VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("valid rate"))
                     .expect("valid format"),
@@ -118,6 +135,13 @@ impl EngineConfig {
     #[must_use]
     pub fn with_audio_provider(mut self, provider: Arc<dyn AudioInputProvider>) -> Self {
         self.audio_provider = provider;
+        self
+    }
+
+    /// Replaces the provider used to open optional local monitor sinks.
+    #[must_use]
+    pub fn with_audio_output_provider(mut self, provider: Arc<dyn AudioOutputProvider>) -> Self {
+        self.audio_output_provider = provider;
         self
     }
 
@@ -140,6 +164,40 @@ impl EngineConfig {
     pub fn with_desktop_audio_id(mut self, device_id: impl Into<String>) -> Self {
         let device_id = device_id.into();
         self.desktop_audio_id = (!device_id.trim().is_empty()).then_some(device_id);
+        self
+    }
+
+    /// Selects the optional output device used by the local monitor bus.
+    ///
+    /// An empty or whitespace-only value clears the sink. Opening and writing
+    /// the selected device remains on the dedicated audio-output worker.
+    #[must_use]
+    pub fn with_monitor_output_id(mut self, device_id: impl Into<String>) -> Self {
+        let device_id = device_id.into();
+        self.monitor_output_id =
+            (!device_id.trim().is_empty()).then(|| device_id.trim().to_owned());
+        self
+    }
+
+    /// Sets the bounded number of complete monitor blocks held by the output
+    /// worker before new blocks are dropped.
+    #[must_use]
+    pub const fn with_monitor_output_queue_blocks(mut self, blocks: usize) -> Self {
+        self.monitor_output_queue_blocks = blocks;
+        self
+    }
+
+    /// Sets the desktop channel's OBS-compatible monitor destination policy.
+    #[must_use]
+    pub const fn with_desktop_monitor_mode(mut self, mode: AudioMonitorMode) -> Self {
+        self.desktop_monitor_mode = mode;
+        self
+    }
+
+    /// Sets the microphone channel's OBS-compatible monitor destination policy.
+    #[must_use]
+    pub const fn with_audio_input_monitor_mode(mut self, mode: AudioMonitorMode) -> Self {
+        self.microphone_monitor_mode = mode;
         self
     }
 
@@ -215,7 +273,12 @@ impl Clone for EngineConfig {
             desktop_audio_id: self.desktop_audio_id.clone(),
             audio_input_sync_offset_millis: self.audio_input_sync_offset_millis,
             desktop_audio_sync_offset_millis: self.desktop_audio_sync_offset_millis,
+            desktop_monitor_mode: self.desktop_monitor_mode,
+            microphone_monitor_mode: self.microphone_monitor_mode,
             audio_provider: Arc::clone(&self.audio_provider),
+            audio_output_provider: Arc::clone(&self.audio_output_provider),
+            monitor_output_id: self.monitor_output_id.clone(),
+            monitor_output_queue_blocks: self.monitor_output_queue_blocks,
             video_encoder: Box::new(RleVideoEncoder::new(format)),
         }
     }
@@ -250,6 +313,8 @@ pub struct EngineStats {
     pub video_frames: u64,
     pub audio_blocks: u64,
     pub audio_fallback_blocks: u64,
+    pub monitor_blocks_submitted: u64,
+    pub monitor_blocks_dropped: u64,
     pub last_video_timestamp: Option<Timestamp>,
     pub last_audio_timestamp: Option<Timestamp>,
     pub audio_peak_milli: u16,
@@ -383,6 +448,8 @@ pub struct EngineSnapshot {
     pub audio_fallback: bool,
     /// What the desktop channel is capturing, or why it is silent.
     pub desktop_audio: DesktopAudioSource,
+    /// Optional local monitor-output worker telemetry.
+    pub monitor_output: Option<AudioOutputWorkerSnapshot>,
     pub stream_metrics: Option<StreamMetrics>,
     /// Native production-stream counters for SRT/RTMP/RTMPS sessions.
     pub production_stream_metrics: Option<ProductionStreamMetrics>,
@@ -939,6 +1006,10 @@ pub struct EngineSession {
     desktop_audio_reconnect_at: Option<Timestamp>,
     /// Bounded delay line for the desktop channel.
     desktop_audio_delay: AudioDelayLine,
+    /// Owns the optional native monitor sink on a dedicated output thread.
+    monitor_output_worker: Option<AudioOutputWorker>,
+    /// Non-blocking handoff used by the real-time audio path.
+    monitor_output_handle: Option<AudioOutputWorkerHandle>,
     next_audio_deadline: Option<obs_rs_audio::AudioDeadline>,
     render_timestamp: Timestamp,
     video_encoder: Box<dyn VideoEncoder>,
@@ -980,6 +1051,11 @@ impl EngineSession {
                 "output queue capacity must be greater than zero".to_owned(),
             ));
         }
+        if config.monitor_output_queue_blocks == 0 {
+            return Err(EngineError::InvalidConfiguration(
+                "monitor output queue capacity must be greater than zero".to_owned(),
+            ));
+        }
         let profile = project
             .active_profile_spec()
             .ok_or(EngineError::NoActiveProfile)?;
@@ -998,7 +1074,12 @@ impl EngineSession {
             desktop_audio_id,
             audio_input_sync_offset_millis,
             desktop_audio_sync_offset_millis,
+            desktop_monitor_mode,
+            microphone_monitor_mode,
             audio_provider,
+            audio_output_provider,
+            monitor_output_id,
+            monitor_output_queue_blocks,
             video_encoder,
         } = config;
         if video_encoder.format() != format {
@@ -1013,6 +1094,8 @@ impl EngineSession {
         let mut mixer = AudioMixer::new(audio_format);
         let desktop_audio_source = mixer.add_source(1.0)?;
         let microphone_audio_source = mixer.add_source(1.0)?;
+        mixer.set_monitor_mode(desktop_audio_source, desktop_monitor_mode)?;
+        mixer.set_monitor_mode(microphone_audio_source, microphone_monitor_mode)?;
         let audio_input_delay = AudioDelayLine::with_block_frames(
             audio_format,
             audio_input_sync_offset_millis,
@@ -1029,6 +1112,20 @@ impl EngineSession {
         let (desktop_audio, desktop_audio_backend, desktop_audio_active_device_id) =
             open_desktop_audio(&audio_provider, audio_format, desktop_audio_id.as_deref());
         let desktop_audio_reconnect_at = audio_reconnect_deadline(desktop_audio.is_none());
+        let (monitor_output_worker, monitor_output_handle) =
+            if let Some(device_id) = monitor_output_id.as_deref() {
+                let worker = AudioOutputWorker::spawn(
+                    Arc::clone(&audio_output_provider),
+                    device_id,
+                    audio_format,
+                    monitor_output_queue_blocks,
+                )
+                .map_err(|error| EngineError::InvalidConfiguration(error.to_string()))?;
+                let handle = worker.handle();
+                (Some(worker), Some(handle))
+            } else {
+                (None, None)
+            };
 
         Ok(Self {
             video_encoder,
@@ -1043,7 +1140,12 @@ impl EngineSession {
                 desktop_audio_id,
                 audio_input_sync_offset_millis,
                 desktop_audio_sync_offset_millis,
+                desktop_monitor_mode,
+                microphone_monitor_mode,
                 audio_provider,
+                audio_output_provider,
+                monitor_output_id,
+                monitor_output_queue_blocks,
                 video_encoder: Box::new(RleVideoEncoder::new(format)),
             },
             project,
@@ -1067,6 +1169,8 @@ impl EngineSession {
             desktop_audio_active_device_id,
             desktop_audio_reconnect_at,
             desktop_audio_delay,
+            monitor_output_worker,
+            monitor_output_handle,
             next_audio_deadline: None,
             render_timestamp: Timestamp::ZERO,
             recording: None,
@@ -1398,6 +1502,62 @@ impl EngineSession {
             EngineAudioChannel::Microphone => self.microphone_audio_source,
         };
         self.mixer.set_muted(source, muted)?;
+        Ok(())
+    }
+
+    /// Sets the OBS-compatible monitor destination policy for one live channel.
+    ///
+    /// The mixer owns this routing state so the output and local monitor buses
+    /// cannot drift apart between the engine and a frontend. A monitor sink is
+    /// optional; when no sink is configured, the monitor bus is simply not
+    /// submitted anywhere.
+    pub fn set_channel_monitor_mode(
+        &mut self,
+        channel: EngineAudioChannel,
+        mode: AudioMonitorMode,
+    ) -> Result<(), EngineError> {
+        let source = match channel {
+            EngineAudioChannel::Desktop => {
+                self.config.desktop_monitor_mode = mode;
+                self.desktop_audio_source
+            }
+            EngineAudioChannel::Microphone => {
+                self.config.microphone_monitor_mode = mode;
+                self.microphone_audio_source
+            }
+        };
+        self.mixer.set_monitor_mode(source, mode)?;
+        Ok(())
+    }
+
+    /// Selects or clears the asynchronous local monitor output sink.
+    ///
+    /// A replacement worker is spawned before the previous one is cancelled,
+    /// so a thread-creation failure leaves the current sink intact. Device
+    /// opening itself remains asynchronous and is reported through
+    /// [`EngineSnapshot::monitor_output`].
+    pub fn set_monitor_output_id(&mut self, device_id: Option<&str>) -> Result<(), EngineError> {
+        let device_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        let replacement = if let Some(device_id) = device_id.as_deref() {
+            Some(
+                AudioOutputWorker::spawn(
+                    Arc::clone(&self.config.audio_output_provider),
+                    device_id,
+                    self.config.audio_format,
+                    self.config.monitor_output_queue_blocks,
+                )
+                .map_err(|error| EngineError::InvalidConfiguration(error.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let replacement_handle = replacement.as_ref().map(AudioOutputWorker::handle);
+        self.monitor_output_worker = replacement;
+        self.monitor_output_handle = replacement_handle;
+        self.config.monitor_output_id = device_id;
         Ok(())
     }
 
@@ -2468,6 +2628,10 @@ impl EngineSession {
             } else {
                 DesktopAudioSource::Silent(self.desktop_audio_backend.clone())
             },
+            monitor_output: self
+                .monitor_output_worker
+                .as_ref()
+                .map(AudioOutputWorker::snapshot),
             stream_metrics: self.streaming.as_ref().and_then(StreamOutput::metrics),
             production_stream_metrics: self
                 .streaming
@@ -2627,14 +2791,36 @@ impl EngineSession {
             self.desktop_audio_filters.apply(&mut desktop)?;
             input = self.audio_input_delay.process(input)?;
             desktop = self.desktop_audio_delay.process(desktop)?;
-            let mixed = self.mixer.mix(
-                deadline.timestamp(),
-                self.config.audio_block_frames,
-                &[
-                    (self.desktop_audio_source, &desktop),
-                    (self.microphone_audio_source, &input),
-                ],
-            )?;
+            let (mixed, monitor) = if self.monitor_output_handle.is_some() {
+                let (output, monitor) = self.mixer.mix_buses(
+                    deadline.timestamp(),
+                    self.config.audio_block_frames,
+                    &[
+                        (self.desktop_audio_source, &desktop),
+                        (self.microphone_audio_source, &input),
+                    ],
+                )?;
+                (output, Some(monitor))
+            } else {
+                let output = self.mixer.mix(
+                    deadline.timestamp(),
+                    self.config.audio_block_frames,
+                    &[
+                        (self.desktop_audio_source, &desktop),
+                        (self.microphone_audio_source, &input),
+                    ],
+                )?;
+                (output, None)
+            };
+            if let (Some(handle), Some(monitor)) = (&self.monitor_output_handle, monitor) {
+                if handle.try_write(monitor) {
+                    self.stats.monitor_blocks_submitted =
+                        self.stats.monitor_blocks_submitted.saturating_add(1);
+                } else {
+                    self.stats.monitor_blocks_dropped =
+                        self.stats.monitor_blocks_dropped.saturating_add(1);
+                }
+            }
             self.stats.desktop_peak_milli =
                 self.mixer.source_peak_milli(self.desktop_audio_source)?;
             self.stats.microphone_peak_milli =
@@ -3319,7 +3505,7 @@ mod tests {
     };
 
     use super::*;
-    use obs_rs_audio::{AudioDeviceInfo, MAX_GAIN_MILLI};
+    use obs_rs_audio::{AudioDeviceInfo, AudioMonitorMode, AudioOutputWorkerState, MAX_GAIN_MILLI};
     use obs_rs_config::Config;
     use obs_rs_core::SourceId;
     use obs_rs_media::{FrameFilter, FrameRate, FrameTransform};
@@ -4514,6 +4700,68 @@ mod tests {
         assert!(engine.stats().microphone_peak_milli > 0);
         assert_eq!(engine.stats().video_frames, 0);
         assert_eq!(engine.stats().audio_blocks, 1);
+    }
+
+    #[test]
+    fn monitor_modes_route_engine_audio_to_the_bounded_output_worker() {
+        let config = EngineConfig::default()
+            .with_audio_input_monitor_mode(AudioMonitorMode::MonitorOnly)
+            .with_monitor_output_id("test-output");
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+
+        let output = engine
+            .drain_audio_until(Timestamp::ZERO)
+            .expect("audio block");
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0].sample(0, 0), Some(0.0));
+        assert_eq!(engine.stats().monitor_blocks_submitted, 1);
+        assert_eq!(engine.stats().monitor_blocks_dropped, 0);
+        assert!(engine.snapshot().monitor_output.is_some());
+
+        engine
+            .set_channel_monitor_mode(EngineAudioChannel::Microphone, AudioMonitorMode::Off)
+            .expect("switch monitor mode");
+        assert_eq!(
+            engine
+                .mixer
+                .source_monitor_mode(engine.microphone_audio_source)
+                .expect("microphone source"),
+            AudioMonitorMode::Off
+        );
+        engine
+            .set_monitor_output_id(None)
+            .expect("clear monitor output");
+        assert!(engine.snapshot().monitor_output.is_none());
+    }
+
+    #[test]
+    fn monitor_output_worker_failure_is_visible_without_failing_the_engine_tick() {
+        let config = EngineConfig::default().with_monitor_output_id("missing-output");
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+        engine
+            .monitor_audio_until(Timestamp::ZERO)
+            .expect("monitor tick remains independent of sink failure");
+
+        for _ in 0..100 {
+            if engine
+                .snapshot()
+                .monitor_output
+                .as_ref()
+                .is_some_and(|output| output.state == AudioOutputWorkerState::Failed)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let output = engine
+            .snapshot()
+            .monitor_output
+            .expect("configured monitor worker");
+        assert_eq!(output.state, AudioOutputWorkerState::Failed);
+        assert!(output
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("unavailable")));
     }
 
     #[test]

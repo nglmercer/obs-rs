@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use obs_rs_audio::AudioMonitorMode;
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFrame};
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
@@ -122,6 +123,12 @@ enum WorkerCommand {
     ),
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
     SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
+    SetMonitorMode(
+        EngineAudioChannel,
+        AudioMonitorMode,
+        mpsc::Sender<Result<(), String>>,
+    ),
+    SetMonitorOutput(Option<String>, mpsc::Sender<Result<(), String>>),
     SyncProject(Project, mpsc::Sender<Result<(), String>>),
     #[cfg(test)]
     TestBlock(mpsc::Sender<()>, Receiver<()>),
@@ -221,6 +228,7 @@ impl EngineWorker {
                     audio_backend: "worker unavailable".to_owned(),
                     audio_fallback: true,
                     desktop_audio: DesktopAudioSource::Silent("worker unavailable".to_owned()),
+                    monitor_output: None,
                     stream_metrics: None,
                     production_stream_metrics: None,
                     stream_queued_bytes: 0,
@@ -1220,6 +1228,51 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Applies an OBS-compatible monitor destination policy on the worker-owned
+    /// mixer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker or mixer rejects the update.
+    pub fn set_channel_monitor_mode(
+        &self,
+        channel: EngineAudioChannel,
+        mode: AudioMonitorMode,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetMonitorMode(channel, mode, reply))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
+    /// Selects or clears the worker-owned asynchronous local monitor sink.
+    ///
+    /// Device opening is performed by the audio-output worker; this command
+    /// only changes engine ownership and returns after the replacement has been
+    /// handed off.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker or replacement setup rejects the
+    /// request.
+    pub fn set_monitor_output_id(&self, device_id: Option<&str>) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetMonitorOutput(
+                device_id.map(str::to_owned),
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Switches the worker-owned audio input without blocking the GUI on
     /// `PipeWire` discovery or process setup.
     ///
@@ -1512,6 +1565,20 @@ fn worker_loop(
                 let _ = reply.send(Ok(()));
                 false
             }
+            WorkerCommand::SetMonitorMode(channel, mode, reply) => {
+                let result = session
+                    .set_channel_monitor_mode(channel, mode)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::SetMonitorOutput(device_id, reply) => {
+                let result = session
+                    .set_monitor_output_id(device_id.as_deref())
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
             WorkerCommand::SyncProject(project, reply) => {
                 let result = session
                     .sync_project(project)
@@ -1727,7 +1794,7 @@ fn push_output_event(events: &Arc<Mutex<VecDeque<OutputEvent>>>, event: OutputEv
 mod tests {
     use std::time::Duration;
 
-    use obs_rs_audio::AudioFormat;
+    use obs_rs_audio::{AudioFormat, AudioMonitorMode};
     use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 
     use super::*;
@@ -1737,7 +1804,15 @@ mod tests {
         let format = VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("valid frame rate"))
             .expect("valid video format");
         let audio = AudioFormat::new(48_000, 2).expect("valid audio format");
-        let session = EngineSession::for_format(format, EngineConfig::new(audio)).expect("session");
+        worker_with_config(capacity, format, EngineConfig::new(audio))
+    }
+
+    fn worker_with_config(
+        capacity: usize,
+        format: VideoFormat,
+        config: EngineConfig,
+    ) -> EngineWorker {
+        let session = EngineSession::for_format(format, config).expect("session");
         EngineWorker::spawn_with_capacity(session, capacity).expect("worker")
     }
 
@@ -2249,6 +2324,50 @@ mod tests {
             )
             .expect_err("unbounded noise gate open threshold");
         assert!(matches!(error, EngineError::Worker(reason) if reason.contains("open threshold")));
+    }
+
+    #[test]
+    fn monitor_controls_and_sink_selection_stay_on_the_worker() {
+        let format =
+            VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let worker = worker_with_config(
+            2,
+            format,
+            EngineConfig::new(audio).with_audio_input_monitor_mode(AudioMonitorMode::MonitorOnly),
+        );
+
+        worker
+            .set_channel_monitor_mode(
+                EngineAudioChannel::Microphone,
+                AudioMonitorMode::MonitorOnly,
+            )
+            .expect("monitor mode");
+        worker
+            .set_monitor_output_id(Some("test-output"))
+            .expect("monitor sink");
+        assert!(worker.try_monitor_audio(Timestamp::ZERO));
+
+        for _ in 0..100 {
+            if worker.snapshot().engine.stats.monitor_blocks_submitted > 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        let snapshot = worker.snapshot();
+        assert!(snapshot.engine.stats.monitor_blocks_submitted > 0);
+        assert!(snapshot.engine.monitor_output.is_some());
+
+        worker
+            .set_monitor_output_id(None)
+            .expect("clear monitor sink");
+        for _ in 0..100 {
+            if worker.snapshot().engine.monitor_output.is_none() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(worker.snapshot().engine.monitor_output.is_none());
     }
 
     #[test]
