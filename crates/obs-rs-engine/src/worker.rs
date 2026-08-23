@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use obs_rs_audio::AudioMonitorMode;
+use obs_rs_audio::{AudioFormat, AudioMonitorMode};
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFrame};
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
@@ -129,6 +129,7 @@ enum WorkerCommand {
         mpsc::Sender<Result<(), String>>,
     ),
     SetMonitorOutput(Option<String>, mpsc::Sender<Result<(), String>>),
+    SetAudioFormat(AudioFormat, mpsc::Sender<Result<(), String>>),
     SyncProject(Project, mpsc::Sender<Result<(), String>>),
     #[cfg(test)]
     TestBlock(mpsc::Sender<()>, Receiver<()>),
@@ -1273,6 +1274,23 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Rebuilds the worker-owned audio runtime for a validated new format.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when an output is active, the format cannot be
+    /// negotiated, or the worker has already closed.
+    pub fn set_audio_format(&self, format: AudioFormat) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetAudioFormat(format, reply))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Switches the worker-owned audio input without blocking the GUI on
     /// `PipeWire` discovery or process setup.
     ///
@@ -1575,6 +1593,13 @@ fn worker_loop(
             WorkerCommand::SetMonitorOutput(device_id, reply) => {
                 let result = session
                     .set_monitor_output_id(device_id.as_deref())
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::SetAudioFormat(format, reply) => {
+                let result = session
+                    .set_audio_format(format)
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
@@ -2368,6 +2393,25 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         assert!(worker.snapshot().engine.monitor_output.is_none());
+    }
+
+    #[test]
+    fn audio_format_replacement_stays_on_the_worker_boundary() {
+        let format =
+            VideoFormat::new(16, 16, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let audio = AudioFormat::new(48_000, 2).expect("audio format");
+        let worker = worker_with_config(2, format, EngineConfig::new(audio));
+        let next = AudioFormat::new(44_100, 1).expect("next audio format");
+
+        worker.set_audio_format(next).expect("audio format change");
+        assert!(worker.try_monitor_audio(Timestamp::ZERO));
+        for _ in 0..100 {
+            if worker.snapshot().engine.stats.audio_blocks > 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(worker.snapshot().engine.stats.audio_blocks > 0);
     }
 
     #[test]

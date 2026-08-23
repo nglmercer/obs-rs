@@ -430,6 +430,42 @@ fn mixer_applies_stereo_pan_and_rejects_invalid_values() {
 }
 
 #[test]
+fn mixer_format_reconfiguration_preserves_controls_and_resets_meter_state() {
+    let mut mixer = AudioMixer::new(format());
+    let source = mixer.add_source(1.0).expect("source");
+    mixer.set_gain_milli(source, 1_500).expect("gain");
+    mixer.set_pan_milli(source, -500).expect("pan");
+    mixer
+        .set_monitor_mode(source, AudioMonitorMode::MonitorAndOutput)
+        .expect("monitor mode");
+    let loud = AudioBuffer::new(format(), Timestamp::ZERO, vec![1.0, 1.0]).expect("loud buffer");
+    mixer
+        .mix(Timestamp::ZERO, 1, &[(source, &loud)])
+        .expect("meter mix");
+    assert_eq!(mixer.source_peak_milli(source).expect("peak"), 1_000);
+    mixer.set_muted(source, true).expect("mute");
+
+    let next_format = AudioFormat::new(44_100, 1).expect("next format");
+    mixer.set_format(next_format);
+
+    assert_eq!(mixer.format(), next_format);
+    assert_eq!(mixer.source_count(), 1);
+    assert_eq!(mixer.source_peak_milli(source).expect("reset peak"), 0);
+    assert_eq!(mixer.source_peak_hold_milli(source).expect("reset hold"), 0);
+    assert!(!mixer.source_clipped(source).expect("reset clip"));
+    assert_eq!(
+        mixer.source_monitor_mode(source),
+        Ok(AudioMonitorMode::MonitorAndOutput)
+    );
+    let input = AudioBuffer::new(next_format, Timestamp::ZERO, vec![0.25]).expect("mono input");
+    let output = mixer
+        .mix(Timestamp::ZERO, 1, &[(source, &input)])
+        .expect("reconfigured mix");
+    assert_eq!(output.format(), next_format);
+    assert_eq!(output.samples(), &[0.0]);
+}
+
+#[test]
 fn mixer_block_timing_report() {
     let mut mixer = AudioMixer::new(format());
     let source = mixer.add_source(1.0).expect("source");

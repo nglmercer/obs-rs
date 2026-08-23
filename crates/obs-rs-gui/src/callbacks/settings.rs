@@ -10,6 +10,7 @@ use std::{
     rc::Rc,
 };
 
+use obs_rs_audio::AudioFormat;
 use obs_rs_engine::ProductionProtocol;
 use obs_rs_media::{FrameRate, ScaleFilter, VideoFormat};
 use obs_rs_output::{
@@ -1771,6 +1772,24 @@ pub(crate) fn apply_staged_video_format(
     Some(apply_video_format(state, output, format).map(|()| format))
 }
 
+/// Applies an audio-format change that was staged while an output was
+/// running.
+///
+/// Called from the same idle boundary as the staged video change, after the
+/// old recording/streaming container has been closed.
+pub(crate) fn apply_staged_audio_format(
+    output: &Rc<RefCell<OutputRuntime>>,
+) -> Option<Result<AudioFormat, String>> {
+    let format = output.borrow_mut().take_staged_audio_format()?;
+    Some(
+        output
+            .borrow_mut()
+            .set_audio_format(format)
+            .map(|()| format)
+            .map_err(|error| error.to_string()),
+    )
+}
+
 /// Reads every editable field out of the window into a settings document.
 ///
 /// Committing is two distinct jobs — collecting the draft and acting on it —
@@ -2182,13 +2201,32 @@ pub(crate) fn apply_settings_snapshot(
     }
 
     let mut notes = Vec::new();
+    let output_active = {
+        let state = state.borrow();
+        state.recording() || state.streaming()
+    };
 
     // Audio: rebuild the mixer only when the format actually differs.
+    let audio_format = AudioFormat::new(settings.sample_rate_hz(), settings.channel_count());
     if let Err(error) = state.borrow_mut().dispatch(UiCommand::SetAudioFormat {
         sample_rate: settings.sample_rate_hz(),
         channels: settings.channel_count(),
     }) {
         notes.push(format!("audio: {error}"));
+    }
+    if let Ok(audio_format) = audio_format {
+        if output.borrow().audio_format() != audio_format {
+            if output_active {
+                output.borrow_mut().stage_audio_format(audio_format);
+                notes.push(format!(
+                    "audio: {} Hz / {} channels is staged and applies when the output stops",
+                    audio_format.sample_rate(),
+                    audio_format.channels()
+                ));
+            } else if let Err(error) = output.borrow_mut().set_audio_format(audio_format) {
+                notes.push(format!("audio runtime: {error}"));
+            }
+        }
     }
 
     if let Err(error) = output.borrow_mut().set_audio_input_id(
@@ -2259,10 +2297,6 @@ pub(crate) fn apply_settings_snapshot(
     // the project and the surface rebuilds on the next sync, and configure the
     // encoders for the scaled output geometry beside it. Both are canvas-class
     // changes, so both are staged together while an output is running.
-    let output_active = {
-        let state = state.borrow();
-        state.recording() || state.streaming()
-    };
     if let Some(format) = video_format_from(settings.video) {
         if output_active {
             // Changing the canvas mid-output would rebuild the encoders under a

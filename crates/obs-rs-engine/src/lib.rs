@@ -1561,6 +1561,87 @@ impl EngineSession {
         Ok(())
     }
 
+    /// Rebuilds the audio clock, mixer, device inputs, and optional monitor
+    /// sink for a new format while the output is idle.
+    ///
+    /// Audio format changes alter packet caps and device negotiation, so they
+    /// cannot be applied underneath an active recording, stream, or replay
+    /// buffer. The worker owns this control-plane operation; the UI only sends
+    /// the validated format and never touches device resources directly.
+    pub fn set_audio_format(&mut self, audio_format: AudioFormat) -> Result<(), EngineError> {
+        if self.config.audio_format == audio_format {
+            return Ok(());
+        }
+        if self.is_recording() || self.is_streaming() || self.is_replay_buffer_active() {
+            return Err(EngineError::Busy("change the audio format"));
+        }
+
+        let audio_input_delay = AudioDelayLine::with_block_frames(
+            audio_format,
+            self.config.audio_input_sync_offset_millis,
+            self.config.audio_block_frames,
+        )?;
+        let desktop_audio_delay = AudioDelayLine::with_block_frames(
+            audio_format,
+            self.config.desktop_audio_sync_offset_millis,
+            self.config.audio_block_frames,
+        )?;
+        let (audio_input, audio_backend, audio_fallback, audio_active_device_id) = open_audio_input(
+            &self.config.audio_provider,
+            audio_format,
+            self.config.audio_input_id.as_deref(),
+        );
+        let (desktop_audio, desktop_audio_backend, desktop_audio_active_device_id) =
+            open_desktop_audio(
+                &self.config.audio_provider,
+                audio_format,
+                self.config.desktop_audio_id.as_deref(),
+            );
+        let (monitor_output_worker, monitor_output_handle) =
+            if let Some(device_id) = self.config.monitor_output_id.as_deref() {
+                let worker = AudioOutputWorker::spawn(
+                    Arc::clone(&self.config.audio_output_provider),
+                    device_id,
+                    audio_format,
+                    self.config.monitor_output_queue_blocks,
+                )
+                .map_err(|error| EngineError::InvalidConfiguration(error.to_string()))?;
+                let handle = worker.handle();
+                (Some(worker), Some(handle))
+            } else {
+                (None, None)
+            };
+
+        self.audio_input.stop();
+        if let Some(desktop_audio_input) = self.desktop_audio.as_mut() {
+            desktop_audio_input.stop();
+        }
+        self.audio_input = audio_input;
+        self.audio_backend = audio_backend;
+        self.audio_fallback = audio_fallback;
+        self.audio_active_device_id = audio_active_device_id;
+        self.audio_reconnect_at = audio_reconnect_deadline(audio_fallback);
+        self.audio_input_delay = audio_input_delay;
+        self.desktop_audio = desktop_audio;
+        self.desktop_audio_backend = desktop_audio_backend;
+        self.desktop_audio_active_device_id = desktop_audio_active_device_id;
+        self.desktop_audio_reconnect_at = audio_reconnect_deadline(self.desktop_audio.is_none());
+        self.desktop_audio_delay = desktop_audio_delay;
+        self.mixer.set_format(audio_format);
+        self.timeline = MediaTimeline::new(
+            self.format.frame_rate(),
+            audio_format,
+            self.config.timeline_tolerance_nanos,
+        );
+        self.audio_encoder = RawAudioEncoder::new(audio_format);
+        self.monitor_output_worker = monitor_output_worker;
+        self.monitor_output_handle = monitor_output_handle;
+        self.config.audio_format = audio_format;
+        self.next_audio_deadline = None;
+        self.last_error = None;
+        Ok(())
+    }
+
     /// Switches the live audio input without rebuilding the video runtime.
     ///
     /// The provider is queried on the engine worker thread. If the requested
@@ -4762,6 +4843,48 @@ mod tests {
             .last_error
             .as_deref()
             .is_some_and(|error| error.contains("unavailable")));
+    }
+
+    #[test]
+    fn idle_audio_format_rebuild_preserves_routing_and_restarts_the_timeline() {
+        let config = EngineConfig::default()
+            .with_audio_input_monitor_mode(AudioMonitorMode::MonitorOnly)
+            .with_monitor_output_id("test-output");
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+        let next_format = AudioFormat::new(44_100, 1).expect("next format");
+
+        engine
+            .set_audio_format(next_format)
+            .expect("idle format change");
+        assert_eq!(engine.config.audio_format, next_format);
+        assert_eq!(engine.timeline.audio_format(), next_format);
+        assert_eq!(
+            engine
+                .mixer
+                .source_monitor_mode(engine.microphone_audio_source)
+                .expect("microphone source"),
+            AudioMonitorMode::MonitorOnly
+        );
+        assert!(engine.snapshot().monitor_output.is_some());
+
+        let tick = engine.tick(None, None).expect("reconfigured tick");
+        assert!(!tick.audio_blocks.is_empty());
+        assert!(tick
+            .audio_blocks
+            .iter()
+            .all(|buffer| buffer.format() == next_format));
+
+        engine
+            .start_replay_buffer(1_024 * 1_024, Duration::from_secs(5))
+            .expect("replay buffer");
+        let error = engine
+            .set_audio_format(AudioFormat::new(48_000, 2).expect("other format"))
+            .expect_err("active replay must block format replacement");
+        assert!(matches!(
+            error,
+            EngineError::Busy("change the audio format")
+        ));
+        engine.stop_replay_buffer();
     }
 
     #[test]

@@ -631,6 +631,23 @@ impl AudioMixer {
         self.format
     }
 
+    /// Reconfigures the mix format while preserving every registered source's
+    /// gain, mute, pan, and monitor-routing controls.
+    ///
+    /// The caller must discard any in-flight buffers before mixing again. Peak
+    /// telemetry belongs to the previous format, so it is reset at the same
+    /// boundary rather than being presented as a measurement of the new one.
+    pub fn set_format(&mut self, format: AudioFormat) {
+        self.format = format;
+        for control in self.sources.values_mut() {
+            control.peak_milli = 0;
+            control.peak_hold_milli = 0;
+            control.peak_hold_at = Timestamp::ZERO;
+            control.clipped = false;
+            control.clipped_at = Timestamp::ZERO;
+        }
+    }
+
     /// Returns the number of registered sources.
     #[must_use]
     pub fn source_count(&self) -> usize {

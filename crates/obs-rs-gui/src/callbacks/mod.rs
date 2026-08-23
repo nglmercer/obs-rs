@@ -215,6 +215,22 @@ pub(crate) fn start_preview_timer(
         // first tick after the output stopped, and before the ordinary project
         // sync so both reach the engine in one rebuild.
         if !output_active {
+            match settings::apply_staged_audio_format(&output) {
+                Some(Ok(format)) => ui.set_status_message(
+                    format!(
+                        "Audio format changed to {} Hz / {} channels now that the output stopped",
+                        format.sample_rate(),
+                        format.channels()
+                    )
+                    .into(),
+                ),
+                Some(Err(error)) => {
+                    ui.set_status_message(
+                        format!("Staged audio format change failed: {error}").into(),
+                    );
+                }
+                None => {}
+            }
             match settings::apply_staged_video_format(&state, &output) {
                 Some(Ok(format)) => ui.set_status_message(
                     format!(

@@ -746,6 +746,28 @@ fn output_runtime_applies_bounded_audio_sync_offsets_on_the_worker() {
 }
 
 #[test]
+fn output_runtime_applies_audio_format_changes_at_the_idle_boundary() {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let output = Rc::new(RefCell::new(OutputRuntime::new(format)));
+    let mono = obs_rs_audio::AudioFormat::new(44_100, 1).expect("mono format");
+    let stereo = obs_rs_audio::AudioFormat::new(48_000, 2).expect("stereo format");
+
+    output
+        .borrow_mut()
+        .set_audio_format(mono)
+        .expect("idle audio format should reach the worker");
+    assert_eq!(output.borrow().audio_format(), mono);
+
+    output.borrow_mut().stage_audio_format(stereo);
+    assert!(output.borrow().has_staged_audio_format());
+    let applied = crate::callbacks::settings::apply_staged_audio_format(&output)
+        .expect("a staged audio format is pending")
+        .expect("the staged format applies");
+    assert_eq!(applied, stereo);
+    assert_eq!(output.borrow().audio_format(), stereo);
+}
+
+#[test]
 fn output_runtime_applies_monitor_controls_on_the_worker() {
     let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
     let mut output = OutputRuntime::new(format);

@@ -66,6 +66,7 @@ pub(crate) struct MultiviewTelemetry {
 pub(crate) struct OutputRuntime {
     worker: EngineWorker,
     audio_provider: Arc<PipeWireAudioProvider>,
+    audio_format: AudioFormat,
     format: VideoFormat,
     last_revision: u64,
     format_drops: u64,
@@ -94,6 +95,11 @@ pub(crate) struct OutputRuntime {
     /// geometry, so the change is held here and applied at the next idle
     /// boundary instead of being either silently dropped or forced through.
     staged_video_format: Option<VideoFormat>,
+    /// An audio-format change accepted while an output was running.
+    ///
+    /// Device negotiation and packet caps are rebuilt only after the output
+    /// stops, so an active recording never changes format mid-container.
+    staged_audio_format: Option<AudioFormat>,
     /// Resamples the canvas to the encoded output size.
     ///
     /// The engine encodes whatever it is handed, so scaling belongs on this
@@ -202,6 +208,7 @@ impl OutputRuntime {
         Ok(Self {
             worker: EngineWorker::spawn(engine)?,
             audio_provider,
+            audio_format,
             format,
             last_revision: 0,
             format_drops: 0,
@@ -231,6 +238,7 @@ impl OutputRuntime {
             remux_candidates: None,
             recording_profile: None,
             staged_video_format: None,
+            staged_audio_format: None,
             scaler: None,
             output_format: format,
             scale_filter: ScaleFilter::default(),
@@ -249,6 +257,29 @@ impl OutputRuntime {
     /// Takes the staged canvas change, if the caller is at an idle boundary.
     pub(crate) fn take_staged_video_format(&mut self) -> Option<VideoFormat> {
         self.staged_video_format.take()
+    }
+
+    /// Holds an audio-format change until the running output stops.
+    pub(crate) fn stage_audio_format(&mut self, format: AudioFormat) {
+        self.staged_audio_format = Some(format);
+    }
+
+    /// Takes the staged audio-format change, if the caller is at an idle
+    /// boundary.
+    pub(crate) fn take_staged_audio_format(&mut self) -> Option<AudioFormat> {
+        self.staged_audio_format.take()
+    }
+
+    /// Returns whether an audio-format change is waiting for the output to
+    /// stop.
+    #[cfg(test)]
+    pub(crate) const fn has_staged_audio_format(&self) -> bool {
+        self.staged_audio_format.is_some()
+    }
+
+    /// Returns the audio format currently negotiated by the engine worker.
+    pub(crate) const fn audio_format(&self) -> AudioFormat {
+        self.audio_format
     }
 
     /// Returns whether a canvas change is waiting for the output to stop.
@@ -969,6 +1000,16 @@ impl OutputRuntime {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
+        Ok(())
+    }
+
+    /// Rebuilds the worker-owned audio path for an idle format change.
+    pub(crate) fn set_audio_format(&mut self, format: AudioFormat) -> Result<(), Box<dyn Error>> {
+        if self.audio_format == format {
+            return Ok(());
+        }
+        self.worker.set_audio_format(format)?;
+        self.audio_format = format;
         Ok(())
     }
 
