@@ -1852,6 +1852,13 @@ fn exercise_group_source_callbacks(
         .active_profile_spec()
         .and_then(|profile| profile.scene("preview"))
         .is_some_and(|scene| scene.item(selected.as_str()).is_some()));
+
+    ui.invoke_select_all_sources();
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["background", "overlay-group", selected.as_str()],
+        "Ctrl+A selects the bounded top-level scene-item set through Rust"
+    );
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup

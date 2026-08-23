@@ -46,6 +46,7 @@ export component FloatingDockWindow inherits Window {
     callback remove-scene(string);
     callback open-scene-projector(string);
     callback select-source(string);
+    callback select-all-sources();
     callback navigate-source-selection(int, int);
     callback open-properties(string);
     callback open-filters(string);
@@ -119,6 +120,7 @@ export component FloatingDockWindow inherits Window {
         remove-scene(id) => { root.remove-scene(id); }
         open-scene-projector(id) => { root.open-scene-projector(id); }
         select-source(id) => { root.select-source(id); }
+        select-all-sources() => { root.select-all-sources(); }
         navigate-source-selection(direction, mode) => {
             root.navigate-source-selection(direction, mode);
         }

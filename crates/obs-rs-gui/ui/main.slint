@@ -214,6 +214,7 @@ export component MainWindow inherits Window {
         callback select-profile(string);
         callback set-locale(string);
         callback select-source(string);
+        callback select-all-sources();
         callback navigate-source-selection(int, int);
         callback toggle-source-visibility(string);
         callback toggle-source-locked(string);
@@ -467,6 +468,10 @@ export component MainWindow inherits Window {
         key-pressed(event) => {
             if (root.execute-shortcut(
                 root.trigger-shortcut(root.hotkey-label(event)))) {
+                return accept;
+            }
+            if event.modifiers.control && root.key-name(event.text) == "A" {
+                root.select-all-sources();
                 return accept;
             }
             if (event.text == " ") {
@@ -744,6 +749,7 @@ export component MainWindow inherits Window {
                 remove-scene(id) => { root.remove-scene(id); }
                 open-scene-projector(id) => { root.open-scene-projector(id); }
                 select-source(id) => { root.select-source(id); }
+                select-all-sources() => { root.select-all-sources(); }
                 navigate-source-selection(direction, mode) => {
                     root.navigate-source-selection(direction, mode);
                 }

@@ -28,6 +28,7 @@ export component SourceDock inherits Rectangle {
     callback close-panel(int);
     callback open-modal(int);
     callback select-source(string);
+    callback select-all-sources();
     // Navigation stays a typed callback so Rust can resolve the visible
     // source order from the active scene instead of duplicating it in Slint.
     // direction: -2 = first, -1 = previous, 1 = next, 2 = last.

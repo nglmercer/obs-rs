@@ -195,6 +195,41 @@ fn install_source_list_callbacks(
     });
 
     let weak = ui.as_weak();
+    let select_all_state = Rc::clone(state);
+    let select_all_surface = Rc::clone(surface);
+    ui.on_select_all_sources(move || {
+        let ids = {
+            let state = select_all_state.borrow();
+            let Some(scene_id) = state.preview_scene() else {
+                return;
+            };
+            let Some(scene) = state
+                .project_session()
+                .project()
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(scene_id))
+            else {
+                return;
+            };
+            scene
+                .items()
+                .iter()
+                .map(|item| item.id().to_string())
+                .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
+                .collect::<Vec<_>>()
+        };
+        dispatch_and_refresh(
+            &weak,
+            &select_all_state,
+            &select_all_surface,
+            UiCommand::SelectSources {
+                ids,
+                additive: false,
+            },
+        );
+    });
+
+    let weak = ui.as_weak();
     let navigation_state = Rc::clone(state);
     let navigation_surface = Rc::clone(surface);
     ui.on_navigate_source_selection(move |direction, mode| {
