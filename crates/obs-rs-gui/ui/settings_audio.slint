@@ -1,0 +1,156 @@
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import {
+    AspectRatioLabel,
+    BrowsePathRow,
+    CheckRow,
+    ColorSwatch,
+    EditableResolutionCombo,
+    SegmentedControl,
+    SettingHint,
+    SettingRow,
+    SettingsCombo,
+    SettingsField,
+    SettingsGroup,
+    SettingsSection,
+    SettingsSlider,
+    SettingsSpinBox,
+    SettingsWarning,
+} from "settings_widgets.slint";
+import { I18n } from "i18n.slint";
+import { Metrics, Palette } from "palette.slint";
+
+// One component per settings category. Each takes only the properties it edits
+// and reports changes upward; the window owns the draft state.
+
+export component AudioPage inherits VerticalLayout {
+    in property <[string]> sample-rate-names;
+    in property <int> sample-rate-index;
+    in property <[string]> channel-names;
+    in property <int> channel-index;
+    in property <[string]> audio-device-names;
+    in-out property <int> audio-device-index;
+    in property <[string]> audio-monitor-output-names;
+    in-out property <int> audio-monitor-output-index;
+    in property <[string]> microphone-monitor-mode-names;
+    in-out property <int> microphone-monitor-mode-index;
+    in property <[string]> desktop-monitor-mode-names;
+    in-out property <int> desktop-monitor-mode-index;
+    in-out property <int> audio-input-sync-offset;
+    in-out property <int> desktop-audio-sync-offset;
+    in property <string> devices-summary;
+    // True when the selected input is not currently in the audio graph.
+    in property <bool> audio-input-missing;
+    // True when a selected monitor sink is not currently in the audio graph.
+    in property <bool> audio-monitor-output-missing;
+    callback select-sample-rate(int);
+    callback select-channels(int);
+    callback select-audio-device(int);
+    callback select-audio-monitor-output(int);
+    callback select-microphone-monitor-mode(int);
+    callback select-desktop-monitor-mode(int);
+    callback refresh-audio-devices();
+    callback changed();
+    spacing: Metrics.ui.page-spacing;
+
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_audio_general;
+        SettingRow {
+            label: I18n.text.settings_ui.sample_rate;
+            SettingsCombo {
+                model: root.sample-rate-names;
+                current-index: root.sample-rate-index;
+                selected(value) => { root.select-sample-rate(self.current-index); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.channels;
+            SettingsCombo {
+                model: root.channel-names;
+                current-index: root.channel-index;
+                selected(value) => { root.select-channels(self.current-index); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.audio_input_device;
+            SettingsCombo {
+                model: root.audio-device-names;
+                current-index: root.audio-device-index;
+                selected(value) => { root.select-audio-device(self.current-index); }
+            }
+            Button {
+                text: I18n.text.settings_ui.refresh_devices;
+                height: Metrics.ui.control-height;
+                clicked => { root.refresh-audio-devices(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.audio_monitor_output;
+            SettingsCombo {
+                model: root.audio-monitor-output-names;
+                current-index: root.audio-monitor-output-index;
+                selected(value) => { root.select-audio-monitor-output(self.current-index); }
+            }
+        }
+        // Shown only while the choice cannot be honoured, so a working setup
+        // is not permanently carrying a warning it does not need.
+        if root.audio-input-missing : SettingHint {
+            text: I18n.text.settings_ui.audio_input_missing_hint;
+        }
+        if root.audio-monitor-output-missing : SettingHint {
+            text: I18n.text.settings_ui.audio_monitor_output_missing_hint;
+        }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_audio_monitoring;
+        SettingRow {
+            label: I18n.text.settings_ui.microphone_monitor_mode;
+            SettingsCombo {
+                model: root.microphone-monitor-mode-names;
+                current-index: root.microphone-monitor-mode-index;
+                selected(value) => { root.select-microphone-monitor-mode(self.current-index); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.desktop_audio_monitor_mode;
+            SettingsCombo {
+                model: root.desktop-monitor-mode-names;
+                current-index: root.desktop-monitor-mode-index;
+                selected(value) => { root.select-desktop-monitor-mode(self.current-index); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.audio_monitor_hint; }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_audio_sync;
+        SettingRow {
+            label: I18n.text.settings_ui.microphone_sync_offset;
+            SettingsSpinBox {
+                value <=> root.audio-input-sync-offset;
+                minimum: 0;
+                maximum: 5000;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.desktop_audio_sync_offset;
+            SettingsSpinBox {
+                value <=> root.desktop-audio-sync-offset;
+                minimum: 0;
+                maximum: 5000;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.audio_sync_hint; }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_audio_devices;
+        SettingHint { text: root.devices-summary; }
+        SettingHint { text: I18n.text.settings_ui.audio_devices_hint; }
+    }
+    Rectangle { vertical-stretch: 1; }
+}
+
+// Video owns the canvas, the encoded output, and the frame rate as three
+// separate values: the output resolution is no longer an alias for the canvas,
+// which is what makes the downscale filter meaningful.
+

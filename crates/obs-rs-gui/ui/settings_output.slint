@@ -1,0 +1,303 @@
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import {
+    AspectRatioLabel,
+    BrowsePathRow,
+    CheckRow,
+    ColorSwatch,
+    EditableResolutionCombo,
+    SegmentedControl,
+    SettingHint,
+    SettingRow,
+    SettingsCombo,
+    SettingsField,
+    SettingsGroup,
+    SettingsSection,
+    SettingsSlider,
+    SettingsSpinBox,
+    SettingsWarning,
+} from "settings_widgets.slint";
+import { I18n } from "i18n.slint";
+import { Metrics, Palette } from "palette.slint";
+
+// One component per settings category. Each takes only the properties it edits
+// and reports changes upward; the window owns the draft state.
+
+export component OutputPage inherits VerticalLayout {
+    in property <[string]> output-mode-names;
+    in property <int> output-mode-index;
+    in property <bool> simple-mode;
+    // Streaming
+    in-out property <int> stream-video-bitrate;
+    in-out property <int> stream-audio-bitrate;
+    in property <[string]> video-encoder-names;
+    in property <int> video-encoder-index;
+    in property <[string]> audio-encoder-names;
+    in property <int> audio-encoder-index;
+    in property <[string]> encoder-preset-names;
+    in property <int> encoder-preset-index;
+    in-out property <bool> custom-encoder-settings;
+    in-out property <string> rate-control;
+    in-out property <int> keyframe-interval;
+    in-out property <string> encoder-profile;
+    in-out property <int> b-frames;
+    // Recording
+    in-out property <string> recording-directory;
+    in property <bool> browse-enabled;
+    in property <string> browse-hint;
+    in-out property <bool> filename-without-spaces;
+    in property <[string]> recording-quality-names;
+    in property <int> recording-quality-index;
+    in property <[string]> recording-format-names;
+    in property <int> recording-format-index;
+    in property <bool> recording-format-locked;
+    in-out property <bool> recording-auto-remux;
+    in property <bool> recording-auto-remux-supported;
+    in property <[string]> recording-codec-names;
+    in property <int> recording-codec-index;
+    in property <[string]> recording-audio-encoder-names;
+    in property <int> recording-audio-encoder-index;
+    in property <string> recording-file-preview;
+    in property <bool> software-encoding-warning;
+    in-out property <int> replay-buffer-duration;
+    in-out property <int> replay-buffer-capacity;
+    in-out property <bool> recording-split-enabled;
+    in property <bool> recording-split-supported;
+    in-out property <int> recording-split-duration-minutes;
+    in-out property <int> recording-split-size-mib;
+    in-out property <int> recording-split-max-segments;
+    callback select-output-mode(int);
+    callback select-video-encoder(int);
+    callback select-audio-encoder(int);
+    callback select-encoder-preset(int);
+    callback select-recording-quality(int);
+    callback select-recording-format(int);
+    callback refresh-recording-page();
+    callback select-recording-codec(int);
+    callback select-recording-audio-encoder(int);
+    callback browse-recording-directory();
+    callback changed();
+    spacing: Metrics.ui.page-spacing;
+
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_output_mode;
+        SettingRow {
+            label: I18n.text.settings_ui.output_mode;
+            SettingsCombo {
+                model: root.output-mode-names;
+                current-index: root.output-mode-index;
+                selected(value) => { root.select-output-mode(self.current-index); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.output_mode_hint; }
+    }
+
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_streaming;
+        SettingRow {
+            label: I18n.text.settings_ui.video_bitrate;
+            SettingsSpinBox { value <=> root.stream-video-bitrate; minimum: 100; maximum: 100000; edited(value) => { root.changed(); } }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.audio_bitrate;
+            SettingsSpinBox { value <=> root.stream-audio-bitrate; minimum: 32; maximum: 1024; edited(value) => { root.changed(); } }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.video_encoder;
+            SettingsCombo {
+                model: root.video-encoder-names;
+                current-index: root.video-encoder-index;
+                selected(value) => { root.select-video-encoder(self.current-index); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.encoder_preset;
+            SettingsCombo {
+                model: root.encoder-preset-names;
+                current-index: root.encoder-preset-index;
+                selected(value) => { root.select-encoder-preset(self.current-index); }
+            }
+        }
+        if root.simple-mode : CheckRow {
+            label: I18n.text.settings_ui.custom_encoder_settings;
+            checked <=> root.custom-encoder-settings;
+            toggled(value) => { root.changed(); }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.audio_encoder;
+            SettingsCombo {
+                model: root.audio-encoder-names;
+                current-index: root.audio-encoder-index;
+                selected(value) => { root.select-audio-encoder(self.current-index); }
+            }
+        }
+        // The detailed encoder controls appear in Advanced mode, and in Simple
+        // mode only when the custom-settings box is ticked — which is exactly
+        // what that box means in OBS.
+        if !root.simple-mode || root.custom-encoder-settings : SettingRow {
+            label: I18n.text.settings_ui.rate_control;
+            SettingsField { text <=> root.rate-control; edited => { root.changed(); } }
+        }
+        if !root.simple-mode || root.custom-encoder-settings : SettingRow {
+            label: I18n.text.settings_ui.keyframe_interval;
+            SettingsSpinBox { value <=> root.keyframe-interval; minimum: 0; maximum: 20; edited(value) => { root.changed(); } }
+        }
+        if !root.simple-mode || root.custom-encoder-settings : SettingRow {
+            label: I18n.text.settings_ui.encoder_profile;
+            SettingsField { text <=> root.encoder-profile; edited => { root.changed(); } }
+        }
+        if !root.simple-mode || root.custom-encoder-settings : SettingRow {
+            label: I18n.text.settings_ui.b_frames;
+            SettingsSpinBox { value <=> root.b-frames; minimum: 0; maximum: 16; edited(value) => { root.changed(); } }
+        }
+    }
+
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_recording;
+        SettingRow {
+            label: I18n.text.settings_ui.recording_path;
+            BrowsePathRow {
+                path <=> root.recording-directory;
+                browse-label: I18n.text.settings_ui.browse;
+                browse-enabled: root.browse-enabled;
+                edited(value) => { root.changed(); }
+                browse() => { root.browse-recording-directory(); }
+            }
+        }
+        if !root.browse-enabled : SettingHint { text: root.browse-hint; }
+        CheckRow {
+            label: I18n.text.settings_ui.filename_without_spaces;
+            checked <=> root.filename-without-spaces;
+            toggled(value) => { root.changed(); }
+        }
+        // Composed here rather than in Rust so the sentence follows the
+        // catalog the window is currently showing, not the committed locale.
+        SettingHint {
+            text: I18n.text.settings_ui.recording_saves_as + " " + root.recording-file-preview;
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.recording_quality;
+            SettingsCombo {
+                model: root.recording-quality-names;
+                current-index: root.recording-quality-index;
+                selected(value) => { root.select-recording-quality(self.current-index); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.recording_format;
+            SettingsCombo {
+                model: root.recording-format-names;
+                current-index: root.recording-format-index;
+                enabled: !root.recording-format-locked;
+                selected(value) => { root.select-recording-format(self.current-index); }
+            }
+        }
+        // The lossless preset only exists in the OBS-RS packet container, so
+        // the format is shown fixed rather than silently ignored.
+        if root.recording-format-locked : SettingHint {
+            text: I18n.text.settings_ui.recording_format_locked_hint;
+        }
+        CheckRow {
+            label: I18n.text.settings_ui.recording_auto_remux;
+            enabled: root.recording-auto-remux-supported && !root.recording-split-enabled;
+            checked <=> root.recording-auto-remux;
+            toggled(value) => {
+                root.changed();
+                root.refresh-recording-page();
+            }
+        }
+        if !root.recording-auto-remux-supported || root.recording-split-enabled : SettingHint {
+            text: I18n.text.settings_ui.recording_auto_remux_unavailable;
+        }
+        if !root.recording-format-locked : SettingRow {
+            label: I18n.text.settings_ui.video_encoder;
+            SettingsCombo {
+                model: root.recording-codec-names;
+                current-index: root.recording-codec-index;
+                selected(value) => { root.select-recording-codec(self.current-index); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.audio_encoder;
+            SettingsCombo {
+                model: root.recording-audio-encoder-names;
+                current-index: root.recording-audio-encoder-index;
+                selected(value) => { root.select-recording-audio-encoder(self.current-index); }
+            }
+        }
+        if root.software-encoding-warning : SettingsWarning {
+            text: I18n.text.settings_ui.software_encoding_warning;
+        }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.replay_buffer;
+        SettingRow {
+            label: I18n.text.settings_ui.replay_buffer_duration;
+            SettingsSpinBox {
+                value <=> root.replay-buffer-duration;
+                minimum: 1;
+                maximum: 3600;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.replay_buffer_capacity;
+            SettingsSpinBox {
+                value <=> root.replay-buffer-capacity;
+                minimum: 1;
+                maximum: 256;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.replay_buffer_hint; }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.recording_split;
+        CheckRow {
+            label: I18n.text.settings_ui.recording_split_enabled;
+            enabled: root.recording-split-supported;
+            checked <=> root.recording-split-enabled;
+            toggled(value) => {
+                root.changed();
+                root.refresh-recording-page();
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.recording_split_duration;
+            SettingsSpinBox {
+                value <=> root.recording-split-duration-minutes;
+                minimum: 1;
+                maximum: 1440;
+                enabled: root.recording-split-supported && root.recording-split-enabled;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.recording_split_size;
+            SettingsSpinBox {
+                value <=> root.recording-split-size-mib;
+                minimum: 1;
+                maximum: 256;
+                enabled: root.recording-split-supported && root.recording-split-enabled;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.recording_split_segments;
+            SettingsSpinBox {
+                value <=> root.recording-split-max-segments;
+                minimum: 1;
+                maximum: 1024;
+                enabled: root.recording-split-supported && root.recording-split-enabled;
+                edited(value) => { root.changed(); }
+            }
+        }
+        if root.recording-split-supported : SettingHint {
+            text: I18n.text.settings_ui.recording_split_hint;
+        }
+        if !root.recording-split-supported : SettingHint {
+            text: I18n.text.settings_ui.recording_split_unavailable;
+        }
+    }
+    Rectangle { vertical-stretch: 1; }
+}
+

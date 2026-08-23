@@ -1,0 +1,69 @@
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import {
+    AspectRatioLabel,
+    BrowsePathRow,
+    CheckRow,
+    ColorSwatch,
+    EditableResolutionCombo,
+    SegmentedControl,
+    SettingHint,
+    SettingRow,
+    SettingsCombo,
+    SettingsField,
+    SettingsGroup,
+    SettingsSection,
+    SettingsSlider,
+    SettingsSpinBox,
+    SettingsWarning,
+} from "settings_widgets.slint";
+import { I18n } from "i18n.slint";
+import { Metrics, Palette } from "palette.slint";
+
+// One component per settings category. Each takes only the properties it edits
+// and reports changes upward; the window owns the draft state.
+
+export component AdvancedPage inherits VerticalLayout {
+    in-out property <string> project-path;
+    in-out property <string> diagnostics-path;
+    in-out property <bool> restore-project;
+    in-out property <bool> save-project-on-exit;
+    callback changed();
+    spacing: Metrics.ui.page-spacing;
+
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_project_files;
+        SettingRow {
+            label: I18n.text.settings_ui.project_file;
+            SettingsField {
+                text <=> root.project-path;
+                placeholder-text: "obs-rs-project.json";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.diagnostics_file;
+            SettingsField {
+                text <=> root.diagnostics-path;
+                placeholder-text: "obs-rs-diagnostics.obsrdg";
+                edited => { root.changed(); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.advanced_hint; }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_session;
+        CheckRow {
+            label: I18n.text.settings_ui.restore_project;
+            checked <=> root.restore-project;
+            toggled(value) => { root.changed(); }
+        }
+        CheckRow {
+            label: I18n.text.settings_ui.save_project_on_exit;
+            checked <=> root.save-project-on-exit;
+            toggled(value) => { root.changed(); }
+        }
+        SettingHint { text: I18n.text.settings_ui.session_hint; }
+    }
+    Rectangle { vertical-stretch: 1; }
+}
+
