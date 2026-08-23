@@ -14,6 +14,7 @@ export component ProjectorWindow inherits Window {
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
     callback close-requested();
+    callback toggle-fullscreen();
 
     title: I18n.text.app_name + " — " + root.feed-label;
     background: black;
@@ -24,6 +25,10 @@ export component ProjectorWindow inherits Window {
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 root.close-requested();
+                return accept;
+            }
+            if (event.text == Key.F11) {
+                root.toggle-fullscreen();
                 return accept;
             }
             reject

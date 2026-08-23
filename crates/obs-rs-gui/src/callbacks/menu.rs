@@ -136,8 +136,8 @@ impl ProjectorController {
         stored.sort_unstable_by_key(|entry| entry.projector);
     }
 
-    /// Captures open windowed projectors while retaining the last known
-    /// geometry for feeds that are currently closed or fullscreen.
+    /// Captures open projectors while retaining the last known state for feeds
+    /// that are currently closed.
     pub(crate) fn capture_geometry(&self) -> Vec<ProjectorGeometry> {
         let mut geometry = self.geometry.borrow().clone();
         for (feed, slot) in [
@@ -541,9 +541,7 @@ fn capture_projector_geometry(
     feed: ProjectorFeed,
     window: &ProjectorWindow,
 ) -> Option<ProjectorGeometry> {
-    if window.window().is_fullscreen() {
-        return None;
-    }
+    let fullscreen = window.window().is_fullscreen();
     let position = window.window().position();
     let size = window.window().size();
     #[allow(
@@ -560,9 +558,14 @@ fn capture_projector_geometry(
         size.height,
         scale_milli,
     )
+    .map(|entry| entry.with_fullscreen(fullscreen))
 }
 
 fn restore_projector_geometry(window: &ProjectorWindow, geometry: ProjectorGeometry) {
+    window.window().set_fullscreen(geometry.fullscreen);
+    if geometry.fullscreen {
+        return;
+    }
     let current_scale = window.window().scale_factor().max(0.5);
     #[allow(
         clippy::cast_precision_loss,
@@ -622,22 +625,24 @@ fn open_projector(
         ProjectorFeed::Scene => ui.get_scene_projector_image(),
     });
     // OBS presents program and multiview projectors as borderless fullscreen
-    // feeds. The preview projector remains windowed so the operator can keep
-    // it beside the studio UI. Set this before showing the window so the native
-    // backend creates the correct geometry instead of visibly resizing after
-    // launch.
-    window.window().set_fullscreen(matches!(
-        feed,
-        ProjectorFeed::Program | ProjectorFeed::Multiview
-    ));
-    if !feed.is_fullscreen() {
-        if let Some(geometry) = projectors.stored_geometry(feed) {
-            restore_projector_geometry(&window, geometry);
-        }
+    // feeds by default. A stored toggle wins, so F11 survives a restart while
+    // a first open still follows the feed's reference default.
+    if let Some(geometry) = projectors.stored_geometry(feed) {
+        restore_projector_geometry(&window, geometry);
+    } else {
+        window.window().set_fullscreen(feed.is_fullscreen());
     }
 
     let projectors = Rc::clone(projectors);
     window.on_close_requested(move || close_projector(&projectors, feed));
+    let weak = window.as_weak();
+    window.on_toggle_fullscreen(move || {
+        if let Some(window) = weak.upgrade() {
+            window
+                .window()
+                .set_fullscreen(!window.window().is_fullscreen());
+        }
+    });
 
     window.show()?;
     Ok(window)
