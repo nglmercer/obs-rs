@@ -1,21 +1,27 @@
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
-    rc::Rc,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
-use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::{CompositorMetrics, Runtime, RuntimeLimits, RuntimeUsage, SourceId};
 use obs_rs_engine::{compile_filter_report, FilterCompilation, MAX_FILTER_DIAGNOSTICS};
 use obs_rs_media::{FrameScaler, FrameTransform, FrameTransition, ScaleFilter};
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
-use obs_rs_plugin_api::Plugin;
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::{Profile, Project, SceneItemSpec, SourceSpec};
-use obs_rs_render::{RenderBackend, RenderTarget, RenderTargetRole, SceneLayer, TextureId};
-use obs_rs_render_wgpu::WgpuRenderBackend;
-use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+use obs_rs_render::{RenderBackend, RenderTarget, RenderTargetRole, SceneLayer};
+
+mod compositor;
+mod presenter;
+mod support;
+mod surface;
+
+use compositor::PreviewCompositor;
+pub(crate) use presenter::frame_to_image;
+pub(crate) use support::builtin_source_kinds;
+use support::{builtin_plugin, empty_project, static_scenes};
+pub(crate) use surface::PreviewSurface;
 
 pub(crate) struct PreviewRenderer {
     pub(crate) format: VideoFormat,
@@ -87,130 +93,6 @@ pub(crate) struct RuntimeDiagnostics {
     pub(crate) filter_diagnostics: Vec<String>,
 }
 
-/// The studio window's non-live view of the engine.
-///
-/// The window used to hold a second [`PreviewRenderer`], which meant a second
-/// [`Runtime`], which meant every camera and screen-cast session in the project
-/// was opened twice — once for the window that never rendered a frame from it,
-/// and once for the worker that actually composites. Cameras in particular do
-/// not survive being opened twice. The window needs the canvas format, the
-/// revision it has observed, and engine counters, so that is all this carries;
-/// the worker owns the only live runtime.
-pub(crate) struct PreviewSurface {
-    pub(crate) format: VideoFormat,
-    revision: u64,
-    diagnostics: Arc<Mutex<RuntimeDiagnostics>>,
-}
-
-impl PreviewSurface {
-    /// Creates the window's view of `project` without opening any device.
-    pub(crate) fn new(project: &Project, revision: u64) -> Result<Self, Box<dyn Error>> {
-        let profile = project
-            .active_profile_spec()
-            .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
-        Ok(Self {
-            format: profile.video_format(),
-            revision,
-            diagnostics: Arc::new(Mutex::new(RuntimeDiagnostics::default())),
-        })
-    }
-
-    /// Returns the slot the preview worker publishes engine counters into.
-    pub(crate) fn diagnostics_handle(&self) -> Arc<Mutex<RuntimeDiagnostics>> {
-        Arc::clone(&self.diagnostics)
-    }
-
-    /// Returns the newest engine snapshot the worker published.
-    pub(crate) fn diagnostics(&self) -> RuntimeDiagnostics {
-        self.diagnostics
-            .lock()
-            .map_or_else(|_| RuntimeDiagnostics::default(), |value| value.clone())
-    }
-
-    pub(crate) const fn is_synced(&self, revision: u64) -> bool {
-        self.revision == revision
-    }
-
-    /// Records a new project revision and the canvas it renders at.
-    ///
-    /// Nothing here touches a device: the worker's runtime is the only thing
-    /// that opens capture hardware.
-    pub(crate) fn sync_project(
-        &mut self,
-        project: &Project,
-        revision: u64,
-    ) -> Result<bool, Box<dyn Error>> {
-        if revision == self.revision {
-            return Ok(false);
-        }
-        let profile = project
-            .active_profile_spec()
-            .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
-        self.format = profile.video_format();
-        self.revision = revision;
-        Ok(true)
-    }
-}
-
-struct GpuTarget {
-    target: RenderTarget,
-    texture: TextureId,
-}
-
-struct WgpuCompositor {
-    backend: Box<WgpuRenderBackend>,
-    targets: HashMap<RenderTargetRole, GpuTarget>,
-}
-
-impl WgpuCompositor {
-    fn target(&mut self, target: RenderTarget) -> Result<TextureId, Box<dyn Error>> {
-        if let Some(existing) = self.targets.get(&target.role()) {
-            if existing.target.format() == target.format() {
-                return Ok(existing.texture);
-            }
-        }
-        if let Some(previous) = self.targets.remove(&target.role()) {
-            self.backend.destroy_texture(previous.texture)?;
-        }
-        let texture = self.backend.create_texture(target.format())?;
-        self.targets
-            .insert(target.role(), GpuTarget { target, texture });
-        Ok(texture)
-    }
-}
-
-enum PreviewCompositor {
-    Wgpu(WgpuCompositor),
-    Cpu { reason: Option<String> },
-}
-
-impl PreviewCompositor {
-    fn new(format: VideoFormat) -> Self {
-        let texture_budget = format.rgba_bytes().saturating_mul(12);
-        match WgpuRenderBackend::new(12, texture_budget) {
-            Ok(backend) => Self::Wgpu(WgpuCompositor {
-                backend: Box::new(backend),
-                targets: HashMap::new(),
-            }),
-            Err(error) => Self::Cpu {
-                reason: Some(error.to_string()),
-            },
-        }
-    }
-}
-
-thread_local! {
-    /// The builtin plugin, constructed once per thread.
-    ///
-    /// Rebuilding the renderer used to recreate the plugin and all of its
-    /// factory objects; the plugin is immutable, so one instance is shared.
-    static BUILTIN_PLUGIN: Rc<BuiltinPlugin> = Rc::new(
-        BuiltinPlugin::new().unwrap_or_else(|error| {
-            unreachable!("builtin plugin manifest is valid: {error}")
-        }),
-    );
-}
-
 impl PreviewRenderer {
     pub(crate) fn new(project: &Project, revision: u64) -> Result<Self, Box<dyn Error>> {
         let profile = project
@@ -218,7 +100,7 @@ impl PreviewRenderer {
             .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
         let format = profile.video_format();
         let mut runtime = Runtime::new();
-        let plugin = BUILTIN_PLUGIN.with(Rc::clone);
+        let plugin = builtin_plugin();
         runtime.register_plugin(plugin.as_ref())?;
 
         let mut renderer = Self {
@@ -1081,88 +963,4 @@ impl PreviewRenderer {
             capture.max_nanos() / 1_000,
         )
     }
-}
-
-/// Returns a project holding only `project`'s active profile identity.
-///
-/// [`PreviewRenderer::new`] starts from this so the first build runs through
-/// the same diff as every later update.
-fn empty_project(project: &Project) -> Project {
-    let mut empty = Project::new(project.title()).unwrap_or_else(|_| {
-        Project::new("obs-rs").unwrap_or_else(|error| unreachable!("default title: {error}"))
-    });
-    if let Some(profile) = project.active_profile_spec() {
-        if let Ok(bare) = Profile::new(
-            profile.id().as_str(),
-            profile.name(),
-            profile.video_format(),
-        ) {
-            let _ = empty.add_profile(bare);
-            let _ = empty.set_active_profile(profile.id().as_str());
-        }
-    }
-    empty
-}
-
-/// Returns the scenes whose composed picture cannot change between frames.
-fn static_scenes(profile: &Profile) -> HashSet<String> {
-    profile
-        .scenes()
-        .filter(|scene| {
-            scene.items().iter().any(SceneItemSpec::visible)
-                && scene
-                    .items()
-                    .iter()
-                    .filter(|item| item.visible())
-                    .all(|item| {
-                        item.is_source()
-                            && profile
-                                .source(item.source_id())
-                                .is_some_and(|source| source.kind().as_str() == "color_source")
-                    })
-        })
-        .map(|scene| scene.id().as_str().to_owned())
-        .collect()
-}
-
-/// Returns the source kinds the builtin plugin registers, in identifier order.
-///
-/// The Add Source window needs the catalogue, not a live engine; reading it
-/// from the plugin keeps the window from having to hold a runtime open.
-pub(crate) fn builtin_source_kinds() -> Vec<String> {
-    BUILTIN_PLUGIN.with(|plugin| {
-        let mut kinds = plugin
-            .source_factories()
-            .iter()
-            .map(|factory| factory.kind().as_str().to_owned())
-            .collect::<Vec<_>>();
-        kinds.sort();
-        kinds
-    })
-}
-
-pub(crate) trait PreviewPresenter {
-    fn present(&mut self, frame: &VideoFrame) -> Image;
-}
-
-struct SlintPreviewPresenter;
-
-impl PreviewPresenter for SlintPreviewPresenter {
-    fn present(&mut self, frame: &VideoFrame) -> Image {
-        let format = frame.format();
-        // Slint owns its pixel storage, so one copy out of the engine frame is
-        // unavoidable here; `clone_from_slice` performs it as a single block
-        // copy. The worker supplies a viewport-sized frame, not the full
-        // program canvas.
-        let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
-            frame.pixels(),
-            format.width(),
-            format.height(),
-        );
-        Image::from_rgba8(buffer)
-    }
-}
-
-pub(crate) fn frame_to_image(frame: &VideoFrame) -> Image {
-    SlintPreviewPresenter.present(frame)
 }
