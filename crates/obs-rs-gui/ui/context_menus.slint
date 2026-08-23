@@ -231,6 +231,7 @@ export component SceneContextMenuArea inherits Rectangle {
     callback rename-scene(string);
     callback move-scene(string, int);
     callback remove-scene(string);
+    callback open-scene-projector(string);
 
     public function show-at(position: Point) {
         context-menu.show(position);
@@ -252,6 +253,11 @@ export component SceneContextMenuArea inherits Rectangle {
                     root.select-scene(root.scene-id);
                     root.duplicate-scene(root.scene-id);
                 }
+            }
+            MenuItem {
+                title: I18n.text.scene_projector;
+                enabled: root.scene-id != "";
+                activated => root.open-scene-projector(root.scene-id);
             }
             MenuItem {
                 title: I18n.text.rename;

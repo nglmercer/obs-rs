@@ -769,6 +769,19 @@ impl PreviewRenderer {
         Ok(Some(frame))
     }
 
+    /// Renders one complete scene for a scene projector without opening a
+    /// second runtime or changing the scene's persisted geometry.
+    pub(crate) fn render_scene_projector(
+        &mut self,
+        scene: &str,
+        format: VideoFormat,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        self.render_target(
+            scene,
+            RenderTarget::new(RenderTargetRole::Projector, format),
+        )
+    }
+
     /// Renders one transition into the full program target.
     pub(crate) fn render_transition(
         &mut self,

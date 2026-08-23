@@ -183,6 +183,7 @@ pub(crate) fn refresh_ui(
         ui.set_program_image(Image::default());
         ui.set_multiview_image(Image::default());
         ui.set_source_projector_image(Image::default());
+        ui.set_scene_projector_image(Image::default());
         Some(format!("Preview surface: {error}"))
     } else {
         None
@@ -250,10 +251,20 @@ pub(crate) fn refresh_preview_frames_for_view(
     } else {
         ui.set_source_projector_image(Image::default());
     }
+    if let Some(frame) = result.scene_projector_frame.as_ref() {
+        let copy_started = Instant::now();
+        let image = frame_to_image(frame);
+        worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
+        let update_started = Instant::now();
+        ui.set_scene_projector_image(image);
+        worker.record_slint_update(update_started.elapsed());
+    } else {
+        ui.set_scene_projector_image(Image::default());
+    }
     let performance = worker.performance();
     ui.set_preview_metrics(
         format!(
-            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · multiview p95={} µs · source projector p95={} µs · copy p95={} µs bytes={} · Slint p95={} µs · callback p95={} µs",
+            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · multiview p95={} µs · source projector p95={} µs · scene projector p95={} µs · copy p95={} µs bytes={} · Slint p95={} µs · callback p95={} µs",
             result.metrics,
             worker.queue_depth(),
             worker.dropped_requests(),
@@ -264,6 +275,7 @@ pub(crate) fn refresh_preview_frames_for_view(
             nanos_to_micros(performance.program_render.percentile_nanos(95)),
             nanos_to_micros(performance.multiview_render.percentile_nanos(95)),
             nanos_to_micros(performance.source_projector_render.percentile_nanos(95)),
+            nanos_to_micros(performance.scene_projector_render.percentile_nanos(95)),
             nanos_to_micros(performance.frame_copy.percentile_nanos(95)),
             performance.frame_copy_bytes,
             nanos_to_micros(performance.slint_update.percentile_nanos(95)),

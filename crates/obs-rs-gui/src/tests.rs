@@ -1942,6 +1942,14 @@ fn exercise_menu_actions(
     ui.invoke_open_source_projector();
     assert!(!projectors.is_source_open(), "selecting it again closed it");
 
+    // A scene projector keeps the scene row's stable ID, independent of the
+    // currently selected preview scene.
+    assert!(!projectors.is_scene_open());
+    ui.invoke_open_scene_projector("preview".into());
+    assert!(projectors.is_scene_open(), "the scene projector opened");
+    ui.invoke_open_scene_projector("preview".into());
+    assert!(!projectors.is_scene_open(), "selecting it again closed it");
+
     // Resetting the layout restores the shipped arrangement whatever the row
     // was dragged into.
     let reversed = vec![4, 3, 2, 1, 0];

@@ -68,6 +68,7 @@ export component MainWindow inherits Window {
         in property <image> program-image;
         in property <image> multiview-image;
         in property <image> source-projector-image;
+        in property <image> scene-projector-image;
         in property <string> multiview-status;
         in property <string> multiview-metrics;
         in property <float> multiview-audio-db: -60.0;
@@ -271,6 +272,7 @@ export component MainWindow inherits Window {
         callback open-projector(bool);
         callback open-multiview-projector();
         callback open-source-projector();
+        callback open-scene-projector(string);
         callback select-collection(string);
         callback create-collection(string);
         callback duplicate-collection(string);
@@ -733,6 +735,7 @@ export component MainWindow inherits Window {
                 duplicate-scene(id) => { root.duplicate-scene(id); }
                 move-scene(id, delta) => { root.move-scene(id, delta); }
                 remove-scene(id) => { root.remove-scene(id); }
+                open-scene-projector(id) => { root.open-scene-projector(id); }
                 select-source(id) => { root.select-source(id); }
                 open-properties(id) => { root.open-source-properties-for(id); }
                 open-filters(id) => { root.open-source-filters-for(id); }

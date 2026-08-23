@@ -17,9 +17,11 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    callbacks::docks::DockController, dispatch_and_refresh, initial_project,
-    preview_worker::SourceProjectorTarget, project_store, refresh_ui, source_target, MainWindow,
-    PreviewSurface, ProfileRow, ProjectorWindow,
+    callbacks::docks::DockController,
+    dispatch_and_refresh, initial_project,
+    preview_worker::{SceneProjectorTarget, SourceProjectorTarget},
+    project_store, refresh_ui, source_target, MainWindow, PreviewSurface, ProfileRow,
+    ProjectorWindow,
 };
 
 /// Extension every scene-collection document uses.
@@ -48,7 +50,9 @@ pub(crate) struct ProjectorController {
     preview: RefCell<Option<ProjectorWindow>>,
     multiview: RefCell<Option<ProjectorWindow>>,
     source: RefCell<Option<ProjectorWindow>>,
+    scene: RefCell<Option<ProjectorWindow>>,
     source_target: RefCell<Option<SourceProjectorTarget>>,
+    scene_target: RefCell<Option<SceneProjectorTarget>>,
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +61,7 @@ enum ProjectorFeed {
     Preview,
     Multiview,
     Source,
+    Scene,
 }
 
 impl ProjectorController {
@@ -88,6 +93,15 @@ impl ProjectorController {
             .cloned()
     }
 
+    /// Returns the stable scene target while its projector is open.
+    pub(crate) fn scene_target(&self) -> Option<SceneProjectorTarget> {
+        self.slot(ProjectorFeed::Scene)
+            .borrow()
+            .as_ref()
+            .and(self.scene_target.borrow().as_ref())
+            .cloned()
+    }
+
     /// Pushes the studio's current images into any open projector.
     pub(crate) fn sync(&self, ui: &MainWindow) {
         if let Some(window) = self.program.borrow().as_ref() {
@@ -110,11 +124,22 @@ impl ProjectorController {
             window.set_canvas_width(ui.get_canvas_width());
             window.set_canvas_height(ui.get_canvas_height());
         }
+        if let Some(window) = self.scene.borrow().as_ref() {
+            window.set_source_image(ui.get_scene_projector_image());
+            window.set_canvas_width(ui.get_canvas_width());
+            window.set_canvas_height(ui.get_canvas_height());
+        }
     }
 
     /// Repaints open projectors when the studio theme changes.
     pub(crate) fn set_tokens(&self, tokens: &crate::ThemeTokens) {
-        for window in [&self.program, &self.preview, &self.multiview, &self.source] {
+        for window in [
+            &self.program,
+            &self.preview,
+            &self.multiview,
+            &self.source,
+            &self.scene,
+        ] {
             if let Some(window) = window.borrow().as_ref() {
                 window.global::<crate::Palette>().set_tokens(tokens.clone());
             }
@@ -151,6 +176,11 @@ impl ProjectorController {
     }
 
     #[cfg(test)]
+    pub(crate) fn is_scene_open(&self) -> bool {
+        self.slot(ProjectorFeed::Scene).borrow().is_some()
+    }
+
+    #[cfg(test)]
     pub(crate) fn is_fullscreen(&self, program: bool) -> bool {
         self.slot(if program {
             ProjectorFeed::Program
@@ -168,6 +198,7 @@ impl ProjectorController {
             ProjectorFeed::Preview => &self.preview,
             ProjectorFeed::Multiview => &self.multiview,
             ProjectorFeed::Source => &self.source,
+            ProjectorFeed::Scene => &self.scene,
         }
     }
 }
@@ -184,7 +215,9 @@ pub(crate) fn install_menu_callbacks(
         preview: RefCell::new(None),
         multiview: RefCell::new(None),
         source: RefCell::new(None),
+        scene: RefCell::new(None),
         source_target: RefCell::new(None),
+        scene_target: RefCell::new(None),
     });
 
     install_history(ui, state, surface);
@@ -374,6 +407,51 @@ fn install_projectors(
             }
         }
     });
+
+    install_scene_projector(ui, state, projectors);
+}
+
+fn install_scene_projector(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    projectors: &Rc<ProjectorController>,
+) {
+    let weak = ui.as_weak();
+    let scene_state = Rc::clone(state);
+    let scene_projectors = Rc::clone(projectors);
+    ui.on_open_scene_projector(move |scene| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let feed = ProjectorFeed::Scene;
+        if scene_projectors.slot(feed).borrow().is_some() {
+            close_projector(&scene_projectors, feed);
+            return;
+        }
+        let scene = scene.to_string();
+        let exists = scene_state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene(scene.as_str()))
+            .is_some();
+        if !exists {
+            ui.set_status_message("Scene projector target is unavailable".into());
+            return;
+        }
+        *scene_projectors.scene_target.borrow_mut() = Some(SceneProjectorTarget { scene });
+        match open_projector(&ui, &scene_state, &scene_projectors, feed) {
+            Ok(window) => {
+                *scene_projectors.slot(feed).borrow_mut() = Some(window);
+                scene_projectors.sync(&ui);
+            }
+            Err(error) => {
+                scene_projectors.scene_target.borrow_mut().take();
+                ui.set_status_message(format!("Projector: {error}").into());
+            }
+        }
+    });
 }
 
 fn open_projector(
@@ -395,12 +473,14 @@ fn open_projector(
         ProjectorFeed::Preview => text.preview.clone(),
         ProjectorFeed::Multiview => text.menu_multiview_projector.clone(),
         ProjectorFeed::Source => text.menu_source_projector.clone(),
+        ProjectorFeed::Scene => text.scene_projector.clone(),
     }));
     window.set_source_image(match feed {
         ProjectorFeed::Program => ui.get_program_image(),
         ProjectorFeed::Preview => ui.get_preview_image(),
         ProjectorFeed::Multiview => ui.get_multiview_image(),
         ProjectorFeed::Source => ui.get_source_projector_image(),
+        ProjectorFeed::Scene => ui.get_scene_projector_image(),
     });
     // OBS presents program and multiview projectors as borderless fullscreen
     // feeds. The preview projector remains windowed so the operator can keep
@@ -423,8 +503,14 @@ fn close_projector(projectors: &Rc<ProjectorController>, feed: ProjectorFeed) {
     if let Some(window) = projectors.slot(feed).borrow_mut().take() {
         let _ = window.hide();
     }
-    if matches!(feed, ProjectorFeed::Source) {
-        projectors.source_target.borrow_mut().take();
+    match feed {
+        ProjectorFeed::Source => {
+            projectors.source_target.borrow_mut().take();
+        }
+        ProjectorFeed::Scene => {
+            projectors.scene_target.borrow_mut().take();
+        }
+        ProjectorFeed::Program | ProjectorFeed::Preview | ProjectorFeed::Multiview => {}
     }
 }
 
