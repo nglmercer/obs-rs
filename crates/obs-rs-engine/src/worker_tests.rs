@@ -1,4 +1,3 @@
-
 use std::time::Duration;
 
 use obs_rs_audio::{AudioFormat, AudioMonitorMode};
