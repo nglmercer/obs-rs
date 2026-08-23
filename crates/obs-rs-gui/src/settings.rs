@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use obs_rs_audio::MAX_AUDIO_SYNC_OFFSET_MILLISECONDS;
+use obs_rs_audio::{AudioMonitorMode, MAX_AUDIO_SYNC_OFFSET_MILLISECONDS};
 use obs_rs_config::Config;
 use obs_rs_media::{ScaleFilter, VideoFormat};
 use obs_rs_output::{
@@ -204,6 +204,33 @@ pub(crate) const AUDIO_SYNC_OFFSET_RANGE: std::ops::RangeInclusive<u32> =
 
 /// Default per-channel audio sync offset.
 pub(crate) const AUDIO_SYNC_OFFSET_DEFAULT: u32 = 0;
+
+/// Monitor routing choices exposed by the Audio settings page.
+pub(crate) const AUDIO_MONITOR_MODES: [AudioMonitorMode; 3] = [
+    AudioMonitorMode::Off,
+    AudioMonitorMode::MonitorOnly,
+    AudioMonitorMode::MonitorAndOutput,
+];
+
+/// Stable settings identifier for one monitor-routing choice.
+pub(crate) const fn audio_monitor_mode_id(mode: AudioMonitorMode) -> &'static str {
+    match mode {
+        AudioMonitorMode::Off => "off",
+        AudioMonitorMode::MonitorOnly => "monitor_only",
+        AudioMonitorMode::MonitorAndOutput => "monitor_and_output",
+    }
+}
+
+/// Parses a persisted monitor-routing choice, falling back per field when it
+/// is unknown or from a future version.
+pub(crate) fn audio_monitor_mode_from_id(value: &str) -> Option<AudioMonitorMode> {
+    match value {
+        "off" => Some(AudioMonitorMode::Off),
+        "monitor_only" => Some(AudioMonitorMode::MonitorOnly),
+        "monitor_and_output" => Some(AudioMonitorMode::MonitorAndOutput),
+        _ => None,
+    }
+}
 
 /// The smallest and largest canvas-space distance accepted by source snapping.
 ///
@@ -416,6 +443,12 @@ pub(crate) struct AppSettings {
     /// Provider-stable `PipeWire` input ID; empty selects the first available
     /// input and keeps the deterministic fallback as a safe last resort.
     pub(crate) audio_input_id: String,
+    /// Provider-stable local monitor-output ID; empty disables local playback.
+    pub(crate) audio_monitor_output_id: String,
+    /// Monitor destination policy for the microphone channel.
+    pub(crate) microphone_monitor_mode: AudioMonitorMode,
+    /// Monitor destination policy for the desktop-audio channel.
+    pub(crate) desktop_audio_monitor_mode: AudioMonitorMode,
     /// Positive, sample-quantized delay applied to the microphone channel.
     pub(crate) audio_input_sync_offset_millis: u32,
     /// Positive, sample-quantized delay applied to the desktop-audio channel.
@@ -745,6 +778,9 @@ impl Default for AppSettings {
             rist: RistConfig::default(),
             reference_address: "127.0.0.1:9000".to_owned(),
             audio_input_id: String::new(),
+            audio_monitor_output_id: String::new(),
+            microphone_monitor_mode: AudioMonitorMode::Off,
+            desktop_audio_monitor_mode: AudioMonitorMode::Off,
             audio_input_sync_offset_millis: AUDIO_SYNC_OFFSET_DEFAULT,
             desktop_audio_sync_offset_millis: AUDIO_SYNC_OFFSET_DEFAULT,
             last_preview_scene: String::new(),
@@ -1104,6 +1140,19 @@ impl AppSettings {
             rist,
             reference_address: text(config, "reference_address", &defaults.reference_address),
             audio_input_id: text(config, "audio_input_id", &defaults.audio_input_id),
+            audio_monitor_output_id: text(
+                config,
+                "audio_monitor_output_id",
+                &defaults.audio_monitor_output_id,
+            ),
+            microphone_monitor_mode: config
+                .get("microphone_monitor_mode")
+                .and_then(audio_monitor_mode_from_id)
+                .unwrap_or(defaults.microphone_monitor_mode),
+            desktop_audio_monitor_mode: config
+                .get("desktop_audio_monitor_mode")
+                .and_then(audio_monitor_mode_from_id)
+                .unwrap_or(defaults.desktop_audio_monitor_mode),
             last_preview_scene: text(config, "last_preview_scene", &defaults.last_preview_scene),
             last_program_scene: text(config, "last_program_scene", &defaults.last_program_scene),
             project_scene_selections: config
@@ -1260,6 +1309,18 @@ impl AppSettings {
             ("recording_format", self.recording_format.id().to_owned()),
             ("recording_codec", self.recording_codec.id().to_owned()),
             ("audio_input_id", self.audio_input_id.clone()),
+            (
+                "audio_monitor_output_id",
+                self.audio_monitor_output_id.clone(),
+            ),
+            (
+                "microphone_monitor_mode",
+                audio_monitor_mode_id(self.microphone_monitor_mode).to_owned(),
+            ),
+            (
+                "desktop_audio_monitor_mode",
+                audio_monitor_mode_id(self.desktop_audio_monitor_mode).to_owned(),
+            ),
             ("last_preview_scene", self.last_preview_scene.clone()),
             ("last_program_scene", self.last_program_scene.clone()),
             (
@@ -2320,6 +2381,9 @@ mod tests {
             auto_record_when_streaming: true,
             sample_rate: 2,
             channels: 1,
+            audio_monitor_output_id: "pipewire-output-7".to_owned(),
+            microphone_monitor_mode: AudioMonitorMode::MonitorOnly,
+            desktop_audio_monitor_mode: AudioMonitorMode::MonitorAndOutput,
             audio_input_sync_offset_millis: 125,
             desktop_audio_sync_offset_millis: 2_500,
             hotkey_swap: "F1".to_owned(),
@@ -2712,6 +2776,38 @@ mod tests {
         assert_eq!(
             decoded.desktop_audio_sync_offset_millis,
             defaults.desktop_audio_sync_offset_millis
+        );
+    }
+
+    #[test]
+    fn audio_monitor_settings_reject_unknown_modes_and_round_trip_valid_values() {
+        let settings = AppSettings {
+            audio_monitor_output_id: "pipewire-output-7".to_owned(),
+            microphone_monitor_mode: AudioMonitorMode::MonitorOnly,
+            desktop_audio_monitor_mode: AudioMonitorMode::MonitorAndOutput,
+            ..AppSettings::default()
+        };
+        let mut config = settings.to_config();
+        config
+            .set("microphone_monitor_mode", "future_mode")
+            .expect("future mode");
+        let decoded = AppSettings::from_config(&config);
+
+        assert_eq!(
+            decoded.audio_monitor_output_id,
+            settings.audio_monitor_output_id
+        );
+        assert_eq!(
+            decoded.microphone_monitor_mode,
+            AppSettings::default().microphone_monitor_mode
+        );
+        assert_eq!(
+            decoded.desktop_audio_monitor_mode,
+            settings.desktop_audio_monitor_mode
+        );
+        assert_eq!(
+            audio_monitor_mode_from_id(audio_monitor_mode_id(AudioMonitorMode::MonitorOnly)),
+            Some(AudioMonitorMode::MonitorOnly)
         );
     }
 

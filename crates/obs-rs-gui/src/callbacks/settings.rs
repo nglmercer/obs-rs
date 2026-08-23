@@ -31,13 +31,14 @@ use crate::{
     refresh_ui,
     settings::{
         hotkey_conflicts, recording_stamp, shortcut_bindings, AppSettings, RecordingFormat,
-        AUDIO_SYNC_OFFSET_RANGE, CANVAS_SNAP_DISTANCE_DEFAULT, CANVAS_SNAP_DISTANCE_RANGE,
-        CHANNEL_LAYOUTS, FRAME_RATES, RECORDING_SPLIT_DURATION_MINUTES_DEFAULT,
-        RECORDING_SPLIT_DURATION_MINUTES_RANGE, RECORDING_SPLIT_SEGMENTS_DEFAULT,
-        RECORDING_SPLIT_SEGMENTS_RANGE, RECORDING_SPLIT_SIZE_MIB_DEFAULT,
-        RECORDING_SPLIT_SIZE_MIB_RANGE, REPLAY_BUFFER_CAPACITY_MIB_DEFAULT,
-        REPLAY_BUFFER_CAPACITY_MIB_RANGE, REPLAY_BUFFER_DURATION_DEFAULT,
-        REPLAY_BUFFER_DURATION_RANGE, RESOLUTIONS, SAMPLE_RATES, THEMES,
+        AUDIO_MONITOR_MODES, AUDIO_SYNC_OFFSET_RANGE, CANVAS_SNAP_DISTANCE_DEFAULT,
+        CANVAS_SNAP_DISTANCE_RANGE, CHANNEL_LAYOUTS, FRAME_RATES,
+        RECORDING_SPLIT_DURATION_MINUTES_DEFAULT, RECORDING_SPLIT_DURATION_MINUTES_RANGE,
+        RECORDING_SPLIT_SEGMENTS_DEFAULT, RECORDING_SPLIT_SEGMENTS_RANGE,
+        RECORDING_SPLIT_SIZE_MIB_DEFAULT, RECORDING_SPLIT_SIZE_MIB_RANGE,
+        REPLAY_BUFFER_CAPACITY_MIB_DEFAULT, REPLAY_BUFFER_CAPACITY_MIB_RANGE,
+        REPLAY_BUFFER_DURATION_DEFAULT, REPLAY_BUFFER_DURATION_RANGE, RESOLUTIONS, SAMPLE_RATES,
+        THEMES,
     },
     settings_model::{
         aspect_ratio_text, parse_resolution, resolution_text, FpsMode, OutputMode,
@@ -62,6 +63,8 @@ pub(crate) struct SettingsController {
     canvas: Rc<CanvasController>,
     /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_device_ids: RefCell<Vec<String>>,
+    /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
+    audio_monitor_output_ids: RefCell<Vec<String>>,
     protocol_ids: RefCell<Vec<StreamProtocol>>,
     video_encoder_ids: RefCell<Vec<String>>,
     audio_encoder_ids: RefCell<Vec<String>>,
@@ -307,6 +310,7 @@ pub(crate) fn install_settings_window(
         projectors: Rc::clone(&peers.projectors),
         canvas: Rc::clone(&peers.canvas),
         audio_device_ids: RefCell::new(Vec::new()),
+        audio_monitor_output_ids: RefCell::new(Vec::new()),
         protocol_ids: RefCell::new(Vec::new()),
         video_encoder_ids: RefCell::new(Vec::new()),
         audio_encoder_ids: RefCell::new(Vec::new()),
@@ -773,6 +777,41 @@ fn draft_audio_input_id(controller: &SettingsController) -> String {
         .unwrap_or_default()
 }
 
+/// Returns the monitor-output ID currently shown by the draft picker.
+fn draft_audio_monitor_output_id(controller: &SettingsController) -> String {
+    controller
+        .audio_monitor_output_ids
+        .borrow()
+        .get(usize::try_from(controller.window.get_audio_monitor_output_index()).unwrap_or(0))
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn monitor_mode_index(mode: obs_rs_audio::AudioMonitorMode) -> i32 {
+    AUDIO_MONITOR_MODES
+        .iter()
+        .position(|candidate| *candidate == mode)
+        .and_then(|index| i32::try_from(index).ok())
+        .unwrap_or(0)
+}
+
+fn draft_monitor_mode(index: i32) -> obs_rs_audio::AudioMonitorMode {
+    AUDIO_MONITOR_MODES
+        .get(usize::try_from(index).unwrap_or(0))
+        .copied()
+        .unwrap_or_default()
+}
+
+fn monitor_mode_names(locale: UiLocale) -> Vec<SharedString> {
+    crate::i18n::with_catalog(locale, |text| {
+        vec![
+            text.settings_ui.monitor_off.clone(),
+            text.settings_ui.monitor_only.clone(),
+            text.settings_ui.monitor_and_output.clone(),
+        ]
+    })
+}
+
 /// Rebuilds the audio-input picker from a fresh view of the `PipeWire` graph.
 ///
 /// The stored selection drives the list rather than the other way round: a
@@ -788,9 +827,13 @@ fn populate_audio_devices(
     settings: &AppSettings,
 ) {
     let locale = state.borrow().locale();
-    let entries = output
-        .borrow_mut()
-        .audio_input_entries(&settings.audio_input_id);
+    let (entries, output_entries) = {
+        let mut output = output.borrow_mut();
+        (
+            output.audio_input_entries(&settings.audio_input_id),
+            output.audio_output_entries(&settings.audio_monitor_output_id),
+        )
+    };
     let unavailable_suffix =
         crate::i18n::with_catalog(locale, |text| text.settings_ui.audio_input_missing.clone());
 
@@ -818,6 +861,42 @@ fn populate_audio_devices(
     controller.audio_device_ids.replace(device_ids);
     window.set_audio_device_names(string_model(device_names.into_iter()));
     window.set_audio_device_index(i32::try_from(selected_device_index).unwrap_or(0));
+    let selected_monitor_index = if settings.audio_monitor_output_id.is_empty() {
+        0
+    } else {
+        output_entries
+            .iter()
+            .position(|entry| entry.id == settings.audio_monitor_output_id)
+            .map_or(0, |index| index.saturating_add(1))
+    };
+    let mut monitor_output_ids = vec![String::new()];
+    let mut monitor_output_names = vec![crate::i18n::with_catalog(locale, |text| {
+        text.settings_ui.audio_monitor_output_disabled.clone()
+    })];
+    for entry in &output_entries {
+        monitor_output_ids.push(entry.id.clone());
+        monitor_output_names.push(if entry.available {
+            SharedString::from(entry.name.as_str())
+        } else {
+            SharedString::from(format!(
+                "{} {}",
+                entry.name,
+                crate::i18n::with_catalog(locale, |text| {
+                    text.settings_ui.audio_input_missing.clone()
+                })
+            ))
+        });
+    }
+    controller
+        .audio_monitor_output_ids
+        .replace(monitor_output_ids);
+    window.set_audio_monitor_output_names(string_model(monitor_output_names.into_iter()));
+    window.set_audio_monitor_output_index(i32::try_from(selected_monitor_index).unwrap_or(0));
+    window.set_audio_monitor_output_missing(output_entries.iter().any(|entry| !entry.available));
+    window.set_microphone_monitor_mode_names(string_model(monitor_mode_names(locale).into_iter()));
+    window.set_microphone_monitor_mode_index(monitor_mode_index(settings.microphone_monitor_mode));
+    window.set_desktop_monitor_mode_names(string_model(monitor_mode_names(locale).into_iter()));
+    window.set_desktop_monitor_mode_index(monitor_mode_index(settings.desktop_audio_monitor_mode));
     window.set_devices_summary(output.borrow_mut().audio_devices_summary().into());
     window.set_audio_input_missing(entries.iter().any(|entry| !entry.available));
 }
@@ -1494,8 +1573,18 @@ fn install_commit(
         // The picker's current choice, not the committed one, is what the user
         // is in the middle of making, so it is what survives the rebuild.
         let draft = draft_audio_input_id(&refresh_controller);
+        let draft_monitor_output = draft_audio_monitor_output_id(&refresh_controller);
         let settings = AppSettings {
             audio_input_id: draft,
+            audio_monitor_output_id: draft_monitor_output,
+            microphone_monitor_mode: draft_monitor_mode(
+                refresh_controller
+                    .window
+                    .get_microphone_monitor_mode_index(),
+            ),
+            desktop_audio_monitor_mode: draft_monitor_mode(
+                refresh_controller.window.get_desktop_monitor_mode_index(),
+            ),
             ..refresh_controller.settings.borrow().clone()
         };
         populate_audio_devices(
@@ -1687,6 +1776,10 @@ pub(crate) fn apply_staged_video_format(
 /// Committing is two distinct jobs — collecting the draft and acting on it —
 /// and separating them keeps the "what did the user type" logic away from the
 /// "what does that change in the running session" logic.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the settings draft is read into one validated application document"
+)]
 fn read_draft(controller: &SettingsController) -> AppSettings {
     let window = &controller.window;
     let mut settings = controller.settings.borrow().clone();
@@ -1712,6 +1805,10 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
         unsigned(window.get_audio_input_sync_offset()).min(*AUDIO_SYNC_OFFSET_RANGE.end());
     settings.desktop_audio_sync_offset_millis =
         unsigned(window.get_desktop_audio_sync_offset()).min(*AUDIO_SYNC_OFFSET_RANGE.end());
+    settings.microphone_monitor_mode =
+        draft_monitor_mode(window.get_microphone_monitor_mode_index());
+    settings.desktop_audio_monitor_mode =
+        draft_monitor_mode(window.get_desktop_monitor_mode_index());
     read_hotkey_draft(window, &mut settings);
     settings.preview_border_color = window.get_preview_border_color().to_string();
     settings.program_border_color = window.get_program_border_color().to_string();
@@ -1779,6 +1876,15 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
         device_id.clone_into(&mut settings.audio_input_id);
     } else {
         settings.audio_input_id.clear();
+    }
+    if let Some(device_id) = controller
+        .audio_monitor_output_ids
+        .borrow()
+        .get(usize::try_from(window.get_audio_monitor_output_index()).unwrap_or(0))
+    {
+        device_id.clone_into(&mut settings.audio_monitor_output_id);
+    } else {
+        settings.audio_monitor_output_id.clear();
     }
     if let Some(locale) = UiLocale::supported()
         .get(usize::try_from(window.get_language_index()).unwrap_or(0))
@@ -2102,6 +2208,24 @@ pub(crate) fn apply_settings_snapshot(
     ) {
         notes.push(format!("desktop audio sync offset: {error}"));
     }
+    if let Err(error) = output
+        .borrow_mut()
+        .set_channel_monitor_mode(crate::MIC_CHANNEL_ID, settings.microphone_monitor_mode)
+    {
+        notes.push(format!("microphone monitor mode: {error}"));
+    }
+    if let Err(error) = output.borrow_mut().set_channel_monitor_mode(
+        crate::DESKTOP_CHANNEL_ID,
+        settings.desktop_audio_monitor_mode,
+    ) {
+        notes.push(format!("desktop audio monitor mode: {error}"));
+    }
+    if let Err(error) = output.borrow_mut().set_monitor_output_id(
+        (!settings.audio_monitor_output_id.is_empty())
+            .then_some(settings.audio_monitor_output_id.as_str()),
+    ) {
+        notes.push(format!("monitor output: {error}"));
+    }
 
     output.borrow_mut().configure_stream(settings);
     output.borrow_mut().configure_replay(settings);
@@ -2113,6 +2237,12 @@ pub(crate) fn apply_settings_snapshot(
         notes.push(format!(
             "audio input {} is not connected; the fallback is capturing until it returns",
             settings.audio_input_id
+        ));
+    }
+    if !output.borrow_mut().audio_monitor_output_available() {
+        notes.push(format!(
+            "monitor output {} is not connected; monitoring will retry when it returns",
+            settings.audio_monitor_output_id
         ));
     }
     // The mixer row names the device it is capturing, so the fader and meter

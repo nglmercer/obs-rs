@@ -550,6 +550,9 @@ fn app_settings_round_trip_the_selected_audio_input() {
     let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-{token}.toml"));
     let settings = AppSettings {
         audio_input_id: "pipewire-node-42".to_owned(),
+        audio_monitor_output_id: "pipewire-output-7".to_owned(),
+        microphone_monitor_mode: obs_rs_audio::AudioMonitorMode::MonitorOnly,
+        desktop_audio_monitor_mode: obs_rs_audio::AudioMonitorMode::MonitorAndOutput,
         audio_input_sync_offset_millis: 125,
         desktop_audio_sync_offset_millis: 2_500,
         ..AppSettings::default()
@@ -567,6 +570,18 @@ fn app_settings_round_trip_the_selected_audio_input() {
     assert_eq!(
         reloaded.desktop_audio_sync_offset_millis,
         settings.desktop_audio_sync_offset_millis
+    );
+    assert_eq!(
+        reloaded.audio_monitor_output_id,
+        settings.audio_monitor_output_id
+    );
+    assert_eq!(
+        reloaded.microphone_monitor_mode,
+        settings.microphone_monitor_mode
+    );
+    assert_eq!(
+        reloaded.desktop_audio_monitor_mode,
+        settings.desktop_audio_monitor_mode
     );
     std::fs::remove_file(path).expect("remove settings fixture");
 }
@@ -728,6 +743,29 @@ fn output_runtime_applies_bounded_audio_sync_offsets_on_the_worker() {
     assert!(output
         .set_channel_sync_offset_millis(crate::MIC_CHANNEL_ID, 5_001)
         .is_err());
+}
+
+#[test]
+fn output_runtime_applies_monitor_controls_on_the_worker() {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+
+    output
+        .set_channel_monitor_mode(
+            crate::MIC_CHANNEL_ID,
+            obs_rs_audio::AudioMonitorMode::MonitorOnly,
+        )
+        .expect("microphone monitor mode should reach the worker");
+    output
+        .set_channel_monitor_mode(
+            crate::DESKTOP_CHANNEL_ID,
+            obs_rs_audio::AudioMonitorMode::MonitorAndOutput,
+        )
+        .expect("desktop monitor mode should reach the worker");
+    output
+        .set_monitor_output_id(None)
+        .expect("clearing the monitor sink should reach the worker");
+    assert_eq!(output.monitor_output_id(), None);
 }
 
 #[test]

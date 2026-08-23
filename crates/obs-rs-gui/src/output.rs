@@ -5,7 +5,10 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
+use obs_rs_audio::{
+    AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider, AudioMonitorMode,
+    AudioOutputProvider,
+};
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
 use obs_rs_engine::{
     output_capabilities_snapshot, EngineAudioChannel, EngineConfig, EngineSession, EngineWorker,
@@ -41,6 +44,13 @@ pub(crate) struct AudioInputEntry {
     pub(crate) available: bool,
 }
 
+/// One entry in the settings window's local monitor-output picker.
+pub(crate) struct AudioOutputEntry {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) available: bool,
+}
+
 /// Bounded telemetry projected into the multiview overlay.
 ///
 /// The preview worker does not inspect output state and the UI does not read
@@ -60,6 +70,7 @@ pub(crate) struct OutputRuntime {
     last_revision: u64,
     format_drops: u64,
     audio_input_id: Option<String>,
+    monitor_output_id: Option<String>,
     audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
     recording_started_at: Option<Instant>,
     stream_protocol: Option<&'static str>,
@@ -136,6 +147,7 @@ impl OutputRuntime {
 
     /// Creates an output with persisted input selection and bounded audio
     /// synchronization offsets.
+    #[cfg(test)]
     pub(crate) fn with_audio_input_and_sync_offsets(
         format: VideoFormat,
         audio_format: AudioFormat,
@@ -143,14 +155,48 @@ impl OutputRuntime {
         audio_input_sync_offset_millis: u32,
         desktop_audio_sync_offset_millis: u32,
     ) -> Result<Self, Box<dyn Error>> {
+        Self::with_audio_settings(
+            format,
+            audio_format,
+            audio_input_id,
+            audio_input_sync_offset_millis,
+            desktop_audio_sync_offset_millis,
+            None,
+            AudioMonitorMode::Off,
+            AudioMonitorMode::Off,
+        )
+    }
+
+    /// Creates an output with the complete persisted audio-control boundary.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "this constructor mirrors the bounded persisted audio settings boundary"
+    )]
+    pub(crate) fn with_audio_settings(
+        format: VideoFormat,
+        audio_format: AudioFormat,
+        audio_input_id: Option<&str>,
+        audio_input_sync_offset_millis: u32,
+        desktop_audio_sync_offset_millis: u32,
+        monitor_output_id: Option<&str>,
+        microphone_monitor_mode: AudioMonitorMode,
+        desktop_monitor_mode: AudioMonitorMode,
+    ) -> Result<Self, Box<dyn Error>> {
         let audio_provider = Arc::new(PipeWireAudioProvider::new());
         let provider_for_engine: Arc<dyn AudioInputProvider> = audio_provider.clone();
+        let output_provider_for_engine: Arc<dyn AudioOutputProvider> = audio_provider.clone();
         let mut config = EngineConfig::new(audio_format)
             .with_audio_provider(provider_for_engine)
+            .with_audio_output_provider(output_provider_for_engine)
             .with_audio_input_sync_offset_millis(audio_input_sync_offset_millis)
-            .with_desktop_audio_sync_offset_millis(desktop_audio_sync_offset_millis);
+            .with_desktop_audio_sync_offset_millis(desktop_audio_sync_offset_millis)
+            .with_audio_input_monitor_mode(microphone_monitor_mode)
+            .with_desktop_monitor_mode(desktop_monitor_mode);
         if let Some(audio_input_id) = audio_input_id {
             config = config.with_audio_input_id(audio_input_id);
+        }
+        if let Some(monitor_output_id) = monitor_output_id {
+            config = config.with_monitor_output_id(monitor_output_id);
         }
         let engine = EngineSession::for_format(format, config)?;
         Ok(Self {
@@ -160,6 +206,10 @@ impl OutputRuntime {
             last_revision: 0,
             format_drops: 0,
             audio_input_id: audio_input_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            monitor_output_id: monitor_output_id
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned),
@@ -898,6 +948,17 @@ impl OutputRuntime {
         Ok(())
     }
 
+    /// Requests a live monitor-routing policy on one engine audio channel.
+    pub(crate) fn set_channel_monitor_mode(
+        &mut self,
+        id: &str,
+        mode: AudioMonitorMode,
+    ) -> Result<(), Box<dyn Error>> {
+        self.worker
+            .set_channel_monitor_mode(engine_channel(id), mode)?;
+        Ok(())
+    }
+
     /// Requests a live microphone/input switch on the output worker.
     pub(crate) fn set_audio_input_id(
         &mut self,
@@ -924,10 +985,29 @@ impl OutputRuntime {
         Ok(())
     }
 
+    /// Selects or clears the asynchronous local monitor sink.
+    pub(crate) fn set_monitor_output_id(
+        &mut self,
+        device_id: Option<&str>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.worker.set_monitor_output_id(device_id)?;
+        self.monitor_output_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        Ok(())
+    }
+
     /// Returns the persisted/selected input ID, or an empty string for auto.
     #[cfg(test)]
     pub(crate) fn audio_input_id(&self) -> Option<&str> {
         self.audio_input_id.as_deref()
+    }
+
+    /// Returns the selected local monitor-output ID, or `None` when disabled.
+    #[cfg(test)]
+    pub(crate) fn monitor_output_id(&self) -> Option<&str> {
+        self.monitor_output_id.as_deref()
     }
 
     /// Returns the live microphone meter tuple: current peak, held peak, and
@@ -1259,6 +1339,16 @@ impl OutputRuntime {
             .collect()
     }
 
+    /// Returns discoverable `PipeWire` output devices as `(stable_id, label)`.
+    pub(crate) fn audio_output_devices(&mut self) -> Vec<(String, String)> {
+        self.discover_audio_devices()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|device| device.kind() == AudioDeviceKind::Output && device.available())
+            .map(|device| (device.id().to_owned(), device.name().to_owned()))
+            .collect()
+    }
+
     /// Returns the input picker's entries, keeping `selected` even if it is gone.
     ///
     /// A device that is unplugged, or whose service has restarted, disappears
@@ -1287,6 +1377,38 @@ impl OutputRuntime {
             });
         }
         entries
+    }
+
+    /// Returns output-picker entries, keeping a selected missing sink visible.
+    pub(crate) fn audio_output_entries(&mut self, selected: &str) -> Vec<AudioOutputEntry> {
+        let mut entries = self
+            .audio_output_devices()
+            .into_iter()
+            .map(|(id, name)| AudioOutputEntry {
+                id,
+                name,
+                available: true,
+            })
+            .collect::<Vec<_>>();
+        let selected = selected.trim();
+        if !selected.is_empty() && !entries.iter().any(|entry| entry.id == selected) {
+            entries.push(AudioOutputEntry {
+                name: selected.to_owned(),
+                id: selected.to_owned(),
+                available: false,
+            });
+        }
+        entries
+    }
+
+    /// Returns whether the selected monitor sink is currently discoverable.
+    pub(crate) fn audio_monitor_output_available(&mut self) -> bool {
+        let Some(selected) = self.monitor_output_id.clone() else {
+            return true;
+        };
+        self.audio_output_devices()
+            .iter()
+            .any(|(id, _)| *id == selected)
     }
 
     /// Discards the discovery cache so the next read re-runs `pw-dump`.
