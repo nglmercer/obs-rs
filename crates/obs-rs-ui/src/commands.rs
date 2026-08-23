@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 use obs_rs_audio::{AudioFormat, AudioMixer};
 use obs_rs_audio::{MAX_GAIN_MILLI, MAX_PAN_MILLI, MIN_PAN_MILLI};
-use obs_rs_media::FrameTransition;
+use obs_rs_media::{FrameTransition, TransitionSpec};
+use obs_rs_project::ProjectCommand;
 
 use super::{
     error::UiError,
@@ -262,6 +263,22 @@ impl DesktopState {
                 kind: "preview scene",
                 id: "none".to_owned(),
             })?;
+        let (transition, duration_ms) = self
+            .project
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene(&preview))
+            .and_then(obs_rs_project::SceneSpec::transition_override)
+            .map(|override_spec| {
+                (
+                    override_spec.at_progress(500).map_err(UiError::Media),
+                    override_spec.duration_millis(),
+                )
+            })
+            .map_or(
+                Ok((transition, duration_ms)),
+                |(transition, duration_ms)| transition.map(|transition| (transition, duration_ms)),
+            )?;
         let source = self.program_scene.clone();
         self.set_transition(transition)?;
         self.program_scene = Some(preview);
@@ -285,6 +302,28 @@ impl DesktopState {
             _ => None,
         };
         Ok("preview sent to program")
+    }
+
+    pub(crate) fn set_preview_scene_transition(
+        &mut self,
+        transition: Option<TransitionSpec>,
+    ) -> Result<&'static str, UiError> {
+        let profile = self.project.project().active_profile().to_string();
+        let scene = self
+            .preview_scene
+            .as_ref()
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "preview scene",
+                id: "none".to_owned(),
+            })?
+            .to_string();
+        self.project
+            .dispatch(ProjectCommand::SetSceneTransitionOverride {
+                profile,
+                scene,
+                transition,
+            })?;
+        Ok("scene transition override updated")
     }
 
     /// Returns the current renderer-facing transition sample, retiring it at

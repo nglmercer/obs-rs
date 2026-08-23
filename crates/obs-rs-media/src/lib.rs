@@ -37,4 +37,8 @@ pub use pixel::{PixelFormat, RawVideoFrame};
 pub use scale::{FrameScaler, ScaleFilter};
 pub use time::{sleep_precise, FrameRate, Timestamp, SLEEP_SPIN_WINDOW};
 pub use transform::FrameTransform;
-pub use transition::{parse_rgba8_hex, FrameTransition};
+pub use transition::{
+    parse_rgba8_hex, FrameTransition, TransitionKind, TransitionSpec,
+    DEFAULT_TRANSITION_DURATION_MILLIS, MAX_TRANSITION_DURATION_MILLIS,
+    MIN_TRANSITION_DURATION_MILLIS,
+};

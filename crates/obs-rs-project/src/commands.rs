@@ -7,7 +7,7 @@ use super::{
     validation::{identifier, source_id},
 };
 use obs_rs_config::Config;
-use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
+use obs_rs_media::{FrameFilter, FrameTransform, TransitionSpec, VideoFormat};
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::{Identifier, MAX_IDENTIFIER_BYTES};
 use std::collections::HashSet;
@@ -103,6 +103,13 @@ pub enum ProjectCommand {
         profile: String,
         scene: String,
         name: String,
+    },
+    /// Replaces the optional transition policy used when a scene is taken to
+    /// program. `None` restores inheritance from the desktop transition.
+    SetSceneTransitionOverride {
+        profile: String,
+        scene: String,
+        transition: Option<TransitionSpec>,
     },
     /// Moves one scene to an existing position in the profile scene order.
     MoveScene {
@@ -359,6 +366,15 @@ impl Project {
                     .scene_mut(&scene_id)
                     .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
                 scene.set_name(&name)
+            }
+            ProjectCommand::SetSceneTransitionOverride {
+                profile,
+                scene,
+                transition,
+            } => {
+                let scene = scene_mut(self, &profile, &scene)?;
+                scene.set_transition_override(transition);
+                Ok(())
             }
             ProjectCommand::MoveScene {
                 profile,

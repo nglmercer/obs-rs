@@ -9,12 +9,10 @@ pub const MAX_SHORTCUT_TEXT_BYTES: usize = 64;
 pub const MAX_SHORTCUT_BINDINGS: usize = 64;
 pub const MAX_CONSOLE_COMMAND_BYTES: usize = 256;
 pub const MAX_WEB_REQUEST_BYTES: usize = 64 * 1024;
-/// Smallest accepted scene-transition duration in milliseconds.
-pub const MIN_TRANSITION_DURATION_MILLIS: u32 = 1;
-/// Largest accepted scene-transition duration in milliseconds.
-pub const MAX_TRANSITION_DURATION_MILLIS: u32 = 60_000;
+pub use obs_rs_media::{MAX_TRANSITION_DURATION_MILLIS, MIN_TRANSITION_DURATION_MILLIS};
 /// Default scene-transition duration in milliseconds.
-pub const DEFAULT_TRANSITION_DURATION_MILLIS: u32 = 300;
+pub const DEFAULT_TRANSITION_DURATION_MILLIS: u32 =
+    obs_rs_media::DEFAULT_TRANSITION_DURATION_MILLIS;
 /// Maximum number of scene items a desktop canvas selection retains.
 ///
 /// Selection is transient UI state, but it still crosses frontend boundaries

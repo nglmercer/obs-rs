@@ -1,6 +1,6 @@
 use std::fmt;
 
-use obs_rs_media::FrameTransition;
+use obs_rs_media::{FrameTransition, TransitionSpec};
 use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 
 use super::{error::UiError, MAX_SHORTCUT_KEY_BYTES, MAX_SHORTCUT_TEXT_BYTES};
@@ -438,6 +438,9 @@ pub enum UiCommand {
         transition: FrameTransition,
         duration_ms: u32,
     },
+    /// Persist or clear the transition override for the selected preview
+    /// scene. The override is stored on the destination scene in the project.
+    SetPreviewSceneTransition { transition: Option<TransitionSpec> },
     /// Set one mixer channel's linear gain in thousandths.
     SetMixerGain { id: String, gain_milli: u16 },
     /// Set one mixer channel's stereo pan in thousandths (`-1000..1000`).

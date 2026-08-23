@@ -21,7 +21,7 @@ use super::{
     MAX_PROJECT_BYTES,
 };
 use obs_rs_config::Config;
-use obs_rs_media::{FrameRate, FrameTransform, VideoFormat};
+use obs_rs_media::{FrameRate, FrameTransform, TransitionKind, TransitionSpec, VideoFormat};
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::{Identifier, Json};
 use std::collections::HashSet;
@@ -32,7 +32,9 @@ use crate::RenderBackendPreference;
 const FORMAT_TAG: &str = "obs-rs-project";
 
 /// Schema version this build writes.
-const FORMAT_VERSION: u32 = 6;
+const FORMAT_VERSION: u32 = 7;
+/// The format before per-scene transition policies were persisted.
+const SCENE_ORDER_FORMAT_VERSION: u32 = 6;
 /// The previous format, which had no explicit scene-order member.
 const PREVIOUS_FORMAT_VERSION: u32 = 5;
 /// The format before group targets were persisted.
@@ -89,10 +91,11 @@ impl Project {
             Some(NESTED_SCENE_FORMAT_VERSION) => NESTED_SCENE_FORMAT_VERSION,
             Some(GROUP_FORMAT_VERSION) => GROUP_FORMAT_VERSION,
             Some(PREVIOUS_FORMAT_VERSION) => PREVIOUS_FORMAT_VERSION,
+            Some(SCENE_ORDER_FORMAT_VERSION) => SCENE_ORDER_FORMAT_VERSION,
             Some(FORMAT_VERSION) => FORMAT_VERSION,
             Some(version) => {
                 return Err(invalid(format!(
-                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {NESTED_SCENE_FORMAT_VERSION}, {GROUP_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, and {FORMAT_VERSION}"
+                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {NESTED_SCENE_FORMAT_VERSION}, {GROUP_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, {SCENE_ORDER_FORMAT_VERSION}, and {FORMAT_VERSION}"
                 )))
             }
             None => return Err(invalid("missing or invalid `version`")),
@@ -105,7 +108,7 @@ impl Project {
             if version == LEGACY_FORMAT_VERSION {
                 decode_legacy_profile(&mut project, profile)?;
             } else {
-                decode_profile(&mut project, profile)?;
+                decode_profile(&mut project, profile, version)?;
             }
         }
 
@@ -164,6 +167,12 @@ fn encode_scene(scene: &SceneSpec) -> Json {
     Json::object([
         ("id", Json::string(scene.id.as_str())),
         ("name", Json::string(&scene.name)),
+        (
+            "transition",
+            scene
+                .transition_override
+                .map_or(Json::Null, encode_transition),
+        ),
         (
             "items",
             Json::Array(scene.items.iter().map(encode_item).collect()),
@@ -304,13 +313,13 @@ fn decode_profile_header(value: &Json) -> Result<Profile, ProjectError> {
     Ok(profile)
 }
 
-fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectError> {
+fn decode_profile(project: &mut Project, value: &Json, version: u32) -> Result<(), ProjectError> {
     let mut profile = decode_profile_header(value)?;
     for source in array_member(value, "sources")? {
         profile.add_source(decode_source(source)?)?;
     }
     for scene in array_member(value, "scenes")? {
-        profile.add_scene(decode_scene(scene, &profile)?)?;
+        profile.add_scene(decode_scene(scene, &profile, version)?)?;
     }
     if let Some(scene_order) = value.get("scene_order") {
         let scene_order = scene_order
@@ -332,14 +341,71 @@ fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectErro
     project.add_profile(profile)
 }
 
-fn decode_scene(value: &Json, profile: &Profile) -> Result<SceneSpec, ProjectError> {
+fn decode_scene(value: &Json, profile: &Profile, version: u32) -> Result<SceneSpec, ProjectError> {
     let mut scene = SceneSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
+    if version >= FORMAT_VERSION {
+        if let Some(transition) = value.get("transition") {
+            if !matches!(transition, Json::Null) {
+                scene.set_transition_override(Some(decode_transition(transition)?));
+            }
+        }
+    }
     for item in array_member(value, "items")? {
         let item = decode_item(item, 0)?;
         validate_item_sources(profile, &item)?;
         scene.add_item(item)?;
     }
     Ok(scene)
+}
+
+fn encode_transition(transition: TransitionSpec) -> Json {
+    let (kind, color) = match transition.kind() {
+        TransitionKind::Cut => ("cut", None),
+        TransitionKind::CrossFade => ("cross_fade", None),
+        TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color)),
+    };
+    let mut members = vec![
+        ("kind", Json::string(kind)),
+        ("duration_ms", Json::number(transition.duration_millis())),
+    ];
+    if let Some(color) = color {
+        members.push((
+            "color",
+            Json::Array(color.into_iter().map(Json::number).collect()),
+        ));
+    }
+    Json::object(members)
+}
+
+fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
+    let kind = string_member(value, "kind")?;
+    let duration_millis = number_member(value, "duration_ms")?;
+    let transition = match kind {
+        "cut" => TransitionSpec::new(TransitionKind::Cut, duration_millis),
+        "cross_fade" => TransitionSpec::new(TransitionKind::CrossFade, duration_millis),
+        "fade_to_color" => {
+            let color = array_member(value, "color")?;
+            if color.len() != 4 {
+                return Err(invalid("transition color must contain four channels"));
+            }
+            let color = color
+                .iter()
+                .map(|channel| {
+                    channel
+                        .as_number::<u8>()
+                        .ok_or_else(|| invalid("transition color channel is out of range"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            TransitionSpec::new(
+                TransitionKind::FadeToColor {
+                    color: [color[0], color[1], color[2], color[3]],
+                },
+                duration_millis,
+            )
+        }
+        other => return Err(invalid(format!("unknown scene transition kind: {other}"))),
+    };
+    transition.map_err(ProjectError::Media)
 }
 
 fn validate_item_sources(profile: &Profile, item: &SceneItemSpec) -> Result<(), ProjectError> {

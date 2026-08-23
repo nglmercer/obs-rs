@@ -671,6 +671,42 @@ fn transitions_are_deterministic_and_validate_progress() {
 }
 
 #[test]
+fn transition_specs_keep_policy_separate_from_render_progress() {
+    let color = [16, 32, 64, 128];
+    let spec = TransitionSpec::fade_to_color(450, color).expect("valid policy");
+    assert_eq!(spec.duration_millis(), 450);
+    assert_eq!(spec.kind(), TransitionKind::FadeToColor { color });
+    assert_eq!(
+        spec.at_progress(500).expect("render sample"),
+        FrameTransition::FadeToColor {
+            progress_milli: 500,
+            color,
+        }
+    );
+    assert_eq!(
+        TransitionSpec::from_frame_transition(
+            FrameTransition::CrossFade {
+                progress_milli: 500,
+            },
+            300,
+        )
+        .expect("cross-fade policy")
+        .kind(),
+        TransitionKind::CrossFade
+    );
+    assert_eq!(
+        TransitionSpec::cross_fade(0),
+        Err(MediaError::InvalidTransitionDuration { duration_millis: 0 })
+    );
+    assert_eq!(
+        TransitionSpec::cross_fade(60_001),
+        Err(MediaError::InvalidTransitionDuration {
+            duration_millis: 60_001
+        })
+    );
+}
+
+#[test]
 fn fade_to_color_covers_then_reveals_destination() {
     let source = VideoFrame::solid(format(), Timestamp::ZERO, [255, 0, 0, 255]);
     let destination = VideoFrame::solid(format(), Timestamp::from_millis(10), [0, 0, 255, 255]);

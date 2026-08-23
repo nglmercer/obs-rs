@@ -2,7 +2,7 @@ use super::*;
 use obs_rs_config::Config;
 use obs_rs_media::{
     ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameRate, FrameTransform,
-    LumaKey, VideoFormat,
+    LumaKey, TransitionKind, TransitionSpec, VideoFormat,
 };
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
@@ -85,6 +85,51 @@ fn project_round_trips_deterministically_with_escaped_values() {
     assert!(
         encoded.contains(r#""format": "obs-rs-project""#),
         "{encoded}"
+    );
+}
+
+#[test]
+fn scene_transition_overrides_round_trip_and_clear_through_project_commands() {
+    let mut project = project();
+    let transition = TransitionSpec::fade_to_color(450, [0, 255, 0, 128]).expect("transition");
+    project
+        .apply(ProjectCommand::SetSceneTransitionOverride {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            transition: Some(transition),
+        })
+        .expect("set scene transition");
+
+    let scene = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .expect("scene");
+    assert_eq!(scene.transition_override(), Some(transition));
+    assert_eq!(
+        transition.kind(),
+        TransitionKind::FadeToColor {
+            color: [0, 255, 0, 128]
+        }
+    );
+
+    let encoded = project.serialize();
+    assert!(encoded.contains(r#""kind": "fade_to_color""#), "{encoded}");
+    let decoded = Project::parse(&encoded).expect("transition project parses");
+    assert_eq!(decoded, project);
+
+    project
+        .apply(ProjectCommand::SetSceneTransitionOverride {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            transition: None,
+        })
+        .expect("clear scene transition");
+    assert_eq!(
+        project
+            .profile("live")
+            .and_then(|profile| profile.scene("main"))
+            .and_then(SceneSpec::transition_override),
+        None
     );
 }
 
@@ -676,10 +721,10 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
         Err(ProjectError::InvalidDocument { .. })
     ));
 
-    let future = encoded.replace(r#""version": 6"#, r#""version": 7"#);
+    let future = encoded.replace(r#""version": 7"#, r#""version": 8"#);
     let error = Project::parse(&future).expect_err("a newer schema is not guessed at");
     assert!(
-        format!("{error}").contains("unsupported project schema version 7"),
+        format!("{error}").contains("unsupported project schema version 8"),
         "{error}"
     );
 }
@@ -688,7 +733,7 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
 fn parser_reports_the_line_a_syntax_error_is_on() {
     let broken = project()
         .serialize()
-        .replace(r#""version": 6"#, r#""version": ?"#);
+        .replace(r#""version": 7"#, r#""version": ?"#);
 
     let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
     match error {
@@ -1427,7 +1472,7 @@ fn previous_schema_preserves_serialized_scene_array_order_without_scene_order_me
         .expect("scene order end");
     let mut previous = encoded;
     previous.replace_range(order_start..order_end, "");
-    previous = previous.replace(r#""version": 6"#, r#""version": 5"#);
+    previous = previous.replace(r#""version": 7"#, r#""version": 5"#);
 
     let decoded = Project::parse(&previous).expect("version five project");
     let scene_ids = decoded
@@ -1871,7 +1916,7 @@ fn version_one_scene_sources_migrate_to_registry_and_items() {
     assert_eq!(profile.source("camera").expect("source").filters().len(), 1);
 
     let encoded = migrated.serialize();
-    assert!(encoded.contains(r#""version": 6"#), "{encoded}");
+    assert!(encoded.contains(r#""version": 7"#), "{encoded}");
     assert!(encoded.contains(r#""items""#), "{encoded}");
     assert_eq!(
         Project::parse(&encoded).expect("new format parses"),

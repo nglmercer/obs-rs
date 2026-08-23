@@ -57,7 +57,8 @@
               "visible": false
             }
           ],
-          "name": "Intermission"
+          "name": "Intermission",
+          "transition": null
         },
         {
           "id": "preview",
@@ -83,7 +84,8 @@
               "visible": true
             }
           ],
-          "name": "Preview"
+          "name": "Preview",
+          "transition": null
         },
         {
           "id": "program",
@@ -109,7 +111,8 @@
               "visible": true
             }
           ],
-          "name": "Program"
+          "name": "Program",
+          "transition": null
         }
       ],
       "sources": [
@@ -170,5 +173,5 @@
     }
   ],
   "title": "OBS-RS Studio",
-  "version": 6
+  "version": 7
 }

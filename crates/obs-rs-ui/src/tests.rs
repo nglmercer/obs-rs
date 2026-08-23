@@ -3,7 +3,9 @@ use crate::helpers::escape_html;
 use obs_rs_audio::AudioBuffer;
 use obs_rs_audio::AudioFormat;
 use obs_rs_config::Config;
-use obs_rs_media::{FrameRate, FrameTransition, MediaError, Timestamp, VideoFormat};
+use obs_rs_media::{
+    FrameRate, FrameTransition, MediaError, Timestamp, TransitionSpec, VideoFormat,
+};
 use obs_rs_project::{
     Profile, Project, ProjectCommand, ProjectFileStore, SceneItemDuplicateMode, SceneItemSpec,
     SceneSpec, SourceSpec,
@@ -511,6 +513,55 @@ fn project_commands_keep_dirty_state_and_transitions_validate() {
         })
         .expect("take preview");
     assert_eq!(state.program_scene(), state.preview_scene());
+}
+
+#[test]
+fn preview_scene_transition_override_is_persisted_and_used_by_take() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("program scene");
+    let override_spec = TransitionSpec::fade_to_color(450, [0, 255, 0, 128]).expect("transition");
+    state
+        .dispatch(UiCommand::SetPreviewSceneTransition {
+            transition: Some(override_spec),
+        })
+        .expect("set preview scene override");
+
+    let persisted = Project::parse(&state.project_document()).expect("persisted project");
+    assert_eq!(
+        persisted
+            .profile("live")
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(SceneSpec::transition_override),
+        Some(override_spec)
+    );
+
+    state
+        .dispatch(UiCommand::TakePreview {
+            transition: FrameTransition::Cut,
+            duration_ms: 1,
+        })
+        .expect("take preview");
+    assert_eq!(
+        state.transition(),
+        FrameTransition::FadeToColor {
+            progress_milli: 500,
+            color: [0, 255, 0, 128],
+        }
+    );
+    assert!(matches!(
+        state
+            .transition_snapshot(Instant::now())
+            .expect("active transition")
+            .transition(),
+        FrameTransition::FadeToColor {
+            progress_milli,
+            color: [0, 255, 0, 128],
+        } if progress_milli < 1_000
+    ));
 }
 
 #[test]

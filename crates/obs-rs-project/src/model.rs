@@ -1,5 +1,5 @@
 use obs_rs_config::Config;
-use obs_rs_media::{FrameTransform, VideoFormat};
+use obs_rs_media::{FrameTransform, TransitionSpec, VideoFormat};
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::Identifier;
 use std::{
@@ -719,6 +719,9 @@ fn item_references_scene(item: &SceneItemSpec, scene_id: &Identifier) -> bool {
 pub struct SceneSpec {
     pub(crate) id: Identifier,
     pub(crate) name: String,
+    /// Optional transition policy applied when this scene is taken to program.
+    /// `None` inherits the desktop's current transition selection.
+    pub(crate) transition_override: Option<TransitionSpec>,
     /// Composition order, which is part of the scene's meaning.
     pub(crate) items: Vec<SceneItemSpec>,
     /// O(1) item lookup and membership mirror. Values are indices into the
@@ -740,6 +743,7 @@ impl SceneSpec {
         Ok(Self {
             id: identifier(id, "scene id")?,
             name: name.to_owned(),
+            transition_override: None,
             items: Vec::new(),
             item_ids: HashMap::new(),
         })
@@ -755,6 +759,17 @@ impl SceneSpec {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the optional transition policy used when this scene is taken.
+    #[must_use]
+    pub const fn transition_override(&self) -> Option<TransitionSpec> {
+        self.transition_override
+    }
+
+    /// Replaces the optional transition policy used when this scene is taken.
+    pub fn set_transition_override(&mut self, transition: Option<TransitionSpec>) {
+        self.transition_override = transition;
     }
 
     /// Returns scene items in compositor order.

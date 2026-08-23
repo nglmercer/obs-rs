@@ -229,6 +229,11 @@ impl DesktopState {
                 transition,
                 duration_ms,
             } => self.take_preview(transition, duration_ms)?,
+            UiCommand::SetPreviewSceneTransition { transition } => {
+                let message = self.set_preview_scene_transition(transition)?;
+                self.active_transition = None;
+                message
+            }
             UiCommand::SetMixerGain { id, gain_milli } => {
                 self.set_mixer_gain(&id, gain_milli)?;
                 "mixer gain updated"
