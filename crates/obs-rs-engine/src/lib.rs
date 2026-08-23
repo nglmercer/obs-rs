@@ -68,11 +68,7 @@ use obs_rs_output::{
     WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
-use obs_rs_output_gstreamer::{
-    discover_interrupted_remux_candidates, recover_interrupted_remux_recording,
-    GStreamerCapabilitySnapshot, GStreamerError, GStreamerOutputSession, NativeOutputState,
-    ProductionDestination, ProductionPipelinePlan,
-};
+use obs_rs_output_gstreamer::GStreamerCapabilitySnapshot;
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
     write_interrupted_remux_manifest, AudioEncoderCapability, OutputCapabilitiesSnapshot,

@@ -3122,8 +3122,7 @@ fn exercise_capture_device_properties_window(
     let mut settings = source_settings("camera_capture").expect("camera defaults");
     let camera_id = crate::capture_devices("camera_capture")
         .first()
-        .map(|(id, _)| id.clone())
-        .unwrap_or_else(|| "nokhwa-camera-0".to_owned());
+        .map_or_else(|| "nokhwa-camera-0".to_owned(), |(id, _)| id.clone());
     settings
         .set("device_id", &camera_id)
         .expect("Nokhwa camera selection");
