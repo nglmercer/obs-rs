@@ -61,7 +61,7 @@ pub use sync::{
     SyncState,
 };
 pub use types::{
-    AudioFormat, AudioMonitorMode, AudioMonitorTapId, AudioSourceId, MAX_AUDIO_FRAMES,
-    MAX_CALLBACK_CORRECTION_PPM,
+    AudioChannelLayout, AudioFormat, AudioMonitorMode, AudioMonitorTapId, AudioSourceId,
+    MAX_AUDIO_FRAMES, MAX_CALLBACK_CORRECTION_PPM,
 };
 pub use worker::{AudioCancellationToken, AudioWorker, AudioWorkerReport};

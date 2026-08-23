@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use obs_rs_audio::{AudioMonitorMode, MAX_AUDIO_SYNC_OFFSET_MILLISECONDS};
+use obs_rs_audio::{AudioChannelLayout, AudioMonitorMode, MAX_AUDIO_SYNC_OFFSET_MILLISECONDS};
 use obs_rs_config::Config;
 use obs_rs_media::{ScaleFilter, VideoFormat};
 use obs_rs_output::{
@@ -196,7 +196,14 @@ pub(crate) const FRAME_RATES: [(u32, u32); 6] = [
 pub(crate) const SAMPLE_RATES: [u32; 3] = [44_100, 48_000, 96_000];
 
 /// Channel layouts offered on the Audio page.
-pub(crate) const CHANNEL_LAYOUTS: [u16; 2] = [2, 1];
+pub(crate) const CHANNEL_LAYOUTS: [AudioChannelLayout; 6] = [
+    AudioChannelLayout::Stereo,
+    AudioChannelLayout::Mono,
+    AudioChannelLayout::TwoPointOne,
+    AudioChannelLayout::Quad,
+    AudioChannelLayout::FivePointOne,
+    AudioChannelLayout::SevenPointOne,
+];
 
 /// Per-channel positive audio sync offsets accepted by the Audio page.
 pub(crate) const AUDIO_SYNC_OFFSET_RANGE: std::ops::RangeInclusive<u32> =
@@ -995,7 +1002,11 @@ impl AppSettings {
             channels: config
                 .get("audio_channels")
                 .and_then(|value| value.parse::<u16>().ok())
-                .and_then(|count| CHANNEL_LAYOUTS.iter().position(|value| *value == count))
+                .and_then(|count| {
+                    CHANNEL_LAYOUTS
+                        .iter()
+                        .position(|layout| layout.channels() == count)
+                })
                 .unwrap_or(defaults.channels),
             audio_input_sync_offset_millis: config
                 .get("audio_input_sync_offset_millis")
@@ -1776,7 +1787,7 @@ impl AppSettings {
 
     /// Returns the selected channel count.
     pub(crate) fn channel_count(&self) -> u16 {
-        CHANNEL_LAYOUTS[self.channels.min(CHANNEL_LAYOUTS.len() - 1)]
+        CHANNEL_LAYOUTS[self.channels.min(CHANNEL_LAYOUTS.len() - 1)].channels()
     }
 
     /// Builds the complete token set for the selected theme and style, with
@@ -2809,6 +2820,25 @@ mod tests {
             audio_monitor_mode_from_id(audio_monitor_mode_id(AudioMonitorMode::MonitorOnly)),
             Some(AudioMonitorMode::MonitorOnly)
         );
+    }
+
+    #[test]
+    fn standard_audio_layout_indices_round_trip_by_channel_count() {
+        let mut config = AppSettings::default().to_config();
+        config.set("audio_channels", "6").expect("layout key");
+
+        let decoded = AppSettings::from_config(&config);
+
+        assert_eq!(decoded.channels, 4);
+        assert_eq!(decoded.channel_count(), 6);
+        assert_eq!(
+            CHANNEL_LAYOUTS[decoded.channels],
+            AudioChannelLayout::FivePointOne
+        );
+
+        config.set("audio_channels", "7").expect("discrete key");
+        let fallback = AppSettings::from_config(&config);
+        assert_eq!(fallback.channels, AppSettings::default().channels);
     }
 
     #[test]

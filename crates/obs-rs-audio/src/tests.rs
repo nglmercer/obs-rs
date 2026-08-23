@@ -69,6 +69,50 @@ fn validates_interleaved_buffers() {
 }
 
 #[test]
+fn audio_formats_keep_standard_channel_layouts() {
+    assert_eq!(
+        AudioFormat::new(48_000, 1).expect("mono format").layout(),
+        AudioChannelLayout::Mono
+    );
+    assert_eq!(
+        AudioFormat::new(48_000, 2).expect("stereo format").layout(),
+        AudioChannelLayout::Stereo
+    );
+    assert_eq!(
+        AudioFormat::new(48_000, 3).expect("2.1 format").layout(),
+        AudioChannelLayout::TwoPointOne
+    );
+    assert_eq!(
+        AudioFormat::new(48_000, 4).expect("quad format").layout(),
+        AudioChannelLayout::Quad
+    );
+    assert_eq!(
+        AudioFormat::new(48_000, 6).expect("5.1 format").layout(),
+        AudioChannelLayout::FivePointOne
+    );
+    assert_eq!(
+        AudioFormat::new(48_000, 8).expect("7.1 format").layout(),
+        AudioChannelLayout::SevenPointOne
+    );
+    assert_eq!(
+        AudioFormat::new(48_000, 7)
+            .expect("discrete format")
+            .layout(),
+        AudioChannelLayout::Discrete(7)
+    );
+    assert_eq!(
+        AudioFormat::with_layout(48_000, AudioChannelLayout::FivePointOne)
+            .expect("named format")
+            .channels(),
+        6
+    );
+    assert_eq!(
+        AudioFormat::with_layout(48_000, AudioChannelLayout::Discrete(0)),
+        Err(AudioError::InvalidFormat)
+    );
+}
+
+#[test]
 fn simulated_monitor_sink_validates_format_and_lifecycle() {
     let provider = SimulatedAudioProvider::new();
     let devices = provider.discover_outputs().expect("monitor catalog");

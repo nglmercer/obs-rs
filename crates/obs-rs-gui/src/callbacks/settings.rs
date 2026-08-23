@@ -45,7 +45,8 @@ use crate::{
         aspect_ratio_text, parse_resolution, resolution_text, FpsMode, OutputMode,
         RecordingQuality, UiDensity, UiStyle, VideoSettings, FONT_SIZE_RANGE,
     },
-    I18n, MainWindow, Metrics, OutputRuntime, Palette, PreviewSurface, SettingsWindow, UiMetrics,
+    I18n, MainWindow, Metrics, OutputRuntime, Palette, PreviewSurface, SettingsText,
+    SettingsWindow, UiMetrics,
 };
 
 /// Owns the settings window and the committed settings document.
@@ -368,6 +369,7 @@ pub(crate) fn populate_settings_models(window: &SettingsWindow) {
 /// Model contents that never change while the application runs.
 fn populate_static_models(window: &SettingsWindow) {
     let text = window.global::<I18n>().get_text().settings_ui;
+    populate_channel_names(window, &text);
     window.set_language_names(string_model(
         UiLocale::supported()
             .iter()
@@ -439,9 +441,6 @@ fn populate_static_models(window: &SettingsWindow) {
             .iter()
             .map(|rate| SharedString::from(format!("{rate} Hz"))),
     ));
-    window.set_channel_names(string_model(
-        [text.channels_stereo, text.channels_mono].into_iter(),
-    ));
     window.set_resolution_names(string_model(
         RESOLUTIONS
             .iter()
@@ -466,6 +465,20 @@ fn populate_static_models(window: &SettingsWindow) {
         ["None", "AES-128", "AES-192", "AES-256"]
             .into_iter()
             .map(SharedString::from),
+    ));
+}
+
+fn populate_channel_names(window: &SettingsWindow, text: &SettingsText) {
+    window.set_channel_names(string_model(
+        [
+            text.channels_stereo.clone(),
+            text.channels_mono.clone(),
+            text.channels_two_point_one.clone(),
+            text.channels_quad.clone(),
+            text.channels_five_point_one.clone(),
+            text.channels_seven_point_one.clone(),
+        ]
+        .into_iter(),
     ));
 }
 
@@ -1009,7 +1022,7 @@ fn load_draft(
 
     let audio_format = state.borrow().audio_format();
     window.set_sample_rate_index(index_of(&SAMPLE_RATES, &audio_format.sample_rate()));
-    window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.channels()));
+    window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.layout()));
     window.set_audio_input_sync_offset(
         i32::try_from(settings.audio_input_sync_offset_millis).unwrap_or(0),
     );
