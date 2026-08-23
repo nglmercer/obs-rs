@@ -214,6 +214,7 @@ export component MainWindow inherits Window {
         callback select-profile(string);
         callback set-locale(string);
         callback select-source(string);
+        callback navigate-source-selection(int, int);
         callback toggle-source-visibility(string);
         callback toggle-source-locked(string);
         callback move-source(string, int);
@@ -743,6 +744,9 @@ export component MainWindow inherits Window {
                 remove-scene(id) => { root.remove-scene(id); }
                 open-scene-projector(id) => { root.open-scene-projector(id); }
                 select-source(id) => { root.select-source(id); }
+                navigate-source-selection(direction, mode) => {
+                    root.navigate-source-selection(direction, mode);
+                }
                 open-properties(id) => { root.open-source-properties-for(id); }
                 open-filters(id) => { root.open-source-filters-for(id); }
                 open-transform(id) => { root.open-source-transform-for(id); }

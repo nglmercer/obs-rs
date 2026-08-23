@@ -195,6 +195,19 @@ fn install_source_list_callbacks(
     });
 
     let weak = ui.as_weak();
+    let navigation_state = Rc::clone(state);
+    let navigation_surface = Rc::clone(surface);
+    ui.on_navigate_source_selection(move |direction, mode| {
+        navigate_source_selection_and_refresh(
+            &weak,
+            &navigation_state,
+            &navigation_surface,
+            direction,
+            mode,
+        );
+    });
+
+    let weak = ui.as_weak();
     let visibility_state = Rc::clone(state);
     let visibility_surface = Rc::clone(surface);
     ui.on_toggle_source_visibility(move |id| {
@@ -360,6 +373,78 @@ fn install_source_list_callbacks(
     });
 }
 
+/// Resolves one keyboard navigation request against the active scene's
+/// top-level source order. Nested rows are deliberately excluded until their
+/// selection projection is complete; this keeps keyboard navigation aligned
+/// with the rows that currently own Rust selection state.
+fn navigate_source_selection_and_refresh(
+    weak: &slint::Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    direction: i32,
+    mode: i32,
+) {
+    let target = {
+        let state = state.borrow();
+        let Some(scene_id) = state.preview_scene() else {
+            return;
+        };
+        let Some(scene) = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene(scene_id))
+        else {
+            return;
+        };
+        let current = state.selected_source().and_then(|selected| {
+            scene
+                .items()
+                .iter()
+                .position(|item| item.id().as_str() == selected)
+        });
+        let Some(index) = source_navigation_index(current, scene.items().len(), direction) else {
+            return;
+        };
+        if current == Some(index) {
+            return;
+        }
+        scene.items().get(index).map(|item| item.id().to_string())
+    };
+    let Some(target) = target else {
+        return;
+    };
+    let command = match mode {
+        0 => UiCommand::SelectSource { id: target },
+        1 => UiCommand::SelectSources {
+            ids: vec![target],
+            additive: true,
+        },
+        2 => UiCommand::ToggleSourceSelection { id: target },
+        _ => return,
+    };
+    dispatch_and_refresh(weak, state, surface, command);
+}
+
+/// Returns the next top-level source index for a bounded list-navigation
+/// request. Edges do not wrap, matching the native source list's behavior.
+fn source_navigation_index(current: Option<usize>, count: usize, direction: i32) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    match direction {
+        -2 => Some(0),
+        -1 => current
+            .filter(|&index| index < count)
+            .map_or(Some(count - 1), |index| index.checked_sub(1)),
+        1 => current
+            .filter(|&index| index < count)
+            .map_or(Some(0), |index| (index + 1 < count).then_some(index + 1)),
+        2 => Some(count - 1),
+        _ => None,
+    }
+}
+
 fn install_source_property_callbacks(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -375,4 +460,24 @@ fn install_source_property_callbacks(
         let document = ui.get_source_settings().to_string();
         apply_source_settings_and_refresh(&ui, &settings_state, &settings_surface, &document);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_navigation_index;
+
+    #[test]
+    fn source_navigation_is_bounded_and_non_wrapping() {
+        assert_eq!(source_navigation_index(None, 3, 1), Some(0));
+        assert_eq!(source_navigation_index(None, 3, -1), Some(2));
+        assert_eq!(source_navigation_index(Some(1), 3, -1), Some(0));
+        assert_eq!(source_navigation_index(Some(1), 3, 1), Some(2));
+        assert_eq!(source_navigation_index(Some(0), 3, -1), None);
+        assert_eq!(source_navigation_index(Some(2), 3, 1), None);
+        assert_eq!(source_navigation_index(Some(1), 3, -2), Some(0));
+        assert_eq!(source_navigation_index(Some(1), 3, 2), Some(2));
+        assert_eq!(source_navigation_index(Some(9), 3, 1), Some(0));
+        assert_eq!(source_navigation_index(None, 0, 1), None);
+        assert_eq!(source_navigation_index(Some(1), 3, 99), None);
+    }
 }

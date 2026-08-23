@@ -1699,6 +1699,25 @@ fn exercise_group_source_callbacks(
         .iter()
         .any(|row| row.target == "overlay-group/background"));
 
+    ui.invoke_navigate_source_selection(1, 0);
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("overlay-group"),
+        "Down selects the next visible top-level source"
+    );
+    ui.invoke_navigate_source_selection(-1, 1);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["overlay-group", "background"],
+        "Shift navigation adds the adjacent source without duplicating state"
+    );
+    ui.invoke_navigate_source_selection(2, 2);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["background"],
+        "Ctrl navigation toggles the resolved source"
+    );
+
     let transform = crate::install_source_transform_window(ui, state, surface)
         .expect("nested transform window should instantiate");
     ui.invoke_open_source_transform_for("overlay-group/background".into());

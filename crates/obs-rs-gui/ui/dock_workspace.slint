@@ -63,6 +63,7 @@ export component DockWorkspace inherits Rectangle {
     callback remove-scene(string);
     callback open-scene-projector(string);
     callback select-source(string);
+    callback navigate-source-selection(int, int);
     callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);
@@ -269,6 +270,9 @@ export component DockWorkspace inherits Rectangle {
             remove-scene(id) => { root.remove-scene(id); }
             open-scene-projector(id) => { root.open-scene-projector(id); }
             select-source(id) => { root.select-source(id); }
+            navigate-source-selection(direction, mode) => {
+                root.navigate-source-selection(direction, mode);
+            }
             open-properties(id) => { root.open-properties(id); }
             open-filters(id) => { root.open-filters(id); }
             open-transform(id) => { root.open-transform(id); }

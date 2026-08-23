@@ -28,6 +28,11 @@ export component SourceDock inherits Rectangle {
     callback close-panel(int);
     callback open-modal(int);
     callback select-source(string);
+    // Navigation stays a typed callback so Rust can resolve the visible
+    // source order from the active scene instead of duplicating it in Slint.
+    // direction: -2 = first, -1 = previous, 1 = next, 2 = last.
+    // mode: 0 = replace, 1 = add, 2 = toggle.
+    callback navigate-source-selection(int, int);
     callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);
@@ -67,8 +72,32 @@ export component SourceDock inherits Rectangle {
             VerticalBox {
                 padding: 8px;
                 spacing: 6px;
-                ScrollView {
+                source-focus := FocusScope {
                     vertical-stretch: 1;
+                    focus-on-click: true;
+                    focus-on-tab-navigation: true;
+                    key-pressed(event) => {
+                        if !event.modifiers.alt
+                            && (event.text == Key.UpArrow
+                                || event.text == Key.DownArrow
+                                || event.text == Key.Home
+                                || event.text == Key.End) {
+                            let direction = event.text == Key.UpArrow
+                                ? -1
+                                : (event.text == Key.DownArrow
+                                    ? 1
+                                    : (event.text == Key.Home ? -2 : 2));
+                            let mode = event.modifiers.control
+                                ? 2
+                                : (event.modifiers.shift ? 1 : 0);
+                            root.navigate-source-selection(direction, mode);
+                            return accept;
+                        }
+                        reject
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
                     // Rows stack from the top of the dock the way a
                     // list widget does, instead of centring in the view.
                     VerticalLayout {
@@ -115,11 +144,13 @@ export component SourceDock inherits Rectangle {
                             width: 100%;
                             height: 100%;
                             clicked => {
+                                source-focus.focus();
                                 if !source.nested { select-source(source.id); }
                             }
                             pointer-event(event) => {
                                 if event.kind == PointerEventKind.down
                                     && event.button == PointerEventButton.right {
+                                    source-focus.focus();
                                     if !source.nested { select-source(source.id); }
                                     source-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
                                 }
@@ -154,6 +185,7 @@ export component SourceDock inherits Rectangle {
                                 clicked => toggle-source-locked(source.id);
                             }
                         }
+                    }
                     }
                     }
                 }

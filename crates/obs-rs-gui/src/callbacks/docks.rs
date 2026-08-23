@@ -718,6 +718,12 @@ fn forward_to_studio(
     forward!(on_remove_scene, invoke_remove_scene, id);
     forward!(on_open_scene_projector, invoke_open_scene_projector, id);
     forward!(on_select_source, invoke_select_source, id);
+    forward!(
+        on_navigate_source_selection,
+        invoke_navigate_source_selection,
+        direction,
+        mode
+    );
     forward!(on_open_properties, invoke_open_source_properties_for, id);
     forward!(on_open_filters, invoke_open_source_filters_for, id);
     forward!(
