@@ -674,7 +674,7 @@ pub(crate) struct SelectionOverlay {
     pub(crate) path: String,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CanvasPoint {
     x: i64,
     y: i64,
@@ -730,19 +730,22 @@ fn rotated_bounds(
 /// item's size relative to the canvas and its translation is the top-left
 /// corner of the unrotated visible source. Rotation expands this to the
 /// axis-aligned bounds used by hit testing and the selection overlay.
-pub(crate) fn item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRect {
+fn local_item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRect {
     let (source_width, source_height) = visible_source_extent(transform, canvas);
-    let width = (source_width * i64::from(transform.scale_x_milli()) / UNIT_SCALE_MILLI).max(1);
-    let height = (source_height * i64::from(transform.scale_y_milli()) / UNIT_SCALE_MILLI).max(1);
+    ItemRect {
+        x: i64::from(transform.translate_x()),
+        y: i64::from(transform.translate_y()),
+        width: (source_width * i64::from(transform.scale_x_milli()) / UNIT_SCALE_MILLI).max(1),
+        height: (source_height * i64::from(transform.scale_y_milli()) / UNIT_SCALE_MILLI).max(1),
+    }
+}
+
+pub(crate) fn item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRect {
+    let local = local_item_rect(transform, canvas);
     if transform.is_rotated() {
-        rotated_bounds(transform, width, height)
+        rotated_bounds(transform, local.width, local.height)
     } else {
-        ItemRect {
-            x: i64::from(transform.translate_x()),
-            y: i64::from(transform.translate_y()),
-            width,
-            height,
-        }
+        local
     }
 }
 
@@ -1254,6 +1257,128 @@ fn transform_for_rect(base: FrameTransform, rect: ItemRect, canvas: (u32, u32)) 
     .unwrap_or(base)
 }
 
+/// Rotates a floating-point vector with the same clockwise matrix used by the
+/// media renderer. The inverse form maps a screen-space pointer delta into the
+/// selected item's local resize axes.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "the pointer/transform matrix intentionally uses f64 for sub-pixel rotation geometry"
+)]
+fn rotate_canvas_vector(
+    dx: f64,
+    dy: f64,
+    rotation_milli_degrees: i32,
+    inverse: bool,
+) -> (f64, f64) {
+    let angle = f64::from(rotation_milli_degrees) / 180_000.0 * std::f64::consts::PI;
+    let (sin, cos) = angle.sin_cos();
+    if inverse {
+        (cos * dx + sin * dy, -sin * dx + cos * dy)
+    } else {
+        (cos * dx - sin * dy, sin * dx + cos * dy)
+    }
+}
+
+const fn fixed_handle_signs(handle: i32) -> Option<(i64, i64)> {
+    match handle {
+        1 => Some((1, 1)),
+        2 => Some((0, 1)),
+        3 => Some((-1, 1)),
+        4 => Some((-1, 0)),
+        5 => Some((-1, -1)),
+        6 => Some((0, -1)),
+        7 => Some((1, -1)),
+        8 => Some((1, 0)),
+        _ => None,
+    }
+}
+
+/// Rebuilds a rotated transform from its local-space rectangle while keeping
+/// the opposite visual edge/corner fixed in canvas space.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "the fixed opposite handle is solved through the same f64 rotation matrix as the renderer"
+)]
+fn transform_for_rotated_local_rect(
+    base: FrameTransform,
+    local: ItemRect,
+    handle: i32,
+    canvas: (u32, u32),
+) -> FrameTransform {
+    let Some((fixed_sign_x, fixed_sign_y)) = fixed_handle_signs(handle) else {
+        return base;
+    };
+    let old = local_item_rect(base, canvas);
+    let new_width = local.width.max(MINIMUM_ITEM_PIXELS);
+    let new_height = local.height.max(MINIMUM_ITEM_PIXELS);
+    let (source_width, source_height) = visible_source_extent(base, canvas);
+    let scale_x = scale_for_extent(new_width, source_width);
+    let scale_y = scale_for_extent(new_height, source_height);
+    let actual_width = source_width * i64::from(scale_x) / UNIT_SCALE_MILLI;
+    let actual_height = source_height * i64::from(scale_y) / UNIT_SCALE_MILLI;
+    let old_center = (
+        old.x as f64 + old.width as f64 / 2.0,
+        old.y as f64 + old.height as f64 / 2.0,
+    );
+    let old_fixed_offset = (
+        fixed_sign_x as f64 * old.width as f64 / 2.0,
+        fixed_sign_y as f64 * old.height as f64 / 2.0,
+    );
+    let fixed_point = {
+        let (offset_x, offset_y) = rotate_canvas_vector(
+            old_fixed_offset.0,
+            old_fixed_offset.1,
+            base.rotation_milli_degrees(),
+            false,
+        );
+        (old_center.0 + offset_x, old_center.1 + offset_y)
+    };
+    let new_fixed_offset = (
+        fixed_sign_x as f64 * actual_width as f64 / 2.0,
+        fixed_sign_y as f64 * actual_height as f64 / 2.0,
+    );
+    let (offset_x, offset_y) = rotate_canvas_vector(
+        new_fixed_offset.0,
+        new_fixed_offset.1,
+        base.rotation_milli_degrees(),
+        false,
+    );
+    let new_center = (fixed_point.0 - offset_x, fixed_point.1 - offset_y);
+    let translate_x = rounded_canvas_coordinate(new_center.0 - actual_width as f64 / 2.0);
+    let translate_y = rounded_canvas_coordinate(new_center.1 - actual_height as f64 / 2.0);
+    transform_with_geometry(base, scale_x, scale_y, translate_x, translate_y)
+}
+
+fn snap_rotated_resize_delta(
+    base: FrameTransform,
+    handle: i32,
+    dx: i64,
+    dy: i64,
+    canvas: (u32, u32),
+    guides: &SnapGuides,
+    settings: SnapSettings,
+) -> (i64, i64) {
+    if !settings.enabled || settings.distance <= 0 || !(1..=8).contains(&handle) {
+        return (dx, dy);
+    }
+    let index = usize::try_from(handle - 1).unwrap_or(0);
+    let point = oriented_handle_points(base, canvas)[index];
+    let target_x = point.x.saturating_add(dx);
+    let target_y = point.y.saturating_add(dy);
+    (
+        dx.saturating_add(snap_delta(
+            [target_x; 3],
+            &guides.x[..guides.x_len],
+            settings.distance,
+        )),
+        dy.saturating_add(snap_delta(
+            [target_y; 3],
+            &guides.y[..guides.y_len],
+            settings.distance,
+        )),
+    )
+}
+
 /// Rotates a canvas-space delta into or out of the source-local frame.
 ///
 /// The media transform uses the same clockwise matrix as the renderer. Crop
@@ -1750,16 +1875,48 @@ pub(crate) fn install_canvas_callbacks(
                 i64::from(dy),
                 canvas,
             );
+        } else if draft.items.len() == 1
+            && draft.items[0].transform.is_rotated()
+            && (1..=8).contains(&handle)
+        {
+            let snap_settings = SnapSettings {
+                enabled: drag_controller.canvas_state().snapping().enabled && modifiers.snapping,
+                ..drag_controller.canvas_state().snapping()
+            };
+            let guides = scene_snap_guides(&drag_state, &draft.scene, &draft.items, canvas);
+            let base = draft.items[0].transform;
+            let (adjusted_x, adjusted_y) = snap_rotated_resize_delta(
+                base,
+                handle,
+                i64::from(dx),
+                i64::from(dy),
+                canvas,
+                &guides,
+                snap_settings,
+            );
+            let (axis_x, axis_y) =
+                rotate_canvas_delta(adjusted_x, adjusted_y, base.rotation_milli_degrees(), true);
+            let local_base = local_item_rect(base, canvas);
+            let raw = drag_rect(local_base, handle, axis_x, axis_y);
+            let (aspect_width, aspect_height) = visible_source_extent(base, canvas);
+            let local = if modifiers.preserve_aspect {
+                preserve_resize_aspect(local_base, raw, handle, aspect_width, aspect_height)
+            } else {
+                raw
+            };
+            draft.items[0].transform =
+                transform_for_rotated_local_rect(base, local, handle, canvas);
         } else {
+            let snap_settings = SnapSettings {
+                enabled: drag_controller.canvas_state().snapping().enabled && modifiers.snapping,
+                ..drag_controller.canvas_state().snapping()
+            };
+            let guides = scene_snap_guides(&drag_state, &draft.scene, &draft.items, canvas);
             let snapped = snap_rect(
                 drag_rect(group, handle, i64::from(dx), i64::from(dy)),
                 handle,
-                &scene_snap_guides(&drag_state, &draft.scene, &draft.items, canvas),
-                SnapSettings {
-                    enabled: drag_controller.canvas_state().snapping().enabled
-                        && modifiers.snapping,
-                    ..drag_controller.canvas_state().snapping()
-                },
+                &guides,
+                snap_settings,
             );
             let (aspect_width, aspect_height) = if draft.items.len() == 1 {
                 visible_source_extent(draft.items[0].transform, canvas)
@@ -2512,6 +2669,26 @@ mod tests {
         assert_eq!(overlay.handle_x, [275, 275, 275, 200, 125, 125, 125, 200]);
         assert_eq!(overlay.handle_y, [25, 125, 225, 225, 225, 125, 25, 25]);
         assert_eq!(overlay.path, "M 275 25 L 275 225 L 125 225 L 125 25 Z");
+    }
+
+    #[test]
+    fn rotated_resize_maps_pointer_to_local_axes_and_keeps_opposite_corner_fixed() {
+        let base = FrameTransform::new(500, 500, 100, 50, false, false, 255)
+            .expect("transform")
+            .with_rotation_degrees(90)
+            .expect("rotation");
+        let canvas = (400, 300);
+        let old_handles = oriented_handle_points(base, canvas);
+        assert_eq!(rotate_canvas_delta(30, 0, 90_000, true), (0, -30));
+
+        let local = drag_rect(local_item_rect(base, canvas), 1, 0, -30);
+        let resized = transform_for_rotated_local_rect(base, local, 1, canvas);
+        let new_handles = oriented_handle_points(resized, canvas);
+
+        assert_eq!(resized.scale_x_milli(), 500);
+        assert_eq!(resized.scale_y_milli(), 600);
+        assert_eq!((resized.translate_x(), resized.translate_y()), (115, 35));
+        assert_eq!(new_handles[4], old_handles[4]);
     }
 
     #[test]
