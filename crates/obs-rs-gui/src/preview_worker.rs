@@ -619,6 +619,9 @@ fn enqueue_request(
 mod tests {
     use std::time::Duration;
 
+    use obs_rs_config::Config;
+    use obs_rs_project::{ProjectCommand, SourceFilterSpec};
+
     use super::*;
 
     fn request(scene: &str) -> PreviewRequest {
@@ -696,6 +699,43 @@ mod tests {
             .expect("small canvas");
         let preview = PreviewRenderer::preview_format_for_canvas(small);
         assert_eq!((preview.width(), preview.height()), (640, 360));
+    }
+
+    #[test]
+    fn preview_diagnostics_report_an_unavailable_persisted_filter() {
+        let mut project = crate::initial_project().expect("project");
+        let profile = project.active_profile_spec().expect("profile");
+        let profile_id = profile.id().as_str().to_owned();
+        let source_id = profile
+            .sources()
+            .next()
+            .expect("source")
+            .id()
+            .as_str()
+            .to_owned();
+        let filter = SourceFilterSpec::new(
+            "future-preview-filter",
+            "Future preview filter",
+            "future_effect",
+            Config::new(),
+        )
+        .expect("filter");
+        project
+            .apply(ProjectCommand::AddSourceFilter {
+                profile: profile_id,
+                source: source_id,
+                filter,
+            })
+            .expect("add filter");
+
+        let renderer = PreviewRenderer::new(&project, 0).expect("renderer");
+        assert_eq!(
+            renderer.diagnostics().filter_diagnostics,
+            vec![
+                "source 'Background' filter 'Future preview filter': filter 'future_effect' (effect) unavailable: unsupported kind"
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]

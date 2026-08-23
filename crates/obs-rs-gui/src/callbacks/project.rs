@@ -306,6 +306,14 @@ fn export_diagnostics(
                 diagnostics.failures.join("\n")
             },
         )?;
+        bundle.insert_text(
+            "filter-diagnostics",
+            &if diagnostics.filter_diagnostics.is_empty() {
+                "none".to_owned()
+            } else {
+                diagnostics.filter_diagnostics.join("\n")
+            },
+        )?;
         bundle.insert_text("output", &output.borrow_mut().diagnostics_document())?;
         let mut writer = AtomicDiagnosticFileWriter::new(final_path, temp_path)?;
         Ok(writer.finalize(&bundle)?)

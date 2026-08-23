@@ -64,6 +64,90 @@ const DEFAULT_OUTPUT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
 const DEFAULT_MONITOR_OUTPUT_QUEUE_BLOCKS: usize = 8;
 const AUDIO_RECONNECT_INTERVAL_NANOS: u64 = 1_000_000_000;
+/// Maximum number of persisted-filter diagnostics retained in one snapshot.
+pub const MAX_FILTER_DIAGNOSTICS: usize = 64;
+
+/// Why a persisted filter could not be installed in the current runtime.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FilterCompileFailure {
+    /// The filter belongs to a category handled by another runtime boundary.
+    UnsupportedCategory,
+    /// No registered implementation knows this filter kind.
+    UnsupportedKind,
+    /// The implementation exists, but the persisted settings are invalid.
+    InvalidSettings,
+}
+
+impl FilterCompileFailure {
+    /// Returns the stable diagnostic label for this failure.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::UnsupportedCategory => "unsupported category",
+            Self::UnsupportedKind => "unsupported kind",
+            Self::InvalidSettings => "invalid settings",
+        }
+    }
+}
+
+/// Bounded metadata explaining why one persisted filter was unavailable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilterDiagnostic {
+    kind: String,
+    category: SourceFilterCategory,
+    failure: FilterCompileFailure,
+}
+
+impl FilterDiagnostic {
+    fn new(spec: &SourceFilterSpec, failure: FilterCompileFailure) -> Self {
+        Self {
+            kind: spec.kind().as_str().to_owned(),
+            category: spec.category(),
+            failure,
+        }
+    }
+
+    /// Returns the persisted filter kind.
+    #[must_use]
+    pub fn kind(&self) -> &str {
+        &self.kind
+    }
+
+    /// Returns the persisted filter category.
+    #[must_use]
+    pub const fn category(&self) -> SourceFilterCategory {
+        self.category
+    }
+
+    /// Returns the reason the filter was not installed.
+    #[must_use]
+    pub const fn failure(&self) -> FilterCompileFailure {
+        self.failure
+    }
+}
+
+impl fmt::Display for FilterDiagnostic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "filter '{}' ({}) unavailable: {}",
+            self.kind,
+            self.category.id(),
+            self.failure.label()
+        )
+    }
+}
+
+/// Result of translating a project filter into one runtime filter operation.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FilterCompilation<T> {
+    /// The filter was validated and can be installed.
+    Applied(T),
+    /// The filter is disabled and therefore intentionally has no operation.
+    Ignored,
+    /// The filter remains in project data but is unavailable in this runtime.
+    Unavailable(FilterDiagnostic),
+}
 
 /// Probes the production backend once and returns its typed GUI-safe model.
 #[cfg(feature = "production-gstreamer")]
@@ -451,6 +535,8 @@ pub struct EngineSnapshot {
     pub desktop_audio: DesktopAudioSource,
     /// Optional local monitor-output worker telemetry.
     pub monitor_output: Option<AudioOutputWorkerSnapshot>,
+    /// Bounded diagnostics for persisted filters unavailable in this runtime.
+    pub filter_diagnostics: Vec<String>,
     pub stream_metrics: Option<StreamMetrics>,
     /// Native production-stream counters for SRT/RTMP/RTMPS sessions.
     pub production_stream_metrics: Option<ProductionStreamMetrics>,
@@ -982,6 +1068,7 @@ pub struct EngineSession {
     format: VideoFormat,
     plugin: BuiltinPlugin,
     runtime: Runtime,
+    filter_diagnostics: Vec<String>,
     timeline: MediaTimeline,
     mixer: AudioMixer,
     desktop_audio_source: AudioSourceId,
@@ -1064,7 +1151,9 @@ impl EngineSession {
         let plugin = BuiltinPlugin::new().map_err(|error| {
             EngineError::InvalidConfiguration(format!("built-in plugin failed: {error}"))
         })?;
-        let runtime = build_runtime(&project, &plugin)?;
+        let runtime_build = build_runtime(&project, &plugin)?;
+        let runtime = runtime_build.runtime;
+        let filter_diagnostics = runtime_build.filter_diagnostics;
         let EngineConfig {
             audio_format,
             audio_block_frames,
@@ -1153,6 +1242,7 @@ impl EngineSession {
             format,
             plugin,
             runtime,
+            filter_diagnostics,
             timeline,
             mixer,
             desktop_audio_source,
@@ -1218,8 +1308,9 @@ impl EngineSession {
             .active_profile_spec()
             .ok_or(EngineError::NoActiveProfile)?;
         let format = profile.video_format();
-        let runtime = build_runtime(&project, &self.plugin)?;
-        self.runtime = runtime;
+        let runtime_build = build_runtime(&project, &self.plugin)?;
+        self.runtime = runtime_build.runtime;
+        self.filter_diagnostics = runtime_build.filter_diagnostics;
         self.project = project;
         self.format = format;
         self.timeline = MediaTimeline::new(
@@ -2714,6 +2805,7 @@ impl EngineSession {
                 .monitor_output_worker
                 .as_ref()
                 .map(AudioOutputWorker::snapshot),
+            filter_diagnostics: self.filter_diagnostics.clone(),
             stream_metrics: self.streaming.as_ref().and_then(StreamOutput::metrics),
             production_stream_metrics: self
                 .streaming
@@ -3110,11 +3202,12 @@ impl Drop for EngineSession {
     }
 }
 
-fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, EngineError> {
+fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<RuntimeBuild, EngineError> {
     let profile = project
         .active_profile_spec()
         .ok_or(EngineError::NoActiveProfile)?;
     let mut runtime = Runtime::new();
+    let mut filter_diagnostics = Vec::new();
     runtime.register_plugin(plugin)?;
 
     // Source definitions are profile-wide. Create each runtime source once;
@@ -3124,8 +3217,17 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
         let source_id =
             runtime.create_source(source.kind().as_str(), source.name(), source.settings())?;
         for filter in source.filters() {
-            if let Some(runtime_filter) = compile_filter(filter) {
-                runtime.add_source_filter(source_id, runtime_filter)?;
+            match compile_filter_report(filter) {
+                FilterCompilation::Applied(runtime_filter) => {
+                    runtime.add_source_filter(source_id, runtime_filter)?;
+                }
+                FilterCompilation::Ignored => {}
+                FilterCompilation::Unavailable(diagnostic) => record_filter_diagnostic(
+                    &mut filter_diagnostics,
+                    source.name(),
+                    filter.name(),
+                    &diagnostic,
+                ),
             }
         }
         source_ids.insert(source.id().as_str().to_owned(), source_id);
@@ -3150,7 +3252,32 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
             runtime.set_scene_item_transform_by_id(scene_id, item.item_id(), item.transform())?;
         }
     }
-    Ok(runtime)
+    Ok(RuntimeBuild {
+        runtime,
+        filter_diagnostics,
+    })
+}
+
+struct RuntimeBuild {
+    runtime: Runtime,
+    filter_diagnostics: Vec<String>,
+}
+
+fn record_filter_diagnostic(
+    diagnostics: &mut Vec<String>,
+    source_name: &str,
+    filter_name: &str,
+    diagnostic: &FilterDiagnostic,
+) {
+    if diagnostics.len() + 1 < MAX_FILTER_DIAGNOSTICS {
+        diagnostics.push(format!(
+            "source '{source_name}' filter '{filter_name}': {diagnostic}"
+        ));
+    } else if diagnostics.len() + 1 == MAX_FILTER_DIAGNOSTICS {
+        diagnostics.push(format!(
+            "additional filter diagnostics omitted after {MAX_FILTER_DIAGNOSTICS} entries"
+        ));
+    }
 }
 
 /// Compiles a persistent source filter into the built-in runtime operation.
@@ -3164,7 +3291,7 @@ fn build_runtime(project: &Project, plugin: &BuiltinPlugin) -> Result<Runtime, E
     clippy::too_many_lines,
     reason = "the project-to-renderer boundary keeps every supported effect mapping explicit"
 )]
-pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
+fn compile_frame_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
     if !spec.enabled() || spec.category() != SourceFilterCategory::Effect {
         return None;
     }
@@ -3296,6 +3423,60 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
     }
 }
 
+/// Translates a persisted video effect and preserves the reason when it is
+/// unavailable. The older [`compile_filter`] helper remains as a compact
+/// compatibility view for callers that only need the applied operation.
+#[must_use]
+pub fn compile_filter_report(spec: &SourceFilterSpec) -> FilterCompilation<FrameFilter> {
+    if !spec.enabled() {
+        return FilterCompilation::Ignored;
+    }
+    if spec.category() != SourceFilterCategory::Effect {
+        return FilterCompilation::Unavailable(FilterDiagnostic::new(
+            spec,
+            FilterCompileFailure::UnsupportedCategory,
+        ));
+    }
+    match compile_frame_filter(spec) {
+        Some(filter) => FilterCompilation::Applied(filter),
+        None => FilterCompilation::Unavailable(FilterDiagnostic::new(
+            spec,
+            if frame_filter_kind_is_known(spec.kind().as_str()) {
+                FilterCompileFailure::InvalidSettings
+            } else {
+                FilterCompileFailure::UnsupportedKind
+            },
+        )),
+    }
+}
+
+/// Compiles a supported video effect, discarding an unavailable-filter reason.
+#[must_use]
+pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
+    match compile_filter_report(spec) {
+        FilterCompilation::Applied(filter) => Some(filter),
+        FilterCompilation::Ignored | FilterCompilation::Unavailable(_) => None,
+    }
+}
+
+fn frame_filter_kind_is_known(kind: &str) -> bool {
+    matches!(
+        kind,
+        "grayscale"
+            | "brightness"
+            | "opacity"
+            | "crop_pad"
+            | "color_correction"
+            | "color_multiply_add"
+            | "luma_key"
+            | "color_key"
+            | "chroma_key"
+            | "sharpen"
+            | "scroll"
+            | "render_delay"
+    )
+}
+
 /// Compiles a persistent audio/video filter into an ordered audio operation.
 ///
 /// Audio filters are kept separate from [`compile_filter`] because they run on
@@ -3303,7 +3484,7 @@ pub fn compile_filter(spec: &SourceFilterSpec) -> Option<FrameFilter> {
 /// settings use fixed-point `db_milli` plus integer milliseconds, which avoids
 /// locale-dependent decimal parsing on the real-time boundary.
 #[must_use]
-pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
+fn compile_audio_filter_operation(spec: &SourceFilterSpec) -> Option<AudioFilter> {
     if !spec.enabled() || spec.category() != SourceFilterCategory::AudioVideo {
         return None;
     }
@@ -3387,6 +3568,48 @@ pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
         }
         _ => None,
     }
+}
+
+/// Translates a persisted audio filter and preserves the reason when it is
+/// unavailable in the audio runtime.
+#[must_use]
+pub fn compile_audio_filter_report(spec: &SourceFilterSpec) -> FilterCompilation<AudioFilter> {
+    if !spec.enabled() {
+        return FilterCompilation::Ignored;
+    }
+    if spec.category() != SourceFilterCategory::AudioVideo {
+        return FilterCompilation::Unavailable(FilterDiagnostic::new(
+            spec,
+            FilterCompileFailure::UnsupportedCategory,
+        ));
+    }
+    match compile_audio_filter_operation(spec) {
+        Some(filter) => FilterCompilation::Applied(filter),
+        None => FilterCompilation::Unavailable(FilterDiagnostic::new(
+            spec,
+            if audio_filter_kind_is_known(spec.kind().as_str()) {
+                FilterCompileFailure::InvalidSettings
+            } else {
+                FilterCompileFailure::UnsupportedKind
+            },
+        )),
+    }
+}
+
+/// Compiles a supported audio filter, discarding an unavailable-filter reason.
+#[must_use]
+pub fn compile_audio_filter(spec: &SourceFilterSpec) -> Option<AudioFilter> {
+    match compile_audio_filter_report(spec) {
+        FilterCompilation::Applied(filter) => Some(filter),
+        FilterCompilation::Ignored | FilterCompilation::Unavailable(_) => None,
+    }
+}
+
+fn audio_filter_kind_is_known(kind: &str) -> bool {
+    matches!(
+        kind,
+        "gain" | "invert_polarity" | "limiter" | "compressor" | "expander" | "gate" | "noise_gate"
+    )
 }
 
 fn open_audio_input(
@@ -4060,6 +4283,102 @@ mod tests {
             Some(AudioFilter::noise_gate(-26_000, -32_000, 25, 200, 150).expect("valid gate"))
         );
         assert_eq!(compile_audio_filter(&brightness), None);
+    }
+
+    #[test]
+    fn filter_compiler_reports_disabled_unsupported_and_invalid_instances() {
+        let brightness = SourceFilterSpec::new(
+            "brightness-report",
+            "Brightness",
+            "brightness",
+            Config::parse("milli = 350\n").expect("settings"),
+        )
+        .expect("filter");
+        assert!(matches!(
+            compile_filter_report(&brightness),
+            FilterCompilation::Applied(FrameFilter::Brightness { milli: 350 })
+        ));
+
+        let mut disabled = brightness.clone();
+        disabled.set_enabled(false);
+        assert_eq!(compile_filter_report(&disabled), FilterCompilation::Ignored);
+
+        let invalid = SourceFilterSpec::new(
+            "invalid-report",
+            "Invalid Render Delay",
+            "render_delay",
+            Config::parse("milliseconds = 501\n").expect("settings"),
+        )
+        .expect("filter");
+        assert!(matches!(
+            compile_filter_report(&invalid),
+            FilterCompilation::Unavailable(FilterDiagnostic {
+                failure: FilterCompileFailure::InvalidSettings,
+                ..
+            })
+        ));
+
+        let unknown =
+            SourceFilterSpec::new("unknown-report", "Unknown", "future_effect", Config::new())
+                .expect("filter");
+        assert!(matches!(
+            compile_filter_report(&unknown),
+            FilterCompilation::Unavailable(FilterDiagnostic {
+                failure: FilterCompileFailure::UnsupportedKind,
+                ..
+            })
+        ));
+
+        let audio = SourceFilterSpec::with_category(
+            "audio-report",
+            "Compressor",
+            "compressor",
+            SourceFilterCategory::AudioVideo,
+            Config::new(),
+        )
+        .expect("audio filter");
+        assert!(matches!(
+            compile_filter_report(&audio),
+            FilterCompilation::Unavailable(FilterDiagnostic {
+                failure: FilterCompileFailure::UnsupportedCategory,
+                ..
+            })
+        ));
+        assert!(matches!(
+            compile_audio_filter_report(&audio),
+            FilterCompilation::Unavailable(FilterDiagnostic {
+                failure: FilterCompileFailure::InvalidSettings,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn engine_snapshot_names_persisted_filters_not_available_in_renderer() {
+        let mut project = project();
+        let filter = SourceFilterSpec::new(
+            "future-filter",
+            "Future filter",
+            "future_effect",
+            Config::new(),
+        )
+        .expect("filter");
+        project
+            .apply(ProjectCommand::AddSourceFilter {
+                profile: "live".to_owned(),
+                source: "pattern".to_owned(),
+                filter,
+            })
+            .expect("add filter");
+
+        let engine = EngineSession::new(project, EngineConfig::default()).expect("engine");
+        assert_eq!(
+            engine.snapshot().filter_diagnostics,
+            vec![
+                "source 'Pattern' filter 'Future filter': filter 'future_effect' (effect) unavailable: unsupported kind"
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]

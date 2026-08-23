@@ -7,7 +7,7 @@ use std::{
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_core::{CompositorMetrics, Runtime, RuntimeLimits, RuntimeUsage, SourceId};
-use obs_rs_engine::compile_filter;
+use obs_rs_engine::{compile_filter_report, FilterCompilation, MAX_FILTER_DIAGNOSTICS};
 use obs_rs_media::{FrameScaler, FrameTransform, FrameTransition, ScaleFilter};
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::Plugin;
@@ -36,6 +36,8 @@ pub(crate) struct PreviewRenderer {
     applied: Project,
     /// Project source ID to the live runtime source that implements it.
     source_ids: HashMap<String, SourceId>,
+    /// Bounded persisted filters unavailable in the preview runtime.
+    filter_diagnostics: Vec<String>,
     /// Scenes that currently exist in the runtime.
     scene_ids: HashSet<String>,
     /// Scenes made exclusively from solid color sources do not change between
@@ -81,6 +83,8 @@ pub(crate) struct RuntimeDiagnostics {
     pub(crate) limits: RuntimeLimits,
     /// One line per source that is currently failing.
     pub(crate) failures: Vec<String>,
+    /// Persisted filters unavailable in the preview runtime.
+    pub(crate) filter_diagnostics: Vec<String>,
 }
 
 /// The studio window's non-live view of the engine.
@@ -224,6 +228,7 @@ impl PreviewRenderer {
             revision,
             applied: empty_project(project),
             source_ids: HashMap::new(),
+            filter_diagnostics: Vec::new(),
             scene_ids: HashSet::new(),
             static_scenes: HashSet::new(),
             static_frames: HashMap::new(),
@@ -297,6 +302,7 @@ impl PreviewRenderer {
         let profile = project
             .active_profile_spec()
             .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+        self.filter_diagnostics = Self::collect_filter_diagnostics(profile);
         // The mirrored profile is cloned out first: `sync_source` needs `&mut
         // self`, and the borrow checker will not hold a reference into
         // `self.applied` across it.
@@ -365,11 +371,38 @@ impl PreviewRenderer {
 
     fn apply_filters(&mut self, id: SourceId, source: &SourceSpec) -> Result<(), Box<dyn Error>> {
         for filter in source.filters() {
-            if let Some(runtime_filter) = compile_filter(filter) {
+            if let FilterCompilation::Applied(runtime_filter) = compile_filter_report(filter) {
                 self.runtime.add_source_filter(id, runtime_filter)?;
             }
         }
         Ok(())
+    }
+
+    /// Collects unavailable persisted filters without adding them to the
+    /// renderer. The list is capped so a malformed project cannot inflate
+    /// every diagnostics snapshot.
+    fn collect_filter_diagnostics(profile: &Profile) -> Vec<String> {
+        let mut diagnostics = Vec::new();
+        for source in profile.sources() {
+            for filter in source.filters() {
+                let FilterCompilation::Unavailable(diagnostic) = compile_filter_report(filter)
+                else {
+                    continue;
+                };
+                if diagnostics.len() + 1 < MAX_FILTER_DIAGNOSTICS {
+                    diagnostics.push(format!(
+                        "source '{}' filter '{}': {diagnostic}",
+                        source.name(),
+                        filter.name()
+                    ));
+                } else if diagnostics.len() + 1 == MAX_FILTER_DIAGNOSTICS {
+                    diagnostics.push(format!(
+                        "additional filter diagnostics omitted after {MAX_FILTER_DIAGNOSTICS} entries"
+                    ));
+                }
+            }
+        }
+        diagnostics
     }
 
     /// Rebuilds every scene's composition order in place.
@@ -556,6 +589,7 @@ impl PreviewRenderer {
                     format!("{name}: {failure}")
                 })
                 .collect(),
+            filter_diagnostics: self.filter_diagnostics.clone(),
         }
     }
 

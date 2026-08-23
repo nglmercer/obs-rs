@@ -230,6 +230,7 @@ impl EngineWorker {
                     audio_fallback: true,
                     desktop_audio: DesktopAudioSource::Silent("worker unavailable".to_owned()),
                     monitor_output: None,
+                    filter_diagnostics: Vec::new(),
                     stream_metrics: None,
                     production_stream_metrics: None,
                     stream_queued_bytes: 0,
