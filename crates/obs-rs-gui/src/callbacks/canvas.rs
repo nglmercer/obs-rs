@@ -12,7 +12,7 @@ use std::{cell::RefCell, rc::Rc};
 use obs_rs_media::FrameTransform;
 use obs_rs_project::SceneItemSpec;
 use obs_rs_ui::{DesktopState, UiCommand};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     preview::{TransformDraft, TransformDraftItem},
@@ -658,6 +658,28 @@ impl ItemRect {
     }
 }
 
+/// Geometry for the one bounded transform overlay shown on the preview.
+///
+/// The selection box remains an axis-aligned [`ItemRect`] for hit testing and
+/// group selection. A single rotated item also publishes its oriented handle
+/// points so the visual overlay follows the same transform matrix as the
+/// compositor. The fixed eight-element arrays keep this presentation boundary
+/// bounded and make it impossible for a scene to grow UI overlay state without
+/// a corresponding cap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SelectionOverlay {
+    pub(crate) rect: ItemRect,
+    pub(crate) handle_x: [i32; 8],
+    pub(crate) handle_y: [i32; 8],
+    pub(crate) path: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CanvasPoint {
+    x: i64,
+    y: i64,
+}
+
 /// Returns the visible source extent after crop, in source pixels.
 fn visible_source_extent(transform: FrameTransform, canvas: (u32, u32)) -> (i64, i64) {
     (
@@ -722,6 +744,143 @@ pub(crate) fn item_rect(transform: FrameTransform, canvas: (u32, u32)) -> ItemRe
             height,
         }
     }
+}
+
+/// Rounds a floating-point canvas coordinate into the bounded integer space
+/// consumed by the Slint overlay.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "the transform matrix is evaluated in f64 and clamped before it crosses the UI boundary"
+)]
+fn rounded_canvas_coordinate(value: f64) -> i64 {
+    value.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64
+}
+
+/// Returns the eight clockwise transform-handle points for one item.
+///
+/// The order matches the existing callback IDs: top-left, top, top-right,
+/// right, bottom-right, bottom, bottom-left, left. Translation is the
+/// unrotated visible-source origin and rotation is around the visible item's
+/// centre, matching the media renderer.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "canvas dimensions are converted to f64 for the same rotation matrix used by the media renderer"
+)]
+fn oriented_handle_points(transform: FrameTransform, canvas: (u32, u32)) -> [CanvasPoint; 8] {
+    let (source_width, source_height) = visible_source_extent(transform, canvas);
+    let width = (source_width * i64::from(transform.scale_x_milli()) / UNIT_SCALE_MILLI).max(1);
+    let height = (source_height * i64::from(transform.scale_y_milli()) / UNIT_SCALE_MILLI).max(1);
+    let center_x = f64::from(transform.translate_x()) + width as f64 / 2.0;
+    let center_y = f64::from(transform.translate_y()) + height as f64 / 2.0;
+    let angle = f64::from(transform.rotation_milli_degrees()) / 180_000.0 * std::f64::consts::PI;
+    let (sin, cos) = angle.sin_cos();
+    let half_width = width as f64 / 2.0;
+    let half_height = height as f64 / 2.0;
+    let local_points = [
+        (-half_width, -half_height),
+        (0.0, -half_height),
+        (half_width, -half_height),
+        (half_width, 0.0),
+        (half_width, half_height),
+        (0.0, half_height),
+        (-half_width, half_height),
+        (-half_width, 0.0),
+    ];
+
+    local_points.map(|(local_x, local_y)| CanvasPoint {
+        x: rounded_canvas_coordinate(center_x + cos * local_x - sin * local_y),
+        y: rounded_canvas_coordinate(center_y + sin * local_x + cos * local_y),
+    })
+}
+
+fn axis_handle_points(rect: ItemRect) -> [CanvasPoint; 8] {
+    let right = rect.x.saturating_add(rect.width);
+    let bottom = rect.y.saturating_add(rect.height);
+    let middle_x = rect.x.saturating_add(rect.width / 2);
+    let middle_y = rect.y.saturating_add(rect.height / 2);
+    [
+        CanvasPoint {
+            x: rect.x,
+            y: rect.y,
+        },
+        CanvasPoint {
+            x: middle_x,
+            y: rect.y,
+        },
+        CanvasPoint {
+            x: right,
+            y: rect.y,
+        },
+        CanvasPoint {
+            x: right,
+            y: middle_y,
+        },
+        CanvasPoint {
+            x: right,
+            y: bottom,
+        },
+        CanvasPoint {
+            x: middle_x,
+            y: bottom,
+        },
+        CanvasPoint {
+            x: rect.x,
+            y: bottom,
+        },
+        CanvasPoint {
+            x: rect.x,
+            y: middle_y,
+        },
+    ]
+}
+
+fn selection_path(points: [CanvasPoint; 8]) -> String {
+    let corners = [points[0], points[2], points[4], points[6]];
+    format!(
+        "M {} {} L {} {} L {} {} L {} {} Z",
+        corners[0].x,
+        corners[0].y,
+        corners[1].x,
+        corners[1].y,
+        corners[2].x,
+        corners[2].y,
+        corners[3].x,
+        corners[3].y,
+    )
+}
+
+fn to_slint_coordinate(value: i64) -> i32 {
+    i32::try_from(value).unwrap_or_else(|_| {
+        if value.is_negative() {
+            i32::MIN
+        } else {
+            i32::MAX
+        }
+    })
+}
+
+fn selection_overlay_for_transforms(
+    transforms: &[FrameTransform],
+    canvas: (u32, u32),
+) -> Option<SelectionOverlay> {
+    let rect = transforms
+        .iter()
+        .copied()
+        .map(|transform| item_rect(transform, canvas))
+        .reduce(ItemRect::union)?;
+    let points = if transforms.len() == 1 {
+        oriented_handle_points(transforms[0], canvas)
+    } else {
+        axis_handle_points(rect)
+    };
+    Some(SelectionOverlay {
+        rect,
+        handle_x: points.map(|point| to_slint_coordinate(point.x)),
+        handle_y: points.map(|point| to_slint_coordinate(point.y)),
+        path: selection_path(points),
+    })
 }
 
 /// Rounds a positive fixed-point ratio without using floating point geometry.
@@ -970,20 +1129,66 @@ pub(crate) fn transform_for_command(
     }
 }
 
-/// Returns the single or multi-item selection bounds used by the overlay.
-pub(crate) fn selection_rect(state: &DesktopState, canvas: (u32, u32)) -> Option<ItemRect> {
+/// Returns the single or multi-item geometry used by the transform overlay.
+pub(crate) fn selection_overlay(
+    state: &DesktopState,
+    canvas: (u32, u32),
+) -> Option<SelectionOverlay> {
     let scene_id = state.preview_scene()?;
     let scene = state
         .project_session()
         .project()
         .active_profile_spec()?
         .scene(scene_id)?;
-    scene
+    let transforms = scene
         .items()
         .iter()
         .filter(|item| state.is_source_selected(item.id().as_str()))
-        .map(|item| item_rect(item.transform(), canvas))
-        .reduce(ItemRect::union)
+        .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
+        .map(SceneItemSpec::transform)
+        .collect::<Vec<_>>();
+    selection_overlay_for_transforms(&transforms, canvas)
+}
+
+/// Applies one Rust-owned overlay projection to the generated Slint window.
+///
+/// The model lengths are always exactly eight when a selection exists and
+/// zeroed otherwise. This keeps the declarative handle loop safe even while a
+/// selection is being cleared by a click or project command.
+pub(crate) fn set_selection_overlay(ui: &MainWindow, overlay: Option<&SelectionOverlay>) {
+    let (active, rect, handle_x, handle_y, path) = overlay.map_or_else(
+        || {
+            (
+                false,
+                ItemRect {
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0,
+                },
+                [0; 8],
+                [0; 8],
+                String::new(),
+            )
+        },
+        |overlay| {
+            (
+                true,
+                overlay.rect,
+                overlay.handle_x,
+                overlay.handle_y,
+                overlay.path.clone(),
+            )
+        },
+    );
+    ui.set_item_active(active);
+    ui.set_item_x(i32::try_from(rect.x).unwrap_or(0));
+    ui.set_item_y(i32::try_from(rect.y).unwrap_or(0));
+    ui.set_item_width(i32::try_from(rect.width).unwrap_or(0));
+    ui.set_item_height(i32::try_from(rect.height).unwrap_or(0));
+    ui.set_item_handle_x(ModelRc::new(VecModel::from(handle_x.to_vec())));
+    ui.set_item_handle_y(ModelRc::new(VecModel::from(handle_y.to_vec())));
+    ui.set_item_selection_path(path.into());
 }
 
 /// Rebuilds a transform from an edited rectangle, keeping flips, opacity,
@@ -1580,7 +1785,7 @@ pub(crate) fn install_canvas_callbacks(
                 item.transform = transform_for_rect(item.transform, next_rect, canvas);
             }
         }
-        let overlay = draft_rect(draft, canvas);
+        let overlay = draft_overlay(draft, canvas);
         drop(draft_slot);
         // The drag stays out of the project until the pointer is released: the
         // preview timer feeds this straight to the compositor, and the overlay
@@ -1589,7 +1794,7 @@ pub(crate) fn install_canvas_callbacks(
         // runtime learned to update in place, restart every capture device in
         // the scene along the way.
         if let Some(overlay) = overlay {
-            push_item_rect(&ui, overlay);
+            set_selection_overlay(&ui, Some(&overlay));
         }
     });
 
@@ -1636,13 +1841,6 @@ pub(crate) fn install_canvas_callbacks(
 ///
 /// The dock refresh derives these from the project, which the drag has not
 /// reached yet, so the handles are placed from the draft instead.
-fn push_item_rect(ui: &MainWindow, rect: ItemRect) {
-    ui.set_item_x(i32::try_from(rect.x).unwrap_or(0));
-    ui.set_item_y(i32::try_from(rect.y).unwrap_or(0));
-    ui.set_item_width(i32::try_from(rect.width).unwrap_or(0));
-    ui.set_item_height(i32::try_from(rect.height).unwrap_or(0));
-}
-
 /// Copies the selected scene-item transforms once, at the start of a gesture.
 /// Subsequent pointer samples mutate this bounded draft in place rather than
 /// rebuilding the selection from project state.
@@ -1677,6 +1875,15 @@ fn draft_rect(draft: &TransformDraft, canvas: (u32, u32)) -> Option<ItemRect> {
         .iter()
         .map(|item| item_rect(item.transform, canvas))
         .reduce(ItemRect::union)
+}
+
+fn draft_overlay(draft: &TransformDraft, canvas: (u32, u32)) -> Option<SelectionOverlay> {
+    let transforms = draft
+        .items
+        .iter()
+        .map(|item| item.transform)
+        .collect::<Vec<_>>();
+    selection_overlay_for_transforms(&transforms, canvas)
 }
 
 /// Maps one item rectangle from the old group bounds into the new bounds.
@@ -2282,6 +2489,49 @@ mod tests {
                 height: 1_920,
             }
         );
+    }
+
+    #[test]
+    fn rotated_selection_overlay_uses_oriented_handles() {
+        let transform = FrameTransform::new(500, 500, 100, 50, false, false, 255)
+            .expect("transform")
+            .with_rotation_degrees(90)
+            .expect("rotation");
+        let overlay = selection_overlay_for_transforms(&[transform], (400, 300))
+            .expect("one transform should create an overlay");
+
+        assert_eq!(
+            overlay.rect,
+            ItemRect {
+                x: 125,
+                y: 25,
+                width: 150,
+                height: 200
+            }
+        );
+        assert_eq!(overlay.handle_x, [275, 275, 275, 200, 125, 125, 125, 200]);
+        assert_eq!(overlay.handle_y, [25, 125, 225, 225, 225, 125, 25, 25]);
+        assert_eq!(overlay.path, "M 275 25 L 275 225 L 125 225 L 125 25 Z");
+    }
+
+    #[test]
+    fn multi_selection_overlay_keeps_axis_aligned_group_handles() {
+        let first = FrameTransform::new(250, 250, 20, 30, false, false, 255).expect("transform");
+        let second = FrameTransform::new(250, 250, 160, 100, false, false, 255).expect("transform");
+        let overlay = selection_overlay_for_transforms(&[first, second], (400, 300))
+            .expect("two transforms should create an overlay");
+
+        assert_eq!(
+            overlay.rect,
+            ItemRect {
+                x: 20,
+                y: 30,
+                width: 240,
+                height: 145
+            }
+        );
+        assert_eq!(overlay.handle_x, [20, 140, 260, 260, 260, 140, 20, 20]);
+        assert_eq!(overlay.handle_y, [30, 30, 30, 102, 175, 175, 175, 102]);
     }
 
     #[test]

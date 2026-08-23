@@ -51,8 +51,8 @@ pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks,
     install_dock_callbacks_with_layout, install_menu_callbacks, install_monitor_window,
     install_settings_window, install_setup_window, install_source_filters_window,
-    install_source_properties_window, install_source_transform_window, selection_rect,
-    start_preview_timer, PeerWindows, ProjectorController,
+    install_source_properties_window, install_source_transform_window, selection_overlay,
+    set_selection_overlay, start_preview_timer, PeerWindows, ProjectorController,
 };
 pub(crate) use fixtures::{
     capture_devices, initial_project, kind_runs_in_this_session, kind_selects_monitor,

@@ -35,6 +35,9 @@ component StageCanvas inherits Rectangle {
     in property <int> item-y;
     in property <int> item-width;
     in property <int> item-height;
+    in property <[int]> item-handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <[int]> item-handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <string> item-selection-path: "";
     in property <bool> item-active;
     in property <bool> item-locked;
     callback transform-dragged(int, int, int, int);
@@ -81,6 +84,9 @@ component StageCanvas inherits Rectangle {
         item-y: root.item-y;
         item-width: root.item-width;
         item-height: root.item-height;
+        handle-x: root.item-handle-x;
+        handle-y: root.item-handle-y;
+        selection-path: root.item-selection-path;
         active: root.item-active;
         locked: root.item-locked;
         view-x: root.view-x;
@@ -286,6 +292,9 @@ export component StagePanel inherits Rectangle {
     in property <int> item-y;
     in property <int> item-width;
     in property <int> item-height;
+    in property <[int]> item-handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <[int]> item-handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <string> item-selection-path: "";
     in property <bool> item-active;
     in property <bool> item-locked;
     callback open-source-properties();
@@ -348,6 +357,9 @@ export component StagePanel inherits Rectangle {
                     item-y: root.item-y;
                     item-width: root.item-width;
                     item-height: root.item-height;
+                    item-handle-x: root.item-handle-x;
+                    item-handle-y: root.item-handle-y;
+                    item-selection-path: root.item-selection-path;
                     item-active: root.item-active;
                     item-locked: root.item-locked;
                     transform-dragged(handle, dx, dy, modifiers) => {
@@ -403,6 +415,9 @@ export component StagePanel inherits Rectangle {
                     item-y: root.item-y;
                     item-width: root.item-width;
                     item-height: root.item-height;
+                    item-handle-x: root.item-handle-x;
+                    item-handle-y: root.item-handle-y;
+                    item-selection-path: root.item-selection-path;
                     item-active: root.item-active;
                     item-locked: root.item-locked;
                     transform-dragged(handle, dx, dy, modifiers) => {

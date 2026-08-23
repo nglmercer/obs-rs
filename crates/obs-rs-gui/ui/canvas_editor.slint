@@ -11,6 +11,9 @@ export component CanvasEditor inherits Rectangle {
     in property <int> item-y;
     in property <int> item-width;
     in property <int> item-height;
+    in property <[int]> handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <[int]> handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <string> selection-path: "";
     in property <bool> active;
     in property <bool> locked;
     // Canvas-to-widget mapping.
@@ -62,12 +65,6 @@ export component CanvasEditor inherits Rectangle {
     pure function delta-canvas(value: length) -> int {
         Math.round(value / root.view-scale / 1px);
     }
-
-    // Selection box, placed by mapping canvas pixels through the view.
-    property <length> box-x: root.view-x + root.item-x * root.view-scale * 1px;
-    property <length> box-y: root.view-y + root.item-y * root.view-scale * 1px;
-    property <length> box-width: root.item-width * root.view-scale * 1px;
-    property <length> box-height: root.item-height * root.view-scale * 1px;
 
     // Rec. ITU-R BT.1848-1 / EBU R 95 guide geometry. These are presentation
     // lines only; the Rust canvas keeps the matching integer snap guides.
@@ -203,14 +200,19 @@ export component CanvasEditor inherits Rectangle {
         border-color: Palette.tokens.meter;
     }
 
-    if root.active : Rectangle {
-        x: root.box-x;
-        y: root.box-y;
-        width: root.box-width;
-        height: root.box-height;
-        background: transparent;
-        border-width: 1px;
-        border-color: root.locked ? Palette.tokens.warning : Palette.tokens.accent;
+    if root.active : Path {
+        x: root.view-x;
+        y: root.view-y;
+        width: root.canvas-width * root.view-scale * 1px;
+        height: root.canvas-height * root.view-scale * 1px;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: root.canvas-width;
+        viewbox-height: root.canvas-height;
+        commands: root.selection-path;
+        fill: transparent;
+        stroke: root.locked ? Palette.tokens.warning : Palette.tokens.accent;
+        stroke-width: 1px;
     }
 
     if root.selection-box-active : Rectangle {
@@ -223,8 +225,8 @@ export component CanvasEditor inherits Rectangle {
         border-color: Palette.tokens.accent;
     }
 
-    // Handles are laid out by hand because their positions come from the
-    // selection rectangle rather than from a layout.
+    // Handles are laid out by hand because Rust publishes their canvas-space
+    // coordinates rather than asking the UI to reproduce transform geometry.
     for handle in [
         { id: 1, fx: 0.0, fy: 0.0, cursor: MouseCursor.nwse-resize },
         { id: 2, fx: 0.5, fy: 0.0, cursor: MouseCursor.ns-resize },
@@ -236,8 +238,10 @@ export component CanvasEditor inherits Rectangle {
         { id: 8, fx: 0.0, fy: 0.5, cursor: MouseCursor.ew-resize },
     ] : Rectangle {
         visible: root.active && !root.locked;
-        x: root.box-x + root.box-width * handle.fx - root.handle-size / 2;
-        y: root.box-y + root.box-height * handle.fy - root.handle-size / 2;
+        x: root.view-x + root.handle-x[handle.id - 1] * root.view-scale * 1px
+            - root.handle-size / 2;
+        y: root.view-y + root.handle-y[handle.id - 1] * root.view-scale * 1px
+            - root.handle-size / 2;
         width: root.handle-size;
         height: root.handle-size;
         background: Palette.tokens.accent;

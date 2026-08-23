@@ -7,8 +7,9 @@ use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::preview_worker::{multiview_grid_dimensions, MAX_MULTIVIEW_SCENES};
 use crate::{
-    frame_to_image, project_store, selection_rect, LocaleOption, MainWindow, MixerRow,
-    MultiviewScene, OutputRuntime, PreviewSurface, PreviewWorker, ProfileRow, SceneRow, SourceRow,
+    frame_to_image, project_store, selection_overlay, set_selection_overlay, LocaleOption,
+    MainWindow, MixerRow, MultiviewScene, OutputRuntime, PreviewSurface, PreviewWorker, ProfileRow,
+    SceneRow, SourceRow,
 };
 
 thread_local! {
@@ -521,8 +522,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .unwrap_or(1_080)
             .max(1),
     );
-    let rect = selection_rect(state, canvas);
-    ui.set_item_active(rect.is_some());
+    let overlay = selection_overlay(state, canvas);
     ui.set_item_locked(selected_scene.is_some_and(|scene| {
         scene
             .items()
@@ -530,12 +530,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .filter(|item| state.is_source_selected(item.id().as_str()))
             .any(SceneItemSpec::locked)
     }));
-    if let Some(rect) = rect {
-        ui.set_item_x(i32::try_from(rect.x).unwrap_or(0));
-        ui.set_item_y(i32::try_from(rect.y).unwrap_or(0));
-        ui.set_item_width(i32::try_from(rect.width).unwrap_or(0));
-        ui.set_item_height(i32::try_from(rect.height).unwrap_or(0));
-    }
+    set_selection_overlay(ui, overlay.as_ref());
     // Only a display-backed source offers the picker, so the docks derive the
     // affordance from the selected row instead of guessing from the name.
     ui.set_selected_source_is_screen(

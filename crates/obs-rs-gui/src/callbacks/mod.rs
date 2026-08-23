@@ -32,7 +32,9 @@ use crate::{
 pub(crate) use add_source::install_add_source_window;
 #[cfg(test)]
 pub(crate) use add_source::{add_source_window, populate_add_source_window};
-pub(crate) use canvas::{install_canvas_callbacks, selection_rect, CanvasController};
+pub(crate) use canvas::{
+    install_canvas_callbacks, selection_overlay, set_selection_overlay, CanvasController,
+};
 #[cfg(test)]
 pub(crate) use docks::install_dock_callbacks;
 pub(crate) use docks::install_dock_callbacks_with_layout;

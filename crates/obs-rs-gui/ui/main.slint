@@ -303,6 +303,9 @@ export component MainWindow inherits Window {
         in property <int> item-y;
         in property <int> item-width;
         in property <int> item-height;
+        in property <[int]> item-handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
+        in property <[int]> item-handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+        in property <string> item-selection-path: "";
         in property <bool> item-active;
         in property <bool> item-locked;
 
@@ -634,6 +637,9 @@ export component MainWindow inherits Window {
                 item-y: root.item-y;
                 item-width: root.item-width;
                 item-height: root.item-height;
+                item-handle-x: root.item-handle-x;
+                item-handle-y: root.item-handle-y;
+                item-selection-path: root.item-selection-path;
                 item-active: root.item-active;
                 item-locked: root.item-locked;
                 view-mode: root.view-mode;
