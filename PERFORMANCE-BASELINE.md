@@ -208,6 +208,13 @@ This is a bounded channel-mapping and linear-resampling primitive measurement;
 device-clock correction, capture negotiation, and the complete audio graph are
 not included.
 
+Automatic route reconciliation now uses a capacity-one engine worker. Provider
+discovery, candidate-format negotiation, and native input opening run on that
+worker; the audio tick only polls a mutex-backed latest-result slot and queues
+the next refresh with `try_send`. The route-change regression fixture verifies
+that a healthy default switch is applied without waiting for provider I/O, while
+explicit selections remain unchanged.
+
 The same release probe for Invert Polarity is kept separate because it has no
 settings or gain conversion; its result is recorded by:
 

@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
+mod audio_routes;
 mod worker;
 
 pub use worker::{EngineWorker, EngineWorkerSnapshot};
@@ -20,12 +21,16 @@ use std::{
     time::{Duration, Instant},
 };
 
+use audio_routes::{
+    open_input_with_conversion, select_audio_device, AudioRouteRequest, AudioRouteUpdate,
+    AudioRouteWorker, ROUTE_REFRESH_INTERVAL_NANOS,
+};
+
 use obs_rs_audio::{
-    AudioBuffer, AudioDelayLine, AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioFilter,
-    AudioFilterChain, AudioFormat, AudioInput, AudioInputProvider, AudioInputState, AudioMixer,
-    AudioMonitorMode, AudioOutputProvider, AudioOutputWorker, AudioOutputWorkerHandle,
-    AudioOutputWorkerSnapshot, AudioResampler, AudioSourceId, AvSyncMetrics,
-    SimulatedAudioProvider,
+    AudioBuffer, AudioDelayLine, AudioDeviceError, AudioDeviceKind, AudioFilter, AudioFilterChain,
+    AudioFormat, AudioInput, AudioInputProvider, AudioMixer, AudioMonitorMode, AudioOutputProvider,
+    AudioOutputWorker, AudioOutputWorkerHandle, AudioOutputWorkerSnapshot, AudioSourceId,
+    AvSyncMetrics, SimulatedAudioProvider,
 };
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
@@ -1094,6 +1099,14 @@ pub struct EngineSession {
     desktop_audio_reconnect_at: Option<Timestamp>,
     /// Bounded delay line for the desktop channel.
     desktop_audio_delay: AudioDelayLine,
+    /// Discovers and opens automatic route replacements off the audio tick.
+    audio_route_worker: AudioRouteWorker,
+    /// Next media timestamp at which a non-blocking route refresh may be queued.
+    audio_route_refresh_at: Timestamp,
+    /// Sequence of the most recent route request, used to reject stale results.
+    audio_route_request_sequence: u64,
+    /// Whether the worker is processing one bounded refresh request.
+    audio_route_request_pending: bool,
     /// Owns the optional native monitor sink on a dedicated output thread.
     monitor_output_worker: Option<AudioOutputWorker>,
     /// Non-blocking handoff used by the real-time audio path.
@@ -1202,6 +1215,8 @@ impl EngineSession {
         let (desktop_audio, desktop_audio_backend, desktop_audio_active_device_id) =
             open_desktop_audio(&audio_provider, audio_format, desktop_audio_id.as_deref());
         let desktop_audio_reconnect_at = audio_reconnect_deadline(desktop_audio.is_none());
+        let audio_route_worker = AudioRouteWorker::spawn(Arc::clone(&audio_provider))
+            .map_err(|error| EngineError::InvalidConfiguration(error.to_string()))?;
         let (monitor_output_worker, monitor_output_handle) =
             if let Some(device_id) = monitor_output_id.as_deref() {
                 let worker = AudioOutputWorker::spawn(
@@ -1260,6 +1275,10 @@ impl EngineSession {
             desktop_audio_active_device_id,
             desktop_audio_reconnect_at,
             desktop_audio_delay,
+            audio_route_worker,
+            audio_route_refresh_at: Timestamp::ZERO,
+            audio_route_request_sequence: 0,
+            audio_route_request_pending: false,
             monitor_output_worker,
             monitor_output_handle,
             next_audio_deadline: None,
@@ -1730,6 +1749,7 @@ impl EngineSession {
         self.monitor_output_handle = monitor_output_handle;
         self.config.audio_format = audio_format;
         self.next_audio_deadline = None;
+        self.invalidate_audio_route_requests();
         self.last_error = None;
         Ok(())
     }
@@ -1759,6 +1779,7 @@ impl EngineSession {
         self.config.audio_input_id = device_id;
         self.audio_reconnect_at = audio_reconnect_deadline(audio_fallback);
         self.next_audio_deadline = None;
+        self.invalidate_audio_route_requests();
         self.last_error = None;
     }
 
@@ -1790,6 +1811,7 @@ impl EngineSession {
         self.config.desktop_audio_id = device_id;
         self.desktop_audio_reconnect_at = audio_reconnect_deadline(self.desktop_audio.is_none());
         self.next_audio_deadline = None;
+        self.invalidate_audio_route_requests();
     }
 
     /// Renders one scene using the session's independent preview clock.
@@ -2830,6 +2852,84 @@ impl EngineSession {
             .render_scene(scene, &VideoRequest::new(timestamp, self.format))?)
     }
 
+    fn invalidate_audio_route_requests(&mut self) {
+        self.audio_route_request_sequence = self.audio_route_request_sequence.saturating_add(1);
+        self.audio_route_request_pending = false;
+        self.audio_route_refresh_at = Timestamp::ZERO;
+        while self.audio_route_worker.take_result().is_some() {}
+    }
+
+    /// Polls and schedules automatic route work without performing provider
+    /// discovery or device opening on the engine/audio tick.
+    fn poll_automatic_audio_routes(&mut self, timestamp: Timestamp) {
+        while let Some(result) = self.audio_route_worker.take_result() {
+            self.audio_route_request_pending = false;
+            if result.sequence != self.audio_route_request_sequence {
+                continue;
+            }
+            match result.microphone {
+                AudioRouteUpdate::Opened(route) => {
+                    self.audio_input.stop();
+                    self.audio_input = route.input;
+                    self.audio_backend = route.device_name;
+                    self.audio_active_device_id = Some(route.device_id);
+                    self.audio_fallback = false;
+                    self.audio_reconnect_at = None;
+                    self.audio_input_delay.reset();
+                    self.next_audio_deadline = None;
+                    self.last_error = None;
+                }
+                AudioRouteUpdate::Unavailable(reason) => {
+                    let _ = reason;
+                }
+                AudioRouteUpdate::Unchanged => {}
+            }
+            match result.desktop {
+                AudioRouteUpdate::Opened(route) => {
+                    if let Some(desktop) = self.desktop_audio.as_mut() {
+                        desktop.stop();
+                    }
+                    self.desktop_audio = Some(route.input);
+                    self.desktop_audio_backend = route.device_name;
+                    self.desktop_audio_active_device_id = Some(route.device_id);
+                    self.desktop_audio_reconnect_at = None;
+                    self.desktop_audio_delay.reset();
+                    self.next_audio_deadline = None;
+                    self.last_error = None;
+                }
+                AudioRouteUpdate::Unavailable(reason) => {
+                    let _ = reason;
+                }
+                AudioRouteUpdate::Unchanged => {}
+            }
+        }
+
+        let watches_microphone = self.config.audio_input_id.is_none()
+            && !self.audio_fallback
+            && self.audio_active_device_id.is_some();
+        let watches_desktop =
+            self.config.desktop_audio_id.is_none() && self.desktop_audio_active_device_id.is_some();
+        if (!watches_microphone && !watches_desktop)
+            || timestamp < self.audio_route_refresh_at
+            || self.audio_route_request_pending
+        {
+            return;
+        }
+        self.audio_route_refresh_at = timestamp
+            .checked_add(ROUTE_REFRESH_INTERVAL_NANOS)
+            .unwrap_or(timestamp);
+        self.audio_route_request_sequence = self.audio_route_request_sequence.saturating_add(1);
+        let request = AudioRouteRequest {
+            sequence: self.audio_route_request_sequence,
+            format: self.config.audio_format,
+            microphone_requested_id: self.config.audio_input_id.clone(),
+            microphone_active_id: self.audio_active_device_id.clone(),
+            desktop_requested_id: self.config.desktop_audio_id.clone(),
+            desktop_active_id: self.desktop_audio_active_device_id.clone(),
+        };
+        self.audio_route_request_pending = self.audio_route_worker.try_refresh(request);
+    }
+
     fn read_audio_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
         if self.audio_fallback {
             self.try_reconnect_audio(timestamp);
@@ -2947,6 +3047,7 @@ impl EngineSession {
     }
 
     fn drain_audio_until(&mut self, timestamp: Timestamp) -> Result<Vec<AudioBuffer>, EngineError> {
+        self.poll_automatic_audio_routes(timestamp);
         let mut audio_blocks = Vec::new();
         while self
             .next_audio_deadline
@@ -3638,7 +3739,7 @@ fn open_live_audio_input(
     requested_id: Option<&str>,
 ) -> Option<(Box<dyn AudioInput>, String, String)> {
     let (device_id, device_name) = discover_audio_input_device(provider, requested_id)?;
-    let input = open_input_with_conversion(provider, &device_id, format)?;
+    let input = open_input_with_conversion(provider, &device_id, format).ok()?;
     Some((input, device_name, device_id))
 }
 
@@ -3670,8 +3771,8 @@ fn open_desktop_audio(
         return (None, "no playback monitor".to_owned(), None);
     };
     match open_input_with_conversion(provider, &device_id, format) {
-        Some(input) => (Some(input), device_name, Some(device_id)),
-        None => (
+        Ok(input) => (Some(input), device_name, Some(device_id)),
+        Err(_) => (
             None,
             "unavailable (no compatible device format)".to_owned(),
             None,
@@ -3687,100 +3788,8 @@ fn open_live_desktop_audio(
     let devices = provider.discover().ok()?;
     let (device_id, device_name) =
         select_audio_device(&devices, AudioDeviceKind::Output, requested_id)?;
-    let input = open_input_with_conversion(provider, &device_id, format)?;
+    let input = open_input_with_conversion(provider, &device_id, format).ok()?;
     Some((input, device_name, device_id))
-}
-
-fn select_audio_device(
-    devices: &[AudioDeviceInfo],
-    kind: AudioDeviceKind,
-    requested_id: Option<&str>,
-) -> Option<(String, String)> {
-    let selected = if let Some(requested) = requested_id {
-        devices
-            .iter()
-            .find(|device| device.kind() == kind && device.id() == requested && device.available())
-    } else {
-        devices
-            .iter()
-            .find(|device| device.kind() == kind && device.available() && device.is_default())
-            .or_else(|| {
-                devices
-                    .iter()
-                    .find(|device| device.kind() == kind && device.available())
-            })
-    }?;
-    Some((selected.id().to_owned(), selected.name().to_owned()))
-}
-
-fn open_input_with_conversion(
-    provider: &Arc<dyn AudioInputProvider>,
-    device_id: &str,
-    mix_format: AudioFormat,
-) -> Option<Box<dyn AudioInput>> {
-    let mut candidates = vec![mix_format];
-    for (rate, channels) in [(48_000, 2), (44_100, 2), (48_000, 1), (44_100, 1)] {
-        let candidate = AudioFormat::new(rate, channels).ok()?;
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
-    }
-    for device_format in candidates {
-        let Ok(input) = provider.open_input(device_id, device_format) else {
-            continue;
-        };
-        if device_format == mix_format {
-            return Some(input);
-        }
-        return Some(Box::new(ConvertedAudioInput {
-            input,
-            converter: AudioResampler::new(device_format, mix_format).ok()?,
-            mix_format,
-        }));
-    }
-    None
-}
-
-struct ConvertedAudioInput {
-    input: Box<dyn AudioInput>,
-    converter: AudioResampler,
-    mix_format: AudioFormat,
-}
-
-impl AudioInput for ConvertedAudioInput {
-    fn format(&self) -> AudioFormat {
-        self.mix_format
-    }
-
-    fn state(&self) -> AudioInputState {
-        self.input.state()
-    }
-
-    fn read_block(
-        &mut self,
-        timestamp: Timestamp,
-        frames: usize,
-    ) -> Result<AudioBuffer, AudioDeviceError> {
-        let source = self.converter.input_format();
-        let source_frames = (frames
-            .saturating_mul(source.sample_rate() as usize)
-            .saturating_add(self.mix_format.sample_rate() as usize - 1))
-            / self.mix_format.sample_rate() as usize;
-        let input = self.input.read_block(timestamp, source_frames.max(1))?;
-        let converted = self.converter.process(&input)?;
-        if converted.frames() == frames {
-            return Ok(converted);
-        }
-        let sample_count = frames.saturating_mul(usize::from(self.mix_format.channels()));
-        let mut samples = converted.samples().to_vec();
-        samples.resize(sample_count, 0.0);
-        samples.truncate(sample_count);
-        AudioBuffer::new(self.mix_format, timestamp, samples).map_err(Into::into)
-    }
-
-    fn stop(&mut self) {
-        self.input.stop();
-    }
 }
 
 #[allow(
@@ -4772,6 +4781,113 @@ mod tests {
         assert_eq!(
             engine.snapshot().desktop_audio,
             DesktopAudioSource::Monitor("Default speakers".to_owned())
+        );
+    }
+
+    #[derive(Debug)]
+    struct ChangingDefaultProvider {
+        phase: Arc<AtomicUsize>,
+        opens: Arc<AtomicUsize>,
+    }
+
+    impl AudioInputProvider for ChangingDefaultProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+            let input_id = if self.phase.load(Ordering::Acquire) == 0 {
+                "first-input"
+            } else {
+                "second-input"
+            };
+            let input_name = if input_id == "first-input" {
+                "First microphone"
+            } else {
+                "Second microphone"
+            };
+            let mut input = AudioDeviceInfo::new(input_id, input_name, AudioDeviceKind::Input)?;
+            input.set_default(true);
+            let mut output =
+                AudioDeviceInfo::new("stable-output", "Stable speakers", AudioDeviceKind::Output)?;
+            output.set_default(true);
+            Ok(vec![input, output])
+        }
+
+        fn open_input(
+            &self,
+            device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+            if !matches!(device_id, "first-input" | "second-input" | "stable-output") {
+                return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                    device_id.to_owned(),
+                ));
+            }
+            self.opens.fetch_add(1, Ordering::AcqRel);
+            SimulatedAudioProvider::new().open_input("test-audio", format)
+        }
+    }
+
+    #[test]
+    fn automatic_audio_routes_reconcile_a_live_default_change_off_tick() {
+        let phase = Arc::new(AtomicUsize::new(0));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(ChangingDefaultProvider {
+            phase: Arc::clone(&phase),
+            opens: Arc::clone(&opens),
+        });
+        let config = EngineConfig::default().with_audio_provider(provider);
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+        assert_eq!(
+            engine.audio_active_device_id.as_deref(),
+            Some("first-input")
+        );
+        engine
+            .drain_audio_until(Timestamp::ZERO)
+            .expect("initial route refresh");
+        phase.store(1, Ordering::Release);
+
+        for attempt in 0..100_u64 {
+            engine
+                .drain_audio_until(Timestamp::from_millis(500 + attempt * 10))
+                .expect("route-refresh audio");
+            if engine.audio_active_device_id.as_deref() == Some("second-input") {
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+        assert_eq!(
+            engine.audio_active_device_id.as_deref(),
+            Some("second-input")
+        );
+        assert!(!engine.snapshot().audio_fallback);
+        assert!(opens.load(Ordering::Acquire) >= 3);
+    }
+
+    #[test]
+    fn explicit_audio_selection_ignores_a_live_default_change() {
+        let phase = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(ChangingDefaultProvider {
+            phase: Arc::clone(&phase),
+            opens: Arc::new(AtomicUsize::new(0)),
+        });
+        let config = EngineConfig::default()
+            .with_audio_provider(provider)
+            .with_audio_input_id("first-input");
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+        engine
+            .drain_audio_until(Timestamp::ZERO)
+            .expect("initial route refresh");
+        phase.store(1, Ordering::Release);
+
+        for attempt in 0..40_u64 {
+            engine
+                .drain_audio_until(Timestamp::from_millis(500 + attempt * 10))
+                .expect("explicit route audio");
+            std::thread::yield_now();
+        }
+
+        assert_eq!(
+            engine.audio_active_device_id.as_deref(),
+            Some("first-input")
         );
     }
 
