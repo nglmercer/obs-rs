@@ -1,0 +1,637 @@
+use super::ui_layout::read_order;
+use super::*;
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one integration fixture exercises the complete nested source workflow"
+)]
+pub(super) fn exercise_group_source_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
+
+    // A failed Save must leave the pending action armed so the user can fix
+    // the path and try again instead of silently discarding the project.
+    let missing_parent = std::env::temp_dir().join(format!(
+        "obs-rs-save-discard-missing-{}.directory",
+        std::process::id()
+    ));
+    let failed_path = missing_parent.join("project.obsrproj");
+    ui.set_project_path(failed_path.to_string_lossy().into_owned().into());
+    ui.set_pending_discard(4);
+    ui.invoke_save_discard(4);
+    assert_eq!(ui.get_pending_discard(), 4);
+    assert!(ui.get_status_message().contains("Save failed"));
+    ui.set_pending_discard(0);
+
+    let saved_path = std::env::temp_dir().join(format!(
+        "obs-rs-save-discard-success-{}.obsrproj",
+        std::process::id()
+    ));
+    ui.set_project_path(saved_path.to_string_lossy().into_owned().into());
+    ui.set_pending_discard(8);
+    ui.invoke_save_discard(8);
+    assert_eq!(ui.get_pending_discard(), 0);
+    assert!(!state.borrow().is_dirty());
+    assert!(saved_path.is_file());
+    std::fs::remove_file(&saved_path).expect("remove save/discard fixture");
+
+    ui.set_project_path("obs-rs-project.json".into());
+
+    let mut group =
+        obs_rs_project::SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(obs_rs_project::SceneItemSpec::for_source("background").expect("first child"))
+        .expect("first child attach");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(obs_rs_project::SceneItemSpec::for_source("pattern").expect("second child"))
+        .expect("second child attach");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: group,
+        }))
+        .expect("add group to preview");
+    refresh_ui(ui, state, surface);
+    assert!(ui
+        .get_source_rows()
+        .iter()
+        .any(|row| row.target == "overlay-group/background"));
+
+    ui.invoke_navigate_source_selection(1, 0);
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("overlay-group"),
+        "Down selects the next visible top-level source"
+    );
+    ui.invoke_navigate_source_selection(-1, 1);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["overlay-group", "background"],
+        "Shift navigation adds the adjacent source without duplicating state"
+    );
+    ui.invoke_navigate_source_selection(2, 2);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["background"],
+        "Ctrl navigation toggles the resolved source"
+    );
+
+    let transform = crate::install_source_transform_window(ui, state, surface)
+        .expect("nested transform window should instantiate");
+    ui.invoke_open_source_transform_for("overlay-group/background".into());
+    let transform_window = crate::callbacks::source_transform::source_transform_window(&transform);
+    assert_eq!(transform_window.get_source_name(), "Background");
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("background"),
+        "opening a nested transform must not replace canvas selection"
+    );
+    transform_window.set_position_x(37);
+    transform_window.set_position_y(-9);
+    transform_window.set_item_opacity(190);
+    transform_window.invoke_accept_transform();
+    let nested_transform = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(obs_rs_project::SceneItemSpec::group)
+        .and_then(|group| {
+            group
+                .items()
+                .iter()
+                .find(|item| item.id().as_str() == "background")
+        })
+        .map(obs_rs_project::SceneItemSpec::transform)
+        .expect("nested transform should be committed to the child");
+    assert_eq!(nested_transform.translate_x(), 37);
+    assert_eq!(nested_transform.translate_y(), -9);
+    assert_eq!(nested_transform.opacity(), 190);
+
+    let properties = crate::install_source_properties_window(ui, state, surface)
+        .expect("nested properties window should instantiate");
+    ui.invoke_open_source_properties_for("overlay-group/background".into());
+    let properties_window =
+        crate::callbacks::source_properties::SourcePropertiesController::window(&properties);
+    assert_eq!(properties_window.get_source_name(), "Background");
+    assert_eq!(properties_window.get_source_kind(), "color_source");
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("background"),
+        "opening nested properties must not replace canvas selection"
+    );
+    properties_window.invoke_edit_property("width".into(), "800".into());
+    properties_window.invoke_accept_properties();
+    assert_eq!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.source("background"))
+            .and_then(|source| source.settings().get("width")),
+        Some("800")
+    );
+
+    let filters = crate::install_source_filters_window(ui, state, surface)
+        .expect("nested filters window should instantiate");
+    ui.invoke_open_source_filters_for("overlay-group/background".into());
+    let filters_window = crate::callbacks::source_filters::source_filters_window(&filters);
+    assert_eq!(filters_window.get_source_name(), "Background");
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("background"),
+        "opening a nested filter target must not replace canvas selection"
+    );
+    filters_window.invoke_add_filter("opacity".into());
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.source("background"))
+        .is_some_and(|source| {
+            source
+                .filters()
+                .iter()
+                .any(|filter| filter.kind().as_str() == "opacity")
+        }));
+    filters_window.invoke_close_window();
+
+    ui.invoke_toggle_source_visibility("overlay-group/background".into());
+    ui.invoke_move_source_to("overlay-group/background".into(), 1);
+    ui.invoke_flip_source("overlay-group/background".into(), true);
+    ui.invoke_duplicate_source("overlay-group/background".into());
+    ui.invoke_toggle_source_locked("overlay-group/background".into());
+    ui.invoke_remove_source("overlay-group/pattern".into());
+
+    {
+        let state = state.borrow();
+        let group = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(|scene| scene.item("overlay-group"))
+            .and_then(obs_rs_project::SceneItemSpec::group)
+            .expect("group after UI callbacks");
+        assert_eq!(
+            group.items().len(),
+            2,
+            "the nested remove callback removes one child after duplication"
+        );
+        assert_eq!(
+            group.items()[0].source_id().as_str(),
+            "background",
+            "the group move callback must use the group-local order"
+        );
+        assert!(!group.items()[0].visible());
+        assert!(group.items()[0].locked());
+        assert!(group.items()[0].transform().flip_x());
+        assert_eq!(group.items()[1].source_id().as_str(), "background_copy");
+    }
+
+    // Root-level duplication follows OBS's selection behavior even when
+    // existing copies mean the new ID is not a predictable "_copy" suffix.
+    ui.invoke_select_source("background".into());
+    ui.invoke_duplicate_source("background".into());
+    let selected = state
+        .borrow()
+        .selected_source()
+        .map(str::to_owned)
+        .expect("duplicating a root source selects the new item");
+    assert_ne!(selected, "background");
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .is_some_and(|scene| scene.item(selected.as_str()).is_some()));
+
+    ui.invoke_select_all_sources();
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["background", "overlay-group", selected.as_str()],
+        "Ctrl+A selects the bounded top-level scene-item set through Rust"
+    );
+}
+
+/// Opens the File menu through its actual pointer target and proves its popup
+/// participates in hit testing outside the navbar's 26px bounds.
+pub(super) fn exercise_navbar_popup(ui: &MainWindow) {
+    let file_button = ElementHandle::find_by_element_id(ui, "AppNavbar::file-button")
+        .next()
+        .expect("File menu button is discoverable");
+    file_button.mock_single_click(PointerEventButton::Left);
+
+    let entries = ElementHandle::find_by_element_type_name(ui, "MenuEntry").collect::<Vec<_>>();
+    assert_eq!(entries.len(), 7, "the complete File popup is visible");
+    entries[0].mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(ui, "MenuEntry").count(),
+        0,
+        "selecting an entry closes the popup"
+    );
+}
+
+/// Drives the menu-bar actions through the real callbacks.
+///
+/// The bar's previous failure mode was an entry that dispatched a string
+/// nothing handled, so this asserts each action changes observable state rather
+/// than only that it can be invoked.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one integration fixture exercises the complete menu and projector workflow"
+)]
+pub(super) fn exercise_menu_actions(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    docks: &Rc<crate::callbacks::docks::DockController>,
+) {
+    let projectors = crate::install_menu_callbacks(ui, state, surface, docks);
+
+    // The exercises before this one have already edited the project, so the
+    // history starts from a known-empty state rather than from their leftovers.
+    ui.invoke_new_project();
+    assert!(!ui.get_can_undo(), "a fresh document has nothing to undo");
+    let profile = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile()
+        .to_string();
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneName {
+            profile,
+            scene: "preview".to_owned(),
+            name: "Renamed in test".to_owned(),
+        }))
+        .expect("rename the preview scene");
+    refresh_ui(ui, state, surface);
+    assert!(ui.get_can_undo(), "an edit becomes an undoable step");
+
+    ui.invoke_undo_edit();
+    assert!(
+        !ui.get_can_undo() && ui.get_can_redo(),
+        "undo consumes the step and offers it back as a redo"
+    );
+    ui.invoke_redo_edit();
+    assert!(ui.get_can_undo());
+
+    // Starting another new project clears the history along with the document.
+    ui.invoke_new_project();
+    assert!(
+        !ui.get_can_undo() && !ui.get_can_redo(),
+        "undo must not reach across a new document"
+    );
+
+    // A clean restart reopens fixed-target projectors whose bounded lifecycle
+    // bit was captured at shutdown. Closing it again clears that bit before
+    // the ordinary toggle assertions below.
+    let source_target = crate::selected_target(&state.borrow()).expect("selected source target");
+    projectors.restore_geometry(&[
+        ProjectorGeometry::new(ProjectorKind::Program, 24, 32, 960, 540, 1_000)
+            .expect("valid projector geometry")
+            .with_fullscreen(true)
+            .with_open(true),
+        ProjectorGeometry::new(ProjectorKind::Source, 48, 64, 960, 540, 1_000)
+            .expect("valid source projector geometry")
+            .with_open(true),
+        ProjectorGeometry::new(ProjectorKind::Scene, 72, 96, 960, 540, 1_000)
+            .expect("valid scene projector geometry")
+            .with_open(true),
+    ]);
+    projectors.restore_targets(&[
+        ProjectorTarget::Source {
+            scene: source_target.scene.clone(),
+            item: source_target.item.clone(),
+        },
+        ProjectorTarget::Scene {
+            scene: "preview".to_owned(),
+        },
+    ]);
+    projectors.reopen_persisted(ui, state);
+    assert!(
+        projectors.is_open(true),
+        "the persisted program projector reopened"
+    );
+    assert!(
+        projectors.is_source_open() && projectors.is_scene_open(),
+        "persisted source and scene projectors reopened"
+    );
+    ui.invoke_open_projector(true);
+    ui.invoke_open_source_projector();
+    ui.invoke_open_scene_projector("preview".into());
+    assert!(
+        !projectors.is_open(true),
+        "closing clears the persisted open state"
+    );
+
+    // A projector is a toggle, not a way to stack duplicate windows.
+    assert!(!projectors.is_open(true));
+    ui.invoke_open_projector(true);
+    assert!(projectors.is_open(true), "the program projector opened");
+    assert!(
+        projectors.is_fullscreen(true),
+        "the program projector uses fullscreen geometry"
+    );
+    assert!(!projectors.is_open(false), "only one feed was requested");
+    ui.invoke_open_projector(true);
+    assert!(!projectors.is_open(true), "selecting it again closed it");
+
+    assert!(!projectors.is_multiview_open());
+    ui.invoke_open_multiview_projector();
+    assert!(
+        projectors.is_multiview_open(),
+        "the multiview projector opened"
+    );
+    assert!(
+        projectors.is_multiview_fullscreen(),
+        "the multiview projector uses fullscreen geometry"
+    );
+    ui.invoke_open_multiview_projector();
+    assert!(
+        !projectors.is_multiview_open(),
+        "selecting multiview again closed it"
+    );
+
+    // A source projector captures the selected scene item, not the current
+    // selection after the window has opened.
+    refresh_ui(ui, state, surface);
+    assert!(!projectors.is_source_open());
+    ui.invoke_open_source_projector();
+    assert!(
+        projectors.is_source_open(),
+        "the selected source projector opened"
+    );
+    ui.invoke_open_source_projector();
+    assert!(!projectors.is_source_open(), "selecting it again closed it");
+
+    // A scene projector keeps the scene row's stable ID, independent of the
+    // currently selected preview scene.
+    assert!(!projectors.is_scene_open());
+    ui.invoke_open_scene_projector("preview".into());
+    assert!(projectors.is_scene_open(), "the scene projector opened");
+    ui.invoke_open_scene_projector("preview".into());
+    assert!(!projectors.is_scene_open(), "selecting it again closed it");
+
+    // Resetting the layout restores the shipped arrangement whatever the row
+    // was dragged into.
+    let reversed = vec![4, 3, 2, 1, 0];
+    ui.set_panel_order(ModelRc::new(VecModel::from(reversed.clone())));
+    ui.set_show_mixer(false);
+    ui.invoke_reset_dock_layout();
+    assert_ne!(read_order(ui), reversed, "the reset changed the row");
+    assert_eq!(read_order(ui), AppSettings::default().layout.panel_order);
+    assert!(
+        ui.get_show_mixer(),
+        "a hidden dock comes back with the reset"
+    );
+
+    // The menu models the About and Scene Collection entries read are populated.
+    assert!(!ui.get_app_version().is_empty());
+    assert!(!ui.get_app_platform().is_empty());
+    assert!(
+        ui.get_collection_rows().row_count() >= 1,
+        "the open document is always listed as a collection"
+    );
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the integration fixture exercises one complete context-menu workflow"
+)]
+pub(super) fn exercise_context_menus(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
+    ui.invoke_new_project();
+    ui.invoke_add_scene("intro".into(), "Intro".into());
+    assert_eq!(state.borrow().preview_scene(), Some("intro"));
+    ui.invoke_duplicate_scene("intro".into());
+    assert_eq!(state.borrow().preview_scene(), Some("intro_copy"));
+    ui.invoke_select_preview("preview".into());
+    let profile = "live".to_owned();
+    for id in ["middle", "foreground"] {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+                profile: profile.clone(),
+                scene: "preview".to_owned(),
+                source: SourceSpec::new(
+                    id,
+                    "color_source",
+                    id,
+                    source_settings("color_source").expect("source defaults"),
+                )
+                .expect("source"),
+            }))
+            .expect("add source");
+    }
+    refresh_ui(ui, state, surface);
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
+            profile: profile.clone(),
+            scene: "preview".to_owned(),
+            item: "foreground".to_owned(),
+            transform: FrameTransform::new(500, 250, 100, 50, false, false, 255)
+                .expect("source transform"),
+        }))
+        .expect("position source for transform command");
+    refresh_ui(ui, state, surface);
+    ui.invoke_transform_source("foreground".into(), "center-screen".into());
+    let centered = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("foreground"))
+        .expect("centered source")
+        .transform();
+    assert_eq!((centered.translate_x(), centered.translate_y()), (160, 135));
+
+    let rows = ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
+        .filter(|row| row.size().height > 30.0)
+        .collect::<Vec<_>>();
+    println!(
+        "source rows model={} handles={:?}",
+        ui.get_source_rows().row_count(),
+        ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
+            .map(|row| (row.size(), row.absolute_position(), row.id()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(rows.len(), 3);
+    let row_target = rows[1]
+        .query_descendants()
+        .match_inherits("TouchArea")
+        .match_predicate(|target| target.size().width > 150.0 && target.size().height > 30.0)
+        .find_first()
+        .expect("source row hit target");
+    println!(
+        "right click target={:?} id={:?} selected-before={:?}",
+        row_target.size(),
+        row_target.id(),
+        state.borrow().selected_source()
+    );
+    let position = row_target.absolute_position();
+    let size = row_target.size();
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position: LogicalPosition::new(
+            position.x + size.width / 2.0,
+            position.y + size.height / 2.0,
+        ),
+        button: PointerEventButton::Right,
+    });
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+    for _ in 0..6 {
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::UpArrow.into(),
+        });
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::UpArrow.into(),
+        });
+    }
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Return.into(),
+    });
+    println!(
+        "after keyboard duplicate sources={:?}",
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .map(|scene| scene
+                .sources()
+                .iter()
+                .map(|source| source.id().to_string())
+                .collect::<Vec<_>>())
+    );
+    println!("selected-after={:?}", state.borrow().selected_source());
+    let entries = ElementHandle::find_by_element_type_name(ui, "MenuEntry").collect::<Vec<_>>();
+    println!(
+        "source menu entries: {:?}",
+        entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.type_name().map(|value| value.to_string()),
+                    entry.id().map(|value| value.to_string()),
+                    entry.size(),
+                    entry.absolute_position(),
+                    entry.computed_opacity(),
+                    entry.accessible_label().map(|value| value.to_string()),
+                    entry.accessible_enabled(),
+                    entry.accessible_checked(),
+                )
+            })
+            .collect::<Vec<_>>()
+    );
+    for type_name in [
+        "MenuEntry",
+        "MenuItem",
+        "MenuItemBase",
+        "MenuFrame",
+        "ContextMenuInternal",
+    ] {
+        println!(
+            "{} count={}",
+            type_name,
+            ElementHandle::find_by_element_type_name(ui, type_name).count()
+        );
+    }
+    for type_name in [
+        "PopupMenuImpl",
+        "FocusScope",
+        "MenuFrameBase",
+        "Text",
+        "TouchArea",
+        "Window",
+    ] {
+        println!(
+            "{} count={}",
+            type_name,
+            ElementHandle::find_by_element_type_name(ui, type_name).count()
+        );
+    }
+    println!(
+        "context ids={:?} context types={:?}",
+        ElementHandle::find_by_element_id(ui, "SourceContextMenuArea::context-menu")
+            .map(|element| (element.type_name(), element.id(), element.size()))
+            .collect::<Vec<_>>(),
+        ElementHandle::find_by_element_type_name(ui, "ContextMenuArea")
+            .map(|element| (element.type_name(), element.id(), element.size()))
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "compact buttons={:?}",
+        ElementHandle::find_by_element_type_name(ui, "CompactButton")
+            .map(|button| (
+                button.size(),
+                button.absolute_position(),
+                button.accessible_label()
+            ))
+            .collect::<Vec<_>>()
+    );
+    let more = ElementHandle::find_by_element_type_name(ui, "CompactButton")
+        .find(|button| {
+            let position = button.absolute_position();
+            position.x > 180.0 && position.x < 320.0 && position.y > 800.0
+        })
+        .expect("source more button");
+    more.mock_single_click(PointerEventButton::Left);
+    println!(
+        "after more menu entries={:?}",
+        ElementHandle::find_by_element_type_name(ui, "MenuEntry")
+            .map(|entry| (
+                entry.type_name(),
+                entry.id(),
+                entry.size(),
+                entry.absolute_position()
+            ))
+            .collect::<Vec<_>>()
+    );
+    let context = ElementHandle::find_by_element_type_name(ui, "ContextMenuArea")
+        .find(|element| {
+            let position = element.absolute_position();
+            element.size().height > 30.0 && position.y > 680.0 && position.y < 720.0
+        })
+        .expect("source context area");
+    context.mock_single_click(PointerEventButton::Right);
+    println!(
+        "after context right menu entries={:?}",
+        ElementHandle::find_by_element_type_name(ui, "MenuEntry")
+            .map(|entry| (
+                entry.type_name(),
+                entry.id(),
+                entry.size(),
+                entry.absolute_position()
+            ))
+            .collect::<Vec<_>>()
+    );
+}

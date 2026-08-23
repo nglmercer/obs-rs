@@ -1,0 +1,225 @@
+use super::*;
+
+pub(super) fn exercise_recording_controls(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-callback-{token}.obsr"));
+    ui.set_recording_path(path.to_string_lossy().into_owned().into());
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
+
+    ui.invoke_toggle_recording();
+    assert!(
+        state.borrow().recording(),
+        "Record button must start the state"
+    );
+    let frame = PreviewRenderer::new(state.borrow().project_session().project(), 0)
+        .expect("preview renderer")
+        .render("program")
+        .expect("program frame")
+        .expect("program scene frame");
+    crate::callbacks::push_program_frame(ui, None, None, Some(frame), &output);
+    ui.invoke_toggle_recording();
+    for _ in 0..100 {
+        crate::callbacks::reconcile_output_lifecycle(ui, state, &output);
+        if !state.borrow().recording() && path.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        !state.borrow().recording(),
+        "Record button must stop the state"
+    );
+
+    let bytes = std::fs::read(&path).expect("GUI recording file");
+    assert!(!bytes.is_empty());
+    let packets = MemoryMuxer::decode(&bytes).expect("GUI recording container");
+    assert!(packets
+        .iter()
+        .any(|packet| packet.kind() == PacketKind::Video));
+    assert!(packets
+        .iter()
+        .any(|packet| packet.kind() == PacketKind::Audio));
+    std::fs::remove_file(path).expect("remove GUI recording fixture");
+
+    exercise_replay_controls(ui, state, surface);
+    exercise_output_reconciliation(ui, state, &output);
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "preview".to_owned(),
+        })
+        .expect("transition fixture should select a preview scene");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("transition fixture should select a program scene");
+    ui.invoke_fade_to_color("#00FF0080".into(), "450".into());
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("Fade to Color callback should start a transition");
+    assert!(matches!(
+        transition.transition(),
+        FrameTransition::FadeToColor {
+            progress_milli,
+            color: [0, 255, 0, 128],
+        } if progress_milli < 1_000
+    ));
+
+    ui.invoke_set_scene_transition("fade_to_color".into(), "450".into(), "#00FF0080".into());
+    let override_spec = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(SceneSpec::transition_override)
+        .expect("dock action should persist a scene transition override");
+    assert_eq!(override_spec.duration_millis(), 450);
+    assert_eq!(
+        override_spec.kind(),
+        obs_rs_media::TransitionKind::FadeToColor {
+            color: [0, 255, 0, 128]
+        }
+    );
+
+    ui.invoke_clear_scene_transition();
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(SceneSpec::transition_override)
+        .is_none());
+
+    ui.invoke_set_scene_transition("cross_fade".into(), "0".into(), "#000000FF".into());
+    assert!(ui
+        .get_status_message()
+        .contains("Transition duration must be 1–60000 ms"));
+
+    ui.invoke_fade_to_color("green".into(), "450".into());
+    assert!(ui
+        .get_status_message()
+        .contains("Transition color must be #RRGGBB or #RRGGBBAA"));
+}
+
+/// Drives the actual Controls-dock replay actions and verifies that the
+/// worker-owned history survives an asynchronous save without stopping until
+/// the explicit stop action.
+fn exercise_replay_controls(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("obs-rs-gui-replay-{token}"));
+    std::fs::create_dir(&directory).expect("replay fixture directory");
+    let recording_path = directory.join("recording.obsr");
+    ui.set_recording_path(recording_path.to_string_lossy().into_owned().into());
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
+
+    ui.invoke_toggle_replay_buffer();
+    assert!(
+        ui.get_replay_buffering(),
+        "Replay control must expose the accepted start request"
+    );
+    let frame = PreviewRenderer::new(state.borrow().project_session().project(), 0)
+        .expect("preview renderer")
+        .render("program")
+        .expect("program frame")
+        .expect("program scene frame");
+    crate::callbacks::push_program_frame(ui, None, None, Some(frame), &output);
+
+    ui.invoke_save_replay_buffer();
+    let replay_path = (0..100).find_map(|_| {
+        crate::refresh_output_ui(ui, &output);
+        let path = std::fs::read_dir(&directory)
+            .expect("read replay fixture directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "obsr")
+                    && path
+                        .file_name()
+                        .is_some_and(|name| name != "recording.obsr")
+            });
+        if path.is_some() {
+            path
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            None
+        }
+    });
+    let replay_path = replay_path.expect("replay save should commit asynchronously");
+    let bytes = std::fs::read(&replay_path).expect("replay file");
+    assert!(!bytes.is_empty());
+    assert!(
+        ui.get_replay_buffering(),
+        "saving a replay must not stop the capture history"
+    );
+
+    ui.invoke_toggle_replay_buffer();
+    for _ in 0..100 {
+        crate::refresh_output_ui(ui, &output);
+        if !ui.get_replay_buffering() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        !ui.get_replay_buffering(),
+        "Replay control must stop capture"
+    );
+    std::fs::remove_dir_all(directory).expect("remove replay fixture directory");
+}
+
+/// Checks the desktop stops claiming an output the engine is not running.
+///
+/// The controls set their booleans optimistically, so a start the engine
+/// refused would otherwise leave the window showing "recording" forever.
+fn exercise_output_reconciliation(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    output: &Rc<RefCell<OutputRuntime>>,
+) {
+    // The engine is idle here, so both claims are stale by construction.
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::StartRecording)
+        .expect("claim recording");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::StartStreaming)
+        .expect("claim streaming");
+    ui.set_recording(true);
+    ui.set_streaming(true);
+
+    crate::callbacks::reconcile_output_lifecycle(ui, state, output);
+
+    assert!(
+        !state.borrow().recording(),
+        "a recording the engine never opened must not stay claimed"
+    );
+    assert!(
+        !state.borrow().streaming(),
+        "a stream the engine never opened must not stay claimed"
+    );
+    assert!(!ui.get_recording() && !ui.get_streaming());
+}

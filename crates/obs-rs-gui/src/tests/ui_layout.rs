@@ -1,0 +1,438 @@
+use super::*;
+
+pub(super) fn exercise_layout_restore(ui: &MainWindow) {
+    let mut stored = AppSettings::default();
+    stored.layout.panel_order = vec![2, 4, 0, 1, 3];
+    stored.layout.dock_tree =
+        DockNode::from_legacy(&stored.layout.panel_order, &stored.layout.panel_weights)
+            .expect("test layout should have a valid dock tree");
+    stored.layout.show_transitions = false;
+    stored.layout.view_mode = 0;
+    stored.layout.dock_height = 300;
+
+    stored.apply_layout(ui);
+
+    assert_eq!(ui.get_view_mode(), 0);
+    assert!(!ui.get_show_transitions());
+    assert!(ui.get_show_mixer());
+    let order = ui.get_panel_order();
+    assert_eq!(
+        (0..order.row_count())
+            .filter_map(|index| order.row_data(index))
+            .collect::<Vec<_>>(),
+        stored.layout.panel_order
+    );
+
+    let mut captured = AppSettings::default();
+    captured.capture_layout(ui);
+    assert_eq!(captured.layout, stored.layout);
+
+    // Leave the window in its default layout for the snapshot tests that follow.
+    AppSettings::default().apply_layout(ui);
+}
+
+/// Drives dock reordering, splitter resizing, and detaching a dock into its
+/// own window through the real callbacks.
+pub(super) fn exercise_dock_layout(
+    ui: &MainWindow,
+    controller: &Rc<crate::callbacks::docks::DockController>,
+) {
+    assert!(!ui.get_meters_paused());
+    ui.invoke_toggle_meters_paused();
+    assert!(ui.get_meters_paused(), "the mixer monitor pauses");
+    ui.invoke_toggle_meters_paused();
+    assert!(!ui.get_meters_paused(), "the mixer monitor resumes");
+
+    // Reordering moves the dragged dock one place and leaves the rest alone.
+    let before = read_order(ui);
+    ui.invoke_move_panel(before[0], 1);
+    let after = read_order(ui);
+    assert_eq!(after[0], before[1]);
+    assert_eq!(after[1], before[0]);
+    assert_eq!(after[2..], before[2..]);
+
+    // A splitter drag trades width between its two neighbours only.
+    let before = read_weights(ui);
+    ui.invoke_resize_panel(2, 160);
+    let after = read_weights(ui);
+    assert!(after[0] > before[0] || after[1] > before[1], "a dock grew");
+    assert!(
+        (after.iter().sum::<f32>() - before.iter().sum::<f32>()).abs() < 1e-4,
+        "the row's total width must be preserved"
+    );
+
+    // A header drag resolves a pane target and paints a directional insertion
+    // hint before the drop mutates the tree.
+    ui.invoke_dock_drag_start(0, 0.99, 0.5);
+    ui.invoke_dock_drag_moved(0, 0.99, 0.5);
+    assert!(ui.get_dock_dragging());
+    assert_eq!(ui.get_dock_drop_target(), 4);
+    assert!(ui.get_dock_drop_zone() > 0);
+    ui.invoke_dock_drag_end(0, 0.99, 0.5);
+    assert!(!ui.get_dock_dragging());
+    assert_eq!(read_order(ui).last().copied(), Some(0));
+
+    let before_splitter = read_dock_splitters(ui)[0].boundary;
+    ui.invoke_resize_dock_splitter(0, 100.0);
+    assert!(read_dock_splitters(ui)[0].boundary > before_splitter);
+
+    // Detaching opens a window for the dock and takes it out of the row.
+    assert!(!controller.is_floating(2));
+    ui.invoke_float_panel(2);
+    assert!(controller.is_floating(2), "the mixer detached");
+    assert!(read_floating(ui)[2], "the row must know the dock left it");
+    let floating_geometry = controller.capture_floating_geometry();
+    let mixer_geometry = floating_geometry
+        .iter()
+        .find(|geometry| geometry.panel == 2)
+        .expect("the detached window geometry is captured");
+    assert!(mixer_geometry.width >= 240);
+    assert!(mixer_geometry.height >= 160);
+
+    // Detaching again returns it to the row.
+    ui.invoke_float_panel(2);
+    assert!(!controller.is_floating(2), "the mixer re-docked");
+    assert!(!read_floating(ui)[2]);
+
+    // The tree callbacks drive the same pane projection used by the visible
+    // workspace: tabbing keeps one region, selecting a tab changes its active
+    // leaf, and a split creates a second bounded region.
+    ui.invoke_tab_dock_with(4, 3);
+    let panes = read_dock_panes(ui);
+    assert!(panes.iter().any(|pane| pane.tab_count == 2));
+    ui.invoke_select_dock_tab(4);
+    assert!(read_dock_panes(ui)
+        .iter()
+        .any(|pane| pane.panel_kind == 4 && pane.active));
+    ui.invoke_split_dock_with(2, 4, 1, 500);
+    assert_eq!(read_dock_panes(ui).len(), 5);
+}
+
+pub(super) fn read_order(ui: &MainWindow) -> Vec<i32> {
+    let model = ui.get_panel_order();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+pub(super) fn read_weights(ui: &MainWindow) -> Vec<f32> {
+    let model = ui.get_panel_weights();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+pub(super) fn read_floating(ui: &MainWindow) -> Vec<bool> {
+    let model = ui.get_panel_floating();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+pub(super) fn read_dock_panes(ui: &MainWindow) -> Vec<crate::DockPane> {
+    let model = ui.get_dock_panes();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+pub(super) fn read_dock_splitters(ui: &MainWindow) -> Vec<crate::DockSplitter> {
+    let model = ui.get_dock_splitters();
+    (0..model.row_count())
+        .filter_map(|row| model.row_data(row))
+        .collect()
+}
+
+/// Renders the display picker in both locales with a two-monitor layout, so a
+/// broken map binding or a missing catalog field fails the suite.
+pub(super) fn render_monitor_window() {
+    let window = crate::MonitorWindow::new().expect("monitor window should instantiate");
+    window.set_source_name("x11_screen_capture".into());
+    window.set_monitor_rows(ModelRc::new(VecModel::from(vec![
+        crate::MonitorRow {
+            id: "DP-1".into(),
+            name: "DP-1".into(),
+            geometry: "1920x1080 at 0,0".into(),
+            primary: true,
+            selected: true,
+            normalized_x: 0.0,
+            normalized_y: 0.0,
+            normalized_width: 0.6,
+            normalized_height: 1.0,
+        },
+        crate::MonitorRow {
+            id: "HDMI-1".into(),
+            name: "HDMI-1".into(),
+            geometry: "1280x1024 at 1920,0".into(),
+            primary: false,
+            selected: false,
+            normalized_x: 0.6,
+            normalized_y: 0.0,
+            normalized_width: 0.4,
+            normalized_height: 0.94,
+        },
+    ])));
+    window.set_selected_id("DP-1".into());
+    window.show().expect("monitor window should show");
+    for locale in UiLocale::supported() {
+        window
+            .global::<I18n>()
+            .set_text(crate::i18n::catalog(*locale));
+        let snapshot = window
+            .window()
+            .take_snapshot()
+            .expect("monitor window should render");
+        assert!(snapshot.width() > 0 && snapshot.height() > 0);
+    }
+    window.hide().expect("monitor window should hide");
+}
+
+/// Drives the display picker end to end: opening it for an X11 screen source,
+/// accepting the whole-desktop choice, and confirming the project records it.
+pub(super) fn exercise_monitor_selection(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let scene = state
+        .borrow()
+        .preview_scene()
+        .expect("preview scene")
+        .to_owned();
+    let settings = source_settings("x11_screen_capture").expect("x11 defaults");
+    let source = SourceSpec::new("gui-screen", "x11_screen_capture", "GUI screen", settings)
+        .expect("screen source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: scene.clone(),
+            source,
+        }))
+        .expect("add screen source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: "gui-screen".to_owned(),
+        })
+        .expect("select screen source");
+    refresh_ui(ui, state, surface);
+    assert!(
+        ui.get_selected_source_is_screen(),
+        "an X11 screen source must offer the display picker"
+    );
+
+    let controller = crate::install_monitor_window(ui, state, surface).expect("monitor controller");
+    ui.invoke_open_monitor_window();
+    let window = crate::callbacks::monitor::MonitorController::window(&controller);
+    // The whole-desktop choice is the one available on every host, including a
+    // CI machine with no display server.
+    window.set_capture_whole_desktop(true);
+    window.invoke_accept_monitor();
+
+    let state = state.borrow();
+    let source = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.source("gui-screen"))
+        .expect("screen source persisted");
+    assert_eq!(
+        source.settings().get("monitor"),
+        Some(""),
+        "the display choice must reach the project command"
+    );
+}
+
+/// Drives the real settings controller through Apply, Cancel, and OK.
+///
+/// The draft semantics are the whole point of the window, so they are checked
+/// against the controller rather than against a hand-built stand-in: Apply
+/// persists and clears the dirty flag, Cancel discards every draft including
+/// the live-previewed appearance, OK persists and closes, and a field that
+/// fails validation commits nothing at all.
+pub(super) fn exercise_settings_commit(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    canvas: &Rc<crate::callbacks::CanvasController>,
+) {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-window-{token}.toml"));
+    let format = surface.borrow().format;
+    let output = Rc::new(RefCell::new(OutputRuntime::new(format)));
+    let docks = crate::install_dock_callbacks(ui, state);
+    let projectors = crate::install_menu_callbacks(ui, state, surface, &docks);
+    let controller = crate::install_settings_window(
+        ui,
+        state,
+        surface,
+        &output,
+        AppSettings::default(),
+        path.clone(),
+        &crate::PeerWindows {
+            add_source: crate::install_add_source_window(ui, state, surface)
+                .expect("add source controller"),
+            properties: crate::install_source_properties_window(ui, state, surface)
+                .expect("properties controller"),
+            filters: crate::install_source_filters_window(ui, state, surface)
+                .expect("filters controller"),
+            transform: crate::install_source_transform_window(ui, state, surface)
+                .expect("transform controller"),
+            monitor: crate::install_monitor_window(ui, state, surface).expect("monitor controller"),
+            docks,
+            projectors,
+            canvas: Rc::clone(canvas),
+        },
+    )
+    .expect("settings controller should install");
+    let window = controller.window();
+
+    // Opening the window fills the draft from the committed document, so a
+    // freshly opened window has nothing to apply.
+    ui.invoke_open_settings_window();
+    assert!(!window.get_dirty(), "a freshly loaded draft is not dirty");
+    exercise_stream_server_selection(window);
+
+    // Apply: every draft is persisted and the button goes quiet again.
+    window.set_density_index(3);
+    window.set_font_size(16.0);
+    window.set_style_index(2);
+    window.invoke_edit_output_resolution("1280x720".into());
+    window.set_scale_filter_index(2);
+    window.set_recording_quality_index(2);
+    window.set_recording_filename_without_spaces(true);
+    window.set_snap_distance(24);
+    window.set_show_safe_areas(true);
+    window.set_dirty(true);
+    window.invoke_apply_settings();
+
+    assert!(
+        !window.get_dirty(),
+        "Apply clears the unapplied-changes flag"
+    );
+    let committed = controller.committed();
+    assert_eq!(
+        committed.density,
+        crate::settings_model::UiDensity::Comfortable
+    );
+    assert_eq!(committed.font_size, 16);
+    assert_eq!(committed.style, crate::settings_model::UiStyle::Contrast);
+    assert_eq!(committed.video.output_width, 1_280);
+    assert_eq!(committed.video.scale_filter, ScaleFilter::Lanczos);
+    assert!(committed.recording_filename_without_spaces);
+    assert_eq!(committed.canvas_snap_distance, 24);
+    assert!(committed.show_safe_areas);
+    assert_eq!(AppSettings::load(&path), committed, "Apply writes the file");
+
+    // A field that cannot be parsed stops the commit entirely: nothing else on
+    // the page may reach the document behind an invalid value.
+    window.invoke_edit_base_resolution("not-a-resolution".into());
+    window.set_font_size(9.0);
+    window.set_dirty(true);
+    window.invoke_apply_settings();
+
+    assert!(
+        window.get_dirty(),
+        "a rejected commit leaves the changes unapplied"
+    );
+    assert_eq!(window.get_category(), 5, "the invalid page is brought up");
+    assert!(!window.get_base_resolution_valid(), "the row stays marked");
+    assert_eq!(
+        controller.committed().font_size,
+        16,
+        "an unrelated field must not be committed behind an invalid one"
+    );
+
+    // Cancel discards every draft, including the appearance that was already
+    // previewed onto the live windows.
+    window.invoke_cancel_settings();
+    assert!(!window.get_dirty());
+    assert_eq!(controller.committed().font_size, 16);
+
+    // OK persists and closes.
+    ui.invoke_open_settings_window();
+    window.set_recording_quality_index(0);
+    window.set_dirty(true);
+    window.invoke_accept_settings();
+    assert!(!window.get_dirty(), "OK applies before it closes");
+    assert_eq!(
+        controller.committed().recording_quality,
+        crate::settings_model::RecordingQuality::SameAsStream
+    );
+    assert_eq!(
+        AppSettings::load(&path).recording_quality,
+        crate::settings_model::RecordingQuality::SameAsStream
+    );
+    std::fs::remove_file(&path).expect("remove settings fixture");
+}
+
+fn exercise_stream_server_selection(window: &SettingsWindow) {
+    let twitch_index = RTMP_SERVICE_PRESETS
+        .iter()
+        .position(|preset| preset.id() == "twitch")
+        .expect("Twitch service preset");
+    let twitch_index = i32::try_from(twitch_index).expect("service index");
+    window.set_rtmp_service_index(twitch_index);
+    window.invoke_select_stream_service(twitch_index);
+    assert_eq!(window.get_rtmp_server_names().row_count(), 46);
+    window.invoke_select_stream_server(1);
+    assert_eq!(window.get_rtmp_server(), "live-sel.twitch.tv/app");
+}
+
+/// Renders each settings category so a page that fails to lay out — an empty
+/// model, a binding loop, a missing catalog field — fails the suite.
+pub(super) fn render_every_settings_category() {
+    let window = SettingsWindow::new().expect("settings window should instantiate");
+    crate::callbacks::populate_settings_models(&window);
+    assert_eq!(window.get_rtmp_service_names().row_count(), 82);
+    window.show().expect("settings window should show");
+    for locale in UiLocale::supported() {
+        window
+            .global::<I18n>()
+            .set_text(crate::i18n::catalog(*locale));
+        for category in 0..9 {
+            window.set_category(category);
+            let snapshot = window
+                .window()
+                .take_snapshot()
+                .expect("settings category should render");
+            assert!(
+                snapshot.width() > 0 && snapshot.height() > 0,
+                "settings category {category} rendered an empty surface"
+            );
+        }
+    }
+
+    // Density, font size, and the wider Spanish labels are the three things
+    // that can break the shared geometry, so the three redesigned pages are
+    // rendered against all of them rather than only at the default.
+    window
+        .global::<I18n>()
+        .set_text(crate::i18n::catalog(UiLocale::Spanish));
+    for density in crate::settings_model::UiDensity::ALL {
+        for font_size in [
+            *crate::settings_model::FONT_SIZE_RANGE.start(),
+            *crate::settings_model::FONT_SIZE_RANGE.end(),
+        ] {
+            window
+                .global::<crate::Metrics>()
+                .set_ui(crate::settings_model::metrics(density, font_size));
+            for category in [1, 3, 5] {
+                window.set_category(category);
+                let snapshot = window
+                    .window()
+                    .take_snapshot()
+                    .expect("settings category should render at every density");
+                assert!(
+                    snapshot.width() > 0 && snapshot.height() > 0,
+                    "category {category} rendered empty at {density:?}/{font_size}"
+                );
+            }
+        }
+    }
+    window.hide().expect("settings window should hide");
+}
