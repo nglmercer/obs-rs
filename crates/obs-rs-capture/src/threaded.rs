@@ -178,32 +178,42 @@ impl ThreadedCaptureDevice {
             None => Ok(None),
         }
     }
+
+    /// Requests a clean worker shutdown and reports whether the worker joined.
+    ///
+    /// A caller that is about to replace a camera must not start the
+    /// replacement when this returns `false`: the old worker may still be
+    /// inside an uninterruptible native driver call and therefore still owns
+    /// the physical device.
+    pub fn shutdown(&mut self) -> bool {
+        self.mailbox.stop.store(true, Ordering::Release);
+        if self.join.is_none() {
+            return true;
+        }
+        let deadline = Instant::now() + SHUTDOWN_GRACE;
+        while !self.mailbox.finished.load(Ordering::Acquire)
+            && !self.join.as_ref().is_some_and(|join| join.is_finished())
+            && Instant::now() < deadline
+        {
+            thread::sleep(IDLE_POLL);
+        }
+        let finished = self.mailbox.finished.load(Ordering::Acquire)
+            || self.join.as_ref().is_some_and(|join| join.is_finished());
+        if !finished {
+            return false;
+        }
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+        true
+    }
 }
 
 impl Drop for ThreadedCaptureDevice {
     /// Stops the worker, waiting only as long as [`SHUTDOWN_GRACE`] for it.
     ///
-    /// A worker that does not come back within the grace period is abandoned
-    /// rather than joined. That leaks the thread, and the device stays claimed
-    /// by this process until the driver call it is stuck in returns — but the
-    /// alternative is a studio that freezes because a webcam stopped answering,
-    /// which is worse and is not recoverable by the user. There is no portable
-    /// way to interrupt a blocking native frame acquisition; bounding the wait
-    /// is the honest thing this layer can do about it.
     fn drop(&mut self) {
-        self.mailbox.stop.store(true, Ordering::Release);
-        let Some(join) = self.join.take() else {
-            return;
-        };
-        let deadline = Instant::now() + SHUTDOWN_GRACE;
-        while !self.mailbox.finished.load(Ordering::Acquire) && Instant::now() < deadline {
-            thread::sleep(IDLE_POLL);
-        }
-        // `finished` is set as the worker's last act, so joining after it is
-        // observed cannot block for meaningfully longer.
-        if self.mailbox.finished.load(Ordering::Acquire) {
-            let _ = join.join();
-        }
+        let _ = self.shutdown();
     }
 }
 

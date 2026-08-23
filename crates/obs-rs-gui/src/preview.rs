@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use obs_rs_config::Config;
 use obs_rs_core::{CompositorMetrics, Runtime, RuntimeLimits, RuntimeUsage, SourceId};
 use obs_rs_engine::{compile_filter_report, FilterCompilation, MAX_FILTER_DIAGNOSTICS};
 use obs_rs_media::{FrameScaler, FrameTransform, FrameTransition, ScaleFilter};
@@ -148,12 +149,10 @@ impl PreviewRenderer {
         let profile = project
             .active_profile_spec()
             .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
-        // A different canvas means every source renegotiates its output shape,
-        // and a different profile is a different scene collection entirely.
-        // Those are the two cases a diff cannot express.
-        let rebuild = project.active_profile() != self.applied.active_profile()
-            || profile.video_format() != self.format
-            || self.kind_changed(profile);
+        // A different canvas means every source renegotiates its output shape.
+        // Profile changes and source-kind changes are diffed below so sources
+        // shared by two profiles can stay open while the scene graph moves.
+        let rebuild = profile.video_format() != self.format;
         if rebuild {
             *self = Self::new(project, revision)?;
             return Ok(true);
@@ -167,7 +166,8 @@ impl PreviewRenderer {
         Ok(true)
     }
 
-    /// Returns whether a live source changed its kind, which a diff cannot do.
+    /// Returns whether a live source changed its kind and therefore needs its
+    /// scene references detached before the old factory instance is replaced.
     fn kind_changed(&self, profile: &Profile) -> bool {
         let Some(applied) = self.applied.active_profile_spec() else {
             return true;
@@ -191,7 +191,6 @@ impl PreviewRenderer {
         let previous = self
             .applied
             .active_profile_spec()
-            .filter(|_| self.applied.active_profile() == project.active_profile())
             .map(|profile| {
                 profile
                     .sources()
@@ -200,11 +199,21 @@ impl PreviewRenderer {
             })
             .unwrap_or_default();
 
-        for source in profile.sources() {
+        if self.kind_changed(profile) {
+            for scene in self.scene_ids.clone() {
+                self.runtime.clear_scene_sources(&scene)?;
+            }
+        }
+
+        let active_sources = self.active_source_ids(profile)?;
+        for source in profile
+            .sources()
+            .filter(|source| active_sources.contains(source.id().as_str()))
+        {
             self.sync_source(source, previous.get(source.id().as_str()))?;
         }
         self.sync_scenes(profile)?;
-        self.retire_sources(profile)?;
+        self.retire_sources(profile, &active_sources)?;
 
         self.static_scenes = static_scenes(profile);
         // Cached still frames describe scene content that may have just moved.
@@ -237,6 +246,21 @@ impl PreviewRenderer {
         let previous = previous.ok_or_else(|| {
             std::io::Error::other(format!("source {} has no mirrored state", source.id()))
         })?;
+        if previous.kind() != source.kind() {
+            // Runtime source instances cannot change factory kind in place.
+            // Scene references were cleared by `apply_profile` before this
+            // path, so destroying this one source does not disturb any other
+            // capture device.
+            self.runtime.destroy_source(id)?;
+            let id = self.runtime.create_source(
+                source.kind().as_str(),
+                source.name(),
+                source.settings(),
+            )?;
+            self.apply_filters(id, source)?;
+            self.source_ids.insert(source.id().as_str().to_owned(), id);
+            return Ok(());
+        }
         // Only settings can reach the device, so only settings restart it.
         if previous.settings() != source.settings() {
             self.runtime.update_source(id, source.settings())?;
@@ -367,12 +391,32 @@ impl PreviewRenderer {
             .collect()
     }
 
-    /// Destroys sources the project no longer defines.
-    fn retire_sources(&mut self, profile: &Profile) -> Result<(), Box<dyn Error>> {
+    /// Resolves the source instances that have at least one visible scene
+    /// consumer. A source definition can exist in the project without being
+    /// live in the preview runtime; keeping that distinction prevents hidden
+    /// cameras and screen-cast sessions from claiming hardware.
+    fn active_source_ids(&self, profile: &Profile) -> Result<HashSet<String>, Box<dyn Error>> {
+        let mut active = HashSet::new();
+        for scene in profile.scenes() {
+            for item in profile.flatten_scene_items(scene.id().as_str())? {
+                active.insert(item.source_id().as_str().to_owned());
+            }
+        }
+        Ok(active)
+    }
+
+    /// Destroys sources the project no longer defines or no longer displays.
+    fn retire_sources(
+        &mut self,
+        profile: &Profile,
+        active_sources: &HashSet<String>,
+    ) -> Result<(), Box<dyn Error>> {
         let removed = self
             .source_ids
             .iter()
-            .filter(|(id, _)| !profile.has_source(id.as_str()))
+            .filter(|(id, _)| {
+                !profile.has_source(id.as_str()) || !active_sources.contains(id.as_str())
+            })
             .map(|(id, source)| (id.clone(), *source))
             .collect::<Vec<_>>();
         for (project_id, source) in removed {
@@ -380,6 +424,25 @@ impl PreviewRenderer {
             self.source_ids.remove(&project_id);
         }
         Ok(())
+    }
+
+    /// Takes backend-generated settings that became available after an
+    /// asynchronous source open, such as a fresh Wayland restore token.
+    pub(crate) fn take_source_settings_updates(&mut self) -> Vec<(String, String, Config)> {
+        let profile = self.applied.active_profile().as_str().to_owned();
+        let sources = self
+            .source_ids
+            .iter()
+            .map(|(project_id, source_id)| (project_id.clone(), *source_id))
+            .collect::<Vec<_>>();
+        sources
+            .into_iter()
+            .filter_map(|(project_id, source_id)| {
+                self.runtime
+                    .take_source_settings_update(source_id)
+                    .map(|settings| (profile.clone(), project_id, settings))
+            })
+            .collect()
     }
 
     /// Applies, replaces, or withdraws the canvas drag's transform.

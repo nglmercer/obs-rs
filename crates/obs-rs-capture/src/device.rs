@@ -79,6 +79,15 @@ pub trait VideoCaptureDevice: Send {
         self.start(request.output_format())
     }
 
+    /// Returns a backend-provided token that can restore the current session.
+    ///
+    /// Most capture devices do not have persistent session state. Wayland's
+    /// screen-cast portal is the exception, so this optional hook keeps that
+    /// state available without making every backend know about the portal.
+    fn restore_token(&self) -> Option<&str> {
+        None
+    }
+
     /// Stops delivery; stopping an already-stopped device is a no-op.
     fn stop(&mut self);
 

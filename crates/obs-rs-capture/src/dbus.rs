@@ -11,4 +11,4 @@ mod connection;
 mod screencast;
 mod value;
 
-pub use screencast::{open_screencast, CursorMode, ScreenCastSession};
+pub use screencast::{open_screencast, open_screencast_cancellable, CursorMode, ScreenCastSession};

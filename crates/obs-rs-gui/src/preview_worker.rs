@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use obs_rs_config::Config;
 use obs_rs_media::{LatencyMetrics, RawVideoFrame, VideoFormat, VideoFrame};
 use obs_rs_project::Project;
 use obs_rs_ui::TransitionSnapshot;
@@ -64,6 +65,7 @@ pub(crate) struct PreviewResult {
     pub(crate) program_output_frame: Option<VideoFrame>,
     pub(crate) error: Option<String>,
     pub(crate) metrics: String,
+    pub(crate) source_settings_updates: Vec<(String, String, Config)>,
     #[cfg(test)]
     render_thread: thread::ThreadId,
 }
@@ -325,6 +327,7 @@ fn preview_loop(project: &Project, revision: u64, shared: PreviewLoopShared<'_>)
                 program_output_frame: None,
                 error: Some(error.clone()),
                 metrics: "Preview worker unavailable".to_owned(),
+                source_settings_updates: Vec::new(),
                 #[cfg(test)]
                 render_thread: thread::current().id(),
             },
@@ -495,6 +498,7 @@ fn render_request(
         renderer.advance_timestamp();
     }
     let error = error.or_else(|| output.as_ref().err().map(ToString::to_string));
+    let source_settings_updates = renderer.take_source_settings_updates();
     PreviewResult {
         preview_scene: request.preview_scene,
         preview_frame: preview.as_ref().ok().cloned().flatten(),
@@ -507,6 +511,7 @@ fn render_request(
         program_output_frame: output_frame,
         error,
         metrics: renderer.metrics_summary(),
+        source_settings_updates,
         #[cfg(test)]
         render_thread: thread::current().id(),
     }
@@ -671,6 +676,7 @@ fn renderer_error(
             program_output_frame: None,
             error: Some(error),
             metrics: "Preview project sync failed".to_owned(),
+            source_settings_updates: Vec::new(),
             #[cfg(test)]
             render_thread: thread::current().id(),
         },

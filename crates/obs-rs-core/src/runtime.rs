@@ -610,6 +610,17 @@ impl Runtime {
             .map_err(RuntimeError::Source)
     }
 
+    /// Takes a settings update emitted by a live source after backend setup.
+    ///
+    /// Source backends may learn persistent state only after an asynchronous
+    /// open completes. Keeping this pull boundary on the runtime lets the GUI
+    /// write that state back to the project without exposing source objects.
+    pub fn take_source_settings_update(&mut self, source: SourceId) -> Option<Config> {
+        self.sources
+            .get_mut(&source)
+            .and_then(|instance| instance.source.take_settings_update())
+    }
+
     /// Renames a source instance without recreating it.
     ///
     /// # Errors

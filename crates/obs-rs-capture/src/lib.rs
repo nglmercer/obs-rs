@@ -28,8 +28,9 @@ pub use nokhwa_camera::{
 pub use raw_reader::RawFrameReader;
 #[cfg(target_os = "linux")]
 pub use wayland::{
-    pipewire_reader_available, wayland_session_available, WaylandCaptureDevice,
-    PIPEWIRE_READER_COMMAND,
+    pipewire_reader_available, publish_wayland_portal_handoff, take_wayland_portal_handoff,
+    wayland_session_available, WaylandCaptureDevice, PIPEWIRE_READER_COMMAND,
+    WAYLAND_PORTAL_HANDOFF_SETTING,
 };
 #[cfg(target_os = "linux")]
 pub use x11::{
@@ -66,7 +67,7 @@ pub use factories::{
     WAYLAND_SCREEN_CAPTURE_SOURCE_KIND, X11_SCREEN_CAPTURE_SOURCE_KIND,
     X11_WINDOW_CAPTURE_SOURCE_KIND,
 };
-pub use lifecycle::{AsyncCaptureDevice, CaptureLifecycleState};
+pub use lifecycle::{AsyncCaptureDevice, CaptureCancellation, CaptureLifecycleState};
 pub use protocol::{
     encode_frame_packet, write_frame_packet, FRAME_STREAM_MAGIC, MAX_FRAME_STREAM_PACKET_BYTES,
 };

@@ -213,6 +213,16 @@ pub trait Source: Send {
     /// Returns [`SourceError`] when the source cannot accept the settings.
     fn update(&mut self, settings: &Config) -> Result<(), SourceError>;
 
+    /// Returns a backend-generated settings update, if one is ready.
+    ///
+    /// This is used for state that a live source learns from its backend after
+    /// creation, such as a Wayland portal's replacement restore token. The
+    /// default keeps existing sources source-compatible with the optional
+    /// lifecycle event.
+    fn take_settings_update(&mut self) -> Option<Config> {
+        None
+    }
+
     /// Produces one frame or reports that no frame is ready yet.
     ///
     /// # Errors

@@ -8,7 +8,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 #[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use obs_rs_config::Config;
 use obs_rs_ui::DesktopState;
@@ -26,6 +26,9 @@ use crate::{
 /// identical dialogs stacked on top of each other.
 #[cfg(target_os = "linux")]
 static PORTAL_REQUEST_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "linux")]
+static PORTAL_HANDOFF_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(target_os = "linux")]
 struct PortalRequestGuard;
@@ -292,7 +295,9 @@ fn share_through_portal(
     controller: &Rc<MonitorController>,
     source: &str,
 ) {
-    use obs_rs_capture::{open_screencast, CursorMode};
+    use obs_rs_capture::{
+        open_screencast, publish_wayland_portal_handoff, CursorMode, WaylandCaptureDevice,
+    };
 
     let Some(target) = source_target(&state.borrow(), source) else {
         ui.set_status_message("Screen sharing failed: the source could not be resolved".into());
@@ -307,6 +312,12 @@ fn share_through_portal(
     }
 
     let source = source.to_owned();
+    let handoff_id = format!(
+        "{}-{}",
+        std::process::id(),
+        PORTAL_HANDOFF_COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let callback_handoff_id = handoff_id.clone();
     let cursor = target_settings_document(state, &target)
         .as_deref()
         .and_then(|document| Config::parse(document).ok())
@@ -333,12 +344,17 @@ fn share_through_portal(
                     CursorMode::Hidden
                 },
             ) {
-                // The token outlives this session, so it is read before the
-                // session is dropped and the compositor's stream stops.
-                Ok(session) => session.restore_token().map_or_else(
-                    || Err("the compositor shared a screen but would not remember it".to_owned()),
-                    |token| Ok(token.to_owned()),
-                ),
+                // Keep this exact live session. Dropping it and reopening from
+                // a token would perform a second portal handshake and can
+                // show a second picker on compositors that do not restore it.
+                Ok(session) => {
+                    WaylandCaptureDevice::from_session("wayland-screen", "Wayland screen", session)
+                        .map(|device| {
+                            publish_wayland_portal_handoff(handoff_id, device);
+                            callback_handoff_id
+                        })
+                        .map_err(|error| error.to_string())
+                }
                 Err(error) => Err(error.to_string()),
             };
             let _ = slint::invoke_from_event_loop(move || {
@@ -346,7 +362,9 @@ fn share_through_portal(
                     return;
                 };
                 match outcome {
-                    Ok(token) => ui.invoke_apply_portal_token(source.into(), token.into()),
+                    Ok(handoff_id) => {
+                        ui.invoke_apply_portal_token(source.into(), handoff_id.into());
+                    }
                     Err(error) => {
                         ui.set_status_message(
                             format!("Screen sharing was not started: {error}").into(),
@@ -361,7 +379,7 @@ fn share_through_portal(
     }
 }
 
-/// Stores a portal token on the selected source, on the UI thread.
+/// Hands the live portal session to the selected source, on the UI thread.
 #[cfg(target_os = "linux")]
 fn install_portal_token(
     ui: &MainWindow,
@@ -396,8 +414,17 @@ fn install_portal_token(
             ui.set_status_message("Screen sharing failed: source settings are invalid".into());
             return;
         };
-        if settings.set("restore_token", token.as_str()).is_err() {
-            ui.set_status_message("Screen sharing failed: the token could not be stored".into());
+        settings.remove("restore_token");
+        if settings
+            .set(
+                obs_rs_capture::WAYLAND_PORTAL_HANDOFF_SETTING,
+                token.as_str(),
+            )
+            .is_err()
+        {
+            ui.set_status_message(
+                "Screen sharing failed: the live session could not be handed off".into(),
+            );
             return;
         }
         apply_source_settings_to(&ui, &state, &surface, &target, &settings.serialize());

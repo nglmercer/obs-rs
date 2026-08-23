@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use obs_rs_media::{FrameTransition, RawVideoFrame, VideoFrame};
-use obs_rs_project::{Profile, SceneItemSpec, SceneSpec};
+use obs_rs_project::{Profile, ProjectCommand, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 
@@ -204,10 +204,30 @@ type RefreshedPreviewFrames = (
 pub(crate) fn refresh_preview_frames_for_view(
     ui: &MainWindow,
     worker: &PreviewWorker,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
 ) -> RefreshedPreviewFrames {
     let Some(result) = worker.try_take_latest() else {
         return (None, None, None, None, None);
     };
+    let mut settings_updated = false;
+    for (profile, source, settings) in result.source_settings_updates.iter().cloned() {
+        match state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceSettings {
+                profile,
+                source,
+                settings,
+            })) {
+            Ok(()) => settings_updated = true,
+            Err(error) => {
+                ui.set_status_message(format!("Source settings update failed: {error}").into())
+            }
+        }
+    }
+    if settings_updated {
+        refresh_ui(ui, state, surface);
+    }
     match (&result.preview_scene, &result.preview_frame) {
         (_, Some(frame)) => {
             let copy_started = Instant::now();

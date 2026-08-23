@@ -158,6 +158,7 @@ impl SourceFactory for SimulatedCaptureFactory {
                 device: None,
                 failure: None,
                 retry_countdown: CAMERA_RETRY_FRAMES,
+                shutdown_blocked: false,
             };
             // A camera that is unplugged, busy, or missing must not stop the
             // scene from being created: the source stays, reports why, and
@@ -215,12 +216,18 @@ impl SourceFactory for NokhwaCaptureFactory {
 
     fn create(&self, name: &str, settings: &Config) -> Result<Box<dyn Source>, SourceError> {
         let format = parse_format(settings)?;
-        let device_id = settings
-            .get("device_id")
-            .filter(|value| is_nokhwa_camera_id(value))
-            .ok_or_else(|| {
-                SourceError::invalid_setting("device_id", "expected a Nokhwa camera ID")
-            })?;
+        let device_id = match settings.get("device_id").map(str::trim) {
+            Some(value) if !value.is_empty() => {
+                if !is_nokhwa_camera_id(value) {
+                    return Err(SourceError::invalid_setting(
+                        "device_id",
+                        "expected a Nokhwa camera ID",
+                    ));
+                }
+                value
+            }
+            _ => "nokhwa-camera-0",
+        };
         let native_mode = parse_camera_mode(settings)?;
         let mut source = NativeCameraSource {
             kind: self.kind.clone(),
@@ -231,6 +238,7 @@ impl SourceFactory for NokhwaCaptureFactory {
             device: None,
             failure: None,
             retry_countdown: CAMERA_RETRY_FRAMES,
+            shutdown_blocked: false,
         };
         // Opening is asynchronous. A disconnected or busy camera remains a
         // valid project source and reports its Nokhwa failure on render.
@@ -304,6 +312,9 @@ struct NativeCameraSource {
     failure: Option<String>,
     /// Renders since the last attempt to reopen a camera that was unavailable.
     retry_countdown: u32,
+    /// Set when the previous worker could not be joined yet. No replacement
+    /// may open the same physical camera until that worker has finished.
+    shutdown_blocked: bool,
 }
 
 /// Renders between attempts to reopen an unavailable camera.
@@ -328,7 +339,18 @@ impl NativeCameraSource {
         // and its worker has already begun opening the camera — before the old
         // value is dropped, so both would be holding the same device and the
         // new one would very likely be told it is busy.
-        drop(self.device.take());
+        if let Some(mut previous) = self.device.take() {
+            if !previous.shutdown() {
+                self.failure = Some(
+                    "the previous camera worker is still shutting down; waiting before reopening"
+                        .to_owned(),
+                );
+                self.shutdown_blocked = true;
+                self.device = Some(previous);
+                return;
+            }
+        }
+        self.shutdown_blocked = false;
         let request = self.native_mode.map_or_else(
             || CaptureRequest::output(self.format),
             |mode| CaptureRequest::camera(self.format, mode),
@@ -397,6 +419,17 @@ impl Source for NativeCameraSource {
                 configured: self.format,
                 requested: request.format(),
             });
+        }
+        if self.shutdown_blocked {
+            if self
+                .device
+                .as_ref()
+                .is_some_and(|device| device.state() == CaptureLifecycleState::Lost)
+            {
+                self.reopen();
+            } else {
+                return Err(self.unavailable());
+            }
         }
         match self.device.as_ref().map(ThreadedCaptureDevice::state) {
             // No worker at all: count down to the next attempt.

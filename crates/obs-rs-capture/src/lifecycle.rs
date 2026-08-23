@@ -1,5 +1,8 @@
 use std::{
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
     thread,
 };
 
@@ -23,7 +26,44 @@ pub enum CaptureLifecycleState {
 }
 
 type OpenResult = Result<Box<dyn VideoCaptureDevice>, CaptureError>;
-type OpenDevice = dyn Fn() -> OpenResult + Send + Sync + 'static;
+type OpenDevice = dyn Fn(&CaptureCancellation) -> OpenResult + Send + Sync + 'static;
+
+/// Cancellation shared by a source handle and its asynchronous opener.
+///
+/// Native APIs are not all interruptible, but portal requests can be closed
+/// explicitly. Keeping this token at the capture boundary lets a backend stop
+/// waiting as soon as its owning source is replaced or dropped.
+#[derive(Clone, Debug)]
+pub struct CaptureCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl CaptureCancellation {
+    /// Creates a cancellation token that is initially active.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Marks the associated open attempt as cancelled.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Returns whether the owner has abandoned the open attempt.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+impl Default for CaptureCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Non-blocking boundary around permission prompts and native device opening.
 ///
@@ -34,7 +74,7 @@ pub struct AsyncCaptureDevice {
     format: VideoFormat,
     opener: Arc<OpenDevice>,
     receiver: mpsc::Receiver<OpenResult>,
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    cancelled: CaptureCancellation,
     device: Option<Box<dyn VideoCaptureDevice>>,
     state: CaptureLifecycleState,
     last_error: Option<CaptureError>,
@@ -47,9 +87,18 @@ impl AsyncCaptureDevice {
         format: VideoFormat,
         opener: impl Fn() -> OpenResult + Send + Sync + 'static,
     ) -> Self {
+        Self::open_cancellable(format, move |_| opener())
+    }
+
+    /// Starts opening a platform device with a cancellation-aware opener.
+    #[must_use]
+    pub fn open_cancellable(
+        format: VideoFormat,
+        opener: impl Fn(&CaptureCancellation) -> OpenResult + Send + Sync + 'static,
+    ) -> Self {
         let opener: Arc<OpenDevice> = Arc::new(opener);
-        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let receiver = spawn_open(Arc::clone(&opener), format, Arc::clone(&cancelled));
+        let cancelled = CaptureCancellation::new();
+        let receiver = spawn_open(Arc::clone(&opener), format, cancelled.clone());
         Self {
             format,
             opener,
@@ -59,6 +108,26 @@ impl AsyncCaptureDevice {
             state: CaptureLifecycleState::Opening,
             last_error: None,
         }
+    }
+
+    /// Adopts an already-opened device, retaining `opener` for recovery after
+    /// the adopted session is lost.
+    pub fn ready(
+        format: VideoFormat,
+        mut device: Box<dyn VideoCaptureDevice>,
+        opener: impl Fn(&CaptureCancellation) -> OpenResult + Send + Sync + 'static,
+    ) -> Result<Self, CaptureError> {
+        device.start(format)?;
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        Ok(Self {
+            format,
+            opener: Arc::new(opener),
+            receiver,
+            cancelled: CaptureCancellation::new(),
+            device: Some(device),
+            state: CaptureLifecycleState::Ready,
+            last_error: None,
+        })
     }
 
     /// Returns the current observable lifecycle state.
@@ -73,6 +142,12 @@ impl AsyncCaptureDevice {
         self.last_error.as_ref()
     }
 
+    /// Returns a backend-provided restore token from the ready device.
+    #[must_use]
+    pub fn restore_token(&self) -> Option<&str> {
+        self.device.as_ref()?.restore_token()
+    }
+
     /// Starts another asynchronous open after a lost session.
     ///
     /// Denied sessions intentionally cannot retry without constructing a new
@@ -85,14 +160,13 @@ impl AsyncCaptureDevice {
         if self.state != CaptureLifecycleState::Lost {
             return Err(CaptureError::AlreadyRunning);
         }
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.cancelled.cancel();
         self.device = None;
-        self.cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.cancelled = CaptureCancellation::new();
         self.receiver = spawn_open(
             Arc::clone(&self.opener),
             self.format,
-            Arc::clone(&self.cancelled),
+            self.cancelled.clone(),
         );
         self.state = CaptureLifecycleState::Retrying;
         self.last_error = None;
@@ -162,22 +236,22 @@ impl AsyncCaptureDevice {
 fn spawn_open(
     opener: Arc<OpenDevice>,
     format: VideoFormat,
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    cancelled: CaptureCancellation,
 ) -> mpsc::Receiver<OpenResult> {
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let result = opener().and_then(|mut device| {
-            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        let result = opener(&cancelled).and_then(|mut device| {
+            if cancelled.is_cancelled() {
                 return Err(CaptureError::NotRunning);
             }
             device.start(format)?;
-            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            if cancelled.is_cancelled() {
                 device.stop();
                 return Err(CaptureError::NotRunning);
             }
             Ok(device)
         });
-        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        if cancelled.is_cancelled() {
             return;
         }
         let _ = sender.send(result);
@@ -194,7 +268,6 @@ const fn is_permission_denial(error: &CaptureError) -> bool {
 
 impl Drop for AsyncCaptureDevice {
     fn drop(&mut self) {
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.cancelled.cancel();
     }
 }

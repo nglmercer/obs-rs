@@ -146,14 +146,6 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
             devices.first().map_or(fallback, |(id, _)| id.as_str())
         };
         settings.set("device_id", device_id)?;
-        if kind == "camera_capture" {
-            if let Some(mode) = camera_modes_for_device(device_id).first().copied() {
-                settings.set("capture_width", &mode.width().to_string())?;
-                settings.set("capture_height", &mode.height().to_string())?;
-                settings.set("capture_fps", &camera_fps_setting(mode))?;
-                settings.set("capture_pixel_format", mode.pixel_format().as_str())?;
-            }
-        }
     }
     if kind == "x11_screen_capture" {
         if let Ok(display) = std::env::var("DISPLAY") {
@@ -406,15 +398,6 @@ pub(crate) fn camera_modes_for_device(device_id: &str) -> Vec<CameraMode> {
         snapshot.insert(device_id.to_owned(), (Instant::now(), modes.clone()));
     }
     modes
-}
-
-fn camera_fps_setting(mode: CameraMode) -> String {
-    let frame_rate = mode.frame_rate();
-    if frame_rate.denominator() == 1 {
-        frame_rate.numerator().to_string()
-    } else {
-        format!("{}/{}", frame_rate.numerator(), frame_rate.denominator())
-    }
 }
 
 fn scene(

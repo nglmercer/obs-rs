@@ -333,6 +333,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &ui,
         &state,
         &preview_worker,
+        &surface,
         &output,
         &projectors,
         &docks,

@@ -173,6 +173,7 @@ pub(crate) fn start_preview_timer(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     preview_worker: &Rc<PreviewWorker>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     projectors: &Rc<ProjectorController>,
     docks: &Rc<docks::DockController>,
@@ -182,6 +183,7 @@ pub(crate) fn start_preview_timer(
     let weak = ui.as_weak();
     let state = Rc::clone(state);
     let preview_worker = Rc::clone(preview_worker);
+    let surface = Rc::clone(surface);
     let output = Rc::clone(output);
     let projectors = Rc::clone(projectors);
     let docks = Rc::clone(docks);
@@ -359,7 +361,7 @@ pub(crate) fn start_preview_timer(
             }
         }
         let (preview_frame, program_frame, program_output, program_output_frame, render_error) =
-            refresh_preview_frames_for_view(&ui, &preview_worker);
+            refresh_preview_frames_for_view(&ui, &preview_worker, &state, &surface);
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
         }
