@@ -242,6 +242,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Menu-bar actions and the projector windows they open.
     let projectors = install_menu_callbacks(&ui, &state, &surface, &docks);
     projectors.restore_geometry(&settings.layout.projector_geometry);
+    projectors.restore_targets(&settings.layout.projector_targets);
     if !smoke && screenshot.is_none() {
         projectors.reopen_persisted(&ui, &state);
     }

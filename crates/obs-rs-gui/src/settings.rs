@@ -34,8 +34,11 @@ const SETTINGS_FILE: &str = "obs-rs-settings.toml";
 const PROJECT_FILE: &str = "obs-rs-project.json";
 const DIAGNOSTICS_FILE: &str = "obs-rs-diagnostics.obsrdg";
 const PROJECT_SCENE_SELECTIONS_KEY: &str = "project_scene_selections";
+const PROJECTOR_TARGETS_KEY: &str = "layout_projector_targets";
 const MAX_PERSISTED_PROJECT_SCENE_SELECTIONS: usize = 16;
 const MAX_PERSISTED_SELECTION_KEY_BYTES: usize = 384;
+const MAX_PERSISTED_PROJECTOR_TARGETS: usize = 2;
+const MAX_PROJECTOR_TARGET_COMPONENT_BYTES: usize = 256;
 
 /// Whether the first-run setup should be shown at startup.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -511,9 +514,12 @@ pub(crate) struct LayoutSettings {
     /// retained so a window can keep its logical size when it is restored on
     /// a display with a different DPI.
     pub(crate) floating_geometry: Vec<FloatingGeometry>,
-    /// Last known physical desktop geometry for windowed projector feeds.
-    /// Fullscreen projectors deliberately keep no geometry of their own.
+    /// Last known physical desktop geometry for projector feeds. Fullscreen
+    /// projectors retain bounded dimensions for a later return to windowed
+    /// mode; display state is stored in the same record.
     pub(crate) projector_geometry: Vec<ProjectorGeometry>,
+    /// Bounded target identities for source and scene projector reopening.
+    pub(crate) projector_targets: Vec<ProjectorTarget>,
     /// Versioned tree representation of the dock arrangement.
     pub(crate) dock_tree: DockNode,
 }
@@ -581,6 +587,13 @@ pub(crate) enum ProjectorKind {
     Multiview,
     Source,
     Scene,
+}
+
+/// Stable target identity for a source or scene projector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectorTarget {
+    Source { scene: String, item: String },
+    Scene { scene: String },
 }
 
 impl ProjectorKind {
@@ -711,6 +724,7 @@ impl Default for LayoutSettings {
             floating_panels: Vec::new(),
             floating_geometry: Vec::new(),
             projector_geometry: Vec::new(),
+            projector_targets: Vec::new(),
             dock_tree,
         }
     }
@@ -922,6 +936,93 @@ impl LayoutSettings {
         format!("v3:{}", records.join(";"))
     }
 
+    fn parse_projector_targets(value: &str) -> Vec<ProjectorTarget> {
+        let Some(records) = value.strip_prefix("v1") else {
+            return Vec::new();
+        };
+        let records = records.strip_prefix(';').unwrap_or_default();
+        let mut targets = Vec::with_capacity(MAX_PERSISTED_PROJECTOR_TARGETS);
+        for record in records.split(';').filter(|record| !record.is_empty()) {
+            if targets.len() == MAX_PERSISTED_PROJECTOR_TARGETS {
+                break;
+            }
+            let mut fields = record.split('|');
+            let Some(kind) = fields.next() else {
+                continue;
+            };
+            let target = match kind {
+                "source" => {
+                    let (Some(scene), Some(item)) = (
+                        fields.next().and_then(selection_component_decode),
+                        fields.next().and_then(selection_component_decode),
+                    ) else {
+                        continue;
+                    };
+                    if fields.next().is_some()
+                        || scene.is_empty()
+                        || item.is_empty()
+                        || scene.len() > MAX_PROJECTOR_TARGET_COMPONENT_BYTES
+                        || item.len() > MAX_PROJECTOR_TARGET_COMPONENT_BYTES
+                    {
+                        continue;
+                    }
+                    ProjectorTarget::Source { scene, item }
+                }
+                "scene" => {
+                    let Some(scene) = fields.next().and_then(selection_component_decode) else {
+                        continue;
+                    };
+                    if fields.next().is_some()
+                        || scene.is_empty()
+                        || scene.len() > MAX_PROJECTOR_TARGET_COMPONENT_BYTES
+                    {
+                        continue;
+                    }
+                    ProjectorTarget::Scene { scene }
+                }
+                _ => continue,
+            };
+            let duplicate = targets.iter().any(|existing| {
+                matches!(
+                    (existing, &target),
+                    (
+                        ProjectorTarget::Source { .. },
+                        ProjectorTarget::Source { .. }
+                    ) | (ProjectorTarget::Scene { .. }, ProjectorTarget::Scene { .. })
+                )
+            });
+            if !duplicate {
+                targets.push(target);
+            }
+        }
+        targets
+    }
+
+    fn projector_targets_text(&self) -> String {
+        let mut targets = self.projector_targets.clone();
+        targets.sort_by_key(|target| matches!(target, ProjectorTarget::Scene { .. }));
+        let mut encoded = String::from("v1");
+        for target in targets.into_iter().take(MAX_PERSISTED_PROJECTOR_TARGETS) {
+            let record = match target {
+                ProjectorTarget::Source { scene, item } => format!(
+                    "source|{}|{}",
+                    selection_component(&scene),
+                    selection_component(&item)
+                ),
+                ProjectorTarget::Scene { scene } => {
+                    format!("scene|{}", selection_component(&scene))
+                }
+            };
+            let required = 1_usize.saturating_add(record.len());
+            if encoded.len().saturating_add(required) > obs_rs_config::MAX_VALUE_BYTES {
+                break;
+            }
+            encoded.push(';');
+            encoded.push_str(&record);
+        }
+        encoded
+    }
+
     fn panel_order_text(&self) -> String {
         self.dock_tree
             .leaf_order()
@@ -1063,6 +1164,10 @@ impl LayoutSettings {
                 .get("layout_projector_geometry")
                 .map(Self::parse_projector_geometry)
                 .unwrap_or(defaults.projector_geometry),
+            projector_targets: config
+                .get(PROJECTOR_TARGETS_KEY)
+                .map(Self::parse_projector_targets)
+                .unwrap_or(defaults.projector_targets),
             dock_tree,
         }
     }
@@ -1585,6 +1690,7 @@ impl AppSettings {
                 "layout_projector_geometry",
                 self.layout.projector_geometry_text(),
             ),
+            (PROJECTOR_TARGETS_KEY, self.layout.projector_targets_text()),
             (
                 "layout_dock_tree",
                 self.layout
@@ -2890,6 +2996,46 @@ mod tests {
                 .count(),
             1,
             "the first valid duplicate wins"
+        );
+    }
+
+    #[test]
+    fn projector_targets_round_trip_with_bounded_escaped_components() {
+        let mut settings = AppSettings::default();
+        settings.layout.projector_targets = vec![
+            ProjectorTarget::Source {
+                scene: "scene;one".to_owned(),
+                item: "group|item".to_owned(),
+            },
+            ProjectorTarget::Scene {
+                scene: "program".to_owned(),
+            },
+        ];
+        let decoded = AppSettings::from_config(&settings.to_config());
+        assert_eq!(
+            decoded.layout.projector_targets,
+            settings.layout.projector_targets
+        );
+
+        let mut config = Config::new();
+        config
+            .set(
+                PROJECTOR_TARGETS_KEY,
+                "v1;source|scene%3Bone|group%7Citem;scene|program;source|later|item;scene||bad",
+            )
+            .expect("projector target key");
+        let decoded = AppSettings::from_config(&config);
+        assert_eq!(
+            decoded.layout.projector_targets,
+            vec![
+                ProjectorTarget::Source {
+                    scene: "scene;one".to_owned(),
+                    item: "group|item".to_owned(),
+                },
+                ProjectorTarget::Scene {
+                    scene: "program".to_owned(),
+                },
+            ]
         );
     }
 

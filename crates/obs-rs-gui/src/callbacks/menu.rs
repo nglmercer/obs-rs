@@ -16,7 +16,9 @@ use std::{
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::settings::{scale_window_dimension, FloatingGeometry, ProjectorGeometry, ProjectorKind};
+use crate::settings::{
+    scale_window_dimension, FloatingGeometry, ProjectorGeometry, ProjectorKind, ProjectorTarget,
+};
 use crate::{
     callbacks::docks::{clamp_window_position, current_desktop_bounds, DockController},
     dispatch_and_refresh, initial_project,
@@ -136,6 +138,55 @@ impl ProjectorController {
         stored.sort_unstable_by_key(|entry| entry.projector);
     }
 
+    /// Loads bounded source/scene target identities captured from the previous
+    /// session. Geometry and target state remain separate so a stale target
+    /// cannot make an otherwise valid window record unsafe to parse.
+    pub(crate) fn restore_targets(&self, targets: &[ProjectorTarget]) {
+        self.source_target.borrow_mut().take();
+        self.scene_target.borrow_mut().take();
+        for target in targets.iter().take(2) {
+            match target {
+                ProjectorTarget::Source { scene, item }
+                    if self.source_target.borrow().is_none() =>
+                {
+                    *self.source_target.borrow_mut() = Some(SourceProjectorTarget {
+                        scene: scene.clone(),
+                        item: item.clone(),
+                    });
+                }
+                ProjectorTarget::Scene { scene } if self.scene_target.borrow().is_none() => {
+                    *self.scene_target.borrow_mut() = Some(SceneProjectorTarget {
+                        scene: scene.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Captures only targets belonging to currently open source/scene feeds.
+    /// A closed feed's geometry remains useful for the next manual open, but
+    /// its target must not be resurrected without an explicit user choice.
+    pub(crate) fn capture_targets(&self) -> Vec<ProjectorTarget> {
+        let mut targets = Vec::with_capacity(2);
+        if self.source.borrow().is_some() {
+            if let Some(target) = self.source_target.borrow().as_ref() {
+                targets.push(ProjectorTarget::Source {
+                    scene: target.scene.clone(),
+                    item: target.item.clone(),
+                });
+            }
+        }
+        if self.scene.borrow().is_some() {
+            if let Some(target) = self.scene_target.borrow().as_ref() {
+                targets.push(ProjectorTarget::Scene {
+                    scene: target.scene.clone(),
+                });
+            }
+        }
+        targets
+    }
+
     /// Captures open projectors while retaining the last known state for feeds
     /// that are currently closed.
     pub(crate) fn capture_geometry(&self) -> Vec<ProjectorGeometry> {
@@ -184,9 +235,9 @@ impl ProjectorController {
         }
     }
 
-    /// Reopens fixed-target projectors that were open at the previous clean
-    /// shutdown. Source and scene feeds are intentionally excluded because
-    /// their target identity is not part of the bounded geometry record yet.
+    /// Reopens projectors that were open at the previous clean shutdown. A
+    /// source or scene target is reopened only when it still resolves in the
+    /// active project; fixed feeds need no target record.
     pub(crate) fn reopen_persisted(
         self: &Rc<Self>,
         ui: &MainWindow,
@@ -196,8 +247,14 @@ impl ProjectorController {
             ProjectorFeed::Program,
             ProjectorFeed::Preview,
             ProjectorFeed::Multiview,
+            ProjectorFeed::Source,
+            ProjectorFeed::Scene,
         ] {
             if !self.stored_geometry(feed).is_some_and(|entry| entry.open) {
+                continue;
+            }
+            if !self.target_is_available(feed, state) {
+                self.set_open(feed, false);
                 continue;
             }
             match open_projector(ui, state, self, feed) {
@@ -209,6 +266,25 @@ impl ProjectorController {
                     ui.set_status_message(format!("Projector restore: {error}").into());
                 }
             }
+        }
+    }
+
+    fn target_is_available(&self, feed: ProjectorFeed, state: &Rc<RefCell<DesktopState>>) -> bool {
+        let state = state.borrow();
+        let profile = state.project_session().project().active_profile_spec();
+        match feed {
+            ProjectorFeed::Source => self.source_target.borrow().as_ref().is_some_and(|target| {
+                profile
+                    .and_then(|profile| profile.scene(target.scene.as_str()))
+                    .and_then(|scene| super::source::item_for_target(scene, target.item.as_str()))
+                    .is_some_and(obs_rs_project::SceneItemSpec::is_source)
+            }),
+            ProjectorFeed::Scene => self.scene_target.borrow().as_ref().is_some_and(|target| {
+                profile
+                    .and_then(|profile| profile.scene(target.scene.as_str()))
+                    .is_some()
+            }),
+            ProjectorFeed::Program | ProjectorFeed::Preview | ProjectorFeed::Multiview => true,
         }
     }
 

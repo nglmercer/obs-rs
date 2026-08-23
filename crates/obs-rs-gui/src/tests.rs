@@ -3,7 +3,7 @@ use super::i18n::catalog;
 use super::output::stream_protocol_label;
 use super::preview::PreviewRenderer;
 use super::refresh::{peak_db, transition_label_for_locale};
-use super::settings::{AppSettings, ProjectorGeometry, ProjectorKind};
+use super::settings::{AppSettings, ProjectorGeometry, ProjectorKind, ProjectorTarget};
 use super::settings_model::RecordingQuality;
 use super::{
     capture_devices, close_request_response, initial_project, install_canvas_callbacks, refresh_ui,
@@ -1909,23 +1909,40 @@ fn exercise_menu_actions(
     // A clean restart reopens fixed-target projectors whose bounded lifecycle
     // bit was captured at shutdown. Closing it again clears that bit before
     // the ordinary toggle assertions below.
-    projectors.restore_geometry(&[ProjectorGeometry::new(
-        ProjectorKind::Program,
-        24,
-        32,
-        960,
-        540,
-        1_000,
-    )
-    .expect("valid projector geometry")
-    .with_fullscreen(true)
-    .with_open(true)]);
+    let source_target = crate::selected_target(&state.borrow()).expect("selected source target");
+    projectors.restore_geometry(&[
+        ProjectorGeometry::new(ProjectorKind::Program, 24, 32, 960, 540, 1_000)
+            .expect("valid projector geometry")
+            .with_fullscreen(true)
+            .with_open(true),
+        ProjectorGeometry::new(ProjectorKind::Source, 48, 64, 960, 540, 1_000)
+            .expect("valid source projector geometry")
+            .with_open(true),
+        ProjectorGeometry::new(ProjectorKind::Scene, 72, 96, 960, 540, 1_000)
+            .expect("valid scene projector geometry")
+            .with_open(true),
+    ]);
+    projectors.restore_targets(&[
+        ProjectorTarget::Source {
+            scene: source_target.scene.clone(),
+            item: source_target.item.clone(),
+        },
+        ProjectorTarget::Scene {
+            scene: "preview".to_owned(),
+        },
+    ]);
     projectors.reopen_persisted(ui, state);
     assert!(
         projectors.is_open(true),
         "the persisted program projector reopened"
     );
+    assert!(
+        projectors.is_source_open() && projectors.is_scene_open(),
+        "persisted source and scene projectors reopened"
+    );
     ui.invoke_open_projector(true);
+    ui.invoke_open_source_projector();
+    ui.invoke_open_scene_projector("preview".into());
     assert!(
         !projectors.is_open(true),
         "closing clears the persisted open state"
