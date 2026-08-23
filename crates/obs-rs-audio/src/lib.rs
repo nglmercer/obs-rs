@@ -11,6 +11,7 @@ mod error;
 mod filters;
 mod mixer;
 mod monitor;
+mod output_worker;
 mod pacing;
 mod queue;
 mod resampler;
@@ -46,6 +47,10 @@ pub use filters::{
 };
 pub use mixer::{AudioMixer, MAX_GAIN_MILLI, MAX_PAN_MILLI, MIN_PAN_MILLI};
 pub use monitor::AudioMonitorTap;
+pub use output_worker::{
+    AudioOutputWorker, AudioOutputWorkerError, AudioOutputWorkerHandle, AudioOutputWorkerSnapshot,
+    AudioOutputWorkerState,
+};
 pub use pacing::{
     AudioClock, AudioDeadline, AudioPacer, AudioPacingResult, AudioScheduler, MonotonicAudioClock,
 };
