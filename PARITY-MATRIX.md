@@ -22,6 +22,12 @@ server is available to this process. The deterministic Slint screenshot harness
 did produce English and Spanish fixtures for all nine settings pages in
 `artifacts/baseline/screenshots/`.
 
+The latest audio packet makes the typed standard channel-layout metadata
+functional at the provider-to-mix boundary: the bounded resampler maps Mono,
+Stereo, 2.1, Quad, 5.1, and 7.1 by speaker role, while unknown `Discrete`
+layouts retain the index-based fallback. This does not claim per-source audio
+routing, adaptive clock correction, or multiple recording tracks.
+
 ## Core, scheduling, and rendering
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |

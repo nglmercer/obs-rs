@@ -5,6 +5,16 @@ gaps. It is intentionally about ownership and boundaries, not a second feature
 roadmap. Each gap should become one or more narrow work packets with an
 independent reviewer.
 
+## Latest verified packet
+
+The provider-to-mix `AudioResampler` now consumes the typed standard layout
+metadata instead of treating every channel count as an unlabeled index list.
+Speaker-role conversion is bounded and covered by a release timing probe;
+`Discrete` provider layouts retain the compatibility fallback. This closes
+only the low-level conversion slice. The project still lacks canonical
+per-source audio identity and routing, so source properties and multiple tracks
+remain intentionally open gaps.
+
 ## Phase 1 progress
 
 The first performance packet is now implemented:

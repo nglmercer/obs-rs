@@ -1,8 +1,191 @@
 use super::{
     buffer::AudioBuffer,
     error::AudioError,
-    types::{AudioFormat, MAX_AUDIO_FRAMES},
+    types::{AudioChannelLayout, AudioFormat, MAX_AUDIO_FRAMES},
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChannelRole {
+    Left,
+    Right,
+    Center,
+    Lfe,
+    BackLeft,
+    BackRight,
+    SideLeft,
+    SideRight,
+}
+
+const MONO_ROLES: [ChannelRole; 1] = [ChannelRole::Center];
+const STEREO_ROLES: [ChannelRole; 2] = [ChannelRole::Left, ChannelRole::Right];
+const TWO_POINT_ONE_ROLES: [ChannelRole; 3] =
+    [ChannelRole::Left, ChannelRole::Right, ChannelRole::Lfe];
+const QUAD_ROLES: [ChannelRole; 4] = [
+    ChannelRole::Left,
+    ChannelRole::Right,
+    ChannelRole::BackLeft,
+    ChannelRole::BackRight,
+];
+const FIVE_POINT_ONE_ROLES: [ChannelRole; 6] = [
+    ChannelRole::Left,
+    ChannelRole::Right,
+    ChannelRole::Center,
+    ChannelRole::Lfe,
+    ChannelRole::SideLeft,
+    ChannelRole::SideRight,
+];
+const SEVEN_POINT_ONE_ROLES: [ChannelRole; 8] = [
+    ChannelRole::Left,
+    ChannelRole::Right,
+    ChannelRole::Center,
+    ChannelRole::Lfe,
+    ChannelRole::BackLeft,
+    ChannelRole::BackRight,
+    ChannelRole::SideLeft,
+    ChannelRole::SideRight,
+];
+const LEFT_DOWNMIX_ROLES: [ChannelRole; 4] = [
+    ChannelRole::Left,
+    ChannelRole::Center,
+    ChannelRole::BackLeft,
+    ChannelRole::SideLeft,
+];
+const RIGHT_DOWNMIX_ROLES: [ChannelRole; 4] = [
+    ChannelRole::Right,
+    ChannelRole::Center,
+    ChannelRole::BackRight,
+    ChannelRole::SideRight,
+];
+
+fn standard_roles(layout: AudioChannelLayout) -> Option<&'static [ChannelRole]> {
+    match layout {
+        AudioChannelLayout::Mono => Some(&MONO_ROLES),
+        AudioChannelLayout::Stereo => Some(&STEREO_ROLES),
+        AudioChannelLayout::TwoPointOne => Some(&TWO_POINT_ONE_ROLES),
+        AudioChannelLayout::Quad => Some(&QUAD_ROLES),
+        AudioChannelLayout::FivePointOne => Some(&FIVE_POINT_ONE_ROLES),
+        AudioChannelLayout::SevenPointOne => Some(&SEVEN_POINT_ONE_ROLES),
+        AudioChannelLayout::Discrete(_) => None,
+    }
+}
+
+fn exact_role_sample(samples: &[f32], roles: &[ChannelRole], role: ChannelRole) -> Option<f32> {
+    roles
+        .iter()
+        .position(|candidate| *candidate == role)
+        .and_then(|channel| samples.get(channel).copied())
+}
+
+fn average_roles(
+    samples: &[f32],
+    roles: &[ChannelRole],
+    candidates: &[ChannelRole],
+) -> Option<f32> {
+    let mut total = 0.0;
+    let mut count = 0_u16;
+    for candidate in candidates {
+        if let Some(sample) = exact_role_sample(samples, roles, *candidate) {
+            total += sample;
+            count = count.saturating_add(1);
+        }
+    }
+    (count > 0).then_some(total / f32::from(count))
+}
+
+fn first_role_sample(
+    samples: &[f32],
+    roles: &[ChannelRole],
+    candidates: &[ChannelRole],
+) -> Option<f32> {
+    candidates
+        .iter()
+        .find_map(|candidate| exact_role_sample(samples, roles, *candidate))
+}
+
+fn standard_role_sample(samples: &[f32], roles: &[ChannelRole], role: ChannelRole) -> f32 {
+    if let Some(sample) = exact_role_sample(samples, roles, role) {
+        return sample;
+    }
+    let fallback = match role {
+        ChannelRole::Left => [
+            ChannelRole::Center,
+            ChannelRole::BackLeft,
+            ChannelRole::SideLeft,
+        ],
+        ChannelRole::Right => [
+            ChannelRole::Center,
+            ChannelRole::BackRight,
+            ChannelRole::SideRight,
+        ],
+        ChannelRole::Center => [ChannelRole::Left, ChannelRole::Right, ChannelRole::Center],
+        ChannelRole::Lfe => return 0.0,
+        ChannelRole::BackLeft => [
+            ChannelRole::SideLeft,
+            ChannelRole::Left,
+            ChannelRole::Center,
+        ],
+        ChannelRole::BackRight => [
+            ChannelRole::SideRight,
+            ChannelRole::Right,
+            ChannelRole::Center,
+        ],
+        ChannelRole::SideLeft => [
+            ChannelRole::BackLeft,
+            ChannelRole::Left,
+            ChannelRole::Center,
+        ],
+        ChannelRole::SideRight => [
+            ChannelRole::BackRight,
+            ChannelRole::Right,
+            ChannelRole::Center,
+        ],
+    };
+    if role == ChannelRole::Center {
+        average_roles(samples, roles, &fallback).unwrap_or(0.0)
+    } else {
+        first_role_sample(samples, roles, &fallback).unwrap_or(0.0)
+    }
+}
+
+fn mapped_channel(
+    samples: &[f32],
+    input_layout: AudioChannelLayout,
+    output_layout: AudioChannelLayout,
+    output_channel: usize,
+) -> f32 {
+    let input_channels = usize::from(input_layout.channels());
+    if output_layout == AudioChannelLayout::Mono {
+        return samples.iter().sum::<f32>() / f32::from(input_layout.channels());
+    }
+    if input_layout == output_layout {
+        return samples.get(output_channel).copied().unwrap_or(0.0);
+    }
+
+    let (Some(input_roles), Some(output_roles)) =
+        (standard_roles(input_layout), standard_roles(output_layout))
+    else {
+        return samples
+            .get(output_channel.min(input_channels.saturating_sub(1)))
+            .copied()
+            .unwrap_or(0.0);
+    };
+    let role = output_roles[output_channel];
+    if matches!(
+        output_layout,
+        AudioChannelLayout::Stereo | AudioChannelLayout::TwoPointOne
+    ) && matches!(role, ChannelRole::Left | ChannelRole::Right)
+    {
+        let candidates = if role == ChannelRole::Left {
+            &LEFT_DOWNMIX_ROLES
+        } else {
+            &RIGHT_DOWNMIX_ROLES
+        };
+        return average_roles(samples, input_roles, candidates)
+            .unwrap_or_else(|| standard_role_sample(samples, input_roles, role));
+    }
+    standard_role_sample(samples, input_roles, role)
+}
+
 /// A deterministic linear resampler and channel mapper for interleaved buffers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AudioResampler {
@@ -14,9 +197,11 @@ impl AudioResampler {
     ///
     /// # Errors
     ///
-    /// Channel layouts are mapped deterministically: mono is duplicated,
-    /// downmixing to mono averages all input channels, and wider layouts retain
-    /// corresponding channels while duplicating the final available channel.
+    /// Standard layouts are mapped by speaker role: mono output averages all
+    /// input channels, stereo/2.1 downmixes preserve left/right families, and
+    /// wider standard layouts synthesize only missing roles from their nearest
+    /// available speaker. Discrete layouts retain the bounded index-based
+    /// fallback for provider formats without speaker metadata.
     pub const fn new(input: AudioFormat, output: AudioFormat) -> Result<Self, AudioError> {
         Ok(Self { input, output })
     }
@@ -79,15 +264,18 @@ impl AudioResampler {
             let second_samples = &input_samples[second_base..second_base + input_channels];
 
             for (channel, output) in output_frame.iter_mut().enumerate() {
-                let sample = |frame: &[f32]| {
-                    if output_channels == 1 {
-                        frame.iter().sum::<f32>() / input_channels as f32
-                    } else {
-                        frame[channel.min(input_channels - 1)]
-                    }
-                };
-                let first_sample = sample(first_samples);
-                let second_sample = sample(second_samples);
+                let first_sample = mapped_channel(
+                    first_samples,
+                    self.input.layout(),
+                    self.output.layout(),
+                    channel,
+                );
+                let second_sample = mapped_channel(
+                    second_samples,
+                    self.input.layout(),
+                    self.output.layout(),
+                    channel,
+                );
                 *output = first_sample + (second_sample - first_sample) * fraction;
             }
 

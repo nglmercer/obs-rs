@@ -1355,6 +1355,71 @@ fn resampler_maps_mono_to_stereo() {
 }
 
 #[test]
+fn resampler_maps_standard_layouts_by_speaker_role() {
+    let input =
+        AudioFormat::with_layout(48_000, AudioChannelLayout::FivePointOne).expect("5.1 input");
+    let quad = AudioFormat::with_layout(48_000, AudioChannelLayout::Quad).expect("quad output");
+    let buffer = AudioBuffer::new(
+        input,
+        Timestamp::ZERO,
+        vec![1.0, -1.0, 0.5, 0.25, 0.2, -0.2],
+    )
+    .expect("5.1 buffer");
+    let converted = AudioResampler::new(input, quad)
+        .expect("quad converter")
+        .process(&buffer)
+        .expect("quad conversion");
+    assert_eq!(converted.samples(), &[1.0, -1.0, 0.2, -0.2]);
+
+    let stereo =
+        AudioFormat::with_layout(48_000, AudioChannelLayout::Stereo).expect("stereo input");
+    let surround =
+        AudioFormat::with_layout(48_000, AudioChannelLayout::SevenPointOne).expect("7.1 output");
+    let stereo_buffer =
+        AudioBuffer::new(stereo, Timestamp::ZERO, vec![0.4, -0.2]).expect("stereo buffer");
+    let expanded = AudioResampler::new(stereo, surround)
+        .expect("surround converter")
+        .process(&stereo_buffer)
+        .expect("surround conversion");
+    assert_eq!(
+        expanded.samples(),
+        &[0.4, -0.2, 0.1, 0.0, 0.4, -0.2, 0.4, -0.2]
+    );
+}
+
+#[test]
+fn resampler_block_timing_report() {
+    let input_format =
+        AudioFormat::with_layout(48_000, AudioChannelLayout::FivePointOne).expect("5.1 input");
+    let output_format =
+        AudioFormat::with_layout(48_000, AudioChannelLayout::Stereo).expect("stereo output");
+    let input = AudioBuffer::new(
+        input_format,
+        Timestamp::ZERO,
+        (0..(480 * usize::from(input_format.channels())))
+            .map(|sample| f32::from(u16::try_from(sample % 17).expect("bounded sample")) / 17.0)
+            .collect(),
+    )
+    .expect("input buffer");
+    let resampler = AudioResampler::new(input_format, output_format).expect("resampler");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for _ in 0..200 {
+        let output = resampler.process(&input).expect("resample block");
+        checksum += output.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "resampler: 200 blocks x 480 5.1 frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
 fn delay_line_preserves_order_and_reuses_the_input_shape() {
     let mono = AudioFormat::new(1_000, 1).expect("mono format");
     let mut delay = AudioDelayLine::with_block_frames(mono, 3, 2).expect("delay line");

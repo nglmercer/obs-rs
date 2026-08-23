@@ -196,6 +196,18 @@ The observed release result was `112.129 µs` total, or `560 ns` per
 full audio-graph and device-clock performance still require the Phase 16
 matrix.
 
+The standard-layout resampler probe converts 200 reusable 480-frame 5.1
+blocks to stereo using speaker-role mapping. Its release measurement is:
+
+```text
+cargo test --release -p obs-rs-audio resampler_block_timing_report -- --nocapture
+resampler: 200 blocks x 480 5.1 frames = 5.680215ms (28.401µs/block)
+```
+
+This is a bounded channel-mapping and linear-resampling primitive measurement;
+device-clock correction, capture negotiation, and the complete audio graph are
+not included.
+
 The same release probe for Invert Polarity is kept separate because it has no
 settings or gain conversion; its result is recorded by:
 
