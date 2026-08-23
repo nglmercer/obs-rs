@@ -511,6 +511,9 @@ pub(crate) struct LayoutSettings {
     /// retained so a window can keep its logical size when it is restored on
     /// a display with a different DPI.
     pub(crate) floating_geometry: Vec<FloatingGeometry>,
+    /// Last known physical desktop geometry for windowed projector feeds.
+    /// Fullscreen projectors deliberately keep no geometry of their own.
+    pub(crate) projector_geometry: Vec<ProjectorGeometry>,
     /// Versioned tree representation of the dock arrangement.
     pub(crate) dock_tree: DockNode,
 }
@@ -532,14 +535,14 @@ pub(crate) struct FloatingGeometry {
 }
 
 impl FloatingGeometry {
-    const MIN_POSITION: i32 = -2_000_000;
-    const MAX_POSITION: i32 = 2_000_000;
-    const MIN_WIDTH: u32 = 240;
-    const MAX_WIDTH: u32 = 8_192;
-    const MIN_HEIGHT: u32 = 160;
-    const MAX_HEIGHT: u32 = 8_192;
-    const MIN_SCALE_MILLI: u32 = 500;
-    const MAX_SCALE_MILLI: u32 = 4_000;
+    pub(crate) const MIN_POSITION: i32 = -2_000_000;
+    pub(crate) const MAX_POSITION: i32 = 2_000_000;
+    pub(crate) const MIN_WIDTH: u32 = 240;
+    pub(crate) const MAX_WIDTH: u32 = 8_192;
+    pub(crate) const MIN_HEIGHT: u32 = 160;
+    pub(crate) const MAX_HEIGHT: u32 = 8_192;
+    pub(crate) const MIN_SCALE_MILLI: u32 = 500;
+    pub(crate) const MAX_SCALE_MILLI: u32 = 4_000;
 
     /// Creates a geometry record only when every value is safe to restore.
     pub(crate) fn new(
@@ -570,6 +573,101 @@ impl FloatingGeometry {
     }
 }
 
+/// The stable IDs used by the projector settings record.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum ProjectorKind {
+    Program,
+    Preview,
+    Multiview,
+    Source,
+    Scene,
+}
+
+impl ProjectorKind {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Program,
+        Self::Preview,
+        Self::Multiview,
+        Self::Source,
+        Self::Scene,
+    ];
+
+    const fn id(self) -> &'static str {
+        match self {
+            Self::Program => "program",
+            Self::Preview => "preview",
+            Self::Multiview => "multiview",
+            Self::Source => "source",
+            Self::Scene => "scene",
+        }
+    }
+
+    fn from_id(value: &str) -> Option<Self> {
+        match value {
+            "program" => Some(Self::Program),
+            "preview" => Some(Self::Preview),
+            "multiview" => Some(Self::Multiview),
+            "source" => Some(Self::Source),
+            "scene" => Some(Self::Scene),
+            _ => None,
+        }
+    }
+}
+
+/// Bounded geometry for one projector feed that is restored as a window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectorGeometry {
+    pub(crate) projector: ProjectorKind,
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) scale_milli: u32,
+}
+
+impl ProjectorGeometry {
+    /// Creates a geometry record only when every value is safe to restore.
+    pub(crate) fn new(
+        projector: ProjectorKind,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        scale_milli: u32,
+    ) -> Option<Self> {
+        if !(FloatingGeometry::MIN_POSITION..=FloatingGeometry::MAX_POSITION).contains(&x)
+            || !(FloatingGeometry::MIN_POSITION..=FloatingGeometry::MAX_POSITION).contains(&y)
+            || !(FloatingGeometry::MIN_WIDTH..=FloatingGeometry::MAX_WIDTH).contains(&width)
+            || !(FloatingGeometry::MIN_HEIGHT..=FloatingGeometry::MAX_HEIGHT).contains(&height)
+            || !(FloatingGeometry::MIN_SCALE_MILLI..=FloatingGeometry::MAX_SCALE_MILLI)
+                .contains(&scale_milli)
+        {
+            return None;
+        }
+        Some(Self {
+            projector,
+            x,
+            y,
+            width,
+            height,
+            scale_milli,
+        })
+    }
+}
+
+/// Scales a bounded physical dimension when a window is restored on another
+/// DPI, keeping the result inside the same safe window-size range.
+pub(crate) fn scale_window_dimension(value: u32, ratio: f32, minimum: u32, maximum: u32) -> u32 {
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "dimensions are bounded by the geometry record before scaling"
+    )]
+    let scaled = (value as f32 * ratio).round() as u32;
+    scaled.clamp(minimum, maximum)
+}
+
 /// The dock IDs a layout must contain, in the order OBS ships them.
 const DEFAULT_PANEL_ORDER: [i32; 5] = [1, 0, 2, 3, 4];
 
@@ -598,6 +696,7 @@ impl Default for LayoutSettings {
             panel_weights,
             floating_panels: Vec::new(),
             floating_geometry: Vec::new(),
+            projector_geometry: Vec::new(),
             dock_tree,
         }
     }
@@ -702,6 +801,47 @@ impl LayoutSettings {
         geometry
     }
 
+    /// Parses the versioned `v1:projector:x:y:width:height:scale;...`
+    /// geometry list. Individual bad records are discarded so a stale window
+    /// record cannot prevent the other projector feeds from restoring.
+    fn parse_projector_geometry(value: &str) -> Vec<ProjectorGeometry> {
+        let Some(records) = value.strip_prefix("v1:") else {
+            return Vec::new();
+        };
+        let mut geometry: Vec<ProjectorGeometry> = Vec::new();
+        for record in records.split(';').filter(|record| !record.is_empty()) {
+            let fields = record.split(':').collect::<Vec<_>>();
+            if fields.len() != 6 {
+                continue;
+            }
+            let [projector, x, y, width, height, scale] = [
+                fields[0], fields[1], fields[2], fields[3], fields[4], fields[5],
+            ];
+            let (Some(projector), Some(x), Some(y), Some(width), Some(height), Some(scale)) = (
+                ProjectorKind::from_id(projector),
+                x.parse().ok(),
+                y.parse().ok(),
+                width.parse().ok(),
+                height.parse().ok(),
+                scale.parse().ok(),
+            ) else {
+                continue;
+            };
+            let Some(entry) = ProjectorGeometry::new(projector, x, y, width, height, scale) else {
+                continue;
+            };
+            if geometry
+                .iter()
+                .all(|other| other.projector != entry.projector)
+                && geometry.len() < ProjectorKind::ALL.len()
+            {
+                geometry.push(entry);
+            }
+        }
+        geometry.sort_unstable_by_key(|entry| entry.projector);
+        geometry
+    }
+
     fn floating_geometry_text(&self) -> String {
         let mut geometry = self.floating_geometry.clone();
         geometry.sort_unstable_by_key(|entry| entry.panel);
@@ -711,6 +851,26 @@ impl LayoutSettings {
                 format!(
                     "{}:{}:{}:{}:{}:{}",
                     entry.panel, entry.x, entry.y, entry.width, entry.height, entry.scale_milli
+                )
+            })
+            .collect::<Vec<_>>();
+        format!("v1:{}", records.join(";"))
+    }
+
+    fn projector_geometry_text(&self) -> String {
+        let mut geometry = self.projector_geometry.clone();
+        geometry.sort_unstable_by_key(|entry| entry.projector);
+        let records = geometry
+            .into_iter()
+            .map(|entry| {
+                format!(
+                    "{}:{}:{}:{}:{}:{}",
+                    entry.projector.id(),
+                    entry.x,
+                    entry.y,
+                    entry.width,
+                    entry.height,
+                    entry.scale_milli
                 )
             })
             .collect::<Vec<_>>();
@@ -854,6 +1014,10 @@ impl LayoutSettings {
                 .get("layout_floating_geometry")
                 .map(Self::parse_floating_geometry)
                 .unwrap_or(defaults.floating_geometry),
+            projector_geometry: config
+                .get("layout_projector_geometry")
+                .map(Self::parse_projector_geometry)
+                .unwrap_or(defaults.projector_geometry),
             dock_tree,
         }
     }
@@ -1371,6 +1535,10 @@ impl AppSettings {
             (
                 "layout_floating_geometry",
                 self.layout.floating_geometry_text(),
+            ),
+            (
+                "layout_projector_geometry",
+                self.layout.projector_geometry_text(),
             ),
             (
                 "layout_dock_tree",
@@ -2572,6 +2740,42 @@ mod tests {
         assert_eq!(
             decoded.layout.floating_geometry,
             vec![FloatingGeometry::new(2, -1_920, 84, 720, 520, 1_250).expect("valid geometry")]
+        );
+    }
+
+    #[test]
+    fn projector_geometry_round_trips_and_rejects_unsafe_records() {
+        let mut settings = AppSettings::default();
+        settings.layout.projector_geometry = vec![
+            ProjectorGeometry::new(ProjectorKind::Preview, -1_920, 84, 960, 540, 1_250)
+                .expect("valid geometry"),
+            ProjectorGeometry::new(ProjectorKind::Scene, 2_560, 120, 1_280, 720, 2_000)
+                .expect("valid geometry"),
+        ];
+
+        let decoded = AppSettings::from_config(&settings.to_config());
+
+        assert_eq!(
+            decoded.layout.projector_geometry,
+            settings.layout.projector_geometry
+        );
+
+        let mut config = Config::new();
+        config
+            .set(
+                "layout_projector_geometry",
+                "v1:preview:-1920:84:960:540:1250;scene:2560:120:1280:720:2000;preview:300:200:960:540:1250;source:0:0:99999:540:1250;unknown:0:0:960:540:1250",
+            )
+            .expect("geometry key");
+        let decoded = AppSettings::from_config(&config);
+        assert_eq!(
+            decoded.layout.projector_geometry,
+            vec![
+                ProjectorGeometry::new(ProjectorKind::Preview, -1_920, 84, 960, 540, 1_250)
+                    .expect("valid geometry"),
+                ProjectorGeometry::new(ProjectorKind::Scene, 2_560, 120, 1_280, 720, 2_000)
+                    .expect("valid geometry"),
+            ]
         );
     }
 

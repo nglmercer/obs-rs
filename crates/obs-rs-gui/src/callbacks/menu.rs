@@ -16,8 +16,9 @@ use std::{
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
+use crate::settings::{scale_window_dimension, FloatingGeometry, ProjectorGeometry, ProjectorKind};
 use crate::{
-    callbacks::docks::DockController,
+    callbacks::docks::{clamp_window_position, current_desktop_bounds, DockController},
     dispatch_and_refresh, initial_project,
     preview_worker::{SceneProjectorTarget, SourceProjectorTarget},
     project_store, refresh_ui, source_target, MainWindow, PreviewSurface, ProfileRow,
@@ -53,6 +54,7 @@ pub(crate) struct ProjectorController {
     scene: RefCell<Option<ProjectorWindow>>,
     source_target: RefCell<Option<SourceProjectorTarget>>,
     scene_target: RefCell<Option<SceneProjectorTarget>>,
+    geometry: RefCell<Vec<ProjectorGeometry>>,
 }
 
 #[derive(Clone, Copy)]
@@ -62,6 +64,22 @@ enum ProjectorFeed {
     Multiview,
     Source,
     Scene,
+}
+
+impl ProjectorFeed {
+    const fn kind(self) -> ProjectorKind {
+        match self {
+            Self::Program => ProjectorKind::Program,
+            Self::Preview => ProjectorKind::Preview,
+            Self::Multiview => ProjectorKind::Multiview,
+            Self::Source => ProjectorKind::Source,
+            Self::Scene => ProjectorKind::Scene,
+        }
+    }
+
+    const fn is_fullscreen(self) -> bool {
+        matches!(self, Self::Program | Self::Multiview)
+    }
 }
 
 impl ProjectorController {
@@ -100,6 +118,59 @@ impl ProjectorController {
             .as_ref()
             .and(self.scene_target.borrow().as_ref())
             .cloned()
+    }
+
+    /// Loads bounded window geometry captured from the previous session.
+    pub(crate) fn restore_geometry(&self, geometry: &[ProjectorGeometry]) {
+        let mut stored = self.geometry.borrow_mut();
+        stored.clear();
+        for entry in geometry.iter().copied() {
+            if stored
+                .iter()
+                .all(|other| other.projector != entry.projector)
+                && stored.len() < ProjectorKind::ALL.len()
+            {
+                stored.push(entry);
+            }
+        }
+        stored.sort_unstable_by_key(|entry| entry.projector);
+    }
+
+    /// Captures open windowed projectors while retaining the last known
+    /// geometry for feeds that are currently closed or fullscreen.
+    pub(crate) fn capture_geometry(&self) -> Vec<ProjectorGeometry> {
+        let mut geometry = self.geometry.borrow().clone();
+        for (feed, slot) in [
+            (ProjectorFeed::Program, &self.program),
+            (ProjectorFeed::Preview, &self.preview),
+            (ProjectorFeed::Multiview, &self.multiview),
+            (ProjectorFeed::Source, &self.source),
+            (ProjectorFeed::Scene, &self.scene),
+        ] {
+            let window = slot.borrow();
+            if let Some(window) = window.as_ref() {
+                if let Some(entry) = capture_projector_geometry(feed, window) {
+                    replace_projector_geometry(&mut geometry, entry);
+                }
+            }
+        }
+        geometry.sort_unstable_by_key(|entry| entry.projector);
+        geometry
+    }
+
+    fn remember_geometry(&self, feed: ProjectorFeed, window: &ProjectorWindow) {
+        let Some(entry) = capture_projector_geometry(feed, window) else {
+            return;
+        };
+        replace_projector_geometry(&mut self.geometry.borrow_mut(), entry);
+    }
+
+    fn stored_geometry(&self, feed: ProjectorFeed) -> Option<ProjectorGeometry> {
+        self.geometry
+            .borrow()
+            .iter()
+            .find(|entry| entry.projector == feed.kind())
+            .copied()
     }
 
     /// Pushes the studio's current images into any open projector.
@@ -218,6 +289,7 @@ pub(crate) fn install_menu_callbacks(
         scene: RefCell::new(None),
         source_target: RefCell::new(None),
         scene_target: RefCell::new(None),
+        geometry: RefCell::new(Vec::new()),
     });
 
     install_history(ui, state, surface);
@@ -454,6 +526,73 @@ fn install_scene_projector(
     });
 }
 
+fn replace_projector_geometry(geometry: &mut Vec<ProjectorGeometry>, entry: ProjectorGeometry) {
+    if let Some(existing) = geometry
+        .iter_mut()
+        .find(|existing| existing.projector == entry.projector)
+    {
+        *existing = entry;
+    } else if geometry.len() < ProjectorKind::ALL.len() {
+        geometry.push(entry);
+    }
+}
+
+fn capture_projector_geometry(
+    feed: ProjectorFeed,
+    window: &ProjectorWindow,
+) -> Option<ProjectorGeometry> {
+    if window.window().is_fullscreen() {
+        return None;
+    }
+    let position = window.window().position();
+    let size = window.window().size();
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "the scale factor is finite and stored as bounded thousandths"
+    )]
+    let scale_milli = (window.window().scale_factor().max(0.5) * 1_000.0).round() as u32;
+    ProjectorGeometry::new(
+        feed.kind(),
+        position.x,
+        position.y,
+        size.width,
+        size.height,
+        scale_milli,
+    )
+}
+
+fn restore_projector_geometry(window: &ProjectorWindow, geometry: ProjectorGeometry) {
+    let current_scale = window.window().scale_factor().max(0.5);
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the stored scale is bounded thousandths and f32 is sufficient for DPI"
+    )]
+    let saved_scale = (geometry.scale_milli as f32 / 1_000.0).max(0.5);
+    let ratio = (current_scale / saved_scale).clamp(0.5, 2.0);
+    let width = scale_window_dimension(
+        geometry.width,
+        ratio,
+        FloatingGeometry::MIN_WIDTH,
+        FloatingGeometry::MAX_WIDTH,
+    );
+    let height = scale_window_dimension(
+        geometry.height,
+        ratio,
+        FloatingGeometry::MIN_HEIGHT,
+        FloatingGeometry::MAX_HEIGHT,
+    );
+    let (x, y) = current_desktop_bounds().map_or((geometry.x, geometry.y), |bounds| {
+        clamp_window_position(geometry.x, geometry.y, width, height, bounds)
+    });
+    window
+        .window()
+        .set_position(slint::PhysicalPosition::new(x, y));
+    window
+        .window()
+        .set_size(slint::PhysicalSize::new(width, height));
+}
+
 fn open_projector(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -491,6 +630,11 @@ fn open_projector(
         feed,
         ProjectorFeed::Program | ProjectorFeed::Multiview
     ));
+    if !feed.is_fullscreen() {
+        if let Some(geometry) = projectors.stored_geometry(feed) {
+            restore_projector_geometry(&window, geometry);
+        }
+    }
 
     let projectors = Rc::clone(projectors);
     window.on_close_requested(move || close_projector(&projectors, feed));
@@ -501,6 +645,7 @@ fn open_projector(
 
 fn close_projector(projectors: &Rc<ProjectorController>, feed: ProjectorFeed) {
     if let Some(window) = projectors.slot(feed).borrow_mut().take() {
+        projectors.remember_geometry(feed, &window);
         let _ = window.hide();
     }
     match feed {

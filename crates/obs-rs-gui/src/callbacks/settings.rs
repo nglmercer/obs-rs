@@ -157,6 +157,7 @@ impl SettingsController {
         settings.layout.panel_order = dock_tree.leaf_order();
         settings.layout.dock_tree = dock_tree;
         settings.layout.floating_geometry = self.docks.capture_floating_geometry();
+        settings.layout.projector_geometry = self.projectors.capture_geometry();
         let mut failures = Vec::new();
         if let Err(error) = settings.save(&self.path) {
             failures.push(format!("settings file: {error}"));

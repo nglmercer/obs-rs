@@ -13,7 +13,7 @@ use slint::{ComponentHandle, Model, ModelRc, PhysicalPosition, PhysicalSize, Vec
 use crate::{
     dock_tree::{DockAxis, DockDropZone, DockNode},
     fixtures::{desktop_bounds, screen_monitors, DesktopBounds},
-    settings::FloatingGeometry,
+    settings::{scale_window_dimension, FloatingGeometry},
     DockPane, DockSplitter, FloatingDockWindow, MainWindow,
 };
 
@@ -889,8 +889,18 @@ fn restore_window_geometry(
     )]
     let saved_scale = (geometry.scale_milli as f32 / 1_000.0).max(0.5);
     let ratio = (current_scale / saved_scale).clamp(0.5, 2.0);
-    let width = scale_dimension(geometry.width, ratio, 240, 8_192);
-    let height = scale_dimension(geometry.height, ratio, 160, 8_192);
+    let width = scale_window_dimension(
+        geometry.width,
+        ratio,
+        FloatingGeometry::MIN_WIDTH,
+        FloatingGeometry::MAX_WIDTH,
+    );
+    let height = scale_window_dimension(
+        geometry.height,
+        ratio,
+        FloatingGeometry::MIN_HEIGHT,
+        FloatingGeometry::MAX_HEIGHT,
+    );
     let (x, y) = bounds.map_or((geometry.x, geometry.y), |bounds| {
         clamp_window_position(geometry.x, geometry.y, width, height, bounds)
     });
@@ -903,7 +913,7 @@ fn restore_window_geometry(
 /// for a monitor left or above the primary display are preserved.
 const MIN_VISIBLE_DOCK_PIXELS: i32 = 48;
 
-fn clamp_window_position(
+pub(crate) fn clamp_window_position(
     x: i32,
     y: i32,
     width: u32,
@@ -944,20 +954,9 @@ fn clamp_position(value: i32, minimum: i32, maximum: i32, oversized_fallback: i3
     }
 }
 
-fn current_desktop_bounds() -> Option<DesktopBounds> {
+pub(crate) fn current_desktop_bounds() -> Option<DesktopBounds> {
     let monitors = screen_monitors();
     (!monitors.is_empty()).then(|| desktop_bounds(&monitors))
-}
-
-fn scale_dimension(value: u32, ratio: f32, minimum: u32, maximum: u32) -> u32 {
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "dimensions are bounded by FloatingGeometry before scaling"
-    )]
-    let scaled = (value as f32 * ratio).round() as u32;
-    scaled.clamp(minimum, maximum)
 }
 
 #[cfg(test)]
