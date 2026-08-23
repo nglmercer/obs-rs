@@ -624,6 +624,7 @@ pub(crate) struct ProjectorGeometry {
     pub(crate) height: u32,
     pub(crate) scale_milli: u32,
     pub(crate) fullscreen: bool,
+    pub(crate) open: bool,
 }
 
 impl ProjectorGeometry {
@@ -653,11 +654,17 @@ impl ProjectorGeometry {
             height,
             scale_milli,
             fullscreen: false,
+            open: false,
         })
     }
 
     pub(crate) const fn with_fullscreen(mut self, fullscreen: bool) -> Self {
         self.fullscreen = fullscreen;
+        self
+    }
+
+    pub(crate) const fn with_open(mut self, open: bool) -> Self {
+        self.open = open;
         self
     }
 }
@@ -809,10 +816,12 @@ impl LayoutSettings {
     }
 
     /// Parses the versioned projector geometry list. Version one records did
-    /// not carry fullscreen state and therefore restore as windowed; version
-    /// two adds one bounded `0`/`1` field without invalidating old settings.
+    /// not carry display state; version two adds fullscreen; version three
+    /// adds one bounded open-state bit without invalidating old settings.
     fn parse_projector_geometry(value: &str) -> Vec<ProjectorGeometry> {
-        let (version, records) = if let Some(records) = value.strip_prefix("v2:") {
+        let (version, records) = if let Some(records) = value.strip_prefix("v3:") {
+            (3_u8, records)
+        } else if let Some(records) = value.strip_prefix("v2:") {
             (2_u8, records)
         } else if let Some(records) = value.strip_prefix("v1:") {
             (1_u8, records)
@@ -822,7 +831,10 @@ impl LayoutSettings {
         let mut geometry: Vec<ProjectorGeometry> = Vec::new();
         for record in records.split(';').filter(|record| !record.is_empty()) {
             let fields = record.split(':').collect::<Vec<_>>();
-            if (version == 1 && fields.len() != 6) || (version == 2 && fields.len() != 7) {
+            if (version == 1 && fields.len() != 6)
+                || (version == 2 && fields.len() != 7)
+                || (version == 3 && fields.len() != 8)
+            {
                 continue;
             }
             let [projector, x, y, width, height, scale] = [
@@ -840,15 +852,24 @@ impl LayoutSettings {
             };
             let fullscreen = match version {
                 1 => false,
-                2 => match fields[6] {
+                2 | 3 => match fields[6] {
                     "0" => false,
                     "1" => true,
                     _ => continue,
                 },
                 _ => continue,
             };
+            let open = match version {
+                3 => match fields[7] {
+                    "0" => false,
+                    "1" => true,
+                    _ => continue,
+                },
+                1 | 2 => false,
+                _ => continue,
+            };
             let Some(entry) = ProjectorGeometry::new(projector, x, y, width, height, scale)
-                .map(|entry| entry.with_fullscreen(fullscreen))
+                .map(|entry| entry.with_fullscreen(fullscreen).with_open(open))
             else {
                 continue;
             };
@@ -886,7 +907,7 @@ impl LayoutSettings {
             .into_iter()
             .map(|entry| {
                 format!(
-                    "{}:{}:{}:{}:{}:{}:{}",
+                    "{}:{}:{}:{}:{}:{}:{}:{}",
                     entry.projector.id(),
                     entry.x,
                     entry.y,
@@ -894,10 +915,11 @@ impl LayoutSettings {
                     entry.height,
                     entry.scale_milli,
                     u8::from(entry.fullscreen),
+                    u8::from(entry.open),
                 )
             })
             .collect::<Vec<_>>();
-        format!("v2:{}", records.join(";"))
+        format!("v3:{}", records.join(";"))
     }
 
     fn panel_order_text(&self) -> String {
@@ -2774,7 +2796,8 @@ mod tests {
                 .expect("valid geometry"),
             ProjectorGeometry::new(ProjectorKind::Scene, 2_560, 120, 1_280, 720, 2_000)
                 .expect("valid geometry")
-                .with_fullscreen(true),
+                .with_fullscreen(true)
+                .with_open(true),
         ];
 
         let decoded = AppSettings::from_config(&settings.to_config());
@@ -2832,6 +2855,42 @@ mod tests {
             .iter()
             .find(|entry| entry.projector == ProjectorKind::Multiview)
             .is_some_and(|entry| entry.fullscreen));
+        assert!(!decoded
+            .layout
+            .projector_geometry
+            .iter()
+            .find(|entry| entry.projector == ProjectorKind::Multiview)
+            .is_some_and(|entry| entry.open));
+
+        config
+            .set(
+                "layout_projector_geometry",
+                "v3:preview:-1920:84:960:540:1250:0:1;scene:2560:120:1280:720:2000:1:1;source:0:0:960:540:1250:1:9;multiview:0:0:960:540:1250:1:1;multiview:10:10:960:540:1250:0:0",
+            )
+            .expect("projector lifecycle key");
+        let decoded = AppSettings::from_config(&config);
+        assert!(decoded
+            .layout
+            .projector_geometry
+            .iter()
+            .find(|entry| entry.projector == ProjectorKind::Preview)
+            .is_some_and(|entry| entry.open));
+        assert!(decoded
+            .layout
+            .projector_geometry
+            .iter()
+            .find(|entry| entry.projector == ProjectorKind::Scene)
+            .is_some_and(|entry| entry.fullscreen && entry.open));
+        assert_eq!(
+            decoded
+                .layout
+                .projector_geometry
+                .iter()
+                .filter(|entry| entry.projector == ProjectorKind::Multiview)
+                .count(),
+            1,
+            "the first valid duplicate wins"
+        );
     }
 
     #[test]

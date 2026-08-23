@@ -242,6 +242,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Menu-bar actions and the projector windows they open.
     let projectors = install_menu_callbacks(&ui, &state, &surface, &docks);
     projectors.restore_geometry(&settings.layout.projector_geometry);
+    if !smoke && screenshot.is_none() {
+        projectors.reopen_persisted(&ui, &state);
+    }
     // Keeps the settings window alive for the whole session; dropping the
     // controller would close it.
     let add_source_window = install_add_source_window(&ui, &state, &surface)?;

@@ -3,7 +3,7 @@ use super::i18n::catalog;
 use super::output::stream_protocol_label;
 use super::preview::PreviewRenderer;
 use super::refresh::{peak_db, transition_label_for_locale};
-use super::settings::AppSettings;
+use super::settings::{AppSettings, ProjectorGeometry, ProjectorKind};
 use super::settings_model::RecordingQuality;
 use super::{
     capture_devices, close_request_response, initial_project, install_canvas_callbacks, refresh_ui,
@@ -1858,6 +1858,10 @@ fn exercise_navbar_popup(ui: &MainWindow) {
 /// The bar's previous failure mode was an entry that dispatched a string
 /// nothing handled, so this asserts each action changes observable state rather
 /// than only that it can be invoked.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one integration fixture exercises the complete menu and projector workflow"
+)]
 fn exercise_menu_actions(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -1900,6 +1904,31 @@ fn exercise_menu_actions(
     assert!(
         !ui.get_can_undo() && !ui.get_can_redo(),
         "undo must not reach across a new document"
+    );
+
+    // A clean restart reopens fixed-target projectors whose bounded lifecycle
+    // bit was captured at shutdown. Closing it again clears that bit before
+    // the ordinary toggle assertions below.
+    projectors.restore_geometry(&[ProjectorGeometry::new(
+        ProjectorKind::Program,
+        24,
+        32,
+        960,
+        540,
+        1_000,
+    )
+    .expect("valid projector geometry")
+    .with_fullscreen(true)
+    .with_open(true)]);
+    projectors.reopen_persisted(ui, state);
+    assert!(
+        projectors.is_open(true),
+        "the persisted program projector reopened"
+    );
+    ui.invoke_open_projector(true);
+    assert!(
+        !projectors.is_open(true),
+        "closing clears the persisted open state"
     );
 
     // A projector is a toggle, not a way to stack duplicate windows.

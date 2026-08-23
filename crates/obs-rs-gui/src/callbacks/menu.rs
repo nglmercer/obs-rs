@@ -173,6 +173,45 @@ impl ProjectorController {
             .copied()
     }
 
+    fn set_open(&self, feed: ProjectorFeed, open: bool) {
+        if let Some(entry) = self
+            .geometry
+            .borrow_mut()
+            .iter_mut()
+            .find(|entry| entry.projector == feed.kind())
+        {
+            entry.open = open;
+        }
+    }
+
+    /// Reopens fixed-target projectors that were open at the previous clean
+    /// shutdown. Source and scene feeds are intentionally excluded because
+    /// their target identity is not part of the bounded geometry record yet.
+    pub(crate) fn reopen_persisted(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        state: &Rc<RefCell<DesktopState>>,
+    ) {
+        for feed in [
+            ProjectorFeed::Program,
+            ProjectorFeed::Preview,
+            ProjectorFeed::Multiview,
+        ] {
+            if !self.stored_geometry(feed).is_some_and(|entry| entry.open) {
+                continue;
+            }
+            match open_projector(ui, state, self, feed) {
+                Ok(window) => {
+                    *self.slot(feed).borrow_mut() = Some(window);
+                    self.sync(ui);
+                }
+                Err(error) => {
+                    ui.set_status_message(format!("Projector restore: {error}").into());
+                }
+            }
+        }
+    }
+
     /// Pushes the studio's current images into any open projector.
     pub(crate) fn sync(&self, ui: &MainWindow) {
         if let Some(window) = self.program.borrow().as_ref() {
@@ -558,7 +597,7 @@ fn capture_projector_geometry(
         size.height,
         scale_milli,
     )
-    .map(|entry| entry.with_fullscreen(fullscreen))
+    .map(|entry| entry.with_fullscreen(fullscreen).with_open(true))
 }
 
 fn restore_projector_geometry(window: &ProjectorWindow, geometry: ProjectorGeometry) {
@@ -651,6 +690,7 @@ fn open_projector(
 fn close_projector(projectors: &Rc<ProjectorController>, feed: ProjectorFeed) {
     if let Some(window) = projectors.slot(feed).borrow_mut().take() {
         projectors.remember_geometry(feed, &window);
+        projectors.set_open(feed, false);
         let _ = window.hide();
     }
     match feed {
