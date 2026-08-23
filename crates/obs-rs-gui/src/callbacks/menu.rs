@@ -17,11 +17,14 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::settings::{
-    scale_window_dimension, FloatingGeometry, ProjectorGeometry, ProjectorKind, ProjectorTarget,
+    scale_window_dimension, FloatingGeometry, ProjectorGeometry, ProjectorKind, ProjectorMonitor,
+    ProjectorTarget,
 };
 use crate::{
     callbacks::docks::{clamp_window_position, current_desktop_bounds, DockController},
-    dispatch_and_refresh, initial_project,
+    dispatch_and_refresh,
+    fixtures::{desktop_bounds, screen_monitors, DesktopBounds, MonitorChoice},
+    initial_project,
     preview_worker::{SceneProjectorTarget, SourceProjectorTarget},
     project_store, refresh_ui, source_target, MainWindow, PreviewSurface, ProfileRow,
     ProjectorWindow,
@@ -57,6 +60,7 @@ pub(crate) struct ProjectorController {
     source_target: RefCell<Option<SourceProjectorTarget>>,
     scene_target: RefCell<Option<SceneProjectorTarget>>,
     geometry: RefCell<Vec<ProjectorGeometry>>,
+    monitors: RefCell<Vec<ProjectorMonitor>>,
 }
 
 #[derive(Clone, Copy)]
@@ -138,6 +142,25 @@ impl ProjectorController {
         stored.sort_unstable_by_key(|entry| entry.projector);
     }
 
+    /// Loads bounded monitor identities captured from the previous session.
+    ///
+    /// The platform is asked to resolve the identity only when a projector is
+    /// reopened. A missing monitor therefore falls back to the current virtual
+    /// desktop instead of making startup fail.
+    pub(crate) fn restore_monitors(&self, monitors: &[ProjectorMonitor]) {
+        let mut stored = self.monitors.borrow_mut();
+        stored.clear();
+        for entry in monitors.iter().take(ProjectorKind::ALL.len()) {
+            if stored
+                .iter()
+                .all(|other| other.projector != entry.projector)
+            {
+                stored.push(entry.clone());
+            }
+        }
+        stored.sort_unstable_by_key(|entry| entry.projector);
+    }
+
     /// Loads bounded source/scene target identities captured from the previous
     /// session. Geometry and target state remain separate so a stale target
     /// cannot make an otherwise valid window record unsafe to parse.
@@ -209,11 +232,42 @@ impl ProjectorController {
         geometry
     }
 
+    /// Captures the monitor containing each open projector's window center,
+    /// while retaining the last known identity for closed feeds.
+    pub(crate) fn capture_monitors(&self) -> Vec<ProjectorMonitor> {
+        let mut monitors = self.monitors.borrow().clone();
+        let choices = screen_monitors();
+        for (feed, slot) in [
+            (ProjectorFeed::Program, &self.program),
+            (ProjectorFeed::Preview, &self.preview),
+            (ProjectorFeed::Multiview, &self.multiview),
+            (ProjectorFeed::Source, &self.source),
+            (ProjectorFeed::Scene, &self.scene),
+        ] {
+            let window = slot.borrow();
+            if let Some(window) = window.as_ref() {
+                if let Some(entry) = capture_projector_monitor(feed, window, &choices) {
+                    replace_projector_monitor(&mut monitors, entry);
+                }
+            }
+        }
+        monitors.sort_unstable_by_key(|entry| entry.projector);
+        monitors
+    }
+
     fn remember_geometry(&self, feed: ProjectorFeed, window: &ProjectorWindow) {
         let Some(entry) = capture_projector_geometry(feed, window) else {
             return;
         };
         replace_projector_geometry(&mut self.geometry.borrow_mut(), entry);
+    }
+
+    fn remember_monitor(&self, feed: ProjectorFeed, window: &ProjectorWindow) {
+        let choices = screen_monitors();
+        let Some(entry) = capture_projector_monitor(feed, window, &choices) else {
+            return;
+        };
+        replace_projector_monitor(&mut self.monitors.borrow_mut(), entry);
     }
 
     fn stored_geometry(&self, feed: ProjectorFeed) -> Option<ProjectorGeometry> {
@@ -222,6 +276,14 @@ impl ProjectorController {
             .iter()
             .find(|entry| entry.projector == feed.kind())
             .copied()
+    }
+
+    fn stored_monitor(&self, feed: ProjectorFeed) -> Option<ProjectorMonitor> {
+        self.monitors
+            .borrow()
+            .iter()
+            .find(|entry| entry.projector == feed.kind())
+            .cloned()
     }
 
     fn set_open(&self, feed: ProjectorFeed, open: bool) {
@@ -405,6 +467,7 @@ pub(crate) fn install_menu_callbacks(
         source_target: RefCell::new(None),
         scene_target: RefCell::new(None),
         geometry: RefCell::new(Vec::new()),
+        monitors: RefCell::new(Vec::new()),
     });
 
     install_history(ui, state, surface);
@@ -652,6 +715,17 @@ fn replace_projector_geometry(geometry: &mut Vec<ProjectorGeometry>, entry: Proj
     }
 }
 
+fn replace_projector_monitor(monitors: &mut Vec<ProjectorMonitor>, entry: ProjectorMonitor) {
+    if let Some(existing) = monitors
+        .iter_mut()
+        .find(|existing| existing.projector == entry.projector)
+    {
+        *existing = entry;
+    } else if monitors.len() < ProjectorKind::ALL.len() {
+        monitors.push(entry);
+    }
+}
+
 fn capture_projector_geometry(
     feed: ProjectorFeed,
     window: &ProjectorWindow,
@@ -676,11 +750,56 @@ fn capture_projector_geometry(
     .map(|entry| entry.with_fullscreen(fullscreen).with_open(true))
 }
 
-fn restore_projector_geometry(window: &ProjectorWindow, geometry: ProjectorGeometry) {
-    window.window().set_fullscreen(geometry.fullscreen);
+fn capture_projector_monitor(
+    feed: ProjectorFeed,
+    window: &ProjectorWindow,
+    monitors: &[MonitorChoice],
+) -> Option<ProjectorMonitor> {
+    let position = window.window().position();
+    let size = window.window().size();
+    let center_x = i64::from(position.x).saturating_add(i64::from(size.width) / 2);
+    let center_y = i64::from(position.y).saturating_add(i64::from(size.height) / 2);
+    let monitor = monitor_containing_point(monitors, center_x, center_y)?;
+    ProjectorMonitor::new(feed.kind(), monitor.id.clone())
+}
+
+fn monitor_containing_point(monitors: &[MonitorChoice], x: i64, y: i64) -> Option<&MonitorChoice> {
+    monitors.iter().find(|monitor| {
+        let right = i64::from(monitor.x).saturating_add(i64::from(monitor.width));
+        let bottom = i64::from(monitor.y).saturating_add(i64::from(monitor.height));
+        x >= i64::from(monitor.x) && x < right && y >= i64::from(monitor.y) && y < bottom
+    })
+}
+
+fn monitor_bounds(monitor: &MonitorChoice) -> DesktopBounds {
+    desktop_bounds(std::slice::from_ref(monitor))
+}
+
+fn restore_projector_geometry(
+    window: &ProjectorWindow,
+    geometry: ProjectorGeometry,
+    stored_monitor: Option<&ProjectorMonitor>,
+) {
+    let monitor = stored_monitor.and_then(|stored| {
+        screen_monitors()
+            .into_iter()
+            .find(|monitor| monitor.id == stored.monitor)
+    });
+    let bounds = monitor
+        .as_ref()
+        .map(monitor_bounds)
+        .or_else(current_desktop_bounds);
     if geometry.fullscreen {
+        if let Some(monitor) = monitor.as_ref() {
+            let bounds = monitor_bounds(monitor);
+            window
+                .window()
+                .set_position(slint::PhysicalPosition::new(bounds.left, bounds.top));
+        }
+        window.window().set_fullscreen(true);
         return;
     }
+    window.window().set_fullscreen(false);
     let current_scale = window.window().scale_factor().max(0.5);
     #[allow(
         clippy::cast_precision_loss,
@@ -700,7 +819,7 @@ fn restore_projector_geometry(window: &ProjectorWindow, geometry: ProjectorGeome
         FloatingGeometry::MIN_HEIGHT,
         FloatingGeometry::MAX_HEIGHT,
     );
-    let (x, y) = current_desktop_bounds().map_or((geometry.x, geometry.y), |bounds| {
+    let (x, y) = bounds.map_or((geometry.x, geometry.y), |bounds| {
         clamp_window_position(geometry.x, geometry.y, width, height, bounds)
     });
     window
@@ -743,7 +862,8 @@ fn open_projector(
     // feeds by default. A stored toggle wins, so F11 survives a restart while
     // a first open still follows the feed's reference default.
     if let Some(geometry) = projectors.stored_geometry(feed) {
-        restore_projector_geometry(&window, geometry);
+        let monitor = projectors.stored_monitor(feed);
+        restore_projector_geometry(&window, geometry, monitor.as_ref());
     } else {
         window.window().set_fullscreen(feed.is_fullscreen());
     }
@@ -766,6 +886,7 @@ fn open_projector(
 fn close_projector(projectors: &Rc<ProjectorController>, feed: ProjectorFeed) {
     if let Some(window) = projectors.slot(feed).borrow_mut().take() {
         projectors.remember_geometry(feed, &window);
+        projectors.remember_monitor(feed, &window);
         projectors.set_open(feed, false);
         let _ = window.hide();
     }
@@ -1304,6 +1425,36 @@ fn collection_row(path: &Path, current: &Path) -> Option<ProfileRow> {
 mod tests {
     use super::*;
     use obs_rs_project::ProjectCommand;
+
+    fn monitor(id: &str, x: i32, y: i32, width: u32, height: u32) -> MonitorChoice {
+        MonitorChoice {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            x,
+            y,
+            width,
+            height,
+            primary: x == 0 && y == 0,
+        }
+    }
+
+    #[test]
+    fn projector_window_center_resolves_to_one_monitor_without_crossing_bounds() {
+        let monitors = [
+            monitor("DP-1", 0, 0, 1_920, 1_080),
+            monitor("HDMI-1", 1_920, 0, 2_560, 1_440),
+        ];
+
+        assert_eq!(
+            monitor_containing_point(&monitors, 1_000, 500).map(|monitor| monitor.id.as_str()),
+            Some("DP-1")
+        );
+        assert_eq!(
+            monitor_containing_point(&monitors, 2_500, 700).map(|monitor| monitor.id.as_str()),
+            Some("HDMI-1")
+        );
+        assert_eq!(monitor_containing_point(&monitors, 4_480, 700), None);
+    }
 
     #[test]
     fn a_collection_name_becomes_a_bounded_separator_free_file_name() {

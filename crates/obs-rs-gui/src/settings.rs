@@ -35,10 +35,13 @@ const PROJECT_FILE: &str = "obs-rs-project.json";
 const DIAGNOSTICS_FILE: &str = "obs-rs-diagnostics.obsrdg";
 const PROJECT_SCENE_SELECTIONS_KEY: &str = "project_scene_selections";
 const PROJECTOR_TARGETS_KEY: &str = "layout_projector_targets";
+const PROJECTOR_MONITORS_KEY: &str = "layout_projector_monitors";
 const MAX_PERSISTED_PROJECT_SCENE_SELECTIONS: usize = 16;
 const MAX_PERSISTED_SELECTION_KEY_BYTES: usize = 384;
 const MAX_PERSISTED_PROJECTOR_TARGETS: usize = 2;
 const MAX_PROJECTOR_TARGET_COMPONENT_BYTES: usize = 256;
+const MAX_PERSISTED_PROJECTOR_MONITORS: usize = 5;
+const MAX_PROJECTOR_MONITOR_ID_BYTES: usize = 256;
 
 /// Whether the first-run setup should be shown at startup.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -520,6 +523,8 @@ pub(crate) struct LayoutSettings {
     pub(crate) projector_geometry: Vec<ProjectorGeometry>,
     /// Bounded target identities for source and scene projector reopening.
     pub(crate) projector_targets: Vec<ProjectorTarget>,
+    /// Bounded monitor identities observed for projector windows.
+    pub(crate) projector_monitors: Vec<ProjectorMonitor>,
     /// Versioned tree representation of the dock arrangement.
     pub(crate) dock_tree: DockNode,
 }
@@ -594,6 +599,22 @@ pub(crate) enum ProjectorKind {
 pub(crate) enum ProjectorTarget {
     Source { scene: String, item: String },
     Scene { scene: String },
+}
+
+/// Stable platform monitor identity observed for one projector feed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectorMonitor {
+    pub(crate) projector: ProjectorKind,
+    pub(crate) monitor: String,
+}
+
+impl ProjectorMonitor {
+    pub(crate) fn new(projector: ProjectorKind, monitor: String) -> Option<Self> {
+        if monitor.is_empty() || monitor.len() > MAX_PROJECTOR_MONITOR_ID_BYTES {
+            return None;
+        }
+        Some(Self { projector, monitor })
+    }
 }
 
 impl ProjectorKind {
@@ -725,6 +746,7 @@ impl Default for LayoutSettings {
             floating_geometry: Vec::new(),
             projector_geometry: Vec::new(),
             projector_targets: Vec::new(),
+            projector_monitors: Vec::new(),
             dock_tree,
         }
     }
@@ -1023,6 +1045,67 @@ impl LayoutSettings {
         encoded
     }
 
+    /// Parses `v1;program|DP-1;preview|HDMI-1` into bounded monitor records.
+    ///
+    /// Monitor IDs come from a platform capability and may contain separators,
+    /// so they use the same escaped component format as other session-scoped
+    /// identities. Duplicate feed records are ignored after the first valid
+    /// record, keeping restoration deterministic.
+    fn parse_projector_monitors(value: &str) -> Vec<ProjectorMonitor> {
+        let Some(records) = value.strip_prefix("v1") else {
+            return Vec::new();
+        };
+        let records = records.strip_prefix(';').unwrap_or_default();
+        let mut monitors: Vec<ProjectorMonitor> =
+            Vec::with_capacity(MAX_PERSISTED_PROJECTOR_MONITORS);
+        for record in records.split(';').filter(|record| !record.is_empty()) {
+            if monitors.len() == MAX_PERSISTED_PROJECTOR_MONITORS {
+                break;
+            }
+            let mut fields = record.split('|');
+            let (Some(projector), Some(monitor)) = (
+                fields.next().and_then(ProjectorKind::from_id),
+                fields.next().and_then(selection_component_decode),
+            ) else {
+                continue;
+            };
+            if fields.next().is_some() {
+                continue;
+            }
+            let Some(monitor) = ProjectorMonitor::new(projector, monitor) else {
+                continue;
+            };
+            if monitors
+                .iter()
+                .all(|existing| existing.projector != monitor.projector)
+            {
+                monitors.push(monitor);
+            }
+        }
+        monitors.sort_unstable_by_key(|entry| entry.projector);
+        monitors
+    }
+
+    fn projector_monitors_text(&self) -> String {
+        let mut monitors = self.projector_monitors.clone();
+        monitors.sort_unstable_by_key(|entry| entry.projector);
+        let mut encoded = String::from("v1");
+        for monitor in monitors.into_iter().take(MAX_PERSISTED_PROJECTOR_MONITORS) {
+            let record = format!(
+                "{}|{}",
+                monitor.projector.id(),
+                selection_component(&monitor.monitor)
+            );
+            let required = 1_usize.saturating_add(record.len());
+            if encoded.len().saturating_add(required) > obs_rs_config::MAX_VALUE_BYTES {
+                break;
+            }
+            encoded.push(';');
+            encoded.push_str(&record);
+        }
+        encoded
+    }
+
     fn panel_order_text(&self) -> String {
         self.dock_tree
             .leaf_order()
@@ -1168,6 +1251,10 @@ impl LayoutSettings {
                 .get(PROJECTOR_TARGETS_KEY)
                 .map(Self::parse_projector_targets)
                 .unwrap_or(defaults.projector_targets),
+            projector_monitors: config
+                .get(PROJECTOR_MONITORS_KEY)
+                .map(Self::parse_projector_monitors)
+                .unwrap_or(defaults.projector_monitors),
             dock_tree,
         }
     }
@@ -1691,6 +1778,10 @@ impl AppSettings {
                 self.layout.projector_geometry_text(),
             ),
             (PROJECTOR_TARGETS_KEY, self.layout.projector_targets_text()),
+            (
+                PROJECTOR_MONITORS_KEY,
+                self.layout.projector_monitors_text(),
+            ),
             (
                 "layout_dock_tree",
                 self.layout
@@ -3035,6 +3126,40 @@ mod tests {
                 ProjectorTarget::Scene {
                     scene: "program".to_owned(),
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn projector_monitors_round_trip_with_bounded_escaped_ids() {
+        let mut settings = AppSettings::default();
+        settings.layout.projector_monitors = vec![
+            ProjectorMonitor::new(ProjectorKind::Program, "HDMI-1".to_owned())
+                .expect("valid monitor"),
+            ProjectorMonitor::new(ProjectorKind::Preview, "DP-1|desk;left".to_owned())
+                .expect("valid monitor"),
+        ];
+        let decoded = AppSettings::from_config(&settings.to_config());
+        assert_eq!(
+            decoded.layout.projector_monitors,
+            settings.layout.projector_monitors
+        );
+
+        let mut config = Config::new();
+        config
+            .set(
+                PROJECTOR_MONITORS_KEY,
+                "v1;preview|DP-1%7Cdesk%3Bleft;program|HDMI-1;preview|later;scene||bad;unknown|DP-2",
+            )
+            .expect("projector monitor key");
+        let decoded = AppSettings::from_config(&config);
+        assert_eq!(
+            decoded.layout.projector_monitors,
+            vec![
+                ProjectorMonitor::new(ProjectorKind::Program, "HDMI-1".to_owned())
+                    .expect("valid monitor"),
+                ProjectorMonitor::new(ProjectorKind::Preview, "DP-1|desk;left".to_owned())
+                    .expect("valid monitor"),
             ]
         );
     }

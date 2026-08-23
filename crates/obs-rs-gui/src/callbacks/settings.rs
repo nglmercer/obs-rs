@@ -159,6 +159,7 @@ impl SettingsController {
         settings.layout.floating_geometry = self.docks.capture_floating_geometry();
         settings.layout.projector_geometry = self.projectors.capture_geometry();
         settings.layout.projector_targets = self.projectors.capture_targets();
+        settings.layout.projector_monitors = self.projectors.capture_monitors();
         let mut failures = Vec::new();
         if let Err(error) = settings.save(&self.path) {
             failures.push(format!("settings file: {error}"));
