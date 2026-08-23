@@ -17,8 +17,9 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
-    callbacks::docks::DockController, dispatch_and_refresh, initial_project, project_store,
-    refresh_ui, MainWindow, PreviewSurface, ProfileRow, ProjectorWindow,
+    callbacks::docks::DockController, dispatch_and_refresh, initial_project,
+    preview_worker::SourceProjectorTarget, project_store, refresh_ui, source_target, MainWindow,
+    PreviewSurface, ProfileRow, ProjectorWindow,
 };
 
 /// Extension every scene-collection document uses.
@@ -46,6 +47,8 @@ pub(crate) struct ProjectorController {
     program: RefCell<Option<ProjectorWindow>>,
     preview: RefCell<Option<ProjectorWindow>>,
     multiview: RefCell<Option<ProjectorWindow>>,
+    source: RefCell<Option<ProjectorWindow>>,
+    source_target: RefCell<Option<SourceProjectorTarget>>,
 }
 
 #[derive(Clone, Copy)]
@@ -53,6 +56,7 @@ enum ProjectorFeed {
     Program,
     Preview,
     Multiview,
+    Source,
 }
 
 impl ProjectorController {
@@ -75,6 +79,15 @@ impl ProjectorController {
         self.slot(ProjectorFeed::Multiview).borrow().is_some()
     }
 
+    /// Returns the selected source target while its projector is open.
+    pub(crate) fn source_target(&self) -> Option<SourceProjectorTarget> {
+        self.slot(ProjectorFeed::Source)
+            .borrow()
+            .as_ref()
+            .and(self.source_target.borrow().as_ref())
+            .cloned()
+    }
+
     /// Pushes the studio's current images into any open projector.
     pub(crate) fn sync(&self, ui: &MainWindow) {
         if let Some(window) = self.program.borrow().as_ref() {
@@ -92,11 +105,16 @@ impl ProjectorController {
             window.set_canvas_width(ui.get_canvas_width());
             window.set_canvas_height(ui.get_canvas_height());
         }
+        if let Some(window) = self.source.borrow().as_ref() {
+            window.set_source_image(ui.get_source_projector_image());
+            window.set_canvas_width(ui.get_canvas_width());
+            window.set_canvas_height(ui.get_canvas_height());
+        }
     }
 
     /// Repaints open projectors when the studio theme changes.
     pub(crate) fn set_tokens(&self, tokens: &crate::ThemeTokens) {
-        for window in [&self.program, &self.preview, &self.multiview] {
+        for window in [&self.program, &self.preview, &self.multiview, &self.source] {
             if let Some(window) = window.borrow().as_ref() {
                 window.global::<crate::Palette>().set_tokens(tokens.clone());
             }
@@ -128,6 +146,11 @@ impl ProjectorController {
     }
 
     #[cfg(test)]
+    pub(crate) fn is_source_open(&self) -> bool {
+        self.slot(ProjectorFeed::Source).borrow().is_some()
+    }
+
+    #[cfg(test)]
     pub(crate) fn is_fullscreen(&self, program: bool) -> bool {
         self.slot(if program {
             ProjectorFeed::Program
@@ -144,6 +167,7 @@ impl ProjectorController {
             ProjectorFeed::Program => &self.program,
             ProjectorFeed::Preview => &self.preview,
             ProjectorFeed::Multiview => &self.multiview,
+            ProjectorFeed::Source => &self.source,
         }
     }
 }
@@ -159,6 +183,8 @@ pub(crate) fn install_menu_callbacks(
         program: RefCell::new(None),
         preview: RefCell::new(None),
         multiview: RefCell::new(None),
+        source: RefCell::new(None),
+        source_target: RefCell::new(None),
     });
 
     install_history(ui, state, surface);
@@ -314,6 +340,40 @@ fn install_projectors(
             Err(error) => ui.set_status_message(format!("Projector: {error}").into()),
         }
     });
+
+    let weak = ui.as_weak();
+    let source_state = Rc::clone(state);
+    let source_projectors = Rc::clone(projectors);
+    ui.on_open_source_projector(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let feed = ProjectorFeed::Source;
+        if source_projectors.slot(feed).borrow().is_some() {
+            close_projector(&source_projectors, feed);
+            return;
+        }
+        let item = ui.get_selected_source().to_string();
+        let target = source_target(&source_state.borrow(), &item);
+        let Some(target) = target else {
+            ui.set_status_message("Select a source before opening its projector".into());
+            return;
+        };
+        *source_projectors.source_target.borrow_mut() = Some(SourceProjectorTarget {
+            scene: target.scene,
+            item: target.item,
+        });
+        match open_projector(&ui, &source_state, &source_projectors, feed) {
+            Ok(window) => {
+                *source_projectors.slot(feed).borrow_mut() = Some(window);
+                source_projectors.sync(&ui);
+            }
+            Err(error) => {
+                source_projectors.source_target.borrow_mut().take();
+                ui.set_status_message(format!("Projector: {error}").into());
+            }
+        }
+    });
 }
 
 fn open_projector(
@@ -334,11 +394,13 @@ fn open_projector(
         ProjectorFeed::Program => text.program.clone(),
         ProjectorFeed::Preview => text.preview.clone(),
         ProjectorFeed::Multiview => text.menu_multiview_projector.clone(),
+        ProjectorFeed::Source => text.menu_source_projector.clone(),
     }));
     window.set_source_image(match feed {
         ProjectorFeed::Program => ui.get_program_image(),
         ProjectorFeed::Preview => ui.get_preview_image(),
         ProjectorFeed::Multiview => ui.get_multiview_image(),
+        ProjectorFeed::Source => ui.get_source_projector_image(),
     });
     // OBS presents program and multiview projectors as borderless fullscreen
     // feeds. The preview projector remains windowed so the operator can keep
@@ -360,6 +422,9 @@ fn open_projector(
 fn close_projector(projectors: &Rc<ProjectorController>, feed: ProjectorFeed) {
     if let Some(window) = projectors.slot(feed).borrow_mut().take() {
         let _ = window.hide();
+    }
+    if matches!(feed, ProjectorFeed::Source) {
+        projectors.source_target.borrow_mut().take();
     }
 }
 

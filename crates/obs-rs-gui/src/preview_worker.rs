@@ -18,6 +18,13 @@ use crate::preview::{PreviewRenderer, RuntimeDiagnostics, TransformDraft};
 /// scene collection into an unbounded render fan-out.
 pub(crate) const MAX_MULTIVIEW_SCENES: usize = 16;
 
+/// The scene-item identity captured by a selected-source projector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceProjectorTarget {
+    pub(crate) scene: String,
+    pub(crate) item: String,
+}
+
 struct PreviewRequest {
     project: Option<Project>,
     revision: u64,
@@ -28,6 +35,7 @@ struct PreviewRequest {
     program_preview_format: VideoFormat,
     multiview_scenes: Vec<String>,
     multiview_format: VideoFormat,
+    source_projector: Option<SourceProjectorTarget>,
     render_program: bool,
     prepare_output: bool,
     prepare_output_rgba: bool,
@@ -41,6 +49,7 @@ pub(crate) struct PreviewResult {
     pub(crate) program_scene: Option<String>,
     pub(crate) program_frame: Option<VideoFrame>,
     pub(crate) multiview_frame: Option<VideoFrame>,
+    pub(crate) source_projector_frame: Option<VideoFrame>,
     pub(crate) program_output: Option<RawVideoFrame>,
     /// Full-canvas RGBA is present only when the output cannot consume the
     /// accelerated raw path, such as CPU fallback or output scaling.
@@ -73,6 +82,7 @@ pub(crate) struct PreviewPerformanceSnapshot {
     pub(crate) preview_render: LatencyMetrics,
     pub(crate) program_render: LatencyMetrics,
     pub(crate) multiview_render: LatencyMetrics,
+    pub(crate) source_projector_render: LatencyMetrics,
     pub(crate) worker: LatencyMetrics,
     pub(crate) frame_copy: LatencyMetrics,
     pub(crate) frame_copy_bytes: u64,
@@ -91,6 +101,8 @@ pub(crate) struct RenderTargets<'a> {
     /// Ordered scene IDs for the bounded multiview grid.
     pub(crate) multiview_scenes: Vec<String>,
     pub(crate) multiview_format: VideoFormat,
+    /// Selected scene-item source to render in the bounded source projector.
+    pub(crate) source_projector: Option<&'a SourceProjectorTarget>,
     /// Whether the bounded program view is wanted as well as the preview one.
     pub(crate) render_program: bool,
     /// Whether the program frame should also be converted for the encoder.
@@ -188,6 +200,7 @@ impl PreviewWorker {
             program_preview_format: targets.program_preview_format,
             multiview_scenes,
             multiview_format: targets.multiview_format,
+            source_projector: targets.source_projector.cloned(),
             render_program: targets.render_program,
             prepare_output: targets.prepare_output,
             prepare_output_rgba: targets.prepare_output_rgba,
@@ -294,6 +307,7 @@ fn preview_loop(project: &Project, revision: u64, shared: PreviewLoopShared<'_>)
                 program_scene: None,
                 program_frame: None,
                 multiview_frame: None,
+                source_projector_frame: None,
                 program_output: None,
                 program_output_frame: None,
                 error: Some(error.clone()),
@@ -371,12 +385,26 @@ fn render_request(
         }
         multiview
     };
+    let source_projector = if let Some(target) = request.source_projector.as_ref() {
+        let source_started = std::time::Instant::now();
+        let format = PreviewRenderer::preview_format_for_canvas(renderer.format);
+        let source_projector = render_source_projector(renderer, target, format);
+        if let Ok(mut performance) = performance.lock() {
+            performance
+                .source_projector_render
+                .record(source_started.elapsed());
+        }
+        source_projector
+    } else {
+        Ok(None)
+    };
     let error = preview
         .as_ref()
         .err()
         .cloned()
         .or_else(|| program.as_ref().err().cloned())
         .or_else(|| multiview.as_ref().err().cloned())
+        .or_else(|| source_projector.as_ref().err().cloned())
         .or_else(|| {
             (request.preview_scene.is_some() && matches!(preview, Ok(None)))
                 .then(|| "preview scene produced no frame".to_owned())
@@ -390,6 +418,10 @@ fn render_request(
         .or_else(|| {
             (!request.multiview_scenes.is_empty() && matches!(multiview, Ok(None)))
                 .then(|| "multiview scenes produced no frame".to_owned())
+        })
+        .or_else(|| {
+            (request.source_projector.is_some() && matches!(source_projector, Ok(None)))
+                .then(|| "selected source produced no frame".to_owned())
         });
     let (output, output_frame) = if request.prepare_output {
         match request.program_scene.as_deref() {
@@ -425,6 +457,7 @@ fn render_request(
     if request.preview_scene.is_some()
         || (request.render_program && request.program_scene.is_some())
         || !request.multiview_scenes.is_empty()
+        || request.source_projector.is_some()
         || (request.prepare_output && request.program_scene.is_some())
     {
         renderer.advance_timestamp();
@@ -436,6 +469,7 @@ fn render_request(
         program_scene: request.program_scene,
         program_frame: program.as_ref().ok().cloned().flatten(),
         multiview_frame: multiview.as_ref().ok().cloned().flatten(),
+        source_projector_frame: source_projector.as_ref().ok().cloned().flatten(),
         program_output: output.ok().flatten(),
         program_output_frame: output_frame,
         error,
@@ -443,6 +477,16 @@ fn render_request(
         #[cfg(test)]
         render_thread: thread::current().id(),
     }
+}
+
+fn render_source_projector(
+    renderer: &mut PreviewRenderer,
+    target: &SourceProjectorTarget,
+    format: VideoFormat,
+) -> Result<Option<VideoFrame>, String> {
+    renderer
+        .render_source(&target.scene, &target.item, format)
+        .map_err(|error| error.to_string())
 }
 
 fn render_multiview_scene(
@@ -578,6 +622,7 @@ fn renderer_error(
             program_scene: None,
             program_frame: None,
             multiview_frame: None,
+            source_projector_frame: None,
             program_output: None,
             program_output_frame: None,
             error: Some(error),
@@ -650,6 +695,7 @@ mod tests {
                 obs_rs_media::FrameRate::new(30, 1).expect("rate"),
             )
             .expect("multiview format"),
+            source_projector: None,
             render_program: false,
             prepare_output: false,
             prepare_output_rgba: false,
@@ -785,6 +831,24 @@ mod tests {
     }
 
     #[test]
+    fn source_projector_renders_the_selected_item_without_scene_geometry() {
+        let project = crate::initial_project().expect("initial project");
+        let canvas = project
+            .active_profile_spec()
+            .expect("profile")
+            .video_format();
+        let format = PreviewRenderer::preview_format_for_canvas(canvas);
+        let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
+        let frame = renderer
+            .render_source("preview", "background", format)
+            .expect("source projector render")
+            .expect("selected source frame");
+
+        assert_eq!(frame.format(), format);
+        assert_eq!(frame.pixel(0, 0), Some([0x10, 0x20, 0x30, 0xff]));
+    }
+
+    #[test]
     fn multiview_render_timing_report() {
         let project = crate::initial_project().expect("project");
         let profile = project.active_profile_spec().expect("profile");
@@ -859,6 +923,7 @@ mod tests {
                         .video_format(),
                     1,
                 ),
+                source_projector: None,
                 render_program: true,
                 prepare_output: true,
                 prepare_output_rgba: true,

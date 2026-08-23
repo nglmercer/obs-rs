@@ -728,6 +728,47 @@ impl PreviewRenderer {
         )
     }
 
+    /// Renders one selected source item without applying its scene-item
+    /// transform or compositing the rest of the scene.
+    ///
+    /// A source projector follows the source's own output and source-level
+    /// filters. Its target is separate from the preview/program targets so a
+    /// projector cannot overwrite a GUI feed or force a full-canvas readback.
+    pub(crate) fn render_source(
+        &mut self,
+        scene: &str,
+        item: &str,
+        format: VideoFormat,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        let target = RenderTarget::new(RenderTargetRole::Projector, format);
+        if matches!(self.compositor, PreviewCompositor::Wgpu(_)) {
+            if !self.submit_source_layer(scene, item, target)? {
+                return Ok(None);
+            }
+            let PreviewCompositor::Wgpu(compositor) = &mut self.compositor else {
+                return Ok(None);
+            };
+            let texture = compositor.target(target)?;
+            return compositor
+                .backend
+                .readback(texture)
+                .map(Some)
+                .map_err(Into::into);
+        }
+
+        let request = VideoRequest::new(self.timestamp, self.format);
+        let layers = self.runtime.render_scene_layers(scene, &request)?;
+        let Some(layer) = layers.iter().find(|layer| layer.item_id() == item) else {
+            return Ok(None);
+        };
+        let mut frame = layer.frame().clone();
+        frame.apply_filters(layer.filters());
+        if frame.format() != target.format() {
+            frame = self.scale_frame(&frame, target.format())?;
+        }
+        Ok(Some(frame))
+    }
+
     /// Renders one transition into the full program target.
     pub(crate) fn render_transition(
         &mut self,
@@ -897,6 +938,39 @@ impl PreviewRenderer {
         }
         if target.role() == RenderTargetRole::Program {
             self.gpu_program_scene = Some(scene.to_owned());
+        }
+        Ok(true)
+    }
+
+    /// Submits one selected source item to a projector target without opening
+    /// another runtime or applying scene-item geometry.
+    fn submit_source_layer(
+        &mut self,
+        scene: &str,
+        item: &str,
+        target: RenderTarget,
+    ) -> Result<bool, Box<dyn Error>> {
+        let request = VideoRequest::new(self.timestamp, self.format);
+        let layers = self.runtime.render_scene_layers(scene, &request)?;
+        let Some(layer) = layers.iter().find(|layer| layer.item_id() == item) else {
+            return Ok(false);
+        };
+        let submitted = SceneLayer::frame(layer.frame(), FrameTransform::IDENTITY, layer.filters());
+        let submit_result = {
+            let PreviewCompositor::Wgpu(compositor) = &mut self.compositor else {
+                return Ok(false);
+            };
+            let texture = compositor.target(target)?;
+            compositor
+                .backend
+                .submit_layers(texture, std::slice::from_ref(&submitted))
+        };
+        if let Err(error) = submit_result {
+            self.compositor = PreviewCompositor::Cpu {
+                reason: Some(format!("GPU composition failed: {error}")),
+            };
+            self.gpu_program_scene = None;
+            return Err(error.into());
         }
         Ok(true)
     }

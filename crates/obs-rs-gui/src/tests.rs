@@ -1930,6 +1930,18 @@ fn exercise_menu_actions(
         "selecting multiview again closed it"
     );
 
+    // A source projector captures the selected scene item, not the current
+    // selection after the window has opened.
+    refresh_ui(ui, state, surface);
+    assert!(!projectors.is_source_open());
+    ui.invoke_open_source_projector();
+    assert!(
+        projectors.is_source_open(),
+        "the selected source projector opened"
+    );
+    ui.invoke_open_source_projector();
+    assert!(!projectors.is_source_open(), "selecting it again closed it");
+
     // Resetting the layout restores the shipped arrangement whatever the row
     // was dragged into.
     let reversed = vec![4, 3, 2, 1, 0];

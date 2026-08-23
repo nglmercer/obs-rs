@@ -67,6 +67,7 @@ export component MainWindow inherits Window {
         in property <image> preview-image;
         in property <image> program-image;
         in property <image> multiview-image;
+        in property <image> source-projector-image;
         in property <string> multiview-status;
         in property <string> multiview-metrics;
         in property <float> multiview-audio-db: -60.0;
@@ -269,6 +270,7 @@ export component MainWindow inherits Window {
         // `true` opens the program feed, `false` the preview feed.
         callback open-projector(bool);
         callback open-multiview-projector();
+        callback open-source-projector();
         callback select-collection(string);
         callback create-collection(string);
         callback duplicate-collection(string);
@@ -536,6 +538,8 @@ export component MainWindow inherits Window {
                         root.open-projector(false);
                     } else if action == "projector-multiview" {
                         root.open-multiview-projector();
+                    } else if action == "projector-source" {
+                        root.open-source-projector();
                     } else if action == "reset-layout" {
                         root.reset-dock-layout();
                     } else if action == "new-collection" {

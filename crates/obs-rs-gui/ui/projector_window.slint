@@ -3,13 +3,13 @@ import { Palette } from "palette.slint";
 
 // A borderless full-bleed view of one canvas, which is what OBS calls a
 // projector. It renders nothing of its own: the studio window pushes the same
-// composited image it already produced for preview or program, so a projector
-// can never disagree with what the operator is watching.
+// worker-produced image it already uses for preview, program, multiview, or a
+// selected source, so a projector never opens a second capture runtime.
 export component ProjectorWindow inherits Window {
     in property <string> locale;
     in property <image> source-image;
-    // "preview" or "program"; shown in the title so two open projectors are
-    // still tellable apart in a window switcher.
+    // Feed label shown in the title so open projectors remain tellable in a
+    // window switcher.
     in property <string> feed-label;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;

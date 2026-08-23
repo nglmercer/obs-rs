@@ -65,10 +65,15 @@ pub(crate) use source_properties::install_source_properties_window;
 pub(crate) use source_transform::install_source_transform_window;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bounded render consumer is an independent demand bit"
+)]
 struct RenderDemand {
     request_preview: bool,
     request_program_view: bool,
     request_multiview: bool,
+    request_source_projector: bool,
     interval: Option<Duration>,
 }
 
@@ -106,6 +111,7 @@ struct RenderDemandInput {
     output: OutputRenderState,
     projectors: ProjectorRenderDemand,
     multiview_projector: bool,
+    source_projector: bool,
     view: StudioView,
 }
 
@@ -115,8 +121,9 @@ struct RenderDemandInput {
 /// preview/program-view frames.
 fn render_demand(input: RenderDemandInput) -> RenderDemand {
     let main_interactive = input.window == WindowRenderState::Visible;
-    let projector_open =
-        input.projectors != ProjectorRenderDemand::None || input.multiview_projector;
+    let projector_open = input.projectors != ProjectorRenderDemand::None
+        || input.multiview_projector
+        || input.source_projector;
     let request_preview = (main_interactive && input.view != StudioView::Multiview)
         || input.window == WindowRenderState::Minimized
         || matches!(
@@ -129,6 +136,7 @@ fn render_demand(input: RenderDemandInput) -> RenderDemand {
     ) || (main_interactive && input.view == StudioView::Studio);
     let request_multiview =
         input.multiview_projector || (main_interactive && input.view == StudioView::Multiview);
+    let request_source_projector = input.source_projector;
     let interval =
         if input.output == OutputRenderState::Active || projector_open || main_interactive {
             Some(Duration::from_millis(16))
@@ -141,6 +149,7 @@ fn render_demand(input: RenderDemandInput) -> RenderDemand {
         request_preview,
         request_program_view,
         request_multiview,
+        request_source_projector,
         interval,
     }
 }
@@ -201,6 +210,7 @@ pub(crate) fn start_preview_timer(
             (true, true) => ProjectorRenderDemand::Both,
         };
         let multiview_projector = projectors.wants_multiview();
+        let source_projector = projectors.source_target();
         let demand = render_demand(RenderDemandInput {
             window,
             output: if output_active {
@@ -210,6 +220,7 @@ pub(crate) fn start_preview_timer(
             },
             projectors: projector_demand,
             multiview_projector,
+            source_projector: source_projector.is_some(),
             view: match ui.get_view_mode() {
                 0 => StudioView::Studio,
                 2 => StudioView::Multiview,
@@ -310,6 +321,10 @@ pub(crate) fn start_preview_timer(
                             profile.video_format(),
                             profile.scenes().take(MAX_MULTIVIEW_SCENES).count().max(1),
                         ),
+                        source_projector: demand
+                            .request_source_projector
+                            .then_some(source_projector.as_ref())
+                            .flatten(),
                         // A program projector is a third consumer of the program
                         // canvas, so single-canvas editing has to render it again
                         // while one is up.
@@ -517,12 +532,14 @@ mod tests {
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
                 multiview_projector: false,
+                source_projector: false,
                 view: StudioView::Single,
             }),
             RenderDemand {
                 request_preview: false,
                 request_program_view: false,
                 request_multiview: false,
+                request_source_projector: false,
                 interval: None,
             }
         );
@@ -536,12 +553,14 @@ mod tests {
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
                 multiview_projector: false,
+                source_projector: false,
                 view: StudioView::Studio,
             }),
             RenderDemand {
                 request_preview: true,
                 request_program_view: false,
                 request_multiview: false,
+                request_source_projector: false,
                 interval: Some(Duration::from_millis(200)),
             }
         );
@@ -555,12 +574,14 @@ mod tests {
                 output: OutputRenderState::Active,
                 projectors: ProjectorRenderDemand::None,
                 multiview_projector: false,
+                source_projector: false,
                 view: StudioView::Studio,
             }),
             RenderDemand {
                 request_preview: false,
                 request_program_view: false,
                 request_multiview: false,
+                request_source_projector: false,
                 interval: Some(Duration::from_millis(16)),
             }
         );
@@ -574,12 +595,14 @@ mod tests {
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
                 multiview_projector: false,
+                source_projector: false,
                 view: StudioView::Studio,
             }),
             RenderDemand {
                 request_preview: true,
                 request_program_view: true,
                 request_multiview: false,
+                request_source_projector: false,
                 interval: Some(Duration::from_millis(16)),
             }
         );
@@ -593,12 +616,14 @@ mod tests {
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
                 multiview_projector: false,
+                source_projector: false,
                 view: StudioView::Multiview,
             }),
             RenderDemand {
                 request_preview: false,
                 request_program_view: false,
                 request_multiview: true,
+                request_source_projector: false,
                 interval: Some(Duration::from_millis(16)),
             }
         );
@@ -612,12 +637,35 @@ mod tests {
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
                 multiview_projector: true,
+                source_projector: false,
                 view: StudioView::Single,
             }),
             RenderDemand {
                 request_preview: false,
                 request_program_view: false,
                 request_multiview: true,
+                request_source_projector: false,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_source_projector_requests_only_the_selected_source() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
+                source_projector: true,
+                view: StudioView::Single,
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: false,
+                request_source_projector: true,
                 interval: Some(Duration::from_millis(16)),
             }
         );
