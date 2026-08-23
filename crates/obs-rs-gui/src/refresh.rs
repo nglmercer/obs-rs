@@ -132,6 +132,7 @@ pub(crate) fn refresh_ui(
         ui.set_preview_scene(state.preview_scene().unwrap_or("none").into());
         ui.set_program_scene(state.program_scene().unwrap_or("none").into());
         ui.set_transition(transition_label_for_locale(locale, state.transition()).into());
+        ui.set_transition_kind(transition_kind(state.transition()).into());
         ui.set_recording(state.recording());
         ui.set_streaming(state.streaming());
         ui.set_dirty(state.is_dirty());
@@ -616,6 +617,14 @@ pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTra
             text.fade_to_color, color[0], color[1], color[2], color[3]
         ),
     })
+}
+
+pub(crate) fn transition_kind(transition: FrameTransition) -> &'static str {
+    match transition {
+        FrameTransition::Cut => "cut",
+        FrameTransition::CrossFade { .. } => "cross_fade",
+        FrameTransition::FadeToColor { .. } => "fade_to_color",
+    }
 }
 
 #[cfg(test)]

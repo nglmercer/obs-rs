@@ -6,6 +6,7 @@ import { Palette } from "palette.slint";
 export component TransitionDock inherits Rectangle {
     in property <string> locale;
     in property <string> transition;
+    in property <string> transition-kind;
     in property <int> panel-kind;
     in property <bool> floating;
     callback move-panel(int, int);
@@ -18,6 +19,8 @@ export component TransitionDock inherits Rectangle {
     callback fade-transition();
     callback fade-transition-duration(string);
     callback fade-to-color(string, string);
+    callback set-scene-transition(string, string, string);
+    callback clear-scene-transition();
     property <string> duration: "300";
     property <string> fade-color: "#000000FF";
 
@@ -94,10 +97,12 @@ export component TransitionDock inherits Rectangle {
                     CompactButton {
                         icon-name: "add";
                         hint: I18n.text.add_transition;
+                        clicked => set-scene-transition(root.transition-kind, root.duration, root.fade-color);
                     }
                     CompactButton {
                         icon-name: "remove";
                         hint: I18n.text.remove_transition;
+                        clicked => clear-scene-transition();
                     }
                     CompactButton {
                         icon-name: "more";

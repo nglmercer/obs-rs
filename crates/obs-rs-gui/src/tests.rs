@@ -3130,6 +3130,38 @@ fn exercise_recording_controls(
         } if progress_milli < 1_000
     ));
 
+    ui.invoke_set_scene_transition("fade_to_color".into(), "450".into(), "#00FF0080".into());
+    let override_spec = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(SceneSpec::transition_override)
+        .expect("dock action should persist a scene transition override");
+    assert_eq!(override_spec.duration_millis(), 450);
+    assert_eq!(
+        override_spec.kind(),
+        obs_rs_media::TransitionKind::FadeToColor {
+            color: [0, 255, 0, 128]
+        }
+    );
+
+    ui.invoke_clear_scene_transition();
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(SceneSpec::transition_override)
+        .is_none());
+
+    ui.invoke_set_scene_transition("cross_fade".into(), "0".into(), "#000000FF".into());
+    assert!(ui
+        .get_status_message()
+        .contains("Transition duration must be 1–60000 ms"));
+
     ui.invoke_fade_to_color("green".into(), "450".into());
     assert!(ui
         .get_status_message()

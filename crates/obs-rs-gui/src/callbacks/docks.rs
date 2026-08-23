@@ -71,6 +71,7 @@ impl DockController {
             window.set_source_count(ui.get_source_count());
             window.set_can_paste(ui.get_can_paste());
             window.set_transition(ui.get_transition());
+            window.set_transition_kind(ui.get_transition_kind());
             window.set_recording(ui.get_recording());
             window.set_streaming(ui.get_streaming());
             window.set_remux_recovery_supported(ui.get_remux_recovery_supported());
@@ -747,6 +748,14 @@ fn forward_to_studio(
         duration
     );
     forward!(on_fade_to_color, invoke_fade_to_color, color, duration);
+    forward!(
+        on_set_scene_transition,
+        invoke_set_scene_transition,
+        kind,
+        duration,
+        color
+    );
+    forward!(on_clear_scene_transition, invoke_clear_scene_transition);
     forward!(on_toggle_recording, invoke_toggle_recording);
     forward!(on_toggle_streaming, invoke_toggle_streaming);
     forward!(on_recover_recording, invoke_recover_recording);

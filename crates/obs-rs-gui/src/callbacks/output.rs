@@ -1,7 +1,9 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_engine::OutputLifecycle;
-use obs_rs_media::{parse_rgba8_hex, FrameTransition, RawVideoFrame, VideoFrame};
+use obs_rs_media::{
+    parse_rgba8_hex, FrameTransition, RawVideoFrame, TransitionKind, TransitionSpec, VideoFrame,
+};
 use obs_rs_ui::{
     DesktopState, UiCommand, DEFAULT_TRANSITION_DURATION_MILLIS, MAX_TRANSITION_DURATION_MILLIS,
     MIN_TRANSITION_DURATION_MILLIS,
@@ -296,6 +298,83 @@ fn install_transition_callbacks(
         };
         take_transition_and_refresh(&weak, &color_state, &color_surface, transition, duration);
     });
+
+    install_scene_transition_override_callbacks(ui, state, surface);
+}
+
+fn install_scene_transition_override_callbacks(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let weak = ui.as_weak();
+    let override_state = Rc::clone(state);
+    let override_surface = Rc::clone(surface);
+    ui.on_set_scene_transition(move |kind, duration, color| {
+        let result = scene_transition_spec(kind.as_str(), duration.as_str(), color.as_str()).map(
+            |transition| {
+                override_state
+                    .borrow_mut()
+                    .dispatch(UiCommand::SetPreviewSceneTransition {
+                        transition: Some(transition),
+                    })
+            },
+        );
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(Ok(())) => refresh_ui(&ui, &override_state, &override_surface),
+            Ok(Err(error)) => {
+                ui.set_status_message(format!("Transition override failed: {error}").into());
+            }
+            Err(error) => ui.set_status_message(error.into()),
+        }
+    });
+
+    let weak = ui.as_weak();
+    let clear_state = Rc::clone(state);
+    let clear_surface = Rc::clone(surface);
+    ui.on_clear_scene_transition(move || {
+        let result = clear_state
+            .borrow_mut()
+            .dispatch(UiCommand::SetPreviewSceneTransition { transition: None });
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(()) => refresh_ui(&ui, &clear_state, &clear_surface),
+            Err(error) => {
+                ui.set_status_message(format!("Transition override failed: {error}").into());
+            }
+        }
+    });
+}
+
+fn scene_transition_spec(
+    kind: &str,
+    duration: &str,
+    color: &str,
+) -> Result<TransitionSpec, String> {
+    let duration = duration
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|duration| {
+            (MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS).contains(duration)
+        })
+        .ok_or_else(|| "Transition duration must be 1–60000 ms".to_owned())?;
+    match kind {
+        "cut" => TransitionSpec::new(TransitionKind::Cut, duration),
+        "cross_fade" => TransitionSpec::new(TransitionKind::CrossFade, duration),
+        "fade_to_color" => {
+            let color = parse_rgba8_hex(color.trim())
+                .ok_or_else(|| "Transition color must be #RRGGBB or #RRGGBBAA".to_owned())?;
+            TransitionSpec::new(TransitionKind::FadeToColor { color }, duration)
+        }
+        _ => return Err("Transition override failed: unknown transition kind".to_owned()),
+    }
+    .map_err(|error| format!("Transition override failed: {error}"))
 }
 
 pub(crate) fn take_transition_and_refresh(

@@ -32,6 +32,7 @@ export component DockWorkspace inherits Rectangle {
     in property <int> source-count;
     in property <bool> can-paste;
     in property <string> transition;
+    in property <string> transition-kind;
     in property <bool> recording;
     in property <bool> streaming;
     in property <bool> replay-buffering;
@@ -85,6 +86,8 @@ export component DockWorkspace inherits Rectangle {
     callback fade-transition();
     callback fade-transition-duration(string);
     callback fade-to-color(string, string);
+    callback set-scene-transition(string, string, string);
+    callback clear-scene-transition();
     callback set-view-mode(int);
     callback toggle-recording();
     callback toggle-streaming();
@@ -237,6 +240,7 @@ export component DockWorkspace inherits Rectangle {
             source-count: root.source-count;
             can-paste: root.can-paste;
             transition: root.transition;
+            transition-kind: root.transition-kind;
             recording: root.recording;
             streaming: root.streaming;
             replay-buffering: root.replay-buffering;
@@ -287,6 +291,8 @@ export component DockWorkspace inherits Rectangle {
             fade-transition() => { root.fade-transition(); }
             fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
             fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
+            set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
+            clear-scene-transition() => { root.clear-scene-transition(); }
             set-view-mode(mode) => { root.set-view-mode(mode); }
             toggle-recording() => { root.toggle-recording(); }
             toggle-streaming() => { root.toggle-streaming(); }
