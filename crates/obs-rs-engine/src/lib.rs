@@ -9,13 +9,19 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 mod audio_routes;
+mod config;
+mod types;
 mod worker;
 
+pub use config::EngineConfig;
+pub use types::{
+    DesktopAudioSource, EngineAudioChannel, EngineError, EngineSnapshot, EngineStats, EngineTick,
+    FilterCompilation, FilterCompileFailure, FilterDiagnostic, OutputEvent, OutputLifecycle,
+    ProductionStreamMetrics, ReplaySaveStatus,
+};
 pub use worker::{EngineWorker, EngineWorkerSnapshot};
 
 use std::{
-    error::Error,
-    fmt,
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -26,27 +32,27 @@ use audio_routes::{
     AudioRouteWorker, ROUTE_REFRESH_INTERVAL_NANOS,
 };
 
+#[cfg(test)]
+use obs_rs_audio::AudioDeviceError;
 use obs_rs_audio::{
-    AudioBuffer, AudioDelayLine, AudioDeviceError, AudioDeviceKind, AudioFilter, AudioFilterChain,
-    AudioFormat, AudioInput, AudioInputProvider, AudioMixer, AudioMonitorMode, AudioOutputProvider,
-    AudioOutputWorker, AudioOutputWorkerHandle, AudioOutputWorkerSnapshot, AudioSourceId,
-    AvSyncMetrics, SimulatedAudioProvider,
+    AudioBuffer, AudioDelayLine, AudioDeviceKind, AudioFilter, AudioFilterChain, AudioFormat,
+    AudioInput, AudioInputProvider, AudioMixer, AudioMonitorMode, AudioOutputWorker,
+    AudioOutputWorkerHandle, AudioSourceId, AvSyncMetrics, SimulatedAudioProvider,
 };
 use obs_rs_builtins::BuiltinPlugin;
-use obs_rs_clock::{MediaTimeline, TimelineError};
-use obs_rs_core::{Runtime, RuntimeError};
+use obs_rs_clock::MediaTimeline;
+use obs_rs_core::Runtime;
 use obs_rs_media::{
-    ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameRate, FrameTransform,
-    LatencyMetrics, LumaKey, RawVideoFrame, RenderDelay, Timestamp, VideoFormat, VideoFrame,
-    MAX_RENDER_DELAY_MILLISECONDS, MAX_SCROLL_SPEED, MIN_RENDER_DELAY_MILLISECONDS,
-    MIN_SCROLL_SPEED,
+    ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameTransform, LumaKey,
+    RawVideoFrame, RenderDelay, Timestamp, VideoFormat, VideoFrame, MAX_RENDER_DELAY_MILLISECONDS,
+    MAX_SCROLL_SPEED, MIN_RENDER_DELAY_MILLISECONDS, MIN_SCROLL_SPEED,
 };
 use obs_rs_output::{
     recover_stale_packet_files, AtomicPacketFileWriter, AudioEncoder, AudioEncoderConfig,
-    AudioInputRequirement, EncodedPacket, OutputError, OutputProfile, PacketDropPolicy,
-    RawAudioEncoder, ReconnectOutcome, ReconnectPolicy, ReplayBuffer, RleVideoEncoder,
-    SegmentedPacketFileWriter, SegmentedRecordingPolicy, StreamMetrics, StreamSession, StreamState,
-    StreamTarget, StreamingTransport, TcpPacketTransport, VideoEncoder, VideoEncoderConfig,
+    AudioInputRequirement, EncodedPacket, OutputProfile, PacketDropPolicy, RawAudioEncoder,
+    ReconnectOutcome, ReconnectPolicy, ReplayBuffer, RleVideoEncoder, SegmentedPacketFileWriter,
+    SegmentedRecordingPolicy, StreamMetrics, StreamSession, StreamState, StreamTarget,
+    StreamingTransport, TcpPacketTransport, VideoEncoder, VideoEncoderConfig,
     VideoInputRequirement, WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
@@ -61,7 +67,7 @@ pub use obs_rs_output_gstreamer::{
     ProductionProtocol, ProtocolCapability, RemuxRecovery, VideoEncoderCapability,
 };
 use obs_rs_plugin_api::VideoRequest;
-use obs_rs_project::{Project, ProjectError, SourceFilterCategory, SourceFilterSpec};
+use obs_rs_project::{Project, SourceFilterCategory, SourceFilterSpec};
 
 const DEFAULT_AUDIO_BLOCK_FRAMES: usize = 480;
 const DEFAULT_TIMELINE_TOLERANCE_NANOS: u64 = 5_000_000;
@@ -72,600 +78,11 @@ const AUDIO_RECONNECT_INTERVAL_NANOS: u64 = 1_000_000_000;
 /// Maximum number of persisted-filter diagnostics retained in one snapshot.
 pub const MAX_FILTER_DIAGNOSTICS: usize = 64;
 
-/// Why a persisted filter could not be installed in the current runtime.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FilterCompileFailure {
-    /// The filter belongs to a category handled by another runtime boundary.
-    UnsupportedCategory,
-    /// No registered implementation knows this filter kind.
-    UnsupportedKind,
-    /// The implementation exists, but the persisted settings are invalid.
-    InvalidSettings,
-}
-
-impl FilterCompileFailure {
-    /// Returns the stable diagnostic label for this failure.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::UnsupportedCategory => "unsupported category",
-            Self::UnsupportedKind => "unsupported kind",
-            Self::InvalidSettings => "invalid settings",
-        }
-    }
-}
-
-/// Bounded metadata explaining why one persisted filter was unavailable.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FilterDiagnostic {
-    kind: String,
-    category: SourceFilterCategory,
-    failure: FilterCompileFailure,
-}
-
-impl FilterDiagnostic {
-    fn new(spec: &SourceFilterSpec, failure: FilterCompileFailure) -> Self {
-        Self {
-            kind: spec.kind().as_str().to_owned(),
-            category: spec.category(),
-            failure,
-        }
-    }
-
-    /// Returns the persisted filter kind.
-    #[must_use]
-    pub fn kind(&self) -> &str {
-        &self.kind
-    }
-
-    /// Returns the persisted filter category.
-    #[must_use]
-    pub const fn category(&self) -> SourceFilterCategory {
-        self.category
-    }
-
-    /// Returns the reason the filter was not installed.
-    #[must_use]
-    pub const fn failure(&self) -> FilterCompileFailure {
-        self.failure
-    }
-}
-
-impl fmt::Display for FilterDiagnostic {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "filter '{}' ({}) unavailable: {}",
-            self.kind,
-            self.category.id(),
-            self.failure.label()
-        )
-    }
-}
-
-/// Result of translating a project filter into one runtime filter operation.
-#[derive(Clone, Debug, PartialEq)]
-pub enum FilterCompilation<T> {
-    /// The filter was validated and can be installed.
-    Applied(T),
-    /// The filter is disabled and therefore intentionally has no operation.
-    Ignored,
-    /// The filter remains in project data but is unavailable in this runtime.
-    Unavailable(FilterDiagnostic),
-}
-
 /// Probes the production backend once and returns its typed GUI-safe model.
 #[cfg(feature = "production-gstreamer")]
 #[must_use]
 pub fn output_capabilities_snapshot() -> OutputCapabilitiesSnapshot {
     GStreamerCapabilitySnapshot::probe().capabilities()
-}
-
-/// Configuration for one portable engine session.
-pub struct EngineConfig {
-    audio_format: AudioFormat,
-    audio_block_frames: usize,
-    timeline_tolerance_nanos: u64,
-    output_queue_bytes: usize,
-    reconnect_attempts: u32,
-    audio_input_id: Option<String>,
-    desktop_audio_id: Option<String>,
-    audio_input_sync_offset_millis: u32,
-    desktop_audio_sync_offset_millis: u32,
-    desktop_monitor_mode: AudioMonitorMode,
-    microphone_monitor_mode: AudioMonitorMode,
-    audio_provider: Arc<dyn AudioInputProvider>,
-    audio_output_provider: Arc<dyn AudioOutputProvider>,
-    monitor_output_id: Option<String>,
-    monitor_output_queue_blocks: usize,
-    video_encoder: Box<dyn VideoEncoder>,
-}
-
-impl EngineConfig {
-    /// Creates a configuration with the deterministic audio fallback and the
-    /// lossless RLE video encoder.
-    ///
-    /// Use [`Self::with_video_encoder`] to install a different [`VideoEncoder`].
-    ///
-    /// # Panics
-    ///
-    /// Panics if the hardcoded default video format is ever invalid, which
-    /// cannot happen for the constants used here.
-    #[must_use]
-    pub fn new(audio_format: AudioFormat) -> Self {
-        let simulated_input_provider: Arc<dyn AudioInputProvider> =
-            Arc::new(SimulatedAudioProvider::new());
-        let simulated_output_provider: Arc<dyn AudioOutputProvider> =
-            Arc::new(SimulatedAudioProvider::new());
-        Self {
-            audio_format,
-            audio_block_frames: DEFAULT_AUDIO_BLOCK_FRAMES,
-            timeline_tolerance_nanos: DEFAULT_TIMELINE_TOLERANCE_NANOS,
-            output_queue_bytes: DEFAULT_OUTPUT_QUEUE_BYTES,
-            reconnect_attempts: DEFAULT_RECONNECT_ATTEMPTS,
-            audio_input_id: None,
-            desktop_audio_id: None,
-            audio_input_sync_offset_millis: 0,
-            desktop_audio_sync_offset_millis: 0,
-            desktop_monitor_mode: AudioMonitorMode::Off,
-            microphone_monitor_mode: AudioMonitorMode::Off,
-            audio_provider: simulated_input_provider,
-            audio_output_provider: simulated_output_provider,
-            monitor_output_id: None,
-            monitor_output_queue_blocks: DEFAULT_MONITOR_OUTPUT_QUEUE_BLOCKS,
-            video_encoder: Box::new(RleVideoEncoder::new(
-                VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("valid rate"))
-                    .expect("valid format"),
-            )),
-        }
-    }
-
-    /// Replaces the audio provider used before falling back to the test signal.
-    #[must_use]
-    pub fn with_audio_provider(mut self, provider: Arc<dyn AudioInputProvider>) -> Self {
-        self.audio_provider = provider;
-        self
-    }
-
-    /// Replaces the provider used to open optional local monitor sinks.
-    #[must_use]
-    pub fn with_audio_output_provider(mut self, provider: Arc<dyn AudioOutputProvider>) -> Self {
-        self.audio_output_provider = provider;
-        self
-    }
-
-    /// Selects a provider-stable input ID, or clears the selection when empty.
-    #[must_use]
-    pub fn with_audio_input_id(mut self, device_id: impl Into<String>) -> Self {
-        let device_id = device_id.into();
-        self.audio_input_id = (!device_id.trim().is_empty()).then_some(device_id);
-        self
-    }
-
-    /// Selects the playback device whose monitor feeds the desktop channel.
-    ///
-    /// An empty value clears the selection, which makes the session pick the
-    /// provider-declared default playback route, then the first available
-    /// route. Desktop capture has no deterministic stand-in: when no monitor
-    /// can be opened the channel stays silent rather
-    /// than borrowing the microphone's test signal, so what the meter shows is
-    /// what the recording contains.
-    #[must_use]
-    pub fn with_desktop_audio_id(mut self, device_id: impl Into<String>) -> Self {
-        let device_id = device_id.into();
-        self.desktop_audio_id = (!device_id.trim().is_empty()).then_some(device_id);
-        self
-    }
-
-    /// Selects the optional output device used by the local monitor bus.
-    ///
-    /// An empty or whitespace-only value clears the sink. Opening and writing
-    /// the selected device remains on the dedicated audio-output worker.
-    #[must_use]
-    pub fn with_monitor_output_id(mut self, device_id: impl Into<String>) -> Self {
-        let device_id = device_id.into();
-        self.monitor_output_id =
-            (!device_id.trim().is_empty()).then(|| device_id.trim().to_owned());
-        self
-    }
-
-    /// Sets the bounded number of complete monitor blocks held by the output
-    /// worker before new blocks are dropped.
-    #[must_use]
-    pub const fn with_monitor_output_queue_blocks(mut self, blocks: usize) -> Self {
-        self.monitor_output_queue_blocks = blocks;
-        self
-    }
-
-    /// Sets the desktop channel's OBS-compatible monitor destination policy.
-    #[must_use]
-    pub const fn with_desktop_monitor_mode(mut self, mode: AudioMonitorMode) -> Self {
-        self.desktop_monitor_mode = mode;
-        self
-    }
-
-    /// Sets the microphone channel's OBS-compatible monitor destination policy.
-    #[must_use]
-    pub const fn with_audio_input_monitor_mode(mut self, mode: AudioMonitorMode) -> Self {
-        self.microphone_monitor_mode = mode;
-        self
-    }
-
-    /// Sets the bounded positive delay applied to the microphone channel.
-    #[must_use]
-    pub const fn with_audio_input_sync_offset_millis(mut self, milliseconds: u32) -> Self {
-        self.audio_input_sync_offset_millis = milliseconds;
-        self
-    }
-
-    /// Sets the bounded positive delay applied to the desktop channel.
-    #[must_use]
-    pub const fn with_desktop_audio_sync_offset_millis(mut self, milliseconds: u32) -> Self {
-        self.desktop_audio_sync_offset_millis = milliseconds;
-        self
-    }
-
-    /// Sets the number of sample frames mixed per engine tick.
-    ///
-    /// A zero value is rejected when the session is created, where the error can
-    /// be reported through the normal engine error channel.
-    #[must_use]
-    pub const fn with_audio_block_frames(mut self, frames: usize) -> Self {
-        self.audio_block_frames = frames;
-        self
-    }
-
-    /// Sets the bounded stream queue capacity in bytes.
-    #[must_use]
-    pub const fn with_output_queue_bytes(mut self, bytes: usize) -> Self {
-        self.output_queue_bytes = bytes;
-        self
-    }
-
-    /// Replaces the video encoder used for recording and streaming.
-    ///
-    /// The default is a lossless RLE reference encoder; production hosts swap in
-    /// a hardware-accelerated or production-codec implementation behind this
-    /// same contract without touching engine source.
-    #[must_use]
-    pub fn with_video_encoder(mut self, encoder: Box<dyn VideoEncoder>) -> Self {
-        self.video_encoder = encoder;
-        self
-    }
-
-    /// Returns the negotiated audio format.
-    #[must_use]
-    pub const fn audio_format(&self) -> AudioFormat {
-        self.audio_format
-    }
-}
-
-impl Clone for EngineConfig {
-    // `Clone::clone` has no fallible contract, so documenting panics would be
-    // misleading. The `expect` calls here guard values this constructor itself
-    // produced, so they cannot fire in practice.
-    #[allow(clippy::missing_panics_doc)]
-    fn clone(&self) -> Self {
-        // The video encoder is a trait object that has no `Clone`, and the
-        // format it was built for is not readable back out of the trait. A
-        // cloned config therefore installs a fresh default RLE encoder rather
-        // than producing a half-populated config the session constructor would
-        // have to special-case.
-        let format = VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("valid rate"))
-            .expect("valid format");
-        Self {
-            audio_format: self.audio_format,
-            audio_block_frames: self.audio_block_frames,
-            timeline_tolerance_nanos: self.timeline_tolerance_nanos,
-            output_queue_bytes: self.output_queue_bytes,
-            reconnect_attempts: self.reconnect_attempts,
-            audio_input_id: self.audio_input_id.clone(),
-            desktop_audio_id: self.desktop_audio_id.clone(),
-            audio_input_sync_offset_millis: self.audio_input_sync_offset_millis,
-            desktop_audio_sync_offset_millis: self.desktop_audio_sync_offset_millis,
-            desktop_monitor_mode: self.desktop_monitor_mode,
-            microphone_monitor_mode: self.microphone_monitor_mode,
-            audio_provider: Arc::clone(&self.audio_provider),
-            audio_output_provider: Arc::clone(&self.audio_output_provider),
-            monitor_output_id: self.monitor_output_id.clone(),
-            monitor_output_queue_blocks: self.monitor_output_queue_blocks,
-            video_encoder: Box::new(RleVideoEncoder::new(format)),
-        }
-    }
-}
-
-impl Default for EngineConfig {
-    fn default() -> Self {
-        let format = AudioFormat::new(48_000, 2)
-            .unwrap_or_else(|error| unreachable!("the built-in audio format is valid: {error}"));
-        Self::new(format)
-    }
-}
-
-/// A single coordinated media tick.
-pub struct EngineTick {
-    /// The rendered preview frame, when a preview scene was selected.
-    pub preview_frame: Option<VideoFrame>,
-    /// The rendered program frame, when a program scene was selected.
-    pub program_frame: Option<VideoFrame>,
-    /// All audio blocks needed to reach this video frame's timestamp.
-    pub audio_blocks: Vec<AudioBuffer>,
-    /// The video deadline represented by this tick.
-    pub timestamp: Timestamp,
-    /// Peak level of the mixed audio delivered by this tick in thousandths.
-    pub audio_peak_milli: u16,
-}
-
-/// Monotonic counters and device diagnostics exposed to hosts and GUIs.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct EngineStats {
-    pub ticks: u64,
-    pub video_frames: u64,
-    pub audio_blocks: u64,
-    pub audio_fallback_blocks: u64,
-    pub monitor_blocks_submitted: u64,
-    pub monitor_blocks_dropped: u64,
-    pub last_video_timestamp: Option<Timestamp>,
-    pub last_audio_timestamp: Option<Timestamp>,
-    pub audio_peak_milli: u16,
-    pub desktop_peak_milli: u16,
-    pub microphone_peak_milli: u16,
-    pub desktop_peak_hold_milli: u16,
-    pub microphone_peak_hold_milli: u16,
-    pub desktop_clipped: bool,
-    pub microphone_clipped: bool,
-    pub video_encode_latency: LatencyMetrics,
-    pub audio_encode_latency: LatencyMetrics,
-    pub output_submit_latency: LatencyMetrics,
-    pub audio_blocks_per_video_tick: u32,
-    /// Bounded cross-domain timestamp telemetry from the session timeline.
-    pub av_sync: AvSyncMetrics,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EngineAudioChannel {
-    Desktop,
-    Microphone,
-}
-
-/// Lifecycle of one output, recording or streaming.
-///
-/// A frontend cannot infer this from "is the handle open?" alone: a connect
-/// that failed and a stream that was never started both leave no handle, yet a
-/// user has to be told the difference. Tracking the phase explicitly is what
-/// lets the desktop reconcile its own booleans against what the engine really
-/// did, rather than assuming a start request succeeded.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum OutputLifecycle {
-    /// No output is open and none was requested.
-    #[default]
-    Idle,
-    /// A start was requested and has not yet been accepted or rejected.
-    Starting,
-    /// The output is open and accepting packets.
-    Running,
-    /// A stop was requested and finalization is in progress.
-    Stopping,
-    /// The output stopped because of an error rather than a request.
-    Failed,
-}
-
-/// A streaming lifecycle transition published by the engine worker.
-///
-/// Frontends consume these events asynchronously; output setup and teardown
-/// never need to complete on their event thread.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum OutputEvent {
-    Starting,
-    Running,
-    Disconnected,
-    Reconnecting { attempt: u32 },
-    Failed { reason: String },
-    Stopping,
-    Stopped,
-}
-
-impl OutputLifecycle {
-    /// Returns whether this phase means the output is no longer carrying media.
-    ///
-    /// Both `Idle` and `Failed` are terminal for the frontend's purposes: in
-    /// either case a UI still showing "recording" is lying to the operator.
-    #[must_use]
-    pub const fn is_stopped(self) -> bool {
-        matches!(self, Self::Idle | Self::Failed)
-    }
-
-    /// Returns the stable label used by the status bar and diagnostics.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Starting => "starting",
-            Self::Running => "running",
-            Self::Stopping => "stopping",
-            Self::Failed => "failed",
-        }
-    }
-}
-
-/// What the desktop mixer channel is reading.
-///
-/// A silent desktop channel is an ordinary outcome rather than an error — a
-/// headless machine or a platform without monitor capture simply has nothing to
-/// record — so the reason travels with the state instead of being reported as a
-/// failure the operator has to dismiss.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DesktopAudioSource {
-    /// The named playback monitor is open and feeding the channel.
-    Monitor(String),
-    /// Nothing is open; the payload explains why, for the diagnostics report.
-    Silent(String),
-}
-
-impl DesktopAudioSource {
-    /// Returns the device name, or the reason the channel is silent.
-    #[must_use]
-    pub fn label(&self) -> &str {
-        match self {
-            Self::Monitor(label) | Self::Silent(label) => label,
-        }
-    }
-
-    /// Returns whether a real monitor is feeding the channel.
-    #[must_use]
-    pub const fn is_capturing(&self) -> bool {
-        matches!(self, Self::Monitor(_))
-    }
-}
-
-/// A small immutable status snapshot suitable for a status bar.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EngineSnapshot {
-    pub recording: bool,
-    pub streaming: bool,
-    /// Explicit recording phase, including a failed start the boolean hides.
-    pub recording_lifecycle: OutputLifecycle,
-    /// Explicit streaming phase, including a failed connect or a lost peer.
-    pub streaming_lifecycle: OutputLifecycle,
-    /// Explicit replay-capture phase, including a failed start request.
-    pub replay_lifecycle: OutputLifecycle,
-    /// Result of the most recent asynchronous replay save request.
-    pub replay_save_status: ReplaySaveStatus,
-    /// Number of packetized entries currently retained for replay.
-    pub replay_buffer_packets: usize,
-    pub stream_state: Option<StreamState>,
-    pub audio_backend: String,
-    pub audio_fallback: bool,
-    /// What the desktop channel is capturing, or why it is silent.
-    pub desktop_audio: DesktopAudioSource,
-    /// Optional local monitor-output worker telemetry.
-    pub monitor_output: Option<AudioOutputWorkerSnapshot>,
-    /// Bounded diagnostics for persisted filters unavailable in this runtime.
-    pub filter_diagnostics: Vec<String>,
-    pub stream_metrics: Option<StreamMetrics>,
-    /// Native production-stream counters for SRT/RTMP/RTMPS sessions.
-    pub production_stream_metrics: Option<ProductionStreamMetrics>,
-    pub stream_queued_bytes: usize,
-    pub last_error: Option<String>,
-    pub stats: EngineStats,
-}
-
-/// Status of the latest replay-buffer save request.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ReplaySaveStatus {
-    /// No save has been requested since replay capture was started.
-    Idle,
-    /// The worker owns the snapshot and atomic file write.
-    Saving,
-    /// The last save committed this many bytes.
-    Saved { bytes: usize },
-    /// The last save failed without stopping replay capture.
-    Failed { reason: String },
-}
-
-/// Protocol-independent telemetry copied from a native production adapter.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ProductionStreamMetrics {
-    pub video_submitted: u64,
-    pub audio_submitted: u64,
-    pub dropped: u64,
-    pub reconnects: u64,
-    pub video_queue_bytes: u64,
-    pub audio_queue_bytes: u64,
-    pub max_submit_latency_nanos: u128,
-}
-
-/// Errors raised by session construction, media processing, or output lifecycle.
-#[derive(Debug)]
-pub enum EngineError {
-    InvalidConfiguration(String),
-    NoActiveProfile,
-    Runtime(RuntimeError),
-    Project(ProjectError),
-    Timeline(TimelineError),
-    Audio(AudioDeviceError),
-    AudioMix(obs_rs_audio::AudioError),
-    Output(OutputError),
-    #[cfg(feature = "production-gstreamer")]
-    ProductionOutput(GStreamerError),
-    Io(std::io::Error),
-    Worker(String),
-    Busy(&'static str),
-}
-
-impl fmt::Display for EngineError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidConfiguration(reason) => {
-                write!(formatter, "invalid engine configuration: {reason}")
-            }
-            Self::NoActiveProfile => formatter.write_str("project has no active profile"),
-            Self::Runtime(error) => write!(formatter, "runtime failed: {error}"),
-            Self::Project(error) => write!(formatter, "project failed: {error}"),
-            Self::Timeline(error) => write!(formatter, "media timeline failed: {error}"),
-            Self::Audio(error) => write!(formatter, "audio input failed: {error}"),
-            Self::AudioMix(error) => write!(formatter, "audio mixer failed: {error}"),
-            Self::Output(error) => write!(formatter, "output failed: {error}"),
-            #[cfg(feature = "production-gstreamer")]
-            Self::ProductionOutput(error) => write!(formatter, "production output failed: {error}"),
-            Self::Io(error) => write!(formatter, "engine I/O failed: {error}"),
-            Self::Worker(error) => write!(formatter, "engine worker failed: {error}"),
-            Self::Busy(operation) => {
-                write!(formatter, "cannot {operation} while an output is active")
-            }
-        }
-    }
-}
-
-impl Error for EngineError {}
-
-impl From<RuntimeError> for EngineError {
-    fn from(error: RuntimeError) -> Self {
-        Self::Runtime(error)
-    }
-}
-
-impl From<ProjectError> for EngineError {
-    fn from(error: ProjectError) -> Self {
-        Self::Project(error)
-    }
-}
-
-impl From<TimelineError> for EngineError {
-    fn from(error: TimelineError) -> Self {
-        Self::Timeline(error)
-    }
-}
-
-impl From<AudioDeviceError> for EngineError {
-    fn from(error: AudioDeviceError) -> Self {
-        Self::Audio(error)
-    }
-}
-
-impl From<obs_rs_audio::AudioError> for EngineError {
-    fn from(error: obs_rs_audio::AudioError) -> Self {
-        Self::AudioMix(error)
-    }
-}
-
-impl From<OutputError> for EngineError {
-    fn from(error: OutputError) -> Self {
-        Self::Output(error)
-    }
-}
-
-#[cfg(feature = "production-gstreamer")]
-impl From<GStreamerError> for EngineError {
-    fn from(error: GStreamerError) -> Self {
-        Self::ProductionOutput(error)
-    }
-}
-
-impl From<std::io::Error> for EngineError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(error)
-    }
 }
 
 enum RecordingOutput {
@@ -719,6 +136,10 @@ impl RecordingOutput {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(clippy::unnecessary_wraps)
+    )]
     fn push_raw_video(&mut self, frame: &RawVideoFrame) -> Result<(), EngineError> {
         #[cfg(not(feature = "production-gstreamer"))]
         let _ = frame;
