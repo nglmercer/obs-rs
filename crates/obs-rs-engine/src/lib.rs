@@ -907,6 +907,8 @@ pub struct EngineSession {
     /// channel silent instead of substituting another signal for it.
     desktop_audio: Option<Box<dyn AudioInput>>,
     desktop_audio_backend: String,
+    /// Next media timestamp at which a selected monitor may be reopened.
+    desktop_audio_reconnect_at: Option<Timestamp>,
     next_audio_deadline: Option<obs_rs_audio::AudioDeadline>,
     render_timestamp: Timestamp,
     video_encoder: Box<dyn VideoEncoder>,
@@ -977,13 +979,12 @@ impl EngineSession {
         let microphone_audio_source = mixer.add_source(1.0)?;
         let (audio_input, audio_backend, audio_fallback) =
             open_audio_input(&audio_provider, audio_format, audio_input_id.as_deref());
-        let audio_reconnect_at = if audio_fallback && audio_input_id.is_some() {
-            Some(Timestamp::from_nanos(AUDIO_RECONNECT_INTERVAL_NANOS))
-        } else {
-            None
-        };
+        let audio_reconnect_at =
+            audio_reconnect_deadline(audio_fallback && audio_input_id.is_some());
         let (desktop_audio, desktop_audio_backend) =
             open_desktop_audio(&audio_provider, audio_format, desktop_audio_id.as_deref());
+        let desktop_audio_reconnect_at =
+            audio_reconnect_deadline(desktop_audio.is_none() && desktop_audio_id.is_some());
 
         Ok(Self {
             video_encoder,
@@ -1015,6 +1016,7 @@ impl EngineSession {
             audio_reconnect_at,
             desktop_audio,
             desktop_audio_backend,
+            desktop_audio_reconnect_at,
             next_audio_deadline: None,
             render_timestamp: Timestamp::ZERO,
             recording: None,
@@ -1332,11 +1334,8 @@ impl EngineSession {
         self.audio_backend = audio_backend;
         self.audio_fallback = audio_fallback;
         self.config.audio_input_id = device_id;
-        self.audio_reconnect_at = if audio_fallback && self.config.audio_input_id.is_some() {
-            Some(Timestamp::from_nanos(AUDIO_RECONNECT_INTERVAL_NANOS))
-        } else {
-            None
-        };
+        self.audio_reconnect_at =
+            audio_reconnect_deadline(audio_fallback && self.config.audio_input_id.is_some());
         self.next_audio_deadline = None;
         self.last_error = None;
     }
@@ -1345,21 +1344,27 @@ impl EngineSession {
     ///
     /// Unlike the microphone there is no fallback signal, so an unavailable
     /// device leaves the channel silent and names the reason in the snapshot.
+    /// A configured unavailable device is retried at a bounded media-time
+    /// interval without silently selecting another playback route.
     pub fn set_desktop_audio_id(&mut self, device_id: Option<&str>) {
+        let device_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
         if let Some(desktop) = self.desktop_audio.as_mut() {
             desktop.stop();
         }
         let (desktop_audio, desktop_audio_backend) = open_desktop_audio(
             &self.config.audio_provider,
             self.config.audio_format,
-            device_id,
+            device_id.as_deref(),
         );
         self.desktop_audio = desktop_audio;
         self.desktop_audio_backend = desktop_audio_backend;
-        self.config.desktop_audio_id = device_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
+        self.config.desktop_audio_id = device_id;
+        self.desktop_audio_reconnect_at = audio_reconnect_deadline(
+            self.desktop_audio.is_none() && self.config.desktop_audio_id.is_some(),
+        );
         self.next_audio_deadline = None;
     }
 
@@ -2458,15 +2463,24 @@ impl EngineSession {
     ///
     /// A monitor that fails mid-session is closed rather than retried every
     /// block: the desktop channel degrades to silence and says so in the
-    /// backend label, which keeps a broken device from stalling the tick.
+    /// backend label. A configured monitor is retried only at the bounded
+    /// media-time interval, which keeps a broken device from stalling every
+    /// tick.
     fn read_desktop_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
         let frames = self.config.audio_block_frames;
+        self.try_reconnect_desktop_audio(timestamp);
         if let Some(desktop) = self.desktop_audio.as_mut() {
             match desktop.read_block(timestamp, frames) {
                 Ok(buffer) => return Ok(buffer),
                 Err(error) => {
+                    desktop.stop();
                     self.desktop_audio = None;
                     self.desktop_audio_backend = format!("unavailable ({error})");
+                    self.desktop_audio_reconnect_at = self
+                        .config
+                        .desktop_audio_id
+                        .as_ref()
+                        .and_then(|_| timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS));
                     self.last_error = Some(error.to_string());
                 }
             }
@@ -2476,6 +2490,33 @@ impl EngineSession {
             timestamp,
             frames,
         )?)
+    }
+
+    fn try_reconnect_desktop_audio(&mut self, timestamp: Timestamp) {
+        let Some(next_attempt) = self.desktop_audio_reconnect_at else {
+            return;
+        };
+        if timestamp < next_attempt {
+            return;
+        }
+
+        self.desktop_audio_reconnect_at = timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS);
+        let Some(device_id) = self.config.desktop_audio_id.as_deref() else {
+            self.desktop_audio_reconnect_at = None;
+            return;
+        };
+        let Some((desktop_audio, desktop_audio_backend)) = open_requested_desktop_audio(
+            &self.config.audio_provider,
+            self.config.audio_format,
+            device_id,
+        ) else {
+            return;
+        };
+
+        self.desktop_audio = Some(desktop_audio);
+        self.desktop_audio_backend = desktop_audio_backend;
+        self.desktop_audio_reconnect_at = None;
+        self.last_error = None;
     }
 
     fn drain_audio_until(&mut self, timestamp: Timestamp) -> Result<Vec<AudioBuffer>, EngineError> {
@@ -3006,6 +3047,10 @@ fn open_audio_input(
     (fallback, "simulated fallback".to_owned(), true)
 }
 
+fn audio_reconnect_deadline(enabled: bool) -> Option<Timestamp> {
+    enabled.then_some(Timestamp::from_nanos(AUDIO_RECONNECT_INTERVAL_NANOS))
+}
+
 fn open_requested_audio_input(
     provider: &Arc<dyn AudioInputProvider>,
     format: AudioFormat,
@@ -3050,18 +3095,18 @@ fn open_desktop_audio(
     let Ok(devices) = provider.discover() else {
         return (None, "unavailable".to_owned());
     };
-    let selected = requested_id
-        .and_then(|requested| {
-            devices
-                .iter()
-                .find(|device| device.id() == requested && device.available())
+    let selected = if let Some(requested) = requested_id {
+        devices.into_iter().find(|device| {
+            device.kind() == AudioDeviceKind::Output
+                && device.id() == requested
+                && device.available()
         })
-        .or_else(|| {
-            devices
-                .iter()
-                .find(|device| device.kind() == AudioDeviceKind::Output && device.available())
-        })
-        .map(|device| (device.id().to_owned(), device.name().to_owned()));
+    } else {
+        devices
+            .into_iter()
+            .find(|device| device.kind() == AudioDeviceKind::Output && device.available())
+    }
+    .map(|device| (device.id().to_owned(), device.name().to_owned()));
     let Some((device_id, device_name)) = selected else {
         return (None, "no playback monitor".to_owned());
     };
@@ -3069,6 +3114,21 @@ fn open_desktop_audio(
         Some(input) => (Some(input), device_name),
         None => (None, "unavailable (no compatible device format)".to_owned()),
     }
+}
+
+fn open_requested_desktop_audio(
+    provider: &Arc<dyn AudioInputProvider>,
+    format: AudioFormat,
+    requested_id: &str,
+) -> Option<(Box<dyn AudioInput>, String)> {
+    let devices = provider.discover().ok()?;
+    let device = devices.into_iter().find(|device| {
+        device.kind() == AudioDeviceKind::Output
+            && device.id() == requested_id
+            && device.available()
+    })?;
+    let input = open_input_with_conversion(provider, device.id(), format)?;
+    Some((input, device.name().to_owned()))
 }
 
 fn open_input_with_conversion(
@@ -4074,6 +4134,38 @@ mod tests {
         }
     }
 
+    struct ReconnectingMonitorProvider {
+        opens: Arc<AtomicUsize>,
+    }
+
+    impl AudioInputProvider for ReconnectingMonitorProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+            Ok(vec![AudioDeviceInfo::new(
+                "reconnecting-monitor",
+                "Reconnecting monitor",
+                AudioDeviceKind::Output,
+            )?])
+        }
+
+        fn open_input(
+            &self,
+            device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+            if device_id != "reconnecting-monitor" {
+                return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                    device_id.to_owned(),
+                ));
+            }
+            let attempt = self.opens.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(FailingAudioInput {
+                format,
+                inner: SimulatedAudioProvider::new().open_input("test-audio", format)?,
+                healthy_blocks: if attempt == 0 { 2 } else { usize::MAX },
+            }))
+        }
+    }
+
     #[test]
     fn falling_back_after_a_device_failure_keeps_the_audio_timeline_continuous() {
         // The timeline, not the device, issues block timestamps, and the
@@ -4136,6 +4228,51 @@ mod tests {
         assert_eq!(snapshot.audio_backend, "Reconnecting input");
         assert_eq!(opens.load(Ordering::SeqCst), 2);
         assert!(snapshot.last_error.is_none());
+    }
+
+    #[test]
+    fn selected_desktop_monitor_reconnects_after_a_bounded_media_interval() {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let config = EngineConfig::default()
+            .with_audio_provider(Arc::new(ReconnectingMonitorProvider {
+                opens: Arc::clone(&opens),
+            }))
+            .with_desktop_audio_id("reconnecting-monitor");
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+
+        engine
+            .drain_audio_until(Timestamp::from_millis(900))
+            .expect("silent desktop blocks");
+        assert_eq!(
+            engine.snapshot().desktop_audio,
+            DesktopAudioSource::Silent(
+                "unavailable (audio device unavailable: unplugged)".to_owned()
+            )
+        );
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+
+        engine
+            .drain_audio_until(Timestamp::from_millis(1_100))
+            .expect("reconnected desktop blocks");
+        let snapshot = engine.snapshot();
+        assert_eq!(
+            snapshot.desktop_audio,
+            DesktopAudioSource::Monitor("Reconnecting monitor".to_owned())
+        );
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn selected_desktop_monitor_does_not_silently_switch_to_another_route() {
+        let config = EngineConfig::default()
+            .with_audio_provider(Arc::new(MonitorProvider))
+            .with_desktop_audio_id("missing-monitor");
+        let engine = EngineSession::new(project(), config).expect("engine");
+
+        assert_eq!(
+            engine.snapshot().desktop_audio,
+            DesktopAudioSource::Silent("no playback monitor".to_owned())
+        );
     }
 
     #[test]
