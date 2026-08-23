@@ -60,6 +60,7 @@ const DEFAULT_AUDIO_BLOCK_FRAMES: usize = 480;
 const DEFAULT_TIMELINE_TOLERANCE_NANOS: u64 = 5_000_000;
 const DEFAULT_OUTPUT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
+const AUDIO_RECONNECT_INTERVAL_NANOS: u64 = 1_000_000_000;
 
 /// Probes the production backend once and returns its typed GUI-safe model.
 #[cfg(feature = "production-gstreamer")]
@@ -900,6 +901,8 @@ pub struct EngineSession {
     audio_input: Box<dyn AudioInput>,
     audio_backend: String,
     audio_fallback: bool,
+    /// Next media timestamp at which a selected input may be reopened.
+    audio_reconnect_at: Option<Timestamp>,
     /// Absent when no playback monitor could be opened, which keeps the desktop
     /// channel silent instead of substituting another signal for it.
     desktop_audio: Option<Box<dyn AudioInput>>,
@@ -974,6 +977,11 @@ impl EngineSession {
         let microphone_audio_source = mixer.add_source(1.0)?;
         let (audio_input, audio_backend, audio_fallback) =
             open_audio_input(&audio_provider, audio_format, audio_input_id.as_deref());
+        let audio_reconnect_at = if audio_fallback && audio_input_id.is_some() {
+            Some(Timestamp::from_nanos(AUDIO_RECONNECT_INTERVAL_NANOS))
+        } else {
+            None
+        };
         let (desktop_audio, desktop_audio_backend) =
             open_desktop_audio(&audio_provider, audio_format, desktop_audio_id.as_deref());
 
@@ -1004,6 +1012,7 @@ impl EngineSession {
             audio_input,
             audio_backend,
             audio_fallback,
+            audio_reconnect_at,
             desktop_audio,
             desktop_audio_backend,
             next_audio_deadline: None,
@@ -1305,22 +1314,29 @@ impl EngineSession {
     /// Switches the live audio input without rebuilding the video runtime.
     ///
     /// The provider is queried on the engine worker thread. If the requested
-    /// device is unavailable, the same deterministic fallback used during
-    /// startup is selected and the snapshot exposes that fallback state.
+    /// device is unavailable, the deterministic fallback is used without
+    /// silently selecting another device. A configured unavailable device is
+    /// retried at a bounded media-time interval.
     pub fn set_audio_input_id(&mut self, device_id: Option<&str>) {
+        let device_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
         self.audio_input.stop();
         let (audio_input, audio_backend, audio_fallback) = open_audio_input(
             &self.config.audio_provider,
             self.config.audio_format,
-            device_id,
+            device_id.as_deref(),
         );
         self.audio_input = audio_input;
         self.audio_backend = audio_backend;
         self.audio_fallback = audio_fallback;
-        self.config.audio_input_id = device_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
+        self.config.audio_input_id = device_id;
+        self.audio_reconnect_at = if audio_fallback && self.config.audio_input_id.is_some() {
+            Some(Timestamp::from_nanos(AUDIO_RECONNECT_INTERVAL_NANOS))
+        } else {
+            None
+        };
         self.next_audio_deadline = None;
         self.last_error = None;
     }
@@ -2375,15 +2391,24 @@ impl EngineSession {
     }
 
     fn read_audio_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
+        if self.audio_fallback {
+            self.try_reconnect_audio(timestamp);
+        }
         match self
             .audio_input
             .read_block(timestamp, self.config.audio_block_frames)
         {
             Ok(buffer) => Ok(buffer),
             Err(error) => {
+                self.audio_input.stop();
                 self.audio_fallback = true;
                 self.audio_backend = format!("simulated fallback ({error})");
                 self.last_error = Some(error.to_string());
+                self.audio_reconnect_at = self
+                    .config
+                    .audio_input_id
+                    .as_ref()
+                    .and_then(|_| timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS));
                 self.audio_input = SimulatedAudioProvider::new()
                     .open_input("test-audio", self.config.audio_format)?;
                 // The fallback signal runs on its own clock, so the timeline's
@@ -2397,6 +2422,36 @@ impl EngineSession {
                     .read_block(timestamp, self.config.audio_block_frames)?)
             }
         }
+    }
+
+    fn try_reconnect_audio(&mut self, timestamp: Timestamp) {
+        let Some(next_attempt) = self.audio_reconnect_at else {
+            return;
+        };
+        if timestamp < next_attempt {
+            return;
+        }
+
+        self.audio_reconnect_at = timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS);
+        let Some(device_id) = self.config.audio_input_id.as_deref() else {
+            self.audio_reconnect_at = None;
+            return;
+        };
+        let Some((audio_input, audio_backend)) = open_requested_audio_input(
+            &self.config.audio_provider,
+            self.config.audio_format,
+            device_id,
+        ) else {
+            return;
+        };
+
+        self.audio_input.stop();
+        self.audio_input = audio_input;
+        self.audio_backend = audio_backend;
+        self.audio_fallback = false;
+        self.audio_reconnect_at = None;
+        self.next_audio_deadline = None;
+        self.last_error = None;
     }
 
     /// Reads one desktop block, or silence when no monitor is open.
@@ -2939,25 +2994,7 @@ fn open_audio_input(
     format: AudioFormat,
     requested_id: Option<&str>,
 ) -> (Box<dyn AudioInput>, String, bool) {
-    let primary = provider.discover().ok().and_then(|devices| {
-        requested_id
-            .and_then(|requested| {
-                devices
-                    .iter()
-                    .find(|device| {
-                        device.kind() == AudioDeviceKind::Input
-                            && device.id() == requested
-                            && device.available()
-                    })
-                    .map(|device| (device.id().to_owned(), device.name().to_owned()))
-            })
-            .or_else(|| {
-                devices
-                    .into_iter()
-                    .find(|device| device.kind() == AudioDeviceKind::Input && device.available())
-                    .map(|device| (device.id().to_owned(), device.name().to_owned()))
-            })
-    });
+    let primary = discover_audio_input_device(provider, requested_id);
     if let Some((device_id, device_name)) = primary {
         if let Some(input) = open_input_with_conversion(provider, &device_id, format) {
             return (input, device_name, false);
@@ -2967,6 +3004,35 @@ fn open_audio_input(
         .open_input("test-audio", format)
         .unwrap_or_else(|error| unreachable!("fallback audio format is valid: {error}"));
     (fallback, "simulated fallback".to_owned(), true)
+}
+
+fn open_requested_audio_input(
+    provider: &Arc<dyn AudioInputProvider>,
+    format: AudioFormat,
+    requested_id: &str,
+) -> Option<(Box<dyn AudioInput>, String)> {
+    let (device_id, device_name) = discover_audio_input_device(provider, Some(requested_id))?;
+    let input = open_input_with_conversion(provider, &device_id, format)?;
+    Some((input, device_name))
+}
+
+fn discover_audio_input_device(
+    provider: &Arc<dyn AudioInputProvider>,
+    requested_id: Option<&str>,
+) -> Option<(String, String)> {
+    let devices = provider.discover().ok()?;
+    let selected = if let Some(requested) = requested_id {
+        devices.into_iter().find(|device| {
+            device.kind() == AudioDeviceKind::Input
+                && device.id() == requested
+                && device.available()
+        })
+    } else {
+        devices
+            .into_iter()
+            .find(|device| device.kind() == AudioDeviceKind::Input && device.available())
+    }?;
+    Some((selected.id().to_owned(), selected.name().to_owned()))
 }
 
 /// Opens the playback monitor that feeds the desktop channel.
@@ -3090,7 +3156,10 @@ fn audio_peak_milli(buffer: &AudioBuffer) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
 
     use super::*;
     use obs_rs_audio::{AudioDeviceInfo, MAX_GAIN_MILLI};
@@ -3597,6 +3666,18 @@ mod tests {
     }
 
     #[test]
+    fn selected_audio_input_does_not_silently_switch_to_another_device() {
+        let engine = EngineSession::new(
+            project(),
+            EngineConfig::default().with_audio_input_id("missing-input"),
+        )
+        .expect("engine");
+        let snapshot = engine.snapshot();
+        assert!(snapshot.audio_fallback);
+        assert_eq!(snapshot.audio_backend, "simulated fallback");
+    }
+
+    #[test]
     fn desktop_and_microphone_are_distinct_metered_mixer_sources() {
         let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
         engine
@@ -3941,7 +4022,11 @@ mod tests {
 
     impl AudioInputProvider for FailingProvider {
         fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
-            Ok(Vec::new())
+            Ok(vec![AudioDeviceInfo::new(
+                "failing-input",
+                "Failing input",
+                AudioDeviceKind::Input,
+            )?])
         }
 
         fn open_input(
@@ -3953,6 +4038,38 @@ mod tests {
                 format,
                 inner: SimulatedAudioProvider::new().open_input("test-audio", format)?,
                 healthy_blocks: 2,
+            }))
+        }
+    }
+
+    struct ReconnectingProvider {
+        opens: Arc<AtomicUsize>,
+    }
+
+    impl AudioInputProvider for ReconnectingProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+            Ok(vec![AudioDeviceInfo::new(
+                "reconnecting-input",
+                "Reconnecting input",
+                AudioDeviceKind::Input,
+            )?])
+        }
+
+        fn open_input(
+            &self,
+            device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+            if device_id != "reconnecting-input" {
+                return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                    device_id.to_owned(),
+                ));
+            }
+            let attempt = self.opens.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(FailingAudioInput {
+                format,
+                inner: SimulatedAudioProvider::new().open_input("test-audio", format)?,
+                healthy_blocks: if attempt == 0 { 2 } else { usize::MAX },
             }))
         }
     }
@@ -3993,6 +4110,32 @@ mod tests {
             steps.iter().all(|step| *step == block_nanos),
             "block spacing changed across the fallback: {steps:?}"
         );
+    }
+
+    #[test]
+    fn selected_audio_input_reconnects_after_a_bounded_media_interval() {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let config = EngineConfig::default()
+            .with_audio_provider(Arc::new(ReconnectingProvider {
+                opens: Arc::clone(&opens),
+            }))
+            .with_audio_input_id("reconnecting-input");
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+
+        engine
+            .drain_audio_until(Timestamp::from_millis(900))
+            .expect("fallback audio blocks");
+        assert!(engine.snapshot().audio_fallback);
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+
+        engine
+            .drain_audio_until(Timestamp::from_millis(1_100))
+            .expect("reconnected audio blocks");
+        let snapshot = engine.snapshot();
+        assert!(!snapshot.audio_fallback);
+        assert_eq!(snapshot.audio_backend, "Reconnecting input");
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+        assert!(snapshot.last_error.is_none());
     }
 
     #[test]

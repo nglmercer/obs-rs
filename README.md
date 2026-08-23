@@ -162,9 +162,12 @@ The camera list in the source properties offers the real V4L2 nodes discovered
 on the host, and selecting one starts a bounded `ffmpeg` reader for it. The
 microphone is chosen on the settings window's Audio page; the engine captures
 that device, and the mixer's input channel is named after it, so its fader,
-mute, and meter act on the audio that reaches the recording and the stream.
-`obs-rs-linux-check` reports whether the live `PipeWire` capture is running or
-the deterministic fallback took over.
+mute, and meter act on the audio that reaches the recording and the stream. If
+the configured microphone disappears, the engine keeps bounded deterministic
+fallback audio and retries that same device at a one-second media-time
+interval. `obs-rs-linux-check` reports whether the live `PipeWire` capture is
+running or the deterministic fallback took over; this managed host cannot
+provide live unplug/replug evidence.
 
 Settings, the reopened project, and the dock layout are stored under
 `$XDG_CONFIG_HOME/obs-rs` (a file already present in the working directory keeps
