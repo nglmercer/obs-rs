@@ -943,6 +943,78 @@ fn resampler_maps_mono_to_stereo() {
 }
 
 #[test]
+fn delay_line_preserves_order_and_reuses_the_input_shape() {
+    let mono = AudioFormat::new(1_000, 1).expect("mono format");
+    let mut delay = AudioDelayLine::with_block_frames(mono, 3, 2).expect("delay line");
+    assert_eq!(delay.delay_frames(), 3);
+    assert!(!delay.is_passthrough());
+
+    let first = AudioBuffer::new(mono, Timestamp::ZERO, vec![1.0, 2.0]).expect("first block");
+    let second =
+        AudioBuffer::new(mono, Timestamp::from_millis(2), vec![3.0, 4.0]).expect("second block");
+    let third =
+        AudioBuffer::new(mono, Timestamp::from_millis(4), vec![5.0, 6.0]).expect("third block");
+
+    assert_eq!(
+        delay.process(first).expect("first output").samples(),
+        &[0.0, 0.0]
+    );
+    assert_eq!(
+        delay.process(second).expect("second output").samples(),
+        &[0.0, 1.0]
+    );
+    assert_eq!(
+        delay.process(third).expect("third output").samples(),
+        &[2.0, 3.0]
+    );
+}
+
+#[test]
+fn delay_line_rejects_unbounded_offsets_and_wrong_formats() {
+    let mono = AudioFormat::new(48_000, 1).expect("mono format");
+    let too_large = MAX_AUDIO_SYNC_OFFSET_MILLISECONDS + 1;
+    assert!(matches!(
+        AudioDelayLine::new(mono, too_large),
+        Err(AudioError::InvalidSyncOffset {
+            milliseconds
+        }) if milliseconds == too_large
+    ));
+
+    let mut delay = AudioDelayLine::new(mono, 10).expect("delay line");
+    let stereo = AudioFormat::new(48_000, 2).expect("stereo format");
+    let input = AudioBuffer::silence(stereo, Timestamp::ZERO, 1).expect("stereo buffer");
+    assert!(matches!(
+        delay.process(input),
+        Err(AudioError::FormatMismatch {
+            expected,
+            actual
+        }) if expected == mono && actual == stereo
+    ));
+}
+
+#[test]
+fn delay_line_block_timing_report() {
+    let mut delay = AudioDelayLine::with_block_frames(format(), 500, 480).expect("delay line");
+    let mut block = AudioBuffer::silence(format(), Timestamp::ZERO, 480).expect("audio block");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for index in 0_u64..200 {
+        block.set_timestamp(Timestamp::from_millis(index * 10));
+        block = delay.process(block).expect("delay block");
+        checksum += block.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "audio delay: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
 fn scheduler_and_buffer_end_use_sample_clock_timestamps() {
     let mono = AudioFormat::new(48_000, 1).expect("mono format");
     let mut scheduler = AudioScheduler::new(mono);

@@ -5,6 +5,7 @@
 
 mod buffer;
 mod callback_clock;
+mod delay;
 mod device;
 mod error;
 mod filters;
@@ -22,6 +23,7 @@ mod tests;
 
 pub use buffer::{AudioBuffer, AudioBufferPool};
 pub use callback_clock::{AudioCallbackClock, AudioCallbackObservation};
+pub use delay::{AudioDelayLine, MAX_AUDIO_SYNC_OFFSET_MILLISECONDS};
 pub use device::{
     AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioInput, AudioInputProvider,
     AudioInputState, AudioOutput, AudioOutputProvider, AudioOutputState, SharedAudioInputProvider,

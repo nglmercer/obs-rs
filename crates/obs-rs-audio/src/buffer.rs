@@ -247,6 +247,14 @@ impl AudioBuffer {
     pub(crate) fn samples_mut(&mut self) -> &mut [f32] {
         &mut self.samples
     }
+
+    pub(crate) fn take_samples(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.samples)
+    }
+
+    pub(crate) fn replace_samples(&mut self, samples: Vec<f32>) {
+        self.samples = samples;
+    }
 }
 
 /// Reuses interleaved sample allocations for a fixed audio format.

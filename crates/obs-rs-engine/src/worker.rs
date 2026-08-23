@@ -84,6 +84,7 @@ enum WorkerCommand {
     MonitorAudio(Timestamp),
     SetGain(EngineAudioChannel, u16, mpsc::Sender<Result<(), String>>),
     SetPan(EngineAudioChannel, i32, mpsc::Sender<Result<(), String>>),
+    SetSyncOffset(EngineAudioChannel, u32, mpsc::Sender<Result<(), String>>),
     SetGainFilter(EngineAudioChannel, i32, mpsc::Sender<Result<(), String>>),
     SetInvertPolarity(EngineAudioChannel, mpsc::Sender<Result<(), String>>),
     SetLimiter(
@@ -1006,6 +1007,28 @@ impl EngineWorker {
             .map_err(EngineError::Worker)
     }
 
+    /// Applies a bounded positive sync offset on the worker-owned audio
+    /// channel without making the GUI own a delay queue.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker or delay-line bound rejects the
+    /// update.
+    pub fn set_channel_sync_offset_millis(
+        &self,
+        channel: EngineAudioChannel,
+        milliseconds: u32,
+    ) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetSyncOffset(channel, milliseconds, reply))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
     /// Replaces the live channel's Gain filter on the worker-owned engine.
     ///
     /// # Errors
@@ -1379,6 +1402,13 @@ fn worker_loop(
             WorkerCommand::SetPan(channel, pan_milli, reply) => {
                 let result = session
                     .set_channel_pan_milli(channel, pan_milli)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(result);
+                false
+            }
+            WorkerCommand::SetSyncOffset(channel, milliseconds, reply) => {
+                let result = session
+                    .set_channel_sync_offset_millis(channel, milliseconds)
                     .map_err(|error| error.to_string());
                 let _ = reply.send(result);
                 false
@@ -2157,6 +2187,9 @@ mod tests {
             .set_channel_pan_milli(EngineAudioChannel::Microphone, -1_000)
             .expect("valid pan");
         worker
+            .set_channel_sync_offset_millis(EngineAudioChannel::Microphone, 100)
+            .expect("valid sync offset");
+        worker
             .set_channel_invert_polarity(EngineAudioChannel::Microphone)
             .expect("valid invert polarity filter");
         worker
@@ -2182,6 +2215,13 @@ mod tests {
             .set_channel_gain_filter_db_milli(EngineAudioChannel::Microphone, 30_001)
             .expect_err("unbounded gain filter");
         assert!(matches!(error, EngineError::Worker(reason) if reason.contains("outside")));
+        let error = worker
+            .set_channel_sync_offset_millis(
+                EngineAudioChannel::Microphone,
+                obs_rs_audio::MAX_AUDIO_SYNC_OFFSET_MILLISECONDS + 1,
+            )
+            .expect_err("unbounded sync offset");
+        assert!(matches!(error, EngineError::Worker(reason) if reason.contains("sync offset")));
         let error = worker
             .set_channel_pan_milli(EngineAudioChannel::Microphone, 1_001)
             .expect_err("unbounded pan");

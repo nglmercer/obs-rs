@@ -21,9 +21,9 @@ use std::{
 };
 
 use obs_rs_audio::{
-    AudioBuffer, AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioFilter, AudioFilterChain,
-    AudioFormat, AudioInput, AudioInputProvider, AudioInputState, AudioMixer, AudioResampler,
-    AudioSourceId, AvSyncMetrics, SimulatedAudioProvider,
+    AudioBuffer, AudioDelayLine, AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioFilter,
+    AudioFilterChain, AudioFormat, AudioInput, AudioInputProvider, AudioInputState, AudioMixer,
+    AudioResampler, AudioSourceId, AvSyncMetrics, SimulatedAudioProvider,
 };
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_clock::{MediaTimeline, TimelineError};
@@ -78,6 +78,8 @@ pub struct EngineConfig {
     reconnect_attempts: u32,
     audio_input_id: Option<String>,
     desktop_audio_id: Option<String>,
+    audio_input_sync_offset_millis: u32,
+    desktop_audio_sync_offset_millis: u32,
     audio_provider: Arc<dyn AudioInputProvider>,
     video_encoder: Box<dyn VideoEncoder>,
 }
@@ -102,6 +104,8 @@ impl EngineConfig {
             reconnect_attempts: DEFAULT_RECONNECT_ATTEMPTS,
             audio_input_id: None,
             desktop_audio_id: None,
+            audio_input_sync_offset_millis: 0,
+            desktop_audio_sync_offset_millis: 0,
             audio_provider: Arc::new(SimulatedAudioProvider::new()),
             video_encoder: Box::new(RleVideoEncoder::new(
                 VideoFormat::new(640, 360, FrameRate::new(30, 1).expect("valid rate"))
@@ -136,6 +140,20 @@ impl EngineConfig {
     pub fn with_desktop_audio_id(mut self, device_id: impl Into<String>) -> Self {
         let device_id = device_id.into();
         self.desktop_audio_id = (!device_id.trim().is_empty()).then_some(device_id);
+        self
+    }
+
+    /// Sets the bounded positive delay applied to the microphone channel.
+    #[must_use]
+    pub const fn with_audio_input_sync_offset_millis(mut self, milliseconds: u32) -> Self {
+        self.audio_input_sync_offset_millis = milliseconds;
+        self
+    }
+
+    /// Sets the bounded positive delay applied to the desktop channel.
+    #[must_use]
+    pub const fn with_desktop_audio_sync_offset_millis(mut self, milliseconds: u32) -> Self {
+        self.desktop_audio_sync_offset_millis = milliseconds;
         self
     }
 
@@ -195,6 +213,8 @@ impl Clone for EngineConfig {
             reconnect_attempts: self.reconnect_attempts,
             audio_input_id: self.audio_input_id.clone(),
             desktop_audio_id: self.desktop_audio_id.clone(),
+            audio_input_sync_offset_millis: self.audio_input_sync_offset_millis,
+            desktop_audio_sync_offset_millis: self.desktop_audio_sync_offset_millis,
             audio_provider: Arc::clone(&self.audio_provider),
             video_encoder: Box::new(RleVideoEncoder::new(format)),
         }
@@ -907,6 +927,8 @@ pub struct EngineSession {
     audio_active_device_id: Option<String>,
     /// Next media timestamp at which a selected input may be reopened.
     audio_reconnect_at: Option<Timestamp>,
+    /// Bounded delay line for the microphone channel.
+    audio_input_delay: AudioDelayLine,
     /// Absent when no playback monitor could be opened, which keeps the desktop
     /// channel silent instead of substituting another signal for it.
     desktop_audio: Option<Box<dyn AudioInput>>,
@@ -915,6 +937,8 @@ pub struct EngineSession {
     desktop_audio_active_device_id: Option<String>,
     /// Next media timestamp at which a selected monitor may be reopened.
     desktop_audio_reconnect_at: Option<Timestamp>,
+    /// Bounded delay line for the desktop channel.
+    desktop_audio_delay: AudioDelayLine,
     next_audio_deadline: Option<obs_rs_audio::AudioDeadline>,
     render_timestamp: Timestamp,
     video_encoder: Box<dyn VideoEncoder>,
@@ -941,6 +965,10 @@ pub struct EngineSession {
 )]
 impl EngineSession {
     /// Builds a session from the project's active profile.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "session initialization keeps all bounded runtime ownership in one constructor"
+    )]
     pub fn new(project: Project, config: EngineConfig) -> Result<Self, EngineError> {
         if config.audio_block_frames == 0 {
             return Err(EngineError::InvalidConfiguration(
@@ -968,6 +996,8 @@ impl EngineSession {
             reconnect_attempts,
             audio_input_id,
             desktop_audio_id,
+            audio_input_sync_offset_millis,
+            desktop_audio_sync_offset_millis,
             audio_provider,
             video_encoder,
         } = config;
@@ -983,6 +1013,16 @@ impl EngineSession {
         let mut mixer = AudioMixer::new(audio_format);
         let desktop_audio_source = mixer.add_source(1.0)?;
         let microphone_audio_source = mixer.add_source(1.0)?;
+        let audio_input_delay = AudioDelayLine::with_block_frames(
+            audio_format,
+            audio_input_sync_offset_millis,
+            audio_block_frames,
+        )?;
+        let desktop_audio_delay = AudioDelayLine::with_block_frames(
+            audio_format,
+            desktop_audio_sync_offset_millis,
+            audio_block_frames,
+        )?;
         let (audio_input, audio_backend, audio_fallback, audio_active_device_id) =
             open_audio_input(&audio_provider, audio_format, audio_input_id.as_deref());
         let audio_reconnect_at = audio_reconnect_deadline(audio_fallback);
@@ -1001,6 +1041,8 @@ impl EngineSession {
                 reconnect_attempts,
                 audio_input_id,
                 desktop_audio_id,
+                audio_input_sync_offset_millis,
+                desktop_audio_sync_offset_millis,
                 audio_provider,
                 video_encoder: Box::new(RleVideoEncoder::new(format)),
             },
@@ -1019,10 +1061,12 @@ impl EngineSession {
             audio_fallback,
             audio_active_device_id,
             audio_reconnect_at,
+            audio_input_delay,
             desktop_audio,
             desktop_audio_backend,
             desktop_audio_active_device_id,
             desktop_audio_reconnect_at,
+            desktop_audio_delay,
             next_audio_deadline: None,
             render_timestamp: Timestamp::ZERO,
             recording: None,
@@ -1079,6 +1123,8 @@ impl EngineSession {
             self.config.timeline_tolerance_nanos,
         );
         self.stats.av_sync = AvSyncMetrics::default();
+        self.audio_input_delay.reset();
+        self.desktop_audio_delay.reset();
         self.next_audio_deadline = None;
         self.render_timestamp = Timestamp::ZERO;
         self.video_encoder = Box::new(RleVideoEncoder::new(format));
@@ -1138,6 +1184,36 @@ impl EngineSession {
             EngineAudioChannel::Microphone => self.microphone_audio_source,
         };
         self.mixer.set_pan_milli(source, pan_milli)?;
+        Ok(())
+    }
+
+    /// Sets a bounded positive sync offset on one live audio channel.
+    ///
+    /// The delay is quantized to complete sample frames and clearing or
+    /// changing it resets only that channel's queued audio. No unbounded
+    /// samples are retained and the video timeline is not blocked.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the offset exceeds the audio delay-line
+    /// bound or the channel cannot be reconfigured.
+    pub fn set_channel_sync_offset_millis(
+        &mut self,
+        channel: EngineAudioChannel,
+        milliseconds: u32,
+    ) -> Result<(), EngineError> {
+        match channel {
+            EngineAudioChannel::Desktop => {
+                self.desktop_audio_delay
+                    .set_delay_milliseconds(milliseconds)?;
+                self.config.desktop_audio_sync_offset_millis = milliseconds;
+            }
+            EngineAudioChannel::Microphone => {
+                self.audio_input_delay
+                    .set_delay_milliseconds(milliseconds)?;
+                self.config.audio_input_sync_offset_millis = milliseconds;
+            }
+        }
         Ok(())
     }
 
@@ -1337,6 +1413,7 @@ impl EngineSession {
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
         self.audio_input.stop();
+        self.audio_input_delay.reset();
         let (audio_input, audio_backend, audio_fallback, audio_active_device_id) = open_audio_input(
             &self.config.audio_provider,
             self.config.audio_format,
@@ -1367,6 +1444,7 @@ impl EngineSession {
         if let Some(desktop) = self.desktop_audio.as_mut() {
             desktop.stop();
         }
+        self.desktop_audio_delay.reset();
         let (desktop_audio, desktop_audio_backend, desktop_audio_active_device_id) =
             open_desktop_audio(
                 &self.config.audio_provider,
@@ -2425,6 +2503,7 @@ impl EngineSession {
             Ok(buffer) => Ok(buffer),
             Err(error) => {
                 self.audio_input.stop();
+                self.audio_input_delay.reset();
                 self.audio_active_device_id = None;
                 self.audio_fallback = true;
                 self.audio_backend = format!("simulated fallback ({error})");
@@ -2438,9 +2517,10 @@ impl EngineSession {
                 // next tick to re-anchors the audio deadlines to the current
                 // video timestamp instead of chasing a device that is gone.
                 self.next_audio_deadline = None;
-                Ok(self
+                let buffer = self
                     .audio_input
-                    .read_block(timestamp, self.config.audio_block_frames)?)
+                    .read_block(timestamp, self.config.audio_block_frames)?;
+                Ok(buffer)
             }
         }
     }
@@ -2463,6 +2543,7 @@ impl EngineSession {
         };
 
         self.audio_input.stop();
+        self.audio_input_delay.reset();
         self.audio_input = audio_input;
         self.audio_backend = audio_backend;
         self.audio_fallback = false;
@@ -2487,6 +2568,7 @@ impl EngineSession {
                 Err(error) => {
                     desktop.stop();
                     self.desktop_audio = None;
+                    self.desktop_audio_delay.reset();
                     self.desktop_audio_active_device_id = None;
                     self.desktop_audio_backend = format!("unavailable ({error})");
                     self.desktop_audio_reconnect_at =
@@ -2495,11 +2577,8 @@ impl EngineSession {
                 }
             }
         }
-        Ok(AudioBuffer::silence(
-            self.config.audio_format,
-            timestamp,
-            frames,
-        )?)
+        let buffer = AudioBuffer::silence(self.config.audio_format, timestamp, frames)?;
+        Ok(buffer)
     }
 
     fn try_reconnect_desktop_audio(&mut self, timestamp: Timestamp) {
@@ -2522,6 +2601,7 @@ impl EngineSession {
         };
 
         self.desktop_audio = Some(desktop_audio);
+        self.desktop_audio_delay.reset();
         self.desktop_audio_backend = desktop_audio_backend;
         self.desktop_audio_active_device_id = Some(desktop_audio_active_device_id);
         self.desktop_audio_reconnect_at = None;
@@ -2545,6 +2625,8 @@ impl EngineSession {
             let mut desktop = self.read_desktop_block(deadline.timestamp())?;
             self.microphone_audio_filters.apply(&mut input)?;
             self.desktop_audio_filters.apply(&mut desktop)?;
+            input = self.audio_input_delay.process(input)?;
+            desktop = self.desktop_audio_delay.process(desktop)?;
             let mixed = self.mixer.mix(
                 deadline.timestamp(),
                 self.config.audio_block_frames,
@@ -3733,6 +3815,40 @@ mod tests {
         let sync = engine.stats().av_sync;
         assert_eq!(sync.observations(), 5);
         assert!(sync.max_abs_delta_nanos() > 0);
+    }
+
+    #[test]
+    fn microphone_sync_offset_delays_only_that_channel_and_is_bounded() {
+        let config = EngineConfig::default().with_audio_input_sync_offset_millis(10);
+        let mut engine = EngineSession::new(project(), config).expect("engine");
+
+        let first = engine
+            .drain_audio_until(Timestamp::ZERO)
+            .expect("first audio block");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].sample(0, 0), Some(0.0));
+
+        let second = engine
+            .drain_audio_until(Timestamp::from_millis(10))
+            .expect("second audio block");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].sample(0, 0), Some(0.12));
+
+        engine
+            .set_channel_sync_offset_millis(EngineAudioChannel::Microphone, 0)
+            .expect("clear sync offset");
+        let immediate = engine
+            .drain_audio_until(Timestamp::from_millis(20))
+            .expect("third audio block");
+        assert_eq!(immediate[0].sample(0, 0), Some(0.12));
+
+        let error = engine
+            .set_channel_sync_offset_millis(
+                EngineAudioChannel::Microphone,
+                obs_rs_audio::MAX_AUDIO_SYNC_OFFSET_MILLISECONDS + 1,
+            )
+            .expect_err("offset must remain bounded");
+        assert!(error.to_string().contains("sync offset"));
     }
 
     #[test]

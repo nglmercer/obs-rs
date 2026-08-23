@@ -107,6 +107,8 @@ pub enum AudioError {
     FilterOverflow,
     /// A source pan is not finite or is outside `[-1.0, 1.0]`.
     InvalidPan,
+    /// A fixed source sync offset exceeds the bounded audio control range.
+    InvalidSyncOffset { milliseconds: u32 },
     /// A mix sum overflowed the finite `f32` range.
     MixOverflow,
     /// Source IDs are exhausted.
@@ -267,6 +269,10 @@ impl fmt::Display for AudioError {
             Self::InvalidPan => {
                 formatter.write_str("audio pan must be finite and between -1 and 1")
             }
+            Self::InvalidSyncOffset { milliseconds } => write!(
+                formatter,
+                "audio sync offset {milliseconds} ms is outside the supported range"
+            ),
             Self::MixOverflow => formatter.write_str("audio mix exceeded finite sample range"),
             Self::SourceIdExhausted => formatter.write_str("audio source ID space is exhausted"),
             Self::ZeroMonitorCapacity => {
