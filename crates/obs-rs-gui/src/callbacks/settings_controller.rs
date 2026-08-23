@@ -13,6 +13,7 @@ mod settings_pages;
 
 #[allow(
     clippy::wildcard_imports,
+    unused_imports,
     reason = "settings callback modules share the controller boundary imports"
 )]
 use settings_commit::*;
@@ -27,6 +28,7 @@ use settings_helpers::*;
 )]
 use settings_pages::*;
 
+#[allow(unused_imports)]
 pub(crate) use settings_commit::{
     apply_settings_snapshot, apply_staged_audio_format, apply_staged_output_scaling,
     apply_staged_video_format, apply_video_format,
