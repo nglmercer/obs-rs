@@ -14,7 +14,7 @@ use std::{
 };
 
 use obs_rs_ui::{DesktopState, UiCommand};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, PhysicalPosition, PhysicalSize, VecModel};
 
 use crate::settings::{
     scale_window_dimension, FloatingGeometry, ProjectorGeometry, ProjectorKind, ProjectorMonitor,
@@ -26,7 +26,7 @@ use crate::{
     fixtures::{desktop_bounds, screen_monitors, DesktopBounds, MonitorChoice},
     initial_project,
     preview_worker::{SceneProjectorTarget, SourceProjectorTarget},
-    project_store, refresh_ui, source_target, MainWindow, PreviewSurface, ProfileRow,
+    project_store, refresh_ui, source_target, MainWindow, MonitorRow, PreviewSurface, ProfileRow,
     ProjectorWindow,
 };
 
@@ -284,6 +284,53 @@ impl ProjectorController {
             .iter()
             .find(|entry| entry.projector == feed.kind())
             .cloned()
+    }
+
+    /// Moves an existing projector to one of the monitors reported by the
+    /// platform adapter and remembers the stable identity for the next
+    /// restart. The monitor list is resolved again at activation time so a
+    /// display removed after the menu opened is a typed failure, not a stale
+    /// coordinate write.
+    fn move_to_monitor(
+        &self,
+        feed: ProjectorFeed,
+        window: &ProjectorWindow,
+        monitor_id: &str,
+    ) -> Result<(), String> {
+        let monitor = screen_monitors()
+            .into_iter()
+            .find(|monitor| monitor.id == monitor_id)
+            .ok_or_else(|| format!("display '{monitor_id}' is no longer available"))?;
+        let stored = ProjectorMonitor::new(feed.kind(), monitor.id.clone())
+            .ok_or_else(|| "display identity is invalid".to_owned())?;
+
+        if window.window().is_fullscreen() {
+            // Native fullscreen follows the window's current display on the
+            // supported desktop backend. Temporarily leaving fullscreen lets
+            // the new physical target be selected without opening another
+            // projector window or capture runtime.
+            window.window().set_fullscreen(false);
+            window
+                .window()
+                .set_position(PhysicalPosition::new(monitor.x, monitor.y));
+            window
+                .window()
+                .set_size(PhysicalSize::new(monitor.width, monitor.height));
+            window.window().set_fullscreen(true);
+        } else {
+            let size = window.window().size();
+            let (x, y) = clamp_window_position(
+                monitor.x,
+                monitor.y,
+                size.width,
+                size.height,
+                monitor_bounds(&monitor),
+            );
+            window.window().set_position(PhysicalPosition::new(x, y));
+        }
+
+        replace_projector_monitor(&mut self.monitors.borrow_mut(), stored);
+        Ok(())
     }
 
     fn set_open(&self, feed: ProjectorFeed, open: bool) {
@@ -775,6 +822,66 @@ fn monitor_bounds(monitor: &MonitorChoice) -> DesktopBounds {
     desktop_bounds(std::slice::from_ref(monitor))
 }
 
+/// Projects the current platform display capability into the projector menu's
+/// typed rows. A missing or stale saved identity selects the primary display
+/// (or the first reported display) as the visible default without rewriting
+/// persistence until the user explicitly chooses a target.
+fn projector_monitor_rows(selected: Option<&str>) -> Vec<MonitorRow> {
+    let monitors = screen_monitors();
+    projector_monitor_rows_for(&monitors, selected)
+}
+
+fn projector_monitor_rows_for(
+    monitors: &[MonitorChoice],
+    selected: Option<&str>,
+) -> Vec<MonitorRow> {
+    let bounds = desktop_bounds(monitors);
+    let selected_id = selected
+        .filter(|id| monitors.iter().any(|monitor| monitor.id.as_str() == *id))
+        .map(str::to_owned)
+        .or_else(|| {
+            monitors
+                .iter()
+                .find(|monitor| monitor.primary)
+                .or_else(|| monitors.first())
+                .map(|monitor| monitor.id.clone())
+        });
+
+    monitors
+        .iter()
+        .map(|monitor| {
+            let width = i32::try_from(monitor.width).unwrap_or(i32::MAX);
+            let height = i32::try_from(monitor.height).unwrap_or(i32::MAX);
+            MonitorRow {
+                id: monitor.id.as_str().into(),
+                name: monitor.name.as_str().into(),
+                geometry: monitor.geometry().into(),
+                primary: monitor.primary,
+                selected: selected_id.as_deref().is_some_and(|id| id == monitor.id),
+                normalized_x: normalized_monitor(
+                    monitor.x.saturating_sub(bounds.left),
+                    bounds.width,
+                ),
+                normalized_y: normalized_monitor(
+                    monitor.y.saturating_sub(bounds.top),
+                    bounds.height,
+                ),
+                normalized_width: normalized_monitor(width, bounds.width),
+                normalized_height: normalized_monitor(height, bounds.height),
+            }
+        })
+        .collect()
+}
+
+fn normalized_monitor(value: i32, extent: i32) -> f32 {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "desktop geometry is far below f32's exact integer range"
+    )]
+    let fraction = value as f32 / extent.max(1) as f32;
+    fraction.clamp(0.0, 1.0)
+}
+
 fn restore_projector_geometry(
     window: &ProjectorWindow,
     geometry: ProjectorGeometry,
@@ -867,15 +974,45 @@ fn open_projector(
     } else {
         window.window().set_fullscreen(feed.is_fullscreen());
     }
+    let selected_monitor = projectors.stored_monitor(feed);
+    window.set_monitor_rows(ModelRc::new(VecModel::from(projector_monitor_rows(
+        selected_monitor
+            .as_ref()
+            .map(|monitor| monitor.monitor.as_str()),
+    ))));
 
-    let projectors = Rc::clone(projectors);
-    window.on_close_requested(move || close_projector(&projectors, feed));
-    let weak = window.as_weak();
+    let close_projectors = Rc::clone(projectors);
+    window.on_close_requested(move || close_projector(&close_projectors, feed));
+    let fullscreen_window = window.as_weak();
     window.on_toggle_fullscreen(move || {
-        if let Some(window) = weak.upgrade() {
+        if let Some(window) = fullscreen_window.upgrade() {
             window
                 .window()
                 .set_fullscreen(!window.window().is_fullscreen());
+        }
+    });
+
+    let move_projectors = Rc::clone(projectors);
+    let move_window = window.as_weak();
+    let move_ui = ui.as_weak();
+    window.on_move_to_monitor(move |monitor_id| {
+        let Some(window) = move_window.upgrade() else {
+            return;
+        };
+        match move_projectors.move_to_monitor(feed, &window, monitor_id.as_str()) {
+            Ok(()) => {
+                let selected_monitor = move_projectors.stored_monitor(feed);
+                window.set_monitor_rows(ModelRc::new(VecModel::from(projector_monitor_rows(
+                    selected_monitor
+                        .as_ref()
+                        .map(|monitor| monitor.monitor.as_str()),
+                ))));
+            }
+            Err(error) => {
+                if let Some(ui) = move_ui.upgrade() {
+                    ui.set_status_message(format!("Projector monitor: {error}").into());
+                }
+            }
         }
     });
 
@@ -1454,6 +1591,42 @@ mod tests {
             Some("HDMI-1")
         );
         assert_eq!(monitor_containing_point(&monitors, 4_480, 700), None);
+    }
+
+    #[test]
+    fn projector_monitor_rows_preserve_identity_and_desktop_arrangement() {
+        let monitors = [
+            monitor("DP-1", -1_920, 0, 1_920, 1_080),
+            monitor("HDMI-1", 0, -200, 2_560, 1_440),
+        ];
+
+        let rows = projector_monitor_rows_for(&monitors, Some("HDMI-1"));
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id.as_str(), "DP-1");
+        assert!(!rows[0].selected);
+        assert!(rows[1].selected);
+        assert!(rows[0].normalized_x.abs() < f32::EPSILON);
+        assert!(rows[1].normalized_y.abs() < f32::EPSILON);
+        assert!(rows.iter().all(|row| {
+            row.normalized_width > 0.0
+                && row.normalized_height > 0.0
+                && row.normalized_width <= 1.0
+                && row.normalized_height <= 1.0
+        }));
+    }
+
+    #[test]
+    fn stale_projector_monitor_selection_falls_back_to_primary_row() {
+        let monitors = [
+            monitor("DP-1", 0, 0, 1_920, 1_080),
+            monitor("HDMI-1", 1_920, 0, 2_560, 1_440),
+        ];
+
+        let rows = projector_monitor_rows_for(&monitors, Some("gone"));
+
+        assert!(rows[0].selected);
+        assert!(!rows[1].selected);
     }
 
     #[test]

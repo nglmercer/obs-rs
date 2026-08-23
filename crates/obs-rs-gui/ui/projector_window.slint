@@ -1,4 +1,5 @@
 import { I18n } from "i18n.slint";
+import { MonitorRow } from "models.slint";
 import { Palette } from "palette.slint";
 
 // A borderless full-bleed view of one canvas, which is what OBS calls a
@@ -13,7 +14,9 @@ export component ProjectorWindow inherits Window {
     in property <string> feed-label;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
+    in property <[MonitorRow]> monitor-rows;
     callback close-requested();
+    callback move-to-monitor(string);
     callback toggle-fullscreen();
 
     title: I18n.text.app_name + " — " + root.feed-label;
@@ -69,7 +72,34 @@ export component ProjectorWindow inherits Window {
                 }
             }
 
-            hover := TouchArea { }
+            hover := TouchArea {
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down
+                        && event.button == PointerEventButton.right {
+                        projector-menu.show({ x: self.mouse-x, y: self.mouse-y });
+                    }
+                }
+            }
+        }
+    }
+
+    projector-menu := ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: I18n.text.monitor_ui.select_monitor;
+                enabled: false;
+            }
+            MenuSeparator { }
+            if root.monitor-rows.length == 0 : MenuItem {
+                title: I18n.text.monitor_ui.empty;
+                enabled: false;
+            }
+            for monitor in root.monitor-rows : MenuItem {
+                title: monitor.name + " · " + monitor.geometry;
+                checkable: true;
+                checked: monitor.selected;
+                activated => root.move-to-monitor(monitor.id);
+            }
         }
     }
 }
