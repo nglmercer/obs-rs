@@ -165,10 +165,12 @@ that device, and the mixer's input channel is named after it, so its fader,
 mute, and meter act on the audio that reaches the recording and the stream. If
 the configured microphone disappears, the engine keeps bounded deterministic
 fallback audio and retries that same device at a one-second media-time
-interval. A configured desktop playback monitor similarly returns to silence
-and retries only its selected route after a loss. `obs-rs-linux-check` reports
-whether the live `PipeWire` capture is running or the deterministic fallback
-took over; this managed host cannot provide live unplug/replug evidence.
+interval; an automatic microphone route rediscovers the first available input.
+A configured desktop playback monitor similarly returns to silence
+and retries only its selected route after a loss; an automatic route is
+rediscovered from the first available output. `obs-rs-linux-check` reports whether
+the live `PipeWire` capture is running or the deterministic fallback took over;
+this managed host cannot provide live unplug/replug evidence.
 
 Settings, the reopened project, and the dock layout are stored under
 `$XDG_CONFIG_HOME/obs-rs` (a file already present in the working directory keeps
