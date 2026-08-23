@@ -151,7 +151,7 @@ export component AppNavbar inherits Rectangle {
         x: view-button.x;
         y: root.height;
         width: 260px;
-        height: 140px;
+        height: 166px;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -167,6 +167,7 @@ export component AppNavbar inherits Rectangle {
                 checked: root.view-mode == 2;
                 clicked => { root.select-view-mode(2); view-popup.close(); }
             }
+            MenuEntry { label: I18n.text.menu_multiview_projector; clicked => { root.menu-action("projector-multiview"); view-popup.close(); } }
             MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("projector-preview"); view-popup.close(); } }
             MenuEntry { label: I18n.text.menu_program_projector; clicked => { root.menu-action("projector-program"); view-popup.close(); } }
         }

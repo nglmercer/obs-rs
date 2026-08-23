@@ -45,6 +45,14 @@ const MAX_COLLECTION_NAME: usize = 64;
 pub(crate) struct ProjectorController {
     program: RefCell<Option<ProjectorWindow>>,
     preview: RefCell<Option<ProjectorWindow>>,
+    multiview: RefCell<Option<ProjectorWindow>>,
+}
+
+#[derive(Clone, Copy)]
+enum ProjectorFeed {
+    Program,
+    Preview,
+    Multiview,
 }
 
 impl ProjectorController {
@@ -53,12 +61,18 @@ impl ProjectorController {
     /// Single-canvas editing skips the program render to save a full-size
     /// composite per frame, so an open program projector has to ask for it back.
     pub(crate) fn wants_program(&self) -> bool {
-        self.program.borrow().is_some()
+        self.slot(ProjectorFeed::Program).borrow().is_some()
     }
 
     /// Returns whether a preview projector needs the preview feed rendered.
     pub(crate) fn wants_preview(&self) -> bool {
-        self.preview.borrow().is_some()
+        self.slot(ProjectorFeed::Preview).borrow().is_some()
+    }
+
+    /// Returns whether a multiview projector needs the bounded scene grid
+    /// rendered, even when the main window is in another view mode.
+    pub(crate) fn wants_multiview(&self) -> bool {
+        self.slot(ProjectorFeed::Multiview).borrow().is_some()
     }
 
     /// Pushes the studio's current images into any open projector.
@@ -73,11 +87,16 @@ impl ProjectorController {
             window.set_canvas_width(ui.get_canvas_width());
             window.set_canvas_height(ui.get_canvas_height());
         }
+        if let Some(window) = self.multiview.borrow().as_ref() {
+            window.set_source_image(ui.get_multiview_image());
+            window.set_canvas_width(ui.get_canvas_width());
+            window.set_canvas_height(ui.get_canvas_height());
+        }
     }
 
     /// Repaints open projectors when the studio theme changes.
     pub(crate) fn set_tokens(&self, tokens: &crate::ThemeTokens) {
-        for window in [&self.program, &self.preview] {
+        for window in [&self.program, &self.preview, &self.multiview] {
             if let Some(window) = window.borrow().as_ref() {
                 window.global::<crate::Palette>().set_tokens(tokens.clone());
             }
@@ -86,22 +105,45 @@ impl ProjectorController {
 
     #[cfg(test)]
     pub(crate) fn is_open(&self, program: bool) -> bool {
-        self.slot(program).borrow().is_some()
+        self.slot(if program {
+            ProjectorFeed::Program
+        } else {
+            ProjectorFeed::Preview
+        })
+        .borrow()
+        .is_some()
     }
 
     #[cfg(test)]
-    pub(crate) fn is_fullscreen(&self, program: bool) -> bool {
-        self.slot(program)
+    pub(crate) fn is_multiview_open(&self) -> bool {
+        self.slot(ProjectorFeed::Multiview).borrow().is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_multiview_fullscreen(&self) -> bool {
+        self.slot(ProjectorFeed::Multiview)
             .borrow()
             .as_ref()
             .is_some_and(|window| window.window().is_fullscreen())
     }
 
-    const fn slot(&self, program: bool) -> &RefCell<Option<ProjectorWindow>> {
-        if program {
-            &self.program
+    #[cfg(test)]
+    pub(crate) fn is_fullscreen(&self, program: bool) -> bool {
+        self.slot(if program {
+            ProjectorFeed::Program
         } else {
-            &self.preview
+            ProjectorFeed::Preview
+        })
+        .borrow()
+        .as_ref()
+        .is_some_and(|window| window.window().is_fullscreen())
+    }
+
+    const fn slot(&self, feed: ProjectorFeed) -> &RefCell<Option<ProjectorWindow>> {
+        match feed {
+            ProjectorFeed::Program => &self.program,
+            ProjectorFeed::Preview => &self.preview,
+            ProjectorFeed::Multiview => &self.multiview,
         }
     }
 }
@@ -116,6 +158,7 @@ pub(crate) fn install_menu_callbacks(
     let projectors = Rc::new(ProjectorController {
         program: RefCell::new(None),
         preview: RefCell::new(None),
+        multiview: RefCell::new(None),
     });
 
     install_history(ui, state, surface);
@@ -225,22 +268,48 @@ fn install_projectors(
     projectors: &Rc<ProjectorController>,
 ) {
     let weak = ui.as_weak();
-    let state = Rc::clone(state);
-    let projectors = Rc::clone(projectors);
+    let preview_state = Rc::clone(state);
+    let preview_projectors = Rc::clone(projectors);
     ui.on_open_projector(move |program| {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         // Selecting an open projector again closes it, so the menu entry is a
         // toggle rather than a way to stack duplicate windows.
-        if projectors.slot(program).borrow().is_some() {
-            close_projector(&projectors, program);
+        let feed = if program {
+            ProjectorFeed::Program
+        } else {
+            ProjectorFeed::Preview
+        };
+        if preview_projectors.slot(feed).borrow().is_some() {
+            close_projector(&preview_projectors, feed);
             return;
         }
-        match open_projector(&ui, &state, &projectors, program) {
+        match open_projector(&ui, &preview_state, &preview_projectors, feed) {
             Ok(window) => {
-                *projectors.slot(program).borrow_mut() = Some(window);
-                projectors.sync(&ui);
+                *preview_projectors.slot(feed).borrow_mut() = Some(window);
+                preview_projectors.sync(&ui);
+            }
+            Err(error) => ui.set_status_message(format!("Projector: {error}").into()),
+        }
+    });
+
+    let weak = ui.as_weak();
+    let multiview_state = Rc::clone(state);
+    let multiview_projectors = Rc::clone(projectors);
+    ui.on_open_multiview_projector(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let feed = ProjectorFeed::Multiview;
+        if multiview_projectors.slot(feed).borrow().is_some() {
+            close_projector(&multiview_projectors, feed);
+            return;
+        }
+        match open_projector(&ui, &multiview_state, &multiview_projectors, feed) {
+            Ok(window) => {
+                *multiview_projectors.slot(feed).borrow_mut() = Some(window);
+                multiview_projectors.sync(&ui);
             }
             Err(error) => ui.set_status_message(format!("Projector: {error}").into()),
         }
@@ -251,7 +320,7 @@ fn open_projector(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     projectors: &Rc<ProjectorController>,
-    program: bool,
+    feed: ProjectorFeed,
 ) -> Result<ProjectorWindow, slint::PlatformError> {
     let window = ProjectorWindow::new()?;
     let locale = state.borrow().locale();
@@ -261,33 +330,35 @@ fn open_projector(
     window
         .global::<crate::Palette>()
         .set_tokens(ui.global::<crate::Palette>().get_tokens());
-    window.set_feed_label(crate::i18n::with_catalog(locale, |text| {
-        if program {
-            text.program.clone()
-        } else {
-            text.preview.clone()
-        }
+    window.set_feed_label(crate::i18n::with_catalog(locale, |text| match feed {
+        ProjectorFeed::Program => text.program.clone(),
+        ProjectorFeed::Preview => text.preview.clone(),
+        ProjectorFeed::Multiview => text.menu_multiview_projector.clone(),
     }));
-    window.set_source_image(if program {
-        ui.get_program_image()
-    } else {
-        ui.get_preview_image()
+    window.set_source_image(match feed {
+        ProjectorFeed::Program => ui.get_program_image(),
+        ProjectorFeed::Preview => ui.get_preview_image(),
+        ProjectorFeed::Multiview => ui.get_multiview_image(),
     });
-    // OBS presents the program projector as a borderless fullscreen feed. The
-    // preview projector remains windowed so the operator can keep it beside
-    // the studio UI. Set this before showing the window so the native backend
-    // creates the correct geometry instead of visibly resizing after launch.
-    window.window().set_fullscreen(program);
+    // OBS presents program and multiview projectors as borderless fullscreen
+    // feeds. The preview projector remains windowed so the operator can keep
+    // it beside the studio UI. Set this before showing the window so the native
+    // backend creates the correct geometry instead of visibly resizing after
+    // launch.
+    window.window().set_fullscreen(matches!(
+        feed,
+        ProjectorFeed::Program | ProjectorFeed::Multiview
+    ));
 
     let projectors = Rc::clone(projectors);
-    window.on_close_requested(move || close_projector(&projectors, program));
+    window.on_close_requested(move || close_projector(&projectors, feed));
 
     window.show()?;
     Ok(window)
 }
 
-fn close_projector(projectors: &Rc<ProjectorController>, program: bool) {
-    if let Some(window) = projectors.slot(program).borrow_mut().take() {
+fn close_projector(projectors: &Rc<ProjectorController>, feed: ProjectorFeed) {
+    if let Some(window) = projectors.slot(feed).borrow_mut().take() {
         let _ = window.hide();
     }
 }

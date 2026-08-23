@@ -105,6 +105,7 @@ struct RenderDemandInput {
     window: WindowRenderState,
     output: OutputRenderState,
     projectors: ProjectorRenderDemand,
+    multiview_projector: bool,
     view: StudioView,
 }
 
@@ -114,7 +115,8 @@ struct RenderDemandInput {
 /// preview/program-view frames.
 fn render_demand(input: RenderDemandInput) -> RenderDemand {
     let main_interactive = input.window == WindowRenderState::Visible;
-    let projector_open = input.projectors != ProjectorRenderDemand::None;
+    let projector_open =
+        input.projectors != ProjectorRenderDemand::None || input.multiview_projector;
     let request_preview = (main_interactive && input.view != StudioView::Multiview)
         || input.window == WindowRenderState::Minimized
         || matches!(
@@ -125,7 +127,8 @@ fn render_demand(input: RenderDemandInput) -> RenderDemand {
         input.projectors,
         ProjectorRenderDemand::Program | ProjectorRenderDemand::Both
     ) || (main_interactive && input.view == StudioView::Studio);
-    let request_multiview = main_interactive && input.view == StudioView::Multiview;
+    let request_multiview =
+        input.multiview_projector || (main_interactive && input.view == StudioView::Multiview);
     let interval =
         if input.output == OutputRenderState::Active || projector_open || main_interactive {
             Some(Duration::from_millis(16))
@@ -197,6 +200,7 @@ pub(crate) fn start_preview_timer(
             (false, true) => ProjectorRenderDemand::Program,
             (true, true) => ProjectorRenderDemand::Both,
         };
+        let multiview_projector = projectors.wants_multiview();
         let demand = render_demand(RenderDemandInput {
             window,
             output: if output_active {
@@ -205,6 +209,7 @@ pub(crate) fn start_preview_timer(
                 OutputRenderState::Idle
             },
             projectors: projector_demand,
+            multiview_projector,
             view: match ui.get_view_mode() {
                 0 => StudioView::Studio,
                 2 => StudioView::Multiview,
@@ -511,6 +516,7 @@ mod tests {
                 window: WindowRenderState::Hidden,
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
                 view: StudioView::Single,
             }),
             RenderDemand {
@@ -529,6 +535,7 @@ mod tests {
                 window: WindowRenderState::Minimized,
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
                 view: StudioView::Studio,
             }),
             RenderDemand {
@@ -547,6 +554,7 @@ mod tests {
                 window: WindowRenderState::Hidden,
                 output: OutputRenderState::Active,
                 projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
                 view: StudioView::Studio,
             }),
             RenderDemand {
@@ -565,6 +573,7 @@ mod tests {
                 window: WindowRenderState::Visible,
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
                 view: StudioView::Studio,
             }),
             RenderDemand {
@@ -583,7 +592,27 @@ mod tests {
                 window: WindowRenderState::Visible,
                 output: OutputRenderState::Idle,
                 projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
                 view: StudioView::Multiview,
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: true,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_multiview_projector_requests_only_the_bounded_scene_grid() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: true,
+                view: StudioView::Single,
             }),
             RenderDemand {
                 request_preview: false,

@@ -1914,6 +1914,22 @@ fn exercise_menu_actions(
     ui.invoke_open_projector(true);
     assert!(!projectors.is_open(true), "selecting it again closed it");
 
+    assert!(!projectors.is_multiview_open());
+    ui.invoke_open_multiview_projector();
+    assert!(
+        projectors.is_multiview_open(),
+        "the multiview projector opened"
+    );
+    assert!(
+        projectors.is_multiview_fullscreen(),
+        "the multiview projector uses fullscreen geometry"
+    );
+    ui.invoke_open_multiview_projector();
+    assert!(
+        !projectors.is_multiview_open(),
+        "selecting multiview again closed it"
+    );
+
     // Resetting the layout restores the shipped arrangement whatever the row
     // was dragged into.
     let reversed = vec![4, 3, 2, 1, 0];
