@@ -50,6 +50,37 @@ impl AudioSourceId {
     }
 }
 
+/// The destination policy for one mixer source.
+///
+/// The output bus is the signal sent to recording and streaming. The monitor
+/// bus is the signal sent to a local monitoring sink. Keeping the policy on
+/// the mixer source makes the routing decision part of the audio graph rather
+/// than a GUI-only flag.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum AudioMonitorMode {
+    /// Send the source to the output bus only.
+    #[default]
+    Off,
+    /// Send the source to the monitor bus and mute it from the output bus.
+    MonitorOnly,
+    /// Send the source to both the monitor and output buses.
+    MonitorAndOutput,
+}
+
+impl AudioMonitorMode {
+    /// Returns whether this mode contributes the source to the output bus.
+    #[must_use]
+    pub const fn sends_to_output(self) -> bool {
+        matches!(self, Self::Off | Self::MonitorAndOutput)
+    }
+
+    /// Returns whether this mode contributes the source to the monitor bus.
+    #[must_use]
+    pub const fn sends_to_monitor(self) -> bool {
+        matches!(self, Self::MonitorOnly | Self::MonitorAndOutput)
+    }
+}
+
 /// A stable handle for a bounded post-mix monitoring tap.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AudioMonitorTapId(pub(crate) u64);

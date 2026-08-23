@@ -227,6 +227,42 @@ fn mixer_block_timing_report() {
 }
 
 #[test]
+fn mixer_buses_block_timing_report() {
+    let mut mixer = AudioMixer::new(format());
+    let output_source = mixer.add_source(1.0).expect("output source");
+    let monitor_source = mixer.add_source(1.0).expect("monitor source");
+    mixer
+        .set_monitor_mode(monitor_source, AudioMonitorMode::MonitorAndOutput)
+        .expect("both-bus source");
+    let input =
+        AudioBuffer::new(format(), Timestamp::ZERO, vec![0.01; 480 * 2]).expect("audio input");
+    let mut output = AudioBuffer::silence(format(), Timestamp::ZERO, 480).expect("output");
+    let mut monitor = AudioBuffer::silence(format(), Timestamp::ZERO, 480).expect("monitor");
+    let started = Instant::now();
+    let mut checksum = 0.0_f32;
+    for block in 0_u64..200 {
+        mixer
+            .mix_buses_into(
+                Timestamp::from_millis(block * 10),
+                &mut output,
+                &mut monitor,
+                &[(output_source, &input), (monitor_source, &input)],
+            )
+            .expect("mix buses");
+        checksum += output.samples()[0] + monitor.samples()[0];
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed.as_nanos() > 0);
+    assert!(checksum.is_finite());
+    std::hint::black_box(checksum);
+    println!(
+        "mixer buses: 200 blocks x 480 stereo frames = {:?} ({:?}/block)",
+        elapsed,
+        elapsed / 200
+    );
+}
+
+#[test]
 fn mixer_meter_hold_and_clip_indicators_expire_on_bounded_timers() {
     let mut mixer = AudioMixer::new(format());
     let source = mixer.add_source(2.0).expect("source");
@@ -893,6 +929,58 @@ fn mixer_monitor_taps_are_bounded_and_post_mix() {
         AudioMonitorTap::new(0).map(|_| ()),
         Err(AudioError::ZeroMonitorCapacity)
     );
+}
+
+#[test]
+fn mixer_monitor_modes_route_separate_buses() {
+    let mut mixer = AudioMixer::new(format());
+    let output_only = mixer.add_source(1.0).expect("output source");
+    let monitor_only = mixer.add_source(1.0).expect("monitor source");
+    let both = mixer.add_source(1.0).expect("both source");
+    mixer
+        .set_monitor_mode(monitor_only, AudioMonitorMode::MonitorOnly)
+        .expect("monitor-only mode");
+    mixer
+        .set_monitor_mode(both, AudioMonitorMode::MonitorAndOutput)
+        .expect("both mode");
+
+    let input = buffer(&[0.1, 0.2]);
+    let (output, monitor) = mixer
+        .mix_buses(
+            Timestamp::ZERO,
+            1,
+            &[
+                (output_only, &input),
+                (monitor_only, &input),
+                (both, &input),
+            ],
+        )
+        .expect("bus mix");
+
+    assert_eq!(output.samples(), &[0.2, 0.4]);
+    assert_eq!(monitor.samples(), &[0.2, 0.4]);
+    assert_eq!(
+        mixer.source_monitor_mode(output_only),
+        Ok(AudioMonitorMode::Off)
+    );
+    assert_eq!(
+        mixer.source_monitor_mode(AudioSourceId(99)),
+        Err(AudioError::UnknownSource(AudioSourceId(99)))
+    );
+}
+
+#[test]
+fn monitor_only_mode_is_applied_to_the_legacy_output_mix() {
+    let mut mixer = AudioMixer::new(format());
+    let source = mixer.add_source(1.0).expect("source");
+    mixer
+        .set_monitor_mode(source, AudioMonitorMode::MonitorOnly)
+        .expect("monitor-only mode");
+
+    let output = mixer
+        .mix(Timestamp::ZERO, 1, &[(source, &buffer(&[0.4, -0.4]))])
+        .expect("output mix");
+    assert_eq!(output.samples(), &[0.0, 0.0]);
 }
 
 #[test]

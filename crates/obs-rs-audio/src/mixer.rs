@@ -2,7 +2,7 @@ use super::{
     buffer::AudioBuffer,
     error::AudioError,
     monitor::AudioMonitorTap,
-    types::{AudioFormat, AudioMonitorTapId, AudioSourceId, MAX_AUDIO_FRAMES},
+    types::{AudioFormat, AudioMonitorMode, AudioMonitorTapId, AudioSourceId, MAX_AUDIO_FRAMES},
 };
 use obs_rs_media::Timestamp;
 use std::{collections::BTreeMap, sync::Arc};
@@ -21,6 +21,7 @@ struct SourceControl {
     gain: f32,
     muted: bool,
     pan: f32,
+    monitor_mode: AudioMonitorMode,
     peak_milli: u16,
     peak_hold_milli: u16,
     peak_hold_at: Timestamp,
@@ -71,6 +72,7 @@ impl AudioMixer {
                 gain,
                 muted: false,
                 pan: 0.0,
+                monitor_mode: AudioMonitorMode::Off,
                 peak_milli: 0,
                 peak_hold_milli: 0,
                 peak_hold_at: Timestamp::ZERO,
@@ -133,6 +135,44 @@ impl AudioMixer {
             .ok_or(AudioError::UnknownSource(source))?;
         control.muted = muted;
         Ok(())
+    }
+
+    /// Sets the destination policy for one source.
+    ///
+    /// `Off` follows OBS's “Monitor Off” behavior: the source remains in the
+    /// recording/stream output and is absent from the local monitor bus.
+    /// `MonitorOnly` removes it from the output bus, while
+    /// `MonitorAndOutput` sends it to both buses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::UnknownSource`] for an unknown source.
+    pub fn set_monitor_mode(
+        &mut self,
+        source: AudioSourceId,
+        mode: AudioMonitorMode,
+    ) -> Result<(), AudioError> {
+        let control = self
+            .sources
+            .get_mut(&source)
+            .ok_or(AudioError::UnknownSource(source))?;
+        control.monitor_mode = mode;
+        Ok(())
+    }
+
+    /// Returns the destination policy for one source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::UnknownSource`] for an unknown source.
+    pub fn source_monitor_mode(
+        &self,
+        source: AudioSourceId,
+    ) -> Result<AudioMonitorMode, AudioError> {
+        self.sources
+            .get(&source)
+            .map(|control| control.monitor_mode)
+            .ok_or(AudioError::UnknownSource(source))
     }
 
     /// Sets a source's stereo pan, where `-1` is left, `0` is center, and `1` is
@@ -288,7 +328,7 @@ impl AudioMixer {
         inputs: &[(AudioSourceId, &AudioBuffer)],
     ) -> Result<Arc<AudioBuffer>, AudioError> {
         let mut output = AudioBuffer::silence(self.format, timestamp, frames)?;
-        self.mix_core(timestamp, &mut output, inputs)?;
+        self.mix_core(timestamp, &mut output, None, inputs)?;
         let snapshot = Arc::new(output);
         for tap in self.monitor_taps.values_mut() {
             tap.observe(&snapshot);
@@ -320,7 +360,7 @@ impl AudioMixer {
         output: &mut AudioBuffer,
         inputs: &[(AudioSourceId, &AudioBuffer)],
     ) -> Result<(), AudioError> {
-        self.mix_core(timestamp, output, inputs)?;
+        self.mix_core(timestamp, output, None, inputs)?;
 
         if !self.monitor_taps.is_empty() {
             // A caller-owned output cannot be moved into an Arc without changing
@@ -334,10 +374,70 @@ impl AudioMixer {
         Ok(())
     }
 
+    /// Mixes one input set into separate recording/output and local-monitor
+    /// buses.
+    ///
+    /// The two buses share one validation and source traversal. A source with
+    /// [`AudioMonitorMode::MonitorOnly`] appears only in `monitor`, a source
+    /// with [`AudioMonitorMode::MonitorAndOutput`] appears in both, and the
+    /// default [`AudioMonitorMode::Off`] appears only in `output`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation and overflow errors as [`AudioMixer::mix`].
+    pub fn mix_buses(
+        &mut self,
+        timestamp: Timestamp,
+        frames: usize,
+        inputs: &[(AudioSourceId, &AudioBuffer)],
+    ) -> Result<(AudioBuffer, AudioBuffer), AudioError> {
+        let mut output = AudioBuffer::silence(self.format, timestamp, frames)?;
+        let mut monitor = AudioBuffer::silence(self.format, timestamp, frames)?;
+        self.mix_buses_into(timestamp, &mut output, &mut monitor, inputs)?;
+        Ok((output, monitor))
+    }
+
+    /// Allocation-free form of [`AudioMixer::mix_buses`].
+    ///
+    /// `output` and `monitor` supply the storage and are overwritten. Existing
+    /// post-mix monitoring taps observe the output bus, preserving the legacy
+    /// diagnostic-tap contract; the returned monitor bus is the source-routed
+    /// local-monitor signal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError`] when either destination or an input violates the
+    /// mixer format/frame contract, or when a sum becomes non-finite.
+    pub fn mix_buses_into(
+        &mut self,
+        timestamp: Timestamp,
+        output: &mut AudioBuffer,
+        monitor: &mut AudioBuffer,
+        inputs: &[(AudioSourceId, &AudioBuffer)],
+    ) -> Result<(), AudioError> {
+        self.mix_core(timestamp, output, Some(monitor), inputs)?;
+
+        if !self.monitor_taps.is_empty() {
+            // A caller-owned output cannot be moved into an Arc without
+            // changing this method's ownership contract. Monitor taps retain
+            // the output bus only, as they did before source routing existed.
+            let snapshot = Arc::new(output.clone());
+            for tap in self.monitor_taps.values_mut() {
+                tap.observe(&snapshot);
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the bounded output and monitor buses share one validated source traversal"
+    )]
     fn mix_core(
         &mut self,
         timestamp: Timestamp,
         output: &mut AudioBuffer,
+        mut monitor: Option<&mut AudioBuffer>,
         inputs: &[(AudioSourceId, &AudioBuffer)],
     ) -> Result<(), AudioError> {
         if output.format() != self.format {
@@ -349,6 +449,20 @@ impl AudioMixer {
         let frames = output.frames();
         if frames > MAX_AUDIO_FRAMES {
             return Err(AudioError::BufferTooLarge { frames });
+        }
+        if let Some(monitor) = monitor.as_deref() {
+            if monitor.format() != self.format {
+                return Err(AudioError::FormatMismatch {
+                    expected: self.format,
+                    actual: monitor.format(),
+                });
+            }
+            if monitor.frames() != frames {
+                return Err(AudioError::FrameCountMismatch {
+                    expected: frames,
+                    actual: monitor.frames(),
+                });
+            }
         }
         let channels = usize::from(self.format.channels);
 
@@ -380,67 +494,96 @@ impl AudioMixer {
 
         self.reset_meter_state(timestamp);
 
-        let mixed = output.samples_mut();
-        mixed.fill(0.0);
-
-        for (source, buffer) in inputs {
-            let Some(control) = self.sources.get(source) else {
-                return Err(AudioError::UnknownSource(*source));
-            };
-            let (gain, muted, pan) = (control.gain, control.muted, control.pan);
-            if muted {
-                continue;
+        {
+            let mixed = output.samples_mut();
+            mixed.fill(0.0);
+            let mut monitored = monitor.as_mut().map(|buffer| buffer.samples_mut());
+            if let Some(monitored) = monitored.as_mut() {
+                monitored.fill(0.0);
             }
 
-            // Pan is constant for the whole buffer, so the per-channel gains are
-            // folded into the source gain once instead of being recomputed (with
-            // a modulo) for every sample.
-            let left_gain = gain * (1.0 - pan.max(0.0));
-            let right_gain = gain * (1.0 + pan.min(0.0));
+            for (source, buffer) in inputs {
+                let Some(control) = self.sources.get(source) else {
+                    return Err(AudioError::UnknownSource(*source));
+                };
+                let (gain, muted, pan, monitor_mode) = (
+                    control.gain,
+                    control.muted,
+                    control.pan,
+                    control.monitor_mode,
+                );
+                if muted {
+                    continue;
+                }
 
-            for (output_frame, input_frame) in mixed
-                .chunks_exact_mut(channels)
-                .zip(buffer.samples().chunks_exact(channels))
-            {
-                for (channel, (output, input)) in
-                    output_frame.iter_mut().zip(input_frame).enumerate()
-                {
-                    let gain = match channel {
-                        0 => left_gain,
-                        1 => right_gain,
-                        _ => gain,
-                    };
-                    *output += *input * gain;
+                // Pan is constant for the whole buffer, so the per-channel gains are
+                // folded into the source gain once instead of being recomputed (with
+                // a modulo) for every sample.
+                let left_gain = gain * (1.0 - pan.max(0.0));
+                let right_gain = gain * (1.0 + pan.min(0.0));
+
+                if monitor_mode.sends_to_output() {
+                    add_source_samples(
+                        mixed,
+                        buffer.samples(),
+                        channels,
+                        gain,
+                        left_gain,
+                        right_gain,
+                    );
+                }
+                if monitor_mode.sends_to_monitor() {
+                    if let Some(monitored) = monitored.as_deref_mut() {
+                        add_source_samples(
+                            monitored,
+                            buffer.samples(),
+                            channels,
+                            gain,
+                            left_gain,
+                            right_gain,
+                        );
+                    }
+                }
+
+                // Peak bookkeeping is deliberately separate from the accumulation
+                // loop so the hot mix pass has no finiteness branch or loop-carried
+                // max dependency that would prevent vectorization.
+                let peak = buffer
+                    .samples()
+                    .chunks_exact(channels)
+                    .flat_map(|input_frame| {
+                        input_frame.iter().enumerate().map(|(channel, input)| {
+                            let channel_gain = match channel {
+                                0 => left_gain,
+                                1 => right_gain,
+                                _ => gain,
+                            };
+                            (*input * channel_gain).abs()
+                        })
+                    })
+                    .fold(0.0_f32, f32::max);
+                self.update_source_meter(*source, timestamp, peak);
+            }
+
+            for sample in mixed.iter_mut() {
+                if !sample.is_finite() {
+                    return Err(AudioError::MixOverflow);
+                }
+                *sample = sample.clamp(-1.0, 1.0);
+            }
+            if let Some(monitored) = monitored {
+                for sample in monitored.iter_mut() {
+                    if !sample.is_finite() {
+                        return Err(AudioError::MixOverflow);
+                    }
+                    *sample = sample.clamp(-1.0, 1.0);
                 }
             }
-
-            // Peak bookkeeping is deliberately separate from the accumulation
-            // loop so the hot mix pass has no finiteness branch or loop-carried
-            // max dependency that would prevent vectorization.
-            let peak = buffer
-                .samples()
-                .chunks_exact(channels)
-                .flat_map(|input_frame| {
-                    input_frame.iter().enumerate().map(|(channel, input)| {
-                        let channel_gain = match channel {
-                            0 => left_gain,
-                            1 => right_gain,
-                            _ => gain,
-                        };
-                        (*input * channel_gain).abs()
-                    })
-                })
-                .fold(0.0_f32, f32::max);
-            self.update_source_meter(*source, timestamp, peak);
-        }
-
-        for sample in mixed.iter_mut() {
-            if !sample.is_finite() {
-                return Err(AudioError::MixOverflow);
-            }
-            *sample = sample.clamp(-1.0, 1.0);
         }
         output.set_timestamp(timestamp);
+        if let Some(monitor) = monitor {
+            monitor.set_timestamp(timestamp);
+        }
         Ok(())
     }
 
@@ -532,6 +675,29 @@ impl AudioMixer {
             .get(&source)
             .map(|control| control.clipped)
             .ok_or(AudioError::UnknownSource(source))
+    }
+}
+
+fn add_source_samples(
+    target: &mut [f32],
+    input: &[f32],
+    channels: usize,
+    gain: f32,
+    left_gain: f32,
+    right_gain: f32,
+) {
+    for (target_frame, input_frame) in target
+        .chunks_exact_mut(channels)
+        .zip(input.chunks_exact(channels))
+    {
+        for (channel, (target, input)) in target_frame.iter_mut().zip(input_frame).enumerate() {
+            let channel_gain = match channel {
+                0 => left_gain,
+                1 => right_gain,
+                _ => gain,
+            };
+            *target += *input * channel_gain;
+        }
     }
 }
 
