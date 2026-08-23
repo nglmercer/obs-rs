@@ -144,6 +144,8 @@ export component SettingsWindow inherits Window {
     in-out property <int> channel-index;
     in property <[string]> audio-device-names;
     in-out property <int> audio-device-index;
+    in-out property <int> audio-input-sync-offset;
+    in-out property <int> desktop-audio-sync-offset;
     in property <string> devices-summary;
     in property <bool> audio-input-missing;
     callback refresh-audio-devices();
@@ -496,6 +498,8 @@ export component SettingsWindow inherits Window {
                         channel-index: root.channel-index;
                         audio-device-names: root.audio-device-names;
                         audio-device-index: root.audio-device-index;
+                        audio-input-sync-offset: root.audio-input-sync-offset;
+                        desktop-audio-sync-offset: root.desktop-audio-sync-offset;
                         devices-summary: root.devices-summary;
                         audio-input-missing: root.audio-input-missing;
                         refresh-audio-devices() => { root.refresh-audio-devices(); }
@@ -511,6 +515,7 @@ export component SettingsWindow inherits Window {
                             root.audio-device-index = index;
                             root.dirty = true;
                         }
+                        changed() => { root.dirty = true; }
                     }
                     if root.category == 5 : VideoPage {
                         resolution-names: root.resolution-names;

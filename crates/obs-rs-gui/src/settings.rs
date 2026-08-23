@@ -10,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use obs_rs_audio::MAX_AUDIO_SYNC_OFFSET_MILLISECONDS;
 use obs_rs_config::Config;
 use obs_rs_media::{ScaleFilter, VideoFormat};
 use obs_rs_output::{
@@ -196,6 +197,13 @@ pub(crate) const SAMPLE_RATES: [u32; 3] = [44_100, 48_000, 96_000];
 
 /// Channel layouts offered on the Audio page.
 pub(crate) const CHANNEL_LAYOUTS: [u16; 2] = [2, 1];
+
+/// Per-channel positive audio sync offsets accepted by the Audio page.
+pub(crate) const AUDIO_SYNC_OFFSET_RANGE: std::ops::RangeInclusive<u32> =
+    0..=MAX_AUDIO_SYNC_OFFSET_MILLISECONDS;
+
+/// Default per-channel audio sync offset.
+pub(crate) const AUDIO_SYNC_OFFSET_DEFAULT: u32 = 0;
 
 /// The smallest and largest canvas-space distance accepted by source snapping.
 ///
@@ -408,6 +416,10 @@ pub(crate) struct AppSettings {
     /// Provider-stable `PipeWire` input ID; empty selects the first available
     /// input and keeps the deterministic fallback as a safe last resort.
     pub(crate) audio_input_id: String,
+    /// Positive, sample-quantized delay applied to the microphone channel.
+    pub(crate) audio_input_sync_offset_millis: u32,
+    /// Positive, sample-quantized delay applied to the desktop-audio channel.
+    pub(crate) desktop_audio_sync_offset_millis: u32,
     /// Last Preview scene selected in the desktop session; empty means use the
     /// first scene after a project is restored.
     pub(crate) last_preview_scene: String,
@@ -733,6 +745,8 @@ impl Default for AppSettings {
             rist: RistConfig::default(),
             reference_address: "127.0.0.1:9000".to_owned(),
             audio_input_id: String::new(),
+            audio_input_sync_offset_millis: AUDIO_SYNC_OFFSET_DEFAULT,
+            desktop_audio_sync_offset_millis: AUDIO_SYNC_OFFSET_DEFAULT,
             last_preview_scene: String::new(),
             last_program_scene: String::new(),
             project_scene_selections: Vec::new(),
@@ -947,6 +961,16 @@ impl AppSettings {
                 .and_then(|value| value.parse::<u16>().ok())
                 .and_then(|count| CHANNEL_LAYOUTS.iter().position(|value| *value == count))
                 .unwrap_or(defaults.channels),
+            audio_input_sync_offset_millis: config
+                .get("audio_input_sync_offset_millis")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|offset| AUDIO_SYNC_OFFSET_RANGE.contains(offset))
+                .unwrap_or(defaults.audio_input_sync_offset_millis),
+            desktop_audio_sync_offset_millis: config
+                .get("desktop_audio_sync_offset_millis")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|offset| AUDIO_SYNC_OFFSET_RANGE.contains(offset))
+                .unwrap_or(defaults.desktop_audio_sync_offset_millis),
             hotkey_swap: hotkey(config, "hotkey_swap", &defaults.hotkey_swap),
             hotkey_start_recording: hotkey(
                 config,
@@ -1139,6 +1163,14 @@ impl AppSettings {
             ("show_safe_areas", self.show_safe_areas.to_string()),
             ("audio_sample_rate", self.sample_rate_hz().to_string()),
             ("audio_channels", self.channel_count().to_string()),
+            (
+                "audio_input_sync_offset_millis",
+                self.audio_input_sync_offset_millis.to_string(),
+            ),
+            (
+                "desktop_audio_sync_offset_millis",
+                self.desktop_audio_sync_offset_millis.to_string(),
+            ),
             ("hotkey_swap", self.hotkey_swap.clone()),
             (
                 "hotkey_start_recording",
@@ -2288,6 +2320,8 @@ mod tests {
             auto_record_when_streaming: true,
             sample_rate: 2,
             channels: 1,
+            audio_input_sync_offset_millis: 125,
+            desktop_audio_sync_offset_millis: 2_500,
             hotkey_swap: "F1".to_owned(),
             hotkey_undo: "Alt+U".to_owned(),
             hotkey_redo: "Alt+Y".to_owned(),
@@ -2655,6 +2689,29 @@ mod tests {
         assert_eq!(
             decoded.preview_border_color,
             AppSettings::default().preview_border_color
+        );
+    }
+
+    #[test]
+    fn audio_sync_offsets_are_bounded_before_runtime_use() {
+        let defaults = AppSettings::default();
+        let mut config = defaults.to_config();
+        config
+            .set("audio_input_sync_offset_millis", "5001")
+            .expect("input offset key");
+        config
+            .set("desktop_audio_sync_offset_millis", "-1")
+            .expect("desktop offset key");
+
+        let decoded = AppSettings::from_config(&config);
+
+        assert_eq!(
+            decoded.audio_input_sync_offset_millis,
+            defaults.audio_input_sync_offset_millis
+        );
+        assert_eq!(
+            decoded.desktop_audio_sync_offset_millis,
+            defaults.desktop_audio_sync_offset_millis
         );
     }
 

@@ -626,6 +626,8 @@ export component AudioPage inherits VerticalLayout {
     in property <int> channel-index;
     in property <[string]> audio-device-names;
     in-out property <int> audio-device-index;
+    in-out property <int> audio-input-sync-offset;
+    in-out property <int> desktop-audio-sync-offset;
     in property <string> devices-summary;
     // True when the selected input is not currently in the audio graph.
     in property <bool> audio-input-missing;
@@ -633,6 +635,7 @@ export component AudioPage inherits VerticalLayout {
     callback select-channels(int);
     callback select-audio-device(int);
     callback refresh-audio-devices();
+    callback changed();
     spacing: Metrics.ui.page-spacing;
 
     SettingsGroup {
@@ -671,6 +674,28 @@ export component AudioPage inherits VerticalLayout {
         if root.audio-input-missing : SettingHint {
             text: I18n.text.settings_ui.audio_input_missing_hint;
         }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_audio_sync;
+        SettingRow {
+            label: I18n.text.settings_ui.microphone_sync_offset;
+            SettingsSpinBox {
+                value <=> root.audio-input-sync-offset;
+                minimum: 0;
+                maximum: 5000;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.desktop_audio_sync_offset;
+            SettingsSpinBox {
+                value <=> root.desktop-audio-sync-offset;
+                minimum: 0;
+                maximum: 5000;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.audio_sync_hint; }
     }
     SettingsGroup {
         title: I18n.text.settings_ui.group_audio_devices;

@@ -191,11 +191,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             channels: settings.channel_count(),
         })
         .map_err(|error| format!("stored audio format: {error}"))?;
-    let output = Rc::new(RefCell::new(OutputRuntime::with_audio_input(
-        surface.borrow().format,
-        audio_format,
-        (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
-    )?));
+    let output = Rc::new(RefCell::new(
+        OutputRuntime::with_audio_input_and_sync_offsets(
+            surface.borrow().format,
+            audio_format,
+            (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
+            settings.audio_input_sync_offset_millis,
+            settings.desktop_audio_sync_offset_millis,
+        )?,
+    ));
 
     // The mixer's live channel shows the input it captures from the first
     // frame, rather than a generic label that never matches the device list.

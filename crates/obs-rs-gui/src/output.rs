@@ -125,14 +125,30 @@ impl OutputRuntime {
 
     /// Creates an output with a persisted input selection. Device discovery and
     /// process startup remain inside the engine worker's construction path.
+    #[cfg(test)]
     pub(crate) fn with_audio_input(
         format: VideoFormat,
         audio_format: AudioFormat,
         audio_input_id: Option<&str>,
     ) -> Result<Self, Box<dyn Error>> {
+        Self::with_audio_input_and_sync_offsets(format, audio_format, audio_input_id, 0, 0)
+    }
+
+    /// Creates an output with persisted input selection and bounded audio
+    /// synchronization offsets.
+    pub(crate) fn with_audio_input_and_sync_offsets(
+        format: VideoFormat,
+        audio_format: AudioFormat,
+        audio_input_id: Option<&str>,
+        audio_input_sync_offset_millis: u32,
+        desktop_audio_sync_offset_millis: u32,
+    ) -> Result<Self, Box<dyn Error>> {
         let audio_provider = Arc::new(PipeWireAudioProvider::new());
         let provider_for_engine: Arc<dyn AudioInputProvider> = audio_provider.clone();
-        let mut config = EngineConfig::new(audio_format).with_audio_provider(provider_for_engine);
+        let mut config = EngineConfig::new(audio_format)
+            .with_audio_provider(provider_for_engine)
+            .with_audio_input_sync_offset_millis(audio_input_sync_offset_millis)
+            .with_desktop_audio_sync_offset_millis(desktop_audio_sync_offset_millis);
         if let Some(audio_input_id) = audio_input_id {
             config = config.with_audio_input_id(audio_input_id);
         }
@@ -892,6 +908,19 @@ impl OutputRuntime {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
+        Ok(())
+    }
+
+    /// Requests a bounded live synchronization-offset update on one audio
+    /// channel. The worker owns the delay line, so this call never copies or
+    /// blocks on audio data in the GUI thread.
+    pub(crate) fn set_channel_sync_offset_millis(
+        &mut self,
+        id: &str,
+        milliseconds: u32,
+    ) -> Result<(), Box<dyn Error>> {
+        self.worker
+            .set_channel_sync_offset_millis(engine_channel(id), milliseconds)?;
         Ok(())
     }
 

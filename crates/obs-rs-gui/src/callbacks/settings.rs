@@ -31,13 +31,13 @@ use crate::{
     refresh_ui,
     settings::{
         hotkey_conflicts, recording_stamp, shortcut_bindings, AppSettings, RecordingFormat,
-        CANVAS_SNAP_DISTANCE_DEFAULT, CANVAS_SNAP_DISTANCE_RANGE, CHANNEL_LAYOUTS, FRAME_RATES,
-        RECORDING_SPLIT_DURATION_MINUTES_DEFAULT, RECORDING_SPLIT_DURATION_MINUTES_RANGE,
-        RECORDING_SPLIT_SEGMENTS_DEFAULT, RECORDING_SPLIT_SEGMENTS_RANGE,
-        RECORDING_SPLIT_SIZE_MIB_DEFAULT, RECORDING_SPLIT_SIZE_MIB_RANGE,
-        REPLAY_BUFFER_CAPACITY_MIB_DEFAULT, REPLAY_BUFFER_CAPACITY_MIB_RANGE,
-        REPLAY_BUFFER_DURATION_DEFAULT, REPLAY_BUFFER_DURATION_RANGE, RESOLUTIONS, SAMPLE_RATES,
-        THEMES,
+        AUDIO_SYNC_OFFSET_RANGE, CANVAS_SNAP_DISTANCE_DEFAULT, CANVAS_SNAP_DISTANCE_RANGE,
+        CHANNEL_LAYOUTS, FRAME_RATES, RECORDING_SPLIT_DURATION_MINUTES_DEFAULT,
+        RECORDING_SPLIT_DURATION_MINUTES_RANGE, RECORDING_SPLIT_SEGMENTS_DEFAULT,
+        RECORDING_SPLIT_SEGMENTS_RANGE, RECORDING_SPLIT_SIZE_MIB_DEFAULT,
+        RECORDING_SPLIT_SIZE_MIB_RANGE, REPLAY_BUFFER_CAPACITY_MIB_DEFAULT,
+        REPLAY_BUFFER_CAPACITY_MIB_RANGE, REPLAY_BUFFER_DURATION_DEFAULT,
+        REPLAY_BUFFER_DURATION_RANGE, RESOLUTIONS, SAMPLE_RATES, THEMES,
     },
     settings_model::{
         aspect_ratio_text, parse_resolution, resolution_text, FpsMode, OutputMode,
@@ -823,6 +823,10 @@ fn populate_audio_devices(
 }
 
 /// Copies committed settings plus live project state into the window's draft.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the settings draft is copied atomically into one Slint window boundary"
+)]
 fn load_draft(
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
@@ -926,6 +930,12 @@ fn load_draft(
     let audio_format = state.borrow().audio_format();
     window.set_sample_rate_index(index_of(&SAMPLE_RATES, &audio_format.sample_rate()));
     window.set_channel_index(index_of(&CHANNEL_LAYOUTS, &audio_format.channels()));
+    window.set_audio_input_sync_offset(
+        i32::try_from(settings.audio_input_sync_offset_millis).unwrap_or(0),
+    );
+    window.set_desktop_audio_sync_offset(
+        i32::try_from(settings.desktop_audio_sync_offset_millis).unwrap_or(0),
+    );
     populate_audio_devices(window, state, output, controller, &settings);
 
     load_video_draft(surface, controller, &settings);
@@ -1698,6 +1708,10 @@ fn read_draft(controller: &SettingsController) -> AppSettings {
     settings.channels = usize::try_from(window.get_channel_index())
         .unwrap_or(0)
         .min(CHANNEL_LAYOUTS.len() - 1);
+    settings.audio_input_sync_offset_millis =
+        unsigned(window.get_audio_input_sync_offset()).min(*AUDIO_SYNC_OFFSET_RANGE.end());
+    settings.desktop_audio_sync_offset_millis =
+        unsigned(window.get_desktop_audio_sync_offset()).min(*AUDIO_SYNC_OFFSET_RANGE.end());
     read_hotkey_draft(window, &mut settings);
     settings.preview_border_color = window.get_preview_border_color().to_string();
     settings.program_border_color = window.get_program_border_color().to_string();
@@ -2029,6 +2043,10 @@ fn commit(
 /// Setup deliberately comes through the same path as the ordinary settings
 /// window so audio routing, output staging, project video geometry, palette,
 /// and persistence cannot drift into two subtly different implementations.
+#[allow(
+    clippy::too_many_lines,
+    reason = "settings application keeps the runtime and persisted snapshot atomic"
+)]
 pub(crate) fn apply_settings_snapshot(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -2071,6 +2089,18 @@ pub(crate) fn apply_settings_snapshot(
         (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
     ) {
         notes.push(format!("audio input: {error}"));
+    }
+    if let Err(error) = output.borrow_mut().set_channel_sync_offset_millis(
+        crate::MIC_CHANNEL_ID,
+        settings.audio_input_sync_offset_millis,
+    ) {
+        notes.push(format!("microphone sync offset: {error}"));
+    }
+    if let Err(error) = output.borrow_mut().set_channel_sync_offset_millis(
+        crate::DESKTOP_CHANNEL_ID,
+        settings.desktop_audio_sync_offset_millis,
+    ) {
+        notes.push(format!("desktop audio sync offset: {error}"));
     }
 
     output.borrow_mut().configure_stream(settings);

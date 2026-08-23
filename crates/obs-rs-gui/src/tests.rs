@@ -550,12 +550,23 @@ fn app_settings_round_trip_the_selected_audio_input() {
     let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-{token}.toml"));
     let settings = AppSettings {
         audio_input_id: "pipewire-node-42".to_owned(),
+        audio_input_sync_offset_millis: 125,
+        desktop_audio_sync_offset_millis: 2_500,
         ..AppSettings::default()
     };
     settings.save(&path).expect("settings should save");
     assert_eq!(
         AppSettings::load(&path).audio_input_id,
         settings.audio_input_id
+    );
+    let reloaded = AppSettings::load(&path);
+    assert_eq!(
+        reloaded.audio_input_sync_offset_millis,
+        settings.audio_input_sync_offset_millis
+    );
+    assert_eq!(
+        reloaded.desktop_audio_sync_offset_millis,
+        settings.desktop_audio_sync_offset_millis
     );
     std::fs::remove_file(path).expect("remove settings fixture");
 }
@@ -701,6 +712,22 @@ fn output_runtime_switches_the_selected_audio_input_without_rebuilding_video() {
         .set_audio_input_id(None)
         .expect("automatic input should be accepted");
     assert_eq!(output.audio_input_id(), None);
+}
+
+#[test]
+fn output_runtime_applies_bounded_audio_sync_offsets_on_the_worker() {
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut output = OutputRuntime::new(format);
+
+    output
+        .set_channel_sync_offset_millis(crate::MIC_CHANNEL_ID, 125)
+        .expect("microphone offset should reach the worker");
+    output
+        .set_channel_sync_offset_millis(crate::DESKTOP_CHANNEL_ID, 2_500)
+        .expect("desktop offset should reach the worker");
+    assert!(output
+        .set_channel_sync_offset_millis(crate::MIC_CHANNEL_ID, 5_001)
+        .is_err());
 }
 
 #[test]
