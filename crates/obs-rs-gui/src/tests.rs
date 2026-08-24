@@ -30,6 +30,8 @@ mod runtime;
 mod scene;
 #[path = "tests/ui.rs"]
 mod ui;
+#[path = "tests/ui_canvas.rs"]
+mod ui_canvas;
 #[path = "tests/ui_layout.rs"]
 mod ui_layout;
 #[path = "tests/ui_navigation.rs"]
