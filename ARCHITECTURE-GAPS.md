@@ -48,8 +48,9 @@ same as zero-copy or final performance certification.
 Selection projection update: nested Sources rows now resolve through the same
 bounded `DesktopState` path selection as top-level rows. Clicks, context-menu
 opening, and depth-first keyboard navigation can select targets such as
-`group/child`; nested canvas geometry remains intentionally separate until
-world-transform projection is implemented.
+`group/child`; Ctrl+A uses the same bounded visible-row projection. Nested
+canvas geometry remains intentionally separate until world-transform
+projection is implemented.
 
 | ID | Gap | Current evidence | Consequence | Required target | Dependencies / first packet |
 | --- | --- | --- | --- | --- | --- |

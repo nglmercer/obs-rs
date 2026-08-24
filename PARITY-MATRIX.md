@@ -71,7 +71,8 @@ routing, adaptive clock correction, or multiple recording tracks.
 
 > Nested-row update: source-row selection and depth-first keyboard navigation
 > now include visible group descendants using the same bounded path targets as
-> nested source actions. This closes dock selection projection, but does not
+> nested source actions. Ctrl+A uses that same visible-row projection and
+> bounded selection limit. This closes dock selection projection, but does not
 > claim nested canvas geometry parity.
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |

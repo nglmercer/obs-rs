@@ -211,10 +211,19 @@ fn install_source_list_callbacks(
             else {
                 return;
             };
-            scene
-                .items()
-                .iter()
-                .map(|item| item.id().to_string())
+            let Some(profile) = state.project_session().project().active_profile_spec() else {
+                return;
+            };
+            let mut rows = Vec::new();
+            crate::refresh::append_source_rows(
+                &mut rows,
+                profile,
+                scene.items(),
+                &state,
+                &mut Vec::new(),
+            );
+            rows.into_iter()
+                .map(|row| row.target.to_string())
                 .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
                 .collect::<Vec<_>>()
         };

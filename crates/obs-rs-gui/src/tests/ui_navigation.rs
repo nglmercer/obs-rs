@@ -238,10 +238,32 @@ pub(super) fn exercise_group_source_callbacks(
         .is_some_and(|scene| scene.item(selected.as_str()).is_some()));
 
     ui.invoke_select_all_sources();
-    assert_eq!(
-        state.borrow().selected_sources().collect::<Vec<_>>(),
-        vec!["background", "overlay-group", selected.as_str()],
-        "Ctrl+A selects the bounded top-level scene-item set through Rust"
+    let selected_sources = state
+        .borrow()
+        .selected_sources()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert!(
+        selected_sources.iter().any(|target| target == "background"),
+        "Ctrl+A keeps the root source in the bounded visible-row selection"
+    );
+    assert!(
+        selected_sources
+            .iter()
+            .any(|target| target == "overlay-group"),
+        "Ctrl+A keeps the group row in the bounded visible-row selection"
+    );
+    assert!(
+        selected_sources
+            .iter()
+            .any(|target| target.starts_with("overlay-group/")),
+        "Ctrl+A includes visible nested group rows through the same Rust target path"
+    );
+    assert!(
+        selected_sources
+            .iter()
+            .any(|target| target == selected.as_str()),
+        "Ctrl+A includes the later root row after the nested group"
     );
 }
 
