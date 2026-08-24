@@ -76,7 +76,8 @@ the starter scene and transient pan. Crop handles, nested geometry, live DPI,
 and the native capture device prerequisite remain outside this evidence; the
 same fixture also verifies a real wheel event changes continuous zoom and
 restores the anchored viewport state, while the separate rotation-handle
-gesture observes one fixed-point angle commit.
+gesture observes one fixed-point angle commit and the Alt left-middle handle
+gesture changes source crop without changing horizontal scene scale.
 
 The source-row follow-up inserts a temporary group at a visible boundary and
 clicks its nested child through the actual SourceContextMenuArea target. The

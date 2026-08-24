@@ -11,6 +11,7 @@ const OVERLAPPING_CANVAS_POINTER_SOURCES: [&str; 2] =
     ["canvas-pointer-under", "canvas-pointer-top"];
 const TRANSFORM_CANVAS_POINTER_SOURCE: &str = "canvas-pointer-transform";
 const ROTATION_CANVAS_POINTER_SOURCE: &str = "canvas-pointer-rotation";
+const CROP_CANVAS_POINTER_SOURCE: &str = "canvas-pointer-crop";
 
 pub(super) fn exercise_canvas_pointer_fixture(
     ui: &MainWindow,
@@ -20,6 +21,7 @@ pub(super) fn exercise_canvas_pointer_fixture(
     prepare_canvas_pointer_scene(state, surface, ui);
     exercise_transform_handle(ui, state, surface);
     exercise_rotation_handle(ui, state, surface);
+    exercise_crop_handle(ui, state, surface);
     exercise_drag_selection(ui, state);
     exercise_overlapping_selection(ui, state, surface);
     exercise_pan_and_zoom(ui);
@@ -193,6 +195,101 @@ fn exercise_rotation_handle(
             items: vec![ROTATION_CANVAS_POINTER_SOURCE.to_owned()],
         }))
         .expect("remove rotation pointer source");
+    refresh_ui(ui, state, surface);
+}
+
+fn exercise_crop_handle(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            source: SourceSpec::new(
+                CROP_CANVAS_POINTER_SOURCE,
+                "color_source",
+                CROP_CANVAS_POINTER_SOURCE,
+                source_settings("color_source").expect("crop pointer defaults"),
+            )
+            .expect("crop pointer source"),
+        }))
+        .expect("add crop pointer source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: CROP_CANVAS_POINTER_SOURCE.to_owned(),
+            transform: FrameTransform::new(400, 300, 650, 320, false, false, u8::MAX)
+                .expect("crop pointer transform"),
+        }))
+        .expect("position crop pointer source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: CROP_CANVAS_POINTER_SOURCE.to_owned(),
+        })
+        .expect("select crop pointer source");
+    refresh_ui(ui, state, surface);
+
+    let before = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item(CROP_CANVAS_POINTER_SOURCE))
+        .expect("crop pointer item before drag")
+        .transform();
+    let handle_x = ui
+        .get_item_handle_x()
+        .row_data(7)
+        .expect("left-middle crop handle x");
+    let handle_y = ui
+        .get_item_handle_y()
+        .row_data(7)
+        .expect("left-middle crop handle y");
+    let canvas = canvas_surface(ui);
+    let start = canvas_point(ui, &canvas, handle_x, handle_y);
+    let end = LogicalPosition::new(start.x + 18.0, start.y);
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Alt.into(),
+    });
+    drag_canvas_at(ui, start, end, PointerEventButton::Left);
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Alt.into(),
+    });
+
+    let after = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item(CROP_CANVAS_POINTER_SOURCE))
+        .expect("crop pointer item after drag")
+        .transform();
+    assert!(
+        after.crop_left() > before.crop_left(),
+        "Alt plus the left-middle handle crops the source edge"
+    );
+    assert_eq!(
+        after.scale_x_milli(),
+        before.scale_x_milli(),
+        "Alt crop does not resize the scene item horizontally"
+    );
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItems {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            items: vec![CROP_CANVAS_POINTER_SOURCE.to_owned()],
+        }))
+        .expect("remove crop pointer source");
     refresh_ui(ui, state, surface);
 }
 

@@ -128,6 +128,10 @@ The fixture separately resolves the published rotation handle, drags it to a
 new canvas angle, and observes the changed fixed-point rotation after the
 single commit on release. Crop and live DPI pointer evidence remain open.
 
+It also holds Alt while dragging the published left-middle handle inward and
+observes a larger `crop_left` with the horizontal scene scale unchanged. This
+covers the real modifier path for crop; live DPI evidence remains open.
+
 The same GUI fixture now inserts a temporary group at a visible row boundary,
 clicks its nested child through the real SourceContextMenuArea pointer target,
 and verifies the stable `group/child` selection path before removing the group.
