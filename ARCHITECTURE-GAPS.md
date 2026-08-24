@@ -123,7 +123,11 @@ bounded `DesktopState` path selection as top-level rows. Clicks, context-menu
 opening, and depth-first keyboard navigation can select targets such as
 `group/child`; Ctrl+A uses the same bounded visible-row projection. Nested
 canvas geometry remains intentionally separate until world-transform
-projection is implemented.
+projection is implemented. The canvas pointer fixture now also uses two
+overlapping temporary top-level items to prove top-layer selection,
+select-underneath on the next plain click, and Ctrl-toggle of the top layer
+through the real pointer boundary. The pure hit-test oracle and the live event
+path now exercise the same ordered selection owner.
 
 The Sources dock now exposes one atomic same-parent grouping command. It
 preserves the parent order and child transforms for root or nested selections,

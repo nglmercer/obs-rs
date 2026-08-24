@@ -7,6 +7,8 @@ use super::*;
 /// transient pan, and wheel zoom exercises cursor-anchored viewport updates,
 /// before the fixture restores the scene.
 const CANVAS_POINTER_SOURCES: [&str; 2] = ["canvas-pointer-left", "canvas-pointer-right"];
+const OVERLAPPING_CANVAS_POINTER_SOURCES: [&str; 2] =
+    ["canvas-pointer-under", "canvas-pointer-top"];
 
 pub(super) fn exercise_canvas_pointer_fixture(
     ui: &MainWindow,
@@ -15,6 +17,7 @@ pub(super) fn exercise_canvas_pointer_fixture(
 ) {
     prepare_canvas_pointer_scene(state, surface, ui);
     exercise_drag_selection(ui, state);
+    exercise_overlapping_selection(ui, state, surface);
     exercise_pan_and_zoom(ui);
     restore_canvas_pointer_scene(ui, state, surface);
 }
@@ -92,6 +95,78 @@ fn exercise_drag_selection(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
         vec!["canvas-pointer-left", "canvas-pointer-right"],
         "Ctrl drag adds the second intersecting source"
     );
+}
+
+fn exercise_overlapping_selection(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    for id in OVERLAPPING_CANVAS_POINTER_SOURCES {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                source: SourceSpec::new(
+                    id,
+                    "color_source",
+                    id,
+                    source_settings("color_source").expect("overlap pointer defaults"),
+                )
+                .expect("overlap pointer source"),
+            }))
+            .expect("add overlap pointer source");
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                item: id.to_owned(),
+                transform: FrameTransform::new(250, 250, 400, 300, false, false, u8::MAX)
+                    .expect("overlap pointer transform"),
+            }))
+            .expect("position overlap pointer source");
+    }
+    refresh_ui(ui, state, surface);
+    let canvas = canvas_surface(ui);
+    let point = canvas_point(ui, &canvas, 520, 420);
+    click_canvas_at(ui, point);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["canvas-pointer-top"],
+        "plain canvas click selects the topmost overlapping source"
+    );
+    click_canvas_at(ui, point);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["canvas-pointer-under"],
+        "plain canvas click walks below an already-selected hit"
+    );
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    click_canvas_at(ui, point);
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["canvas-pointer-under", "canvas-pointer-top"],
+        "Ctrl canvas click toggles the topmost overlapping source"
+    );
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItems {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            items: OVERLAPPING_CANVAS_POINTER_SOURCES
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+        }))
+        .expect("remove overlap pointer sources");
+    refresh_ui(ui, state, surface);
 }
 
 fn exercise_pan_and_zoom(ui: &MainWindow) {
@@ -200,6 +275,19 @@ fn canvas_center(canvas: &ElementHandle) -> LogicalPosition {
     let origin = canvas.absolute_position();
     let size = canvas.size();
     LogicalPosition::new(origin.x + size.width / 2.0, origin.y + size.height / 2.0)
+}
+
+fn click_canvas_at(ui: &MainWindow, position: LogicalPosition) {
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position });
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Left,
+    });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Left,
+    });
 }
 
 #[allow(
