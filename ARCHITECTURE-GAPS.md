@@ -69,10 +69,11 @@ toggle after movement; plain navigation remains bounded and non-wrapping.
 
 The canvas pointer-fixture packet now exercises the actual Slint testing-backend
 pointer path against the editable surface. It maps the current fit zoom and
-pan into letterboxed coordinates, proves blank-space drag-box replacement and
-Ctrl-additive selection, then removes temporary items and restores the starter
-scene. Transform handles, nested geometry, live DPI, and the native capture
-device prerequisite remain outside this evidence.
+pan into letterboxed coordinates, proves blank-space drag-box replacement,
+Ctrl-additive selection, and both middle-button and Space+drag pan, then removes
+temporary items and restores the starter scene and transient pan. Transform
+handles, nested geometry, live DPI, and the native capture device prerequisite
+remain outside this evidence.
 
 The UI modularization packet extracted the window-root modal overlay into
 `main_modals.slint`. It deliberately moved no project state or mutation logic:

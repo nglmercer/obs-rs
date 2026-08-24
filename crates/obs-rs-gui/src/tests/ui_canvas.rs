@@ -3,7 +3,8 @@ use super::*;
 /// Exercises the editable canvas through the testing backend's real pointer
 /// event path. The starter background is hidden so the center of the canvas is
 /// an empty drag origin; two bounded color sources then prove replacement and
-/// Ctrl-additive drag-box selection before the fixture restores the scene.
+/// Ctrl-additive drag-box selection. Middle-drag and Space+drag also exercise
+/// transient pan before the fixture restores the scene.
 pub(super) fn exercise_canvas_pointer_fixture(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -75,6 +76,46 @@ pub(super) fn exercise_canvas_pointer_fixture(
         state.borrow().selected_sources().collect::<Vec<_>>(),
         vec!["canvas-pointer-left", "canvas-pointer-right"],
         "Ctrl drag adds the second intersecting source"
+    );
+
+    let initial_pan = (ui.get_canvas_pan_x(), ui.get_canvas_pan_y());
+    let canvas = canvas_surface(ui);
+    let center = canvas.absolute_position();
+    let center = LogicalPosition::new(
+        center.x + canvas.size().width / 2.0,
+        center.y + canvas.size().height / 2.0,
+    );
+    canvas.mock_drag(
+        LogicalPosition::new(center.x + 24.0, center.y - 12.0),
+        PointerEventButton::Middle,
+    );
+    let middle_pan = (ui.get_canvas_pan_x(), ui.get_canvas_pan_y());
+    assert_ne!(middle_pan, initial_pan, "middle drag pans the canvas");
+
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+    let canvas = canvas_surface(ui);
+    let center = canvas.absolute_position();
+    let center = LogicalPosition::new(
+        center.x + canvas.size().width / 2.0,
+        center.y + canvas.size().height / 2.0,
+    );
+    canvas.mock_drag(
+        LogicalPosition::new(center.x - 18.0, center.y + 14.0),
+        PointerEventButton::Left,
+    );
+    ui.window()
+        .dispatch_event(WindowEvent::KeyReleased { text: " ".into() });
+    let space_pan = (ui.get_canvas_pan_x(), ui.get_canvas_pan_y());
+    assert_ne!(space_pan, middle_pan, "Space+drag pans the canvas");
+    ui.invoke_canvas_pan_dragged(
+        initial_pan.0.saturating_sub(space_pan.0),
+        initial_pan.1.saturating_sub(space_pan.1),
+    );
+    assert_eq!(
+        (ui.get_canvas_pan_x(), ui.get_canvas_pan_y()),
+        initial_pan,
+        "pointer pan is transient and restored for the remaining fixture"
     );
 
     state
