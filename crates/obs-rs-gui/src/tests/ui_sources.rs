@@ -199,20 +199,6 @@ pub(super) fn exercise_source_mouse_selection(
     );
 
     ui.window().dispatch_event(WindowEvent::KeyPressed {
-        text: Key::Control.into(),
-    });
-    visible_source_row_target(ui, 3).mock_single_click(PointerEventButton::Left);
-    ui.window().dispatch_event(WindowEvent::KeyReleased {
-        text: Key::Control.into(),
-    });
-    refresh_ui(ui, state, surface);
-    assert_eq!(
-        state.borrow().selected_sources().collect::<Vec<_>>(),
-        vec!["keyboard-delete-first", "keyboard-delete-second"],
-        "Ctrl-click toggles a source into the selection"
-    );
-
-    ui.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Shift.into(),
     });
     visible_source_row_target(ui, 4).mock_single_click(PointerEventButton::Left);
@@ -227,7 +213,7 @@ pub(super) fn exercise_source_mouse_selection(
             "keyboard-delete-second",
             "mouse-select-first"
         ],
-        "Shift-click adds a source without duplicating existing selection"
+        "Shift-click selects the contiguous source-row range"
     );
 
     ui.window().dispatch_event(WindowEvent::KeyPressed {
@@ -242,6 +228,20 @@ pub(super) fn exercise_source_mouse_selection(
         state.borrow().selected_sources().collect::<Vec<_>>(),
         vec!["keyboard-delete-first", "mouse-select-first"],
         "Ctrl-click toggles an existing source out of the selection"
+    );
+
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Shift.into(),
+    });
+    visible_source_row_target(ui, 3).mock_single_click(PointerEventButton::Left);
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Shift.into(),
+    });
+    refresh_ui(ui, state, surface);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["keyboard-delete-second", "mouse-select-first"],
+        "Shift-click resolves the range in either direction from the active row"
     );
 }
 

@@ -197,6 +197,42 @@ fn group_child_targets(
         .collect())
 }
 
+/// Returns the same bounded depth-first row order projected by the Sources
+/// dock. Keeping range resolution on this Rust side means Slint only reports
+/// the clicked target and never owns a second source-order model.
+fn visible_source_targets(state: &DesktopState) -> Option<Vec<String>> {
+    let scene_id = state.preview_scene()?;
+    let profile = state.project_session().project().active_profile_spec()?;
+    let scene = profile.scene(scene_id)?;
+    let mut rows = Vec::new();
+    crate::refresh::append_source_rows(&mut rows, profile, scene.items(), state, &mut Vec::new());
+    Some(
+        rows.into_iter()
+            .map(|row| row.target.to_string())
+            .take(MAX_CANVAS_SELECTIONS)
+            .collect(),
+    )
+}
+
+/// Resolves an OBS-style contiguous source-row range from the current active
+/// row to the clicked row. A missing anchor degrades to selecting the clicked
+/// row, while a stale target is rejected without dispatching a command.
+fn source_selection_range(
+    anchor: Option<&str>,
+    target: &str,
+    targets: &[String],
+) -> Option<Vec<String>> {
+    let target_index = targets.iter().position(|id| id == target)?;
+    let anchor_index = anchor.and_then(|id| targets.iter().position(|target| target == id));
+    let (start, end) = anchor_index.map_or((target_index, target_index), |anchor_index| {
+        (
+            anchor_index.min(target_index),
+            anchor_index.max(target_index),
+        )
+    });
+    Some(targets[start..=end].to_vec())
+}
+
 fn move_scene_and_refresh(
     weak: &slint::Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -263,13 +299,23 @@ fn install_source_list_callbacks(
     let source_mode_surface = Rc::clone(surface);
     ui.on_select_source_with_mode(move |id, mode| {
         let command = match mode {
-            0 => UiCommand::SelectSource { id: id.to_string() },
-            1 => UiCommand::SelectSources {
-                ids: vec![id.to_string()],
-                additive: true,
-            },
-            2 => UiCommand::ToggleSourceSelection { id: id.to_string() },
-            _ => return,
+            0 => Some(UiCommand::SelectSource { id: id.to_string() }),
+            2 => Some(UiCommand::ToggleSourceSelection { id: id.to_string() }),
+            3 => {
+                let state = source_mode_state.borrow();
+                visible_source_targets(&state).and_then(|targets| {
+                    source_selection_range(state.selected_source(), id.as_str(), &targets).map(
+                        |ids| UiCommand::SelectSources {
+                            ids,
+                            additive: false,
+                        },
+                    )
+                })
+            }
+            _ => None,
+        };
+        let Some(command) = command else {
+            return;
         };
         dispatch_and_refresh(&weak, &source_mode_state, &source_mode_surface, command);
     });
@@ -280,32 +326,10 @@ fn install_source_list_callbacks(
     ui.on_select_all_sources(move || {
         let ids = {
             let state = select_all_state.borrow();
-            let Some(scene_id) = state.preview_scene() else {
+            let Some(targets) = visible_source_targets(&state) else {
                 return;
             };
-            let Some(scene) = state
-                .project_session()
-                .project()
-                .active_profile_spec()
-                .and_then(|profile| profile.scene(scene_id))
-            else {
-                return;
-            };
-            let Some(profile) = state.project_session().project().active_profile_spec() else {
-                return;
-            };
-            let mut rows = Vec::new();
-            crate::refresh::append_source_rows(
-                &mut rows,
-                profile,
-                scene.items(),
-                &state,
-                &mut Vec::new(),
-            );
-            rows.into_iter()
-                .map(|row| row.target.to_string())
-                .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
-                .collect::<Vec<_>>()
+            targets
         };
         dispatch_and_refresh(
             &weak,
@@ -644,38 +668,19 @@ fn navigate_source_selection_and_refresh(
 ) {
     let target = {
         let state = state.borrow();
-        let Some(scene_id) = state.preview_scene() else {
+        let Some(targets) = visible_source_targets(&state) else {
             return;
         };
-        let Some(scene) = state
-            .project_session()
-            .project()
-            .active_profile_spec()
-            .and_then(|profile| profile.scene(scene_id))
-        else {
-            return;
-        };
-        let Some(profile) = state.project_session().project().active_profile_spec() else {
-            return;
-        };
-        let mut rows = Vec::new();
-        crate::refresh::append_source_rows(
-            &mut rows,
-            profile,
-            scene.items(),
-            &state,
-            &mut Vec::new(),
-        );
         let current = state
             .selected_source()
-            .and_then(|selected| rows.iter().position(|row| row.target.as_str() == selected));
-        let Some(index) = source_navigation_index(current, rows.len(), direction) else {
+            .and_then(|selected| targets.iter().position(|target| target == selected));
+        let Some(index) = source_navigation_index(current, targets.len(), direction) else {
             return;
         };
         if current == Some(index) {
             return;
         }
-        rows.get(index).map(|row| row.target.to_string())
+        targets.get(index).cloned()
     };
     let Some(target) = target else {
         return;
@@ -730,7 +735,7 @@ fn install_source_property_callbacks(
 
 #[cfg(test)]
 mod tests {
-    use super::source_navigation_index;
+    use super::{source_navigation_index, source_selection_range};
 
     #[test]
     fn source_navigation_is_bounded_and_non_wrapping() {
@@ -745,5 +750,45 @@ mod tests {
         assert_eq!(source_navigation_index(Some(9), 3, 1), Some(0));
         assert_eq!(source_navigation_index(None, 0, 1), None);
         assert_eq!(source_navigation_index(Some(1), 3, 99), None);
+    }
+
+    #[test]
+    fn source_selection_range_is_contiguous_and_bounded() {
+        let targets = vec![
+            "first".to_owned(),
+            "second".to_owned(),
+            "third".to_owned(),
+            "fourth".to_owned(),
+        ];
+        assert_eq!(
+            source_selection_range(Some("second"), "fourth", &targets),
+            Some(
+                vec!["second", "third", "fourth"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            )
+        );
+        assert_eq!(
+            source_selection_range(Some("fourth"), "second", &targets),
+            Some(
+                vec!["second", "third", "fourth"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            )
+        );
+        assert_eq!(
+            source_selection_range(None, "third", &targets),
+            Some(vec!["third".to_owned()])
+        );
+        assert_eq!(
+            source_selection_range(Some("missing"), "third", &targets),
+            Some(vec!["third".to_owned()])
+        );
+        assert_eq!(
+            source_selection_range(Some("first"), "missing", &targets),
+            None
+        );
     }
 }

@@ -186,7 +186,7 @@ export component SourceDock inherits Rectangle {
                                     source-focus.focus();
                                     let mode = event.modifiers.control
                                         ? 2
-                                        : (event.modifiers.shift ? 1 : 0);
+                                        : (event.modifiers.shift ? 3 : 0);
                                     select-source-with-mode(source.id, mode);
                                 }
                                 if event.kind == PointerEventKind.down
