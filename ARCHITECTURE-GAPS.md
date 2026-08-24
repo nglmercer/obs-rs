@@ -81,6 +81,13 @@ clicks its nested child through the actual SourceContextMenuArea target. The
 selected `group/child` path is verified and the temporary group is removed;
 nested canvas geometry is still a separate gap.
 
+The dock-header pointer packet now drives the visible `DockHeader` through the
+testing backend rather than invoking the callback directly. It verifies drag
+start, right-zone hit testing over the final pane, release-time tree mutation,
+and restores the default tree before the legacy projection checks. This is
+interaction evidence only; live multi-monitor/DPI and custom floating dock
+surfaces remain open.
+
 The UI modularization packet extracted the window-root modal overlay into
 `main_modals.slint`. It deliberately moved no project state or mutation logic:
 the component receives bounded properties and forwards typed callbacks, while

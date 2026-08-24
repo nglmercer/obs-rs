@@ -43,6 +43,8 @@ pub(super) fn exercise_dock_layout(
     ui.invoke_toggle_meters_paused();
     assert!(!ui.get_meters_paused(), "the mixer monitor resumes");
 
+    exercise_dock_header_pointer_drag(ui, controller);
+
     // Reordering moves the dragged dock one place and leaves the rest alone.
     let before = read_order(ui);
     ui.invoke_move_panel(before[0], 1);
@@ -106,6 +108,89 @@ pub(super) fn exercise_dock_layout(
         .any(|pane| pane.panel_kind == 4 && pane.active));
     ui.invoke_split_dock_with(2, 4, 1, 500);
     assert_eq!(read_dock_panes(ui).len(), 5);
+}
+
+/// Drives a dock header through the testing backend's actual pointer path.
+///
+/// The direct callback checks below remain useful for the legacy move/resize
+/// projections, but this verifies that a visible header starts a drag, updates
+/// the directional target while pressed, and commits the resulting tree on
+/// release.
+fn exercise_dock_header_pointer_drag(
+    ui: &MainWindow,
+    controller: &Rc<crate::callbacks::docks::DockController>,
+) {
+    let headers = ElementHandle::find_by_element_type_name(ui, "DockHeader")
+        .filter(|header| header.size().width > 100.0 && header.size().height >= 20.0)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        headers.len(),
+        5,
+        "the default layout exposes five dock headers"
+    );
+    let before = read_order(ui);
+    assert_eq!(
+        before.len(),
+        headers.len(),
+        "dock headers mirror the pane order"
+    );
+
+    let source = headers[0].absolute_position();
+    let source_size = headers[0].size();
+    let target = headers
+        .last()
+        .expect("the default layout has a final dock header");
+    let target_position = target.absolute_position();
+    let target_size = target.size();
+    let start = LogicalPosition::new(
+        source.x + source_size.width / 2.0,
+        source.y + source_size.height / 2.0,
+    );
+    // The right quarter is a directional insertion zone, not a tab target.
+    let drop = LogicalPosition::new(
+        target_position.x + target_size.width * 0.9,
+        target_position.y + target_size.height / 2.0,
+    );
+
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: start });
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position: start,
+        button: PointerEventButton::Left,
+    });
+    assert!(ui.get_dock_dragging(), "the header starts a dock drag");
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: drop });
+    assert_eq!(
+        ui.get_dock_drop_target(),
+        *before.last().expect("the final pane has a dock kind"),
+        "the pointer resolves the final pane as the drop target"
+    );
+    assert_eq!(
+        ui.get_dock_drop_zone(),
+        2,
+        "the pointer resolves the right zone"
+    );
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position: drop,
+        button: PointerEventButton::Left,
+    });
+
+    assert!(
+        !ui.get_dock_dragging(),
+        "the header clears its drag state on release"
+    );
+    assert_eq!(
+        read_order(ui).last().copied(),
+        before.first().copied(),
+        "the real header drop moves the source dock after the target"
+    );
+
+    let default = AppSettings::default();
+    let default_tree =
+        DockNode::from_legacy(&default.layout.panel_order, &default.layout.panel_weights)
+            .expect("the default dock tree is valid");
+    controller.replace_tree(&default_tree, ui);
 }
 
 pub(super) fn read_order(ui: &MainWindow) -> Vec<i32> {

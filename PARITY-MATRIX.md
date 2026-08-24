@@ -123,6 +123,14 @@ clicks its nested child through the real SourceContextMenuArea pointer target,
 and verifies the stable `group/child` selection path before removing the group.
 Nested canvas geometry remains separate from nested Sources-dock projection.
 
+## Latest verified package: dock-header pointer drag
+
+On 2026-08-24, the GUI dock fixture now drives a visible `DockHeader` through
+the testing backend's real pointer path. It verifies drag start, directional
+right-zone hit testing over the final pane, tree mutation on release, and
+restores the default dock tree before the remaining layout assertions. The
+fixture still does not provide compositor-backed multi-monitor/DPI evidence.
+
 ## Latest verified package: main-window modal modularization
 
 On 2026-08-24, the 1,024-line `main.slint` component was split at the
@@ -168,7 +176,7 @@ project/scene/output, collection, recovery, remux, and rename dialog flows.
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | DOCK-001 | Dock layout | Docks are arranged in a nested horizontal/vertical tree with tab groups. | A bounded, validated `DockNode` tree owns persistence; Rust emits normalized pane and splitter projections, and the Slint workspace renders horizontal/vertical splits, active tabs, and bounded split handles. Legacy order/weight models remain only for compatibility. | Partial | Desktop | `dock_tree` geometry/resize/round-trip tests; GUI snapshot and splitter callback coverage. | `crates/obs-rs-gui/src/dock_tree.rs`, `crates/obs-rs-gui/ui/dock_workspace.slint`, `crates/obs-rs-gui/src/callbacks/docks.rs` | Platform minimum-size/monitor behavior |
-| DOCK-002 | Tabs, insertion, re-docking | Docks can be dragged into split or tab insertion targets and re-docked without losing geometry. | Header drags use normalized pane hit-testing, show tab/left/right/top/bottom indicators, preserve flat-row reorder semantics, and commit typed tab/split mutations; floating re-docking remains functional. | Partial | Desktop | Tree drop-zone/atomic-mutation tests; GUI drag-indicator, splitter, and re-dock coverage. | `crates/obs-rs-gui/src/dock_tree.rs`, `crates/obs-rs-gui/ui/dock_workspace.slint`, `crates/obs-rs-gui/src/callbacks/docks.rs` | Plugin/custom dock drop contracts |
+| DOCK-002 | Tabs, insertion, re-docking | Docks can be dragged into split or tab insertion targets and re-docked without losing geometry. | Header drags use normalized pane hit-testing, show tab/left/right/top/bottom indicators, preserve flat-row reorder semantics, and commit typed tab/split mutations; floating re-docking remains functional. | Partial | Desktop | Tree drop-zone/atomic-mutation tests; GUI real DockHeader pointer drag/drop, drag-indicator, splitter, and re-dock coverage. | `crates/obs-rs-gui/src/dock_tree.rs`, `crates/obs-rs-gui/ui/dock_workspace.slint`, `crates/obs-rs-gui/src/callbacks/docks.rs` | Plugin/custom dock drop contracts |
 | DOCK-003 | Floating windows | Floating docks retain position/size across restart, monitor changes, and DPI changes. | Detached windows share the studio models, reopen from persisted detached state, and persist bounded physical position/size plus scale-aware restoration. When the existing platform display capability reports a virtual desktop, restored positions are clamped so at least a 48px title-bar strip remains visible; when no monitor bounds are available, saved physical coordinates are preserved. Projector windows persist the platform monitor identity observed at their center, expose a right-click display menu backed by the current monitor capability, and restore within the selected monitor when it is still present, falling back to the current virtual desktop otherwise. Live multi-monitor/DPI evidence remains unavailable on this host. | Partial | Linux desktop slice | Settings geometry/monitor round-trip; GUI detach/re-dock capture; pure virtual-desktop clamp, projector-center monitor, and monitor-row projection tests; no compositor-backed multi-monitor test. | `crates/obs-rs-gui/src/{callbacks/docks.rs,callbacks/menu.rs,callbacks/monitor.rs,fixtures.rs}`, `crates/obs-rs-gui/ui/projector_window.slint`, `crates/obs-rs-gui/src/settings.rs` | Platform monitor capability/live multi-monitor fixture |
 | DOCK-004 | Core dock coverage | Scenes, Sources, Mixer, Transitions, Controls, Stats, properties, and plugin docks are available. | Scenes, Sources, Mixer, Transitions, Controls, and diagnostics panels exist; plugin/custom dock registration is absent. | Partial | Desktop | GUI snapshot and callback tests. | `crates/obs-rs-gui/ui`, `crates/obs-rs-gui/src` | Dock extension API |
 
