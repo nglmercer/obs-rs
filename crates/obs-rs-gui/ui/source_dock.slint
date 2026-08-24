@@ -32,6 +32,7 @@ export component SourceDock inherits Rectangle {
     callback close-panel(int);
     callback open-modal(int);
     callback select-source(string);
+    callback select-source-with-mode(string, int);
     callback select-all-sources();
     // Navigation stays a typed callback so Rust can resolve the visible
     // source order from the active scene instead of duplicating it in Slint.
@@ -141,6 +142,9 @@ export component SourceDock inherits Rectangle {
                         can-paste: root.can-paste;
                         can-group: root.can-group-sources;
                         select-source(id) => { root.select-source(id); }
+                        select-source-with-mode(id, mode) => {
+                            root.select-source-with-mode(id, mode);
+                        }
                         open-properties(id) => { root.open-properties(id); }
                         open-filters(id) => { root.open-filters(id); }
                         open-transform(id) => { root.open-transform(id); }
@@ -175,9 +179,16 @@ export component SourceDock inherits Rectangle {
                             height: 100%;
                             clicked => {
                                 source-focus.focus();
-                                select-source(source.id);
                             }
                             pointer-event(event) => {
+                                if event.kind == PointerEventKind.down
+                                    && event.button == PointerEventButton.left {
+                                    source-focus.focus();
+                                    let mode = event.modifiers.control
+                                        ? 2
+                                        : (event.modifiers.shift ? 1 : 0);
+                                    select-source-with-mode(source.id, mode);
+                                }
                                 if event.kind == PointerEventKind.down
                                     && event.button == PointerEventButton.right {
                                     source-focus.focus();
@@ -238,6 +249,9 @@ export component SourceDock inherits Rectangle {
                     can-paste: root.can-paste;
                     can-group: root.can-group-sources;
                     select-source(id) => { root.select-source(id); }
+                    select-source-with-mode(id, mode) => {
+                        root.select-source-with-mode(id, mode);
+                    }
                     open-properties(id) => { root.open-properties(id); }
                     open-filters(id) => { root.open-filters(id); }
                     open-transform(id) => { root.open-transform(id); }

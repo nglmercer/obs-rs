@@ -22,6 +22,7 @@ export component SourceContextMenuArea inherits Rectangle {
     in property <[MoveTarget]> move-targets;
 
     callback select-source(string);
+    callback select-source-with-mode(string, int);
     callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);

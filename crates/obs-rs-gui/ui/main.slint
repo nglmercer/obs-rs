@@ -211,6 +211,7 @@ export component MainWindow inherits Window {
         callback select-profile(string);
         callback set-locale(string);
         callback select-source(string);
+        callback select-source-with-mode(string, int);
         callback select-all-sources();
         callback navigate-source-selection(int, int);
         callback toggle-source-visibility(string);
@@ -786,6 +787,9 @@ export component MainWindow inherits Window {
                 open-scene-projector(id) => { root.open-scene-projector(id); }
                 open-source-projector() => { root.open-source-projector(); }
                 select-source(id) => { root.select-source(id); }
+                select-source-with-mode(id, mode) => {
+                    root.select-source-with-mode(id, mode);
+                }
                 select-all-sources() => { root.select-all-sources(); }
                 navigate-source-selection(direction, mode) => {
                     root.navigate-source-selection(direction, mode);

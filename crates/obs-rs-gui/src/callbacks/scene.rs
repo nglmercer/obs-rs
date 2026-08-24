@@ -259,6 +259,22 @@ fn install_source_list_callbacks(
     });
 
     let weak = ui.as_weak();
+    let source_mode_state = Rc::clone(state);
+    let source_mode_surface = Rc::clone(surface);
+    ui.on_select_source_with_mode(move |id, mode| {
+        let command = match mode {
+            0 => UiCommand::SelectSource { id: id.to_string() },
+            1 => UiCommand::SelectSources {
+                ids: vec![id.to_string()],
+                additive: true,
+            },
+            2 => UiCommand::ToggleSourceSelection { id: id.to_string() },
+            _ => return,
+        };
+        dispatch_and_refresh(&weak, &source_mode_state, &source_mode_surface, command);
+    });
+
+    let weak = ui.as_weak();
     let select_all_state = Rc::clone(state);
     let select_all_surface = Rc::clone(surface);
     ui.on_select_all_sources(move || {

@@ -84,6 +84,18 @@ existing native capture-device assertion fails on this host because no device
 row is available; the overall GUI fixture is therefore not green in this
 environment.
 
+## Latest verified package: source-dock modifier selection
+
+On 2026-08-24, left-clicks in the visible Sources rows now carry the actual
+PointerEvent modifier state to the Rust-owned selection boundary. Plain click
+replaces the bounded selection, Shift-click adds one source, and Ctrl-click
+toggles one source in or out; docked, floating, and context-menu surfaces
+forward the same typed callback. The GUI fixture covers replacement, add, and
+toggle after each refresh. This is additive selection, not OBS range selection;
+drag-box, range selection, and complete nested-row pointer evidence remain
+open. The full fixture still stops later at the host's unavailable native
+capture-device row.
+
 ## Latest verified package: main-window modal modularization
 
 On 2026-08-24, the 1,024-line `main.slint` component was split at the

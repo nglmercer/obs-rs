@@ -53,6 +53,15 @@ assertion because this host exposes no device row; the popup-specific testing
 harness does not expose a stable menu element, so its interaction remains a
 follow-up fixture rather than a false green result.
 
+The Sources dock modifier-selection packet now maps plain, Shift, and Ctrl
+pointer clicks through one typed callback into the existing Rust selection
+owner. Docked, floating, and context-menu boundaries share that callback, so
+selection is not duplicated in Slint. The GUI fixture proves replacement,
+additive selection, and toggle removal while re-querying rows after each model
+refresh. Shift is currently additive rather than range-selecting; drag-box,
+range selection, and complete nested-row pointer evidence remain open. The
+fixture still fails later when this host exposes no native capture-device row.
+
 The UI modularization packet extracted the window-root modal overlay into
 `main_modals.slint`. It deliberately moved no project state or mutation logic:
 the component receives bounded properties and forwards typed callbacks, while

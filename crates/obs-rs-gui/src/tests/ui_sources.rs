@@ -146,6 +146,118 @@ pub(super) fn exercise_multi_source_keyboard_delete(
         }));
 }
 
+/// Verifies that Sources rows translate mouse modifiers into the same Rust
+/// selection modes used by keyboard navigation and canvas selection.
+pub(super) fn exercise_source_mouse_selection(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    for id in [
+        "mouse-select-first",
+        "mouse-select-second",
+        "mouse-select-third",
+    ] {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                source: SourceSpec::new(
+                    id,
+                    "color_source",
+                    id,
+                    source_settings("color_source").expect("source defaults"),
+                )
+                .expect("mouse selection source"),
+            }))
+            .expect("add mouse selection source");
+    }
+    refresh_ui(ui, state, surface);
+    let rows = ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
+        .filter(|row| row.size().height > 30.0)
+        .collect::<Vec<_>>();
+    assert!(
+        rows.len() >= 5,
+        "the visible source rows include the selection targets"
+    );
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSources {
+            ids: Vec::new(),
+            additive: false,
+        })
+        .expect("clear selection before mouse test");
+    refresh_ui(ui, state, surface);
+
+    visible_source_row_target(ui, 2).mock_single_click(PointerEventButton::Left);
+    refresh_ui(ui, state, surface);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["keyboard-delete-first"],
+        "plain source-row click replaces the selection"
+    );
+
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    visible_source_row_target(ui, 3).mock_single_click(PointerEventButton::Left);
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+    refresh_ui(ui, state, surface);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["keyboard-delete-first", "keyboard-delete-second"],
+        "Ctrl-click toggles a source into the selection"
+    );
+
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Shift.into(),
+    });
+    visible_source_row_target(ui, 4).mock_single_click(PointerEventButton::Left);
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Shift.into(),
+    });
+    refresh_ui(ui, state, surface);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec![
+            "keyboard-delete-first",
+            "keyboard-delete-second",
+            "mouse-select-first"
+        ],
+        "Shift-click adds a source without duplicating existing selection"
+    );
+
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    visible_source_row_target(ui, 3).mock_single_click(PointerEventButton::Left);
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+    refresh_ui(ui, state, surface);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["keyboard-delete-first", "mouse-select-first"],
+        "Ctrl-click toggles an existing source out of the selection"
+    );
+}
+
+fn visible_source_row_target(ui: &MainWindow, index: usize) -> ElementHandle {
+    let rows = ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
+        .filter(|row| row.size().height > 30.0)
+        .collect::<Vec<_>>();
+    rows.get(index)
+        .expect("visible source row")
+        .query_descendants()
+        .match_inherits("TouchArea")
+        .match_predicate(|area| area.size().width > 150.0 && area.size().height > 30.0)
+        .find_first()
+        .expect("visible source row target")
+}
+
 fn focus_canvas(ui: &MainWindow) {
     let canvas = ElementHandle::find_by_element_id(ui, "CanvasEditor::surface")
         .find(|canvas| canvas.size().width > 100.0 && canvas.size().height > 100.0)
