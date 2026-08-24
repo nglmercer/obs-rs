@@ -379,7 +379,7 @@ fn install_source_list_callbacks(
             let item = state
                 .preview_scene()
                 .and_then(|scene_id| profile.and_then(|profile| profile.scene(scene_id)))
-                .and_then(|scene| scene.item(id.as_str()));
+                .and_then(|scene| crate::callbacks::item_for_target(scene, id.as_str()));
             item.and_then(|item| profile.and_then(|profile| profile.source(item.source_id())))
                 .map(|source| source.name().to_owned())
         };

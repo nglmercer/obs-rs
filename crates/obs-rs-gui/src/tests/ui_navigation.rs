@@ -77,6 +77,13 @@ pub(super) fn exercise_group_source_callbacks(
         .iter()
         .find(|row| row.target == "overlay-group/background")
         .is_some_and(|row| row.selected));
+    ui.invoke_open_source_rename("overlay-group/background".into());
+    assert_eq!(
+        ui.get_source_name_draft(),
+        "Background",
+        "nested source rename resolves the path-addressed source definition"
+    );
+    ui.set_active_modal(0);
     ui.invoke_select_source("background".into());
 
     ui.invoke_navigate_source_selection(1, 0);
