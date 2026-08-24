@@ -118,6 +118,12 @@ a plain click selects the top layer, a second plain click walks to the selected
 layer underneath, and Ctrl-click toggles the top layer back into the ordered
 selection. This covers the live pointer path for the existing hit-stack rule.
 
+It also inserts a temporary selected source, resolves the Rust-published
+bottom-right handle coordinates, and drags that handle through the real
+`TouchArea`. The resulting scale change is observed in project state before
+the temporary item is removed; rotation, crop, and live DPI pointer evidence
+remain open.
+
 The same GUI fixture now inserts a temporary group at a visible row boundary,
 clicks its nested child through the real SourceContextMenuArea pointer target,
 and verifies the stable `group/child` selection path before removing the group.

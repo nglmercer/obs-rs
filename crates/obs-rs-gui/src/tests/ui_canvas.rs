@@ -9,6 +9,7 @@ use super::*;
 const CANVAS_POINTER_SOURCES: [&str; 2] = ["canvas-pointer-left", "canvas-pointer-right"];
 const OVERLAPPING_CANVAS_POINTER_SOURCES: [&str; 2] =
     ["canvas-pointer-under", "canvas-pointer-top"];
+const TRANSFORM_CANVAS_POINTER_SOURCE: &str = "canvas-pointer-transform";
 
 pub(super) fn exercise_canvas_pointer_fixture(
     ui: &MainWindow,
@@ -16,10 +17,96 @@ pub(super) fn exercise_canvas_pointer_fixture(
     surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     prepare_canvas_pointer_scene(state, surface, ui);
+    exercise_transform_handle(ui, state, surface);
     exercise_drag_selection(ui, state);
     exercise_overlapping_selection(ui, state, surface);
     exercise_pan_and_zoom(ui);
     restore_canvas_pointer_scene(ui, state, surface);
+}
+
+fn exercise_transform_handle(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            source: SourceSpec::new(
+                TRANSFORM_CANVAS_POINTER_SOURCE,
+                "color_source",
+                TRANSFORM_CANVAS_POINTER_SOURCE,
+                source_settings("color_source").expect("transform pointer defaults"),
+            )
+            .expect("transform pointer source"),
+        }))
+        .expect("add transform pointer source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: TRANSFORM_CANVAS_POINTER_SOURCE.to_owned(),
+            transform: FrameTransform::new(400, 300, 650, 320, false, false, u8::MAX)
+                .expect("transform pointer transform"),
+        }))
+        .expect("position transform pointer source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: TRANSFORM_CANVAS_POINTER_SOURCE.to_owned(),
+        })
+        .expect("select transform pointer source");
+    refresh_ui(ui, state, surface);
+
+    let before = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item(TRANSFORM_CANVAS_POINTER_SOURCE))
+        .expect("transform pointer item before drag")
+        .transform();
+    let handle_x = ui
+        .get_item_handle_x()
+        .row_data(4)
+        .expect("bottom-right handle x");
+    let handle_y = ui
+        .get_item_handle_y()
+        .row_data(4)
+        .expect("bottom-right handle y");
+    let canvas = canvas_surface(ui);
+    let start = canvas_point(ui, &canvas, handle_x, handle_y);
+    let end = LogicalPosition::new(start.x + 18.0, start.y + 12.0);
+    drag_canvas_at(ui, start, end, PointerEventButton::Left);
+
+    let after = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item(TRANSFORM_CANVAS_POINTER_SOURCE))
+        .expect("transform pointer item after drag")
+        .transform();
+    assert!(
+        after.scale_x_milli() > before.scale_x_milli()
+            || after.scale_y_milli() > before.scale_y_milli(),
+        "the real bottom-right handle drag resizes the selected source"
+    );
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItems {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            items: vec![TRANSFORM_CANVAS_POINTER_SOURCE.to_owned()],
+        }))
+        .expect("remove transform pointer source");
+    refresh_ui(ui, state, surface);
 }
 
 fn prepare_canvas_pointer_scene(
@@ -287,6 +374,26 @@ fn click_canvas_at(ui: &MainWindow, position: LogicalPosition) {
     ui.window().dispatch_event(WindowEvent::PointerReleased {
         position,
         button: PointerEventButton::Left,
+    });
+}
+
+fn drag_canvas_at(
+    ui: &MainWindow,
+    start: LogicalPosition,
+    end: LogicalPosition,
+    button: PointerEventButton,
+) {
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: start });
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position: start,
+        button,
+    });
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: end });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position: end,
+        button,
     });
 }
 
