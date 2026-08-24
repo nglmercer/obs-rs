@@ -243,6 +243,20 @@ pub(super) fn exercise_source_mouse_selection(
         vec!["keyboard-delete-second", "mouse-select-first"],
         "Shift-click resolves the range in either direction from the active row"
     );
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: "keyboard-delete-first".to_owned(),
+        })
+        .expect("reset keyboard range anchor");
+    refresh_ui(ui, state, surface);
+    ui.invoke_navigate_source_selection(1, 1);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["keyboard-delete-first", "keyboard-delete-second"],
+        "Shift keyboard navigation selects the adjacent source range"
+    );
 }
 
 fn visible_source_row_target(ui: &MainWindow, index: usize) -> ElementHandle {

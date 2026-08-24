@@ -37,7 +37,7 @@ export component SourceDock inherits Rectangle {
     // Navigation stays a typed callback so Rust can resolve the visible
     // source order from the active scene instead of duplicating it in Slint.
     // direction: -2 = first, -1 = previous, 1 = next, 2 = last.
-    // mode: 0 = replace, 1 = add, 2 = toggle.
+    // mode: 0 = replace, 1 = range, 2 = toggle.
     callback navigate-source-selection(int, int);
     callback open-properties(string);
     callback open-filters(string);

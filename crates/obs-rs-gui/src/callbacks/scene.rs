@@ -666,7 +666,7 @@ fn navigate_source_selection_and_refresh(
     direction: i32,
     mode: i32,
 ) {
-    let target = {
+    let command = {
         let state = state.borrow();
         let Some(targets) = visible_source_targets(&state) else {
             return;
@@ -680,19 +680,23 @@ fn navigate_source_selection_and_refresh(
         if current == Some(index) {
             return;
         }
-        targets.get(index).cloned()
+        let Some(target) = targets.get(index).cloned() else {
+            return;
+        };
+        match mode {
+            0 => Some(UiCommand::SelectSource { id: target }),
+            1 => source_selection_range(state.selected_source(), target.as_str(), &targets).map(
+                |ids| UiCommand::SelectSources {
+                    ids,
+                    additive: false,
+                },
+            ),
+            2 => Some(UiCommand::ToggleSourceSelection { id: target }),
+            _ => None,
+        }
     };
-    let Some(target) = target else {
+    let Some(command) = command else {
         return;
-    };
-    let command = match mode {
-        0 => UiCommand::SelectSource { id: target },
-        1 => UiCommand::SelectSources {
-            ids: vec![target],
-            additive: true,
-        },
-        2 => UiCommand::ToggleSourceSelection { id: target },
-        _ => return,
     };
     dispatch_and_refresh(weak, state, surface, command);
 }

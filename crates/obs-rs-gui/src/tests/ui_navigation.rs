@@ -181,8 +181,8 @@ pub(super) fn exercise_group_source_callbacks(
     ui.invoke_navigate_source_selection(-1, 1);
     assert_eq!(
         state.borrow().selected_sources().collect::<Vec<_>>(),
-        vec!["overlay-group", "background"],
-        "Shift navigation adds the adjacent source without duplicating state"
+        vec!["background", "overlay-group"],
+        "Shift navigation selects the contiguous range without duplicating state"
     );
     ui.invoke_navigate_source_selection(2, 2);
     assert_eq!(
