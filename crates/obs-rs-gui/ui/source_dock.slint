@@ -58,6 +58,7 @@ export component SourceDock inherits Rectangle {
     callback paste-reference(string);
     callback paste-duplicate(string);
     callback remove-source(string);
+    callback remove-selected-sources();
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -94,7 +95,7 @@ export component SourceDock inherits Rectangle {
                             // Deletion remains a Rust callback so locked-item
                             // validation, nested paths, and undo ownership do
                             // not get duplicated in the dock.
-                            root.remove-source(root.selected-source);
+                            root.remove-selected-sources();
                             return accept;
                         }
                         if !event.modifiers.alt
@@ -271,7 +272,7 @@ export component SourceDock inherits Rectangle {
                         icon-name: "remove";
                         hint: I18n.text.remove_source;
                         enabled: root.selected-source != "";
-                        clicked => { root.remove-source(root.selected-source); }
+                        clicked => { root.remove-selected-sources(); }
                     }
                     CompactButton {
                         width: 22px;

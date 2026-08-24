@@ -41,6 +41,15 @@ The GUI fixture covers the successful unlocked canvas path and the locked dock
 failure path; global hotkey registration and broader source context-menu parity
 remain separate gaps.
 
+The atomic multi-selection Delete packet now routes the full bounded
+`DesktopState` selection through `RemoveSceneItems`. Root and nested targets are
+validated before mutation, selected group descendants are subsumed by their
+ancestor, and locked targets or ancestors reject the complete operation. The
+project tests prove root/nested removal, atomic failure, and one-step undo/redo;
+the callback is forwarded through docked and floating panels as well as the
+canvas. The GUI fixture reaches this scenario, then fails later at the existing
+native capture-device choice assertion because this host exposes no device row.
+
 The UI modularization packet extracted the window-root modal overlay into
 `main_modals.slint`. It deliberately moved no project state or mutation logic:
 the component receives bounded properties and forwards typed callbacks, while

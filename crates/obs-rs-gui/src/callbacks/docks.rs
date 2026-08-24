@@ -760,6 +760,7 @@ fn forward_to_studio(
     forward!(on_paste_reference, invoke_paste_reference, target);
     forward!(on_paste_duplicate, invoke_paste_duplicate, target);
     forward!(on_remove_source, invoke_remove_source, id);
+    forward!(on_remove_selected_sources, invoke_remove_selected_sources);
     forward!(on_set_mixer_gain, invoke_set_mixer_gain, id, gain);
     forward!(on_set_mixer_pan, invoke_set_mixer_pan, id, pan);
     forward!(on_toggle_mixer_mute, invoke_toggle_mixer_mute, id);

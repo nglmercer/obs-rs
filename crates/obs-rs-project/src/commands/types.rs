@@ -85,6 +85,17 @@ pub enum ProjectCommand {
         scene: String,
         item: String,
     },
+    /// Removes several root or nested scene items as one atomic edit.
+    ///
+    /// Targets use root IDs or outer-to-inner paths such as
+    /// `overlay-group/source`. Selecting both a group and one of its
+    /// descendants removes the group once; all selected targets are validated
+    /// before any item is changed.
+    RemoveSceneItems {
+        profile: String,
+        scene: String,
+        items: Vec<String>,
+    },
     /// Duplicates one scene item as a reference or with a cloned source.
     DuplicateSceneItem {
         profile: String,

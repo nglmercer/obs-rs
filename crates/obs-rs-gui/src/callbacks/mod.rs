@@ -10,6 +10,7 @@ mod scene;
 pub(crate) mod settings;
 pub(crate) mod setup;
 mod source;
+mod source_batch;
 pub(crate) mod source_filters;
 pub(crate) mod source_properties;
 pub(crate) mod source_transform;
@@ -64,6 +65,7 @@ pub(crate) use source::{
     toggle_source_visibility_and_refresh, transform_source_and_refresh, SceneItemTarget,
     SourceTarget,
 };
+pub(crate) use source_batch::remove_selected_sources_and_refresh;
 pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
 pub(crate) use source_transform::install_source_transform_window;

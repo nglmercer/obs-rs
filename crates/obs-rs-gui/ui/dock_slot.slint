@@ -78,6 +78,7 @@ export component DockSlot inherits Rectangle {
     callback paste-reference(string);
     callback paste-duplicate(string);
     callback remove-source(string);
+    callback remove-selected-sources();
     callback set-mixer-gain(string, int);
     callback set-mixer-pan(string, int);
     callback toggle-mixer-mute(string);
@@ -178,6 +179,7 @@ export component DockSlot inherits Rectangle {
         paste-reference(target) => { root.paste-reference(target); }
         paste-duplicate(target) => { root.paste-duplicate(target); }
         remove-source(id) => { root.remove-source(id); }
+        remove-selected-sources() => { root.remove-selected-sources(); }
     }
     if panel-kind == 2 : MixerDock {
         floating: root.floating;

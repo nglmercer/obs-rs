@@ -71,6 +71,8 @@ fn unique_paths(label: &str) -> (PathBuf, PathBuf) {
     )
 }
 
+#[path = "project_tests_batch_remove.rs"]
+mod batch_remove;
 #[path = "project_tests_commands.rs"]
 mod commands;
 #[path = "project_tests_groups.rs"]

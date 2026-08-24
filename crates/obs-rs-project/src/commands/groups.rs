@@ -550,6 +550,84 @@ pub(super) fn remove_group_item(
         .ok_or(ProjectError::UnknownSceneItem(item_id))
 }
 
+/// Removes a bounded selection of root or nested scene items in one atomic
+/// project edit. Validation runs against the original scene and mutations are
+/// applied to a clone, so even an unexpected stale-index failure cannot leave
+/// the caller with a partially removed selection.
+pub(super) fn remove_scene_items(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    items: &[String],
+) -> Result<(), ProjectError> {
+    if items.is_empty() {
+        return Err(ProjectError::InvalidGroupSelection);
+    }
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let source_scene = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?
+        .scene(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+
+    let mut seen = HashSet::with_capacity(items.len());
+    let mut parsed = Vec::with_capacity(items.len());
+    for target in items {
+        if !seen.insert(target.clone()) {
+            return Err(ProjectError::InvalidGroupSelection);
+        }
+        let (group_path, item_id) = parse_scene_item_target(target)?;
+        path_is_unlocked(source_scene, &group_path)?;
+        let parent = parent_items(source_scene, &group_path)?;
+        let item = parent
+            .iter()
+            .find(|candidate| candidate.id() == &item_id)
+            .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?;
+        if item.locked() {
+            return Err(ProjectError::LockedSceneItem(item_id));
+        }
+        let mut full_path = group_path.clone();
+        full_path.push(item_id.clone());
+        parsed.push((full_path, group_path, item_id));
+    }
+
+    // A selected group owns all of its descendants. Collapse those descendant
+    // targets instead of attempting to remove an item from a parent that may
+    // already have been removed by the same user gesture.
+    let mut canonical = parsed
+        .iter()
+        .filter(|(target, _, _)| {
+            !parsed.iter().any(|(candidate, _, _)| {
+                candidate.len() < target.len() && target.starts_with(candidate)
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    canonical.sort_by_key(|target| std::cmp::Reverse(target.1.len()));
+
+    let mut updated = project.clone();
+    let updated_scene = updated
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?
+        .scene_mut(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    for (_, group_path, item_id) in canonical {
+        let removed = if group_path.is_empty() {
+            updated_scene.remove_item(&item_id)
+        } else {
+            group_mut_at(&mut updated_scene.items, &group_path)
+                .ok_or(ProjectError::InvalidGroupPath)?
+                .remove_item(&item_id)
+        };
+        if removed.is_none() {
+            return Err(ProjectError::UnknownSceneItem(item_id));
+        }
+    }
+    *project = updated;
+    Ok(())
+}
+
 pub(super) fn duplicate_group_item(
     project: &mut Project,
     profile: &str,

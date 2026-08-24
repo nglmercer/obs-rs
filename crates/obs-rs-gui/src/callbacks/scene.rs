@@ -9,9 +9,9 @@ use crate::{
     apply_source_settings_and_refresh, dispatch_and_refresh, duplicate_scene_and_refresh,
     duplicate_source_and_refresh, flip_source_and_refresh, move_source_and_refresh,
     move_source_to_and_refresh, move_source_to_group_and_refresh, refresh_ui,
-    remove_scene_and_refresh, remove_source_and_refresh, reset_source_transform_and_refresh,
-    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
-    transform_source_and_refresh, MainWindow, PreviewSurface,
+    remove_scene_and_refresh, remove_selected_sources_and_refresh, remove_source_and_refresh,
+    reset_source_transform_and_refresh, toggle_source_locked_and_refresh,
+    toggle_source_visibility_and_refresh, transform_source_and_refresh, MainWindow, PreviewSurface,
 };
 
 pub(crate) fn install_scene_callbacks(
@@ -602,6 +602,17 @@ fn install_source_list_callbacks(
     let remove_surface = Rc::clone(surface);
     ui.on_remove_source(move |id| {
         remove_source_and_refresh(&weak, &remove_state, &remove_surface, id.as_str());
+    });
+
+    let weak = ui.as_weak();
+    let remove_selected_state = Rc::clone(state);
+    let remove_selected_surface = Rc::clone(surface);
+    ui.on_remove_selected_sources(move || {
+        remove_selected_sources_and_refresh(
+            &weak,
+            &remove_selected_state,
+            &remove_selected_surface,
+        );
     });
 }
 

@@ -143,11 +143,12 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_sources::render_source_properties_window();
     ui_sources::render_source_filters_window(&ui, &state, &surface);
     ui_sources::exercise_source_transform_window(&ui, &state, &surface);
+    ui_sources::exercise_source_keyboard_delete(&ui, &state, &surface);
+    ui_sources::exercise_multi_source_keyboard_delete(&ui, &state, &surface);
     ui_layout::render_monitor_window();
     ui_sources::exercise_add_source_window(&ui, &state, &surface);
     ui_sources::exercise_capture_device_properties_window(&ui, &state, &surface);
     ui_layout::exercise_monitor_selection(&ui, &state, &surface);
-    ui_sources::exercise_source_keyboard_delete(&ui, &state, &surface);
     ui_output::exercise_recording_controls(&ui, &state, &surface);
     ui_navigation::exercise_menu_actions(&ui, &state, &surface, &docks);
     ui_navigation::exercise_group_source_callbacks(&ui, &state, &surface);

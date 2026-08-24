@@ -67,6 +67,85 @@ pub(super) fn exercise_source_keyboard_delete(
     }
 }
 
+/// Verifies that Delete applies to the complete bounded canvas selection and
+/// that the project session restores that selection in one undo step.
+pub(super) fn exercise_multi_source_keyboard_delete(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    for id in ["keyboard-delete-first", "keyboard-delete-second"] {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                source: SourceSpec::new(
+                    id,
+                    "color_source",
+                    id,
+                    source_settings("color_source").expect("source defaults"),
+                )
+                .expect("multi-delete source"),
+            }))
+            .expect("add multi-delete source");
+    }
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSources {
+            ids: vec![
+                "keyboard-delete-first".to_owned(),
+                "keyboard-delete-second".to_owned(),
+            ],
+            additive: false,
+        })
+        .expect("select both sources");
+    refresh_ui(ui, state, surface);
+    focus_canvas(ui);
+    // The focus click may also hit an existing canvas item; restore the
+    // intended multi-selection after focus has been established.
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSources {
+            ids: vec![
+                "keyboard-delete-first".to_owned(),
+                "keyboard-delete-second".to_owned(),
+            ],
+            additive: false,
+        })
+        .expect("restore both selected sources");
+    refresh_ui(ui, state, surface);
+
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Delete.into(),
+    });
+    ui.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Delete.into(),
+    });
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .is_some_and(|scene| {
+            scene.item("keyboard-delete-first").is_none()
+                && scene.item("keyboard-delete-second").is_none()
+        }));
+
+    ui.invoke_undo_edit();
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .is_some_and(|scene| {
+            scene.item("keyboard-delete-first").is_some()
+                && scene.item("keyboard-delete-second").is_some()
+        }));
+}
+
 fn focus_canvas(ui: &MainWindow) {
     let canvas = ElementHandle::find_by_element_id(ui, "CanvasEditor::surface")
         .find(|canvas| canvas.size().width > 100.0 && canvas.size().height > 100.0)

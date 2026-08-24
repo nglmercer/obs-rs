@@ -43,10 +43,11 @@ pub(crate) use callbacks::{
     apply_source_transforms_to, duplicate_scene_and_refresh, duplicate_source_and_refresh,
     flip_source_and_refresh, item_for_target, move_source_and_refresh, move_source_to_and_refresh,
     move_source_to_group_and_refresh, project_store, remove_scene_and_refresh,
-    remove_source_and_refresh, reset_source_transform_and_refresh, scene_item_target,
-    source_target, source_target_is_locked, source_transform_document, target_settings_document,
-    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
-    transform_source_and_refresh, SceneItemTarget, SourceTarget,
+    remove_selected_sources_and_refresh, remove_source_and_refresh,
+    reset_source_transform_and_refresh, scene_item_target, source_target, source_target_is_locked,
+    source_transform_document, target_settings_document, toggle_source_locked_and_refresh,
+    toggle_source_visibility_and_refresh, transform_source_and_refresh, SceneItemTarget,
+    SourceTarget,
 };
 pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks,
