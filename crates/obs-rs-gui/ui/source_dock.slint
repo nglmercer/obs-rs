@@ -12,6 +12,7 @@ export component SourceDock inherits Rectangle {
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
     in property <bool> selected-source-is-group;
+    in property <bool> selected-source-is-scene;
     in property <bool> selected-source-is-nested;
     in property <bool> selected-source-visible;
     in property <bool> selected-source-locked;
@@ -38,6 +39,7 @@ export component SourceDock inherits Rectangle {
     callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);
+    callback open-source-projector(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
     callback move-source(string, int);
@@ -123,6 +125,7 @@ export component SourceDock inherits Rectangle {
                         open-properties(id) => { root.open-properties(id); }
                         open-filters(id) => { root.open-filters(id); }
                         open-transform(id) => { root.open-transform(id); }
+                        open-source-projector(id) => { root.open-source-projector(id); }
                         rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                         duplicate-source(id) => {
                             root.select-source(id);
@@ -194,7 +197,9 @@ export component SourceDock inherits Rectangle {
                 selected-source-menu := SourceContextMenuArea {
                     height: 22px;
                     source-id: root.selected-source == "none" ? "" : root.selected-source;
-                    source-kind: "";
+                    source-kind: root.selected-source-is-scene
+                        ? "scene"
+                        : (root.selected-source-is-group ? "group" : "source");
                     nested: root.selected-source-is-nested;
                     group: root.selected-source-is-group;
                     source-visible: root.selected-source-visible;
@@ -209,6 +214,7 @@ export component SourceDock inherits Rectangle {
                     open-properties(id) => { root.open-properties(id); }
                     open-filters(id) => { root.open-filters(id); }
                     open-transform(id) => { root.open-transform(id); }
+                    open-source-projector(id) => { root.open-source-projector(id); }
                     rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                     duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
                     copy-source(id) => { root.copy-source(id); }

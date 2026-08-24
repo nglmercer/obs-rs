@@ -64,6 +64,7 @@ impl DockController {
             window.set_selected_source(ui.get_selected_source());
             window.set_selected_source_is_screen(ui.get_selected_source_is_screen());
             window.set_selected_source_is_group(ui.get_selected_source_is_group());
+            window.set_selected_source_is_scene(ui.get_selected_source_is_scene());
             window.set_selected_source_is_nested(ui.get_selected_source_is_nested());
             window.set_selected_source_visible(ui.get_selected_source_visible());
             window.set_selected_source_locked(ui.get_selected_source_locked());
@@ -718,6 +719,7 @@ fn forward_to_studio(
     forward!(on_move_scene, invoke_move_scene, id, delta);
     forward!(on_remove_scene, invoke_remove_scene, id);
     forward!(on_open_scene_projector, invoke_open_scene_projector, id);
+    forward!(on_open_source_projector, invoke_open_source_projector);
     forward!(on_select_source, invoke_select_source, id);
     forward!(
         on_navigate_source_selection,

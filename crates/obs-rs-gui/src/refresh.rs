@@ -557,6 +557,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .is_some_and(|source| crate::kind_selects_monitor(source.kind().as_str())),
     );
     ui.set_selected_source_is_group(selected_item.is_some_and(SceneItemSpec::is_group));
+    ui.set_selected_source_is_scene(selected_item.is_some_and(SceneItemSpec::is_scene_reference));
     ui.set_selected_source_is_nested(selected_source_is_nested);
 
     refresh_mixer_rows(ui, state);

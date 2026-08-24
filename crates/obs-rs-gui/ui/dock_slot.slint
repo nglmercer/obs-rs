@@ -18,6 +18,7 @@ export component DockSlot inherits Rectangle {
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
     in property <bool> selected-source-is-group;
+    in property <bool> selected-source-is-scene;
     in property <bool> selected-source-is-nested;
     in property <bool> selected-source-visible;
     in property <bool> selected-source-locked;
@@ -52,6 +53,7 @@ export component DockSlot inherits Rectangle {
     callback move-scene(string, int);
     callback remove-scene(string);
     callback open-scene-projector(string);
+    callback open-source-projector();
     callback select-source(string);
     callback select-all-sources();
     callback navigate-source-selection(int, int);
@@ -126,6 +128,7 @@ export component DockSlot inherits Rectangle {
         selected-source: root.selected-source;
         selected-source-is-screen: root.selected-source-is-screen;
         selected-source-is-group: root.selected-source-is-group;
+        selected-source-is-scene: root.selected-source-is-scene;
         selected-source-is-nested: root.selected-source-is-nested;
         selected-source-visible: root.selected-source-visible;
         selected-source-locked: root.selected-source-locked;
@@ -146,6 +149,10 @@ export component DockSlot inherits Rectangle {
         open-properties(id) => { root.open-properties(id); }
         open-filters(id) => { root.open-filters(id); }
         open-transform(id) => { root.open-transform(id); }
+        open-source-projector(id) => {
+            root.select-source(id);
+            root.open-source-projector();
+        }
         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
         toggle-source-locked(id) => { root.toggle-source-locked(id); }
         move-source(id, delta) => { root.move-source(id, delta); }

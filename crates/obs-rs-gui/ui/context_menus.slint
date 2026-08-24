@@ -22,6 +22,7 @@ export component SourceContextMenuArea inherits Rectangle {
     callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);
+    callback open-source-projector(string);
     callback rename-source(string);
     callback duplicate-source(string);
     callback copy-source(string);
@@ -64,6 +65,13 @@ export component SourceContextMenuArea inherits Rectangle {
                     if !root.nested { root.select-source(root.source-id); }
                     root.open-filters(root.source-id);
                 }
+            }
+            MenuItem {
+                title: I18n.text.menu_source_projector;
+                enabled: root.source-id != ""
+                    && root.source-kind != "scene"
+                    && !root.group;
+                activated => root.open-source-projector(root.source-id);
             }
             MenuItem {
                 title: I18n.text.rename;
