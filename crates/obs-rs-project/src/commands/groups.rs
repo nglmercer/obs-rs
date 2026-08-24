@@ -86,6 +86,7 @@ pub(super) fn set_group_item_transform(
     let profile_spec = project
         .profile(&profile_id)
         .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let video_format = profile_spec.video_format();
     let scene_spec = profile_spec
         .scene(&scene_id)
         .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
@@ -95,7 +96,11 @@ pub(super) fn set_group_item_transform(
     }
     if parent_transform != FrameTransform::IDENTITY {
         transform
-            .compose_simple(parent_transform)
+            .compose_axis_aligned(
+                parent_transform,
+                video_format.width(),
+                video_format.height(),
+            )
             .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(item_id.clone()))?;
     }
     group_mut(project, profile, scene, group_path)?
@@ -117,6 +122,7 @@ fn group_parent_transform(
     let profile = project
         .profile(&profile_id)
         .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let video_format = profile.video_format();
     let scene = profile
         .scene(&scene_id)
         .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
@@ -129,7 +135,7 @@ fn group_parent_transform(
             .ok_or(ProjectError::InvalidGroupPath)?;
         parent = group_item
             .transform()
-            .compose_simple(parent)
+            .compose_axis_aligned(parent, video_format.width(), video_format.height())
             .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(group_id.clone()))?;
         items = group_item
             .group()

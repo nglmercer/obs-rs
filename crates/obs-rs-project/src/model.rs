@@ -229,12 +229,13 @@ impl Profile {
     }
 
     /// Flattens one visible scene graph into source references for a runtime
-    /// adapter, preserving draw order and composing simple nested transforms.
+    /// adapter, preserving draw order and composing axis-aligned nested
+    /// transforms.
     ///
     /// Direct source transforms retain the full media transform model. Only a
     /// transform that crosses a nested-scene boundary is restricted to the
-    /// axis-aligned scale/translation/opacity subset; unsupported transforms
-    /// fail explicitly instead of being approximated.
+    /// axis-aligned scale/translation/opacity/mirroring subset; unsupported
+    /// transforms fail explicitly instead of being approximated.
     ///
     /// # Errors
     ///
@@ -311,16 +312,16 @@ impl Profile {
                 item.transform()
             } else {
                 item.transform()
-                    .compose_simple(parent_transform)
+                    .compose_axis_aligned(
+                        parent_transform,
+                        self.video_format.width(),
+                        self.video_format.height(),
+                    )
                     .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(item.id().clone()))?
             };
             path.push(item.id().clone());
             let result = if let Some(child_scene) = item.scene_id() {
-                if transform.is_cropped()
-                    || transform.is_rotated()
-                    || transform.flip_x()
-                    || transform.flip_y()
-                {
+                if transform.is_cropped() || transform.is_rotated() {
                     return Err(ProjectError::UnsupportedNestedSceneTransform(
                         item.id().clone(),
                     ));
@@ -334,11 +335,7 @@ impl Profile {
                     output,
                 )
             } else if let Some(group) = item.group() {
-                if transform.is_cropped()
-                    || transform.is_rotated()
-                    || transform.flip_x()
-                    || transform.flip_y()
-                {
+                if transform.is_cropped() || transform.is_rotated() {
                     return Err(ProjectError::UnsupportedNestedSceneTransform(
                         item.id().clone(),
                     ));

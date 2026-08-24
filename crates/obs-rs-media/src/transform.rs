@@ -307,4 +307,110 @@ impl FrameTransform {
             ..Self::IDENTITY
         })
     }
+
+    /// Composes axis-aligned nested transforms using the profile canvas bounds.
+    ///
+    /// This is the flattening path for nested scenes and groups. In addition to
+    /// scale, translation, and opacity, it preserves horizontal and vertical
+    /// mirroring by reflecting the child visible rectangle around the parent
+    /// canvas before combining its fixed-point geometry. Cropping and rotation
+    /// remain rejected because their source-edge and centre semantics require a
+    /// transformed intermediate canvas.
+    ///
+    /// `canvas_width` and `canvas_height` are the dimensions of the nested
+    /// scene/group canvas, not the current viewport.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransform`] when the canvas is empty, either
+    /// transform uses cropping or rotation, or a composed value exceeds the
+    /// bounded representation.
+    pub fn compose_axis_aligned(
+        self,
+        parent: Self,
+        canvas_width: u32,
+        canvas_height: u32,
+    ) -> Result<Self, MediaError> {
+        if canvas_width == 0
+            || canvas_height == 0
+            || self.is_cropped()
+            || parent.is_cropped()
+            || self.is_rotated()
+            || parent.is_rotated()
+        {
+            return Err(MediaError::InvalidTransform);
+        }
+
+        let scale_x = (u64::from(self.scale_x_milli) * u64::from(parent.scale_x_milli)) / 1_000;
+        let scale_y = (u64::from(self.scale_y_milli) * u64::from(parent.scale_y_milli)) / 1_000;
+        if scale_x == 0
+            || scale_y == 0
+            || scale_x > u64::from(Self::MAX_SCALE_MILLI)
+            || scale_y > u64::from(Self::MAX_SCALE_MILLI)
+        {
+            return Err(MediaError::InvalidTransform);
+        }
+
+        let translate_x = compose_axis_aligned_translation(
+            self.translate_x,
+            parent.translate_x,
+            self.scale_x_milli,
+            parent.scale_x_milli,
+            canvas_width,
+            parent.flip_x,
+        )
+        .ok_or(MediaError::InvalidTransform)?;
+        let translate_y = compose_axis_aligned_translation(
+            self.translate_y,
+            parent.translate_y,
+            self.scale_y_milli,
+            parent.scale_y_milli,
+            canvas_height,
+            parent.flip_y,
+        )
+        .ok_or(MediaError::InvalidTransform)?;
+        let (Ok(scale_x), Ok(scale_y), Ok(translate_x), Ok(translate_y)) = (
+            u32::try_from(scale_x),
+            u32::try_from(scale_y),
+            i32::try_from(translate_x),
+            i32::try_from(translate_y),
+        ) else {
+            return Err(MediaError::InvalidTransform);
+        };
+        let opacity = (u16::from(self.opacity) * u16::from(parent.opacity) + 127) / 255;
+        Ok(Self {
+            scale_x_milli: scale_x,
+            scale_y_milli: scale_y,
+            translate_x,
+            translate_y,
+            flip_x: self.flip_x != parent.flip_x,
+            flip_y: self.flip_y != parent.flip_y,
+            opacity: u8::try_from(opacity).unwrap_or(u8::MAX),
+            ..Self::IDENTITY
+        })
+    }
+}
+
+fn compose_axis_aligned_translation(
+    child_translation: i32,
+    parent_translation: i32,
+    child_scale_milli: u32,
+    parent_scale_milli: u32,
+    canvas_dimension: u32,
+    parent_flipped: bool,
+) -> Option<i64> {
+    let child_extent = i64::from(canvas_dimension)
+        .checked_mul(i64::from(child_scale_milli))?
+        .checked_div(1_000)?;
+    let child_origin = if parent_flipped {
+        i64::from(canvas_dimension)
+            .checked_sub(i64::from(child_translation))?
+            .checked_sub(child_extent)?
+    } else {
+        i64::from(child_translation)
+    };
+    child_origin
+        .checked_mul(i64::from(parent_scale_milli))?
+        .checked_div(1_000)?
+        .checked_add(i64::from(parent_translation))
 }

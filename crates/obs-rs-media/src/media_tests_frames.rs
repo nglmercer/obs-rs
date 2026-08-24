@@ -166,6 +166,66 @@ fn simple_nested_transforms_compose_without_approximating_unsupported_features()
 }
 
 #[test]
+fn axis_aligned_nested_transforms_compose_mirroring_around_canvas_bounds() {
+    let child = FrameTransform::new(500, 500, 1, 2, true, false, 200).expect("child transform");
+    let parent =
+        FrameTransform::new(2_000, 2_000, 3, 4, true, true, 128).expect("parent transform");
+
+    let composed = child
+        .compose_axis_aligned(parent, 8, 6)
+        .expect("axis-aligned composition");
+    assert_eq!(composed.scale_x_milli(), 1_000);
+    assert_eq!(composed.scale_y_milli(), 1_000);
+    assert_eq!(composed.translate_x(), 9);
+    assert_eq!(composed.translate_y(), 6);
+    assert!(!composed.flip_x());
+    assert!(composed.flip_y());
+    assert_eq!(composed.opacity(), 100);
+
+    let cropped = child.with_crop(1, 0, 0, 0).expect("bounded crop");
+    assert_eq!(
+        cropped.compose_axis_aligned(parent, 8, 6),
+        Err(MediaError::InvalidTransform)
+    );
+    let rotated = child.with_rotation_degrees(15).expect("bounded rotation");
+    assert_eq!(
+        rotated.compose_axis_aligned(parent, 8, 6),
+        Err(MediaError::InvalidTransform)
+    );
+    assert_eq!(
+        child.compose_axis_aligned(parent, 0, 6),
+        Err(MediaError::InvalidTransform)
+    );
+}
+
+#[test]
+fn axis_aligned_nested_mirroring_matches_the_reference_renderer() {
+    let format =
+        VideoFormat::new(4, 2, FrameRate::new(30, 1).expect("rate")).expect("valid format");
+    let frame = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        (0_u8..8).flat_map(|value| [value, 0, 0, u8::MAX]).collect(),
+    )
+    .expect("pixels");
+    let child =
+        FrameTransform::new(1_000, 1_000, 0, 0, true, false, u8::MAX).expect("child transform");
+    let parent =
+        FrameTransform::new(1_000, 1_000, 0, 0, false, true, u8::MAX).expect("parent transform");
+    let composed = child
+        .compose_axis_aligned(parent, format.width(), format.height())
+        .expect("axis-aligned composition");
+
+    let sequential = frame
+        .clone()
+        .transformed(child)
+        .and_then(|intermediate| intermediate.transformed(parent))
+        .expect("sequential transforms");
+    let direct = frame.transformed(composed).expect("composed transform");
+    assert_eq!(direct, sequential);
+}
+
+#[test]
 fn a_crop_that_consumes_the_frame_is_rejected_at_render_time() {
     let frame = VideoFrame::solid(format(), Timestamp::ZERO, [1, 2, 3, 255]);
     let transform = FrameTransform::IDENTITY

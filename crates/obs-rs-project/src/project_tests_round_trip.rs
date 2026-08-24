@@ -151,7 +151,7 @@ fn group_items_round_trip_flatten_and_duplicate_sources() {
     let mut project = project();
     let mut group = SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
     group.set_transform(
-        FrameTransform::new(2_000, 1_500, 20, 30, false, false, 200).expect("group transform"),
+        FrameTransform::new(2_000, 1_500, 20, 30, true, false, 200).expect("group transform"),
     );
     group
         .group_mut()
@@ -160,6 +160,9 @@ fn group_items_round_trip_flatten_and_duplicate_sources() {
         .expect("group child attach");
     let mut nested_group =
         SceneItemSpec::for_group("inner-group", "Inner group").expect("nested group");
+    nested_group.set_transform(
+        FrameTransform::new(1_000, 1_000, 0, 0, true, false, 255).expect("nested group transform"),
+    );
     nested_group
         .group_mut()
         .expect("nested group target")
@@ -213,6 +216,8 @@ fn group_items_round_trip_flatten_and_duplicate_sources() {
     assert!(flattened
         .iter()
         .all(|item| item.source_id().as_str() == "background"));
+    assert!(flattened[1].transform().flip_x());
+    assert!(!flattened[2].transform().flip_x());
 
     project
         .apply(ProjectCommand::DuplicateSceneWithMode {
