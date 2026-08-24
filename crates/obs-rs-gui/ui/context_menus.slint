@@ -42,6 +42,7 @@ export component SourceContextMenuArea inherits Rectangle {
     callback flip-source(string, bool);
     callback transform-source(string, string);
     callback remove-source(string);
+    callback remove-selected-sources();
 
     public function show-at(position: Point) {
         context-menu.show(position);
@@ -252,7 +253,7 @@ export component SourceContextMenuArea inherits Rectangle {
                 enabled: root.source-id != "" && !root.source-locked;
                 activated => {
                     if !root.nested { root.select-source(root.source-id); }
-                    root.remove-source(root.source-id);
+                    root.remove-selected-sources();
                 }
             }
         }

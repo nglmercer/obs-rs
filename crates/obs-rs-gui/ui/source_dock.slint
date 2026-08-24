@@ -166,6 +166,7 @@ export component SourceDock inherits Rectangle {
                         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
                         transform-source(id, action) => { root.transform-source(id, action); }
                         remove-source(id) => { root.remove-source(id); }
+                        remove-selected-sources() => { root.remove-selected-sources(); }
                         background: source.selected ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;
@@ -259,6 +260,7 @@ export component SourceDock inherits Rectangle {
                     flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
                     transform-source(id, action) => { root.transform-source(id, action); }
                     remove-source(id) => { root.remove-source(id); }
+                    remove-selected-sources() => { root.remove-selected-sources(); }
                     HorizontalBox {
                     spacing: 4px;
                     CompactButton {

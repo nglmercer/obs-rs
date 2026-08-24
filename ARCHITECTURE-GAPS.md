@@ -46,9 +46,12 @@ The atomic multi-selection Delete packet now routes the full bounded
 validated before mutation, selected group descendants are subsumed by their
 ancestor, and locked targets or ancestors reject the complete operation. The
 project tests prove root/nested removal, atomic failure, and one-step undo/redo;
-the callback is forwarded through docked and floating panels as well as the
-canvas. The GUI fixture reaches this scenario, then fails later at the existing
-native capture-device choice assertion because this host exposes no device row.
+the callback is forwarded through the SourceContextMenuArea, docked and
+floating panels, as well as the canvas. The GUI fixture reaches the keyboard
+scenario, then fails later at the existing native capture-device choice
+assertion because this host exposes no device row; the popup-specific testing
+harness does not expose a stable menu element, so its interaction remains a
+follow-up fixture rather than a false green result.
 
 The UI modularization packet extracted the window-root modal overlay into
 `main_modals.slint`. It deliberately moved no project state or mutation logic:

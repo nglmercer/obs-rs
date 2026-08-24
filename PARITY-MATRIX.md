@@ -76,7 +76,8 @@ are validated before mutation, selecting both a group and a descendant removes
 the group once, and a locked target or locked group ancestor rejects the whole
 gesture without partial removal. The command therefore creates one undo/redo
 boundary instead of one history entry per selected row. The callback is wired
-through the canvas, dock workspace, dock slot, and floating-dock boundaries.
+through the canvas, Sources dock button, SourceContextMenuArea, dock workspace,
+dock slot, and floating-dock boundaries.
 Project tests cover root/nested removal, ancestor collapse, lock rejection, and
 one-step undo/redo. The GUI fixture reaches the new keyboard scenario before an
 existing native capture-device assertion fails on this host because no device
