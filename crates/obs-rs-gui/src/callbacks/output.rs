@@ -351,7 +351,7 @@ fn install_scene_transition_override_callbacks(
     });
 }
 
-fn scene_transition_spec(
+pub(crate) fn scene_transition_spec(
     kind: &str,
     duration: &str,
     color: &str,

@@ -455,6 +455,8 @@ pub(super) fn catalog() -> UiText {
         resume_meters: s("Resume meters"),
         mixer_options: s("Mixer options"),
         transition_title: s("Scene Transitions"),
+        inherit_transition: s("Inherit desktop transition"),
+        transition_override_hint: s("This scene uses this transition when it is taken to Program."),
         fade: s("Fade"),
         fade_to_color: s("Fade to color"),
         duration: s("Duration"),

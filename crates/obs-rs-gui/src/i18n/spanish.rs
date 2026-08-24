@@ -461,6 +461,8 @@ pub(super) fn catalog() -> UiText {
         resume_meters: s("Reanudar medidores"),
         mixer_options: s("Opciones del mezclador"),
         transition_title: s("Transiciones de escena"),
+        inherit_transition: s("Heredar transición del escritorio"),
+        transition_override_hint: s("Esta escena usa esta transición al pasarla a Programa."),
         fade: s("Desvanecimiento"),
         fade_to_color: s("Desvanecer a color"),
         duration: s("Duración"),

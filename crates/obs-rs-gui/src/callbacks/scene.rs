@@ -5,12 +5,13 @@ use obs_rs_ui::{DesktopState, UiCommand, UiLocale, MAX_CANVAS_SELECTIONS};
 use slint::ComponentHandle;
 
 use crate::{
-    apply_source_name_and_refresh, apply_source_settings_and_refresh, dispatch_and_refresh,
-    duplicate_scene_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
-    move_source_and_refresh, move_source_to_and_refresh, move_source_to_group_and_refresh,
-    refresh_ui, remove_scene_and_refresh, remove_source_and_refresh, rename_scene_and_refresh,
-    reset_source_transform_and_refresh, toggle_source_locked_and_refresh,
-    toggle_source_visibility_and_refresh, transform_source_and_refresh, MainWindow, PreviewSurface,
+    apply_scene_properties_and_refresh, apply_source_name_and_refresh,
+    apply_source_settings_and_refresh, dispatch_and_refresh, duplicate_scene_and_refresh,
+    duplicate_source_and_refresh, flip_source_and_refresh, move_source_and_refresh,
+    move_source_to_and_refresh, move_source_to_group_and_refresh, refresh_ui,
+    remove_scene_and_refresh, remove_source_and_refresh, reset_source_transform_and_refresh,
+    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
+    transform_source_and_refresh, MainWindow, PreviewSurface,
 };
 
 pub(crate) fn install_scene_callbacks(
@@ -92,11 +93,14 @@ fn install_scene_selection_callbacks(
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        rename_scene_and_refresh(
+        apply_scene_properties_and_refresh(
             &ui,
             &rename_state,
             &rename_surface,
             ui.get_scene_name().as_str(),
+            ui.get_scene_transition_index(),
+            ui.get_scene_transition_duration().as_str(),
+            ui.get_scene_transition_color().as_str(),
         );
     });
 

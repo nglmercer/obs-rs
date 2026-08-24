@@ -42,6 +42,20 @@ fixture covers destination projection, callback execution, selection recovery,
 and cleanup. Nested crop/rotation semantics and full drag/drop reparenting remain
 open.
 
+## Latest verified package: scene properties
+
+On 2026-08-24, the Scene properties dialog now edits the scene display name
+and its optional Program transition override through one atomic
+`SetSceneProperties` project command. The dialog exposes inheritance from the
+desktop transition, Cut, Fade, and Fade to color with bounded duration and
+RGBA color parsing. Project history records the name and transition as one
+undo step; invalid names or transition values leave the project unchanged.
+Refresh projection is versioned and does not overwrite fields while the modal
+is being edited. Project tests cover persistence, inheritance clearing, undo,
+and atomic rejection; the GUI fixture covers cross-fade, fade-to-color,
+inheritance, and the single undo step. The existing dock transition controls
+continue to use the same parser and runtime state.
+
 ## Core, scheduling, and rendering
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |

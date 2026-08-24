@@ -22,6 +22,15 @@ Stable paths are recomputed after the move so selection does not point at the
 old parent. Direct group drag/drop, nested crop/rotation semantics, and the
 broader save/recovery lifecycle remain open.
 
+The Scene properties packet now keeps scene name and optional transition
+override in the same Rust-owned `SetSceneProperties` command. The dialog
+projects inherited, Cut, cross-fade, and fade-to-color policies, while the
+existing bounded transition parser remains the single validation boundary.
+Refresh versioning prevents background UI ticks from replacing an in-progress
+modal edit, and the project plus GUI fixtures prove one undo step and clean
+inheritance. Per-scene transition selection still does not replace the broader
+Studio Mode transition workflow or production output parity.
+
 ## Phase 1 progress
 
 The first performance packet is now implemented:

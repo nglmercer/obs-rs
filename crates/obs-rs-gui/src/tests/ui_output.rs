@@ -111,6 +111,88 @@ pub(super) fn exercise_recording_controls(
     assert!(ui
         .get_status_message()
         .contains("Transition color must be #RRGGBB or #RRGGBBAA"));
+
+    exercise_scene_properties_dialog(ui, state, surface);
+}
+
+fn exercise_scene_properties_dialog(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    ui.invoke_select_preview("preview".into());
+    refresh_ui(ui, state, surface);
+    assert_eq!(ui.get_scene_transition_index(), 0);
+
+    ui.set_scene_name("Dialog scene".into());
+    ui.set_scene_transition_index(2);
+    ui.set_scene_transition_duration("900".into());
+    ui.set_scene_transition_color("#000000FF".into());
+    ui.invoke_rename_scene();
+    {
+        let state = state.borrow();
+        let scene = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .expect("scene properties target");
+        assert_eq!(scene.name(), "Dialog scene");
+        let transition = scene.transition_override().expect("cross-fade override");
+        assert_eq!(transition.kind(), obs_rs_media::TransitionKind::CrossFade);
+        assert_eq!(transition.duration_millis(), 900);
+    }
+
+    // The dialog's name and transition are one project command and therefore
+    // one undo step.
+    ui.invoke_undo_edit();
+    {
+        let state = state.borrow();
+        let scene = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .expect("scene after undo");
+        assert_eq!(scene.name(), "Preview");
+        assert!(scene.transition_override().is_none());
+    }
+
+    ui.set_scene_name("Color scene".into());
+    ui.set_scene_transition_index(3);
+    ui.set_scene_transition_duration("450".into());
+    ui.set_scene_transition_color("#00FF0080".into());
+    ui.invoke_rename_scene();
+    let transition = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(SceneSpec::transition_override)
+        .expect("fade-to-color override");
+    assert_eq!(transition.duration_millis(), 450);
+    assert_eq!(
+        transition.kind(),
+        obs_rs_media::TransitionKind::FadeToColor {
+            color: [0, 255, 0, 128]
+        }
+    );
+
+    ui.set_scene_name("Inherited scene".into());
+    ui.set_scene_transition_index(0);
+    ui.invoke_rename_scene();
+    {
+        let state = state.borrow();
+        let scene = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .expect("inherited scene");
+        assert_eq!(scene.name(), "Inherited scene");
+        assert!(scene.transition_override().is_none());
+    }
 }
 
 /// Drives the actual Controls-dock replay actions and verifies that the

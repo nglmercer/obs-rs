@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use obs_rs_media::{FrameTransition, RawVideoFrame, VideoFrame};
+use obs_rs_media::{FrameTransition, RawVideoFrame, TransitionKind, VideoFrame};
 use obs_rs_project::{Profile, ProjectCommand, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
@@ -575,6 +575,20 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_scene_name(selected_scene_name.into());
         ui.set_scene_name_version(ui.get_scene_name().clone());
     }
+    let (transition_index, transition_duration, transition_color) =
+        scene_transition_fields(selected_scene);
+    let properties_version = format!("{transition_index}|{transition_duration}|{transition_color}");
+    // Refresh ticks continue while a modal is open. Do not replace text the
+    // user is editing; the next tick after acceptance/cancel synchronizes the
+    // dialog fields with the selected scene again.
+    if ui.get_active_modal() != 5
+        && ui.get_scene_properties_version().as_str() != properties_version
+    {
+        ui.set_scene_transition_index(transition_index);
+        ui.set_scene_transition_duration(transition_duration.into());
+        ui.set_scene_transition_color(transition_color.into());
+        ui.set_scene_properties_version(properties_version.into());
+    }
 
     // The dock selection is a bounded scene-item path. Source configuration is
     // resolved through the profile registry so two rows can point at the same
@@ -782,6 +796,26 @@ pub(crate) fn transition_kind(transition: FrameTransition) -> &'static str {
         FrameTransition::CrossFade { .. } => "cross_fade",
         FrameTransition::FadeToColor { .. } => "fade_to_color",
     }
+}
+
+/// Projects the persisted per-scene transition into the compact dialog model.
+/// Index zero deliberately means inheritance from the desktop transition.
+fn scene_transition_fields(scene: Option<&SceneSpec>) -> (i32, String, String) {
+    let Some(transition) = scene.and_then(SceneSpec::transition_override) else {
+        return (0, "300".to_owned(), "#000000FF".to_owned());
+    };
+    let (index, color) = match transition.kind() {
+        TransitionKind::Cut => (1, "#000000FF".to_owned()),
+        TransitionKind::CrossFade => (2, "#000000FF".to_owned()),
+        TransitionKind::FadeToColor { color } => (
+            3,
+            format!(
+                "#{:02X}{:02X}{:02X}{:02X}",
+                color[0], color[1], color[2], color[3]
+            ),
+        ),
+    };
+    (index, transition.duration_millis().to_string(), color)
 }
 
 #[cfg(test)]

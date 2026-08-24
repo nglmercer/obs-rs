@@ -5,6 +5,7 @@ use obs_rs_project::{ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
+use super::output::scene_transition_spec;
 use crate::{refresh_ui, source_settings_for_canvas, MainWindow, OutputRuntime, PreviewSurface};
 
 const DISCARD_NEW_PROJECT: i32 = 4;
@@ -366,11 +367,14 @@ fn add_scene_and_refresh(
     }
 }
 
-pub(crate) fn rename_scene_and_refresh(
+pub(crate) fn apply_scene_properties_and_refresh(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
     name: &str,
+    transition_index: i32,
+    duration: &str,
+    color: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let profile = state
@@ -384,18 +388,36 @@ pub(crate) fn rename_scene_and_refresh(
             .preview_scene()
             .map(str::to_owned)
             .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+        let transition = match transition_index {
+            0 => None,
+            1 => {
+                Some(scene_transition_spec("cut", duration, color).map_err(std::io::Error::other)?)
+            }
+            2 => Some(
+                scene_transition_spec("cross_fade", duration, color)
+                    .map_err(std::io::Error::other)?,
+            ),
+            3 => Some(
+                scene_transition_spec("fade_to_color", duration, color)
+                    .map_err(std::io::Error::other)?,
+            ),
+            _ => {
+                return Err(std::io::Error::other("Scene transition selection is invalid").into());
+            }
+        };
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSceneName {
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneProperties {
                 profile,
                 scene,
                 name: name.to_owned(),
+                transition,
             }))?;
         Ok(())
     })();
     match result {
         Ok(()) => refresh_ui(ui, state, surface),
-        Err(error) => ui.set_status_message(format!("Rename scene failed: {error}").into()),
+        Err(error) => ui.set_status_message(format!("Scene properties failed: {error}").into()),
     }
 }
 

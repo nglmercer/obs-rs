@@ -127,6 +127,24 @@ impl Project {
                     .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
                 scene.set_name(&name)
             }
+            ProjectCommand::SetSceneProperties {
+                profile,
+                scene,
+                name,
+                transition,
+            } => {
+                let profile_id = identifier(&profile, "profile id")?;
+                let profile = self
+                    .profile_mut(&profile_id)
+                    .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+                let scene_id = identifier(&scene, "scene id")?;
+                let scene = profile
+                    .scene_mut(&scene_id)
+                    .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+                scene.set_name(&name)?;
+                scene.set_transition_override(transition);
+                Ok(())
+            }
             ProjectCommand::SetSceneTransitionOverride {
                 profile,
                 scene,

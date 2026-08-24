@@ -99,13 +99,16 @@ export component ConfirmDialog inherits ModalShell {
 export component RenameSceneDialog inherits ModalShell {
     in property <string> locale;
     in-out property <string> scene-name;
+    in-out property <int> transition-index: 0;
+    in-out property <string> transition-duration;
+    in-out property <string> transition-color;
     callback rename-scene();
 
     title: I18n.text.scene_properties;
     subtitle: I18n.text.scene_dialog_description;
-    accept-label: I18n.text.rename;
+    accept-label: I18n.text.settings_ui.apply;
     cancel-label: I18n.text.cancel;
-    panel-height: 240px;
+    panel-height: 370px;
     accepted => rename-scene();
 
     VerticalBox {
@@ -115,6 +118,28 @@ export component RenameSceneDialog inherits ModalShell {
             text <=> scene-name;
             placeholder-text: I18n.text.scene_name_placeholder;
         }
+        FieldHeading { text: I18n.text.transition_title; }
+        ComboBox {
+            model: [
+                I18n.text.inherit_transition,
+                I18n.text.cut,
+                I18n.text.fade,
+                I18n.text.fade_to_color
+            ];
+            current-index: root.transition-index;
+            selected(value) => { root.transition-index = self.current-index; }
+        }
+        if root.transition-index != 0 : FieldHeading { text: I18n.text.duration; }
+        if root.transition-index != 0 : LineEdit {
+            text <=> root.transition-duration;
+            placeholder-text: "300";
+        }
+        if root.transition-index == 3 : FieldHeading { text: I18n.text.property_ui.color; }
+        if root.transition-index == 3 : LineEdit {
+            text <=> root.transition-color;
+            placeholder-text: "#000000FF";
+        }
+        MutedText { text: I18n.text.transition_override_hint; }
     }
 }
 

@@ -122,6 +122,10 @@ export component MainWindow inherits Window {
         in-out property <int> dock-drop-zone: -1;
         in property <string> scene-name-version;
         in-out property <string> scene-name;
+        in-out property <int> scene-transition-index: 0;
+        in-out property <string> scene-transition-duration;
+        in-out property <string> scene-transition-color;
+        in property <string> scene-properties-version;
         in property <string> selected-source;
         in property <bool> selected-source-visible: false;
         in property <bool> selected-source-locked: false;
@@ -924,6 +928,9 @@ export component MainWindow inherits Window {
         open: root.active-modal == 5;
         locale: root.locale;
         scene-name <=> root.scene-name;
+        transition-index <=> root.scene-transition-index;
+        transition-duration <=> root.scene-transition-duration;
+        transition-color <=> root.scene-transition-color;
         rename-scene() => { root.rename-scene(); }
         close => { root.active-modal = 0; }
         accepted => { root.active-modal = 0; }

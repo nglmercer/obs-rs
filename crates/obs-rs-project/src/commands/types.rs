@@ -118,6 +118,16 @@ pub enum ProjectCommand {
         scene: String,
         name: String,
     },
+    /// Replaces a scene name and its optional transition policy as one edit.
+    ///
+    /// Keeping these fields together makes the Scene properties dialog one
+    /// undoable operation instead of creating a history entry for each field.
+    SetSceneProperties {
+        profile: String,
+        scene: String,
+        name: String,
+        transition: Option<TransitionSpec>,
+    },
     /// Replaces the optional transition policy used when a scene is taken to
     /// program. `None` restores inheritance from the desktop transition.
     SetSceneTransitionOverride {
