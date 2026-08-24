@@ -30,6 +30,7 @@ pub(super) const SCALE_MICROS_PER_PERCENT: i64 = 10_000;
 pub(super) const SCALE_MICROS_PER_UNIT: i64 = 1_000_000;
 pub(super) const RESIZE_MODIFIER_SHIFT: i32 = 1;
 pub(super) const RESIZE_MODIFIER_CONTROL: i32 = 2;
+pub(super) const RESIZE_MODIFIER_ALT: i32 = 4;
 
 /// The scale a transform stores for a source that fills the canvas.
 pub(super) const UNIT_SCALE_MILLI: i64 = 1_000;
@@ -147,13 +148,15 @@ impl Default for SnapSettings {
 /// Modifier policy captured when a resize/move gesture starts.
 ///
 /// OBS keeps ordinary scene-item resizing aspect-preserving and uses Shift to
-/// opt into free resizing. Ctrl suppresses snapping for the gesture. The
-/// policy is copied out of the toolkit event at the boundary so the geometry
-/// functions remain deterministic and testable.
+/// opt into free resizing. Ctrl suppresses snapping for the gesture, while
+/// Alt changes a handle drag into source cropping. The policy is copied out of
+/// the toolkit event at the boundary so the geometry functions remain
+/// deterministic and testable.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct CanvasResizeModifiers {
     pub(super) preserve_aspect: bool,
     pub(super) snapping: bool,
+    pub(super) crop: bool,
 }
 
 impl CanvasResizeModifiers {
@@ -161,6 +164,7 @@ impl CanvasResizeModifiers {
         Self {
             preserve_aspect: mask & RESIZE_MODIFIER_SHIFT == 0,
             snapping: mask & RESIZE_MODIFIER_CONTROL == 0,
+            crop: mask & RESIZE_MODIFIER_ALT != 0,
         }
     }
 }

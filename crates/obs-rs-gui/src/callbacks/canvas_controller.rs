@@ -436,18 +436,13 @@ pub(crate) fn install_canvas_callbacks(
             return;
         };
         let modifiers = CanvasResizeModifiers::from_mask(modifier_mask);
-        if (9..=16).contains(&handle) {
-            if draft.items.len() != 1 {
+        if modifiers.crop {
+            if draft.items.len() != 1 || !(1..=8).contains(&handle) {
                 return;
             }
             let item = &mut draft.items[0];
-            item.transform = crop_transform(
-                item.transform,
-                handle - 8,
-                i64::from(dx),
-                i64::from(dy),
-                canvas,
-            );
+            item.transform =
+                crop_transform(item.transform, handle, i64::from(dx), i64::from(dy), canvas);
         } else if draft.items.len() == 1
             && draft.items[0].transform.is_rotated()
             && (1..=8).contains(&handle)

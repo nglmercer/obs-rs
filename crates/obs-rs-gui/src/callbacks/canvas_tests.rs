@@ -270,6 +270,191 @@ fn opposite_edges_stay_put_while_a_handle_is_dragged() {
 }
 
 #[test]
+fn free_resize_covers_all_handles_and_keeps_the_opposite_edges_fixed() {
+    let base = rect();
+    let cases = [
+        (
+            1,
+            20,
+            15,
+            ItemRect {
+                x: 120,
+                y: 65,
+                width: 380,
+                height: 285,
+            },
+        ),
+        (
+            2,
+            20,
+            15,
+            ItemRect {
+                x: 100,
+                y: 65,
+                width: 400,
+                height: 285,
+            },
+        ),
+        (
+            3,
+            20,
+            15,
+            ItemRect {
+                x: 100,
+                y: 65,
+                width: 420,
+                height: 285,
+            },
+        ),
+        (
+            4,
+            20,
+            15,
+            ItemRect {
+                x: 100,
+                y: 50,
+                width: 420,
+                height: 300,
+            },
+        ),
+        (
+            5,
+            20,
+            15,
+            ItemRect {
+                x: 100,
+                y: 50,
+                width: 420,
+                height: 315,
+            },
+        ),
+        (
+            6,
+            20,
+            15,
+            ItemRect {
+                x: 100,
+                y: 50,
+                width: 400,
+                height: 315,
+            },
+        ),
+        (
+            7,
+            20,
+            15,
+            ItemRect {
+                x: 120,
+                y: 50,
+                width: 380,
+                height: 315,
+            },
+        ),
+        (
+            8,
+            20,
+            15,
+            ItemRect {
+                x: 120,
+                y: 50,
+                width: 380,
+                height: 300,
+            },
+        ),
+    ];
+
+    for (handle, dx, dy, expected) in cases {
+        assert_eq!(
+            drag_rect(base, handle, dx, dy),
+            expected,
+            "free resize handle {handle}"
+        );
+    }
+}
+
+#[test]
+fn aspect_resize_covers_all_handles_and_keeps_the_opposite_anchor() {
+    let base = rect();
+    let cases = [
+        (1, -80, -60, 20, -10),
+        (2, 0, -60, 60, -10),
+        (3, 80, -60, 100, -10),
+        (4, 80, 0, 100, 20),
+        (5, 80, 60, 100, 50),
+        (6, 0, 60, 60, 50),
+        (7, -80, 60, 20, 50),
+        (8, -80, 0, 20, 20),
+    ];
+
+    for (handle, dx, dy, expected_x, expected_y) in cases {
+        let raw = drag_rect(base, handle, dx, dy);
+        let edited = preserve_resize_aspect(base, raw, handle, 4, 3);
+        assert_eq!(
+            (edited.x, edited.y, edited.width, edited.height),
+            (expected_x, expected_y, 480, 360),
+            "aspect resize handle {handle}"
+        );
+        assert_eq!(edited.width * 3, edited.height * 4);
+    }
+}
+
+#[test]
+fn minimum_size_is_enforced_for_every_resize_handle() {
+    let base = rect();
+    let cases = [
+        (
+            1,
+            1_000,
+            1_000,
+            484,
+            334,
+            MINIMUM_ITEM_PIXELS,
+            MINIMUM_ITEM_PIXELS,
+        ),
+        (2, 0, 1_000, 100, 334, 400, MINIMUM_ITEM_PIXELS),
+        (
+            3,
+            -1_000,
+            1_000,
+            100,
+            334,
+            MINIMUM_ITEM_PIXELS,
+            MINIMUM_ITEM_PIXELS,
+        ),
+        (4, -1_000, 0, 100, 50, MINIMUM_ITEM_PIXELS, 300),
+        (
+            5,
+            -1_000,
+            -1_000,
+            100,
+            50,
+            MINIMUM_ITEM_PIXELS,
+            MINIMUM_ITEM_PIXELS,
+        ),
+        (6, 0, -1_000, 100, 50, 400, MINIMUM_ITEM_PIXELS),
+        (
+            7,
+            1_000,
+            -1_000,
+            484,
+            50,
+            MINIMUM_ITEM_PIXELS,
+            MINIMUM_ITEM_PIXELS,
+        ),
+        (8, 1_000, 0, 484, 50, MINIMUM_ITEM_PIXELS, 300),
+    ];
+
+    for (handle, dx, dy, expected_x, expected_y, expected_width, expected_height) in cases {
+        let edited = drag_rect(base, handle, dx, dy);
+        assert_eq!(
+            (edited.x, edited.y, edited.width, edited.height),
+            (expected_x, expected_y, expected_width, expected_height),
+            "minimum size handle {handle}"
+        );
+    }
+}
+
+#[test]
 fn ordinary_resize_preserves_aspect_and_shift_allows_free_resize() {
     let base = rect();
     let raw = drag_rect(base, 5, 100, 10);
@@ -303,6 +488,7 @@ fn ordinary_resize_preserves_aspect_and_shift_allows_free_resize() {
         CanvasResizeModifiers {
             preserve_aspect: true,
             snapping: true,
+            crop: false,
         }
     );
     assert_eq!(
@@ -310,6 +496,7 @@ fn ordinary_resize_preserves_aspect_and_shift_allows_free_resize() {
         CanvasResizeModifiers {
             preserve_aspect: false,
             snapping: true,
+            crop: false,
         }
     );
     assert_eq!(
@@ -317,6 +504,17 @@ fn ordinary_resize_preserves_aspect_and_shift_allows_free_resize() {
         CanvasResizeModifiers {
             preserve_aspect: true,
             snapping: false,
+            crop: false,
+        }
+    );
+    assert_eq!(
+        CanvasResizeModifiers::from_mask(
+            RESIZE_MODIFIER_SHIFT | RESIZE_MODIFIER_CONTROL | RESIZE_MODIFIER_ALT
+        ),
+        CanvasResizeModifiers {
+            preserve_aspect: false,
+            snapping: false,
+            crop: true,
         }
     );
 }
@@ -377,6 +575,37 @@ fn alt_handle_crop_changes_source_edges_without_losing_the_opposite_edge() {
     assert_eq!(right.crop_right(), 100);
     assert_eq!(right.translate_x(), 0);
     assert_eq!(item_rect(right, CANVAS).width, 1_820);
+}
+
+#[test]
+fn alt_crop_covers_all_handles_without_encoding_crop_as_a_handle_id() {
+    let base = FrameTransform::IDENTITY;
+    let cases = [
+        (1, 100, 50, (100, 50, 0, 0, 100, 50)),
+        (2, 0, 50, (0, 50, 0, 0, 0, 50)),
+        (3, -100, 50, (0, 50, 100, 0, 0, 50)),
+        (4, -100, 0, (0, 0, 100, 0, 0, 0)),
+        (5, -100, -50, (0, 0, 100, 50, 0, 0)),
+        (6, 0, -50, (0, 0, 0, 50, 0, 0)),
+        (7, 100, -50, (100, 0, 0, 50, 100, 0)),
+        (8, 100, 0, (100, 0, 0, 0, 100, 0)),
+    ];
+
+    for (handle, dx, dy, expected) in cases {
+        let cropped = crop_transform(base, handle, dx, dy, CANVAS);
+        assert_eq!(
+            (
+                cropped.crop_left(),
+                cropped.crop_top(),
+                cropped.crop_right(),
+                cropped.crop_bottom(),
+                cropped.translate_x(),
+                cropped.translate_y(),
+            ),
+            expected,
+            "crop handle {handle}"
+        );
+    }
 }
 
 #[test]

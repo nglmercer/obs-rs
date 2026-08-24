@@ -41,8 +41,8 @@ use canvas_model::{
 pub(crate) use canvas_model::{CanvasState, CanvasTransformCommand, CanvasZoom};
 #[cfg(test)]
 use canvas_model::{
-    MAX_PAN_PIXELS, MAX_ZOOM_PERCENT, MIN_ZOOM_PERCENT, SCALE_MICROS_PER_PERCENT,
-    SCALE_MICROS_PER_UNIT,
+    MAX_PAN_PIXELS, MAX_ZOOM_PERCENT, MIN_ZOOM_PERCENT, RESIZE_MODIFIER_ALT,
+    SCALE_MICROS_PER_PERCENT, SCALE_MICROS_PER_UNIT,
 };
 use canvas_transform::{
     crop_transform, group_rotation_from_pointer, preserve_resize_aspect, rotate_canvas_delta,
