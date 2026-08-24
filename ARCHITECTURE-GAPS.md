@@ -76,6 +76,11 @@ handles, nested geometry, live DPI, and the native capture device prerequisite
 remain outside this evidence; the same fixture also verifies a real wheel event
 changes continuous zoom and restores the anchored viewport state.
 
+The source-row follow-up inserts a temporary group at a visible boundary and
+clicks its nested child through the actual SourceContextMenuArea target. The
+selected `group/child` path is verified and the temporary group is removed;
+nested canvas geometry is still a separate gap.
+
 The UI modularization packet extracted the window-root modal overlay into
 `main_modals.slint`. It deliberately moved no project state or mutation logic:
 the component receives bounded properties and forwards typed callbacks, while

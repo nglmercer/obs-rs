@@ -16,7 +16,7 @@ use obs_rs_media::{
 };
 use obs_rs_output::{encode_png, MemoryMuxer, OutputProfileKind, PacketKind, RTMP_SERVICE_PRESETS};
 use obs_rs_plugin_api::VideoRequest;
-use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
+use obs_rs_project::{ProjectCommand, SceneItemSpec, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, ProjectSceneSelection, Shortcut, UiAction, UiCommand, UiLocale};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{CloseRequestResponse, ComponentHandle, LogicalPosition, Model, ModelRc, VecModel};

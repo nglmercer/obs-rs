@@ -257,6 +257,64 @@ pub(super) fn exercise_source_mouse_selection(
         vec!["keyboard-delete-first", "keyboard-delete-second"],
         "Shift keyboard navigation selects the adjacent source range"
     );
+
+    exercise_nested_source_mouse_selection(ui, state, surface);
+}
+
+fn exercise_nested_source_mouse_selection(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let mut nested_group = SceneItemSpec::for_group("mouse-select-group", "Mouse select group")
+        .expect("nested mouse selection group");
+    nested_group
+        .group_mut()
+        .expect("nested mouse selection group body")
+        .add_item(
+            SceneItemSpec::new("mouse-select-nested", "mouse-select-first")
+                .expect("nested mouse selection item"),
+        )
+        .expect("add nested mouse selection item");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: nested_group,
+        }))
+        .expect("add nested mouse selection group");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::MoveSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: "mouse-select-group".to_owned(),
+            target_index: 1,
+        }))
+        .expect("place nested mouse selection group in visible rows");
+    refresh_ui(ui, state, surface);
+    visible_source_row_target(ui, 2).mock_single_click(PointerEventButton::Left);
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["mouse-select-group/mouse-select-nested"],
+        "nested source-row click keeps the path-addressed selection"
+    );
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: "mouse-select-group".to_owned(),
+        }))
+        .expect("remove nested mouse selection group");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: "keyboard-delete-first".to_owned(),
+        })
+        .expect("restore source selection after nested pointer test");
+    refresh_ui(ui, state, surface);
 }
 
 fn visible_source_row_target(ui: &MainWindow, index: usize) -> ElementHandle {
