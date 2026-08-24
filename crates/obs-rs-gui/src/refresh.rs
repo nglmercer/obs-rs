@@ -527,6 +527,16 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     ui.set_selected_source_first(selected_source_first);
     ui.set_selected_source_last(selected_source_last);
     ui.set_can_paste(state.can_paste_source());
+    let can_group_sources = selected_scene.is_some_and(|scene| {
+        let selected = state.selected_sources().collect::<Vec<_>>();
+        selected.len() >= 2
+            && selected.iter().all(|target| {
+                !target.contains('/')
+                    && crate::callbacks::item_for_target(scene, target)
+                        .is_some_and(|item| !item.locked())
+            })
+    });
+    ui.set_can_group_sources(can_group_sources);
 
     let selected_settings =
         selected_source_spec.map_or_else(String::new, |source| source.settings().serialize());

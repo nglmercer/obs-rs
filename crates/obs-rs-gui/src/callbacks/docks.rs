@@ -72,6 +72,7 @@ impl DockController {
             window.set_selected_source_last(ui.get_selected_source_last());
             window.set_source_count(ui.get_source_count());
             window.set_can_paste(ui.get_can_paste());
+            window.set_can_group_sources(ui.get_can_group_sources());
             window.set_transition(ui.get_transition());
             window.set_transition_kind(ui.get_transition_kind());
             window.set_recording(ui.get_recording());
@@ -742,6 +743,7 @@ fn forward_to_studio(
     forward!(on_transform_source, invoke_transform_source, id, action);
     forward!(on_open_source_rename, invoke_open_source_rename, id);
     forward!(on_duplicate_source, invoke_duplicate_source, id);
+    forward!(on_group_sources, invoke_group_sources);
     forward!(on_copy_source, invoke_copy_source, id);
     forward!(on_paste_reference, invoke_paste_reference, target);
     forward!(on_paste_duplicate, invoke_paste_duplicate, target);

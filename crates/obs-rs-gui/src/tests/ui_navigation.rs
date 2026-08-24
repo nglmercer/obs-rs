@@ -296,6 +296,63 @@ pub(super) fn exercise_group_source_callbacks(
             .any(|target| target == selected.as_str()),
         "Ctrl+A includes the later root row after the nested group"
     );
+
+    // Grouping is enabled only for an unlocked root selection. Add a second
+    // root item so this exercises the complete callback and the same atomic
+    // project command used by the context menu.
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: obs_rs_project::SceneItemSpec::for_source("pattern").expect("pattern root item"),
+        }))
+        .expect("add root item for grouping");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSources {
+            ids: vec!["background".to_owned(), "pattern".to_owned()],
+            additive: false,
+        })
+        .expect("select root items for grouping");
+    refresh_ui(ui, state, surface);
+    assert!(ui.get_can_group_sources());
+    ui.invoke_group_sources();
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("group"),
+        "grouping selects the new group"
+    );
+    let grouped_ids = {
+        let state = state.borrow();
+        let grouped = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(|scene| scene.item("group"))
+            .and_then(obs_rs_project::SceneItemSpec::group)
+            .expect("group callback creates a root group");
+        grouped
+            .items()
+            .iter()
+            .map(|item| item.id().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        grouped_ids,
+        vec!["background".to_owned(), "pattern".to_owned()]
+    );
+    assert!(!ui.get_can_group_sources());
+    ui.invoke_undo_edit();
+    ui.invoke_undo_edit();
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .is_some_and(|scene| scene.item("group").is_none() && scene.item("pattern").is_none()));
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup

@@ -26,6 +26,7 @@ export component DockSlot inherits Rectangle {
     in property <bool> selected-source-last;
     in property <int> source-count;
     in property <bool> can-paste;
+    in property <bool> can-group-sources;
     in property <string> transition;
     in property <string> transition-kind;
     in property <bool> recording;
@@ -69,6 +70,7 @@ export component DockSlot inherits Rectangle {
     callback transform-source(string, string);
     callback open-source-rename(string);
     callback duplicate-source(string);
+    callback group-sources();
     callback copy-source(string);
     callback paste-reference(string);
     callback paste-duplicate(string);
@@ -136,6 +138,7 @@ export component DockSlot inherits Rectangle {
         selected-source-last: root.selected-source-last;
         source-count: root.source-count;
         can-paste: root.can-paste;
+        can-group-sources: root.can-group-sources;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
         dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
         dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
@@ -162,6 +165,7 @@ export component DockSlot inherits Rectangle {
         transform-source(id, action) => { root.transform-source(id, action); }
         open-source-rename(id) => { root.open-source-rename(id); }
         duplicate-source(id) => { root.duplicate-source(id); }
+        group-sources() => { root.group-sources(); }
         copy-source(id) => { root.copy-source(id); }
         paste-reference(target) => { root.paste-reference(target); }
         paste-duplicate(target) => { root.paste-duplicate(target); }

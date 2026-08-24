@@ -52,6 +52,10 @@ opening, and depth-first keyboard navigation can select targets such as
 canvas geometry remains intentionally separate until world-transform
 projection is implemented.
 
+The Sources dock now exposes one atomic root-only grouping command. It preserves
+scene order and child transforms, rejects nested or locked selections, keeps the
+new group selected, and leaves the performance/presentation path unchanged.
+
 | ID | Gap | Current evidence | Consequence | Required target | Dependencies / first packet |
 | --- | --- | --- | --- | --- | --- |
 | GAP-001 | Render-target ownership is conflated | `RenderTarget`/`RenderTargetRole` and role-keyed WGPU targets now separate program, preview, projector, and encoder ownership; GUI preview no longer targets the full canvas by default. Selected-source and selected-scene projectors use the same worker runtime and bounded projector targets. | Native fan-out and projector lifetimes are not yet connected, and the compatibility readback remains explicit CPU storage. | Finish role-specific fan-out and native target import while preserving the CPU oracle and output scaling tests. | Work 005–006; preserve `obs-rs-media` CPU oracle and existing output scaling tests. |

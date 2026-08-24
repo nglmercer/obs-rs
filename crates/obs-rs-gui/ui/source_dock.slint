@@ -20,6 +20,7 @@ export component SourceDock inherits Rectangle {
     in property <bool> selected-source-last;
     in property <int> source-count;
     in property <bool> can-paste;
+    in property <bool> can-group-sources;
     in property <int> panel-kind;
     in property <bool> floating;
     callback move-panel(int, int);
@@ -49,6 +50,7 @@ export component SourceDock inherits Rectangle {
     callback transform-source(string, string);
     callback open-source-rename(string);
     callback duplicate-source(string);
+    callback group-sources();
     callback copy-source(string);
     callback paste-reference(string);
     callback paste-duplicate(string);
@@ -121,6 +123,7 @@ export component SourceDock inherits Rectangle {
                         can-move-bottom: !source.last;
                         source-count: source.count;
                         can-paste: root.can-paste;
+                        can-group: root.can-group-sources;
                         select-source(id) => { root.select-source(id); }
                         open-properties(id) => { root.open-properties(id); }
                         open-filters(id) => { root.open-filters(id); }
@@ -131,6 +134,7 @@ export component SourceDock inherits Rectangle {
                             root.select-source(id);
                             root.duplicate-source(id);
                         }
+                        group-sources() => { root.group-sources(); }
                         copy-source(id) => { root.copy-source(id); }
                         paste-reference(target) => { root.paste-reference(target); }
                         paste-duplicate(target) => { root.paste-duplicate(target); }
@@ -156,7 +160,7 @@ export component SourceDock inherits Rectangle {
                                 if event.kind == PointerEventKind.down
                                     && event.button == PointerEventButton.right {
                                     source-focus.focus();
-                                    select-source(source.id);
+                                    if !source.selected { select-source(source.id); }
                                     source-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
                                 }
                             }
@@ -210,6 +214,7 @@ export component SourceDock inherits Rectangle {
                     can-move-bottom: !root.selected-source-last;
                     source-count: root.source-count;
                     can-paste: root.can-paste;
+                    can-group: root.can-group-sources;
                     select-source(id) => { root.select-source(id); }
                     open-properties(id) => { root.open-properties(id); }
                     open-filters(id) => { root.open-filters(id); }
@@ -217,6 +222,7 @@ export component SourceDock inherits Rectangle {
                     open-source-projector(id) => { root.open-source-projector(id); }
                     rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                     duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
+                    group-sources() => { root.group-sources(); }
                     copy-source(id) => { root.copy-source(id); }
                     paste-reference(target) => { root.paste-reference(target); }
                     paste-duplicate(target) => { root.paste-duplicate(target); }

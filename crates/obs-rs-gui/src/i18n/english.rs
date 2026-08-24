@@ -422,6 +422,7 @@ pub(super) fn catalog() -> UiText {
         copy_source: s("Copy"),
         paste_reference: s("Paste (Reference)"),
         paste_duplicate: s("Paste (Duplicate)"),
+        group_selected_sources: s("Group selected items"),
         source_move_up: s("Move source up"),
         source_move_down: s("Move source down"),
         duplicate: s("Duplicate"),

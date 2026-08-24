@@ -2,6 +2,7 @@
 
 use obs_rs_media::FrameTransform;
 use obs_rs_util::Identifier;
+use std::collections::HashSet;
 
 use super::super::{
     error::ProjectError,
@@ -89,6 +90,87 @@ pub(super) fn set_group_name(
             .ok_or(ProjectError::InvalidGroupPath)?
             .set_name(name)
     }
+}
+
+pub(super) fn group_scene_items(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    item_ids: &[String],
+    mut group: SceneItemSpec,
+) -> Result<(), ProjectError> {
+    if item_ids.len() < 2 || item_ids.iter().any(|id| id.contains('/')) {
+        return Err(ProjectError::InvalidGroupSelection);
+    }
+    if !group.is_group() || group.group().is_some_and(|group| !group.items().is_empty()) {
+        return Err(ProjectError::InvalidGroupPath);
+    }
+    let item_ids = item_ids
+        .iter()
+        .map(|id| identifier(id, "scene item id"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut unique = HashSet::with_capacity(item_ids.len());
+    if item_ids.iter().any(|id| !unique.insert(id.clone())) {
+        return Err(ProjectError::InvalidGroupSelection);
+    }
+
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let profile_ref = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene_ref = profile_ref
+        .scene(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    if scene_ref.has_item(group.id()) {
+        return Err(ProjectError::DuplicateSceneItem(group.id().clone()));
+    }
+
+    let mut selected = item_ids
+        .iter()
+        .map(|id| {
+            let (index, item) = scene_ref
+                .items()
+                .iter()
+                .enumerate()
+                .find(|(_, item)| item.id() == id)
+                .ok_or_else(|| ProjectError::UnknownSceneItem(id.clone()))?;
+            Ok((index, item))
+        })
+        .collect::<Result<Vec<_>, ProjectError>>()?;
+    selected.sort_unstable_by_key(|(index, _)| *index);
+    let insertion_index = selected.first().map_or(0, |(index, _)| *index);
+    let selected_ids = selected
+        .iter()
+        .map(|(_, item)| item.id().clone())
+        .collect::<Vec<_>>();
+    let selected_items = selected
+        .into_iter()
+        .map(|(_, item)| item.clone())
+        .collect::<Vec<_>>();
+    if let Some(item) = selected_items.iter().find(|item| item.locked()) {
+        return Err(ProjectError::LockedSceneItem(item.id().clone()));
+    }
+
+    let group_items = group.group_mut().ok_or(ProjectError::InvalidGroupPath)?;
+    for item in selected_items {
+        group_items.add_item(item)?;
+    }
+
+    let profile = project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene = profile
+        .scene_mut(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    for item_id in selected_ids {
+        scene
+            .remove_item(&item_id)
+            .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?;
+    }
+    let group_id = group.id().clone();
+    scene.add_item(group)?;
+    scene.move_item(&group_id, insertion_index)
 }
 
 pub(super) fn set_group_item_locked(

@@ -1,13 +1,13 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, error::Error, rc::Rc};
 
-use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
-use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
+use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec};
+use obs_rs_ui::{DesktopState, UiCommand, UiLocale, MAX_CANVAS_SELECTIONS};
 use slint::ComponentHandle;
 
 use crate::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, dispatch_and_refresh,
     duplicate_scene_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
-    move_source_and_refresh, move_source_to_and_refresh, remove_scene_and_refresh,
+    move_source_and_refresh, move_source_to_and_refresh, refresh_ui, remove_scene_and_refresh,
     remove_source_and_refresh, rename_scene_and_refresh, reset_source_transform_and_refresh,
     toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
     transform_source_and_refresh, MainWindow, PreviewSurface,
@@ -133,6 +133,28 @@ fn install_scene_selection_callbacks(
     });
 }
 
+fn unique_group_identity(
+    state: &DesktopState,
+    scene_id: &str,
+) -> Result<(String, String), Box<dyn Error>> {
+    let project = state.project_session().project();
+    let scene = project
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
+    for ordinal in 1..=MAX_CANVAS_SELECTIONS.saturating_add(1) {
+        let id = if ordinal == 1 {
+            "group".to_owned()
+        } else {
+            format!("group_{ordinal}")
+        };
+        if !scene.has_item(id.as_str()) {
+            return Ok((id, format!("Group {ordinal}")));
+        }
+    }
+    Err(std::io::Error::other("no bounded group identifier is available").into())
+}
+
 fn move_scene_and_refresh(
     weak: &slint::Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -236,6 +258,49 @@ fn install_source_list_callbacks(
                 additive: false,
             },
         );
+    });
+
+    let weak = ui.as_weak();
+    let group_state = Rc::clone(state);
+    let group_surface = Rc::clone(surface);
+    ui.on_group_sources(move || {
+        let result: Result<String, Box<dyn Error>> = (|| {
+            let (profile, scene, items, group_id, group) = {
+                let state = group_state.borrow();
+                let project = state.project_session().project();
+                let scene = state
+                    .preview_scene()
+                    .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+                let profile = project.active_profile().to_string();
+                let items = state
+                    .selected_sources()
+                    .take(MAX_CANVAS_SELECTIONS)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                let (group_id, group_name) = unique_group_identity(&state, scene)?;
+                let group = SceneItemSpec::for_group(&group_id, &group_name)?;
+                (profile, scene.to_owned(), items, group_id, group)
+            };
+            group_state.borrow_mut().dispatch(UiCommand::Project(
+                ProjectCommand::GroupSceneItems {
+                    profile,
+                    scene,
+                    items,
+                    group,
+                },
+            ))?;
+            group_state.borrow_mut().dispatch(UiCommand::SelectSource {
+                id: group_id.clone(),
+            })?;
+            Ok(group_id)
+        })();
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(_) => refresh_ui(&ui, &group_state, &group_surface),
+            Err(error) => ui.set_status_message(format!("Group sources failed: {error}").into()),
+        }
     });
 
     let weak = ui.as_weak();

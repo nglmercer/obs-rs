@@ -74,6 +74,10 @@ routing, adaptive clock correction, or multiple recording tracks.
 > nested source actions. Ctrl+A uses that same visible-row projection and
 > bounded selection limit; source and group rename now resolve the same target
 > path, including root and nested group names.
+> Group selected items is now one atomic root-only project command: the dock
+> keeps multi-selection on right-click, rejects nested or locked selections,
+> preserves scene order and item state, and selects the new group after the
+> command. Undo removes the grouping as one edit.
 > This closes dock selection projection, but does not claim nested canvas
 > geometry parity.
 

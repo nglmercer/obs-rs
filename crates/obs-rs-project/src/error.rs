@@ -57,8 +57,12 @@ pub enum ProjectError {
     UnknownSource(Identifier),
     /// A scene-item ID is not present.
     UnknownSceneItem(Identifier),
+    /// A locked scene item cannot be grouped with other items.
+    LockedSceneItem(Identifier),
     /// A group path was empty or named a scene item that is not a group.
     InvalidGroupPath,
+    /// A grouping request did not contain at least two unique root items.
+    InvalidGroupSelection,
     /// A filter ID is not present on a source.
     UnknownFilter(Identifier),
     /// A legacy source move destination is outside the scene order.
@@ -110,7 +114,11 @@ impl fmt::Display for ProjectError {
             }
             Self::UnknownSource(id) => write!(formatter, "source {id} does not exist"),
             Self::UnknownSceneItem(id) => write!(formatter, "scene item {id} does not exist"),
+            Self::LockedSceneItem(id) => write!(formatter, "scene item {id} is locked"),
             Self::InvalidGroupPath => formatter.write_str("group path is invalid"),
+            Self::InvalidGroupSelection => {
+                formatter.write_str("at least two unique root scene items are required to group")
+            }
             Self::UnknownFilter(id) => write!(formatter, "filter {id} does not exist"),
             Self::InvalidSourceOrder { index } => {
                 write!(formatter, "source order index {index} is out of range")

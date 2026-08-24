@@ -428,6 +428,7 @@ pub(super) fn catalog() -> UiText {
         copy_source: s("Copiar"),
         paste_reference: s("Pegar (referencia)"),
         paste_duplicate: s("Pegar (duplicado)"),
+        group_selected_sources: s("Agrupar elementos seleccionados"),
         source_move_up: s("Subir fuente"),
         source_move_down: s("Bajar fuente"),
         duplicate: s("Duplicar"),

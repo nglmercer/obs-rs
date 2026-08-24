@@ -17,7 +17,7 @@ mod groups;
 
 use filters::legacy_filter_spec;
 use groups::{
-    duplicate_group_item, move_group_item, paste_group_item, remove_group_item,
+    duplicate_group_item, group_scene_items, move_group_item, paste_group_item, remove_group_item,
     set_group_item_locked, set_group_item_transform, set_group_item_visibility, set_group_name,
 };
 
@@ -68,6 +68,12 @@ impl Project {
                 scene,
                 item,
             } => add_scene_item(self, &profile, &scene, item),
+            ProjectCommand::GroupSceneItems {
+                profile,
+                scene,
+                items,
+                group,
+            } => group_scene_items(self, &profile, &scene, &items, group),
             ProjectCommand::RemoveSceneItem {
                 profile,
                 scene,

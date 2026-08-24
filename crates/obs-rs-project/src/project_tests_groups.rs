@@ -185,6 +185,180 @@ fn group_names_are_path_addressed_and_atomic() {
 }
 
 #[test]
+fn grouping_root_scene_items_preserves_order_and_item_state() {
+    let mut project = project();
+    let mut middle = SceneItemSpec::new("middle", "background").expect("middle item");
+    middle.set_visible(false);
+    middle.set_transform(
+        FrameTransform::new(1_200, 900, -12, 8, false, true, 180).expect("middle transform"),
+    );
+    let mut foreground = SceneItemSpec::new("foreground", "background").expect("foreground item");
+    foreground.set_transform(
+        FrameTransform::new(800, 700, 6, 14, true, false, 90).expect("foreground transform"),
+    );
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: middle,
+        })
+        .expect("add middle item");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: foreground,
+        })
+        .expect("add foreground item");
+
+    let group = SceneItemSpec::for_group("selection-group", "Selection group").expect("group");
+    project
+        .apply(ProjectCommand::GroupSceneItems {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec!["foreground".to_owned(), "background".to_owned()],
+            group,
+        })
+        .expect("group selected root items");
+
+    let scene = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .expect("main scene");
+    assert_eq!(
+        scene
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["selection-group", "middle"]
+    );
+    let grouped_items = scene
+        .item("selection-group")
+        .and_then(SceneItemSpec::group)
+        .expect("grouped items");
+    assert_eq!(
+        grouped_items
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["background", "foreground"]
+    );
+    let background_child = grouped_items
+        .items()
+        .iter()
+        .find(|item| item.id().as_str() == "background")
+        .expect("background child");
+    let foreground_child = grouped_items
+        .items()
+        .iter()
+        .find(|item| item.id().as_str() == "foreground")
+        .expect("foreground child");
+    assert_eq!(
+        background_child.transform(),
+        FrameTransform::new(1_000, 1_000, 4, -3, true, false, 220).expect("background transform")
+    );
+    assert_eq!(
+        foreground_child.transform(),
+        FrameTransform::new(800, 700, 6, 14, true, false, 90).expect("foreground transform")
+    );
+    assert!(!scene.item("middle").expect("middle item").visible());
+    assert_eq!(
+        scene.item("middle").expect("middle item").transform(),
+        FrameTransform::new(1_200, 900, -12, 8, false, true, 180).expect("middle transform")
+    );
+    assert!(project
+        .profile("live")
+        .expect("profile")
+        .has_source("background"));
+}
+
+#[test]
+fn grouping_rejects_non_root_or_invalid_selections_atomically() {
+    let mut project = project_with_nested_group();
+    let invalid_nested = || SceneItemSpec::for_group("new-group", "New group").expect("group");
+
+    for (items, expected) in [
+        (
+            vec!["background".to_owned(), "overlay-group/first".to_owned()],
+            ProjectError::InvalidGroupSelection,
+        ),
+        (
+            vec!["background".to_owned(), "background".to_owned()],
+            ProjectError::InvalidGroupSelection,
+        ),
+        (
+            vec!["background".to_owned()],
+            ProjectError::InvalidGroupSelection,
+        ),
+    ] {
+        let before = project.clone();
+        let error = project
+            .apply(ProjectCommand::GroupSceneItems {
+                profile: "live".to_owned(),
+                scene: "main".to_owned(),
+                items,
+                group: invalid_nested(),
+            })
+            .expect_err("invalid grouping selection must fail");
+        assert_eq!(error, expected);
+        assert_eq!(project, before);
+    }
+
+    let mut non_empty = invalid_nested();
+    non_empty
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::new("child", "background").expect("child"))
+        .expect("add child");
+    let before = project.clone();
+    let error = project
+        .apply(ProjectCommand::GroupSceneItems {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec!["background".to_owned(), "overlay-group".to_owned()],
+            group: non_empty,
+        })
+        .expect_err("pre-populated group must fail");
+    assert_eq!(error, ProjectError::InvalidGroupPath);
+    assert_eq!(project, before);
+
+    let mut locked_project = super::project();
+    locked_project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: SceneItemSpec::new("middle", "background").expect("middle item"),
+        })
+        .expect("add item to lock");
+    locked_project
+        .apply(ProjectCommand::SetSceneItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "middle".to_owned(),
+            locked: true,
+        })
+        .expect("lock item");
+    let before_locked = locked_project.clone();
+    let error = locked_project
+        .apply(ProjectCommand::GroupSceneItems {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec!["background".to_owned(), "middle".to_owned()],
+            group: invalid_nested(),
+        })
+        .expect_err("locked item must not be grouped");
+    assert_eq!(
+        error,
+        ProjectError::LockedSceneItem(Identifier::new("middle").expect("locked item id"))
+    );
+    assert_eq!(locked_project, before_locked);
+}
+
+#[test]
 fn group_child_removal_is_path_addressed_and_retains_the_source_registry() {
     let mut project = project_with_nested_group();
     project

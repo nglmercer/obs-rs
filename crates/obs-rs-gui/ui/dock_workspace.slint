@@ -33,6 +33,7 @@ export component DockWorkspace inherits Rectangle {
     in property <bool> selected-source-last;
     in property <int> source-count;
     in property <bool> can-paste;
+    in property <bool> can-group-sources;
     in property <string> transition;
     in property <string> transition-kind;
     in property <bool> recording;
@@ -80,6 +81,7 @@ export component DockWorkspace inherits Rectangle {
     callback transform-source(string, string);
     callback open-source-rename(string);
     callback duplicate-source(string);
+    callback group-sources();
     callback copy-source(string);
     callback paste-reference(string);
     callback paste-duplicate(string);
@@ -247,6 +249,7 @@ export component DockWorkspace inherits Rectangle {
             selected-source-last: root.selected-source-last;
             source-count: root.source-count;
             can-paste: root.can-paste;
+            can-group-sources: root.can-group-sources;
             transition: root.transition;
             transition-kind: root.transition-kind;
             recording: root.recording;
@@ -293,6 +296,7 @@ export component DockWorkspace inherits Rectangle {
             transform-source(id, action) => { root.transform-source(id, action); }
             open-source-rename(id) => { root.open-source-rename(id); }
             duplicate-source(id) => { root.duplicate-source(id); }
+            group-sources() => { root.group-sources(); }
             copy-source(id) => { root.copy-source(id); }
             paste-reference(target) => { root.paste-reference(target); }
             paste-duplicate(target) => { root.paste-duplicate(target); }

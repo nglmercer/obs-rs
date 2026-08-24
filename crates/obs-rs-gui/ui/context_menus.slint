@@ -17,6 +17,7 @@ export component SourceContextMenuArea inherits Rectangle {
     in property <bool> can-move-bottom;
     in property <int> source-count;
     in property <bool> can-paste;
+    in property <bool> can-group;
 
     callback select-source(string);
     callback open-properties(string);
@@ -25,6 +26,7 @@ export component SourceContextMenuArea inherits Rectangle {
     callback open-source-projector(string);
     callback rename-source(string);
     callback duplicate-source(string);
+    callback group-sources();
     callback copy-source(string);
     callback paste-reference(string);
     callback paste-duplicate(string);
@@ -88,6 +90,11 @@ export component SourceContextMenuArea inherits Rectangle {
                     if !root.nested { root.select-source(root.source-id); }
                     root.duplicate-source(root.source-id);
                 }
+            }
+            MenuItem {
+                title: I18n.text.group_selected_sources;
+                enabled: root.can-group;
+                activated => root.group-sources();
             }
             MenuSeparator {}
             MenuItem {

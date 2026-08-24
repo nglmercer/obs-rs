@@ -61,6 +61,15 @@ pub enum ProjectCommand {
         scene: String,
         item: SceneItemSpec,
     },
+    /// Atomically wraps two or more root scene items in a new group.
+    GroupSceneItems {
+        profile: String,
+        scene: String,
+        /// Root scene-item IDs in any selection order; the command restores
+        /// their existing scene order inside the new group.
+        items: Vec<String>,
+        group: SceneItemSpec,
+    },
     /// Removes one scene item while retaining the source definition.
     RemoveSceneItem {
         profile: String,
