@@ -41,6 +41,13 @@ The GUI fixture covers the successful unlocked canvas path and the locked dock
 failure path; global hotkey registration and broader source context-menu parity
 remain separate gaps.
 
+The UI modularization packet extracted the window-root modal overlay into
+`main_modals.slint`. It deliberately moved no project state or mutation logic:
+the component receives bounded properties and forwards typed callbacks, while
+`MainWindow` continues to own the Rust-facing boundary. The GUI fixture passes
+after the extraction, and the repository size audit now reports no Rust or
+Slint source file above 1,000 lines.
+
 ## Phase 1 progress
 
 The first performance packet is now implemented:

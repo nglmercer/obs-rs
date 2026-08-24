@@ -68,6 +68,16 @@ source remains when the Sources dock is focused, with the expected status
 error. Modifier combinations reserved for shortcuts or alternate actions
 remain outside this packet.
 
+## Latest verified package: main-window modal modularization
+
+On 2026-08-24, the 1,024-line `main.slint` component was split at the
+window-level modal boundary. `MainModals` now owns only dialog presentation and
+two-way field bindings; `MainWindow` remains the single owner of state and
+callbacks. The extracted component preserves setup scrim, confirmation,
+project/scene/output, collection, recovery, remux, and rename dialog flows.
+`main.slint` is now 900 lines and no tracked Rust/Slint source file exceeds the
+1,000-line modularization threshold.
+
 ## Core, scheduling, and rendering
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |

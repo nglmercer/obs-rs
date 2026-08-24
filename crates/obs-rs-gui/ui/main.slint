@@ -7,19 +7,7 @@ import { DockWorkspace } from "dock_workspace.slint";
 import { HorizontalSplitter } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { Palette } from "palette.slint";
-import {
-    AboutDialog,
-    CollectionDialog,
-    ConfirmDialog,
-    DiscardChangesDialog,
-    OutputDialog,
-    ProjectDialog,
-    RecoveryDialog,
-    RemuxRecoveryDialog,
-    RenameSceneDialog,
-    RenameSourceDialog,
-    SceneDialog,
-} from "dialogs.slint";
+import { MainModals } from "main_modals.slint";
 
 export { AddSourceText, I18n, MonitorText, PropertyText, SettingsText, UiText } from "i18n.slint";
 export { Metrics, Palette, ThemeTokens, UiMetrics } from "palette.slint";
@@ -861,164 +849,50 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Modals live at the window root so their scrim covers the whole window
-    // instead of being clipped to the dock that opened them.
-    if root.setup-active : Rectangle {
-        x: 0px;
-        y: 0px;
-        width: root.width;
-        height: root.height;
-        z: 1000;
-        background: rgb(0, 0, 0, 185);
-        TouchArea { }
-        Text {
-            text: I18n.text.settings_ui.setup_title;
-            color: Palette.tokens.text-strong;
-            font-size: 18px;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            width: parent.width;
-            y: parent.height / 2 - 18px;
-        }
-    }
-    ConfirmDialog {
-        open: root.pending-confirm != 0;
+    // Window-level dialogs live in their own overlay component while all
+    // state and mutations remain owned by MainWindow/Rust.
+    MainModals {
         locale: root.locale;
-        message: root.pending-confirm == 1
-            ? I18n.text.settings_ui.prompt_start_stream
-            : root.pending-confirm == 2
-                ? I18n.text.settings_ui.prompt_stop_stream
-                : I18n.text.settings_ui.prompt_stop_recording;
-        close => { root.pending-confirm = 0; }
-        accepted => { root.resolve-confirm(); }
-    }
-    ProjectDialog {
-        open: root.active-modal == 1;
-        locale: root.locale;
-        mode: root.project-dialog-mode;
+        setup-active: root.setup-active;
+        pending-confirm: root.pending-confirm;
+        active-modal: root.active-modal;
+        pending-discard: root.pending-discard;
         project-path <=> root.project-path;
-        collection-path <=> root.collection-transfer-path;
+        collection-transfer-path <=> root.collection-transfer-path;
         diagnostics-path <=> root.diagnostics-path;
-        save-project() => {
-            if root.project-dialog-mode == 1 {
-                root.export-collection(root.collection-transfer-path);
-            } else if root.project-dialog-mode == 2 {
-                root.import-collection(root.collection-transfer-path);
-            } else {
-                root.save-project();
-            }
-        }
-        close => {
-            root.project-dialog-mode = 0;
-            root.active-modal = 0;
-        }
-        accepted => {
-            root.project-dialog-mode = 0;
-            root.active-modal = 0;
-        }
-    }
-    SceneDialog {
-        open: root.active-modal == 2;
-        locale: root.locale;
-        new-scene-id <=> root.new-scene-id;
-        new-scene-name <=> root.new-scene-name;
-        add-scene(id, name) => { root.add-scene(id, name); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    OutputDialog {
-        open: root.active-modal == 4;
-        locale: root.locale;
+        project-dialog-mode <=> root.project-dialog-mode;
         recording-path <=> root.recording-path;
         streaming-address <=> root.streaming-address;
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    RenameSceneDialog {
-        open: root.active-modal == 5;
-        locale: root.locale;
+        new-scene-id <=> root.new-scene-id;
+        new-scene-name <=> root.new-scene-name;
         scene-name <=> root.scene-name;
-        transition-index <=> root.scene-transition-index;
-        transition-duration <=> root.scene-transition-duration;
-        transition-color <=> root.scene-transition-color;
-        rename-scene() => { root.rename-scene(); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    RenameSourceDialog {
-        open: root.active-modal == 12;
-        locale: root.locale;
-        source-name <=> root.source-name-draft;
-        rename-source() => { root.apply-source-name(); }
-        close => {
-            root.active-modal = 0;
-            root.source-rename-target = "";
-        }
-        accepted => {
-            root.active-modal = 0;
-            root.source-rename-target = "";
-        }
-    }
-    CollectionDialog {
-        open: root.active-modal == 9;
-        locale: root.locale;
-        active-collection: root.active-collection;
-        duplicate-mode: root.duplicate-collection-dialog;
-        rename-mode: root.rename-collection-dialog;
+        scene-transition-index <=> root.scene-transition-index;
+        scene-transition-duration <=> root.scene-transition-duration;
+        scene-transition-color <=> root.scene-transition-color;
+        source-name-draft <=> root.source-name-draft;
+        source-rename-target <=> root.source-rename-target;
         collection-name <=> root.collection-name;
-        create-collection(name) => {
-            if root.duplicate-collection-dialog {
-                root.duplicate-collection(name);
-            } else if root.rename-collection-dialog {
-                root.rename-collection(name);
-            } else {
-                root.create-collection(name);
-            }
-        }
-        close => {
-            root.duplicate-collection-dialog = false;
-            root.rename-collection-dialog = false;
-            root.active-modal = 0;
-        }
-        accepted => {
-            root.duplicate-collection-dialog = false;
-            root.rename-collection-dialog = false;
-            root.active-modal = 0;
-        }
-    }
-    AboutDialog {
-        open: root.active-modal == 10;
-        locale: root.locale;
-        version: root.app-version;
-        platform: root.app-platform;
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    DiscardChangesDialog {
-        open: root.pending-discard != 0;
-        locale: root.locale;
-        close => { root.pending-discard = 0; }
-        save => { root.save-discard(root.pending-discard); }
-        discard => { root.resolve-discard(root.pending-discard); }
-    }
-    RecoveryDialog {
-        open: root.active-modal == 11;
-        detail: root.status-message;
-        close => { root.active-modal = 0; }
-        accepted => {
-            root.active-modal = 0;
-            root.open-settings-window();
-        }
-    }
-    RemuxRecoveryDialog {
-        open: root.active-modal == 13;
-        candidates: root.remux-recovery-candidates;
-        candidate-path <=> root.remux-recovery-path;
-        recover(path) => {
-            root.active-modal = 0;
-            root.recover-remux-candidate(path);
-        }
-        close => { root.active-modal = 0; }
+        duplicate-collection-dialog <=> root.duplicate-collection-dialog;
+        rename-collection-dialog <=> root.rename-collection-dialog;
+        active-collection: root.active-collection;
+        status-message: root.status-message;
+        app-version: root.app-version;
+        app-platform: root.app-platform;
+        remux-recovery-candidates: root.remux-recovery-candidates;
+        remux-recovery-path <=> root.remux-recovery-path;
+        resolve-confirm() => { root.resolve-confirm(); }
+        save-project() => { root.save-project(); }
+        export-collection(path) => { root.export-collection(path); }
+        import-collection(path) => { root.import-collection(path); }
+        save-discard(action) => { root.save-discard(action); }
+        resolve-discard(action) => { root.resolve-discard(action); }
+        add-scene(id, name) => { root.add-scene(id, name); }
+        rename-scene() => { root.rename-scene(); }
+        apply-source-name() => { root.apply-source-name(); }
+        duplicate-collection(name) => { root.duplicate-collection(name); }
+        rename-collection(name) => { root.rename-collection(name); }
+        create-collection(name) => { root.create-collection(name); }
+        open-settings-window() => { root.open-settings-window(); }
+        recover-remux-candidate(path) => { root.recover-remux-candidate(path); }
     }
 }
