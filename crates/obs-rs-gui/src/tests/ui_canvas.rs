@@ -10,6 +10,7 @@ const CANVAS_POINTER_SOURCES: [&str; 2] = ["canvas-pointer-left", "canvas-pointe
 const OVERLAPPING_CANVAS_POINTER_SOURCES: [&str; 2] =
     ["canvas-pointer-under", "canvas-pointer-top"];
 const TRANSFORM_CANVAS_POINTER_SOURCE: &str = "canvas-pointer-transform";
+const ROTATION_CANVAS_POINTER_SOURCE: &str = "canvas-pointer-rotation";
 
 pub(super) fn exercise_canvas_pointer_fixture(
     ui: &MainWindow,
@@ -18,6 +19,7 @@ pub(super) fn exercise_canvas_pointer_fixture(
 ) {
     prepare_canvas_pointer_scene(state, surface, ui);
     exercise_transform_handle(ui, state, surface);
+    exercise_rotation_handle(ui, state, surface);
     exercise_drag_selection(ui, state);
     exercise_overlapping_selection(ui, state, surface);
     exercise_pan_and_zoom(ui);
@@ -106,6 +108,91 @@ fn exercise_transform_handle(
             items: vec![TRANSFORM_CANVAS_POINTER_SOURCE.to_owned()],
         }))
         .expect("remove transform pointer source");
+    refresh_ui(ui, state, surface);
+}
+
+fn exercise_rotation_handle(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            source: SourceSpec::new(
+                ROTATION_CANVAS_POINTER_SOURCE,
+                "color_source",
+                ROTATION_CANVAS_POINTER_SOURCE,
+                source_settings("color_source").expect("rotation pointer defaults"),
+            )
+            .expect("rotation pointer source"),
+        }))
+        .expect("add rotation pointer source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: ROTATION_CANVAS_POINTER_SOURCE.to_owned(),
+            transform: FrameTransform::new(400, 300, 650, 320, false, false, u8::MAX)
+                .expect("rotation pointer transform"),
+        }))
+        .expect("position rotation pointer source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: ROTATION_CANVAS_POINTER_SOURCE.to_owned(),
+        })
+        .expect("select rotation pointer source");
+    refresh_ui(ui, state, surface);
+    assert!(
+        ui.get_rotation_handle_active(),
+        "a selected unlocked source exposes the rotation handle"
+    );
+
+    let before = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item(ROTATION_CANVAS_POINTER_SOURCE))
+        .expect("rotation pointer item before drag")
+        .transform();
+    let rotation_x = ui.get_rotation_handle_x();
+    let rotation_y = ui.get_rotation_handle_y();
+    let center_x = ui.get_item_x() + ui.get_item_width() / 2;
+    let center_y = ui.get_item_y() + ui.get_item_height() / 2;
+    let canvas = canvas_surface(ui);
+    let start = canvas_point(ui, &canvas, rotation_x, rotation_y);
+    let end = canvas_point(ui, &canvas, center_x + ui.get_item_width() / 2, center_y);
+    drag_canvas_at(ui, start, end, PointerEventButton::Left);
+
+    let after = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item(ROTATION_CANVAS_POINTER_SOURCE))
+        .expect("rotation pointer item after drag")
+        .transform();
+    assert_ne!(
+        after.rotation_milli_degrees(),
+        before.rotation_milli_degrees(),
+        "the real rotation handle drag changes the selected source angle"
+    );
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItems {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            items: vec![ROTATION_CANVAS_POINTER_SOURCE.to_owned()],
+        }))
+        .expect("remove rotation pointer source");
     refresh_ui(ui, state, surface);
 }
 

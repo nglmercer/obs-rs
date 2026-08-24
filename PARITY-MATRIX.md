@@ -124,6 +124,10 @@ bottom-right handle coordinates, and drags that handle through the real
 the temporary item is removed; rotation, crop, and live DPI pointer evidence
 remain open.
 
+The fixture separately resolves the published rotation handle, drags it to a
+new canvas angle, and observes the changed fixed-point rotation after the
+single commit on release. Crop and live DPI pointer evidence remain open.
+
 The same GUI fixture now inserts a temporary group at a visible row boundary,
 clicks its nested child through the real SourceContextMenuArea pointer target,
 and verifies the stable `group/child` selection path before removing the group.

@@ -72,10 +72,11 @@ pointer path against the editable surface. It maps the current fit zoom and
 pan into letterboxed coordinates, proves blank-space drag-box replacement,
 Ctrl-additive selection, both middle-button and Space+drag pan, and a selected
 source's bottom-right resize handle, then removes temporary items and restores
-the starter scene and transient pan. Rotation/crop handles, nested geometry,
-live DPI, and the native capture device prerequisite remain outside this
-evidence; the same fixture also verifies a real wheel event changes continuous
-zoom and restores the anchored viewport state.
+the starter scene and transient pan. Crop handles, nested geometry, live DPI,
+and the native capture device prerequisite remain outside this evidence; the
+same fixture also verifies a real wheel event changes continuous zoom and
+restores the anchored viewport state, while the separate rotation-handle
+gesture observes one fixed-point angle commit.
 
 The source-row follow-up inserts a temporary group at a visible boundary and
 clicks its nested child through the actual SourceContextMenuArea target. The
