@@ -44,6 +44,7 @@ pub(super) fn exercise_dock_layout(
     assert!(!ui.get_meters_paused(), "the mixer monitor resumes");
 
     exercise_dock_header_pointer_drag(ui, controller);
+    exercise_dock_splitter_pointer_drag(ui, controller);
 
     // Reordering moves the dragged dock one place and leaves the rest alone.
     let before = read_order(ui);
@@ -184,6 +185,64 @@ fn exercise_dock_header_pointer_drag(
         read_order(ui).last().copied(),
         before.first().copied(),
         "the real header drop moves the source dock after the target"
+    );
+
+    let default = AppSettings::default();
+    let default_tree =
+        DockNode::from_legacy(&default.layout.panel_order, &default.layout.panel_weights)
+            .expect("the default dock tree is valid");
+    controller.replace_tree(&default_tree, ui);
+}
+
+/// Drives one visible vertical splitter through the testing backend. The
+/// splitter owns only a bounded tree ratio, so the fixture checks that the
+/// pointer gesture changes a boundary without changing the pane count.
+fn exercise_dock_splitter_pointer_drag(
+    ui: &MainWindow,
+    controller: &Rc<crate::callbacks::docks::DockController>,
+) {
+    let splitters = ElementHandle::find_by_element_type_name(ui, "VerticalSplitter")
+        .filter(|splitter| splitter.size().width >= 4.0 && splitter.size().height > 100.0)
+        .collect::<Vec<_>>();
+    assert!(
+        !splitters.is_empty(),
+        "the default layout exposes a vertical splitter"
+    );
+    let before = read_dock_splitters(ui);
+    assert!(!before.is_empty(), "the Rust projection exposes a splitter");
+
+    let position = splitters[0].absolute_position();
+    let size = splitters[0].size();
+    let start = LogicalPosition::new(
+        position.x + size.width / 2.0,
+        position.y + size.height / 2.0,
+    );
+    let end = LogicalPosition::new(start.x + 40.0, start.y);
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: start });
+    ui.window().dispatch_event(WindowEvent::PointerPressed {
+        position: start,
+        button: PointerEventButton::Left,
+    });
+    ui.window()
+        .dispatch_event(WindowEvent::PointerMoved { position: end });
+    ui.window().dispatch_event(WindowEvent::PointerReleased {
+        position: end,
+        button: PointerEventButton::Left,
+    });
+
+    let after = read_dock_splitters(ui);
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "splitter drag keeps the tree shape"
+    );
+    assert!(
+        after
+            .iter()
+            .zip(before.iter())
+            .any(|(after, before)| (after.boundary - before.boundary).abs() > 0.0001),
+        "the real splitter drag changes a bounded tree boundary"
     );
 
     let default = AppSettings::default();

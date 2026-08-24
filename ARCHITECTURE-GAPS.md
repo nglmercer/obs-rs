@@ -88,6 +88,12 @@ and restores the default tree before the legacy projection checks. This is
 interaction evidence only; live multi-monitor/DPI and custom floating dock
 surfaces remain open.
 
+The dock-splitter pointer follow-up now drives a visible `VerticalSplitter`
+through the testing backend and verifies a bounded boundary change without
+changing pane count. It restores the default tree before the remaining layout
+checks; horizontal main-window splitter, live DPI, and platform minimum-size
+evidence remain separate.
+
 The UI modularization packet extracted the window-root modal overlay into
 `main_modals.slint`. It deliberately moved no project state or mutation logic:
 the component receives bounded properties and forwards typed callbacks, while
