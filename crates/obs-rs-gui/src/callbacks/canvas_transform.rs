@@ -481,6 +481,61 @@ pub(super) fn rotate_canvas_delta(
     (x.round() as i64, y.round() as i64)
 }
 
+/// Converts a rotation-handle pointer sample into a normalized fixed-point
+/// angle. The caller supplies the angle already present on the item (or zero
+/// for a multi-selection pivot), so the pointer math is shared by both paths.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "pointer angles are evaluated in f64 and converted back to the media fixed-point representation"
+)]
+fn rotation_milli_from_pointer(
+    center: (i64, i64),
+    anchor: (i64, i64),
+    pointer: (i64, i64),
+    modifier_mask: i32,
+    base_angle: f64,
+) -> Option<i32> {
+    let center_x = center.0 as f64;
+    let center_y = center.1 as f64;
+    let angle = |point: (i64, i64)| {
+        let dx = point.0 as f64 - center_x;
+        let dy = point.1 as f64 - center_y;
+        (dx.abs() > f64::EPSILON || dy.abs() > f64::EPSILON).then(|| dy.atan2(dx).to_degrees())
+    };
+    let (Some(anchor_angle), Some(pointer_angle)) = (angle(anchor), angle(pointer)) else {
+        return None;
+    };
+    let delta = (pointer_angle - anchor_angle + 180.0).rem_euclid(360.0) - 180.0;
+    let mut rotation = base_angle + delta;
+    if modifier_mask & RESIZE_MODIFIER_SHIFT != 0 {
+        rotation = (rotation / 15.0).round() * 15.0;
+    } else if modifier_mask & RESIZE_MODIFIER_CONTROL == 0 {
+        let snapped = (rotation / 45.0).round() * 45.0;
+        if (rotation - snapped).abs() <= 5.0 {
+            rotation = snapped;
+        }
+    }
+    Some(normalized_rotation_milli(rotation))
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the angle is clamped to the validated fixed-point media range before conversion"
+)]
+fn normalized_rotation_milli(mut rotation: f64) -> i32 {
+    while rotation > 360.0 {
+        rotation -= 360.0;
+    }
+    while rotation < -360.0 {
+        rotation += 360.0;
+    }
+    (rotation * 1_000.0).round().clamp(
+        -f64::from(FrameTransform::MAX_ROTATION_MILLI_DEGREES),
+        f64::from(FrameTransform::MAX_ROTATION_MILLI_DEGREES),
+    ) as i32
+}
+
 /// Converts one rotation-handle pointer sample into a transform rotation.
 ///
 /// The draft owns the transform before the pointer gesture starts, so every
@@ -500,39 +555,73 @@ pub(super) fn rotation_from_pointer(
     canvas: (u32, u32),
 ) -> FrameTransform {
     let local = local_item_rect(base, canvas);
-    let center_x = local.x as f64 + local.width as f64 / 2.0;
-    let center_y = local.y as f64 + local.height as f64 / 2.0;
-    let angle = |point: (i64, i64)| {
-        let dx = point.0 as f64 - center_x;
-        let dy = point.1 as f64 - center_y;
-        (dx.abs() > f64::EPSILON || dy.abs() > f64::EPSILON).then(|| dy.atan2(dx).to_degrees())
-    };
-    let (Some(anchor_angle), Some(pointer_angle)) = (angle(anchor), angle(pointer)) else {
-        return base;
-    };
-    let delta = (pointer_angle - anchor_angle + 180.0).rem_euclid(360.0) - 180.0;
-    let base_angle = f64::from(base.rotation_milli_degrees()) / 1_000.0;
-    let mut rotation = base_angle + delta;
-    if modifier_mask & RESIZE_MODIFIER_SHIFT != 0 {
-        rotation = (rotation / 15.0).round() * 15.0;
-    } else if modifier_mask & RESIZE_MODIFIER_CONTROL == 0 {
-        let snapped = (rotation / 45.0).round() * 45.0;
-        if (rotation - snapped).abs() <= 5.0 {
-            rotation = snapped;
-        }
-    }
-    while rotation > 360.0 {
-        rotation -= 360.0;
-    }
-    while rotation < -360.0 {
-        rotation += 360.0;
-    }
-    let rotation_milli = (rotation * 1_000.0).round().clamp(
-        -f64::from(FrameTransform::MAX_ROTATION_MILLI_DEGREES),
-        f64::from(FrameTransform::MAX_ROTATION_MILLI_DEGREES),
-    ) as i32;
+    let center = (
+        local.x.saturating_add(local.width / 2),
+        local.y.saturating_add(local.height / 2),
+    );
+    let rotation_milli = rotation_milli_from_pointer(
+        center,
+        anchor,
+        pointer,
+        modifier_mask,
+        f64::from(base.rotation_milli_degrees()) / 1_000.0,
+    )
+    .unwrap_or(base.rotation_milli_degrees());
     base.with_rotation_milli_degrees(rotation_milli)
         .unwrap_or(base)
+}
+
+/// Returns the snapped angle delta for rotating a multi-selection around its
+/// fixed bounding-box pivot. Group rotation has no persisted group angle, so
+/// the delta itself is the value subject to the OBS-style snapping policy.
+pub(super) fn group_rotation_from_pointer(
+    center: (i64, i64),
+    anchor: (i64, i64),
+    pointer: (i64, i64),
+    modifier_mask: i32,
+) -> i32 {
+    rotation_milli_from_pointer(center, anchor, pointer, modifier_mask, 0.0).unwrap_or(0)
+}
+
+/// Rotates one item around a shared selection pivot while preserving its
+/// scale, crop, flip, opacity, and local rotation. This is transient gesture
+/// math; the caller commits all resulting item transforms as one command.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "the shared-pivot transform uses the same f64 rotation matrix as the renderer"
+)]
+pub(super) fn rotate_transform_around_point(
+    base: FrameTransform,
+    pivot: (i64, i64),
+    delta_milli_degrees: i32,
+    canvas: (u32, u32),
+) -> FrameTransform {
+    let local = local_item_rect(base, canvas);
+    let center_x = local.x as f64 + local.width as f64 / 2.0;
+    let center_y = local.y as f64 + local.height as f64 / 2.0;
+    let (rotated_x, rotated_y) = rotate_canvas_vector(
+        center_x - pivot.0 as f64,
+        center_y - pivot.1 as f64,
+        delta_milli_degrees,
+        false,
+    );
+    let next_center_x = pivot.0 as f64 + rotated_x;
+    let next_center_y = pivot.1 as f64 + rotated_y;
+    let next_x = rounded_canvas_coordinate(next_center_x - local.width as f64 / 2.0);
+    let next_y = rounded_canvas_coordinate(next_center_y - local.height as f64 / 2.0);
+    let next_rotation = normalized_rotation_milli(
+        f64::from(base.rotation_milli_degrees()) / 1_000.0
+            + f64::from(delta_milli_degrees) / 1_000.0,
+    );
+    transform_with_geometry(
+        base,
+        base.scale_x_milli(),
+        base.scale_y_milli(),
+        next_x,
+        next_y,
+    )
+    .with_rotation_milli_degrees(next_rotation)
+    .unwrap_or(base)
 }
 
 /// Applies an Alt-drag on one of the eight transform handles as a source

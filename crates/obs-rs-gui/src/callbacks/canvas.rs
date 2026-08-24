@@ -45,9 +45,9 @@ use canvas_model::{
     SCALE_MICROS_PER_UNIT,
 };
 use canvas_transform::{
-    crop_transform, preserve_resize_aspect, rotate_canvas_delta, rotation_from_pointer,
-    snap_rotated_resize_delta, transform_for_rect, transform_for_rotated_local_rect,
-    transform_with_geometry,
+    crop_transform, group_rotation_from_pointer, preserve_resize_aspect, rotate_canvas_delta,
+    rotate_transform_around_point, rotation_from_pointer, snap_rotated_resize_delta,
+    transform_for_rect, transform_for_rotated_local_rect, transform_with_geometry,
 };
 pub(crate) use canvas_transform::{
     drag_rect, selection_overlay, set_selection_overlay, transform_for_command,

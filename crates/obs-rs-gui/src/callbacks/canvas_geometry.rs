@@ -483,10 +483,9 @@ pub(super) fn selection_path(points: [CanvasPoint; 8]) -> String {
 
 /// Returns the canvas-space centre of the rotation handle above one item.
 ///
-/// The handle follows the oriented top edge rather than the axis-aligned
-/// selection bounds. Multi-selection overlays deliberately do not expose a
-/// rotation handle yet because rotating a group needs a separate group-pivot
-/// interaction model.
+/// The handle follows the oriented top edge for a single item and the top
+/// edge of the axis-aligned group bounds for a multi-selection. Rust owns the
+/// corresponding pivot for the gesture; Slint only presents this point.
 #[allow(
     clippy::cast_precision_loss,
     reason = "the handle offset follows the same floating-point rotation geometry as the overlay"
@@ -540,9 +539,7 @@ pub(super) fn selection_overlay_for_transforms(
         handle_x: points.map(|point| to_slint_coordinate(point.x)),
         handle_y: points.map(|point| to_slint_coordinate(point.y)),
         path: selection_path(points),
-        rotation_handle: (transforms.len() == 1)
-            .then(|| rotation_handle_point(points))
-            .flatten(),
+        rotation_handle: rotation_handle_point(points),
     })
 }
 

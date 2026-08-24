@@ -444,7 +444,7 @@ fn rotated_selection_overlay_uses_oriented_handles() {
 }
 
 #[test]
-fn rotation_handle_is_only_published_for_one_selection() {
+fn rotation_handle_is_published_for_single_and_group_selection() {
     let single = selection_overlay_for_transforms(&[FrameTransform::IDENTITY], (400, 300))
         .expect("one transform should create an overlay");
     assert_eq!(single.rotation_handle, Some((200, -32)));
@@ -452,7 +452,7 @@ fn rotation_handle_is_only_published_for_one_selection() {
     let second = FrameTransform::new(500, 500, 100, 50, false, false, 255).expect("transform");
     let group = selection_overlay_for_transforms(&[FrameTransform::IDENTITY, second], (400, 300))
         .expect("two transforms should create an overlay");
-    assert_eq!(group.rotation_handle, None);
+    assert_eq!(group.rotation_handle, Some((200, -32)));
 }
 
 #[test]
@@ -477,6 +477,41 @@ fn rotation_pointer_uses_a_stable_base_and_obs_style_modifiers() {
     assert_eq!(default_snapped.rotation_milli_degrees(), 45_000);
     assert_ne!(control_free.rotation_milli_degrees(), 45_000);
     assert!((46_000..=48_000).contains(&control_free.rotation_milli_degrees()));
+}
+
+#[test]
+fn group_rotation_uses_one_pivot_and_preserves_each_item_geometry() {
+    let canvas = (400, 300);
+    let first = FrameTransform::new(500, 500, 50, 100, false, false, 255).expect("first transform");
+    let second =
+        FrameTransform::new(250, 500, 250, 100, false, false, 255).expect("second transform");
+    let center = (200, 175);
+    let delta = group_rotation_from_pointer(center, (200, 75), (300, 175), 0);
+    assert_eq!(delta, 90_000);
+
+    let rotated_first = rotate_transform_around_point(first, center, delta, canvas);
+    let rotated_second = rotate_transform_around_point(second, center, delta, canvas);
+    assert_eq!(
+        (rotated_first.translate_x(), rotated_first.translate_y()),
+        (100, 50)
+    );
+    assert_eq!(
+        (rotated_second.translate_x(), rotated_second.translate_y()),
+        (150, 200)
+    );
+    assert_eq!(rotated_first.rotation_milli_degrees(), 90_000);
+    assert_eq!(rotated_second.rotation_milli_degrees(), 90_000);
+    assert_eq!(
+        (rotated_first.scale_x_milli(), rotated_first.scale_y_milli()),
+        (first.scale_x_milli(), first.scale_y_milli())
+    );
+    assert_eq!(
+        (
+            rotated_second.scale_x_milli(),
+            rotated_second.scale_y_milli()
+        ),
+        (second.scale_x_milli(), second.scale_y_milli())
+    );
 }
 
 #[test]
@@ -702,10 +737,21 @@ fn multi_selection_geometry_timing_report() {
             checksum = checksum.saturating_add(i64::from(item.transform.translate_x()));
         }
     }
+    let rotation_bases = items.iter().map(|item| item.transform).collect::<Vec<_>>();
+    let rotation_started = Instant::now();
+    let pivot = (960, 540);
+    let delta = group_rotation_from_pointer(pivot, (960, 508), (992, 540), 0);
+    for _ in 0..runs {
+        for base in &rotation_bases {
+            let rotated = rotate_transform_around_point(*base, pivot, delta, CANVAS);
+            checksum = checksum.saturating_add(i64::from(rotated.translate_x()));
+        }
+    }
     println!(
-        "multi-selection: items={} runs={} per_sample={:?} checksum={checksum}",
+        "multi-selection: items={} runs={} move_per_sample={:?} rotation_per_sample={:?} checksum={checksum}",
         items.len(),
         runs,
-        started.elapsed() / runs
+        started.elapsed() / runs,
+        rotation_started.elapsed() / runs,
     );
 }

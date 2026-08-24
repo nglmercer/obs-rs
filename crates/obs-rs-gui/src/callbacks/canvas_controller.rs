@@ -1,18 +1,19 @@
 use super::{
-    crop_transform, drag_rect, item_rect, local_item_rect, preserve_resize_aspect,
-    rotate_canvas_delta, rotation_from_pointer, selection_overlay_for_transforms,
-    set_selection_overlay, snap_rect, snap_rotated_resize_delta, transform_for_rect,
-    transform_for_rotated_local_rect, transform_with_geometry, visible_source_extent,
-    CanvasResizeModifiers, CanvasState, CanvasZoom, ComponentHandle, DesktopState, FrameTransform,
-    ItemRect, MainWindow, PreviewSurface, Rc, RefCell, SceneItemSpec, SelectionOverlay, SnapGuides,
-    SnapSettings, TransformDraft, TransformDraftItem, UiCommand, MAX_SNAP_GUIDES,
-    MINIMUM_ITEM_PIXELS,
+    crop_transform, drag_rect, group_rotation_from_pointer, item_rect, local_item_rect,
+    preserve_resize_aspect, rotate_canvas_delta, rotate_transform_around_point,
+    rotation_from_pointer, selection_overlay_for_transforms, set_selection_overlay, snap_rect,
+    snap_rotated_resize_delta, transform_for_rect, transform_for_rotated_local_rect,
+    transform_with_geometry, visible_source_extent, CanvasResizeModifiers, CanvasState, CanvasZoom,
+    ComponentHandle, DesktopState, FrameTransform, ItemRect, MainWindow, PreviewSurface, Rc,
+    RefCell, SceneItemSpec, SelectionOverlay, SnapGuides, SnapSettings, TransformDraft,
+    TransformDraftItem, UiCommand, MAX_SNAP_GUIDES, MINIMUM_ITEM_PIXELS,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct RotationGesture {
     anchor: (i64, i64),
-    base: FrameTransform,
+    center: (i64, i64),
+    base_items: Vec<FrameTransform>,
 }
 
 pub(crate) struct CanvasController {
@@ -27,15 +28,16 @@ impl CanvasController {
         self.draft.borrow().clone()
     }
 
-    fn begin_rotation(&self, x: i64, y: i64, base: FrameTransform) {
+    fn begin_rotation(&self, x: i64, y: i64, center: (i64, i64), base_items: &[FrameTransform]) {
         self.rotation.replace(Some(RotationGesture {
             anchor: (x, y),
-            base,
+            center,
+            base_items: base_items.to_vec(),
         }));
     }
 
     fn rotation_gesture(&self) -> Option<RotationGesture> {
-        *self.rotation.borrow()
+        self.rotation.borrow().clone()
     }
 
     fn clear_rotation(&self) {
@@ -321,6 +323,9 @@ pub(crate) fn install_canvas_callbacks(
     let rotation_state = Rc::clone(state);
     let rotation_controller = Rc::clone(&controller);
     ui.on_rotation_started(move |x, y| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
         if selected_is_locked(&rotation_state) {
             return;
         }
@@ -328,15 +333,25 @@ pub(crate) fn install_canvas_callbacks(
             return;
         };
         let items = selected_transforms(&rotation_state, &scene);
-        if items.len() != 1 {
+        if items.is_empty() {
             return;
         }
-        let base = items[0].transform;
+        let canvas = canvas_size(&ui);
+        let Some(group) = items
+            .iter()
+            .map(|item| item_rect(item.transform, canvas))
+            .reduce(ItemRect::union)
+        else {
+            return;
+        };
+        let center = (
+            group.x.saturating_add(group.width / 2),
+            group.y.saturating_add(group.height / 2),
+        );
+        let base_items = items.iter().map(|item| item.transform).collect::<Vec<_>>();
         *rotation_controller.draft.borrow_mut() = Some(TransformDraft { scene, items });
-        rotation_controller.begin_rotation(i64::from(x), i64::from(y), base);
-        if let Some(ui) = weak.upgrade() {
-            ui.set_canvas_pointer_mode(1);
-        }
+        rotation_controller.begin_rotation(i64::from(x), i64::from(y), center, &base_items);
+        ui.set_canvas_pointer_mode(1);
     });
 
     let weak = ui.as_weak();
@@ -360,16 +375,30 @@ pub(crate) fn install_canvas_callbacks(
         let Some(draft) = draft_slot.as_mut() else {
             return;
         };
-        if draft.scene != scene || draft.items.len() != 1 {
+        if draft.scene != scene || draft.items.len() != rotation.base_items.len() {
             return;
         }
-        draft.items[0].transform = rotation_from_pointer(
-            rotation.base,
-            rotation.anchor,
-            (i64::from(x), i64::from(y)),
-            modifier_mask,
-            canvas,
-        );
+        let pointer = (i64::from(x), i64::from(y));
+        if draft.items.len() == 1 {
+            draft.items[0].transform = rotation_from_pointer(
+                rotation.base_items[0],
+                rotation.anchor,
+                pointer,
+                modifier_mask,
+                canvas,
+            );
+        } else {
+            let delta = group_rotation_from_pointer(
+                rotation.center,
+                rotation.anchor,
+                pointer,
+                modifier_mask,
+            );
+            for (item, base) in draft.items.iter_mut().zip(rotation.base_items.iter()) {
+                item.transform =
+                    rotate_transform_around_point(*base, rotation.center, delta, canvas);
+            }
+        }
         let overlay = draft_overlay(draft, canvas);
         drop(draft_slot);
         if let Some(overlay) = overlay {
