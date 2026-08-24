@@ -359,6 +359,168 @@ fn grouping_rejects_non_root_or_invalid_selections_atomically() {
 }
 
 #[test]
+fn ungrouping_root_group_preserves_child_order_and_state() {
+    let mut project = project_with_nested_group();
+    let group_path = vec!["overlay-group".to_owned()];
+    project
+        .apply(ProjectCommand::SetGroupItemVisibility {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: group_path.clone(),
+            item: "first".to_owned(),
+            visible: false,
+        })
+        .expect("hide first child");
+    project
+        .apply(ProjectCommand::SetGroupItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: group_path.clone(),
+            item: "second".to_owned(),
+            locked: true,
+        })
+        .expect("lock second child");
+    let child_transform =
+        FrameTransform::new(1_250, 875, -11, 17, true, false, 190).expect("child transform");
+    project
+        .apply(ProjectCommand::SetGroupItemTransform {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path,
+            item: "first".to_owned(),
+            transform: child_transform,
+        })
+        .expect("transform first child");
+
+    project
+        .apply(ProjectCommand::UngroupSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group: "overlay-group".to_owned(),
+        })
+        .expect("ungroup root group");
+
+    let scene = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .expect("main scene");
+    assert_eq!(
+        scene
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["background", "first", "second", "inner-group"]
+    );
+    assert!(scene.item("overlay-group").is_none());
+    assert!(!scene.item("first").expect("first child").visible());
+    assert_eq!(
+        scene.item("first").expect("first child").transform(),
+        child_transform
+    );
+    assert!(scene.item("second").expect("second child").locked());
+    assert_eq!(
+        scene
+            .item("inner-group")
+            .and_then(SceneItemSpec::group)
+            .map(|group| group.items().len()),
+        Some(1)
+    );
+    assert!(project
+        .profile("live")
+        .expect("profile")
+        .has_source("background"));
+}
+
+#[test]
+fn ungrouping_rejects_invalid_or_colliding_groups_atomically() {
+    let mut project = project_with_nested_group();
+    for (group, expected) in [
+        ("background".to_owned(), ProjectError::InvalidGroupPath),
+        (
+            "overlay-group/inner-group".to_owned(),
+            ProjectError::InvalidGroupPath,
+        ),
+    ] {
+        let before = project.clone();
+        let error = project
+            .apply(ProjectCommand::UngroupSceneItem {
+                profile: "live".to_owned(),
+                scene: "main".to_owned(),
+                group,
+            })
+            .expect_err("invalid group target must fail");
+        assert_eq!(error, expected);
+        assert_eq!(project, before);
+    }
+
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: SceneItemSpec::new("first", "background").expect("colliding item"),
+        })
+        .expect("add colliding root item");
+    let before_collision = project.clone();
+    let error = project
+        .apply(ProjectCommand::UngroupSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group: "overlay-group".to_owned(),
+        })
+        .expect_err("child collision must fail");
+    assert_eq!(
+        error,
+        ProjectError::DuplicateSceneItem(Identifier::new("first").expect("child id"))
+    );
+    assert_eq!(project, before_collision);
+
+    let mut locked = project_with_nested_group();
+    locked
+        .apply(ProjectCommand::SetSceneItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "overlay-group".to_owned(),
+            locked: true,
+        })
+        .expect("lock root group");
+    let before_locked = locked.clone();
+    let error = locked
+        .apply(ProjectCommand::UngroupSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group: "overlay-group".to_owned(),
+        })
+        .expect_err("locked group must fail");
+    assert_eq!(
+        error,
+        ProjectError::LockedSceneItem(Identifier::new("overlay-group").expect("group id"))
+    );
+    assert_eq!(locked, before_locked);
+
+    let mut empty = project_with_nested_group();
+    empty
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: SceneItemSpec::for_group("empty-group", "Empty group").expect("empty group"),
+        })
+        .expect("add empty group");
+    empty
+        .apply(ProjectCommand::UngroupSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group: "empty-group".to_owned(),
+        })
+        .expect("ungroup empty group");
+    assert!(empty
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .is_some_and(|scene| !scene.has_item("empty-group")));
+}
+
+#[test]
 fn group_child_removal_is_path_addressed_and_retains_the_source_registry() {
     let mut project = project_with_nested_group();
     project

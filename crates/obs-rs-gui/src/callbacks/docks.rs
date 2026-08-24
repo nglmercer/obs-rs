@@ -744,6 +744,7 @@ fn forward_to_studio(
     forward!(on_open_source_rename, invoke_open_source_rename, id);
     forward!(on_duplicate_source, invoke_duplicate_source, id);
     forward!(on_group_sources, invoke_group_sources);
+    forward!(on_ungroup_source, invoke_ungroup_source, id);
     forward!(on_copy_source, invoke_copy_source, id);
     forward!(on_paste_reference, invoke_paste_reference, target);
     forward!(on_paste_duplicate, invoke_paste_duplicate, target);

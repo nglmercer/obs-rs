@@ -64,6 +64,7 @@ export component FloatingDockWindow inherits Window {
     callback open-source-rename(string);
     callback duplicate-source(string);
     callback group-sources();
+    callback ungroup-source(string);
     callback copy-source(string);
     callback paste-reference(string);
     callback paste-duplicate(string);
@@ -146,6 +147,7 @@ export component FloatingDockWindow inherits Window {
         open-source-rename(id) => { root.open-source-rename(id); }
         duplicate-source(id) => { root.duplicate-source(id); }
         group-sources() => { root.group-sources(); }
+        ungroup-source(id) => { root.ungroup-source(id); }
         copy-source(id) => { root.copy-source(id); }
         paste-reference(target) => { root.paste-reference(target); }
         paste-duplicate(target) => { root.paste-duplicate(target); }

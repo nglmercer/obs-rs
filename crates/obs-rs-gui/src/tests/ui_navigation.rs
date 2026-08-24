@@ -353,6 +353,59 @@ pub(super) fn exercise_group_source_callbacks(
         .active_profile_spec()
         .and_then(|profile| profile.scene("preview"))
         .is_some_and(|scene| scene.item("group").is_none() && scene.item("pattern").is_none()));
+
+    let mut ungroup_target =
+        obs_rs_project::SceneItemSpec::for_group("ungroup-target", "Ungroup target")
+            .expect("ungroup target");
+    ungroup_target
+        .group_mut()
+        .expect("ungroup target group")
+        .add_item(
+            obs_rs_project::SceneItemSpec::new("ungroup-child-a", "background").expect("child a"),
+        )
+        .expect("add child a");
+    ungroup_target
+        .group_mut()
+        .expect("ungroup target group")
+        .add_item(
+            obs_rs_project::SceneItemSpec::new("ungroup-child-b", "background").expect("child b"),
+        )
+        .expect("add child b");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: ungroup_target,
+        }))
+        .expect("add ungroup target");
+    refresh_ui(ui, state, surface);
+    ui.invoke_select_source("ungroup-target".into());
+    ui.invoke_ungroup_source("ungroup-target".into());
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["ungroup-child-a", "ungroup-child-b"],
+        "ungroup selects the exposed root children"
+    );
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .is_some_and(|scene| {
+            scene.item("ungroup-target").is_none()
+                && scene.item("ungroup-child-a").is_some()
+                && scene.item("ungroup-child-b").is_some()
+        }));
+    ui.invoke_undo_edit();
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .is_some_and(|scene| scene.item("ungroup-target").is_some()));
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup

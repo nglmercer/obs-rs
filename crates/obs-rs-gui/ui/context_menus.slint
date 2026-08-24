@@ -27,6 +27,7 @@ export component SourceContextMenuArea inherits Rectangle {
     callback rename-source(string);
     callback duplicate-source(string);
     callback group-sources();
+    callback ungroup-source(string);
     callback copy-source(string);
     callback paste-reference(string);
     callback paste-duplicate(string);
@@ -95,6 +96,14 @@ export component SourceContextMenuArea inherits Rectangle {
                 title: I18n.text.group_selected_sources;
                 enabled: root.can-group;
                 activated => root.group-sources();
+            }
+            MenuItem {
+                title: I18n.text.ungroup_source;
+                enabled: root.source-id != ""
+                    && root.group
+                    && !root.nested
+                    && !root.source-locked;
+                activated => root.ungroup-source(root.source-id);
             }
             MenuSeparator {}
             MenuItem {

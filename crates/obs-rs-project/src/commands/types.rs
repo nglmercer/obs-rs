@@ -70,6 +70,12 @@ pub enum ProjectCommand {
         items: Vec<String>,
         group: SceneItemSpec,
     },
+    /// Atomically expands one unlocked root group back into its scene.
+    UngroupSceneItem {
+        profile: String,
+        scene: String,
+        group: String,
+    },
     /// Removes one scene item while retaining the source definition.
     RemoveSceneItem {
         profile: String,

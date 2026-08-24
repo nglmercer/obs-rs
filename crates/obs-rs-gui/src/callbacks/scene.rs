@@ -155,6 +155,26 @@ fn unique_group_identity(
     Err(std::io::Error::other("no bounded group identifier is available").into())
 }
 
+fn root_group_child_ids(
+    state: &DesktopState,
+    scene_id: &str,
+    group_id: &str,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let project = state.project_session().project();
+    let group = project
+        .active_profile_spec()
+        .and_then(|profile| profile.scene(scene_id))
+        .and_then(|scene| scene.item(group_id))
+        .and_then(SceneItemSpec::group)
+        .ok_or_else(|| std::io::Error::other("source is not a root group"))?;
+    Ok(group
+        .items()
+        .iter()
+        .take(MAX_CANVAS_SELECTIONS)
+        .map(|item| item.id().to_string())
+        .collect())
+}
+
 fn move_scene_and_refresh(
     weak: &slint::Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -300,6 +320,50 @@ fn install_source_list_callbacks(
         match result {
             Ok(_) => refresh_ui(&ui, &group_state, &group_surface),
             Err(error) => ui.set_status_message(format!("Group sources failed: {error}").into()),
+        }
+    });
+
+    let weak = ui.as_weak();
+    let ungroup_state = Rc::clone(state);
+    let ungroup_surface = Rc::clone(surface);
+    ui.on_ungroup_source(move |id| {
+        let result: Result<Vec<String>, Box<dyn Error>> = (|| {
+            let (profile, scene, child_ids) = {
+                let state = ungroup_state.borrow();
+                let project = state.project_session().project();
+                let scene = state
+                    .preview_scene()
+                    .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+                let child_ids = root_group_child_ids(&state, scene, id.as_str())?;
+                (
+                    project.active_profile().to_string(),
+                    scene.to_owned(),
+                    child_ids,
+                )
+            };
+            ungroup_state.borrow_mut().dispatch(UiCommand::Project(
+                ProjectCommand::UngroupSceneItem {
+                    profile,
+                    scene,
+                    group: id.to_string(),
+                },
+            ))?;
+            if !child_ids.is_empty() {
+                ungroup_state
+                    .borrow_mut()
+                    .dispatch(UiCommand::SelectSources {
+                        ids: child_ids.clone(),
+                        additive: false,
+                    })?;
+            }
+            Ok(child_ids)
+        })();
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(_) => refresh_ui(&ui, &ungroup_state, &ungroup_surface),
+            Err(error) => ui.set_status_message(format!("Ungroup failed: {error}").into()),
         }
     });
 

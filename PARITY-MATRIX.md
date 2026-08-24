@@ -78,6 +78,9 @@ routing, adaptive clock correction, or multiple recording tracks.
 > keeps multi-selection on right-click, rejects nested or locked selections,
 > preserves scene order and item state, and selects the new group after the
 > command. Undo removes the grouping as one edit.
+> Root-group Ungroup is now the inverse atomic command: it validates lock and
+> child-ID collisions, restores children at the former group position, and
+> selects the exposed root children; nested-group paths remain unsupported.
 > This closes dock selection projection, but does not claim nested canvas
 > geometry parity.
 

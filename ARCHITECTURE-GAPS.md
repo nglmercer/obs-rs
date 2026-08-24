@@ -55,6 +55,10 @@ projection is implemented.
 The Sources dock now exposes one atomic root-only grouping command. It preserves
 scene order and child transforms, rejects nested or locked selections, keeps the
 new group selected, and leaves the performance/presentation path unchanged.
+Root-group ungrouping is its inverse: child IDs are validated before mutation,
+children replace the group at its former order position, and the UI selects
+the resulting root children. Nested-group ungrouping remains intentionally
+outside this packet.
 
 | ID | Gap | Current evidence | Consequence | Required target | Dependencies / first packet |
 | --- | --- | --- | --- | --- | --- |

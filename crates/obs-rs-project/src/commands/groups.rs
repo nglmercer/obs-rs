@@ -173,6 +173,75 @@ pub(super) fn group_scene_items(
     scene.move_item(&group_id, insertion_index)
 }
 
+pub(super) fn ungroup_scene_item(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    group_id: &str,
+) -> Result<(), ProjectError> {
+    if group_id.contains('/') {
+        return Err(ProjectError::InvalidGroupPath);
+    }
+    let group_id = identifier(group_id, "group item id")?;
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let profile_ref = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene_ref = profile_ref
+        .scene(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    let group_index = scene_ref
+        .items()
+        .iter()
+        .position(|item| item.id() == &group_id)
+        .ok_or_else(|| ProjectError::UnknownSceneItem(group_id.clone()))?;
+    let group_item = scene_ref
+        .item(&group_id)
+        .ok_or_else(|| ProjectError::UnknownSceneItem(group_id.clone()))?;
+    if !group_item.is_group() {
+        return Err(ProjectError::InvalidGroupPath);
+    }
+    if group_item.locked() {
+        return Err(ProjectError::LockedSceneItem(group_id));
+    }
+    let children = group_item
+        .group()
+        .ok_or(ProjectError::InvalidGroupPath)?
+        .items()
+        .to_vec();
+    let mut root_ids = scene_ref
+        .items()
+        .iter()
+        .filter(|item| item.id() != &group_id)
+        .map(|item| item.id().clone())
+        .collect::<HashSet<_>>();
+    for child in &children {
+        if !root_ids.insert(child.id().clone()) {
+            return Err(ProjectError::DuplicateSceneItem(child.id().clone()));
+        }
+    }
+
+    let profile = project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene = profile
+        .scene_mut(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    scene
+        .remove_item(&group_id)
+        .ok_or_else(|| ProjectError::UnknownSceneItem(group_id.clone()))?;
+    let child_ids = children
+        .iter()
+        .map(|child| child.id().clone())
+        .collect::<Vec<_>>();
+    scene.add_items(children)?;
+    for (offset, child_id) in child_ids.into_iter().enumerate() {
+        scene.move_item(&child_id, group_index + offset)?;
+    }
+    Ok(())
+}
+
 pub(super) fn set_group_item_locked(
     project: &mut Project,
     profile: &str,
