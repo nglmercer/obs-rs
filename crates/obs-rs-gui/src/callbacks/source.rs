@@ -139,6 +139,62 @@ pub(crate) fn move_source_to_and_refresh(
     }
 }
 
+pub(crate) fn move_source_to_group_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    source_id: &str,
+    destination: &str,
+) {
+    let result: Result<String, Box<dyn Error>> = (|| {
+        let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
+        if locked {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "source is locked",
+            )
+            .into());
+        }
+        let item = source_id
+            .rsplit('/')
+            .next()
+            .filter(|item| !item.is_empty())
+            .ok_or_else(|| std::io::Error::other("source target is invalid"))?;
+        let destination_path = if destination.is_empty() {
+            Vec::new()
+        } else {
+            destination.split('/').map(str::to_owned).collect()
+        };
+        let new_target = if destination.is_empty() {
+            item.to_owned()
+        } else {
+            format!("{destination}/{item}")
+        };
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::MoveSceneItemToParent {
+                profile,
+                scene,
+                item: source_id.to_owned(),
+                destination: destination_path,
+                // The menu chooses the top of the destination group. A later
+                // drag/drop packet can use another validated index.
+                target_index: 0,
+            }))?;
+        state.borrow_mut().dispatch(UiCommand::SelectSource {
+            id: new_target.clone(),
+        })?;
+        Ok(new_target)
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(_) => refresh_ui(&ui, state, surface),
+        Err(error) => ui.set_status_message(format!("Move source failed: {error}").into()),
+    }
+}
+
 pub(crate) fn remove_source_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,

@@ -66,6 +66,68 @@ pub(super) fn exercise_group_source_callbacks(
         .get_source_rows()
         .iter()
         .any(|row| row.target == "overlay-group/background"));
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: obs_rs_project::SceneItemSpec::for_group(
+                "move-target-group",
+                "Move target group",
+            )
+            .expect("move target group"),
+        }))
+        .expect("add move target group");
+    refresh_ui(ui, state, surface);
+    let nested_move_targets = ui
+        .get_source_rows()
+        .iter()
+        .find(|row| row.target == "overlay-group/background")
+        .expect("nested source row");
+    assert_eq!(
+        nested_move_targets
+            .move_targets
+            .iter()
+            .map(|target| (
+                target.id.to_string(),
+                target.name.to_string(),
+                target.enabled
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (String::new(), "Scene root".to_owned(), true),
+            (
+                "overlay-group".to_owned(),
+                "  Overlay group".to_owned(),
+                false
+            ),
+            (
+                "move-target-group".to_owned(),
+                "  Move target group".to_owned(),
+                true
+            ),
+        ]
+    );
+    ui.invoke_move_source_to_group(
+        "overlay-group/background".into(),
+        "move-target-group".into(),
+    );
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("move-target-group/background"),
+        "reparenting keeps selection on the new stable path"
+    );
+    ui.invoke_move_source_to_group(
+        "move-target-group/background".into(),
+        "overlay-group".into(),
+    );
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("overlay-group/background"),
+        "moving back restores the nested target"
+    );
+    ui.invoke_remove_source("move-target-group".into());
+    refresh_ui(ui, state, surface);
     ui.invoke_open_source_rename("overlay-group".into());
     assert_eq!(
         ui.get_source_name_draft(),

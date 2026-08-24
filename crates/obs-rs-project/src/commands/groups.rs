@@ -55,6 +55,24 @@ fn parent_items<'a>(
     }
 }
 
+fn path_is_unlocked(scene: &SceneSpec, group_path: &[Identifier]) -> Result<(), ProjectError> {
+    let mut items = scene.items();
+    for group_id in group_path {
+        let group_item = items
+            .iter()
+            .find(|item| item.id() == group_id)
+            .ok_or(ProjectError::InvalidGroupPath)?;
+        if group_item.locked() {
+            return Err(ProjectError::LockedSceneItem(group_id.clone()));
+        }
+        items = group_item
+            .group()
+            .ok_or(ProjectError::InvalidGroupPath)?
+            .items();
+    }
+    Ok(())
+}
+
 fn parse_scene_item_target(target: &str) -> Result<(Vec<Identifier>, Identifier), ProjectError> {
     if target.is_empty() {
         return Err(ProjectError::InvalidGroupSelection);
@@ -406,6 +424,116 @@ pub(super) fn move_group_item(
 ) -> Result<(), ProjectError> {
     let item_id = identifier(item, "scene item id")?;
     group_mut(project, profile, scene, group_path)?.move_item(&item_id, target_index)
+}
+
+pub(super) fn move_scene_item_to_parent(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    item: &str,
+    destination: &[String],
+    target_index: usize,
+) -> Result<(), ProjectError> {
+    let (source_parent_path, item_id) =
+        parse_scene_item_target(item).map_err(|_| ProjectError::InvalidGroupPath)?;
+    let destination_path = if destination.is_empty() {
+        Vec::new()
+    } else {
+        parse_group_path(destination)?
+    };
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let profile_ref = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene_ref = profile_ref
+        .scene(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+
+    path_is_unlocked(scene_ref, &source_parent_path)?;
+    let source_items = parent_items(scene_ref, &source_parent_path)?;
+    let source_item = source_items
+        .iter()
+        .find(|candidate| candidate.id() == &item_id)
+        .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?;
+    if source_item.locked() {
+        return Err(ProjectError::LockedSceneItem(item_id));
+    }
+
+    // A group cannot be moved below one of its own descendants: doing so
+    // would turn the tree into a cycle and would make flattening recurse.
+    let mut source_target = source_parent_path.clone();
+    source_target.push(source_item.id().clone());
+    if destination_path.starts_with(&source_target) {
+        return Err(ProjectError::InvalidGroupPath);
+    }
+    path_is_unlocked(scene_ref, &destination_path)?;
+    let destination_items = parent_items(scene_ref, &destination_path)?;
+    if destination_items
+        .iter()
+        .any(|candidate| candidate.id() == source_item.id())
+        && source_parent_path != destination_path
+    {
+        return Err(ProjectError::DuplicateSceneItem(source_item.id().clone()));
+    }
+
+    if source_parent_path == destination_path {
+        if target_index >= source_items.len() {
+            return Err(ProjectError::InvalidSceneItemOrder {
+                index: target_index,
+            });
+        }
+        let scene = project
+            .profile_mut(&profile_id)
+            .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?
+            .scene_mut(&scene_id)
+            .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+        if source_parent_path.is_empty() {
+            return scene.move_item(&item_id, target_index);
+        }
+        return group_mut_at(&mut scene.items, &source_parent_path)
+            .ok_or(ProjectError::InvalidGroupPath)?
+            .move_item(&item_id, target_index);
+    }
+
+    // A destination index may point just after the current last item, which
+    // is useful for drag/drop callers. Every failure after this point is
+    // ruled out by the immutable validation above.
+    let destination_len = destination_items.len();
+    if target_index > destination_len {
+        return Err(ProjectError::InvalidSceneItemOrder {
+            index: target_index,
+        });
+    }
+    let scene = project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?
+        .scene_mut(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    let moved = if source_parent_path.is_empty() {
+        scene
+            .remove_item(&item_id)
+            .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?
+    } else {
+        group_mut_at(&mut scene.items, &source_parent_path)
+            .ok_or(ProjectError::InvalidGroupPath)?
+            .remove_item(&item_id)
+            .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?
+    };
+    if destination_path.is_empty() {
+        scene.add_item(moved)?;
+        if target_index < destination_len {
+            scene.move_item(&item_id, target_index)?;
+        }
+    } else {
+        let destination_group = group_mut_at(&mut scene.items, &destination_path)
+            .ok_or(ProjectError::InvalidGroupPath)?;
+        destination_group.add_item(moved)?;
+        if target_index < destination_len {
+            destination_group.move_item(&item_id, target_index)?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn remove_group_item(

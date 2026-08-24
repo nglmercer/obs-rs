@@ -7,10 +7,10 @@ use slint::ComponentHandle;
 use crate::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, dispatch_and_refresh,
     duplicate_scene_and_refresh, duplicate_source_and_refresh, flip_source_and_refresh,
-    move_source_and_refresh, move_source_to_and_refresh, refresh_ui, remove_scene_and_refresh,
-    remove_source_and_refresh, rename_scene_and_refresh, reset_source_transform_and_refresh,
-    toggle_source_locked_and_refresh, toggle_source_visibility_and_refresh,
-    transform_source_and_refresh, MainWindow, PreviewSurface,
+    move_source_and_refresh, move_source_to_and_refresh, move_source_to_group_and_refresh,
+    refresh_ui, remove_scene_and_refresh, remove_source_and_refresh, rename_scene_and_refresh,
+    reset_source_transform_and_refresh, toggle_source_locked_and_refresh,
+    toggle_source_visibility_and_refresh, transform_source_and_refresh, MainWindow, PreviewSurface,
 };
 
 pub(crate) fn install_scene_callbacks(
@@ -439,6 +439,19 @@ fn install_source_list_callbacks(
     let move_to_surface = Rc::clone(surface);
     ui.on_move_source_to(move |id, index| {
         move_source_to_and_refresh(&weak, &move_to_state, &move_to_surface, id.as_str(), index);
+    });
+
+    let weak = ui.as_weak();
+    let move_group_state = Rc::clone(state);
+    let move_group_surface = Rc::clone(surface);
+    ui.on_move_source_to_group(move |id, destination| {
+        move_source_to_group_and_refresh(
+            &weak,
+            &move_group_state,
+            &move_group_surface,
+            id.as_str(),
+            destination.as_str(),
+        );
     });
 
     let weak = ui.as_weak();

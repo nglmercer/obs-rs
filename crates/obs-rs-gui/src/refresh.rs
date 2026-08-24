@@ -8,8 +8,8 @@ use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
 use crate::preview_worker::{multiview_grid_dimensions, MAX_MULTIVIEW_SCENES};
 use crate::{
     frame_to_image, project_store, selection_overlay, set_selection_overlay, LocaleOption,
-    MainWindow, MixerRow, MultiviewScene, OutputRuntime, PreviewSurface, PreviewWorker, ProfileRow,
-    SceneRow, SourceRow,
+    MainWindow, MixerRow, MoveTarget, MultiviewScene, OutputRuntime, PreviewSurface, PreviewWorker,
+    ProfileRow, SceneRow, SourceRow,
 };
 
 thread_local! {
@@ -46,12 +46,90 @@ pub(crate) fn dispatch_and_refresh(
 
 const MAX_SOURCE_ROW_DEPTH: usize = crate::callbacks::MAX_SOURCE_TARGET_DEPTH;
 
+#[derive(Clone, Debug)]
+struct GroupDestination {
+    path: Vec<String>,
+    name: String,
+    enabled: bool,
+}
+
+fn collect_group_destinations(
+    items: &[SceneItemSpec],
+    parent_path: &[String],
+    ancestors_unlocked: bool,
+    destinations: &mut Vec<GroupDestination>,
+) {
+    for item in items {
+        let Some(group) = item.group() else {
+            continue;
+        };
+        let mut path = parent_path.to_vec();
+        path.push(item.id().to_string());
+        let enabled = ancestors_unlocked && !item.locked();
+        destinations.push(GroupDestination {
+            path: path.clone(),
+            name: format!("{}{}", "  ".repeat(path.len()), group.name()),
+            enabled,
+        });
+        collect_group_destinations(group.items(), &path, enabled, destinations);
+    }
+}
+
+fn move_targets_for_row(
+    source_target: &str,
+    parent_path: &[String],
+    destinations: &[GroupDestination],
+    root_name: &str,
+) -> Vec<MoveTarget> {
+    let source_path = source_target
+        .split('/')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut targets = Vec::with_capacity(destinations.len().saturating_add(1));
+    targets.push(MoveTarget {
+        id: "".into(),
+        name: root_name.into(),
+        enabled: !parent_path.is_empty(),
+    });
+    targets.extend(destinations.iter().map(|destination| MoveTarget {
+        id: destination.path.join("/").into(),
+        name: destination.name.clone().into(),
+        enabled: destination.enabled
+            && destination.path != parent_path
+            && !destination.path.starts_with(&source_path),
+    }));
+    targets
+}
+
 pub(crate) fn append_source_rows(
     rows: &mut Vec<SourceRow>,
     profile: &Profile,
     items: &[SceneItemSpec],
     state: &DesktopState,
     group_path: &mut Vec<String>,
+) {
+    let mut destinations = Vec::new();
+    collect_group_destinations(items, &[], true, &mut destinations);
+    let root_name = crate::i18n::with_catalog(state.locale(), |text| text.scene_root.to_string());
+    append_source_rows_inner(
+        rows,
+        profile,
+        items,
+        state,
+        group_path,
+        &destinations,
+        &root_name,
+    );
+}
+
+fn append_source_rows_inner(
+    rows: &mut Vec<SourceRow>,
+    profile: &Profile,
+    items: &[SceneItemSpec],
+    state: &DesktopState,
+    group_path: &mut Vec<String>,
+    destinations: &[GroupDestination],
+    root_name: &str,
 ) {
     let count = i32::try_from(items.len()).unwrap_or(i32::MAX);
     for (index, item) in items.iter().enumerate() {
@@ -84,7 +162,7 @@ pub(crate) fn append_source_rows(
         let selected = state.is_source_selected(target.as_str());
         rows.push(SourceRow {
             id: target.clone().into(),
-            target: target.into(),
+            target: target.clone().into(),
             name: name.into(),
             kind: kind.into(),
             order: (index + 1).to_string().into(),
@@ -96,11 +174,25 @@ pub(crate) fn append_source_rows(
             locked: item.locked(),
             first: index == 0,
             last: index + 1 == items.len(),
+            move_targets: ModelRc::new(VecModel::from(move_targets_for_row(
+                target.as_str(),
+                group_path,
+                destinations,
+                root_name,
+            ))),
         });
         if let Some(group) = item.group() {
             if group_path.len() < MAX_SOURCE_ROW_DEPTH {
                 group_path.push(item.id().to_string());
-                append_source_rows(rows, profile, group.items(), state, group_path);
+                append_source_rows_inner(
+                    rows,
+                    profile,
+                    group.items(),
+                    state,
+                    group_path,
+                    destinations,
+                    root_name,
+                );
                 group_path.pop();
             }
         }
@@ -519,9 +611,14 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     });
     ui.set_source_scene(source_scene.into());
     ui.set_source_count(selected_source_count);
+    let selected_move_targets = selected_row.map_or_else(
+        || ModelRc::new(VecModel::from(Vec::<MoveTarget>::new())),
+        |row| row.move_targets.clone(),
+    );
     if !model_matches(&ui.get_source_rows(), &source_rows) {
         ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
     }
+    ui.set_selected_source_move_targets(selected_move_targets);
     ui.set_selected_source_visible(selected_item.is_some_and(SceneItemSpec::visible));
     ui.set_selected_source_locked(selected_item.is_some_and(SceneItemSpec::locked));
     ui.set_selected_source_first(selected_source_first);

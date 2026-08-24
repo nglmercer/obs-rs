@@ -19,6 +19,15 @@
         selected: bool,
     }
 
+    // One valid or intentionally disabled destination in the source dock's
+    // Move to group menu. Rust supplies the stable path; Slint only renders
+    // the label and forwards the action.
+    export struct MoveTarget {
+        id: string,
+        name: string,
+        enabled: bool,
+    }
+
     export struct SourceRow {
         id: string,
         // Stable action target: a top-level item ID or an outer-to-inner
@@ -35,6 +44,7 @@
         locked: bool,
         first: bool,
         last: bool,
+        move-targets: [MoveTarget],
     }
 
     // One persistent source-filter instance in the standalone Filters window.

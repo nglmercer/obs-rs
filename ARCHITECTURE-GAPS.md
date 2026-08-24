@@ -15,6 +15,13 @@ only the low-level conversion slice. The project still lacks canonical
 per-source audio identity and routing, so source properties and multiple tracks
 remain intentionally open gaps.
 
+The scene-item identity packet now also covers atomic root/group reparenting:
+`MoveSceneItemToParent` validates source and destination paths before moving the
+owned item, and the Sources dock projects the same destinations for nested rows.
+Stable paths are recomputed after the move so selection does not point at the
+old parent. Direct group drag/drop, nested crop/rotation semantics, and the
+broader save/recovery lifecycle remain open.
+
 ## Phase 1 progress
 
 The first performance packet is now implemented:

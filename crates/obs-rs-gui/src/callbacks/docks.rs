@@ -70,6 +70,7 @@ impl DockController {
             window.set_selected_source_locked(ui.get_selected_source_locked());
             window.set_selected_source_first(ui.get_selected_source_first());
             window.set_selected_source_last(ui.get_selected_source_last());
+            window.set_selected_source_move_targets(ui.get_selected_source_move_targets());
             window.set_source_count(ui.get_source_count());
             window.set_can_paste(ui.get_can_paste());
             window.set_can_group_sources(ui.get_can_group_sources());
@@ -694,6 +695,10 @@ fn float(
 /// detached dock forwards to it rather than installing a second copy that could
 /// drift. After the studio has handled the action its models are current, so the
 /// floating dock is re-synced from them immediately.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one forwarding boundary keeps floating and dock callback semantics identical"
+)]
 fn forward_to_studio(
     window: &FloatingDockWindow,
     ui: &MainWindow,
@@ -738,6 +743,12 @@ fn forward_to_studio(
     forward!(on_toggle_source_locked, invoke_toggle_source_locked, id);
     forward!(on_move_source, invoke_move_source, id, delta);
     forward!(on_move_source_to, invoke_move_source_to, id, index);
+    forward!(
+        on_move_source_to_group,
+        invoke_move_source_to_group,
+        id,
+        destination
+    );
     forward!(on_reset_source_transform, invoke_reset_source_transform, id);
     forward!(on_flip_source, invoke_flip_source, id, horizontal);
     forward!(on_transform_source, invoke_transform_source, id, action);

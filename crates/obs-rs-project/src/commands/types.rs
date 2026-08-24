@@ -216,6 +216,19 @@ pub enum ProjectCommand {
         item: String,
         target_index: usize,
     },
+    /// Moves one scene item between the scene root and an existing group.
+    ///
+    /// `item` is a root ID or an outer-to-inner path such as
+    /// `overlay-group/source`. `destination` is the enclosing group path;
+    /// an empty path means the scene root. The item keeps its stable ID,
+    /// transform, visibility, and lock state.
+    MoveSceneItemToParent {
+        profile: String,
+        scene: String,
+        item: String,
+        destination: Vec<String>,
+        target_index: usize,
+    },
     /// Removes one source item from a scene.
     RemoveSource { profile: String, source: String },
     /// Replaces the ordered filter chain for one source.

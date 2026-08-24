@@ -347,6 +347,158 @@ fn grouping_nested_siblings_preserves_parent_order_and_item_state() {
 }
 
 #[test]
+fn moving_scene_items_between_root_and_groups_preserves_state_and_order() {
+    let mut project = project_with_nested_group();
+    let original_transform = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("background"))
+        .map(SceneItemSpec::transform)
+        .expect("root background transform");
+
+    project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "background".to_owned(),
+            destination: vec!["overlay-group".to_owned()],
+            target_index: 1,
+        })
+        .expect("move root item into group");
+    let group = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("group after root reparent");
+    assert_eq!(
+        group
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["first", "background", "second", "inner-group"]
+    );
+    assert_eq!(
+        group
+            .items()
+            .iter()
+            .find(|item| item.id().as_str() == "background")
+            .expect("moved item")
+            .transform(),
+        original_transform
+    );
+
+    project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "overlay-group/first".to_owned(),
+            destination: Vec::new(),
+            target_index: 0,
+        })
+        .expect("move group child to scene root");
+    let scene = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .expect("scene after reparent");
+    assert_eq!(
+        scene
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["first", "overlay-group"]
+    );
+    let group = scene
+        .item("overlay-group")
+        .and_then(SceneItemSpec::group)
+        .expect("group after child reparent");
+    assert_eq!(group.items()[0].id().as_str(), "background");
+
+    let before_cycle = project.clone();
+    let error = project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "overlay-group".to_owned(),
+            destination: vec!["overlay-group".to_owned(), "inner-group".to_owned()],
+            target_index: 0,
+        })
+        .expect_err("a group cannot move inside its own descendant");
+    assert_eq!(error, ProjectError::InvalidGroupPath);
+    assert_eq!(project, before_cycle);
+
+    let before_order = project.clone();
+    let error = project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "overlay-group/background".to_owned(),
+            destination: Vec::new(),
+            target_index: 99,
+        })
+        .expect_err("out-of-range reparent destination must fail");
+    assert_eq!(error, ProjectError::InvalidSceneItemOrder { index: 99 });
+    assert_eq!(project, before_order);
+}
+
+#[test]
+fn moving_scene_items_rejects_locked_source_or_destination_atomically() {
+    let mut project = project_with_nested_group();
+    project
+        .apply(ProjectCommand::SetGroupItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: "first".to_owned(),
+            locked: true,
+        })
+        .expect("lock source child");
+    let before_source = project.clone();
+    let error = project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "overlay-group/first".to_owned(),
+            destination: Vec::new(),
+            target_index: 0,
+        })
+        .expect_err("locked source must not move");
+    assert_eq!(
+        error,
+        ProjectError::LockedSceneItem(Identifier::new("first").expect("id"))
+    );
+    assert_eq!(project, before_source);
+
+    project
+        .apply(ProjectCommand::SetSceneItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "overlay-group".to_owned(),
+            locked: true,
+        })
+        .expect("lock destination group");
+    let before_destination = project.clone();
+    let error = project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "background".to_owned(),
+            destination: vec!["overlay-group".to_owned()],
+            target_index: 0,
+        })
+        .expect_err("locked destination group must reject reparenting");
+    assert_eq!(
+        error,
+        ProjectError::LockedSceneItem(Identifier::new("overlay-group").expect("id"))
+    );
+    assert_eq!(project, before_destination);
+}
+
+#[test]
 fn grouping_rejects_different_parents_or_invalid_selections_atomically() {
     let mut project = project_with_nested_group();
     let invalid_nested = || SceneItemSpec::for_group("new-group", "New group").expect("group");

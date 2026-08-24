@@ -1,5 +1,5 @@
 import { VerticalBox } from "std-widgets.slint";
-import { DockPane, DockSplitter, LocaleOption, MultiviewScene, ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
+import { DockPane, DockSplitter, LocaleOption, MoveTarget, MultiviewScene, ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
 import { I18n } from "i18n.slint";
 import { AppNavbar } from "navbar.slint";
 import { StagePanel } from "stage.slint";
@@ -32,7 +32,7 @@ export { SourceTransformWindow } from "source_transform_window.slint";
 export { MonitorWindow } from "monitor_window.slint";
 export { ProjectorWindow } from "projector_window.slint";
 export { FloatingDockWindow } from "floating_dock.slint";
-export { DockPane, DockSplitter, MonitorRow, MultiviewScene, PropertyRow, SourceCandidate, SourceFilterRow, SourceKindRow } from "models.slint";
+export { DockPane, DockSplitter, MonitorRow, MoveTarget, MultiviewScene, PropertyRow, SourceCandidate, SourceFilterRow, SourceKindRow } from "models.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
@@ -127,6 +127,7 @@ export component MainWindow inherits Window {
         in property <bool> selected-source-locked: false;
         in property <bool> selected-source-first: false;
         in property <bool> selected-source-last: false;
+        in property <[MoveTarget]> selected-source-move-targets;
         in property <int> source-count: 0;
         in property <bool> can-paste: false;
         in property <bool> can-group-sources: false;
@@ -224,6 +225,7 @@ export component MainWindow inherits Window {
         callback toggle-source-locked(string);
         callback move-source(string, int);
         callback move-source-to(string, int);
+        callback move-source-to-group(string, string);
         callback reset-source-transform(string);
         callback flip-source(string, bool);
         callback transform-source(string, string);
@@ -730,6 +732,7 @@ export component MainWindow inherits Window {
                 selected-source-locked: root.selected-source-locked;
                 selected-source-first: root.selected-source-first;
                 selected-source-last: root.selected-source-last;
+                selected-source-move-targets: root.selected-source-move-targets;
                 source-count: root.source-count;
                 can-paste: root.can-paste;
                 can-group-sources: root.can-group-sources;
@@ -790,6 +793,9 @@ export component MainWindow inherits Window {
                 toggle-source-locked(id) => { root.toggle-source-locked(id); }
                 move-source(id, delta) => { root.move-source(id, delta); }
                 move-source-to(id, index) => { root.move-source-to(id, index); }
+                move-source-to-group(id, destination) => {
+                    root.move-source-to-group(id, destination);
+                }
                 reset-source-transform(id) => { root.reset-source-transform(id); }
                 flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
                 transform-source(id, action) => { root.transform-source(id, action); }

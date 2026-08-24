@@ -41,10 +41,10 @@ pub(crate) use callbacks::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
     apply_source_transform_to, apply_source_transforms_to, duplicate_scene_and_refresh,
     duplicate_source_and_refresh, flip_source_and_refresh, item_for_target,
-    move_source_and_refresh, move_source_to_and_refresh, project_store, remove_scene_and_refresh,
-    remove_source_and_refresh, rename_scene_and_refresh, reset_source_transform_and_refresh,
-    scene_item_target, source_target, source_target_is_locked, source_transform_document,
-    target_settings_document, toggle_source_locked_and_refresh,
+    move_source_and_refresh, move_source_to_and_refresh, move_source_to_group_and_refresh,
+    project_store, remove_scene_and_refresh, remove_source_and_refresh, rename_scene_and_refresh,
+    reset_source_transform_and_refresh, scene_item_target, source_target, source_target_is_locked,
+    source_transform_document, target_settings_document, toggle_source_locked_and_refresh,
     toggle_source_visibility_and_refresh, transform_source_and_refresh, SceneItemTarget,
     SourceTarget,
 };
@@ -71,10 +71,11 @@ pub(crate) use refresh::{
 pub(crate) use settings::AppSettings;
 pub(crate) use view::{
     AddSourceText, AddSourceWindow, DockPane, DockSplitter, FloatingDockWindow, I18n, LocaleOption,
-    MainWindow, Metrics, MixerRow, MonitorRow, MonitorText, MonitorWindow, MultiviewScene, Palette,
-    ProfileRow, ProjectorWindow, PropertyRow, PropertyText, SceneRow, SettingsText, SettingsWindow,
-    SetupWindow, SourceCandidate, SourceFilterRow, SourceFiltersWindow, SourceKindRow,
-    SourcePropertiesWindow, SourceRow, SourceTransformWindow, ThemeTokens, UiMetrics, UiText,
+    MainWindow, Metrics, MixerRow, MonitorRow, MonitorText, MonitorWindow, MoveTarget,
+    MultiviewScene, Palette, ProfileRow, ProjectorWindow, PropertyRow, PropertyText, SceneRow,
+    SettingsText, SettingsWindow, SetupWindow, SourceCandidate, SourceFilterRow,
+    SourceFiltersWindow, SourceKindRow, SourcePropertiesWindow, SourceRow, SourceTransformWindow,
+    ThemeTokens, UiMetrics, UiText,
 };
 
 /// Mixer channel backed by the engine's live capture input.

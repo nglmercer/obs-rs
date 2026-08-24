@@ -17,9 +17,9 @@ mod groups;
 
 use filters::legacy_filter_spec;
 use groups::{
-    duplicate_group_item, group_scene_items, move_group_item, paste_group_item, remove_group_item,
-    set_group_item_locked, set_group_item_transform, set_group_item_visibility, set_group_name,
-    ungroup_scene_item,
+    duplicate_group_item, group_scene_items, move_group_item, move_scene_item_to_parent,
+    paste_group_item, remove_group_item, set_group_item_locked, set_group_item_transform,
+    set_group_item_visibility, set_group_name, ungroup_scene_item,
 };
 
 mod types;
@@ -249,6 +249,15 @@ impl Project {
                 item,
                 target_index,
             } => move_scene_item(self, &profile, &scene, &item, target_index),
+            ProjectCommand::MoveSceneItemToParent {
+                profile,
+                scene,
+                item,
+                destination,
+                target_index,
+            } => {
+                move_scene_item_to_parent(self, &profile, &scene, &item, &destination, target_index)
+            }
             ProjectCommand::MoveGroupItem {
                 profile,
                 scene,

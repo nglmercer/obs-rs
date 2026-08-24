@@ -1,4 +1,4 @@
-import { MixerRow, SceneRow, SourceRow } from "models.slint";
+import { MixerRow, MoveTarget, SceneRow, SourceRow } from "models.slint";
 import { DockSlot } from "dock_slot.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
@@ -30,6 +30,7 @@ export component FloatingDockWindow inherits Window {
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
     in property <bool> selected-source-last;
+    in property <[MoveTarget]> selected-source-move-targets;
     in property <int> source-count;
     in property <bool> can-paste;
     in property <bool> can-group-sources;
@@ -58,6 +59,7 @@ export component FloatingDockWindow inherits Window {
     callback toggle-source-locked(string);
     callback move-source(string, int);
     callback move-source-to(string, int);
+    callback move-source-to-group(string, string);
     callback reset-source-transform(string);
     callback flip-source(string, bool);
     callback transform-source(string, string);
@@ -106,6 +108,7 @@ export component FloatingDockWindow inherits Window {
         selected-source-locked: root.selected-source-locked;
         selected-source-first: root.selected-source-first;
         selected-source-last: root.selected-source-last;
+        selected-source-move-targets: root.selected-source-move-targets;
         source-count: root.source-count;
         can-paste: root.can-paste;
         can-group-sources: root.can-group-sources;
@@ -141,6 +144,9 @@ export component FloatingDockWindow inherits Window {
         toggle-source-locked(id) => { root.toggle-source-locked(id); }
         move-source(id, delta) => { root.move-source(id, delta); }
         move-source-to(id, index) => { root.move-source-to(id, index); }
+        move-source-to-group(id, destination) => {
+            root.move-source-to-group(id, destination);
+        }
         reset-source-transform(id) => { root.reset-source-transform(id); }
         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
         transform-source(id, action) => { root.transform-source(id, action); }

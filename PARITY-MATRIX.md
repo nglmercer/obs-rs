@@ -28,6 +28,20 @@ Stereo, 2.1, Quad, 5.1, and 7.1 by speaker role, while unknown `Discrete`
 layouts retain the index-based fallback. This does not claim per-source audio
 routing, adaptive clock correction, or multiple recording tracks.
 
+## Latest verified package: scene-item reparenting
+
+On 2026-08-24, `SCENE-002`/`SOURCE-001` gained an atomic
+`MoveSceneItemToParent` command. A root or nested item can move to the scene
+root or any existing group while retaining its stable ID, transform, visibility,
+and lock state. The Sources dock exposes bounded, localized Move to group
+destinations through the same command for docked and floating panels, and
+selection follows the item’s new path. Cycles, locked ancestors, duplicate
+destination IDs, and invalid order positions fail without mutation. Project
+tests cover root/group and group/group moves plus failure atomicity; the GUI
+fixture covers destination projection, callback execution, selection recovery,
+and cleanup. Nested crop/rotation semantics and full drag/drop reparenting remain
+open.
+
 ## Core, scheduling, and rendering
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |

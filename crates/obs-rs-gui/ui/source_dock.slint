@@ -1,6 +1,6 @@
 import { ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
-import { SourceRow } from "models.slint";
+import { MoveTarget, SourceRow } from "models.slint";
 import { SourceContextMenuArea } from "context_menus.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
@@ -18,6 +18,7 @@ export component SourceDock inherits Rectangle {
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
     in property <bool> selected-source-last;
+    in property <[MoveTarget]> selected-source-move-targets;
     in property <int> source-count;
     in property <bool> can-paste;
     in property <bool> can-group-sources;
@@ -45,6 +46,7 @@ export component SourceDock inherits Rectangle {
     callback toggle-source-locked(string);
     callback move-source(string, int);
     callback move-source-to(string, int);
+    callback move-source-to-group(string, string);
     callback reset-source-transform(string);
     callback flip-source(string, bool);
     callback transform-source(string, string);
@@ -123,6 +125,7 @@ export component SourceDock inherits Rectangle {
                         can-move-top: !source.first;
                         can-move-bottom: !source.last;
                         source-count: source.count;
+                        move-targets: source.move-targets;
                         can-paste: root.can-paste;
                         can-group: root.can-group-sources;
                         select-source(id) => { root.select-source(id); }
@@ -144,6 +147,9 @@ export component SourceDock inherits Rectangle {
                         toggle-source-locked(id) => { root.toggle-source-locked(id); }
                         move-source(id, delta) => { root.move-source(id, delta); }
                         move-source-to(id, index) => { root.move-source-to(id, index); }
+                        move-source-to-group(id, destination) => {
+                            root.move-source-to-group(id, destination);
+                        }
                         reset-source-transform(id) => { root.reset-source-transform(id); }
                         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
                         transform-source(id, action) => { root.transform-source(id, action); }
@@ -215,6 +221,7 @@ export component SourceDock inherits Rectangle {
                     can-move-top: !root.selected-source-first;
                     can-move-bottom: !root.selected-source-last;
                     source-count: root.source-count;
+                    move-targets: root.selected-source-move-targets;
                     can-paste: root.can-paste;
                     can-group: root.can-group-sources;
                     select-source(id) => { root.select-source(id); }
@@ -233,6 +240,9 @@ export component SourceDock inherits Rectangle {
                     toggle-source-locked(id) => { root.toggle-source-locked(id); }
                     move-source(id, delta) => { root.move-source(id, delta); }
                     move-source-to(id, index) => { root.move-source-to(id, index); }
+                    move-source-to-group(id, destination) => {
+                        root.move-source-to-group(id, destination);
+                    }
                     reset-source-transform(id) => { root.reset-source-transform(id); }
                     flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
                     transform-source(id, action) => { root.transform-source(id, action); }
