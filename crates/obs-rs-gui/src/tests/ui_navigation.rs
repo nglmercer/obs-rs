@@ -187,8 +187,8 @@ pub(super) fn exercise_group_source_callbacks(
     ui.invoke_navigate_source_selection(2, 2);
     assert_eq!(
         state.borrow().selected_sources().collect::<Vec<_>>(),
-        vec!["overlay-group", "background", "overlay-group/pattern"],
-        "Ctrl navigation toggles the last visible nested source row"
+        vec!["background", "overlay-group", "overlay-group/pattern"],
+        "Ctrl navigation preserves the ordered range and appends the toggled nested row"
     );
 
     // Keep the canvas selection on the root item while opening a nested
