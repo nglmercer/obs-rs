@@ -86,6 +86,17 @@ export component SourceDock inherits Rectangle {
                     focus-on-click: true;
                     focus-on-tab-navigation: true;
                     key-pressed(event) => {
+                        if !event.modifiers.control
+                            && !event.modifiers.alt
+                            && event.text == Key.Delete
+                            && root.selected-source != ""
+                            && root.selected-source != "none" {
+                            // Deletion remains a Rust callback so locked-item
+                            // validation, nested paths, and undo ownership do
+                            // not get duplicated in the dock.
+                            root.remove-source(root.selected-source);
+                            return accept;
+                        }
                         if !event.modifiers.alt
                             && (event.text == Key.UpArrow
                                 || event.text == Key.DownArrow

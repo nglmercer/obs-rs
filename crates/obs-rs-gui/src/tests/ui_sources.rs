@@ -1,5 +1,94 @@
 use super::*;
 
+/// Verifies that the focused Sources dock uses the same Rust removal callback
+/// as the canvas, including the locked-item failure path.
+pub(super) fn exercise_source_keyboard_delete(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
+    crate::callbacks::install_callbacks(ui, state, surface, &output);
+    for (id, locked) in [("keyboard-delete", false), ("keyboard-delete-locked", true)] {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                source: SourceSpec::new(
+                    id,
+                    "color_source",
+                    id,
+                    source_settings("color_source").expect("source defaults"),
+                )
+                .expect("keyboard source"),
+            }))
+            .expect("add keyboard source");
+        if locked {
+            state
+                .borrow_mut()
+                .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemLocked {
+                    profile: "live".to_owned(),
+                    scene: "preview".to_owned(),
+                    item: id.to_owned(),
+                    locked: true,
+                }))
+                .expect("lock keyboard source");
+        }
+        refresh_ui(ui, state, surface);
+        if locked {
+            focus_last_source_row(ui);
+        } else {
+            focus_canvas(ui);
+        }
+        // The click used to focus the list also selects whichever visible row
+        // is under the test point. Restore the intended target after that
+        // gesture so the keyboard assertion covers the selected item rather
+        // than depending on row ordering in the larger fixture.
+        ui.invoke_select_source(id.into());
+        ui.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Delete.into(),
+        });
+        ui.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Delete.into(),
+        });
+
+        let exists = state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .is_some_and(|scene| scene.item(id).is_some());
+        assert_eq!(exists, locked, "Delete must respect source locking");
+        if locked {
+            assert!(ui.get_status_message().contains("locked"));
+        }
+    }
+}
+
+fn focus_canvas(ui: &MainWindow) {
+    let canvas = ElementHandle::find_by_element_id(ui, "CanvasEditor::surface")
+        .find(|canvas| canvas.size().width > 100.0 && canvas.size().height > 100.0)
+        .expect("editable canvas focus target");
+    canvas.mock_single_click(PointerEventButton::Left);
+}
+
+fn focus_last_source_row(ui: &MainWindow) {
+    let row = ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
+        .filter(|row| row.size().height > 30.0)
+        .collect::<Vec<_>>()
+        .pop()
+        .expect("keyboard source row");
+    let target = row
+        .query_descendants()
+        .match_inherits("TouchArea")
+        .match_predicate(|area| area.size().width > 150.0 && area.size().height > 30.0)
+        .find_first()
+        .expect("keyboard source row focus target");
+    target.mock_single_click(PointerEventButton::Left);
+}
+
 pub(super) fn render_source_properties_window() {
     let window = SourcePropertiesWindow::new().expect("properties window should instantiate");
     window.set_source_name("Background".into());

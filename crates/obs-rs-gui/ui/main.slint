@@ -499,6 +499,17 @@ export component MainWindow inherits Window {
                 root.select-all-sources();
                 return accept;
             }
+            if !event.modifiers.control
+                && !event.modifiers.alt
+                && event.text == Key.Delete
+                && root.selected-source != ""
+                && root.selected-source != "none" {
+                // The canvas and Sources dock share the selected target; the
+                // existing Rust callback therefore applies the same locked
+                // and nested-item rules from either focused surface.
+                root.remove-source(root.selected-source);
+                return accept;
+            }
             if (event.text == " ") {
                 root.space-held = true;
                 return accept;

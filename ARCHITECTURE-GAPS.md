@@ -31,6 +31,16 @@ modal edit, and the project plus GUI fixtures prove one undo step and clean
 inheritance. Per-scene transition selection still does not replace the broader
 Studio Mode transition workflow or production output parity.
 
+The keyboard source-deletion packet keeps the Delete key as a presentation
+boundary only: the focused Sources dock and the editable canvas `FocusScope`
+call the existing Rust `remove-source` callback. The canvas editor explicitly
+requests that scope on pointer-down, so keyboard delivery does not depend on a
+child `TouchArea` becoming focused accidentally. Nested paths, locked-item
+rejection, project history, and refresh therefore continue to have one owner.
+The GUI fixture covers the successful unlocked canvas path and the locked dock
+failure path; global hotkey registration and broader source context-menu parity
+remain separate gaps.
+
 ## Phase 1 progress
 
 The first performance packet is now implemented:

@@ -47,6 +47,7 @@ export component CanvasEditor inherits Rectangle {
     callback canvas-selection-dragged(int, int);
     callback canvas-selection-committed();
     callback canvas-pan-dragged(int, int);
+    callback canvas-focused();
     callback canvas-zoom-step(int);
     // direction, canvas anchor, pointer position, old view origin, and the
     // old view scale in fixed-point micros. The Rust controller uses these to
@@ -103,10 +104,12 @@ export component CanvasEditor inherits Rectangle {
         pointer-event(event) => {
             if (event.kind == PointerEventKind.down
                 && (event.button == PointerEventButton.middle || root.space-held)) {
+                root.canvas-focused();
                 root.last-x = self.mouse-x;
                 root.last-y = self.mouse-y;
                 root.active-handle = -2;
             } else if (event.kind == PointerEventKind.down) {
+                root.canvas-focused();
                 root.last-x = self.mouse-x;
                 root.last-y = self.mouse-y;
                 root.active-handle = 0;

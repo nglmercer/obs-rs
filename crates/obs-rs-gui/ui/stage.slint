@@ -82,7 +82,12 @@ component StageCanvas inherits Rectangle {
         image-fit: contain;
         image-rendering: smooth;
     }
-    if root.editable : CanvasEditor {
+    if root.editable : canvas-focus := FocusScope {
+        // Keep keyboard canvas actions on the focused preview surface while
+        // the project mutation remains owned by the Rust callback boundary.
+        focus-on-click: true;
+        focus-on-tab-navigation: true;
+        CanvasEditor {
         width: 100%;
         height: 100%;
         item-x: root.item-x;
@@ -122,11 +127,13 @@ component StageCanvas inherits Rectangle {
             root.canvas-pointer-pressed(x, y, additive);
         }
         canvas-selection-dragged(x, y) => { root.canvas-selection-dragged(x, y); }
-        canvas-selection-committed() => { root.canvas-selection-committed(); }
-        canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
-        canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
+            canvas-selection-committed() => { root.canvas-selection-committed(); }
+            canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+            canvas-focused() => { canvas-focus.focus(); }
+            canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
         canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale) => {
             root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
+        }
         }
     }
     if labelled : Rectangle {
