@@ -55,11 +55,10 @@ projection is implemented.
 The Sources dock now exposes one atomic same-parent grouping command. It
 preserves the parent order and child transforms for root or nested selections,
 rejects mixed-parent or locked selections, keeps the new path-addressed group
-selected, and leaves the performance/presentation path unchanged. Root-group
-ungrouping is its inverse: child IDs are validated before mutation, children
-replace the group at its former order position, and the UI selects the
-resulting root children. Nested-group ungrouping remains intentionally outside
-this packet.
+selected, and leaves the performance/presentation path unchanged. Ungrouping is
+its inverse for root and nested group paths: child IDs are validated before
+mutation, children replace the group at its former parent position, and the UI
+selects the resulting root or nested child paths.
 
 | ID | Gap | Current evidence | Consequence | Required target | Dependencies / first packet |
 | --- | --- | --- | --- | --- | --- |

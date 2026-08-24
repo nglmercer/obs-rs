@@ -101,7 +101,6 @@ export component SourceContextMenuArea inherits Rectangle {
                 title: I18n.text.ungroup_source;
                 enabled: root.source-id != ""
                     && root.group
-                    && !root.nested
                     && !root.source-locked;
                 activated => root.ungroup-source(root.source-id);
             }

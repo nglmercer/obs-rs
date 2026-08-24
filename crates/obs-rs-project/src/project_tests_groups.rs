@@ -504,12 +504,77 @@ fn ungrouping_root_group_preserves_child_order_and_state() {
 }
 
 #[test]
+fn ungrouping_nested_group_preserves_parent_order_and_child_state() {
+    let mut project = project_with_nested_group();
+    let group_path = vec!["overlay-group".to_owned(), "inner-group".to_owned()];
+    project
+        .apply(ProjectCommand::SetGroupItemVisibility {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: group_path.clone(),
+            item: "nested".to_owned(),
+            visible: false,
+        })
+        .expect("hide nested group child");
+    let child_transform =
+        FrameTransform::new(1_100, 925, 13, -6, false, true, 165).expect("child transform");
+    project
+        .apply(ProjectCommand::SetGroupItemTransform {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path,
+            item: "nested".to_owned(),
+            transform: child_transform,
+        })
+        .expect("transform nested group child");
+
+    project
+        .apply(ProjectCommand::UngroupSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group: "overlay-group/inner-group".to_owned(),
+        })
+        .expect("ungroup nested group");
+
+    let scene = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .expect("main scene");
+    assert_eq!(
+        scene
+            .item("overlay-group")
+            .and_then(SceneItemSpec::group)
+            .map(|group| {
+                group
+                    .items()
+                    .iter()
+                    .map(SceneItemSpec::id)
+                    .map(Identifier::as_str)
+                    .collect::<Vec<_>>()
+            }),
+        Some(vec!["first", "second", "nested"])
+    );
+    let child = scene
+        .item("overlay-group")
+        .and_then(SceneItemSpec::group)
+        .and_then(|group| group.items().last())
+        .expect("exposed nested child");
+    assert_eq!(child.id().as_str(), "nested");
+    assert!(!child.visible());
+    assert_eq!(child.transform(), child_transform);
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one failure matrix covers root and nested ungroup validation"
+)]
 fn ungrouping_rejects_invalid_or_colliding_groups_atomically() {
     let mut project = project_with_nested_group();
     for (group, expected) in [
         ("background".to_owned(), ProjectError::InvalidGroupPath),
         (
-            "overlay-group/inner-group".to_owned(),
+            "overlay-group/first".to_owned(),
             ProjectError::InvalidGroupPath,
         ),
     ] {
@@ -545,6 +610,54 @@ fn ungrouping_rejects_invalid_or_colliding_groups_atomically() {
         ProjectError::DuplicateSceneItem(Identifier::new("first").expect("child id"))
     );
     assert_eq!(project, before_collision);
+
+    let mut nested_collision = project_with_nested_group();
+    nested_collision
+        .apply(ProjectCommand::PasteGroupItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: SceneItemSpec::new("nested", "background").expect("nested collision"),
+            mode: SceneItemDuplicateMode::Reference,
+        })
+        .expect("add nested collision sibling");
+    let before_nested_collision = nested_collision.clone();
+    let error = nested_collision
+        .apply(ProjectCommand::UngroupSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group: "overlay-group/inner-group".to_owned(),
+        })
+        .expect_err("nested child collision must fail");
+    assert_eq!(
+        error,
+        ProjectError::DuplicateSceneItem(Identifier::new("nested").expect("nested id"))
+    );
+    assert_eq!(nested_collision, before_nested_collision);
+
+    let mut locked_nested = project_with_nested_group();
+    locked_nested
+        .apply(ProjectCommand::SetGroupItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: "inner-group".to_owned(),
+            locked: true,
+        })
+        .expect("lock nested group");
+    let before_locked_nested = locked_nested.clone();
+    let error = locked_nested
+        .apply(ProjectCommand::UngroupSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group: "overlay-group/inner-group".to_owned(),
+        })
+        .expect_err("locked nested group must fail");
+    assert_eq!(
+        error,
+        ProjectError::LockedSceneItem(Identifier::new("inner-group").expect("nested group id"))
+    );
+    assert_eq!(locked_nested, before_locked_nested);
 
     let mut locked = project_with_nested_group();
     locked

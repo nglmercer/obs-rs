@@ -72,7 +72,8 @@ pub enum ProjectCommand {
         items: Vec<String>,
         group: SceneItemSpec,
     },
-    /// Atomically expands one unlocked root group back into its scene.
+    /// Atomically expands one unlocked group back into its parent. The target
+    /// is a root group ID or an outer-to-inner group path.
     UngroupSceneItem {
         profile: String,
         scene: String,

@@ -165,23 +165,31 @@ fn unique_group_identity(
     Err(std::io::Error::other("no bounded group identifier is available").into())
 }
 
-fn root_group_child_ids(
+fn group_child_targets(
     state: &DesktopState,
     scene_id: &str,
-    group_id: &str,
+    group_target: &str,
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let project = state.project_session().project();
     let group = project
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene_id))
-        .and_then(|scene| scene.item(group_id))
+        .and_then(|scene| crate::callbacks::item_for_target(scene, group_target))
         .and_then(SceneItemSpec::group)
-        .ok_or_else(|| std::io::Error::other("source is not a root group"))?;
+        .ok_or_else(|| std::io::Error::other("source is not a group"))?;
+    let parent_path = crate::callbacks::source_parent_path(group_target)
+        .ok_or_else(|| std::io::Error::other("group target path is invalid"))?;
     Ok(group
         .items()
         .iter()
         .take(MAX_CANVAS_SELECTIONS)
-        .map(|item| item.id().to_string())
+        .map(|item| {
+            if parent_path.is_empty() {
+                item.id().to_string()
+            } else {
+                format!("{}/{}", parent_path.join("/"), item.id())
+            }
+        })
         .collect())
 }
 
@@ -354,7 +362,7 @@ fn install_source_list_callbacks(
                 let scene = state
                     .preview_scene()
                     .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
-                let child_ids = root_group_child_ids(&state, scene, id.as_str())?;
+                let child_ids = group_child_targets(&state, scene, id.as_str())?;
                 (
                     project.active_profile().to_string(),
                     scene.to_owned(),

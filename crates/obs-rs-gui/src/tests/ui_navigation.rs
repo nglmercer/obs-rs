@@ -450,7 +450,36 @@ pub(super) fn exercise_group_source_callbacks(
         nested_grouped_ids,
         vec!["ungroup-child-a".to_owned(), "ungroup-child-b".to_owned()]
     );
+    ui.invoke_ungroup_source("ungroup-target/group".into());
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec![
+            "ungroup-target/ungroup-child-a",
+            "ungroup-target/ungroup-child-b"
+        ],
+        "nested ungroup selects the exposed child paths"
+    );
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("ungroup-target"))
+        .and_then(obs_rs_project::SceneItemSpec::group)
+        .is_some_and(|group| {
+            group.items().iter().all(|item| item.group().is_none()) && group.items().len() == 2
+        }));
     ui.invoke_undo_edit();
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("ungroup-target"))
+        .and_then(obs_rs_project::SceneItemSpec::group)
+        .is_some_and(|group| group.items().len() == 1 && group.items()[0].is_group()));
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup
