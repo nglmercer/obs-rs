@@ -43,6 +43,12 @@ routing, adaptive clock correction, or multiple recording tracks.
 
 ## Canvas editing
 
+> Selection update: the Sources dock now projects and selects bounded nested
+> group paths such as `overlay-group/background`; click, context-menu opening,
+> and keyboard navigation use the same Rust-owned path selection. Canvas
+> geometry selection still projects top-level items only until nested world
+> transforms have a dedicated overlay model.
+
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | CANVAS-001 | Viewport zoom | Fit to Window, fixed zoom presets, and wheel zoom change the view without changing project transforms. | Rust-owned `CanvasState` drives Fit to Window plus bounded 25%, 50%, 100%, and 200% presets. Wheel zoom now uses bounded continuous 10–800% levels and fixed-point cursor anchoring; the canvas image and selection overlay scale together and remain clipped to the viewport. | Partial | Desktop | `callbacks::canvas` preset, continuous-wheel, and anchor-invariant tests; GUI callback and snapshot coverage. | `crates/obs-rs-gui/ui/{canvas_editor.slint,stage.slint}`, `crates/obs-rs-gui/src/callbacks/canvas.rs`, `crates/obs-rs-gui/src/tests.rs` | Pointer fixture, live DPI/viewport evidence |
@@ -62,6 +68,11 @@ routing, adaptive clock correction, or multiple recording tracks.
 | DOCK-004 | Core dock coverage | Scenes, Sources, Mixer, Transitions, Controls, Stats, properties, and plugin docks are available. | Scenes, Sources, Mixer, Transitions, Controls, and diagnostics panels exist; plugin/custom dock registration is absent. | Partial | Desktop | GUI snapshot and callback tests. | `crates/obs-rs-gui/ui`, `crates/obs-rs-gui/src` | Dock extension API |
 
 ## Scenes, sources, and filters
+
+> Nested-row update: source-row selection and depth-first keyboard navigation
+> now include visible group descendants using the same bounded path targets as
+> nested source actions. This closes dock selection projection, but does not
+> claim nested canvas geometry parity.
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

@@ -64,6 +64,7 @@ impl DockController {
             window.set_selected_source(ui.get_selected_source());
             window.set_selected_source_is_screen(ui.get_selected_source_is_screen());
             window.set_selected_source_is_group(ui.get_selected_source_is_group());
+            window.set_selected_source_is_nested(ui.get_selected_source_is_nested());
             window.set_selected_source_visible(ui.get_selected_source_visible());
             window.set_selected_source_locked(ui.get_selected_source_locked());
             window.set_selected_source_first(ui.get_selected_source_first());

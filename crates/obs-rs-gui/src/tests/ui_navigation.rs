@@ -66,6 +66,18 @@ pub(super) fn exercise_group_source_callbacks(
         .get_source_rows()
         .iter()
         .any(|row| row.target == "overlay-group/background"));
+    ui.invoke_select_source("overlay-group/background".into());
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("overlay-group/background"),
+        "click selection accepts the nested row target"
+    );
+    assert!(ui
+        .get_source_rows()
+        .iter()
+        .find(|row| row.target == "overlay-group/background")
+        .is_some_and(|row| row.selected));
+    ui.invoke_select_source("background".into());
 
     ui.invoke_navigate_source_selection(1, 0);
     assert_eq!(
@@ -82,10 +94,14 @@ pub(super) fn exercise_group_source_callbacks(
     ui.invoke_navigate_source_selection(2, 2);
     assert_eq!(
         state.borrow().selected_sources().collect::<Vec<_>>(),
-        vec!["background"],
-        "Ctrl navigation toggles the resolved source"
+        vec!["overlay-group", "background", "overlay-group/pattern"],
+        "Ctrl navigation toggles the last visible nested source row"
     );
 
+    // Keep the canvas selection on the root item while opening a nested
+    // editor directly; the editor target is intentionally independent from
+    // the active canvas geometry until nested geometry projection is added.
+    ui.invoke_select_source("background".into());
     let transform = crate::install_source_transform_window(ui, state, surface)
         .expect("nested transform window should instantiate");
     ui.invoke_open_source_transform_for("overlay-group/background".into());

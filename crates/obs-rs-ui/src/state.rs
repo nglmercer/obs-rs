@@ -16,8 +16,7 @@ use super::{
 };
 
 mod selection;
-
-use selection::scene_item_at_target;
+use super::helpers::scene_item_at_target;
 
 /// The last Preview/Program choices for one in-memory profile.
 #[derive(Clone, Debug, Default)]
@@ -61,9 +60,10 @@ pub struct DesktopState {
     profile_scene_selections: BTreeMap<Identifier, SceneSelection>,
     project_selection_key: Option<String>,
     project_scene_selections: BTreeMap<String, ProjectSceneSelectionState>,
-    /// Ordered transient canvas selection. The last item is the active item
-    /// used by property dialogs and single-row source actions.
-    pub(crate) selected_sources: Vec<Identifier>,
+    /// Ordered transient scene-item selection. The last item is the active
+    /// item used by property dialogs and single-row source actions. Nested
+    /// group rows use their bounded outer-to-inner path.
+    pub(crate) selected_sources: Vec<String>,
     /// Transient scene-item clipboard. It is intentionally outside the
     /// persistent project and is cleared when a different project is loaded.
     pub(crate) clipboard: Option<SceneItemSpec>,
@@ -97,7 +97,10 @@ impl DesktopState {
             profile_scene_selections: BTreeMap::new(),
             project_selection_key: None,
             project_scene_selections: BTreeMap::new(),
-            selected_sources: selected_sources.into_iter().collect(),
+            selected_sources: selected_sources
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
             clipboard: None,
             locale: UiLocale::English,
             transition: FrameTransition::Cut,
@@ -173,6 +176,7 @@ impl DesktopState {
                     .preview_scene
                     .as_ref()
                     .and_then(|scene| first_source_id(self.project.project(), scene))
+                    .map(|id| id.to_string())
                     .into_iter()
                     .collect();
                 "preview scene selected"
@@ -447,6 +451,7 @@ impl DesktopState {
             .preview_scene
             .as_ref()
             .and_then(|scene| first_source_id(self.project.project(), scene))
+            .map(|id| id.to_string())
             .into_iter()
             .collect();
     }
@@ -477,6 +482,7 @@ impl DesktopState {
                 .preview_scene
                 .as_ref()
                 .and_then(|scene| first_source_id(self.project.project(), scene))
+                .map(|id| id.to_string())
                 .into_iter()
                 .collect();
         }
@@ -614,6 +620,7 @@ impl DesktopState {
             .preview_scene
             .as_ref()
             .and_then(|scene| first_source_id(self.project.project(), scene))
+            .map(|id| id.to_string())
             .into_iter()
             .collect();
         let selection = self
@@ -726,20 +733,18 @@ impl DesktopState {
     /// Returns the source selected in the current preview scene.
     #[must_use]
     pub fn selected_source(&self) -> Option<&str> {
-        self.selected_sources.last().map(Identifier::as_str)
+        self.selected_sources.last().map(String::as_str)
     }
 
     /// Returns the current ordered canvas selection.
     pub fn selected_sources(&self) -> impl Iterator<Item = &str> {
-        self.selected_sources.iter().map(Identifier::as_str)
+        self.selected_sources.iter().map(String::as_str)
     }
 
     /// Returns whether a scene item belongs to the current canvas selection.
     #[must_use]
     pub fn is_source_selected(&self, id: &str) -> bool {
-        self.selected_sources
-            .iter()
-            .any(|selected| selected.as_str() == id)
+        self.selected_sources.iter().any(|selected| selected == id)
     }
 
     /// Returns whether a copied scene item is available to paste.

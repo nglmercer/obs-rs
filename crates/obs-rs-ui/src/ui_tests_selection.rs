@@ -127,6 +127,55 @@ fn desktop_state_selects_source_items_in_preview_scene() {
 }
 
 #[test]
+fn desktop_state_selects_nested_group_targets_without_duplicate_state() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "source_scene".to_owned(),
+        })
+        .expect("source scene selection");
+
+    let mut group = SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::for_source("source").expect("nested item"))
+        .expect("nested item attach");
+    state
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "source_scene".to_owned(),
+            item: group,
+        }))
+        .expect("group insertion");
+
+    state
+        .dispatch(UiCommand::SelectSource {
+            id: "overlay-group/source".to_owned(),
+        })
+        .expect("nested selection");
+    assert_eq!(state.selected_source(), Some("overlay-group/source"));
+    assert_eq!(
+        state.selected_sources().collect::<Vec<_>>(),
+        vec!["overlay-group/source"]
+    );
+
+    state
+        .dispatch(UiCommand::ToggleSourceSelection {
+            id: "overlay-group/source".to_owned(),
+        })
+        .expect("nested toggle");
+    assert_eq!(state.selected_source(), None);
+
+    let error = state
+        .dispatch(UiCommand::SelectSource {
+            id: "overlay-group/missing".to_owned(),
+        })
+        .expect_err("missing nested target must be rejected");
+    assert!(error.to_string().contains("overlay-group/missing"));
+}
+
+#[test]
 fn desktop_state_supports_bounded_multi_selection_and_active_item() {
     let mut state = DesktopState::new(project());
     state

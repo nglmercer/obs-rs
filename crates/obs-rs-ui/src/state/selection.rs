@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 
-use super::super::helpers::identifier;
+use super::super::helpers::{scene_item_at_parts, scene_item_target_parts};
 use super::{DesktopState, UiError};
-use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec, SceneSpec};
+use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 
 impl DesktopState {
     pub(super) fn paste_source(
@@ -63,9 +63,8 @@ impl DesktopState {
             })?;
         }
         if paste_at_root {
-            // The root paste path has a stable top-level selection affordance;
-            // nested rows are deliberately not part of the canvas selection
-            // model yet, so leave that selection untouched.
+            // A root paste always yields a top-level target, which is also the
+            // selection target used by the canvas for this operation.
             let pasted_id = self
                 .project
                 .project()
@@ -83,7 +82,7 @@ impl DesktopState {
                 id: scene.clone(),
             })?;
             self.selected_sources.clear();
-            self.selected_sources.push(pasted_id);
+            self.selected_sources.push(pasted_id.to_string());
         }
         self.sync_selections_after_project_update();
         Ok(match mode {
@@ -105,7 +104,7 @@ impl DesktopState {
                 kind: "scene",
                 id: scene_id.to_owned(),
             })?;
-        let parts = target_parts(target).ok_or_else(|| UiError::UnknownSelection {
+        let parts = scene_item_target_parts(target).ok_or_else(|| UiError::UnknownSelection {
             kind: "scene item",
             id: target.to_owned(),
         })?;
@@ -124,7 +123,7 @@ impl DesktopState {
     pub(super) fn select_one_source(&mut self, id: &str) -> Result<(), UiError> {
         self.ensure_source(id)?;
         self.selected_sources.clear();
-        self.selected_sources.push(identifier(id, "source")?);
+        self.selected_sources.push(id.to_owned());
         Ok(())
     }
 
@@ -137,7 +136,7 @@ impl DesktopState {
         {
             self.selected_sources.remove(index);
         } else if self.selected_sources.len() < crate::MAX_CANVAS_SELECTIONS {
-            self.selected_sources.push(identifier(id, "source")?);
+            self.selected_sources.push(id.to_owned());
         }
         Ok(())
     }
@@ -150,7 +149,6 @@ impl DesktopState {
         let mut validated = Vec::with_capacity(ids.len().min(crate::MAX_CANVAS_SELECTIONS));
         for id in ids.into_iter().take(crate::MAX_CANVAS_SELECTIONS) {
             self.ensure_source(&id)?;
-            let id = identifier(&id, "source")?;
             if !validated.contains(&id) {
                 validated.push(id);
             }
@@ -168,37 +166,4 @@ impl DesktopState {
         self.selected_sources = next;
         Ok(())
     }
-}
-
-const MAX_SCENE_ITEM_PATH_DEPTH: usize = 64;
-
-fn target_parts(target: &str) -> Option<Vec<&str>> {
-    let mut parts = Vec::with_capacity(4);
-    for part in target.split('/') {
-        if part.is_empty() || parts.len() >= MAX_SCENE_ITEM_PATH_DEPTH {
-            return None;
-        }
-        parts.push(part);
-    }
-    (!parts.is_empty()).then_some(parts)
-}
-
-pub(super) fn scene_item_at_target<'a>(
-    scene: &'a SceneSpec,
-    target: &str,
-) -> Option<&'a SceneItemSpec> {
-    let parts = target_parts(target)?;
-    scene_item_at_parts(scene, &parts)
-}
-
-fn scene_item_at_parts<'a>(scene: &'a SceneSpec, parts: &[&str]) -> Option<&'a SceneItemSpec> {
-    let mut items = scene.items();
-    for (index, part) in parts.iter().enumerate() {
-        let item = items.iter().find(|item| item.id().as_str() == *part)?;
-        if index + 1 == parts.len() {
-            return Some(item);
-        }
-        items = item.group()?.items();
-    }
-    None
 }

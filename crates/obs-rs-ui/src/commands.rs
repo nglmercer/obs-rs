@@ -8,7 +8,10 @@ use obs_rs_project::ProjectCommand;
 
 use super::{
     error::UiError,
-    helpers::{first_scene_id, first_source_id, project_has_scene, project_has_source},
+    helpers::{
+        first_scene_id, first_source_id, project_has_scene, project_has_source,
+        scene_item_at_target,
+    },
     state::{ActiveTransition, DesktopState},
     types::{TransitionSnapshot, UiAction, UiCommand, UiNotice},
     MAX_TRANSITION_DURATION_MILLIS, MAX_UI_NOTICES, MIN_TRANSITION_DURATION_MILLIS,
@@ -75,6 +78,7 @@ impl DesktopState {
                 .preview_scene
                 .as_ref()
                 .and_then(|scene| first_source_id(self.project.project(), scene))
+                .map(|id| id.to_string())
                 .into_iter()
                 .collect();
         }
@@ -100,7 +104,7 @@ impl DesktopState {
                 kind: "scene",
                 id: preview_scene.to_owned(),
             })?;
-        if scene.has_item(id) {
+        if scene_item_at_target(scene, id).is_some() {
             Ok(())
         } else {
             Err(UiError::UnknownSelection {

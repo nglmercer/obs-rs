@@ -321,6 +321,7 @@ export component MainWindow inherits Window {
                 // every dock that offers it.
         in property <bool> selected-source-is-screen: false;
         in property <bool> selected-source-is-group: false;
+        in property <bool> selected-source-is-nested: false;
 
         // A mode of -1 means "toggle studio mode", which is how both the View
         // menu and the controls dock drive the canvas.
@@ -716,6 +717,7 @@ export component MainWindow inherits Window {
                 selected-source: root.selected-source;
                 selected-source-is-screen: root.selected-source-is-screen;
                 selected-source-is-group: root.selected-source-is-group;
+                selected-source-is-nested: root.selected-source-is-nested;
                 selected-source-visible: root.selected-source-visible;
                 selected-source-locked: root.selected-source-locked;
                 selected-source-first: root.selected-source-first;

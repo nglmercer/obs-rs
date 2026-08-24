@@ -46,7 +46,7 @@ pub(crate) fn dispatch_and_refresh(
 
 const MAX_SOURCE_ROW_DEPTH: usize = 64;
 
-fn append_source_rows(
+pub(crate) fn append_source_rows(
     rows: &mut Vec<SourceRow>,
     profile: &Profile,
     items: &[SceneItemSpec],
@@ -81,6 +81,7 @@ fn append_source_rows(
         } else {
             format!("{}{}", "  ".repeat(group_path.len()), base_name)
         };
+        let selected = state.is_source_selected(target.as_str());
         rows.push(SourceRow {
             id: target.clone().into(),
             target: target.into(),
@@ -90,7 +91,7 @@ fn append_source_rows(
             count,
             nested: !group_path.is_empty(),
             group: is_group,
-            selected: group_path.is_empty() && state.is_source_selected(item.id().as_str()),
+            selected,
             visible: item.visible(),
             locked: item.locked(),
             first: index == 0,
@@ -483,23 +484,10 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_scene_name_version(ui.get_scene_name().clone());
     }
 
-    // The dock selection is a scene-item ID. Source configuration is resolved
-    // through the profile registry so two rows can point at the same source.
+    // The dock selection is a bounded scene-item path. Source configuration is
+    // resolved through the profile registry so two rows can point at the same
+    // source, including when one row is nested in a group.
     let selected_source = state.selected_source().unwrap_or("none");
-    let mut selected_item = None;
-    let mut selected_source_spec = None;
-    if let Some(scene) = selected_scene {
-        for item in scene.items() {
-            if state.is_source_selected(item.id().as_str()) {
-                selected_item = Some(item);
-                selected_source_spec = profile.and_then(|profile| {
-                    item.is_source()
-                        .then(|| profile.source(item.source_id()))
-                        .flatten()
-                });
-            }
-        }
-    }
     let source_rows = selected_scene.map_or_else(Vec::new, |scene| {
         let Some(profile) = profile else {
             return Vec::new();
@@ -508,27 +496,36 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         append_source_rows(&mut rows, profile, scene.items(), state, &mut Vec::new());
         rows
     });
+    let selected_row = source_rows
+        .iter()
+        .find(|row| row.target.as_str() == selected_source);
+    let selected_source_count = selected_row.map_or_else(
+        || {
+            selected_scene.map_or(0, |scene| {
+                i32::try_from(scene.items().len()).unwrap_or(i32::MAX)
+            })
+        },
+        |row| row.count,
+    );
+    let selected_source_first = selected_row.is_some_and(|row| row.first);
+    let selected_source_last = selected_row.is_some_and(|row| row.last);
+    let selected_source_is_nested = selected_row.is_some_and(|row| row.nested);
+    let selected_item =
+        selected_scene.and_then(|scene| crate::callbacks::item_for_target(scene, selected_source));
+    let selected_source_spec = selected_item.and_then(|item| {
+        item.is_source()
+            .then(|| profile.and_then(|profile| profile.source(item.source_id())))
+            .flatten()
+    });
     ui.set_source_scene(source_scene.into());
-    ui.set_source_count(selected_scene.map_or(0, |scene| {
-        i32::try_from(scene.items().len()).unwrap_or(i32::MAX)
-    }));
+    ui.set_source_count(selected_source_count);
     if !model_matches(&ui.get_source_rows(), &source_rows) {
         ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
     }
-    let selected_source_index = selected_scene.and_then(|scene| {
-        scene
-            .items()
-            .iter()
-            .position(|item| item.id().as_str() == selected_source)
-    });
     ui.set_selected_source_visible(selected_item.is_some_and(SceneItemSpec::visible));
     ui.set_selected_source_locked(selected_item.is_some_and(SceneItemSpec::locked));
-    ui.set_selected_source_first(selected_source_index == Some(0));
-    ui.set_selected_source_last(
-        selected_source_index.is_some_and(|index| {
-            selected_scene.is_some_and(|scene| index + 1 == scene.items().len())
-        }),
-    );
+    ui.set_selected_source_first(selected_source_first);
+    ui.set_selected_source_last(selected_source_last);
     ui.set_can_paste(state.can_paste_source());
 
     let selected_settings =
@@ -548,11 +545,9 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     );
     let overlay = selection_overlay(state, canvas);
     ui.set_item_locked(selected_scene.is_some_and(|scene| {
-        scene
-            .items()
-            .iter()
-            .filter(|item| state.is_source_selected(item.id().as_str()))
-            .any(SceneItemSpec::locked)
+        state.selected_sources().any(|target| {
+            crate::callbacks::item_for_target(scene, target).is_some_and(SceneItemSpec::locked)
+        })
     }));
     set_selection_overlay(ui, overlay.as_ref());
     // Only a display-backed source offers the picker, so the docks derive the
@@ -562,6 +557,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .is_some_and(|source| crate::kind_selects_monitor(source.kind().as_str())),
     );
     ui.set_selected_source_is_group(selected_item.is_some_and(SceneItemSpec::is_group));
+    ui.set_selected_source_is_nested(selected_source_is_nested);
 
     refresh_mixer_rows(ui, state);
 }
@@ -691,31 +687,54 @@ mod tests {
                 item: group,
             })
             .expect("add group");
-        let state = DesktopState::new(project);
+        let mut state = DesktopState::new(project);
+        {
+            let profile = state
+                .project_session()
+                .project()
+                .active_profile_spec()
+                .expect("profile");
+            let scene = profile.scene("preview").expect("preview scene");
+            let mut rows = Vec::new();
+            append_source_rows(&mut rows, profile, scene.items(), &state, &mut Vec::new());
+
+            let group_row = rows
+                .iter()
+                .find(|row| row.target == "overlay-group")
+                .expect("group row");
+            assert!(group_row.group);
+            assert!(!group_row.nested);
+            assert_eq!(group_row.count, 2);
+
+            let child_row = rows
+                .iter()
+                .find(|row| row.target == "overlay-group/background")
+                .expect("group child row");
+            assert!(!child_row.group);
+            assert!(child_row.nested);
+            assert!(!child_row.selected);
+            assert_eq!(child_row.count, 1);
+            assert_eq!(child_row.order.as_str(), "1");
+        }
+
+        state
+            .dispatch(UiCommand::SelectSource {
+                id: "overlay-group/background".to_owned(),
+            })
+            .expect("nested source selection");
         let profile = state
             .project_session()
             .project()
             .active_profile_spec()
-            .expect("profile");
-        let scene = profile.scene("preview").expect("preview scene");
+            .expect("profile after selection");
+        let scene = profile
+            .scene("preview")
+            .expect("preview scene after selection");
         let mut rows = Vec::new();
         append_source_rows(&mut rows, profile, scene.items(), &state, &mut Vec::new());
-
-        let group_row = rows
-            .iter()
-            .find(|row| row.target == "overlay-group")
-            .expect("group row");
-        assert!(group_row.group);
-        assert!(!group_row.nested);
-        assert_eq!(group_row.count, 2);
-
-        let child_row = rows
+        assert!(rows
             .iter()
             .find(|row| row.target == "overlay-group/background")
-            .expect("group child row");
-        assert!(!child_row.group);
-        assert!(child_row.nested);
-        assert_eq!(child_row.count, 1);
-        assert_eq!(child_row.order.as_str(), "1");
+            .is_some_and(|row| row.selected));
     }
 }

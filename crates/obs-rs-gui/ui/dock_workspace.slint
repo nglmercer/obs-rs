@@ -25,6 +25,7 @@ export component DockWorkspace inherits Rectangle {
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
     in property <bool> selected-source-is-group;
+    in property <bool> selected-source-is-nested;
     in property <bool> selected-source-visible;
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
@@ -236,6 +237,7 @@ export component DockWorkspace inherits Rectangle {
             selected-source: root.selected-source;
             selected-source-is-screen: root.selected-source-is-screen;
             selected-source-is-group: root.selected-source-is-group;
+            selected-source-is-nested: root.selected-source-is-nested;
             selected-source-visible: root.selected-source-visible;
             selected-source-locked: root.selected-source-locked;
             selected-source-first: root.selected-source-first;

@@ -409,9 +409,8 @@ fn install_source_list_callbacks(
 }
 
 /// Resolves one keyboard navigation request against the active scene's
-/// top-level source order. Nested rows are deliberately excluded until their
-/// selection projection is complete; this keeps keyboard navigation aligned
-/// with the rows that currently own Rust selection state.
+/// depth-first visible source-row order. The row target is the same bounded
+/// outer-to-inner path used by dock clicks and context-menu actions.
 fn navigate_source_selection_and_refresh(
     weak: &slint::Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -432,19 +431,27 @@ fn navigate_source_selection_and_refresh(
         else {
             return;
         };
-        let current = state.selected_source().and_then(|selected| {
-            scene
-                .items()
-                .iter()
-                .position(|item| item.id().as_str() == selected)
-        });
-        let Some(index) = source_navigation_index(current, scene.items().len(), direction) else {
+        let Some(profile) = state.project_session().project().active_profile_spec() else {
+            return;
+        };
+        let mut rows = Vec::new();
+        crate::refresh::append_source_rows(
+            &mut rows,
+            profile,
+            scene.items(),
+            &state,
+            &mut Vec::new(),
+        );
+        let current = state
+            .selected_source()
+            .and_then(|selected| rows.iter().position(|row| row.target.as_str() == selected));
+        let Some(index) = source_navigation_index(current, rows.len(), direction) else {
             return;
         };
         if current == Some(index) {
             return;
         }
-        scene.items().get(index).map(|item| item.id().to_string())
+        rows.get(index).map(|row| row.target.to_string())
     };
     let Some(target) = target else {
         return;
