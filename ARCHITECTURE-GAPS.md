@@ -73,7 +73,8 @@ pan into letterboxed coordinates, proves blank-space drag-box replacement,
 Ctrl-additive selection, and both middle-button and Space+drag pan, then removes
 temporary items and restores the starter scene and transient pan. Transform
 handles, nested geometry, live DPI, and the native capture device prerequisite
-remain outside this evidence.
+remain outside this evidence; the same fixture also verifies a real wheel event
+changes continuous zoom and restores the anchored viewport state.
 
 The UI modularization packet extracted the window-root modal overlay into
 `main_modals.slint`. It deliberately moved no project state or mutation logic:

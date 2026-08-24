@@ -4,14 +4,27 @@ use super::*;
 /// event path. The starter background is hidden so the center of the canvas is
 /// an empty drag origin; two bounded color sources then prove replacement and
 /// Ctrl-additive drag-box selection. Middle-drag and Space+drag also exercise
-/// transient pan before the fixture restores the scene.
+/// transient pan, and wheel zoom exercises cursor-anchored viewport updates,
+/// before the fixture restores the scene.
+const CANVAS_POINTER_SOURCES: [&str; 2] = ["canvas-pointer-left", "canvas-pointer-right"];
+
 pub(super) fn exercise_canvas_pointer_fixture(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
 ) {
-    let source_ids = ["canvas-pointer-left", "canvas-pointer-right"];
-    for id in source_ids {
+    prepare_canvas_pointer_scene(state, surface, ui);
+    exercise_drag_selection(ui, state);
+    exercise_pan_and_zoom(ui);
+    restore_canvas_pointer_scene(ui, state, surface);
+}
+
+fn prepare_canvas_pointer_scene(
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    ui: &MainWindow,
+) {
+    for id in CANVAS_POINTER_SOURCES {
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::AddSource {
@@ -52,7 +65,9 @@ pub(super) fn exercise_canvas_pointer_fixture(
             .expect("position canvas pointer source");
     }
     refresh_ui(ui, state, surface);
+}
 
+fn exercise_drag_selection(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let canvas = canvas_surface(ui);
     canvas.mock_drag(canvas_point(ui, &canvas, 80, 80), PointerEventButton::Left);
     assert_eq!(
@@ -77,14 +92,12 @@ pub(super) fn exercise_canvas_pointer_fixture(
         vec!["canvas-pointer-left", "canvas-pointer-right"],
         "Ctrl drag adds the second intersecting source"
     );
+}
 
+fn exercise_pan_and_zoom(ui: &MainWindow) {
     let initial_pan = (ui.get_canvas_pan_x(), ui.get_canvas_pan_y());
     let canvas = canvas_surface(ui);
-    let center = canvas.absolute_position();
-    let center = LogicalPosition::new(
-        center.x + canvas.size().width / 2.0,
-        center.y + canvas.size().height / 2.0,
-    );
+    let center = canvas_center(&canvas);
     canvas.mock_drag(
         LogicalPosition::new(center.x + 24.0, center.y - 12.0),
         PointerEventButton::Middle,
@@ -118,12 +131,45 @@ pub(super) fn exercise_canvas_pointer_fixture(
         "pointer pan is transient and restored for the remaining fixture"
     );
 
+    let initial_zoom = ui.get_canvas_zoom();
+    let zoom_pan = (ui.get_canvas_pan_x(), ui.get_canvas_pan_y());
+    canvas_surface(ui).scroll(0.0, 1.0);
+    assert_ne!(
+        ui.get_canvas_zoom(),
+        initial_zoom,
+        "wheel scroll changes the continuous canvas zoom"
+    );
+    ui.invoke_canvas_zoom_changed(initial_zoom);
+    let after_zoom_restore = (ui.get_canvas_pan_x(), ui.get_canvas_pan_y());
+    ui.invoke_canvas_pan_dragged(
+        zoom_pan.0.saturating_sub(after_zoom_restore.0),
+        zoom_pan.1.saturating_sub(after_zoom_restore.1),
+    );
+    assert_eq!(
+        (
+            ui.get_canvas_zoom(),
+            ui.get_canvas_pan_x(),
+            ui.get_canvas_pan_y()
+        ),
+        (initial_zoom, zoom_pan.0, zoom_pan.1),
+        "wheel zoom state is restored for the remaining fixture"
+    );
+}
+
+fn restore_canvas_pointer_scene(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItems {
             profile: "live".to_owned(),
             scene: "preview".to_owned(),
-            items: source_ids.iter().map(ToString::to_string).collect(),
+            items: CANVAS_POINTER_SOURCES
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
         }))
         .expect("remove canvas pointer sources");
     state
@@ -150,6 +196,16 @@ fn canvas_surface(ui: &MainWindow) -> ElementHandle {
         .expect("editable canvas surface")
 }
 
+fn canvas_center(canvas: &ElementHandle) -> LogicalPosition {
+    let origin = canvas.absolute_position();
+    let size = canvas.size();
+    LogicalPosition::new(origin.x + size.width / 2.0, origin.y + size.height / 2.0)
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "testing coordinates are bounded desktop/canvas dimensions"
+)]
 fn canvas_point(ui: &MainWindow, canvas: &ElementHandle, x: i32, y: i32) -> LogicalPosition {
     let origin = canvas.absolute_position();
     let size = canvas.size();
