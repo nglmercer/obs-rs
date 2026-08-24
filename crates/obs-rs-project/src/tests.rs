@@ -75,6 +75,8 @@ fn unique_paths(label: &str) -> (PathBuf, PathBuf) {
 mod commands;
 #[path = "project_tests_groups.rs"]
 mod groups;
+#[path = "project_tests_groups_copy.rs"]
+mod groups_copy;
 #[path = "project_tests_history.rs"]
 mod history;
 #[path = "project_tests_migration.rs"]
