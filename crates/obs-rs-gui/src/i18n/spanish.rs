@@ -280,6 +280,8 @@ pub(super) fn catalog() -> UiText {
         hotkey_save_replay: s("Guardar repetición"),
         hotkey_start_replay: s("Iniciar búfer de repetición"),
         hotkey_stop_replay: s("Detener búfer de repetición"),
+        hotkey_toggle_microphone_mute: s("Silenciar micrófono"),
+        hotkey_toggle_desktop_mute: s("Silenciar audio del escritorio"),
             hotkeys_hint: s("Usa nombres como Space, F1 o Ctrl+Shift+R. Deja el campo vacío para desasignarlo."),
             hotkeys_conflict: s("Atajos duplicados"),
             group_colors: s("Colores"),

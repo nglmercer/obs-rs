@@ -243,6 +243,10 @@ pub enum UiAction {
     StartReplayBuffer,
     /// Stop replay capture through the frontend's output boundary.
     StopReplayBuffer,
+    /// Toggle the microphone mixer channel mute state.
+    ToggleMicrophoneMute,
+    /// Toggle the desktop-audio mixer channel mute state.
+    ToggleDesktopMute,
 }
 
 /// A validated, sortable keyboard shortcut description.

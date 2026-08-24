@@ -119,6 +119,40 @@ fn replay_start_and_stop_shortcuts_are_frontend_actions() {
 }
 
 #[test]
+fn microphone_and_desktop_mute_shortcuts_toggle_their_mixer_channels() {
+    let mut state = DesktopState::new(project());
+    let microphone = Shortcut::new(0, "M").expect("microphone shortcut");
+    let desktop = Shortcut::new(1, "M").expect("desktop shortcut");
+    state
+        .replace_shortcuts(&[
+            (microphone.clone(), UiAction::ToggleMicrophoneMute),
+            (desktop.clone(), UiAction::ToggleDesktopMute),
+        ])
+        .expect("mute shortcut table");
+
+    state
+        .dispatch(UiCommand::TriggerShortcut {
+            shortcut: microphone,
+        })
+        .expect("microphone mute shortcut");
+    state
+        .dispatch(UiCommand::TriggerShortcut { shortcut: desktop })
+        .expect("desktop mute shortcut");
+
+    let channels = state.mixer_channels().collect::<Vec<_>>();
+    assert!(channels
+        .iter()
+        .find(|channel| channel.id() == "mic")
+        .expect("microphone mixer channel")
+        .muted());
+    assert!(channels
+        .iter()
+        .find(|channel| channel.id() == "desktop")
+        .expect("desktop mixer channel")
+        .muted());
+}
+
+#[test]
 fn shortcut_text_is_bounded_and_canonical() {
     let shortcut = Shortcut::parse(" option + shift + f9 ")
         .expect("shortcut syntax")

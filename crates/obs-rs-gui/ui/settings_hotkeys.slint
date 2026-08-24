@@ -35,6 +35,8 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-save-replay;
     in-out property <string> hotkey-start-replay;
     in-out property <string> hotkey-stop-replay;
+    in-out property <string> hotkey-toggle-microphone-mute;
+    in-out property <string> hotkey-toggle-desktop-mute;
     in property <string> conflict-warning;
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -137,6 +139,22 @@ export component HotkeysPage inherits VerticalLayout {
                 edited => { root.changed(); }
             }
         }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_microphone_mute;
+            SettingsField {
+                text <=> root.hotkey-toggle-microphone-mute;
+                placeholder-text: "Ctrl+M";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_desktop_mute;
+            SettingsField {
+                text <=> root.hotkey-toggle-desktop-mute;
+                placeholder-text: "Ctrl+Shift+M";
+                edited => { root.changed(); }
+            }
+        }
         if root.conflict-warning != "" : SettingsWarning {
             text: I18n.text.settings_ui.hotkeys_conflict + ": " + root.conflict-warning;
         }
@@ -144,4 +162,3 @@ export component HotkeysPage inherits VerticalLayout {
     }
     Rectangle { vertical-stretch: 1; }
 }
-

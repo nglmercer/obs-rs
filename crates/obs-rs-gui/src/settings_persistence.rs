@@ -214,6 +214,16 @@ impl AppSettings {
                 &defaults.hotkey_start_replay,
             ),
             hotkey_stop_replay: hotkey(config, "hotkey_stop_replay", &defaults.hotkey_stop_replay),
+            hotkey_toggle_microphone_mute: hotkey(
+                config,
+                "hotkey_toggle_microphone_mute",
+                &defaults.hotkey_toggle_microphone_mute,
+            ),
+            hotkey_toggle_desktop_mute: hotkey(
+                config,
+                "hotkey_toggle_desktop_mute",
+                &defaults.hotkey_toggle_desktop_mute,
+            ),
             preview_border_color: colour_text(
                 config,
                 "preview_border_color",
@@ -408,6 +418,14 @@ impl AppSettings {
             ("hotkey_save_replay", self.hotkey_save_replay.clone()),
             ("hotkey_start_replay", self.hotkey_start_replay.clone()),
             ("hotkey_stop_replay", self.hotkey_stop_replay.clone()),
+            (
+                "hotkey_toggle_microphone_mute",
+                self.hotkey_toggle_microphone_mute.clone(),
+            ),
+            (
+                "hotkey_toggle_desktop_mute",
+                self.hotkey_toggle_desktop_mute.clone(),
+            ),
             ("preview_border_color", self.preview_border_color.clone()),
             ("program_border_color", self.program_border_color.clone()),
             ("project_path", self.project_path.clone()),

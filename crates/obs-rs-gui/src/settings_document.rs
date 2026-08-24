@@ -82,6 +82,14 @@ pub(crate) fn shortcut_bindings(
             settings.hotkey_stop_replay.as_str(),
             UiAction::StopReplayBuffer,
         ),
+        (
+            settings.hotkey_toggle_microphone_mute.as_str(),
+            UiAction::ToggleMicrophoneMute,
+        ),
+        (
+            settings.hotkey_toggle_desktop_mute.as_str(),
+            UiAction::ToggleDesktopMute,
+        ),
     ];
     let mut bindings = Vec::with_capacity(values.len());
     for (text, action) in values {
@@ -112,6 +120,8 @@ pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
         settings.hotkey_save_replay.as_str(),
         settings.hotkey_start_replay.as_str(),
         settings.hotkey_stop_replay.as_str(),
+        settings.hotkey_toggle_microphone_mute.as_str(),
+        settings.hotkey_toggle_desktop_mute.as_str(),
     ];
     let mut counts = BTreeMap::new();
     for value in values {

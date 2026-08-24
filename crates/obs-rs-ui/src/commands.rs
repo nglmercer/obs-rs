@@ -123,6 +123,12 @@ impl DesktopState {
             UiAction::StopStreaming => self.dispatch(UiCommand::StopStreaming),
             UiAction::Undo => self.dispatch(UiCommand::Undo),
             UiAction::Redo => self.dispatch(UiCommand::Redo),
+            UiAction::ToggleMicrophoneMute => self.dispatch(UiCommand::ToggleMixerMute {
+                id: "mic".to_owned(),
+            }),
+            UiAction::ToggleDesktopMute => self.dispatch(UiCommand::ToggleMixerMute {
+                id: "desktop".to_owned(),
+            }),
             UiAction::SaveProject
             | UiAction::FadeTransition
             | UiAction::SaveReplayBuffer

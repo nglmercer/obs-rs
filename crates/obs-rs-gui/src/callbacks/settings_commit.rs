@@ -425,6 +425,14 @@ pub(super) fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSetti
         window.get_hotkey_stop_replay().as_str(),
         &settings.hotkey_stop_replay,
     );
+    settings.hotkey_toggle_microphone_mute = crate::settings::validated_hotkey(
+        window.get_hotkey_toggle_microphone_mute().as_str(),
+        &settings.hotkey_toggle_microphone_mute,
+    );
+    settings.hotkey_toggle_desktop_mute = crate::settings::validated_hotkey(
+        window.get_hotkey_toggle_desktop_mute().as_str(),
+        &settings.hotkey_toggle_desktop_mute,
+    );
 }
 
 /// Reads the canvas-only settings as one validated presentation policy.

@@ -278,6 +278,8 @@ pub(super) fn catalog() -> UiText {
         hotkey_save_replay: s("Save replay"),
         hotkey_start_replay: s("Start replay buffer"),
         hotkey_stop_replay: s("Stop replay buffer"),
+        hotkey_toggle_microphone_mute: s("Mute microphone"),
+        hotkey_toggle_desktop_mute: s("Mute desktop audio"),
             hotkeys_hint: s("Use names like Space, F1, or Ctrl+Shift+R. Leave a field empty to unbind it."),
             hotkeys_conflict: s("Duplicate hotkeys"),
             group_colors: s("Colors"),

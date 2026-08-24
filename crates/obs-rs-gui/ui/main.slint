@@ -385,6 +385,12 @@ export component MainWindow inherits Window {
             } else if (action == 12 && root.replay-buffering) {
                 root.toggle-replay-buffer();
                 true
+            } else if (action == 13) {
+                root.toggle-mixer-mute("mic");
+                true
+            } else if (action == 14) {
+                root.toggle-mixer-mute("desktop");
+                true
             } else {
                 false
             }

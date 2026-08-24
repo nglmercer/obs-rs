@@ -27,6 +27,8 @@ fn settings_round_trip_through_the_config_document() {
         hotkey_save_replay: "Alt+R".to_owned(),
         hotkey_start_replay: "Shift+Alt+R".to_owned(),
         hotkey_stop_replay: "Ctrl+Alt+R".to_owned(),
+        hotkey_toggle_microphone_mute: "Ctrl+M".to_owned(),
+        hotkey_toggle_desktop_mute: "Ctrl+Shift+M".to_owned(),
         preview_border_color: "#00FF88".to_owned(),
         last_preview_scene: "source_scene".to_owned(),
         last_program_scene: "program".to_owned(),
