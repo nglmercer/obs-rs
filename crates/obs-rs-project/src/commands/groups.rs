@@ -54,6 +54,43 @@ pub(super) fn set_group_item_visibility(
     Ok(())
 }
 
+pub(super) fn set_group_name(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    group_path: &[String],
+    name: &str,
+) -> Result<(), ProjectError> {
+    let path = parse_group_path(group_path)?;
+    let group_id = path.last().ok_or(ProjectError::InvalidGroupPath)?;
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
+    let profile = project
+        .profile_mut(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let scene = profile
+        .scene_mut(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+
+    if path.len() == 1 {
+        scene
+            .item_mut(group_id)
+            .ok_or_else(|| ProjectError::UnknownSceneItem(group_id.clone()))?
+            .group_mut()
+            .ok_or(ProjectError::InvalidGroupPath)?
+            .set_name(name)
+    } else {
+        let parent_path = &group_path[..group_path.len().saturating_sub(1)];
+        group_mut_at(&mut scene.items, &parse_group_path(parent_path)?)
+            .ok_or(ProjectError::InvalidGroupPath)?
+            .item_mut(group_id)
+            .ok_or_else(|| ProjectError::UnknownSceneItem(group_id.clone()))?
+            .group_mut()
+            .ok_or(ProjectError::InvalidGroupPath)?
+            .set_name(name)
+    }
+}
+
 pub(super) fn set_group_item_locked(
     project: &mut Project,
     profile: &str,

@@ -375,13 +375,25 @@ fn install_source_list_callbacks(
         let source_name = {
             let state = rename_state.borrow();
             let project = state.project_session().project();
-            let profile = project.active_profile_spec();
-            let item = state
-                .preview_scene()
-                .and_then(|scene_id| profile.and_then(|profile| profile.scene(scene_id)))
-                .and_then(|scene| crate::callbacks::item_for_target(scene, id.as_str()));
-            item.and_then(|item| profile.and_then(|profile| profile.source(item.source_id())))
-                .map(|source| source.name().to_owned())
+            project.active_profile_spec().and_then(|profile| {
+                state.preview_scene().and_then(|scene_id| {
+                    profile.scene(scene_id).and_then(|scene| {
+                        crate::callbacks::item_for_target(scene, id.as_str()).and_then(|item| {
+                            item.group()
+                                .map(|group| group.name().to_owned())
+                                .or_else(|| {
+                                    if item.is_source() {
+                                        profile
+                                            .source(item.source_id())
+                                            .map(|source| source.name().to_owned())
+                                    } else {
+                                        None
+                                    }
+                                })
+                        })
+                    })
+                })
+            })
         };
         match source_name {
             Some(source_name) => {
@@ -391,6 +403,7 @@ fn install_source_list_callbacks(
                     &rename_surface,
                     UiCommand::SelectSource { id: id.to_string() },
                 );
+                ui.set_source_rename_target(id);
                 ui.set_source_name_draft(source_name.into());
                 ui.set_active_modal(12);
             }
@@ -406,7 +419,8 @@ fn install_source_list_callbacks(
             return;
         };
         let name = ui.get_source_name_draft().to_string();
-        apply_source_name_and_refresh(&ui, &apply_name_state, &apply_name_surface, &name);
+        let target = ui.get_source_rename_target().to_string();
+        apply_source_name_and_refresh(&ui, &apply_name_state, &apply_name_surface, &target, &name);
     });
 
     let weak = ui.as_weak();

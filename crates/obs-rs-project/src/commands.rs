@@ -18,7 +18,7 @@ mod groups;
 use filters::legacy_filter_spec;
 use groups::{
     duplicate_group_item, move_group_item, paste_group_item, remove_group_item,
-    set_group_item_locked, set_group_item_transform, set_group_item_visibility,
+    set_group_item_locked, set_group_item_transform, set_group_item_visibility, set_group_name,
 };
 
 mod types;
@@ -137,6 +137,12 @@ impl Project {
                 source,
                 name,
             } => set_source_name(self, &profile, &source, &name),
+            ProjectCommand::SetGroupName {
+                profile,
+                scene,
+                group_path,
+                name,
+            } => set_group_name(self, &profile, &scene, &group_path, &name),
             ProjectCommand::SetSourceSettings {
                 profile,
                 source,

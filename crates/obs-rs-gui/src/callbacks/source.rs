@@ -450,17 +450,46 @@ pub(crate) fn apply_source_name_and_refresh(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
+    target: &str,
     name: &str,
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
-        let (profile, _, _, source) = selected_source_context(&state.borrow())?;
-        state
-            .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSourceName {
-                profile,
-                source,
-                name: name.to_owned(),
-            }))?;
+        if target.trim().is_empty() {
+            return Err(std::io::Error::other("no source or group rename target is set").into());
+        }
+        let command = {
+            let state = state.borrow();
+            let project = state.project_session().project();
+            let profile = project
+                .active_profile_spec()
+                .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+            let scene_id = state
+                .preview_scene()
+                .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+            let scene = profile
+                .scene(scene_id)
+                .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
+            let item = item_for_target(scene, target).ok_or_else(|| {
+                std::io::Error::other("rename target is not in the preview scene")
+            })?;
+            if item.is_group() {
+                ProjectCommand::SetGroupName {
+                    profile: project.active_profile().to_string(),
+                    scene: scene_id.to_owned(),
+                    group_path: target.split('/').map(str::to_owned).collect(),
+                    name: name.to_owned(),
+                }
+            } else if item.is_source() {
+                ProjectCommand::SetSourceName {
+                    profile: project.active_profile().to_string(),
+                    source: item.source_id().to_string(),
+                    name: name.to_owned(),
+                }
+            } else {
+                return Err(std::io::Error::other("rename target is not a source or group").into());
+            }
+        };
+        state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
     })();
     match result {
@@ -818,21 +847,6 @@ pub(crate) fn target_settings_document(
             .settings()
             .serialize(),
     )
-}
-
-fn selected_source_context(
-    state: &DesktopState,
-) -> Result<(String, String, String, String), Box<dyn Error>> {
-    let target = selected_target(state).ok_or_else(|| {
-        std::io::Error::other(if state.preview_scene().is_none() {
-            "no preview scene is selected"
-        } else if state.selected_source().is_none() {
-            "no source is selected"
-        } else {
-            "selected source item is missing"
-        })
-    })?;
-    Ok((target.profile, target.scene, target.item, target.source))
 }
 
 fn parse_source_transform(document: &str) -> Result<FrameTransform, Box<dyn Error>> {

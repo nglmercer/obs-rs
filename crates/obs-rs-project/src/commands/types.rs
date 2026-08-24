@@ -121,6 +121,14 @@ pub enum ProjectCommand {
         source: String,
         name: String,
     },
+    /// Replaces a group's display name using its outermost-to-innermost
+    /// scene-item path.
+    SetGroupName {
+        profile: String,
+        scene: String,
+        group_path: Vec<String>,
+        name: String,
+    },
     /// Replaces one source's validated settings document.
     SetSourceSettings {
         profile: String,

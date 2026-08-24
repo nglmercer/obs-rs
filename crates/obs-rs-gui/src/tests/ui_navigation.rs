@@ -66,6 +66,30 @@ pub(super) fn exercise_group_source_callbacks(
         .get_source_rows()
         .iter()
         .any(|row| row.target == "overlay-group/background"));
+    ui.invoke_open_source_rename("overlay-group".into());
+    assert_eq!(
+        ui.get_source_name_draft(),
+        "Overlay group",
+        "group rename resolves the group item name instead of a source ID"
+    );
+    // Changing the transient selection while the modal is open must not
+    // redirect the rename to the newly selected source.
+    ui.invoke_select_source("background".into());
+    ui.set_source_name_draft("Overlays".into());
+    ui.invoke_apply_source_name();
+    assert_eq!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(|scene| scene.item("overlay-group"))
+            .and_then(obs_rs_project::SceneItemSpec::group)
+            .map(obs_rs_project::GroupSpec::name),
+        Some("Overlays")
+    );
+    ui.set_active_modal(0);
     ui.invoke_select_source("overlay-group/background".into());
     assert_eq!(
         state.borrow().selected_source(),

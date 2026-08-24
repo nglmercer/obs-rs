@@ -143,6 +143,9 @@ export component MainWindow inherits Window {
         in-out property <string> new-source-kind;
         in-out property <string> new-source-name;
         in-out property <string> source-name-draft;
+        // The rename modal applies to the row that opened it, even if the
+        // transient canvas selection changes while the dialog is visible.
+        in-out property <string> source-rename-target;
 
         in property <bool> confirm-start-stream;
         in property <bool> confirm-stop-stream;
@@ -915,8 +918,14 @@ export component MainWindow inherits Window {
         locale: root.locale;
         source-name <=> root.source-name-draft;
         rename-source() => { root.apply-source-name(); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
+        close => {
+            root.active-modal = 0;
+            root.source-rename-target = "";
+        }
+        accepted => {
+            root.active-modal = 0;
+            root.source-rename-target = "";
+        }
     }
     CollectionDialog {
         open: root.active-modal == 9;

@@ -67,7 +67,7 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             MenuItem {
                 title: I18n.text.rename;
-                enabled: root.source-id != "" && !root.nested && !root.group;
+                enabled: root.source-id != "" && (root.group || !root.nested);
                 activated => {
                     root.select-source(root.source-id);
                     root.rename-source(root.source-id);

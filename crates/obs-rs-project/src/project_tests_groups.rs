@@ -122,6 +122,69 @@ fn group_child_commands_are_path_addressed_and_atomic() {
 }
 
 #[test]
+fn group_names_are_path_addressed_and_atomic() {
+    let mut project = project_with_nested_group();
+    project
+        .apply(ProjectCommand::SetGroupName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            name: "Overlays".to_owned(),
+        })
+        .expect("rename root group");
+    project
+        .apply(ProjectCommand::SetGroupName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned(), "inner-group".to_owned()],
+            name: "Inner overlays".to_owned(),
+        })
+        .expect("rename nested group");
+
+    let outer = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .expect("outer group item");
+    assert_eq!(outer.group().expect("outer group").name(), "Overlays");
+    assert_eq!(
+        outer
+            .group()
+            .expect("outer group")
+            .items()
+            .iter()
+            .find(|item| item.id().as_str() == "inner-group")
+            .and_then(SceneItemSpec::group)
+            .expect("inner group")
+            .name(),
+        "Inner overlays"
+    );
+
+    let before_invalid = project.clone();
+    let error = project
+        .apply(ProjectCommand::SetGroupName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned(), "first".to_owned()],
+            name: "Not a group".to_owned(),
+        })
+        .expect_err("a source child cannot be renamed as a group");
+    assert_eq!(error, ProjectError::InvalidGroupPath);
+    assert_eq!(project, before_invalid);
+
+    let error = project
+        .apply(ProjectCommand::SetGroupName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            name: "   ".to_owned(),
+        })
+        .expect_err("empty group names must be rejected");
+    assert_eq!(error, ProjectError::InvalidName { kind: "group" });
+    assert_eq!(project, before_invalid);
+}
+
+#[test]
 fn group_child_removal_is_path_addressed_and_retains_the_source_registry() {
     let mut project = project_with_nested_group();
     project
