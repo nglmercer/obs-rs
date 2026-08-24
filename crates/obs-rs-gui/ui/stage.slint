@@ -37,11 +37,16 @@ component StageCanvas inherits Rectangle {
     in property <int> item-height;
     in property <[int]> item-handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
     in property <[int]> item-handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <int> rotation-handle-x;
+    in property <int> rotation-handle-y;
+    in property <bool> rotation-handle-active: false;
     in property <string> item-selection-path: "";
     in property <bool> item-active;
     in property <bool> item-locked;
     callback transform-dragged(int, int, int, int);
     callback transform-committed();
+    callback rotation-started(int, int);
+    callback rotation-dragged(int, int, int);
     callback canvas-pointer-pressed(int, int, bool);
     callback canvas-selection-dragged(int, int);
     callback canvas-selection-committed();
@@ -86,6 +91,9 @@ component StageCanvas inherits Rectangle {
         item-height: root.item-height;
         handle-x: root.item-handle-x;
         handle-y: root.item-handle-y;
+        rotation-handle-x: root.rotation-handle-x;
+        rotation-handle-y: root.rotation-handle-y;
+        rotation-handle-active: root.rotation-handle-active;
         selection-path: root.item-selection-path;
         active: root.item-active;
         locked: root.item-locked;
@@ -106,6 +114,10 @@ component StageCanvas inherits Rectangle {
             root.transform-dragged(handle, dx, dy, modifiers);
         }
         transform-committed() => { root.transform-committed(); }
+        rotation-started(x, y) => { root.rotation-started(x, y); }
+        rotation-dragged(x, y, modifiers) => {
+            root.rotation-dragged(x, y, modifiers);
+        }
         canvas-pointer-pressed(x, y, additive) => {
             root.canvas-pointer-pressed(x, y, additive);
         }
@@ -294,6 +306,9 @@ export component StagePanel inherits Rectangle {
     in property <int> item-height;
     in property <[int]> item-handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
     in property <[int]> item-handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <int> rotation-handle-x;
+    in property <int> rotation-handle-y;
+    in property <bool> rotation-handle-active: false;
     in property <string> item-selection-path: "";
     in property <bool> item-active;
     in property <bool> item-locked;
@@ -302,6 +317,8 @@ export component StagePanel inherits Rectangle {
     callback open-monitor-window();
     callback transform-dragged(int, int, int, int);
     callback transform-committed();
+    callback rotation-started(int, int);
+    callback rotation-dragged(int, int, int);
     callback canvas-pointer-pressed(int, int, bool);
     callback canvas-selection-dragged(int, int);
     callback canvas-selection-committed();
@@ -359,6 +376,9 @@ export component StagePanel inherits Rectangle {
                     item-height: root.item-height;
                     item-handle-x: root.item-handle-x;
                     item-handle-y: root.item-handle-y;
+                    rotation-handle-x: root.rotation-handle-x;
+                    rotation-handle-y: root.rotation-handle-y;
+                    rotation-handle-active: root.rotation-handle-active;
                     item-selection-path: root.item-selection-path;
                     item-active: root.item-active;
                     item-locked: root.item-locked;
@@ -366,6 +386,10 @@ export component StagePanel inherits Rectangle {
                         root.transform-dragged(handle, dx, dy, modifiers);
                     }
                     transform-committed() => { root.transform-committed(); }
+                    rotation-started(x, y) => { root.rotation-started(x, y); }
+                    rotation-dragged(x, y, modifiers) => {
+                        root.rotation-dragged(x, y, modifiers);
+                    }
                     canvas-pointer-pressed(x, y, additive) => {
                         root.canvas-pointer-pressed(x, y, additive);
                     }
@@ -417,6 +441,9 @@ export component StagePanel inherits Rectangle {
                     item-height: root.item-height;
                     item-handle-x: root.item-handle-x;
                     item-handle-y: root.item-handle-y;
+                    rotation-handle-x: root.rotation-handle-x;
+                    rotation-handle-y: root.rotation-handle-y;
+                    rotation-handle-active: root.rotation-handle-active;
                     item-selection-path: root.item-selection-path;
                     item-active: root.item-active;
                     item-locked: root.item-locked;
@@ -424,6 +451,10 @@ export component StagePanel inherits Rectangle {
                         root.transform-dragged(handle, dx, dy, modifiers);
                     }
                     transform-committed() => { root.transform-committed(); }
+                    rotation-started(x, y) => { root.rotation-started(x, y); }
+                    rotation-dragged(x, y, modifiers) => {
+                        root.rotation-dragged(x, y, modifiers);
+                    }
                     canvas-pointer-pressed(x, y, additive) => {
                         root.canvas-pointer-pressed(x, y, additive);
                     }

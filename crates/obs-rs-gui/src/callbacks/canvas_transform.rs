@@ -3,7 +3,7 @@ use super::{
     rounded_canvas_coordinate, selection_overlay_for_transforms, snap_delta, visible_source_extent,
     CanvasTransformCommand, DesktopState, FrameTransform, ItemRect, MainWindow, ModelRc,
     SceneItemSpec, SelectionOverlay, SnapGuides, SnapSettings, VecModel, MINIMUM_ITEM_PIXELS,
-    UNIT_SCALE_MILLI,
+    RESIZE_MODIFIER_CONTROL, RESIZE_MODIFIER_SHIFT, UNIT_SCALE_MILLI,
 };
 
 /// Applies OBS's default aspect-preserving resize around the fixed edge(s).
@@ -219,7 +219,7 @@ pub(crate) fn selection_overlay(
 /// zeroed otherwise. This keeps the declarative handle loop safe even while a
 /// selection is being cleared by a click or project command.
 pub(crate) fn set_selection_overlay(ui: &MainWindow, overlay: Option<&SelectionOverlay>) {
-    let (active, rect, handle_x, handle_y, path) = overlay.map_or_else(
+    let (active, rect, handle_x, handle_y, path, rotation_handle) = overlay.map_or_else(
         || {
             (
                 false,
@@ -232,6 +232,7 @@ pub(crate) fn set_selection_overlay(ui: &MainWindow, overlay: Option<&SelectionO
                 [0; 8],
                 [0; 8],
                 String::new(),
+                None,
             )
         },
         |overlay| {
@@ -241,6 +242,7 @@ pub(crate) fn set_selection_overlay(ui: &MainWindow, overlay: Option<&SelectionO
                 overlay.handle_x,
                 overlay.handle_y,
                 overlay.path.clone(),
+                overlay.rotation_handle,
             )
         },
     );
@@ -252,6 +254,9 @@ pub(crate) fn set_selection_overlay(ui: &MainWindow, overlay: Option<&SelectionO
     ui.set_item_handle_x(ModelRc::new(VecModel::from(handle_x.to_vec())));
     ui.set_item_handle_y(ModelRc::new(VecModel::from(handle_y.to_vec())));
     ui.set_item_selection_path(path.into());
+    ui.set_rotation_handle_active(rotation_handle.is_some());
+    ui.set_rotation_handle_x(rotation_handle.map_or(0, |(x, _)| x));
+    ui.set_rotation_handle_y(rotation_handle.map_or(0, |(_, y)| y));
 }
 
 /// Rebuilds a transform from an edited rectangle, keeping flips, opacity,
@@ -474,6 +479,60 @@ pub(super) fn rotate_canvas_delta(
         )
     };
     (x.round() as i64, y.round() as i64)
+}
+
+/// Converts one rotation-handle pointer sample into a transform rotation.
+///
+/// The draft owns the transform before the pointer gesture starts, so every
+/// sample is calculated from the same base rotation. Shift snaps the absolute
+/// angle to 15-degree increments, while Ctrl disables the ordinary 45-degree
+/// proximity snaps. The result remains in the validated media range.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "pointer angles are evaluated in f64 and converted back to the media fixed-point representation"
+)]
+pub(super) fn rotation_from_pointer(
+    base: FrameTransform,
+    anchor: (i64, i64),
+    pointer: (i64, i64),
+    modifier_mask: i32,
+    canvas: (u32, u32),
+) -> FrameTransform {
+    let local = local_item_rect(base, canvas);
+    let center_x = local.x as f64 + local.width as f64 / 2.0;
+    let center_y = local.y as f64 + local.height as f64 / 2.0;
+    let angle = |point: (i64, i64)| {
+        let dx = point.0 as f64 - center_x;
+        let dy = point.1 as f64 - center_y;
+        (dx.abs() > f64::EPSILON || dy.abs() > f64::EPSILON).then(|| dy.atan2(dx).to_degrees())
+    };
+    let (Some(anchor_angle), Some(pointer_angle)) = (angle(anchor), angle(pointer)) else {
+        return base;
+    };
+    let delta = (pointer_angle - anchor_angle + 180.0).rem_euclid(360.0) - 180.0;
+    let base_angle = f64::from(base.rotation_milli_degrees()) / 1_000.0;
+    let mut rotation = base_angle + delta;
+    if modifier_mask & RESIZE_MODIFIER_SHIFT != 0 {
+        rotation = (rotation / 15.0).round() * 15.0;
+    } else if modifier_mask & RESIZE_MODIFIER_CONTROL == 0 {
+        let snapped = (rotation / 45.0).round() * 45.0;
+        if (rotation - snapped).abs() <= 5.0 {
+            rotation = snapped;
+        }
+    }
+    while rotation > 360.0 {
+        rotation -= 360.0;
+    }
+    while rotation < -360.0 {
+        rotation += 360.0;
+    }
+    let rotation_milli = (rotation * 1_000.0).round().clamp(
+        -f64::from(FrameTransform::MAX_ROTATION_MILLI_DEGREES),
+        f64::from(FrameTransform::MAX_ROTATION_MILLI_DEGREES),
+    ) as i32;
+    base.with_rotation_milli_degrees(rotation_milli)
+        .unwrap_or(base)
 }
 
 /// Applies an Alt-drag on one of the eight transform handles as a source

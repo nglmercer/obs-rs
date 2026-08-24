@@ -295,6 +295,7 @@ pub(crate) struct SelectionOverlay {
     pub(crate) handle_x: [i32; 8],
     pub(crate) handle_y: [i32; 8],
     pub(crate) path: String,
+    pub(crate) rotation_handle: Option<(i32, i32)>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -480,6 +481,36 @@ pub(super) fn selection_path(points: [CanvasPoint; 8]) -> String {
     )
 }
 
+/// Returns the canvas-space centre of the rotation handle above one item.
+///
+/// The handle follows the oriented top edge rather than the axis-aligned
+/// selection bounds. Multi-selection overlays deliberately do not expose a
+/// rotation handle yet because rotating a group needs a separate group-pivot
+/// interaction model.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "the handle offset follows the same floating-point rotation geometry as the overlay"
+)]
+pub(super) fn rotation_handle_point(points: [CanvasPoint; 8]) -> Option<(i32, i32)> {
+    const ROTATION_HANDLE_DISTANCE: f64 = 32.0;
+    let top = points[1];
+    let bottom = points[5];
+    let direction_x = top.x.saturating_sub(bottom.x) as f64;
+    let direction_y = top.y.saturating_sub(bottom.y) as f64;
+    let length = direction_x.hypot(direction_y);
+    if length <= f64::EPSILON {
+        return None;
+    }
+    Some((
+        to_slint_coordinate(rounded_canvas_coordinate(
+            top.x as f64 + direction_x / length * ROTATION_HANDLE_DISTANCE,
+        )),
+        to_slint_coordinate(rounded_canvas_coordinate(
+            top.y as f64 + direction_y / length * ROTATION_HANDLE_DISTANCE,
+        )),
+    ))
+}
+
 pub(super) fn to_slint_coordinate(value: i64) -> i32 {
     i32::try_from(value).unwrap_or_else(|_| {
         if value.is_negative() {
@@ -509,6 +540,9 @@ pub(super) fn selection_overlay_for_transforms(
         handle_x: points.map(|point| to_slint_coordinate(point.x)),
         handle_y: points.map(|point| to_slint_coordinate(point.y)),
         path: selection_path(points),
+        rotation_handle: (transforms.len() == 1)
+            .then(|| rotation_handle_point(points))
+            .flatten(),
     })
 }
 

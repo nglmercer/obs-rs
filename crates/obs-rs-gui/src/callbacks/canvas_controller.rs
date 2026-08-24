@@ -1,15 +1,23 @@
 use super::{
     crop_transform, drag_rect, item_rect, local_item_rect, preserve_resize_aspect,
-    rotate_canvas_delta, selection_overlay_for_transforms, set_selection_overlay, snap_rect,
-    snap_rotated_resize_delta, transform_for_rect, transform_for_rotated_local_rect,
-    transform_with_geometry, visible_source_extent, CanvasResizeModifiers, CanvasState, CanvasZoom,
-    ComponentHandle, DesktopState, ItemRect, MainWindow, PreviewSurface, Rc, RefCell,
-    SceneItemSpec, SelectionOverlay, SnapGuides, SnapSettings, TransformDraft, TransformDraftItem,
-    UiCommand, MAX_SNAP_GUIDES, MINIMUM_ITEM_PIXELS,
+    rotate_canvas_delta, rotation_from_pointer, selection_overlay_for_transforms,
+    set_selection_overlay, snap_rect, snap_rotated_resize_delta, transform_for_rect,
+    transform_for_rotated_local_rect, transform_with_geometry, visible_source_extent,
+    CanvasResizeModifiers, CanvasState, CanvasZoom, ComponentHandle, DesktopState, FrameTransform,
+    ItemRect, MainWindow, PreviewSurface, Rc, RefCell, SceneItemSpec, SelectionOverlay, SnapGuides,
+    SnapSettings, TransformDraft, TransformDraftItem, UiCommand, MAX_SNAP_GUIDES,
+    MINIMUM_ITEM_PIXELS,
 };
+
+#[derive(Clone, Copy)]
+pub(super) struct RotationGesture {
+    anchor: (i64, i64),
+    base: FrameTransform,
+}
 
 pub(crate) struct CanvasController {
     pub(super) draft: RefCell<Option<TransformDraft>>,
+    pub(super) rotation: RefCell<Option<RotationGesture>>,
     pub(super) state: RefCell<CanvasState>,
 }
 
@@ -17,6 +25,21 @@ impl CanvasController {
     /// Returns the drag in progress, if the pointer is down on an item.
     pub(crate) fn draft(&self) -> Option<TransformDraft> {
         self.draft.borrow().clone()
+    }
+
+    fn begin_rotation(&self, x: i64, y: i64, base: FrameTransform) {
+        self.rotation.replace(Some(RotationGesture {
+            anchor: (x, y),
+            base,
+        }));
+    }
+
+    fn rotation_gesture(&self) -> Option<RotationGesture> {
+        *self.rotation.borrow()
+    }
+
+    fn clear_rotation(&self) {
+        self.rotation.replace(None);
     }
 
     /// Returns the transient viewport state used by the canvas presentation.
@@ -151,6 +174,7 @@ pub(crate) fn install_canvas_callbacks(
 ) -> Rc<CanvasController> {
     let controller = Rc::new(CanvasController {
         draft: RefCell::new(None),
+        rotation: RefCell::new(None),
         state: RefCell::new(CanvasState::default()),
     });
     install_zoom_callbacks(ui, &controller);
@@ -221,6 +245,7 @@ pub(crate) fn install_canvas_callbacks(
         let Some(ui) = weak.upgrade() else {
             return;
         };
+        pointer_controller.clear_rotation();
         pointer_controller.draft.borrow_mut().take();
         let canvas = canvas_size(&ui);
         // A plain click follows OBS's preview behavior: if the current
@@ -290,6 +315,66 @@ pub(crate) fn install_canvas_callbacks(
             &selection_surface,
             UiCommand::SelectSources { ids, additive },
         );
+    });
+
+    let weak = ui.as_weak();
+    let rotation_state = Rc::clone(state);
+    let rotation_controller = Rc::clone(&controller);
+    ui.on_rotation_started(move |x, y| {
+        if selected_is_locked(&rotation_state) {
+            return;
+        }
+        let Some(scene) = rotation_state.borrow().preview_scene().map(str::to_owned) else {
+            return;
+        };
+        let items = selected_transforms(&rotation_state, &scene);
+        if items.len() != 1 {
+            return;
+        }
+        let base = items[0].transform;
+        *rotation_controller.draft.borrow_mut() = Some(TransformDraft { scene, items });
+        rotation_controller.begin_rotation(i64::from(x), i64::from(y), base);
+        if let Some(ui) = weak.upgrade() {
+            ui.set_canvas_pointer_mode(1);
+        }
+    });
+
+    let weak = ui.as_weak();
+    let rotation_state = Rc::clone(state);
+    let rotation_controller = Rc::clone(&controller);
+    ui.on_rotation_dragged(move |x, y, modifier_mask| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        if selected_is_locked(&rotation_state) {
+            return;
+        }
+        let Some(rotation) = rotation_controller.rotation_gesture() else {
+            return;
+        };
+        let Some(scene) = rotation_state.borrow().preview_scene().map(str::to_owned) else {
+            return;
+        };
+        let canvas = canvas_size(&ui);
+        let mut draft_slot = rotation_controller.draft.borrow_mut();
+        let Some(draft) = draft_slot.as_mut() else {
+            return;
+        };
+        if draft.scene != scene || draft.items.len() != 1 {
+            return;
+        }
+        draft.items[0].transform = rotation_from_pointer(
+            rotation.base,
+            rotation.anchor,
+            (i64::from(x), i64::from(y)),
+            modifier_mask,
+            canvas,
+        );
+        let overlay = draft_overlay(draft, canvas);
+        drop(draft_slot);
+        if let Some(overlay) = overlay {
+            set_selection_overlay(&ui, Some(&overlay));
+        }
     });
 
     let weak = ui.as_weak();
@@ -422,6 +507,7 @@ pub(crate) fn install_canvas_callbacks(
         let Some(ui) = weak.upgrade() else {
             return;
         };
+        commit_controller.clear_rotation();
         let Some(draft) = commit_controller.draft.borrow_mut().take() else {
             return;
         };

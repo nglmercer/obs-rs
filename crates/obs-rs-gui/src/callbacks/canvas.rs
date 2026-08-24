@@ -35,18 +35,19 @@ use canvas_geometry::{
 pub(crate) use canvas_geometry::{item_rect, ItemRect, SelectionOverlay};
 use canvas_model::{
     CanvasResizeModifiers, SnapSettings, ACTION_SAFE_INSET, FOUR_BY_THREE_SAFE_X_INSET,
-    GRAPHICS_SAFE_INSET, MAX_SNAP_GUIDES, MINIMUM_ITEM_PIXELS, SAFE_AREA_DENOMINATOR,
-    UNIT_SCALE_MILLI,
+    GRAPHICS_SAFE_INSET, MAX_SNAP_GUIDES, MINIMUM_ITEM_PIXELS, RESIZE_MODIFIER_CONTROL,
+    RESIZE_MODIFIER_SHIFT, SAFE_AREA_DENOMINATOR, UNIT_SCALE_MILLI,
 };
 pub(crate) use canvas_model::{CanvasState, CanvasTransformCommand, CanvasZoom};
 #[cfg(test)]
 use canvas_model::{
-    MAX_PAN_PIXELS, MAX_ZOOM_PERCENT, MIN_ZOOM_PERCENT, RESIZE_MODIFIER_CONTROL,
-    RESIZE_MODIFIER_SHIFT, SCALE_MICROS_PER_PERCENT, SCALE_MICROS_PER_UNIT,
+    MAX_PAN_PIXELS, MAX_ZOOM_PERCENT, MIN_ZOOM_PERCENT, SCALE_MICROS_PER_PERCENT,
+    SCALE_MICROS_PER_UNIT,
 };
 use canvas_transform::{
-    crop_transform, preserve_resize_aspect, rotate_canvas_delta, snap_rotated_resize_delta,
-    transform_for_rect, transform_for_rotated_local_rect, transform_with_geometry,
+    crop_transform, preserve_resize_aspect, rotate_canvas_delta, rotation_from_pointer,
+    snap_rotated_resize_delta, transform_for_rect, transform_for_rotated_local_rect,
+    transform_with_geometry,
 };
 pub(crate) use canvas_transform::{
     drag_rect, selection_overlay, set_selection_overlay, transform_for_command,

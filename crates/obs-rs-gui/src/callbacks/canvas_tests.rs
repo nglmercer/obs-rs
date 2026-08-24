@@ -123,6 +123,7 @@ fn snap_distance_is_bounded_at_the_canvas_boundary() {
 
     let controller = CanvasController {
         draft: RefCell::new(None),
+        rotation: RefCell::new(None),
         state: RefCell::new(CanvasState::default()),
     };
     assert_eq!(
@@ -439,6 +440,43 @@ fn rotated_selection_overlay_uses_oriented_handles() {
     assert_eq!(overlay.handle_x, [275, 275, 275, 200, 125, 125, 125, 200]);
     assert_eq!(overlay.handle_y, [25, 125, 225, 225, 225, 125, 25, 25]);
     assert_eq!(overlay.path, "M 275 25 L 275 225 L 125 225 L 125 25 Z");
+    assert_eq!(overlay.rotation_handle, Some((307, 125)));
+}
+
+#[test]
+fn rotation_handle_is_only_published_for_one_selection() {
+    let single = selection_overlay_for_transforms(&[FrameTransform::IDENTITY], (400, 300))
+        .expect("one transform should create an overlay");
+    assert_eq!(single.rotation_handle, Some((200, -32)));
+
+    let second = FrameTransform::new(500, 500, 100, 50, false, false, 255).expect("transform");
+    let group = selection_overlay_for_transforms(&[FrameTransform::IDENTITY, second], (400, 300))
+        .expect("two transforms should create an overlay");
+    assert_eq!(group.rotation_handle, None);
+}
+
+#[test]
+fn rotation_pointer_uses_a_stable_base_and_obs_style_modifiers() {
+    let base = FrameTransform::IDENTITY;
+    let anchor = (200, -32);
+
+    let quarter_turn = rotation_from_pointer(base, anchor, (382, 150), 0, (400, 300));
+    assert_eq!(quarter_turn.rotation_milli_degrees(), 90_000);
+
+    // A 22-degree pointer move is rounded to the nearest 15-degree increment
+    // while Shift is held.
+    let shift_snapped =
+        rotation_from_pointer(base, anchor, (268, -19), RESIZE_MODIFIER_SHIFT, (400, 300));
+    assert_eq!(shift_snapped.rotation_milli_degrees(), 15_000);
+
+    // The same pointer position is close enough to the ordinary 45-degree
+    // guide to snap without Ctrl, but Ctrl preserves the measured angle.
+    let default_snapped = rotation_from_pointer(base, anchor, (340, 20), 0, (400, 300));
+    let control_free =
+        rotation_from_pointer(base, anchor, (340, 20), RESIZE_MODIFIER_CONTROL, (400, 300));
+    assert_eq!(default_snapped.rotation_milli_degrees(), 45_000);
+    assert_ne!(control_free.rotation_milli_degrees(), 45_000);
+    assert!((46_000..=48_000).contains(&control_free.rotation_milli_degrees()));
 }
 
 #[test]
