@@ -23,6 +23,7 @@ use std::{
 use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Timer, TimerMode};
 
+use crate::preview::TransformDraft;
 use crate::{
     preview_worker::{RenderTargets, MAX_MULTIVIEW_SCENES},
     refresh_output_ui, refresh_preview_frames_for_view, MainWindow, OutputRuntime, PreviewRenderer,
@@ -121,6 +122,19 @@ struct RenderDemandInput {
     source_projector: bool,
     scene_projector: bool,
     view: StudioView,
+    frame_period: Duration,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RenderInvalidationKey {
+    revision: u64,
+    preview_scene: Option<String>,
+    program_scene: Option<String>,
+    program_transition: Option<obs_rs_ui::TransitionSnapshot>,
+    source_projector: Option<crate::preview_worker::SourceProjectorTarget>,
+    scene_projector: Option<crate::preview_worker::SceneProjectorTarget>,
+    draft: Option<TransformDraft>,
+    demand: RenderDemand,
 }
 
 /// Chooses which consumers need a new GUI render and how often to service
@@ -149,7 +163,7 @@ fn render_demand(input: RenderDemandInput) -> RenderDemand {
     let request_scene_projector = input.scene_projector;
     let interval =
         if input.output == OutputRenderState::Active || projector_open || main_interactive {
-            Some(Duration::from_millis(16))
+            Some(input.frame_period)
         } else if input.window == WindowRenderState::Minimized {
             Some(Duration::from_millis(200))
         } else {
@@ -167,6 +181,7 @@ fn render_demand(input: RenderDemandInput) -> RenderDemand {
 
 #[allow(
     clippy::too_many_lines,
+    clippy::too_many_arguments,
     reason = "the timer coordinates bounded rendering and the output lifecycle"
 )]
 pub(crate) fn start_preview_timer(
@@ -194,19 +209,34 @@ pub(crate) fn start_preview_timer(
     let mut last_preview_request = Instant::now()
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
+    let mut last_render_key: Option<RenderInvalidationKey> = None;
     timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         let callback_started = Instant::now();
-        let (revision, preview_scene, program_scene, program_transition, output_active) = {
+        let (
+            revision,
+            preview_scene,
+            program_scene,
+            program_transition,
+            output_active,
+            frame_period,
+        ) = {
             let mut state = state.borrow_mut();
+            let frame_period = state
+                .project_session()
+                .project()
+                .active_profile_spec()
+                .and_then(|profile| profile.video_format().frame_rate().period_nanos())
+                .map_or(Duration::from_millis(33), Duration::from_nanos);
             (
                 state.project_session().revision(),
                 state.preview_scene().map(str::to_owned),
                 state.program_scene().map(str::to_owned),
                 state.transition_snapshot(Instant::now()),
                 state.recording() || state.streaming(),
+                frame_period,
             )
         };
         let window = if ui.window().is_minimized() {
@@ -236,6 +266,7 @@ pub(crate) fn start_preview_timer(
             multiview_projector,
             source_projector: source_projector.is_some(),
             scene_projector: scene_projector.is_some(),
+            frame_period,
             view: match ui.get_view_mode() {
                 0 => StudioView::Studio,
                 2 => StudioView::Multiview,
@@ -298,12 +329,37 @@ pub(crate) fn start_preview_timer(
                 ui.set_status_message(format!("Output project sync failed: {error}").into());
             }
         }
-        let preview_due = demand
-            .interval
-            .is_some_and(|interval| last_preview_request.elapsed() >= interval);
-        if preview_due {
+        let invalidation_key = RenderInvalidationKey {
+            revision,
+            preview_scene: preview_scene.clone(),
+            program_scene: program_scene.clone(),
+            program_transition: program_transition.clone(),
+            source_projector: source_projector.clone(),
+            scene_projector: scene_projector.clone(),
+            draft: canvas.draft(),
+            demand,
+        };
+        let static_only = !output_active
+            && project_is_static_for_demand(
+                &state,
+                &demand,
+                preview_scene.as_deref(),
+                program_scene.as_deref(),
+            )
+            && program_transition.is_none()
+            && invalidation_key.draft.is_none();
+        let invalidated = last_render_key.as_ref() != Some(&invalidation_key);
+        let preview_due = demand.interval.is_some_and(|interval| {
+            last_preview_request.elapsed() >= interval && (!static_only || invalidated)
+        });
+        let poll_due = static_only
+            && !invalidated
+            && demand
+                .interval
+                .is_some_and(|interval| last_preview_request.elapsed() >= interval);
+        if preview_due || poll_due {
             let state = state.borrow();
-            let draft = canvas.draft();
+            let draft = invalidation_key.draft.clone();
             if let Some(profile) = state.project_session().project().active_profile_spec() {
                 preview_worker.request_render(
                     state.project_session().project(),
@@ -350,6 +406,7 @@ pub(crate) fn start_preview_timer(
                         render_program: demand.request_program_view,
                         prepare_output: output_active,
                         prepare_output_rgba: output_active && !output.borrow().accepts_raw_frames(),
+                        poll_only: poll_due,
                         // A canvas drag reaches the compositor here rather than
                         // through a project revision, so the picture follows the
                         // pointer while the undo history stays at one entry per
@@ -358,6 +415,7 @@ pub(crate) fn start_preview_timer(
                     },
                 );
                 last_preview_request = Instant::now();
+                last_render_key = Some(invalidation_key);
             }
         }
         let (preview_frame, program_frame, program_output, program_output_frame, render_error) =
@@ -389,6 +447,32 @@ pub(crate) fn start_preview_timer(
         preview_worker.record_ui_callback(callback_started.elapsed());
     });
     timer
+}
+
+fn project_is_static_for_demand(
+    state: &Rc<RefCell<DesktopState>>,
+    demand: &RenderDemand,
+    preview_scene: Option<&str>,
+    program_scene: Option<&str>,
+) -> bool {
+    if demand.request_multiview || demand.request_source_projector || demand.request_scene_projector
+    {
+        return false;
+    }
+    let state = state.borrow();
+    let project = state.project_session().project();
+    let scene_is_static = |scene: Option<&str>| {
+        scene.is_none_or(|scene| PreviewRenderer::is_static_scene(project, scene))
+    };
+    let preview_static = !demand.request_preview || scene_is_static(preview_scene);
+    let program_static = !demand.request_program_view || scene_is_static(program_scene);
+    let multiview_static = !demand.request_multiview
+        || project.active_profile_spec().is_some_and(|profile| {
+            profile
+                .scenes()
+                .all(|scene| PreviewRenderer::is_static_scene(project, scene.id().as_str()))
+        });
+    preview_static && program_static && multiview_static
 }
 
 /// Brings the desktop's output booleans back in line with the engine's phases.
@@ -554,6 +638,7 @@ mod tests {
                 source_projector: false,
                 scene_projector: false,
                 view: StudioView::Single,
+                frame_period: Duration::from_nanos(33_333_333),
             }),
             RenderDemand {
                 request_preview: false,
@@ -577,6 +662,7 @@ mod tests {
                 source_projector: false,
                 scene_projector: false,
                 view: StudioView::Studio,
+                frame_period: Duration::from_nanos(33_333_333),
             }),
             RenderDemand {
                 request_preview: true,
@@ -600,6 +686,7 @@ mod tests {
                 source_projector: false,
                 scene_projector: false,
                 view: StudioView::Studio,
+                frame_period: Duration::from_nanos(33_333_333),
             }),
             RenderDemand {
                 request_preview: false,
@@ -607,7 +694,7 @@ mod tests {
                 request_multiview: false,
                 request_source_projector: false,
                 request_scene_projector: false,
-                interval: Some(Duration::from_millis(16)),
+                interval: Some(Duration::from_nanos(33_333_333)),
             }
         );
     }
@@ -623,6 +710,7 @@ mod tests {
                 source_projector: false,
                 scene_projector: false,
                 view: StudioView::Studio,
+                frame_period: Duration::from_millis(16),
             }),
             RenderDemand {
                 request_preview: true,
@@ -646,6 +734,7 @@ mod tests {
                 source_projector: false,
                 scene_projector: false,
                 view: StudioView::Multiview,
+                frame_period: Duration::from_millis(16),
             }),
             RenderDemand {
                 request_preview: false,
@@ -669,6 +758,7 @@ mod tests {
                 source_projector: false,
                 scene_projector: false,
                 view: StudioView::Single,
+                frame_period: Duration::from_millis(16),
             }),
             RenderDemand {
                 request_preview: false,
@@ -692,6 +782,7 @@ mod tests {
                 source_projector: true,
                 scene_projector: false,
                 view: StudioView::Single,
+                frame_period: Duration::from_millis(16),
             }),
             RenderDemand {
                 request_preview: false,
@@ -715,6 +806,7 @@ mod tests {
                 source_projector: false,
                 scene_projector: true,
                 view: StudioView::Single,
+                frame_period: Duration::from_millis(16),
             }),
             RenderDemand {
                 request_preview: false,

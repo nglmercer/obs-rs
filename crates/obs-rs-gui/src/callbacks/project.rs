@@ -5,7 +5,7 @@ use obs_rs_project::{ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
-use crate::{refresh_ui, source_settings, MainWindow, OutputRuntime, PreviewSurface};
+use crate::{refresh_ui, source_settings_for_canvas, MainWindow, OutputRuntime, PreviewSurface};
 
 const DISCARD_NEW_PROJECT: i32 = 4;
 const DISCARD_EXIT: i32 = 5;
@@ -451,7 +451,7 @@ pub(crate) fn add_source_and_refresh(
     kind: &str,
     name: &str,
 ) {
-    let (profile, scene) = {
+    let (profile, scene, canvas_width, canvas_height) = {
         let state = state.borrow();
         let profile = state
             .project_session()
@@ -462,11 +462,24 @@ pub(crate) fn add_source_and_refresh(
             .preview_scene()
             .map(str::to_owned)
             .ok_or_else(|| std::io::Error::other("no preview scene is selected"));
-        (profile, scene)
+        let (canvas_width, canvas_height) = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .map_or((1_280, 720), |profile| {
+                let format = profile.video_format();
+                (format.width(), format.height())
+            });
+        (profile, scene, canvas_width, canvas_height)
     };
     let result: Result<(), Box<dyn Error>> = (|| {
         let scene = scene?;
-        let source = SourceSpec::new(id, kind, name, source_settings(kind)?)?;
+        let source = SourceSpec::new(
+            id,
+            kind,
+            name,
+            source_settings_for_canvas(kind, canvas_width, canvas_height)?,
+        )?;
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::AddSource {

@@ -192,13 +192,19 @@ impl ThreadedCaptureDevice {
         }
         let deadline = Instant::now() + SHUTDOWN_GRACE;
         while !self.mailbox.finished.load(Ordering::Acquire)
-            && !self.join.as_ref().is_some_and(|join| join.is_finished())
+            && !self
+                .join
+                .as_ref()
+                .is_some_and(std::thread::JoinHandle::is_finished)
             && Instant::now() < deadline
         {
             thread::sleep(IDLE_POLL);
         }
         let finished = self.mailbox.finished.load(Ordering::Acquire)
-            || self.join.as_ref().is_some_and(|join| join.is_finished());
+            || self
+                .join
+                .as_ref()
+                .is_some_and(std::thread::JoinHandle::is_finished);
         if !finished {
             return false;
         }

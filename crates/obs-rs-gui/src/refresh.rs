@@ -201,6 +201,10 @@ type RefreshedPreviewFrames = (
 );
 
 /// Applies the newest completed background composition without waiting for one.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the refresh boundary applies all bounded consumer results together"
+)]
 pub(crate) fn refresh_preview_frames_for_view(
     ui: &MainWindow,
     worker: &PreviewWorker,
@@ -221,7 +225,7 @@ pub(crate) fn refresh_preview_frames_for_view(
             })) {
             Ok(()) => settings_updated = true,
             Err(error) => {
-                ui.set_status_message(format!("Source settings update failed: {error}").into())
+                ui.set_status_message(format!("Source settings update failed: {error}").into());
             }
         }
     }

@@ -123,8 +123,8 @@
           "name": "Background",
           "settings": {
             "color": "#102030FF",
-            "height": "360",
-            "width": "640"
+            "height": "720",
+            "width": "1280"
           }
         },
         {
@@ -134,8 +134,8 @@
           "name": "Background",
           "settings": {
             "color": "#203040FF",
-            "height": "360",
-            "width": "640"
+            "height": "720",
+            "width": "1280"
           }
         },
         {
@@ -145,8 +145,8 @@
           "name": "Video capture device 1",
           "settings": {
             "device_id": "nokhwa-camera-1",
-            "height": "360",
-            "width": "640"
+            "height": "720",
+            "width": "1280"
           }
         },
         {
@@ -156,9 +156,9 @@
           "name": "Screen capture 1",
           "settings": {
             "capture_cursor": "true",
-            "height": "360",
+            "height": "720",
             "restore_token": "HA0XGvVqau7kEib47znYjQ",
-            "width": "640"
+            "width": "1280"
           }
         }
       ],
@@ -167,8 +167,8 @@
           "denominator": 1,
           "numerator": 30
         },
-        "height": 360,
-        "width": 640
+        "height": 720,
+        "width": 1280
       }
     }
   ],

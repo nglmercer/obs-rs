@@ -469,7 +469,7 @@ pub(super) fn exercise_context_menus(
         .and_then(|scene| scene.item("foreground"))
         .expect("centered source")
         .transform();
-    assert_eq!((centered.translate_x(), centered.translate_y()), (160, 135));
+    assert_eq!((centered.translate_x(), centered.translate_y()), (320, 270));
 
     let rows = ElementHandle::find_by_element_type_name(ui, "SourceContextMenuArea")
         .filter(|row| row.size().height > 30.0)

@@ -5,6 +5,20 @@ use obs_rs_project::{ProjectCommand, SourceFilterSpec};
 
 use super::*;
 
+fn wait_for_frame<T, F, E>(mut render: F) -> T
+where
+    F: FnMut() -> Result<Option<T>, E>,
+    E: std::fmt::Debug,
+{
+    for _ in 0..100 {
+        if let Some(frame) = render().expect("asynchronous frame request") {
+            return frame;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    panic!("asynchronous frame did not complete");
+}
+
 fn request(scene: &str) -> PreviewRequest {
     PreviewRequest {
         project: None,
@@ -36,6 +50,7 @@ fn request(scene: &str) -> PreviewRequest {
         render_program: false,
         prepare_output: false,
         prepare_output_rgba: false,
+        poll_only: false,
         draft: None,
     }
 }
@@ -156,15 +171,36 @@ fn program_transition_uses_the_same_worker_renderer_for_preview_and_output() {
         },
     );
     let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
-    let preview = render_program_scene(&mut renderer, Some("program"), format, Some(&snapshot))
-        .expect("preview transition")
-        .expect("preview frame");
+    let preview = wait_for_frame(|| {
+        render_program_scene(&mut renderer, Some("program"), format, Some(&snapshot))
+    });
     assert_eq!(preview.pixel(0, 0), Some([0x18, 0x28, 0x38, 0xff]));
 
-    let output = render_program_transition(&mut renderer, Some(&snapshot))
-        .expect("output transition")
-        .expect("output frame");
+    let output = wait_for_frame(|| render_program_transition(&mut renderer, Some(&snapshot)));
     assert_eq!(output.pixel(0, 0), Some([0x18, 0x28, 0x38, 0xff]));
+}
+
+#[test]
+fn matching_preview_consumers_share_one_scene_capture() {
+    let project = crate::initial_project().expect("initial project");
+    let canvas = project
+        .active_profile_spec()
+        .expect("profile")
+        .video_format();
+    let format = PreviewRenderer::preview_format_for_canvas(canvas);
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
+    if !renderer.deferred_readback() {
+        // The CPU compatibility compositor renders synchronously and does not
+        // use the GPU scene-layer fan-out boundary under test here.
+        return;
+    }
+    let before = renderer.runtime.compositor_metrics().render_calls();
+
+    let _ = wait_for_frame(|| renderer.render_preview("preview", format));
+    let _ = wait_for_frame(|| renderer.render_program_preview("preview", format));
+
+    let after = renderer.runtime.compositor_metrics().render_calls();
+    assert_eq!(after.saturating_sub(before), 1);
 }
 
 #[test]
@@ -176,10 +212,7 @@ fn source_projector_renders_the_selected_item_without_scene_geometry() {
         .video_format();
     let format = PreviewRenderer::preview_format_for_canvas(canvas);
     let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
-    let frame = renderer
-        .render_source("preview", "background", format)
-        .expect("source projector render")
-        .expect("selected source frame");
+    let frame = wait_for_frame(|| renderer.render_source("preview", "background", format));
 
     assert_eq!(frame.format(), format);
     assert_eq!(frame.pixel(0, 0), Some([0x10, 0x20, 0x30, 0xff]));
@@ -194,10 +227,7 @@ fn scene_projector_renders_the_complete_scene() {
         .video_format();
     let format = PreviewRenderer::preview_format_for_canvas(canvas);
     let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
-    let frame = renderer
-        .render_scene_projector("preview", format)
-        .expect("scene projector render")
-        .expect("scene frame");
+    let frame = wait_for_frame(|| renderer.render_scene_projector("preview", format));
 
     assert_eq!(frame.format(), format);
     assert_eq!(frame.pixel(0, 0), Some([0x10, 0x20, 0x30, 0xff]));
@@ -251,51 +281,56 @@ fn scene_composition_runs_on_the_preview_thread() {
     )
     .expect("preview worker");
     let caller = thread::current().id();
-    worker.request_render(
-        &project,
-        0,
-        RenderTargets {
-            preview_scene: Some(&scene),
-            preview_format: PreviewRenderer::preview_format_for_canvas(
-                project
-                    .active_profile_spec()
-                    .expect("profile")
-                    .video_format(),
-            ),
-            program_scene: Some(&scene),
-            program_transition: None,
-            program_preview_format: PreviewRenderer::preview_format_for_canvas(
-                project
-                    .active_profile_spec()
-                    .expect("profile")
-                    .video_format(),
-            ),
-            multiview_scenes: vec![scene.clone()],
-            multiview_format: PreviewRenderer::multiview_format_for_canvas(
-                project
-                    .active_profile_spec()
-                    .expect("profile")
-                    .video_format(),
-                1,
-            ),
-            source_projector: None,
-            scene_projector: None,
-            render_program: true,
-            prepare_output: true,
-            prepare_output_rgba: true,
-            draft: None,
-        },
-    );
+    let targets = RenderTargets {
+        preview_scene: Some(&scene),
+        preview_format: PreviewRenderer::preview_format_for_canvas(
+            project
+                .active_profile_spec()
+                .expect("profile")
+                .video_format(),
+        ),
+        program_scene: Some(&scene),
+        program_transition: None,
+        program_preview_format: PreviewRenderer::preview_format_for_canvas(
+            project
+                .active_profile_spec()
+                .expect("profile")
+                .video_format(),
+        ),
+        multiview_scenes: vec![scene.clone()],
+        multiview_format: PreviewRenderer::multiview_format_for_canvas(
+            project
+                .active_profile_spec()
+                .expect("profile")
+                .video_format(),
+            1,
+        ),
+        source_projector: None,
+        scene_projector: None,
+        render_program: true,
+        prepare_output: true,
+        prepare_output_rgba: true,
+        poll_only: false,
+        draft: None,
+    };
+    worker.request_render(&project, 0, targets.clone());
 
     let mut result = None;
     // The workspace runs many GUI/runtime tests in parallel. Keep the
     // wait bounded, but leave enough scheduler slack for a loaded managed
     // runner before declaring the worker missing its result.
     for _ in 0..500 {
-        result = worker.try_take_latest();
-        if result.is_some() {
-            break;
+        if let Some(candidate) = worker.try_take_latest() {
+            let complete = candidate.preview_frame.is_some()
+                && candidate.program_frame.is_some()
+                && candidate.multiview_frame.is_some()
+                && candidate.program_output_frame.is_some();
+            if complete {
+                result = Some(candidate);
+                break;
+            }
         }
+        worker.request_render(&project, 0, targets.clone());
         thread::sleep(Duration::from_millis(10));
     }
     let result = result.expect("render result");
@@ -326,6 +361,6 @@ fn scene_composition_runs_on_the_preview_thread() {
     );
     assert_eq!(worker.queue_depth(), 0);
     let performance = worker.performance();
-    assert_eq!(performance.preview_render.samples(), 1);
-    assert_eq!(performance.worker.samples(), 1);
+    assert!(performance.preview_render.samples() >= 1);
+    assert!(performance.worker.samples() >= 1);
 }

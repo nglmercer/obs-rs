@@ -19,11 +19,9 @@ pub(super) fn exercise_recording_controls(
         state.borrow().recording(),
         "Record button must start the state"
     );
-    let frame = PreviewRenderer::new(state.borrow().project_session().project(), 0)
-        .expect("preview renderer")
-        .render("program")
-        .expect("program frame")
-        .expect("program scene frame");
+    let mut renderer = PreviewRenderer::new(state.borrow().project_session().project(), 0)
+        .expect("preview renderer");
+    let frame = wait_for_frame(|| renderer.render("program")).expect("program scene frame");
     crate::callbacks::push_program_frame(ui, None, None, Some(frame), &output);
     ui.invoke_toggle_recording();
     for _ in 0..100 {
@@ -139,11 +137,9 @@ fn exercise_replay_controls(
         ui.get_replay_buffering(),
         "Replay control must expose the accepted start request"
     );
-    let frame = PreviewRenderer::new(state.borrow().project_session().project(), 0)
-        .expect("preview renderer")
-        .render("program")
-        .expect("program frame")
-        .expect("program scene frame");
+    let mut renderer = PreviewRenderer::new(state.borrow().project_session().project(), 0)
+        .expect("preview renderer");
+    let frame = wait_for_frame(|| renderer.render("program")).expect("program scene frame");
     crate::callbacks::push_program_frame(ui, None, None, Some(frame), &output);
 
     ui.invoke_save_replay_buffer();

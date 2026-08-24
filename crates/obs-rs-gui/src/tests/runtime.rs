@@ -195,9 +195,7 @@ fn gui_catalog_switches_complete_copy_between_supported_locales() {
 fn preview_renderer_uses_the_project_scene_sources() {
     let project = initial_project().expect("initial GUI project should validate");
     let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
-    let frame = renderer
-        .render("preview")
-        .expect("preview scene should render")
+    let frame = wait_for_frame(|| renderer.render("preview"))
         .expect("preview scene should produce a frame");
     assert_eq!(frame.pixel(0, 0), Some([0x10, 0x20, 0x30, 0xff]));
 }
@@ -206,16 +204,16 @@ fn preview_renderer_uses_the_project_scene_sources() {
 fn preview_renderer_composes_scene_transitions() {
     let project = initial_project().expect("initial GUI project should validate");
     let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
-    let frame = renderer
-        .render_transition(
+    let frame = wait_for_frame(|| {
+        renderer.render_transition(
             "preview",
             "program",
             FrameTransition::CrossFade {
                 progress_milli: 500,
             },
         )
-        .expect("transition should render")
-        .expect("transition should produce a frame");
+    })
+    .expect("transition should produce a frame");
     assert_eq!(frame.pixel(0, 0), Some([0x18, 0x28, 0x38, 0xff]));
 }
 
@@ -223,14 +221,10 @@ fn preview_renderer_composes_scene_transitions() {
 fn preview_renderer_advances_animated_capture_sources() {
     let project = initial_project().expect("initial GUI project should validate");
     let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
-    let first = renderer
-        .render("intermission")
-        .expect("first pattern frame should render")
-        .expect("pattern scene should produce a frame");
-    let second = renderer
-        .render("intermission")
-        .expect("second pattern frame should render")
-        .expect("pattern scene should produce a frame");
+    let first = wait_for_frame(|| renderer.render("intermission"))
+        .expect("first pattern frame should render");
+    let second = wait_for_frame(|| renderer.render("intermission"))
+        .expect("second pattern frame should render");
     assert_ne!(first.pixels(), second.pixels());
 }
 
@@ -238,15 +232,9 @@ fn preview_renderer_advances_animated_capture_sources() {
 fn preview_renderer_reuses_static_scene_composition() {
     let project = initial_project().expect("initial GUI project should validate");
     let mut renderer = PreviewRenderer::new(&project, 0).expect("preview renderer should build");
-    renderer
-        .render("preview")
-        .expect("static scene should render")
-        .expect("static scene should produce a frame");
+    wait_for_frame(|| renderer.render("preview")).expect("static scene should render");
     let first = renderer.runtime.compositor_metrics();
-    renderer
-        .render("preview")
-        .expect("cached static scene should render")
-        .expect("cached static scene should produce a frame");
+    wait_for_frame(|| renderer.render("preview")).expect("cached static scene should render");
     let second = renderer.runtime.compositor_metrics();
     assert_eq!(second.render_calls(), first.render_calls());
     assert_eq!(second.source_requests(), first.source_requests());

@@ -7,8 +7,8 @@ use super::settings::{AppSettings, ProjectorGeometry, ProjectorKind, ProjectorTa
 use super::settings_model::RecordingQuality;
 use super::{
     capture_devices, close_request_response, initial_project, install_canvas_callbacks,
-    kind_selects_monitor, refresh_ui, restore_project, source_settings, I18n, MainWindow,
-    OutputRuntime, PreviewSurface, SettingsWindow, SourcePropertiesWindow,
+    kind_selects_monitor, refresh_ui, restore_project, source_settings, source_settings_for_canvas,
+    I18n, MainWindow, OutputRuntime, PreviewSurface, SettingsWindow, SourcePropertiesWindow,
 };
 use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
@@ -20,7 +20,7 @@ use obs_rs_project::{ProjectCommand, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, ProjectSceneSelection, Shortcut, UiAction, UiCommand, UiLocale};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
 use slint::{CloseRequestResponse, ComponentHandle, LogicalPosition, Model, ModelRc, VecModel};
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, error::Error, rc::Rc, thread, time::Duration};
 
 #[path = "tests/output.rs"]
 mod output;
@@ -38,6 +38,22 @@ mod ui_navigation;
 mod ui_output;
 #[path = "tests/ui_sources.rs"]
 mod ui_sources;
+
+/// Waits for a compatibility readback to complete without putting a blocking
+/// GPU wait into the renderer. Production code keeps the previous GUI image;
+/// tests may poll briefly because they need to inspect the eventual pixels.
+pub(super) fn wait_for_frame<F>(mut render: F) -> Result<VideoFrame, Box<dyn Error>>
+where
+    F: FnMut() -> Result<Option<VideoFrame>, Box<dyn Error>>,
+{
+    for _ in 0..100 {
+        if let Some(frame) = render()? {
+            return Ok(frame);
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    Err(std::io::Error::other("asynchronous frame did not complete").into())
+}
 
 pub(super) fn canvas_fixture() -> (Rc<RefCell<DesktopState>>, Rc<RefCell<OutputRuntime>>) {
     let project = initial_project().expect("initial project");
@@ -57,6 +73,26 @@ pub(super) fn profile_video_format(state: &Rc<RefCell<DesktopState>>) -> VideoFo
         .active_profile_spec()
         .expect("profile")
         .video_format()
+}
+
+#[test]
+fn starter_project_uses_the_normal_720p30_fallback() {
+    let format = initial_project()
+        .expect("initial project")
+        .active_profile_spec()
+        .expect("profile")
+        .video_format();
+    assert_eq!((format.width(), format.height()), (1_280, 720));
+    assert_eq!(format.frame_rate().numerator(), 30);
+    assert_eq!(format.frame_rate().denominator(), 1);
+}
+
+#[test]
+fn new_color_source_defaults_follow_the_active_canvas() {
+    let settings = source_settings_for_canvas("color_source", 1_920, 1_080)
+        .expect("canvas-aware color source defaults");
+    assert_eq!(settings.get("width"), Some("1920"));
+    assert_eq!(settings.get("height"), Some("1080"));
 }
 
 pub(super) fn scene_source_count(state: &Rc<RefCell<DesktopState>>, scene: &str) -> usize {

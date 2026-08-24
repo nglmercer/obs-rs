@@ -39,7 +39,7 @@ pub const PIPEWIRE_READER_COMMAND: &str = "gst-launch-1.0";
 /// persisted restore token afterward.
 pub const WAYLAND_PORTAL_HANDOFF_SETTING: &str = "portal_handoff_id";
 
-const HANDOFF_TTL: Duration = Duration::from_secs(60);
+const HANDOFF_TTL: Duration = Duration::from_mins(1);
 
 static PORTAL_HANDOFFS: OnceLock<Mutex<HashMap<String, (Instant, WaylandCaptureDevice)>>> =
     OnceLock::new();
@@ -112,6 +112,11 @@ impl WaylandCaptureDevice {
     /// Returns [`CaptureError::PermissionDenied`] when the user cancels the
     /// portal dialog, and [`CaptureError::PlatformUnavailable`] when no portal
     /// is reachable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the portal error when the session cannot be opened or the
+    /// device metadata is invalid.
     pub fn open(id: &str, name: &str, restore_token: Option<&str>) -> Result<Self, CaptureError> {
         let session = open_screencast(restore_token, CursorMode::Embedded)?;
         Self::from_session(id, name, session)
@@ -119,6 +124,11 @@ impl WaylandCaptureDevice {
 
     /// Opens a portal session with cancellation support for asynchronous source
     /// replacement and shutdown.
+    ///
+    /// # Errors
+    ///
+    /// Returns the portal or cancellation error when the session cannot be
+    /// opened, and a metadata error for an invalid device identity.
     pub fn open_cancellable(
         id: &str,
         name: &str,
@@ -130,6 +140,11 @@ impl WaylandCaptureDevice {
     }
 
     /// Builds a device from a session that was already selected by the portal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::InvalidDevice`] when the device identity cannot
+    /// be represented by the capture registry.
     pub fn from_session(
         id: &str,
         name: &str,

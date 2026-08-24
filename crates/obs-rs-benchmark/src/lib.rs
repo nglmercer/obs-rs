@@ -8,6 +8,7 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use std::{
+    cmp::Ordering,
     fmt::{Display, Write},
     fs,
     time::Instant,
@@ -22,8 +23,8 @@ use obs_rs_media::{
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_video::{
-    run_multi_worker_soak, CancellationToken, DropPolicy, MonotonicClock, VideoWorker,
-    VideoWorkerReport,
+    run_multi_worker_soak, CancellationToken, DropPolicy, FrameDeadline, MonotonicClock,
+    VideoWorker, VideoWorkerReport,
 };
 
 /// Number of samples used by the command-line benchmark.
@@ -37,6 +38,7 @@ pub struct RenderLatency {
     pub samples: usize,
     pub p50_nanos: u128,
     pub p95_nanos: u128,
+    pub p99_nanos: u128,
     pub max_nanos: u128,
 }
 
@@ -70,11 +72,13 @@ pub struct SetupCandidate {
 #[derive(Clone, Copy, Debug)]
 pub struct SetupCandidateMetrics {
     pub render_p95_nanos: u128,
+    pub render_p99_nanos: u128,
     pub render_max_nanos: u128,
     pub requested_frames: u64,
     pub processed_frames: u64,
     pub missed_deadlines: u64,
     pub dropped_frames: u64,
+    pub max_queue_age_nanos: u64,
     pub elapsed_millis: u128,
 }
 
@@ -101,17 +105,18 @@ impl SetupBenchmarkReport {
             self.elapsed_millis
         );
         for candidate in &self.candidates {
-            let (p95, missed, dropped) = candidate.result.map_or((0, 0, 0), |metrics| {
+            let (p95, p99, missed, dropped) = candidate.result.map_or((0, 0, 0, 0), |metrics| {
                 (
                     metrics.render_p95_nanos,
+                    metrics.render_p99_nanos,
                     metrics.missed_deadlines,
                     metrics.dropped_frames,
                 )
             });
             let _ = write!(
                 summary,
-                " | {}:tier={},score={},p95_ns={},missed={},dropped={}",
-                candidate.label, candidate.tier, candidate.score, p95, missed, dropped
+                " | {}:tier={},score={},p95_ns={},p99_ns={},missed={},dropped={}",
+                candidate.label, candidate.tier, candidate.score, p95, p99, missed, dropped
             );
         }
         summary.truncate(4_096);
@@ -145,8 +150,8 @@ pub fn run_setup_benchmark() -> Result<SetupBenchmarkReport, String> {
     for (label, format) in candidates {
         let candidate = match run_benchmark(format, SETUP_BENCHMARK_FRAMES, false) {
             Ok(output) => {
-                let metrics = setup_metrics(&output);
-                let (tier, score) = rank_candidate(format, metrics);
+                let metrics = setup_metrics(format, &output);
+                let (tier, score) = rank_setup_candidate(format, metrics);
                 SetupCandidate {
                     label,
                     width: format.width(),
@@ -175,11 +180,11 @@ pub fn run_setup_benchmark() -> Result<SetupBenchmarkReport, String> {
     let recommended = results
         .iter()
         .enumerate()
-        .filter(|(_, candidate)| candidate.result.is_some())
-        .max_by_key(|(_, candidate)| (candidate.tier, candidate.score))
+        .filter(|(_, candidate)| candidate.tier > 0 && candidate.result.is_some())
+        .max_by(|(_, left), (_, right)| compare_setup_candidates(left, right))
         .map(|(index, _)| index);
     if recommended.is_none() {
-        return Err("the local benchmark could not render any candidate".to_owned());
+        return Err("the local benchmark found no stable candidate".to_owned());
     }
     Ok(SetupBenchmarkReport {
         candidates: results,
@@ -195,10 +200,11 @@ pub fn legacy_text(output: &BenchmarkOutput) -> String {
     let compositor = output.compositor;
     let multi_worker = output.multi_worker;
     format!(
-        "obs-rs benchmark: render_samples={} render_p50_ns={} render_p95_ns={} render_max_ns={} frame_owned_buffers={} frame_owned_bytes={} frame_shared_clones={} frame_cow_buffers={} frame_copied_bytes={} rss_before_kib={} rss_after_kib={} requested={} processed={} cancelled={} empty={} dropped_oldest={} dropped_newest={} missed={} lateness_ns={} max_lateness_ns={} wait_ns={} paced_render_ns={} produced_bytes={} peak_queued_bytes={} remaining={} renders={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={} elapsed_ms={} multi_workers={} multi_requested={} multi_processed={} multi_missed={} multi_lateness_ns={} multi_produced_bytes={} multi_peak_queued_bytes={} multi_elapsed_ns={}",
+        "obs-rs benchmark: render_samples={} render_p50_ns={} render_p95_ns={} render_p99_ns={} render_max_ns={} frame_owned_buffers={} frame_owned_bytes={} frame_shared_clones={} frame_cow_buffers={} frame_copied_bytes={} rss_before_kib={} rss_after_kib={} requested={} processed={} cancelled={} empty={} dropped_oldest={} dropped_newest={} missed={} lateness_ns={} max_lateness_ns={} wait_ns={} paced_render_ns={} produced_bytes={} peak_queued_bytes={} remaining={} renders={} source_requests={} source_frames={} empty_sources={} transformed={} filtered={} blends={} elapsed_ms={} multi_workers={} multi_requested={} multi_processed={} multi_missed={} multi_lateness_ns={} multi_produced_bytes={} multi_peak_queued_bytes={} multi_elapsed_ns={}",
         output.render_latency.samples,
         output.render_latency.p50_nanos,
         output.render_latency.p95_nanos,
+        output.render_latency.p99_nanos,
         output.render_latency.max_nanos,
         output.frame_memory.owned_buffers(),
         output.frame_memory.owned_bytes(),
@@ -259,7 +265,7 @@ pub fn legacy_json(output: &BenchmarkOutput) -> String {
     format!(
         concat!(
             "{{\"schema_version\":1,",
-            "\"render_latency\":{{\"samples\":{},\"p50_ns\":{},\"p95_ns\":{},\"max_ns\":{}}},",
+            "\"render_latency\":{{\"samples\":{},\"p50_ns\":{},\"p95_ns\":{},\"p99_ns\":{},\"max_ns\":{}}},",
             "\"frame_memory\":{{\"owned_buffers\":{},\"owned_bytes\":{},\"shared_clones\":{},\"copy_on_write_buffers\":{},\"copied_bytes\":{}}},",
             "\"process_memory\":{{\"rss_before_kib\":{},\"rss_after_kib\":{}}},",
             "\"paced_worker\":{{\"requested\":{},\"processed\":{},\"cancelled\":{},\"empty\":{},\"dropped_oldest\":{},\"dropped_newest\":{},\"missed_deadlines\":{},\"total_lateness_ns\":{},\"max_lateness_ns\":{},\"wait_ns\":{},\"render_ns\":{},\"produced_bytes\":{},\"peak_queued_bytes\":{},\"remaining_queue\":{},\"elapsed_ms\":{}}},",
@@ -269,6 +275,7 @@ pub fn legacy_json(output: &BenchmarkOutput) -> String {
         output.render_latency.samples,
         output.render_latency.p50_nanos,
         output.render_latency.p95_nanos,
+        output.render_latency.p99_nanos,
         output.render_latency.max_nanos,
         output.frame_memory.owned_buffers(),
         output.frame_memory.owned_bytes(),
@@ -323,20 +330,24 @@ fn run_benchmark(
     let cancellation = CancellationToken::new();
     let mut clock = MonotonicClock::start();
     let started = Instant::now();
+    // The scheduler's first deadline is media timestamp zero. Prime that
+    // startup deadline outside the measured run; otherwise a real monotonic
+    // clock necessarily observes the first callback after timestamp zero and
+    // every candidate is reported as having an initial missed deadline even
+    // when its steady-state frame work is comfortably within budget.
+    let mut render = |deadline: FrameDeadline, output_format: VideoFormat| {
+        runtime
+            .render_scene(
+                "benchmark",
+                &VideoRequest::new(deadline.timestamp(), output_format),
+            )
+            .map_err(error_text)
+    };
+    let _ = worker
+        .run(&mut clock, 1, &cancellation, &mut render)
+        .map_err(error_text)?;
     let report = worker
-        .run(
-            &mut clock,
-            frames,
-            &cancellation,
-            |deadline, output_format| {
-                runtime
-                    .render_scene(
-                        "benchmark",
-                        &VideoRequest::new(deadline.timestamp(), output_format),
-                    )
-                    .map_err(error_text)
-            },
-        )
+        .run(&mut clock, frames, &cancellation, &mut render)
         .map_err(error_text)?;
     let elapsed_millis = started.elapsed().as_millis();
     let multi_worker = if include_soak {
@@ -415,31 +426,86 @@ fn candidate_formats() -> Result<Vec<(String, VideoFormat)>, String> {
     .collect()
 }
 
-fn setup_metrics(output: &BenchmarkOutput) -> SetupCandidateMetrics {
+fn setup_metrics(format: VideoFormat, output: &BenchmarkOutput) -> SetupCandidateMetrics {
     let report = output.report;
+    let frame_budget = u128::from(format.frame_rate().period_nanos().unwrap_or(1));
+    // The wall-clock pacer observes unavoidable wake-up jitter at nanosecond
+    // precision. Treat that as queue-age telemetry; a setup deadline is
+    // considered missed only when the measured render itself reaches the
+    // frame budget. This keeps a 1 ms render from being rejected because the
+    // OS woke the pacing thread 200 µs after its target.
+    let missed_deadlines = if output.render_latency.max_nanos >= frame_budget {
+        report.missed_deadlines()
+    } else {
+        0
+    };
     SetupCandidateMetrics {
         render_p95_nanos: output.render_latency.p95_nanos,
+        render_p99_nanos: output.render_latency.p99_nanos,
         render_max_nanos: output.render_latency.max_nanos,
         requested_frames: report.requested_frames(),
         processed_frames: report.processed_frames(),
-        missed_deadlines: report.missed_deadlines(),
+        missed_deadlines,
         dropped_frames: report.dropped_oldest() + report.dropped_newest(),
+        max_queue_age_nanos: report.max_lateness_nanos(),
         elapsed_millis: output.elapsed_millis,
     }
 }
 
-fn rank_candidate(format: VideoFormat, metrics: SetupCandidateMetrics) -> (u8, u64) {
+/// Applies the documented setup acceptance policy to one candidate.
+#[must_use]
+pub fn rank_setup_candidate(format: VideoFormat, metrics: SetupCandidateMetrics) -> (u8, u64) {
     let frame_budget = u128::from(format.frame_rate().period_nanos().unwrap_or(1));
-    let stable = metrics.missed_deadlines == 0
+    let stable = metrics.requested_frames > 0
+        && metrics.processed_frames == metrics.requested_frames
+        && metrics.missed_deadlines == 0
         && metrics.dropped_frames == 0
-        && metrics.render_p95_nanos <= frame_budget;
-    let usable = metrics.render_p95_nanos <= frame_budget.saturating_mul(3) / 2;
-    let tier = if stable { 2 } else { u8::from(usable) };
+        && metrics.render_p95_nanos <= frame_budget.saturating_mul(80) / 100
+        && metrics.render_p99_nanos < frame_budget
+        && u128::from(metrics.max_queue_age_nanos) <= frame_budget
+        && metrics.render_max_nanos <= frame_budget.saturating_mul(2);
+    let tier = u8::from(stable).saturating_mul(2);
     let pixels = u64::from(format.width()).saturating_mul(u64::from(format.height()));
     let score = pixels
         .saturating_mul(u64::from(format.frame_rate().numerator()))
         .saturating_div(u64::from(format.frame_rate().denominator()).max(1));
     (tier, score)
+}
+
+/// Orders setup candidates by stability/headroom before resolution throughput.
+#[must_use]
+pub fn compare_setup_candidates(left: &SetupCandidate, right: &SetupCandidate) -> Ordering {
+    let Some(left_metrics) = left.result else {
+        return Ordering::Less;
+    };
+    let Some(right_metrics) = right.result else {
+        return Ordering::Greater;
+    };
+    left.tier
+        .cmp(&right.tier)
+        // Once both candidates are stable, prefer timing headroom before
+        // using resolution/FPS as a tie breaker.
+        .then_with(|| {
+            right_metrics
+                .render_p95_nanos
+                .cmp(&left_metrics.render_p95_nanos)
+        })
+        .then_with(|| {
+            right_metrics
+                .render_p99_nanos
+                .cmp(&left_metrics.render_p99_nanos)
+        })
+        .then_with(|| {
+            right_metrics
+                .render_max_nanos
+                .cmp(&left_metrics.render_max_nanos)
+        })
+        .then_with(|| {
+            right_metrics
+                .max_queue_age_nanos
+                .cmp(&left_metrics.max_queue_age_nanos)
+        })
+        .then_with(|| left.score.cmp(&right.score))
 }
 
 fn measure_unpaced_render_latency(
@@ -469,6 +535,7 @@ fn measure_unpaced_render_latency(
         samples: samples.len(),
         p50_nanos: percentile(&samples, 50),
         p95_nanos: percentile(&samples, 95),
+        p99_nanos: percentile(&samples, 99),
         max_nanos: samples.last().copied().unwrap_or(0),
     })
 }
@@ -524,7 +591,7 @@ fn error_text(error: impl Display) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{candidate_formats, percentile, rank_candidate, SetupCandidateMetrics};
+    use super::{candidate_formats, percentile, rank_setup_candidate, SetupCandidateMetrics};
     use obs_rs_media::{FrameRate, VideoFormat};
 
     #[test]
@@ -546,13 +613,32 @@ mod tests {
         let format = VideoFormat::new(1_280, 720, FrameRate::new(30, 1).unwrap()).unwrap();
         let stable = SetupCandidateMetrics {
             render_p95_nanos: 1_000,
+            render_p99_nanos: 1_000,
             render_max_nanos: 1_000,
             requested_frames: 60,
             processed_frames: 60,
             missed_deadlines: 0,
             dropped_frames: 0,
+            max_queue_age_nanos: 0,
             elapsed_millis: 1,
         };
-        assert_eq!(rank_candidate(format, stable).0, 2);
+        assert_eq!(rank_setup_candidate(format, stable).0, 2);
+    }
+
+    #[test]
+    fn dropped_or_missed_candidate_is_not_stable_or_recommended() {
+        let format = VideoFormat::new(1_280, 720, FrameRate::new(30, 1).unwrap()).unwrap();
+        let unstable = SetupCandidateMetrics {
+            render_p95_nanos: 1_000,
+            render_p99_nanos: 1_000,
+            render_max_nanos: 1_000,
+            requested_frames: 60,
+            processed_frames: 59,
+            missed_deadlines: 0,
+            dropped_frames: 1,
+            max_queue_age_nanos: 0,
+            elapsed_millis: 1,
+        };
+        assert_eq!(rank_setup_candidate(format, unstable).0, 0);
     }
 }

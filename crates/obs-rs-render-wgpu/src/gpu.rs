@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     fmt,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
     },
 };
@@ -26,6 +26,103 @@ struct GpuTexture {
     texture: wgpu::Texture,
     uploaded: bool,
     timestamp: Timestamp,
+}
+
+const READBACK_IDLE: u8 = 0;
+const READBACK_IN_FLIGHT: u8 = 1;
+const READBACK_COMPLETE: u8 = 2;
+const READBACK_FAILED: u8 = 3;
+// One bounded slot per desktop/output consumer plus a small amount of
+// overlap. The ring is shared by targets, so three slots would let four
+// simultaneous consumers starve the first target even though each consumer is
+// individually latest-frame-wins.
+const READBACK_RING_CAPACITY: usize = 8;
+const NV12_READBACK_RING_CAPACITY: usize = 3;
+
+struct AsyncRgbaReadback {
+    buffer: wgpu::Buffer,
+    status: Arc<AtomicU8>,
+    buffer_size: u64,
+    unpadded_row: u32,
+    padded_row: u32,
+    texture: TextureId,
+    format: VideoFormat,
+    timestamp: Timestamp,
+    sequence: u64,
+}
+
+struct Nv12Staging {
+    output: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    size: u64,
+}
+
+struct AsyncNv12Readback {
+    output: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    status: Arc<AtomicU8>,
+    buffer_size: u64,
+    byte_len: usize,
+    texture: TextureId,
+    format: VideoFormat,
+    timestamp: Timestamp,
+}
+
+/// Persistent GPU resources for the encoder compatibility conversion.
+///
+/// The staging buffers grow only when a larger format is requested and are
+/// reused thereafter. The synchronous map in `readback_nv12` is retained as
+/// an explicit compatibility boundary; the expensive shader and pipeline
+/// compilation is never part of the frame loop.
+struct Nv12Converter {
+    _shader: wgpu::ShaderModule,
+    bind_group_layout: wgpu::BindGroupLayout,
+    _pipeline_layout: wgpu::PipelineLayout,
+    pipeline: wgpu::ComputePipeline,
+    staging: Option<Nv12Staging>,
+    async_staging: Vec<AsyncNv12Readback>,
+}
+
+/// Live counters for the bounded encoder conversion bridge.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Nv12Metrics {
+    conversions: u64,
+    readbacks: u64,
+    bytes_transferred: u64,
+    staging_waits: u64,
+    frames_dropped: u64,
+}
+
+impl Nv12Metrics {
+    /// Number of completed GPU color conversions.
+    #[must_use]
+    pub const fn conversions(self) -> u64 {
+        self.conversions
+    }
+
+    /// Number of completed NV12 payload readbacks.
+    #[must_use]
+    pub const fn readbacks(self) -> u64 {
+        self.readbacks
+    }
+
+    /// Number of NV12 payload bytes transferred to the CPU.
+    #[must_use]
+    pub const fn bytes_transferred(self) -> u64 {
+        self.bytes_transferred
+    }
+
+    /// Number of times the bounded staging ring had no available slot.
+    #[must_use]
+    pub const fn staging_waits(self) -> u64 {
+        self.staging_waits
+    }
+
+    /// Number of conversions dropped because all staging slots were busy.
+    #[must_use]
+    pub const fn frames_dropped(self) -> u64 {
+        self.frames_dropped
+    }
 }
 
 /// Device details safe to expose in diagnostics.
@@ -82,6 +179,11 @@ pub struct WgpuRenderBackend {
     bind_group_layout: wgpu::BindGroupLayout,
     replace_pipeline: wgpu::RenderPipeline,
     composite_pipeline: wgpu::RenderPipeline,
+    nv12: Nv12Converter,
+    nv12_pipeline_builds: u64,
+    nv12_metrics: Nv12Metrics,
+    rgba_readbacks: Vec<AsyncRgbaReadback>,
+    readback_sequence: u64,
     metrics: RenderMetrics,
     capabilities: RenderCapabilities,
     adapter_capabilities: WgpuAdapterCapabilities,
@@ -106,6 +208,7 @@ impl WgpuRenderBackend {
         let (device, queue) = request_device(&adapter)?;
         let device_lost = install_device_loss_handler(&device);
         let (bind_group_layout, replace_pipeline, composite_pipeline) = gpu_compositor(&device);
+        let nv12 = nv12_converter(&device);
         let info = adapter.get_info();
         let cpu = CpuRenderBackend::with_limits(max_textures, max_texture_bytes)
             .map_err(|error| WgpuBackendError(error.to_string()))?;
@@ -119,6 +222,11 @@ impl WgpuRenderBackend {
             bind_group_layout,
             replace_pipeline,
             composite_pipeline,
+            nv12,
+            nv12_pipeline_builds: 1,
+            nv12_metrics: Nv12Metrics::default(),
+            rgba_readbacks: Vec::new(),
+            readback_sequence: 0,
             metrics: RenderMetrics::default(),
             capabilities: RenderCapabilities::with_texture_bytes(
                 true,
@@ -149,6 +257,360 @@ impl WgpuRenderBackend {
         self.device.poll(wgpu::Maintain::Wait);
     }
 
+    /// Returns how many times the reusable NV12 pipeline has been built.
+    ///
+    /// This is primarily useful for diagnostics and regression tests: normal
+    /// frame conversion should leave the value unchanged.
+    #[must_use]
+    pub const fn nv12_pipeline_builds(&self) -> u64 {
+        self.nv12_pipeline_builds
+    }
+
+    /// Returns live counters for the encoder conversion bridge.
+    #[must_use]
+    pub const fn nv12_metrics(&self) -> Nv12Metrics {
+        self.nv12_metrics
+    }
+
+    /// Schedules a bounded RGBA readback without waiting for the GPU.
+    ///
+    /// The returned boolean is false when all bounded staging slots are still
+    /// in flight. Callers should keep their previous presentation in that
+    /// case; realtime preview prefers one dropped frame to a render-worker
+    /// stall.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the device is lost, the texture is unknown, or
+    /// the texture has not received an upload.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the bounded submission owns validation, copy, and map setup"
+    )]
+    pub fn submit_readback(&mut self, texture_id: TextureId) -> Result<bool, RenderError> {
+        self.ensure_ready()?;
+        let (format, timestamp) = self
+            .textures
+            .get(&texture_id)
+            .ok_or(RenderError::UnknownTexture(texture_id))
+            .map(|texture| (texture.format, texture.timestamp))?;
+        if !self
+            .textures
+            .get(&texture_id)
+            .is_some_and(|texture| texture.uploaded)
+        {
+            return Err(RenderError::TextureNotReady(texture_id));
+        }
+        let unpadded_row = format.width().saturating_mul(4);
+        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_row = unpadded_row.div_ceil(alignment) * alignment;
+        let buffer_size = u64::from(padded_row) * u64::from(format.height());
+        let Some(index) = self
+            .rgba_readbacks
+            .iter()
+            .position(|slot| slot.status.load(Ordering::Acquire) == READBACK_IDLE)
+            .or_else(|| {
+                (self.rgba_readbacks.len() < READBACK_RING_CAPACITY)
+                    .then_some(self.rgba_readbacks.len())
+            })
+        else {
+            return Ok(false);
+        };
+        if index == self.rgba_readbacks.len() {
+            self.rgba_readbacks.push(AsyncRgbaReadback {
+                buffer: readback_buffer(&self.device, buffer_size),
+                status: Arc::new(AtomicU8::new(READBACK_IDLE)),
+                buffer_size,
+                unpadded_row,
+                padded_row,
+                texture: texture_id,
+                format,
+                timestamp,
+                sequence: 0,
+            });
+        } else if self.rgba_readbacks[index].buffer_size != buffer_size {
+            self.rgba_readbacks[index] = AsyncRgbaReadback {
+                buffer: readback_buffer(&self.device, buffer_size),
+                status: Arc::new(AtomicU8::new(READBACK_IDLE)),
+                buffer_size,
+                unpadded_row,
+                padded_row,
+                texture: texture_id,
+                format,
+                timestamp,
+                sequence: 0,
+            };
+        }
+        let slot = &mut self.rgba_readbacks[index];
+        slot.status.store(READBACK_IN_FLIGHT, Ordering::Release);
+        slot.unpadded_row = unpadded_row;
+        slot.padded_row = padded_row;
+        slot.texture = texture_id;
+        slot.format = format;
+        slot.timestamp = timestamp;
+        slot.sequence = self.readback_sequence;
+        self.readback_sequence = self.readback_sequence.wrapping_add(1);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("obs-rs-async-readback-copy"),
+            });
+        let texture = self
+            .textures
+            .get(&texture_id)
+            .ok_or(RenderError::UnknownTexture(texture_id))?;
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &slot.buffer,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row),
+                    rows_per_image: Some(format.height()),
+                },
+            },
+            wgpu::Extent3d {
+                width: format.width(),
+                height: format.height(),
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit(Some(encoder.finish()));
+        let status = Arc::clone(&slot.status);
+        slot.buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                status.store(
+                    if result.is_ok() {
+                        READBACK_COMPLETE
+                    } else {
+                        READBACK_FAILED
+                    },
+                    Ordering::Release,
+                );
+            });
+        Ok(true)
+    }
+
+    /// Polls completed asynchronous RGBA readbacks without blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the device is lost or a completed frame violates
+    /// the validated media buffer contract.
+    pub fn poll_readbacks(&mut self) -> Result<Vec<(TextureId, VideoFrame)>, RenderError> {
+        self.ensure_ready()?;
+        self.device.poll(wgpu::Maintain::Poll);
+        let mut completed = Vec::new();
+        for slot in &mut self.rgba_readbacks {
+            match slot.status.load(Ordering::Acquire) {
+                READBACK_COMPLETE => {
+                    let mapped = slot.buffer.slice(..).get_mapped_range();
+                    let mut pixels = Vec::with_capacity(slot.format.rgba_bytes());
+                    for row in mapped.chunks_exact(slot.padded_row as usize) {
+                        pixels.extend_from_slice(&row[..slot.unpadded_row as usize]);
+                    }
+                    drop(mapped);
+                    slot.buffer.unmap();
+                    slot.status.store(READBACK_IDLE, Ordering::Release);
+                    let frame = VideoFrame::new(slot.format, slot.timestamp, pixels)
+                        .map_err(RenderError::Media)?;
+                    self.metrics.record_readback_bytes(slot.format.rgba_bytes());
+                    completed.push((slot.texture, frame));
+                }
+                READBACK_FAILED => {
+                    slot.status.store(READBACK_IDLE, Ordering::Release);
+                }
+                _ => {}
+            }
+        }
+        completed.sort_by_key(|(texture, _)| texture.value());
+        Ok(completed)
+    }
+
+    /// Reports whether a texture already owns an in-flight staging slot.
+    #[must_use]
+    pub fn readback_pending(&self, texture_id: TextureId) -> bool {
+        self.rgba_readbacks.iter().any(|slot| {
+            slot.texture == texture_id && slot.status.load(Ordering::Acquire) == READBACK_IN_FLIGHT
+        })
+    }
+
+    fn nv12_texture_info(
+        &self,
+        texture_id: TextureId,
+    ) -> Result<(VideoFormat, Timestamp, wgpu::TextureView), RenderError> {
+        let texture = self
+            .textures
+            .get(&texture_id)
+            .ok_or(RenderError::UnknownTexture(texture_id))?;
+        if !texture.uploaded {
+            return Err(RenderError::TextureNotReady(texture_id));
+        }
+        Ok((
+            texture.format,
+            texture.timestamp,
+            texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default()),
+        ))
+    }
+
+    /// Schedules a bounded asynchronous RGBA-to-NV12 conversion.
+    ///
+    /// The compute pipeline and staging buffers are retained by the backend;
+    /// this call only records a dispatch/copy and maps an available ring slot.
+    /// A false result means all bounded encoder slots are still in flight.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown/unready texture, invalid 4:2:0
+    /// dimensions, or a lost device.
+    pub fn submit_nv12_readback(&mut self, texture_id: TextureId) -> Result<bool, RenderError> {
+        self.ensure_ready()?;
+        let (format, timestamp, view) = self.nv12_texture_info(texture_id)?;
+        let (byte_len, buffer_size) = nv12_buffer_size(format)?;
+        let Some(index) = self
+            .nv12
+            .async_staging
+            .iter()
+            .position(|slot| slot.status.load(Ordering::Acquire) == READBACK_IDLE)
+            .or_else(|| {
+                (self.nv12.async_staging.len() < NV12_READBACK_RING_CAPACITY)
+                    .then_some(self.nv12.async_staging.len())
+            })
+        else {
+            self.nv12_metrics.staging_waits = self.nv12_metrics.staging_waits.saturating_add(1);
+            self.nv12_metrics.frames_dropped = self.nv12_metrics.frames_dropped.saturating_add(1);
+            return Ok(false);
+        };
+        if index == self.nv12.async_staging.len() {
+            self.nv12.async_staging.push(async_nv12_readback(
+                &self.device,
+                buffer_size,
+                byte_len,
+                texture_id,
+                format,
+                timestamp,
+            ));
+        } else if self.nv12.async_staging[index].buffer_size < buffer_size {
+            self.nv12.async_staging[index] = async_nv12_readback(
+                &self.device,
+                buffer_size,
+                byte_len,
+                texture_id,
+                format,
+                timestamp,
+            );
+        }
+        let slot = &mut self.nv12.async_staging[index];
+        slot.status.store(READBACK_IN_FLIGHT, Ordering::Release);
+        slot.byte_len = byte_len;
+        slot.texture = texture_id;
+        slot.format = format;
+        slot.timestamp = timestamp;
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("obs-rs-nv12-async-bind-group"),
+            layout: &self.nv12.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: slot.output.as_entire_binding(),
+                },
+            ],
+        });
+        let word_count = byte_len.div_ceil(4);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("obs-rs-nv12-async-conversion"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("obs-rs-nv12-async-pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.nv12.pipeline);
+            pass.set_bind_group(0, &bind_group, &[]);
+            let groups = u32::try_from(word_count.div_ceil(64)).unwrap_or(u32::MAX);
+            pass.dispatch_workgroups(groups.min(65_535), groups.div_ceil(65_535), 1);
+        }
+        encoder.copy_buffer_to_buffer(&slot.output, 0, &slot.readback, 0, buffer_size);
+        self.queue.submit(Some(encoder.finish()));
+        let status = Arc::clone(&slot.status);
+        slot.readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                status.store(
+                    if result.is_ok() {
+                        READBACK_COMPLETE
+                    } else {
+                        READBACK_FAILED
+                    },
+                    Ordering::Release,
+                );
+            });
+        Ok(true)
+    }
+
+    /// Polls completed asynchronous NV12 conversions without waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the device is lost or a completed payload fails
+    /// the validated raw-frame contract.
+    pub fn poll_nv12_readbacks(&mut self) -> Result<Vec<(TextureId, RawVideoFrame)>, RenderError> {
+        self.ensure_ready()?;
+        self.device.poll(wgpu::Maintain::Poll);
+        let mut completed = Vec::new();
+        for slot in &mut self.nv12.async_staging {
+            match slot.status.load(Ordering::Acquire) {
+                READBACK_COMPLETE => {
+                    let mapped = slot.readback.slice(..).get_mapped_range();
+                    let bytes = mapped[..slot.byte_len].to_vec();
+                    drop(mapped);
+                    slot.readback.unmap();
+                    slot.status.store(READBACK_IDLE, Ordering::Release);
+                    let frame =
+                        RawVideoFrame::new(slot.format, PixelFormat::Nv12, slot.timestamp, bytes)
+                            .map_err(RenderError::Media)?;
+                    self.metrics.record_color_conversion();
+                    self.metrics.record_readback_bytes(slot.byte_len);
+                    self.nv12_metrics.conversions = self.nv12_metrics.conversions.saturating_add(1);
+                    self.nv12_metrics.readbacks = self.nv12_metrics.readbacks.saturating_add(1);
+                    self.nv12_metrics.bytes_transferred = self
+                        .nv12_metrics
+                        .bytes_transferred
+                        .saturating_add(u64::try_from(slot.byte_len).unwrap_or(u64::MAX));
+                    completed.push((slot.texture, frame));
+                }
+                READBACK_FAILED => {
+                    slot.status.store(READBACK_IDLE, Ordering::Release);
+                }
+                _ => {}
+            }
+        }
+        Ok(completed)
+    }
+
+    /// Reports whether an encoder conversion is already in flight for a
+    /// target texture.
+    #[must_use]
+    pub fn nv12_readback_pending(&self, texture_id: TextureId) -> bool {
+        self.nv12.async_staging.iter().any(|slot| {
+            slot.texture == texture_id && slot.status.load(Ordering::Acquire) == READBACK_IN_FLIGHT
+        })
+    }
+
     /// Converts one composed RGBA texture to packed NV12 on the GPU and reads
     /// back only the encoder-oriented 4:2:0 payload.
     ///
@@ -162,91 +624,42 @@ impl WgpuRenderBackend {
     /// device loss, or a failed GPU mapping operation.
     #[allow(
         clippy::too_many_lines,
-        reason = "GPU conversion owns pipeline creation, dispatch, and explicit mapped readback"
+        reason = "GPU conversion owns dispatch and the explicit compatibility readback"
     )]
     pub fn readback_nv12(&mut self, texture_id: TextureId) -> Result<RawVideoFrame, RenderError> {
         self.ensure_ready()?;
-        let texture = self
-            .textures
-            .get(&texture_id)
-            .ok_or(RenderError::UnknownTexture(texture_id))?;
-        if !texture.uploaded {
-            return Err(RenderError::TextureNotReady(texture_id));
-        }
+        let (format, timestamp, view) = {
+            let texture = self
+                .textures
+                .get(&texture_id)
+                .ok_or(RenderError::UnknownTexture(texture_id))?;
+            if !texture.uploaded {
+                return Err(RenderError::TextureNotReady(texture_id));
+            }
+            (
+                texture.format,
+                texture.timestamp,
+                texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
+            )
+        };
         let byte_len = PixelFormat::Nv12
-            .bytes_for(texture.format)
+            .bytes_for(format)
             .map_err(RenderError::Media)?;
         let word_count = byte_len.div_ceil(4);
         let buffer_size = u64::try_from(word_count)
             .unwrap_or(u64::MAX / 4)
             .saturating_mul(4);
-        let output = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("obs-rs-nv12-output"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("obs-rs-nv12-readback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let shader = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("obs-rs-rgba-to-nv12"),
-                source: wgpu::ShaderSource::Wgsl(NV12_SHADER.into()),
+        self.nv12.ensure_staging(&self.device, buffer_size);
+        let Some(staging) = self.nv12.staging.as_ref() else {
+            return Err(RenderError::Backend {
+                message: "NV12 staging allocation was not initialized".to_owned(),
             });
-        let layout = self
-            .device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("obs-rs-nv12-layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("obs-rs-nv12-pipeline-layout"),
-                bind_group_layouts: &[&layout],
-                push_constant_ranges: &[],
-            });
-        let pipeline = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("obs-rs-nv12-pipeline"),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: "main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            });
-        let view = texture
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        };
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("obs-rs-nv12-bind-group"),
-            layout: &layout,
+            layout: &self.nv12.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -254,7 +667,7 @@ impl WgpuRenderBackend {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: output.as_entire_binding(),
+                    resource: staging.output.as_entire_binding(),
                 },
             ],
         });
@@ -268,21 +681,22 @@ impl WgpuRenderBackend {
                 label: Some("obs-rs-nv12-pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&pipeline);
+            pass.set_pipeline(&self.nv12.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
             let groups = u32::try_from(word_count.div_ceil(64)).unwrap_or(u32::MAX);
             let groups_x = groups.min(65_535);
             let groups_y = groups.div_ceil(65_535);
             pass.dispatch_workgroups(groups_x, groups_y, 1);
         }
-        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, buffer_size);
+        encoder.copy_buffer_to_buffer(&staging.output, 0, &staging.readback, 0, buffer_size);
         self.queue.submit(Some(encoder.finish()));
-        let slice = readback.slice(..);
+        let slice = staging.readback.slice(..);
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
         self.device.poll(wgpu::Maintain::Wait);
+        self.nv12_metrics.staging_waits = self.nv12_metrics.staging_waits.saturating_add(1);
         receiver
             .recv()
             .map_err(|error| RenderError::Backend {
@@ -294,11 +708,17 @@ impl WgpuRenderBackend {
         let mapped = slice.get_mapped_range();
         let bytes = mapped[..byte_len].to_vec();
         drop(mapped);
-        readback.unmap();
-        let frame = RawVideoFrame::new(texture.format, PixelFormat::Nv12, texture.timestamp, bytes)
+        staging.readback.unmap();
+        let frame = RawVideoFrame::new(format, PixelFormat::Nv12, timestamp, bytes)
             .map_err(RenderError::Media)?;
         self.metrics.record_color_conversion();
-        self.metrics.record_readback();
+        self.metrics.record_readback_bytes(byte_len);
+        self.nv12_metrics.conversions = self.nv12_metrics.conversions.saturating_add(1);
+        self.nv12_metrics.readbacks = self.nv12_metrics.readbacks.saturating_add(1);
+        self.nv12_metrics.bytes_transferred = self
+            .nv12_metrics
+            .bytes_transferred
+            .saturating_add(u64::try_from(byte_len).unwrap_or(u64::MAX));
         Ok(frame)
     }
 
@@ -602,6 +1022,7 @@ impl RenderBackend for WgpuRenderBackend {
             };
             timestamp = frame.timestamp();
             let source_format = frame.format();
+            self.metrics.record_upload_bytes(source_format.rgba_bytes());
             let texture = self.acquire_texture(source_format);
             write_texture(&self.queue, &texture, frame);
             prepared.push((
@@ -673,7 +1094,8 @@ impl RenderBackend for WgpuRenderBackend {
             .ok_or(RenderError::UnknownTexture(texture))?;
         gpu.uploaded = true;
         gpu.timestamp = frame.timestamp();
-        self.metrics.record_upload();
+        self.metrics
+            .record_upload_bytes(frame.format().rgba_bytes());
         Ok(())
     }
 
@@ -752,7 +1174,7 @@ impl RenderBackend for WgpuRenderBackend {
             return Err(RenderError::TextureNotReady(texture));
         }
         let frame = read_texture(&self.device, &self.queue, gpu)?;
-        self.metrics.record_readback();
+        self.metrics.record_readback_bytes(gpu.format.rgba_bytes());
         Ok(frame)
     }
 
@@ -772,11 +1194,15 @@ impl RenderBackend for WgpuRenderBackend {
         self.queue = queue;
         self.device_lost = install_device_loss_handler(&self.device);
         self.texture_pool.get_mut().clear();
+        self.rgba_readbacks.clear();
+        self.readback_sequence = 0;
         (
             self.bind_group_layout,
             self.replace_pipeline,
             self.composite_pipeline,
         ) = gpu_compositor(&self.device);
+        self.nv12 = nv12_converter(&self.device);
+        self.nv12_pipeline_builds = self.nv12_pipeline_builds.saturating_add(1);
         for texture in self.textures.values_mut() {
             texture.texture = Self::gpu_texture(texture.format, &self.device);
             texture.uploaded = false;
@@ -790,6 +1216,124 @@ impl RenderBackend for WgpuRenderBackend {
 }
 
 const NV12_SHADER: &str = include_str!("shaders/nv12.wgsl");
+
+impl Nv12Converter {
+    fn ensure_staging(&mut self, device: &wgpu::Device, size: u64) {
+        if self
+            .staging
+            .as_ref()
+            .is_some_and(|staging| staging.size >= size)
+        {
+            return;
+        }
+        self.staging = Some(Nv12Staging {
+            output: nv12_output_buffer(device, size),
+            readback: nv12_readback_buffer(device, size),
+            size,
+        });
+    }
+}
+
+fn nv12_output_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("obs-rs-nv12-output-ring"),
+        size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+fn nv12_readback_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("obs-rs-nv12-readback-ring"),
+        size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    })
+}
+
+fn async_nv12_readback(
+    device: &wgpu::Device,
+    buffer_size: u64,
+    byte_len: usize,
+    texture: TextureId,
+    format: VideoFormat,
+    timestamp: Timestamp,
+) -> AsyncNv12Readback {
+    AsyncNv12Readback {
+        output: nv12_output_buffer(device, buffer_size),
+        readback: nv12_readback_buffer(device, buffer_size),
+        status: Arc::new(AtomicU8::new(READBACK_IDLE)),
+        buffer_size,
+        byte_len,
+        texture,
+        format,
+        timestamp,
+    }
+}
+
+fn nv12_buffer_size(format: VideoFormat) -> Result<(usize, u64), RenderError> {
+    let byte_len = PixelFormat::Nv12
+        .bytes_for(format)
+        .map_err(RenderError::Media)?;
+    let word_count = byte_len.div_ceil(4);
+    let buffer_size = u64::try_from(word_count)
+        .unwrap_or(u64::MAX / 4)
+        .saturating_mul(4);
+    Ok((byte_len, buffer_size))
+}
+
+fn nv12_converter(device: &wgpu::Device) -> Nv12Converter {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("obs-rs-rgba-to-nv12"),
+        source: wgpu::ShaderSource::Wgsl(NV12_SHADER.into()),
+    });
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("obs-rs-nv12-layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("obs-rs-nv12-pipeline-layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("obs-rs-nv12-pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main",
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+    });
+    Nv12Converter {
+        _shader: shader,
+        bind_group_layout,
+        _pipeline_layout: pipeline_layout,
+        pipeline,
+        staging: None,
+        async_staging: Vec::new(),
+    }
+}
 
 fn request_device(
     adapter: &wgpu::Adapter,
@@ -962,4 +1506,13 @@ fn read_texture(
     drop(mapped);
     buffer.unmap();
     VideoFrame::new(texture.format, texture.timestamp, pixels).map_err(RenderError::Media)
+}
+
+fn readback_buffer(device: &wgpu::Device, buffer_size: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("obs-rs-readback-ring"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    })
 }

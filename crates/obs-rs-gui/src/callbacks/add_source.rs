@@ -13,8 +13,8 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    refresh_ui, source_settings, AddSourceWindow, I18n, MainWindow, Palette, PreviewSurface,
-    SourceCandidate, SourceKindRow,
+    refresh_ui, source_settings_for_canvas, AddSourceWindow, I18n, MainWindow, Palette,
+    PreviewSurface, SourceCandidate, SourceKindRow,
 };
 
 /// Sentinel kind id for the "Recently added" entry at the top of the list.
@@ -322,7 +322,13 @@ fn create_source(
         kind_display(kind),
         next_ordinal(state, &scene, kind)
     );
-    let source = SourceSpec::new(&id, kind, &name, source_settings(kind)?)?;
+    let (canvas_width, canvas_height) = canvas_size(state);
+    let source = SourceSpec::new(
+        &id,
+        kind,
+        &name,
+        source_settings_for_canvas(kind, canvas_width, canvas_height)?,
+    )?;
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::AddSource {

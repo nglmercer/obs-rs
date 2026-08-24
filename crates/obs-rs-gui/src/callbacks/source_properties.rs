@@ -10,9 +10,9 @@ use obs_rs_ui::{DesktopState, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    apply_source_settings_to, kind_selects_monitor, properties, source_settings, source_target,
-    target_settings_document, I18n, MainWindow, Palette, PreviewSurface, SourcePropertiesWindow,
-    SourceTarget,
+    apply_source_settings_to, kind_selects_monitor, properties, source_settings_for_canvas,
+    source_target, target_settings_document, I18n, MainWindow, Palette, PreviewSurface,
+    SourcePropertiesWindow, SourceTarget,
 };
 
 /// Owns the properties window.
@@ -170,11 +170,24 @@ fn install_editing(
     controller.window.on_restore_defaults(move || {
         let window = &defaults_controller.window;
         let kind = window.get_source_kind().to_string();
-        if let Ok(defaults) = source_settings(&kind) {
+        let (canvas_width, canvas_height) = active_canvas_size(&defaults_state);
+        if let Ok(defaults) = source_settings_for_canvas(&kind, canvas_width, canvas_height) {
             window.set_source_settings(defaults.serialize().into());
             defaults_controller.refresh_rows(defaults_state.borrow().locale());
         }
     });
+}
+
+fn active_canvas_size(state: &Rc<RefCell<DesktopState>>) -> (u32, u32) {
+    state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .map_or((1_280, 720), |profile| {
+            let format = profile.video_format();
+            (format.width(), format.height())
+        })
 }
 
 fn install_commit(

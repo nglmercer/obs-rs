@@ -16,6 +16,9 @@ use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 /// refreshes while still allowing hot-plug changes to appear promptly.
 const PLATFORM_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(1);
 const CAMERA_MODE_CACHE_TTL: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_CANVAS_WIDTH: u32 = 1_280;
+pub(crate) const DEFAULT_CANVAS_HEIGHT: u32 = 720;
+pub(crate) const DEFAULT_CANVAS_FPS: u32 = 30;
 
 type PlatformDiscoveryCache = BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>;
 type CameraModeCache = BTreeMap<String, (Instant, Vec<CameraMode>)>;
@@ -45,22 +48,29 @@ fn platform_devices_for_kind(kind: CaptureKind) -> Vec<CaptureDeviceInfo> {
 }
 
 pub(crate) fn initial_project() -> Result<Project, Box<dyn Error>> {
-    let format = VideoFormat::new(640, 360, FrameRate::new(30, 1)?)?;
+    let format = default_video_format()?;
     let mut project = Project::new("OBS-RS Studio")?;
     let mut profile = Profile::new("live", "Live profile", format)?;
-    let (preview, preview_source) = scene("preview", "Preview", "background", "#102030FF")?;
-    let (program, program_source) = scene("program", "Program", "background_program", "#203040FF")?;
+    let (preview, preview_source) = scene("preview", "Preview", "background", "#102030FF", format)?;
+    let (program, program_source) = scene(
+        "program",
+        "Program",
+        "background_program",
+        "#203040FF",
+        format,
+    )?;
     let (mut intermission, intermission_source) = scene(
         "intermission",
         "Intermission",
         "background_intermission",
         "#302040FF",
+        format,
     )?;
     let pattern = SourceSpec::new(
         "pattern",
         "test_pattern",
         "Animated pattern",
-        video_settings(),
+        video_settings_for_format(format),
     )?;
     intermission.add_item(SceneItemSpec::for_source("pattern")?)?;
     profile.add_source(preview_source)?;
@@ -93,19 +103,35 @@ pub(crate) fn platform_capture_summary() -> String {
     }
 }
 
-fn video_settings() -> Config {
+fn video_settings_for_format(format: VideoFormat) -> Config {
+    video_settings_for_dimensions(format.width(), format.height())
+}
+
+fn video_settings_for_dimensions(width: u32, height: u32) -> Config {
     let mut settings = Config::new();
     settings
-        .set("width", "640")
-        .expect("static width setting is valid");
+        .set("width", &width.to_string())
+        .expect("source width setting is valid");
     settings
-        .set("height", "360")
-        .expect("static height setting is valid");
+        .set("height", &height.to_string())
+        .expect("source height setting is valid");
     settings
 }
 
 pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
-    let mut settings = video_settings();
+    source_settings_for_canvas(kind, DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT)
+}
+
+/// Returns defaults for a newly created source at the active canvas size.
+///
+/// Capture devices may later negotiate a native mode, but generic source
+/// defaults must not silently reintroduce the old 640x360 project assumption.
+pub(crate) fn source_settings_for_canvas(
+    kind: &str,
+    canvas_width: u32,
+    canvas_height: u32,
+) -> Result<Config, Box<dyn Error>> {
+    let mut settings = video_settings_for_dimensions(canvas_width, canvas_height);
     if kind.trim() == "color_source" {
         settings.set("color", "#405070FF")?;
     }
@@ -405,13 +431,22 @@ fn scene(
     name: &str,
     source_id: &str,
     color: &str,
+    format: VideoFormat,
 ) -> Result<(SceneSpec, SourceSpec), Box<dyn Error>> {
     let mut settings = Config::new();
-    settings.set("width", "640")?;
-    settings.set("height", "360")?;
+    settings.set("width", &format.width().to_string())?;
+    settings.set("height", &format.height().to_string())?;
     settings.set("color", color)?;
     let mut scene = SceneSpec::new(id, name)?;
     scene.add_item(SceneItemSpec::for_source(source_id)?)?;
     let source = SourceSpec::new(source_id, "color_source", "Background", settings)?;
     Ok((scene, source))
+}
+
+fn default_video_format() -> Result<VideoFormat, Box<dyn Error>> {
+    Ok(VideoFormat::new(
+        DEFAULT_CANVAS_WIDTH,
+        DEFAULT_CANVAS_HEIGHT,
+        FrameRate::new(DEFAULT_CANVAS_FPS, 1)?,
+    )?)
 }

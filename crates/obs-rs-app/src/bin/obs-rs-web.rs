@@ -342,11 +342,23 @@ fn help_text() -> String {
 }
 
 fn initial_project() -> Result<Project, Box<dyn Error>> {
-    let format = VideoFormat::new(640, 360, FrameRate::new(30, 1)?)?;
+    let format = VideoFormat::new(1_280, 720, FrameRate::new(30, 1)?)?;
     let mut project = Project::new("OBS-RS browser")?;
     let mut profile = Profile::new("live", "Live profile", format)?;
-    let (preview, preview_source) = scene("preview", "Preview", "background_preview", "#102030FF")?;
-    let (program, program_source) = scene("program", "Program", "background_program", "#203040FF")?;
+    let (preview, preview_source) = scene(
+        "preview",
+        "Preview",
+        "background_preview",
+        "#102030FF",
+        format,
+    )?;
+    let (program, program_source) = scene(
+        "program",
+        "Program",
+        "background_program",
+        "#203040FF",
+        format,
+    )?;
     profile.add_source(preview_source)?;
     profile.add_source(program_source)?;
     profile.add_scene(preview)?;
@@ -360,10 +372,11 @@ fn scene(
     name: &str,
     source_id: &str,
     color: &str,
+    format: VideoFormat,
 ) -> Result<(SceneSpec, SourceSpec), Box<dyn Error>> {
     let mut settings = Config::new();
-    settings.set("width", "640")?;
-    settings.set("height", "360")?;
+    settings.set("width", &format.width().to_string())?;
+    settings.set("height", &format.height().to_string())?;
     settings.set("color", color)?;
     let mut scene = SceneSpec::new(id, name)?;
     scene.add_item(SceneItemSpec::for_source(source_id)?)?;

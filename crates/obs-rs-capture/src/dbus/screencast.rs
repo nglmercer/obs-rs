@@ -141,6 +141,15 @@ pub fn open_screencast(
 
 /// Opens a screen-cast session and closes any pending portal request when the
 /// owning asynchronous source is cancelled.
+///
+/// # Errors
+///
+/// Returns a portal or cancellation error when the session cannot be created,
+/// the user cancels the request, or the portal response is invalid.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the portal handshake remains one cancellable transaction"
+)]
 pub fn open_screencast_cancellable(
     restore_token: Option<&str>,
     cursor: CursorMode,

@@ -216,11 +216,12 @@ pub(crate) fn av_sync_state(video: Timestamp, audio: Timestamp) -> obs_rs_audio:
 
 pub(crate) fn screen_source(
     runtime: &mut Runtime,
+    format: VideoFormat,
 ) -> Result<obs_rs_core::SourceId, Box<dyn Error>> {
     Ok(runtime.create_source(
         "screen_capture",
         "foreground",
-        &video_settings("640", "360"),
+        &video_settings(&format.width().to_string(), &format.height().to_string()),
     )?)
 }
 
@@ -237,7 +238,11 @@ pub(crate) fn project_fixture(
         "background",
         "color_source",
         "background",
-        color_settings("640", "360", "#102030FF"),
+        color_settings(
+            &format.width().to_string(),
+            &format.height().to_string(),
+            "#102030FF",
+        ),
     )?;
     scene.add_item(SceneItemSpec::for_source("background")?)?;
     profile.add_source(background)?;
@@ -251,7 +256,7 @@ pub(crate) fn project_fixture(
             "foreground",
             "screen_capture",
             "foreground",
-            video_settings("640", "360"),
+            video_settings(&format.width().to_string(), &format.height().to_string()),
         )?,
     }))?;
     desktop.dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransform {

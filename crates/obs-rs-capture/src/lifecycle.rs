@@ -112,6 +112,11 @@ impl AsyncCaptureDevice {
 
     /// Adopts an already-opened device, retaining `opener` for recovery after
     /// the adopted session is lost.
+    ///
+    /// # Errors
+    ///
+    /// Returns the device's startup error when it cannot begin capturing with
+    /// the requested format.
     pub fn ready(
         format: VideoFormat,
         mut device: Box<dyn VideoCaptureDevice>,

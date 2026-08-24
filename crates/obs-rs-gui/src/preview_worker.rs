@@ -11,6 +11,7 @@ use std::{
 use obs_rs_config::Config;
 use obs_rs_media::{LatencyMetrics, RawVideoFrame, VideoFormat, VideoFrame};
 use obs_rs_project::Project;
+use obs_rs_render::RenderTargetRole;
 use obs_rs_ui::TransitionSnapshot;
 
 use crate::preview::{PreviewRenderer, RuntimeDiagnostics, TransformDraft};
@@ -32,6 +33,10 @@ pub(crate) struct SceneProjectorTarget {
     pub(crate) scene: String,
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "these independent output-demand switches are coalesced into one request"
+)]
 struct PreviewRequest {
     project: Option<Project>,
     revision: u64,
@@ -47,6 +52,7 @@ struct PreviewRequest {
     render_program: bool,
     prepare_output: bool,
     prepare_output_rgba: bool,
+    poll_only: bool,
     /// The canvas drag in progress, which is not a project edit yet.
     draft: Option<TransformDraft>,
 }
@@ -103,6 +109,10 @@ pub(crate) struct PreviewPerformanceSnapshot {
 
 /// What one render request asks the worker to produce.
 #[derive(Clone)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "these independent output-demand switches are part of one bounded request"
+)]
 pub(crate) struct RenderTargets<'a> {
     pub(crate) preview_scene: Option<&'a str>,
     pub(crate) preview_format: VideoFormat,
@@ -123,6 +133,9 @@ pub(crate) struct RenderTargets<'a> {
     /// Requests a full-canvas RGBA frame for output scaling. The normal GPU
     /// output path does not need this CPU-compatible frame.
     pub(crate) prepare_output_rgba: bool,
+    /// Polls completed GPU presentation buffers without rendering a new
+    /// scene. Used to drain a static scene's first asynchronous readback.
+    pub(crate) poll_only: bool,
     /// The canvas drag in progress, which is not a project edit yet.
     pub(crate) draft: Option<&'a TransformDraft>,
 }
@@ -218,6 +231,7 @@ impl PreviewWorker {
             render_program: targets.render_program,
             prepare_output: targets.prepare_output,
             prepare_output_rgba: targets.prepare_output_rgba,
+            poll_only: targets.poll_only,
             draft: targets.draft.cloned(),
         };
         enqueue_request(
@@ -361,72 +375,102 @@ fn render_request(
     request: PreviewRequest,
     performance: &Mutex<PreviewPerformanceSnapshot>,
 ) -> PreviewResult {
-    let preview_started = std::time::Instant::now();
-    let preview = render_preview_scene(
-        renderer,
-        request.preview_scene.as_deref(),
-        request.preview_format,
-    );
-    if let Ok(mut performance) = performance.lock() {
-        performance.preview_render.record(preview_started.elapsed());
-    }
-    let program = if request.render_program {
-        let program_started = std::time::Instant::now();
-        let program = render_program_scene(
+    let (preview, program, multiview, source_projector, scene_projector) = if request.poll_only {
+        let poll = renderer.poll_deferred_readbacks();
+        let preview =
+            poll.as_ref().map_or_else(
+                |error| Err(error.to_string()),
+                |()| {
+                    Ok(renderer
+                        .take_deferred_frame(RenderTargetRole::Preview, request.preview_format))
+                },
+            );
+        let program = poll.as_ref().map_or_else(
+            |error| Err(error.to_string()),
+            |()| {
+                Ok(renderer.take_deferred_frame(
+                    RenderTargetRole::ProgramPreview,
+                    request.program_preview_format,
+                ))
+            },
+        );
+        (preview, program, Ok(None), Ok(None), Ok(None))
+    } else {
+        let preview_started = std::time::Instant::now();
+        let preview = render_preview_scene(
             renderer,
-            request.program_scene.as_deref(),
-            request.program_preview_format,
-            request.program_transition.as_ref(),
+            request.preview_scene.as_deref(),
+            request.preview_format,
         );
         if let Ok(mut performance) = performance.lock() {
-            performance.program_render.record(program_started.elapsed());
+            performance.preview_render.record(preview_started.elapsed());
         }
-        program
-    } else {
-        Ok(None)
+        let program = if request.render_program {
+            let program_started = std::time::Instant::now();
+            let program = render_program_scene(
+                renderer,
+                request.program_scene.as_deref(),
+                request.program_preview_format,
+                request.program_transition.as_ref(),
+            );
+            if let Ok(mut performance) = performance.lock() {
+                performance.program_render.record(program_started.elapsed());
+            }
+            program
+        } else {
+            Ok(None)
+        };
+        let multiview = if request.multiview_scenes.is_empty() {
+            Ok(None)
+        } else {
+            let multiview_started = std::time::Instant::now();
+            let multiview = render_multiview_scene(
+                renderer,
+                &request.multiview_scenes,
+                request.multiview_format,
+            );
+            if let Ok(mut performance) = performance.lock() {
+                performance
+                    .multiview_render
+                    .record(multiview_started.elapsed());
+            }
+            multiview
+        };
+        let source_projector = if let Some(target) = request.source_projector.as_ref() {
+            let source_started = std::time::Instant::now();
+            let format = PreviewRenderer::preview_format_for_canvas(renderer.format);
+            let source_projector = render_source_projector(renderer, target, format);
+            if let Ok(mut performance) = performance.lock() {
+                performance
+                    .source_projector_render
+                    .record(source_started.elapsed());
+            }
+            source_projector
+        } else {
+            Ok(None)
+        };
+        let scene_projector = if let Some(target) = request.scene_projector.as_ref() {
+            let scene_started = std::time::Instant::now();
+            let format = PreviewRenderer::preview_format_for_canvas(renderer.format);
+            let scene_projector = render_scene_projector(renderer, target, format);
+            if let Ok(mut performance) = performance.lock() {
+                performance
+                    .scene_projector_render
+                    .record(scene_started.elapsed());
+            }
+            scene_projector
+        } else {
+            Ok(None)
+        };
+        (
+            preview,
+            program,
+            multiview,
+            source_projector,
+            scene_projector,
+        )
     };
-    let multiview = if request.multiview_scenes.is_empty() {
-        Ok(None)
-    } else {
-        let multiview_started = std::time::Instant::now();
-        let multiview = render_multiview_scene(
-            renderer,
-            &request.multiview_scenes,
-            request.multiview_format,
-        );
-        if let Ok(mut performance) = performance.lock() {
-            performance
-                .multiview_render
-                .record(multiview_started.elapsed());
-        }
-        multiview
-    };
-    let source_projector = if let Some(target) = request.source_projector.as_ref() {
-        let source_started = std::time::Instant::now();
-        let format = PreviewRenderer::preview_format_for_canvas(renderer.format);
-        let source_projector = render_source_projector(renderer, target, format);
-        if let Ok(mut performance) = performance.lock() {
-            performance
-                .source_projector_render
-                .record(source_started.elapsed());
-        }
-        source_projector
-    } else {
-        Ok(None)
-    };
-    let scene_projector = if let Some(target) = request.scene_projector.as_ref() {
-        let scene_started = std::time::Instant::now();
-        let format = PreviewRenderer::preview_format_for_canvas(renderer.format);
-        let scene_projector = render_scene_projector(renderer, target, format);
-        if let Ok(mut performance) = performance.lock() {
-            performance
-                .scene_projector_render
-                .record(scene_started.elapsed());
-        }
-        scene_projector
-    } else {
-        Ok(None)
-    };
+    let deferred_readback = renderer.deferred_readback();
     let error = preview
         .as_ref()
         .err()
@@ -436,25 +480,32 @@ fn render_request(
         .or_else(|| source_projector.as_ref().err().cloned())
         .or_else(|| scene_projector.as_ref().err().cloned())
         .or_else(|| {
-            (request.preview_scene.is_some() && matches!(preview, Ok(None)))
+            (request.preview_scene.is_some() && matches!(preview, Ok(None)) && !deferred_readback)
                 .then(|| "preview scene produced no frame".to_owned())
         })
         .or_else(|| {
             (request.render_program
                 && request.program_scene.is_some()
-                && matches!(program, Ok(None)))
-            .then(|| "program scene produced no frame".to_owned())
+                && matches!(program, Ok(None))
+                && !deferred_readback)
+                .then(|| "program scene produced no frame".to_owned())
         })
         .or_else(|| {
-            (!request.multiview_scenes.is_empty() && matches!(multiview, Ok(None)))
+            (!request.multiview_scenes.is_empty()
+                && matches!(multiview, Ok(None))
+                && !deferred_readback)
                 .then(|| "multiview scenes produced no frame".to_owned())
         })
         .or_else(|| {
-            (request.source_projector.is_some() && matches!(source_projector, Ok(None)))
+            (request.source_projector.is_some()
+                && matches!(source_projector, Ok(None))
+                && !deferred_readback)
                 .then(|| "selected source produced no frame".to_owned())
         })
         .or_else(|| {
-            (request.scene_projector.is_some() && matches!(scene_projector, Ok(None)))
+            (request.scene_projector.is_some()
+                && matches!(scene_projector, Ok(None))
+                && !deferred_readback)
                 .then(|| "scene projector target produced no frame".to_owned())
         });
     let (output, output_frame) = if request.prepare_output {
@@ -477,6 +528,7 @@ fn render_request(
             }
             Some(scene) => match renderer.encoder_frame(scene) {
                 Ok(Some(frame)) => (Ok(Some(frame)), None),
+                Ok(None) if renderer.deferred_readback() => (Ok(None), None),
                 Ok(None) => match renderer.render_program(scene) {
                     Ok(frame) => (Ok(None), frame),
                     Err(error) => (Err(error), None),
@@ -488,12 +540,13 @@ fn render_request(
     } else {
         (Ok(None), None)
     };
-    if request.preview_scene.is_some()
-        || (request.render_program && request.program_scene.is_some())
-        || !request.multiview_scenes.is_empty()
-        || request.source_projector.is_some()
-        || request.scene_projector.is_some()
-        || (request.prepare_output && request.program_scene.is_some())
+    if !request.poll_only
+        && (request.preview_scene.is_some()
+            || (request.render_program && request.program_scene.is_some())
+            || !request.multiview_scenes.is_empty()
+            || request.source_projector.is_some()
+            || request.scene_projector.is_some()
+            || (request.prepare_output && request.program_scene.is_some()))
     {
         renderer.advance_timestamp();
     }
@@ -510,7 +563,7 @@ fn render_request(
         program_output: output.ok().flatten(),
         program_output_frame: output_frame,
         error,
-        metrics: renderer.metrics_summary(),
+        metrics: renderer.metrics_summary(request.preview_format),
         source_settings_updates,
         #[cfg(test)]
         render_thread: thread::current().id(),
@@ -565,7 +618,7 @@ fn render_multiview_scene(
     let mut pixels = vec![0_u8; composite_format.rgba_bytes()];
     for (index, scene) in scenes.iter().enumerate() {
         let Some(frame) = renderer
-            .render_preview(scene, tile_format)
+            .render_multiview_tile(scene, tile_format)
             .map_err(|error| error.to_string())?
         else {
             continue;

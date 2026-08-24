@@ -22,6 +22,7 @@ mod fixtures;
 mod i18n;
 mod output;
 mod preview;
+mod preview_benchmark;
 mod preview_worker;
 mod properties;
 mod refresh;
@@ -54,12 +55,15 @@ pub(crate) use callbacks::{
     install_source_properties_window, install_source_transform_window, selection_overlay,
     set_selection_overlay, start_preview_timer, PeerWindows, ProjectorController,
 };
+#[cfg(test)]
+pub(crate) use fixtures::source_settings;
 pub(crate) use fixtures::{
     capture_devices, initial_project, kind_runs_in_this_session, kind_selects_monitor,
-    kind_uses_portal, platform_capture_summary, source_settings,
+    kind_uses_portal, platform_capture_summary, source_settings_for_canvas,
 };
 pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewRenderer, PreviewSurface};
+pub(crate) use preview_benchmark::run_gui_setup_benchmark;
 pub(crate) use preview_worker::PreviewWorker;
 pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames_for_view, refresh_ui,

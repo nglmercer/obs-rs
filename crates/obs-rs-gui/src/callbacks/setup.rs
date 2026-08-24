@@ -134,7 +134,7 @@ impl SetupController {
         let (sender, receiver) = mpsc::channel();
         *self.receiver.borrow_mut() = Some(receiver);
         thread::spawn(move || {
-            let _ = sender.send(obs_rs_benchmark::run_setup_benchmark());
+            let _ = sender.send(crate::run_gui_setup_benchmark());
         });
     }
 
@@ -423,11 +423,12 @@ fn report_rows(report: &SetupBenchmarkReport) -> ModelRc<SharedString> {
                     ""
                 };
                 format!(
-                    "{}{} — tier {} · p95 {} ms · missed {} · dropped {}",
+                    "{}{} — tier {} · p95 {} ms · p99 {} ms · missed {} · dropped {}",
                     format_candidate(candidate),
                     marker,
                     candidate.tier,
                     metrics.render_p95_nanos / 1_000_000,
+                    metrics.render_p99_nanos / 1_000_000,
                     metrics.missed_deadlines,
                     metrics.dropped_frames
                 )

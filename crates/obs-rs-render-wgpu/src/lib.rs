@@ -28,7 +28,7 @@ pub const fn build_capabilities() -> WgpuBuildCapabilities {
 mod gpu;
 
 #[cfg(feature = "gpu")]
-pub use gpu::{WgpuAdapterCapabilities, WgpuBackendError, WgpuRenderBackend};
+pub use gpu::{Nv12Metrics, WgpuAdapterCapabilities, WgpuBackendError, WgpuRenderBackend};
 
 #[cfg(test)]
 mod tests {
@@ -303,6 +303,27 @@ mod tests {
                 &[SceneLayer::frame(&solid, FrameTransform::IDENTITY, &[])],
             )
             .expect("viewport-sized GPU composition");
+        assert!(backend
+            .submit_readback(preview_target)
+            .expect("schedule preview readback"));
+        let async_preview = (0..100).find_map(|_| {
+            let frame = backend
+                .poll_readbacks()
+                .expect("poll preview readback")
+                .into_iter()
+                .find(|(texture, _)| *texture == preview_target)
+                .map(|(_, frame)| frame);
+            if frame.is_none() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            frame
+        });
+        assert_eq!(
+            async_preview
+                .expect("asynchronous preview readback")
+                .format(),
+            preview_format
+        );
         let preview = backend.readback(preview_target).expect("preview readback");
         assert_eq!(preview.format(), preview_format);
         assert!(preview
@@ -345,6 +366,31 @@ mod tests {
         assert!(nv12.bytes()[..64].iter().all(|value| *value == 16));
         assert!(nv12.bytes()[64..].iter().all(|value| *value == 128));
         assert_eq!(backend.metrics().color_conversions(), 1);
+        let pipeline_builds = backend.nv12_pipeline_builds();
+        backend
+            .readback_nv12(target)
+            .expect("reused GPU NV12 conversion");
+        assert_eq!(backend.nv12_pipeline_builds(), pipeline_builds);
+        assert!(backend
+            .submit_nv12_readback(target)
+            .expect("schedule asynchronous NV12 conversion"));
+        let async_nv12 = (0..100).find_map(|_| {
+            let frame = backend
+                .poll_nv12_readbacks()
+                .expect("poll asynchronous NV12 conversion")
+                .into_iter()
+                .find(|(texture, _)| *texture == target)
+                .map(|(_, frame)| frame);
+            if frame.is_none() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            frame
+        });
+        let async_nv12 = async_nv12.expect("asynchronous NV12 conversion");
+        assert_eq!(async_nv12.pixel_format(), obs_rs_media::PixelFormat::Nv12);
+        assert!(async_nv12.bytes()[..64].iter().all(|value| *value == 16));
+        assert!(async_nv12.bytes()[64..].iter().all(|value| *value == 128));
+        assert_eq!(backend.nv12_pipeline_builds(), pipeline_builds);
 
         backend.lose_device();
         assert_eq!(backend.state(), obs_rs_render::RenderState::Lost);
