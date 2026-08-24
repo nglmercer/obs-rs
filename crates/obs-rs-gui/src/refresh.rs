@@ -44,7 +44,7 @@ pub(crate) fn dispatch_and_refresh(
     }
 }
 
-const MAX_SOURCE_ROW_DEPTH: usize = 64;
+const MAX_SOURCE_ROW_DEPTH: usize = crate::callbacks::MAX_SOURCE_TARGET_DEPTH;
 
 pub(crate) fn append_source_rows(
     rows: &mut Vec<SourceRow>,
@@ -529,11 +529,21 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     ui.set_can_paste(state.can_paste_source());
     let can_group_sources = selected_scene.is_some_and(|scene| {
         let selected = state.selected_sources().collect::<Vec<_>>();
+        let Some(parent_path) = crate::callbacks::common_source_parent(selected.iter().copied())
+        else {
+            return false;
+        };
+        let parent_exists = if parent_path.is_empty() {
+            true
+        } else {
+            let parent_target = parent_path.join("/");
+            crate::callbacks::item_for_target(scene, parent_target.as_str())
+                .is_some_and(SceneItemSpec::is_group)
+        };
         selected.len() >= 2
+            && parent_exists
             && selected.iter().all(|target| {
-                !target.contains('/')
-                    && crate::callbacks::item_for_target(scene, target)
-                        .is_some_and(|item| !item.locked())
+                crate::callbacks::item_for_target(scene, target).is_some_and(|item| !item.locked())
             })
     });
     ui.set_can_group_sources(can_group_sources);

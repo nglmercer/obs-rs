@@ -67,6 +67,41 @@ pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
 pub(crate) use source_transform::install_source_transform_window;
 
+/// Keep source-row paths bounded at the UI boundary. The path contains both
+/// group IDs and the addressed child ID, so it is one segment deeper than the
+/// project's group nesting limit in the worst case.
+pub(crate) const MAX_SOURCE_TARGET_DEPTH: usize = 65;
+
+/// Returns the enclosing group path for one source-dock target.
+pub(crate) fn source_parent_path(target: &str) -> Option<Vec<String>> {
+    let mut parts = Vec::with_capacity(4);
+    for part in target.split('/') {
+        if part.is_empty() || parts.len() >= MAX_SOURCE_TARGET_DEPTH {
+            return None;
+        }
+        parts.push(part.to_owned());
+    }
+    parts.pop()?;
+    Some(parts)
+}
+
+/// Returns the common enclosing group path for a bounded source selection.
+/// `None` means the targets are malformed or belong to different parents.
+pub(crate) fn common_source_parent<'a, I>(targets: I) -> Option<Vec<String>>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut common = None;
+    for target in targets {
+        let parent = source_parent_path(target)?;
+        if common.as_ref().is_some_and(|current| current != &parent) {
+            return None;
+        }
+        common = Some(parent);
+    }
+    common
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(
     clippy::struct_excessive_bools,

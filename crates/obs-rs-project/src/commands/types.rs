@@ -61,12 +61,14 @@ pub enum ProjectCommand {
         scene: String,
         item: SceneItemSpec,
     },
-    /// Atomically wraps two or more root scene items in a new group.
+    /// Atomically wraps two or more scene items from the same parent in a new
+    /// group. Item targets use root IDs or outer-to-inner paths such as
+    /// `overlay-group/source`.
     GroupSceneItems {
         profile: String,
         scene: String,
-        /// Root scene-item IDs in any selection order; the command restores
-        /// their existing scene order inside the new group.
+        /// Scene-item targets in any selection order; the command restores
+        /// their existing parent order inside the new group.
         items: Vec<String>,
         group: SceneItemSpec,
     },

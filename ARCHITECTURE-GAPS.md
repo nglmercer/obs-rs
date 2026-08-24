@@ -52,13 +52,14 @@ opening, and depth-first keyboard navigation can select targets such as
 canvas geometry remains intentionally separate until world-transform
 projection is implemented.
 
-The Sources dock now exposes one atomic root-only grouping command. It preserves
-scene order and child transforms, rejects nested or locked selections, keeps the
-new group selected, and leaves the performance/presentation path unchanged.
-Root-group ungrouping is its inverse: child IDs are validated before mutation,
-children replace the group at its former order position, and the UI selects
-the resulting root children. Nested-group ungrouping remains intentionally
-outside this packet.
+The Sources dock now exposes one atomic same-parent grouping command. It
+preserves the parent order and child transforms for root or nested selections,
+rejects mixed-parent or locked selections, keeps the new path-addressed group
+selected, and leaves the performance/presentation path unchanged. Root-group
+ungrouping is its inverse: child IDs are validated before mutation, children
+replace the group at its former order position, and the UI selects the
+resulting root children. Nested-group ungrouping remains intentionally outside
+this packet.
 
 | ID | Gap | Current evidence | Consequence | Required target | Dependencies / first packet |
 | --- | --- | --- | --- | --- | --- |

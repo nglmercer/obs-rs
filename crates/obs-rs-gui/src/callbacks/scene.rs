@@ -136,19 +136,29 @@ fn install_scene_selection_callbacks(
 fn unique_group_identity(
     state: &DesktopState,
     scene_id: &str,
+    parent_path: &[String],
 ) -> Result<(String, String), Box<dyn Error>> {
     let project = state.project_session().project();
     let scene = project
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene_id))
         .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
+    let parent_items = if parent_path.is_empty() {
+        scene.items()
+    } else {
+        let parent_target = parent_path.join("/");
+        crate::callbacks::item_for_target(scene, parent_target.as_str())
+            .and_then(SceneItemSpec::group)
+            .map(obs_rs_project::GroupSpec::items)
+            .ok_or_else(|| std::io::Error::other("grouping parent is missing"))?
+    };
     for ordinal in 1..=MAX_CANVAS_SELECTIONS.saturating_add(1) {
         let id = if ordinal == 1 {
             "group".to_owned()
         } else {
             format!("group_{ordinal}")
         };
-        if !scene.has_item(id.as_str()) {
+        if !parent_items.iter().any(|item| item.id().as_str() == id) {
             return Ok((id, format!("Group {ordinal}")));
         }
     }
@@ -285,7 +295,7 @@ fn install_source_list_callbacks(
     let group_surface = Rc::clone(surface);
     ui.on_group_sources(move || {
         let result: Result<String, Box<dyn Error>> = (|| {
-            let (profile, scene, items, group_id, group) = {
+            let (profile, scene, items, group_target, group) = {
                 let state = group_state.borrow();
                 let project = state.project_session().project();
                 let scene = state
@@ -297,9 +307,19 @@ fn install_source_list_callbacks(
                     .take(MAX_CANVAS_SELECTIONS)
                     .map(str::to_owned)
                     .collect::<Vec<_>>();
-                let (group_id, group_name) = unique_group_identity(&state, scene)?;
+                let parent_path =
+                    crate::callbacks::common_source_parent(items.iter().map(String::as_str))
+                        .ok_or_else(|| {
+                            std::io::Error::other("selected sources must share one group parent")
+                        })?;
+                let (group_id, group_name) = unique_group_identity(&state, scene, &parent_path)?;
                 let group = SceneItemSpec::for_group(&group_id, &group_name)?;
-                (profile, scene.to_owned(), items, group_id, group)
+                let group_target = if parent_path.is_empty() {
+                    group_id
+                } else {
+                    format!("{}/{}", parent_path.join("/"), group_id)
+                };
+                (profile, scene.to_owned(), items, group_target, group)
             };
             group_state.borrow_mut().dispatch(UiCommand::Project(
                 ProjectCommand::GroupSceneItems {
@@ -310,9 +330,9 @@ fn install_source_list_callbacks(
                 },
             ))?;
             group_state.borrow_mut().dispatch(UiCommand::SelectSource {
-                id: group_id.clone(),
+                id: group_target.clone(),
             })?;
-            Ok(group_id)
+            Ok(group_target)
         })();
         let Some(ui) = weak.upgrade() else {
             return;

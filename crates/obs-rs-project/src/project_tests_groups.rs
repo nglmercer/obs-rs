@@ -277,7 +277,77 @@ fn grouping_root_scene_items_preserves_order_and_item_state() {
 }
 
 #[test]
-fn grouping_rejects_non_root_or_invalid_selections_atomically() {
+fn grouping_nested_siblings_preserves_parent_order_and_item_state() {
+    let mut project = project_with_nested_group();
+    project
+        .apply(ProjectCommand::SetGroupItemVisibility {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: "first".to_owned(),
+            visible: false,
+        })
+        .expect("hide nested child");
+    let child_transform =
+        FrameTransform::new(850, 1_150, -7, 12, true, false, 175).expect("child transform");
+    project
+        .apply(ProjectCommand::SetGroupItemTransform {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: "second".to_owned(),
+            transform: child_transform,
+        })
+        .expect("transform nested child");
+
+    project
+        .apply(ProjectCommand::GroupSceneItems {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec![
+                "overlay-group/second".to_owned(),
+                "overlay-group/first".to_owned(),
+            ],
+            group: SceneItemSpec::for_group("nested-selection", "Nested selection")
+                .expect("nested group"),
+        })
+        .expect("group nested siblings");
+
+    let outer = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("overlay-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("outer group");
+    assert_eq!(
+        outer
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["nested-selection", "inner-group"]
+    );
+    let nested = outer
+        .items()
+        .first()
+        .and_then(SceneItemSpec::group)
+        .expect("nested selection group");
+    assert_eq!(
+        nested
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["first", "second"]
+    );
+    assert!(!nested.items()[0].visible());
+    assert_eq!(nested.items()[1].transform(), child_transform);
+}
+
+#[test]
+fn grouping_rejects_different_parents_or_invalid_selections_atomically() {
     let mut project = project_with_nested_group();
     let invalid_nested = || SceneItemSpec::for_group("new-group", "New group").expect("group");
 

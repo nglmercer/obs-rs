@@ -297,9 +297,9 @@ pub(super) fn exercise_group_source_callbacks(
         "Ctrl+A includes the later root row after the nested group"
     );
 
-    // Grouping is enabled only for an unlocked root selection. Add a second
-    // root item so this exercises the complete callback and the same atomic
-    // project command used by the context menu.
+    // Grouping is enabled only for an unlocked same-parent selection. Add a
+    // second root item so this exercises the complete callback and the same
+    // atomic project command used by the context menu.
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
@@ -406,6 +406,51 @@ pub(super) fn exercise_group_source_callbacks(
         .active_profile_spec()
         .and_then(|profile| profile.scene("preview"))
         .is_some_and(|scene| scene.item("ungroup-target").is_some()));
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSources {
+            ids: vec![
+                "ungroup-target/ungroup-child-a".to_owned(),
+                "ungroup-target/ungroup-child-b".to_owned(),
+            ],
+            additive: false,
+        })
+        .expect("select nested siblings for grouping");
+    refresh_ui(ui, state, surface);
+    assert!(ui.get_can_group_sources());
+    ui.invoke_group_sources();
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("ungroup-target/group"),
+        "nested grouping selects the new path-addressed group"
+    );
+    let nested_grouped_ids = {
+        let state = state.borrow();
+        let nested_grouped_ids = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(|scene| scene.item("ungroup-target"))
+            .and_then(obs_rs_project::SceneItemSpec::group)
+            .and_then(|group| group.items().first())
+            .and_then(obs_rs_project::SceneItemSpec::group)
+            .map(|group| {
+                group
+                    .items()
+                    .iter()
+                    .map(|item| item.id().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .expect("nested grouping creates a child group");
+        nested_grouped_ids
+    };
+    assert_eq!(
+        nested_grouped_ids,
+        vec!["ungroup-child-a".to_owned(), "ungroup-child-b".to_owned()]
+    );
+    ui.invoke_undo_edit();
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup

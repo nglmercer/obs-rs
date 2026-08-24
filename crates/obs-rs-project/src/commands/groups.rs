@@ -6,7 +6,10 @@ use std::collections::HashSet;
 
 use super::super::{
     error::ProjectError,
-    model::{group_at, group_mut_at, GroupSpec, Project, SceneItemSpec, MAX_GROUP_NESTING_DEPTH},
+    model::{
+        group_at, group_mut_at, GroupSpec, Project, SceneItemSpec, SceneSpec,
+        MAX_GROUP_NESTING_DEPTH,
+    },
     validation::identifier,
 };
 use super::types::SceneItemDuplicateMode;
@@ -37,6 +40,34 @@ fn group_mut<'a>(
         .scene_mut(&scene_id)
         .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
     group_mut_at(&mut scene.items, &path).ok_or(ProjectError::InvalidGroupPath)
+}
+
+fn parent_items<'a>(
+    scene: &'a SceneSpec,
+    group_path: &[Identifier],
+) -> Result<&'a [SceneItemSpec], ProjectError> {
+    if group_path.is_empty() {
+        Ok(scene.items())
+    } else {
+        group_at(scene.items(), group_path)
+            .map(GroupSpec::items)
+            .ok_or(ProjectError::InvalidGroupPath)
+    }
+}
+
+fn parse_scene_item_target(target: &str) -> Result<(Vec<Identifier>, Identifier), ProjectError> {
+    if target.is_empty() {
+        return Err(ProjectError::InvalidGroupSelection);
+    }
+    let mut path = Vec::with_capacity(4);
+    for (index, part) in target.split('/').enumerate() {
+        if part.is_empty() || index > MAX_GROUP_NESTING_DEPTH {
+            return Err(ProjectError::InvalidGroupSelection);
+        }
+        path.push(identifier(part, "scene item id")?);
+    }
+    let item = path.pop().ok_or(ProjectError::InvalidGroupSelection)?;
+    Ok((path, item))
 }
 
 pub(super) fn set_group_item_visibility(
@@ -99,20 +130,29 @@ pub(super) fn group_scene_items(
     item_ids: &[String],
     mut group: SceneItemSpec,
 ) -> Result<(), ProjectError> {
-    if item_ids.len() < 2 || item_ids.iter().any(|id| id.contains('/')) {
+    if item_ids.len() < 2 {
         return Err(ProjectError::InvalidGroupSelection);
     }
     if !group.is_group() || group.group().is_some_and(|group| !group.items().is_empty()) {
         return Err(ProjectError::InvalidGroupPath);
     }
+    let mut parent_path = None;
+    let mut unique = HashSet::with_capacity(item_ids.len());
     let item_ids = item_ids
         .iter()
-        .map(|id| identifier(id, "scene item id"))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut unique = HashSet::with_capacity(item_ids.len());
-    if item_ids.iter().any(|id| !unique.insert(id.clone())) {
-        return Err(ProjectError::InvalidGroupSelection);
-    }
+        .map(|target| {
+            let (path, item) = parse_scene_item_target(target)?;
+            if parent_path.as_ref().is_some_and(|current| current != &path) {
+                return Err(ProjectError::InvalidGroupSelection);
+            }
+            parent_path = Some(path);
+            if !unique.insert(item.clone()) {
+                return Err(ProjectError::InvalidGroupSelection);
+            }
+            Ok(item)
+        })
+        .collect::<Result<Vec<_>, ProjectError>>()?;
+    let parent_path = parent_path.ok_or(ProjectError::InvalidGroupSelection)?;
 
     let profile_id = identifier(profile, "profile id")?;
     let scene_id = identifier(scene, "scene id")?;
@@ -122,15 +162,15 @@ pub(super) fn group_scene_items(
     let scene_ref = profile_ref
         .scene(&scene_id)
         .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
-    if scene_ref.has_item(group.id()) {
+    let parent_ref = parent_items(scene_ref, &parent_path)?;
+    if parent_ref.iter().any(|item| item.id() == group.id()) {
         return Err(ProjectError::DuplicateSceneItem(group.id().clone()));
     }
 
     let mut selected = item_ids
         .iter()
         .map(|id| {
-            let (index, item) = scene_ref
-                .items()
+            let (index, item) = parent_ref
                 .iter()
                 .enumerate()
                 .find(|(_, item)| item.id() == id)
@@ -156,6 +196,7 @@ pub(super) fn group_scene_items(
     for item in selected_items {
         group_items.add_item(item)?;
     }
+    let group_id = group.id().clone();
 
     let profile = project
         .profile_mut(&profile_id)
@@ -163,12 +204,23 @@ pub(super) fn group_scene_items(
     let scene = profile
         .scene_mut(&scene_id)
         .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
-    for item_id in selected_ids {
-        scene
-            .remove_item(&item_id)
-            .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?;
+    if parent_path.is_empty() {
+        for item_id in &selected_ids {
+            scene
+                .remove_item(item_id)
+                .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?;
+        }
+    } else {
+        let parent =
+            group_mut_at(&mut scene.items, &parent_path).ok_or(ProjectError::InvalidGroupPath)?;
+        for item_id in &selected_ids {
+            parent
+                .remove_item(item_id)
+                .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?;
+        }
+        parent.add_item(group)?;
+        return parent.move_item(&group_id, insertion_index);
     }
-    let group_id = group.id().clone();
     scene.add_item(group)?;
     scene.move_item(&group_id, insertion_index)
 }
