@@ -6,7 +6,12 @@ mod native_recording;
 mod native_remux;
 #[path = "native_session.rs"]
 mod native_session;
+#[path = "native_stinger.rs"]
+mod native_stinger;
 
+#[cfg(test)]
+#[path = "native_stinger_tests.rs"]
+mod native_stinger_tests;
 #[cfg(test)]
 #[path = "native_tests.rs"]
 mod native_tests;
@@ -30,6 +35,7 @@ pub use native_remux::{
     remux_matroska_to_mp4, write_interrupted_remux_manifest,
 };
 pub use native_session::{GStreamerOutputSession, OutputSessionTelemetry};
+pub use native_stinger::GStreamerStingerLoader;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeOutputState {

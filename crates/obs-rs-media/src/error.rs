@@ -1,6 +1,45 @@
 use std::fmt;
 
 use super::{format::VideoFormat, pixel::PixelFormat};
+
+/// Coarse, typed failures reported by a native Stinger resource adapter.
+///
+/// The resource path and backend diagnostic remain outside the real-time media
+/// model. Keeping the failure kind copyable lets worker results cross the
+/// bounded queue without retaining unbounded native error text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StingerResourceFailure {
+    /// The resource could not be opened or read.
+    Unreadable,
+    /// No decoder or required native element is available.
+    DecoderUnavailable,
+    /// The decoder pipeline reported a failure.
+    Decoder,
+    /// The resource completed without publishing a video frame.
+    NoVideoFrames,
+    /// A decoded sample did not match the negotiated bounded RGBA format.
+    InvalidFrame,
+    /// The worker cancelled the decode before it completed.
+    Cancelled,
+    /// The decoder did not complete within the bounded wait interval.
+    Timeout,
+}
+
+impl fmt::Display for StingerResourceFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::Unreadable => "resource unreadable",
+            Self::DecoderUnavailable => "decoder unavailable",
+            Self::Decoder => "decoder pipeline failed",
+            Self::NoVideoFrames => "resource has no video frames",
+            Self::InvalidFrame => "decoded frame is invalid",
+            Self::Cancelled => "decode cancelled",
+            Self::Timeout => "decode timed out",
+        };
+        formatter.write_str(label)
+    }
+}
+
 /// Errors raised by the portable media value model.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MediaError {
@@ -36,6 +75,8 @@ pub enum MediaError {
     /// A persisted stinger resource path is empty, oversized, or contains a
     /// control character.
     InvalidStingerResourcePath { bytes: usize },
+    /// A native resource adapter could not resolve a persisted Stinger.
+    StingerResource { failure: StingerResourceFailure },
     /// A pixel layout requires dimensions that the format does not provide.
     UnsupportedPixelDimensions { pixel_format: PixelFormat },
     /// Two frames cannot be combined because their formats differ.
@@ -101,6 +142,9 @@ impl fmt::Display for MediaError {
                 formatter,
                 "stinger resource path has {bytes} bytes; expected 1..=1024 bytes without control characters"
             ),
+            Self::StingerResource { failure } => {
+                write!(formatter, "stinger resource adapter failed: {failure}")
+            }
             Self::UnsupportedPixelDimensions { pixel_format } => write!(
                 formatter,
                 "pixel format {pixel_format:?} does not support these dimensions"

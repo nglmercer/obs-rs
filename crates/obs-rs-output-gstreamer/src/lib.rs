@@ -65,8 +65,8 @@ mod native;
 pub use native::{
     discover_interrupted_remux_candidates, recover_interrupted_remux_recording,
     remux_matroska_to_mp4, write_interrupted_remux_manifest, GStreamerOutputSession,
-    NativeOutputState, OutputSessionTelemetry, RemuxRecovery, MAX_REMUX_MANIFEST_BYTES,
-    MAX_REMUX_RECOVERY_CANDIDATES, MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES,
+    GStreamerStingerLoader, NativeOutputState, OutputSessionTelemetry, RemuxRecovery,
+    MAX_REMUX_MANIFEST_BYTES, MAX_REMUX_RECOVERY_CANDIDATES, MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES,
 };
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ pub use delay::{
     RenderDelayBuffer, RenderDelayError, MAX_RENDER_DELAY_HISTORY_BYTES,
     MAX_RENDER_DELAY_HISTORY_FRAMES, MAX_RENDER_DELAY_MILLISECONDS, MIN_RENDER_DELAY_MILLISECONDS,
 };
-pub use error::MediaError;
+pub use error::{MediaError, StingerResourceFailure};
 pub use filters::{
     ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, LumaKey, RenderDelay,
     MAX_SCROLL_SPEED, MIN_SCROLL_SPEED,
