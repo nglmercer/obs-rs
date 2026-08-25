@@ -18,7 +18,8 @@ use super::{copy_identity, duplicate_item_sources, validate_scene_item};
 mod scene_targets;
 pub(super) use scene_targets::{
     duplicate_scene_item_target, move_scene_item_target, remove_scene_item_target,
-    set_scene_item_locked_target, set_scene_item_visibility_target,
+    set_scene_item_group_name_target, set_scene_item_locked_target,
+    set_scene_item_visibility_target,
 };
 
 fn parse_group_path(path: &[String]) -> Result<Vec<Identifier>, ProjectError> {

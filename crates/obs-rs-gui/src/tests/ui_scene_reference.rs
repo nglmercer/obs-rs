@@ -15,6 +15,9 @@ pub(super) fn exercise_scene_reference_transform_dialog(
     let mut child_item = SceneItemSpec::for_source("background").expect("child item");
     child_item.set_transform(child_transform);
     child.add_item(child_item).expect("child item attach");
+    child
+        .add_item(SceneItemSpec::for_group("transform-group", "Transform group").expect("group"))
+        .expect("group attach");
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::AddScene {
@@ -176,6 +179,7 @@ fn exercise_scene_reference_source_dialogs(
         Some("Nested background"),
         "nested Scene-reference rename must update the shared source definition"
     );
+    exercise_scene_reference_group_rename(ui, state);
     ui.set_active_modal(0);
 
     ui.invoke_toggle_source_visibility("transform-child-ref/background".into());
@@ -219,6 +223,26 @@ fn exercise_scene_reference_source_dialogs(
         .and_then(|scene| scene.item("background"))
         .expect("nested lock target restored")
         .locked());
+}
+
+fn exercise_scene_reference_group_rename(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    ui.invoke_open_source_rename("transform-child-ref/transform-group".into());
+    assert_eq!(ui.get_source_name_draft(), "Transform group");
+    ui.set_source_name_draft("Nested group".into());
+    ui.invoke_apply_source_name();
+    assert_eq!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("transform-child"))
+            .and_then(|scene| scene.item("transform-group"))
+            .and_then(SceneItemSpec::group)
+            .map(obs_rs_project::GroupSpec::name),
+        Some("Nested group"),
+        "nested Scene-reference rename must update the owning group"
+    );
 }
 
 fn exercise_scene_reference_transform_menu(
@@ -319,7 +343,7 @@ fn exercise_scene_reference_remove(ui: &MainWindow, state: &Rc<RefCell<DesktopSt
         .and_then(|profile| profile.scene("transform-child"))
         .is_some_and(|scene| scene.item("background_copy").is_some()));
 
-    ui.invoke_move_source_to("transform-child-ref/background".into(), 1);
+    ui.invoke_move_source_to("transform-child-ref/background".into(), 2);
     let state_ref = state.borrow();
     let child = state_ref
         .project_session()
@@ -327,8 +351,9 @@ fn exercise_scene_reference_remove(ui: &MainWindow, state: &Rc<RefCell<DesktopSt
         .active_profile_spec()
         .and_then(|profile| profile.scene("transform-child"))
         .expect("owner scene after nested reorder");
-    assert_eq!(child.items()[0].id().as_str(), "background_copy");
-    assert_eq!(child.items()[1].id().as_str(), "background");
+    assert_eq!(child.items()[0].id().as_str(), "transform-group");
+    assert_eq!(child.items()[1].id().as_str(), "background_copy");
+    assert_eq!(child.items()[2].id().as_str(), "background");
     drop(state_ref);
 
     ui.invoke_remove_source("transform-child-ref/background".into());

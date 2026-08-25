@@ -190,7 +190,20 @@ On 2026-08-24, the source rename modal now resolves a flattened
 rename behavior remains unchanged, while nested Scene-reference leaves update
 the shared source name through the existing `SetSourceName` command. The GUI
 fixture covers opening the modal, editing the name, and observing the profile
-source update; nested group rename remains outside this packet.
+source update.
+
+## Latest verified package: nested scene-reference group rename
+
+On 2026-08-24, `SetGroupName` now accepts the same stable flattened path when
+the addressed group is below a `Scene` source. The command resolves the owner
+scene and local group path before mutating the group display name, preserving
+the parent Scene-reference item. The rename modal resolves the nested group
+name through the canvas target resolver; project and GUI fixtures cover the
+owner-scene mutation and modal workflow.
+
+> SCENE-002/SOURCE-001 reconciliation: the row's older nested group-name
+> limitation is superseded by this package; the remaining transformed-boundary
+> gap is nested crop/rotation semantics.
 
 ## Latest verified package: nested scene-reference Transform menu
 

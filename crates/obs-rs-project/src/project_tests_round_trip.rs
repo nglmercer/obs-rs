@@ -366,6 +366,51 @@ fn nested_scene_item_move_routes_to_the_owner_scene() {
 }
 
 #[test]
+fn nested_scene_group_name_routes_to_the_owner_scene() {
+    let mut project = project();
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    child
+        .add_item(SceneItemSpec::for_group("child-group", "Child group").expect("group"))
+        .expect("child group attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: SceneItemSpec::for_scene("child-ref", "child").expect("scene reference"),
+        })
+        .expect("add scene reference");
+
+    project
+        .apply(ProjectCommand::SetGroupName {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["child-ref".to_owned(), "child-group".to_owned()],
+            name: "Renamed child group".to_owned(),
+        })
+        .expect("rename scene-reference group");
+
+    let profile = project.profile("live").expect("profile");
+    assert_eq!(
+        profile
+            .scene("child")
+            .and_then(|scene| scene.item("child-group"))
+            .and_then(SceneItemSpec::group)
+            .map(GroupSpec::name),
+        Some("Renamed child group")
+    );
+    assert!(profile
+        .scene("main")
+        .and_then(|scene| scene.item("child-ref"))
+        .is_some());
+}
+
+#[test]
 #[allow(
     clippy::too_many_lines,
     reason = "this regression exercises projection, owner routing, and atomic failures together"

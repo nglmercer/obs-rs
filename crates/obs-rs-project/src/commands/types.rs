@@ -163,7 +163,8 @@ pub enum ProjectCommand {
         name: String,
     },
     /// Replaces a group's display name using its outermost-to-innermost
-    /// scene-item path.
+    /// scene-item path. A path may cross a Scene-reference boundary; the group
+    /// is then renamed in the scene that owns it.
     SetGroupName {
         profile: String,
         scene: String,

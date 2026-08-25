@@ -610,11 +610,15 @@ fn install_source_list_callbacks(
                         .or_else(|| {
                             canvas_item_for_target(profile, scene_id, id.as_str()).and_then(
                                 |item| {
-                                    item.is_source().then(|| {
-                                        profile
-                                            .source(item.source_id())
-                                            .map(|source| source.name().to_owned())
-                                    })?
+                                    item.group().map(|group| group.name().to_owned()).or_else(
+                                        || {
+                                            item.is_source().then(|| {
+                                                profile
+                                                    .source(item.source_id())
+                                                    .map(|source| source.name().to_owned())
+                                            })?
+                                        },
+                                    )
                                 },
                             )
                         })

@@ -21,7 +21,7 @@ use groups::{
     duplicate_group_item, duplicate_scene_item_target, group_scene_items, move_group_item,
     move_scene_item_target, move_scene_item_to_parent, paste_group_item, remove_group_item,
     remove_scene_item_target, remove_scene_items, set_group_item_locked, set_group_item_transform,
-    set_group_item_visibility, set_group_name, set_scene_item_locked_target,
+    set_group_item_visibility, set_scene_item_group_name_target, set_scene_item_locked_target,
     set_scene_item_transform_target, set_scene_item_visibility_target, ungroup_scene_item,
 };
 
@@ -195,7 +195,7 @@ impl Project {
                 scene,
                 group_path,
                 name,
-            } => set_group_name(self, &profile, &scene, &group_path, &name),
+            } => set_scene_item_group_name_target(self, &profile, &scene, &group_path, &name),
             ProjectCommand::SetSourceSettings {
                 profile,
                 source,
