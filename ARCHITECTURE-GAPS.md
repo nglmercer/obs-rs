@@ -46,10 +46,14 @@ resource metadata through one `SetSceneProperties` history entry. The docked
 and floating Transition panels now route an explicit `Take Stinger` callback
 through the ready clip only; invalid duration, not-ready, typed failure,
 stopped-loader, and dispatch errors are visible without callback-side I/O.
-Actual hardware-decode selection and non-GStreamer platform adapters remain
-open. The file-picker workflow is now available through the capability-backed
-Scene Properties button; unsupported desktops keep the bounded manual-path
-field and an explicit unavailable state.
+The native GStreamer adapter now probes known hardware decoder factories and
+the `decodebin` selection property before enabling the Scene Properties
+preference. It sets the bounded `force-sw-decoders` control explicitly and
+returns a typed unavailable failure when a requested hardware path cannot be
+selected. Codec-specific hardware selection and non-GStreamer platform
+adapters remain open. The file-picker workflow is now available through the
+capability-backed Scene Properties button; unsupported desktops keep the
+bounded manual-path field and an explicit unavailable state.
 
 The toolkit-neutral `StingerLoadSession` now owns the transient current request
 and resolved clip around that worker. It clears the renderable clip only after

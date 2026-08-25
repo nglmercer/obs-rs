@@ -35,7 +35,9 @@ pub use native_remux::{
     remux_matroska_to_mp4, write_interrupted_remux_manifest,
 };
 pub use native_session::{GStreamerOutputSession, OutputSessionTelemetry};
-pub use native_stinger::GStreamerStingerLoader;
+pub use native_stinger::{
+    stinger_decode_capabilities, GStreamerStingerLoader, StingerDecodeCapabilities,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeOutputState {

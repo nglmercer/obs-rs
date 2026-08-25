@@ -33,6 +33,80 @@ const MAX_STINGER_SAMPLES: u32 = 257;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GStreamerStingerLoader;
 
+/// Decoder factories that represent a native hardware path for common video
+/// codecs. The list is deliberately conservative: finding one factory makes
+/// the preference selectable, but does not claim every codec is accelerated.
+const HARDWARE_DECODER_FACTORIES: &[&str] = &[
+    "vaapih264dec",
+    "vah264dec",
+    "nvh264dec",
+    "d3d11h264dec",
+    "d3d12h264dec",
+    "v4l2slh264dec",
+    "vaapih265dec",
+    "vah265dec",
+    "nvh265dec",
+    "d3d11h265dec",
+    "d3d12h265dec",
+    "v4l2slh265dec",
+    "vaapiav1dec",
+    "nvav1dec",
+    "d3d11av1dec",
+    "d3d12av1dec",
+    "vaapivp9dec",
+    "vavp9dec",
+    "nvvp9dec",
+    "d3d11vp9dec",
+    "d3d12vp9dec",
+    "vtdec",
+];
+
+/// Native Stinger decoder capabilities observed from the installed
+/// `GStreamer` registry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StingerDecodeCapabilities {
+    hardware_decoder: Option<&'static str>,
+}
+
+impl StingerDecodeCapabilities {
+    /// Returns whether at least one known hardware decoder factory exists.
+    #[must_use]
+    pub const fn hardware_available(self) -> bool {
+        self.hardware_decoder.is_some()
+    }
+
+    /// Returns the first known factory, for diagnostics and tests.
+    #[must_use]
+    pub const fn hardware_decoder(self) -> Option<&'static str> {
+        self.hardware_decoder
+    }
+}
+
+/// Probes the native registry without opening a resource or starting a
+/// pipeline. The result is safe to publish to the toolkit-neutral UI model.
+#[must_use]
+pub fn stinger_decode_capabilities() -> StingerDecodeCapabilities {
+    if gst::init().is_err() {
+        return StingerDecodeCapabilities {
+            hardware_decoder: None,
+        };
+    }
+    let can_select_decoder = gst::ElementFactory::make("decodebin")
+        .build()
+        .is_ok_and(|decoder| decoder.find_property("force-sw-decoders").is_some());
+    if !can_select_decoder {
+        return StingerDecodeCapabilities {
+            hardware_decoder: None,
+        };
+    }
+    StingerDecodeCapabilities {
+        hardware_decoder: HARDWARE_DECODER_FACTORIES
+            .iter()
+            .copied()
+            .find(|factory| gst::ElementFactory::find(factory).is_some()),
+    }
+}
+
 impl StingerResourceLoader for GStreamerStingerLoader {
     fn load(
         &mut self,
@@ -43,6 +117,12 @@ impl StingerResourceLoader for GStreamerStingerLoader {
     }
 }
 
+struct StingerPipeline {
+    pipeline: gst::Pipeline,
+    sink: gst_app::AppSink,
+    link_error: Arc<Mutex<bool>>,
+}
+
 fn decode_stinger(
     request: &StingerLoadRequest,
     cancellation: &StingerLoadCancellation,
@@ -51,6 +131,9 @@ fn decode_stinger(
         return Err(resource_error(StingerResourceFailure::Cancelled));
     }
     gst::init().map_err(|_| resource_error(StingerResourceFailure::DecoderUnavailable))?;
+    if request.spec().hardware_decode() && !stinger_decode_capabilities().hardware_available() {
+        return Err(resource_error(StingerResourceFailure::DecoderUnavailable));
+    }
 
     let path = Path::new(request.spec().resource_path());
     let metadata =
@@ -65,6 +148,34 @@ fn decode_stinger(
 
     let format = request.target_format();
     let caps = rgba_caps(format)?;
+    let prepared = build_stinger_pipeline(location, &caps, request.spec().hardware_decode())?;
+    prepared
+        .pipeline
+        .set_state(gst::State::Playing)
+        .map_err(|_| resource_error(StingerResourceFailure::Decoder))?;
+    let decode_result = pull_frames(
+        &prepared.sink,
+        &prepared.pipeline,
+        format,
+        request,
+        cancellation,
+        &prepared.link_error,
+    );
+    let stop_result = prepared
+        .pipeline
+        .set_state(gst::State::Null)
+        .map_err(|_| resource_error(StingerResourceFailure::Decoder));
+    match stop_result {
+        Ok(_) => decode_result,
+        Err(error) => Err(error),
+    }
+}
+
+fn build_stinger_pipeline(
+    location: &str,
+    caps: &gst::Caps,
+    hardware_decode: bool,
+) -> Result<StingerPipeline, MediaError> {
     let source = gst::ElementFactory::make("filesrc")
         .property("location", location)
         .build()
@@ -72,6 +183,13 @@ fn decode_stinger(
     let decoder = gst::ElementFactory::make("decodebin")
         .build()
         .map_err(|_| resource_error(StingerResourceFailure::Decoder))?;
+    let force_sw_decoders = decoder.find_property("force-sw-decoders").is_some();
+    if hardware_decode && !force_sw_decoders {
+        return Err(resource_error(StingerResourceFailure::DecoderUnavailable));
+    }
+    if force_sw_decoders {
+        decoder.set_property("force-sw-decoders", !hardware_decode);
+    }
     let converter = gst::ElementFactory::make("videoconvert")
         .build()
         .map_err(|_| resource_error(StingerResourceFailure::Decoder))?;
@@ -82,11 +200,11 @@ fn decode_stinger(
         .build()
         .map_err(|_| resource_error(StingerResourceFailure::Decoder))?;
     let capsfilter = gst::ElementFactory::make("capsfilter")
-        .property("caps", &caps)
+        .property("caps", caps)
         .build()
         .map_err(|_| resource_error(StingerResourceFailure::Decoder))?;
     let sink = gst_app::AppSink::builder()
-        .caps(&caps)
+        .caps(caps)
         .max_buffers(MAX_STINGER_SAMPLES)
         .drop(false)
         .sync(false)
@@ -134,17 +252,11 @@ fn decode_stinger(
         }
     });
 
-    pipeline
-        .set_state(gst::State::Playing)
-        .map_err(|_| resource_error(StingerResourceFailure::Decoder))?;
-    let decode_result = pull_frames(&sink, &pipeline, format, request, cancellation, &link_error);
-    let stop_result = pipeline
-        .set_state(gst::State::Null)
-        .map_err(|_| resource_error(StingerResourceFailure::Decoder));
-    match stop_result {
-        Ok(_) => decode_result,
-        Err(error) => Err(error),
-    }
+    Ok(StingerPipeline {
+        pipeline,
+        sink,
+        link_error,
+    })
 }
 
 fn pull_frames(

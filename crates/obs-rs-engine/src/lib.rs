@@ -71,9 +71,9 @@ use obs_rs_output::{
 use obs_rs_output_gstreamer::GStreamerCapabilitySnapshot;
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
-    write_interrupted_remux_manifest, AudioEncoderCapability, GStreamerStingerLoader,
-    OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability, RemuxRecovery,
-    VideoEncoderCapability,
+    stinger_decode_capabilities, write_interrupted_remux_manifest, AudioEncoderCapability,
+    GStreamerStingerLoader, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
+    RemuxRecovery, StingerDecodeCapabilities, VideoEncoderCapability,
 };
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::Project;

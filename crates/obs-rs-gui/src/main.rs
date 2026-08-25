@@ -122,6 +122,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         i_slint_backend_testing::init_no_event_loop();
     }
     let ui = MainWindow::new()?;
+    let stinger_decode_capabilities = obs_rs_engine::stinger_decode_capabilities();
+    ui.set_scene_stinger_hardware_decode_enabled(stinger_decode_capabilities.hardware_available());
     // Stored settings own the file paths and the stream destination, so they
     // are loaded before anything reads them.
     // A screenshot run must not depend on whatever this machine's settings

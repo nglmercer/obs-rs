@@ -127,6 +127,7 @@ export component MainWindow inherits Window {
         in-out property <string> scene-stinger-transition-point: "500";
         in-out property <bool> scene-stinger-preload: true;
         in-out property <bool> scene-stinger-hardware-decode: false;
+        in-out property <bool> scene-stinger-hardware-decode-enabled: false;
         in-out property <bool> scene-stinger-picker-enabled: false;
         in property <string> scene-properties-version;
         in property <string> selected-source;
@@ -943,6 +944,7 @@ export component MainWindow inherits Window {
         scene-stinger-transition-point <=> root.scene-stinger-transition-point;
         scene-stinger-preload <=> root.scene-stinger-preload;
         scene-stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
+        scene-stinger-hardware-decode-enabled <=> root.scene-stinger-hardware-decode-enabled;
         scene-stinger-picker-enabled <=> root.scene-stinger-picker-enabled;
         source-name-draft <=> root.source-name-draft;
         source-rename-target <=> root.source-rename-target;

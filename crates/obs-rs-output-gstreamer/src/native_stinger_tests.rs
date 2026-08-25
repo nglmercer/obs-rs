@@ -29,6 +29,18 @@ fn fixture_path() -> PathBuf {
 }
 
 #[test]
+fn stinger_decode_capabilities_are_registry_backed_and_stable() {
+    gst::init().expect("GStreamer runtime");
+    let first = super::stinger_decode_capabilities();
+    let second = super::stinger_decode_capabilities();
+    assert_eq!(first, second);
+    if let Some(factory) = first.hardware_decoder() {
+        assert!(gst::ElementFactory::find(factory).is_some());
+        assert!(first.hardware_available());
+    }
+}
+
+#[test]
 fn stinger_loader_reports_missing_resource_as_typed_media_error() {
     let path = fixture_path();
     let request = StingerLoadRequest::new(1, spec(&path), target_format());

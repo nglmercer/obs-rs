@@ -488,6 +488,7 @@ pub(super) fn catalog() -> UiText {
         stinger_transition_point: s("Transition point (‰)"),
         stinger_preload: s("Preload resource"),
         stinger_hardware_decode: s("Prefer hardware decode"),
+        stinger_hardware_decode_unavailable: s("No supported native hardware decoder was found; software decoding remains selected."),
         stinger_hint: s("Leave the path empty to clear the Stinger. Decoding stays off the UI thread."),
         stinger_picker_unavailable: s("No system file picker was found; type the resource path manually."),
         add_transition: s("Add transition"),

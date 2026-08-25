@@ -113,6 +113,7 @@ export component RenameSceneDialog inherits ModalShell {
     in-out property <string> stinger-transition-point: "500";
     in-out property <bool> stinger-preload: true;
     in-out property <bool> stinger-hardware-decode: false;
+    in property <bool> stinger-hardware-decode-enabled: false;
     in property <bool> stinger-picker-enabled: false;
     callback rename-scene();
     callback browse-scene-stinger();
@@ -194,7 +195,11 @@ export component RenameSceneDialog inherits ModalShell {
         }
         CheckBox {
             text: I18n.text.stinger_hardware_decode;
+            enabled: root.stinger-hardware-decode-enabled;
             checked <=> root.stinger-hardware-decode;
+        }
+        if !root.stinger-hardware-decode-enabled : MutedText {
+            text: I18n.text.stinger_hardware_decode_unavailable;
         }
         MutedText { text: I18n.text.stinger_hint; }
         if !root.stinger-picker-enabled : MutedText {

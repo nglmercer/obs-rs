@@ -49,6 +49,13 @@ project command. Scene Properties edits those fields as one undoable command.
 Worker-side decoding, track mattes, and fade/audio monitoring policy remain
 incomplete; the current GUI packet now supplies the bounded asynchronous
 picker described below.
+The native GStreamer adapter now probes the installed decoder registry before
+exposing the hardware preference. Scene Properties enables that checkbox only
+when a known hardware decoder and the `decodebin` selection property are
+available; the loader sets `force-sw-decoders` explicitly for software versus
+hardware preference and returns typed `DecoderUnavailable` instead of silently
+accepting a hardware request without a native path. Codec-specific hardware
+selection and other platform adapters remain incomplete.
 The separate resource-worker boundary is now bounded at one pending request
 and one result, supports non-blocking polling and typed request IDs, and
 honors cooperative cancellation. The optional native GStreamer adapter now
@@ -56,7 +63,7 @@ decodes local file/container resources through negotiated RGBA caps and
 bounded preloading, returning typed unreadable/decoder/frame/timeout failures;
 the one-slot result policy discards stale request IDs without blocking submit
 or poll callers. Engine/UI application is now connected for selected-scene
-preload and scene-properties persistence; actual hardware-decode selection,
+preload and scene-properties persistence; codec-specific hardware selection,
 other platform adapters remain incomplete. Scene Properties now launches a
 capability-backed asynchronous file picker on Linux (`zenity`/`kdialog`),
 macOS (`osascript`), and Windows (PowerShell) when available; the selected
@@ -73,7 +80,7 @@ worker-published clip, and dispatches the existing typed `TakeStinger` command.
 Not-ready, typed decode failure, stopped-loader, invalid-duration, and state
 dispatch errors are visible in the status surface. The picker reports
 unavailable, already-open, cancelled, spawn, and selection errors without
-blocking the UI. Actual hardware-decode selection, on-demand Take, and
+blocking the UI. Codec-specific hardware selection, on-demand Take, and
 non-GStreamer adapters remain incomplete.
 
 The asynchronous picker boundary is implemented in
