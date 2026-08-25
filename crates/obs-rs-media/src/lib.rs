@@ -8,6 +8,7 @@ mod error;
 mod filters;
 mod format;
 mod frame;
+mod frame_transitions;
 mod metrics;
 mod pixel;
 mod scale;
@@ -38,7 +39,7 @@ pub use scale::{FrameScaler, ScaleFilter};
 pub use time::{sleep_precise, FrameRate, Timestamp, SLEEP_SPIN_WINDOW};
 pub use transform::FrameTransform;
 pub use transition::{
-    parse_rgba8_hex, FrameTransition, TransitionKind, TransitionSpec,
+    parse_rgba8_hex, FrameTransition, SlideDirection, TransitionKind, TransitionSpec,
     DEFAULT_TRANSITION_DURATION_MILLIS, MAX_TRANSITION_DURATION_MILLIS,
     MIN_TRANSITION_DURATION_MILLIS,
 };

@@ -215,6 +215,15 @@ fn console_parser_covers_state_and_output_commands() {
         }))
     );
     assert_eq!(
+        parse_console_command("transition slide 500"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::Slide {
+                progress_milli: 500,
+                direction: obs_rs_media::SlideDirection::Left,
+            },
+        }))
+    );
+    assert_eq!(
         parse_console_command("transition color 500 #00FF00"),
         Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
             transition: FrameTransition::FadeToColor {

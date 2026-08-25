@@ -196,6 +196,7 @@ export component MainWindow inherits Window {
         callback cut-transition();
         callback fade-transition();
         callback fade-transition-duration(string);
+        callback slide-transition(string);
         callback fade-to-color(string, string);
         callback set-scene-transition(string, string, string);
         callback clear-scene-transition();
@@ -879,6 +880,7 @@ export component MainWindow inherits Window {
                 cut-transition() => { root.cut-transition(); }
                 fade-transition() => { root.fade-transition(); }
                 fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
+                slide-transition(duration) => { root.slide-transition(duration); }
                 fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
                 set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
                 clear-scene-transition() => { root.clear-scene-transition(); }

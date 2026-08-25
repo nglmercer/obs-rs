@@ -21,7 +21,9 @@ use super::{
     MAX_PROJECT_BYTES,
 };
 use obs_rs_config::Config;
-use obs_rs_media::{FrameRate, FrameTransform, TransitionKind, TransitionSpec, VideoFormat};
+use obs_rs_media::{
+    FrameRate, FrameTransform, SlideDirection, TransitionKind, TransitionSpec, VideoFormat,
+};
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::{Identifier, Json};
 use std::collections::HashSet;
@@ -359,10 +361,11 @@ fn decode_scene(value: &Json, profile: &Profile, version: u32) -> Result<SceneSp
 }
 
 fn encode_transition(transition: TransitionSpec) -> Json {
-    let (kind, color) = match transition.kind() {
-        TransitionKind::Cut => ("cut", None),
-        TransitionKind::CrossFade => ("cross_fade", None),
-        TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color)),
+    let (kind, color, direction) = match transition.kind() {
+        TransitionKind::Cut => ("cut", None, None),
+        TransitionKind::CrossFade => ("cross_fade", None, None),
+        TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color), None),
+        TransitionKind::Slide { direction } => ("slide", None, Some(direction)),
     };
     let mut members = vec![
         ("kind", Json::string(kind)),
@@ -372,6 +375,14 @@ fn encode_transition(transition: TransitionSpec) -> Json {
         members.push((
             "color",
             Json::Array(color.into_iter().map(Json::number).collect()),
+        ));
+    }
+    if let Some(direction) = direction {
+        members.push((
+            "direction",
+            Json::string(match direction {
+                SlideDirection::Left => "left",
+            }),
         ));
     }
     Json::object(members)
@@ -402,6 +413,13 @@ fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
                 },
                 duration_millis,
             )
+        }
+        "slide" => {
+            let direction = match string_member(value, "direction")? {
+                "left" => SlideDirection::Left,
+                other => return Err(invalid(format!("unknown slide direction: {other}"))),
+            };
+            TransitionSpec::new(TransitionKind::Slide { direction }, duration_millis)
         }
         other => return Err(invalid(format!("unknown scene transition kind: {other}"))),
     };

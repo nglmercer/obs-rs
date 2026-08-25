@@ -403,6 +403,9 @@ pub(crate) fn apply_scene_properties_and_refresh(
                 scene_transition_spec("fade_to_color", duration, color)
                     .map_err(std::io::Error::other)?,
             ),
+            4 => Some(
+                scene_transition_spec("slide", duration, color).map_err(std::io::Error::other)?,
+            ),
             _ => {
                 return Err(std::io::Error::other("Scene transition selection is invalid").into());
             }

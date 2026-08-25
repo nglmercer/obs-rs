@@ -1,6 +1,6 @@
 use std::fmt;
 
-use obs_rs_media::{parse_rgba8_hex, FrameTransition, MediaError};
+use obs_rs_media::{parse_rgba8_hex, FrameTransition, MediaError, SlideDirection};
 
 use super::{
     types::{UiCommand, UiLocale},
@@ -204,7 +204,7 @@ fn parse_transition_value<'a>(
     command: &'static str,
     mut words: impl Iterator<Item = &'a str>,
 ) -> Result<FrameTransition, ConsoleCommandError> {
-    let kind = required_word(&mut words, "cut, fade, or color")?;
+    let kind = required_word(&mut words, "cut, fade, color, or slide")?;
     Ok(match kind {
         "cut" => {
             ensure_no_extra(command, words)?;
@@ -235,6 +235,19 @@ fn parse_transition_value<'a>(
                     })?;
             let color = parse_transition_color(command, color)?;
             FrameTransition::fade_to_color(progress, color)
+                .map_err(ConsoleCommandError::InvalidTransition)?
+        }
+        "slide" => {
+            let progress = required_word(&mut words, "slide progress in 0..1000")?;
+            ensure_no_extra(command, words)?;
+            let progress =
+                progress
+                    .parse::<u16>()
+                    .map_err(|_| ConsoleCommandError::InvalidArgument {
+                        command,
+                        value: progress.to_owned(),
+                    })?;
+            FrameTransition::slide(progress, SlideDirection::Left)
                 .map_err(ConsoleCommandError::InvalidTransition)?
         }
         value => {

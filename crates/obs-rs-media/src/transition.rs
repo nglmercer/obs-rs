@@ -7,6 +7,13 @@ pub const MAX_TRANSITION_DURATION_MILLIS: u32 = 60_000;
 /// Default scene-transition duration in milliseconds.
 pub const DEFAULT_TRANSITION_DURATION_MILLIS: u32 = 300;
 
+/// Direction supported by the bounded portable slide transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SlideDirection {
+    /// The destination enters from the left while the source exits left.
+    Left,
+}
+
 /// Parses a bounded `#RRGGBB` or `#RRGGBBAA` color into RGBA8.
 ///
 /// Six-digit colors receive an opaque alpha channel. The helper is shared by
@@ -42,6 +49,11 @@ pub enum FrameTransition {
     /// the portable reference can represent transparent transition colors as
     /// well as OBS's usual opaque color picker value.
     FadeToColor { progress_milli: u16, color: [u8; 4] },
+    /// Slides the destination in from the configured direction.
+    Slide {
+        progress_milli: u16,
+        direction: SlideDirection,
+    },
 }
 
 /// The persistent kind of a scene transition.
@@ -53,6 +65,8 @@ pub enum TransitionKind {
     CrossFade,
     /// Covers the source with a color before revealing the destination.
     FadeToColor { color: [u8; 4] },
+    /// Slides the destination in from the configured direction.
+    Slide { direction: SlideDirection },
 }
 
 /// A validated transition policy that can be persisted on a scene.
@@ -115,6 +129,21 @@ impl TransitionSpec {
         Self::new(TransitionKind::FadeToColor { color }, duration_millis)
     }
 
+    /// Creates the bounded left-to-right slide policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransitionDuration`] when the duration is
+    /// outside the bounded scene-transition range.
+    pub const fn slide_left(duration_millis: u32) -> Result<Self, MediaError> {
+        Self::new(
+            TransitionKind::Slide {
+                direction: SlideDirection::Left,
+            },
+            duration_millis,
+        )
+    }
+
     /// Converts one render-time sample into a persistent policy.
     ///
     /// # Errors
@@ -129,6 +158,7 @@ impl TransitionSpec {
             FrameTransition::Cut => TransitionKind::Cut,
             FrameTransition::CrossFade { .. } => TransitionKind::CrossFade,
             FrameTransition::FadeToColor { color, .. } => TransitionKind::FadeToColor { color },
+            FrameTransition::Slide { direction, .. } => TransitionKind::Slide { direction },
         };
         Self::new(kind, duration_millis)
     }
@@ -157,6 +187,9 @@ impl TransitionSpec {
             TransitionKind::CrossFade => FrameTransition::cross_fade(progress_milli),
             TransitionKind::FadeToColor { color } => {
                 FrameTransition::fade_to_color(progress_milli, color)
+            }
+            TransitionKind::Slide { direction } => {
+                FrameTransition::slide(progress_milli, direction)
             }
         }
     }
@@ -194,6 +227,24 @@ impl FrameTransition {
         Ok(Self::FadeToColor {
             progress_milli,
             color,
+        })
+    }
+
+    /// Creates a slide at a validated progress value.
+    ///
+    /// `0` selects the source frame and `1000` selects the destination frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransition`] when `progress_milli` is
+    /// greater than `1000`.
+    pub const fn slide(progress_milli: u16, direction: SlideDirection) -> Result<Self, MediaError> {
+        if progress_milli > 1_000 {
+            return Err(MediaError::InvalidTransition { progress_milli });
+        }
+        Ok(Self::Slide {
+            progress_milli,
+            direction,
         })
     }
 }

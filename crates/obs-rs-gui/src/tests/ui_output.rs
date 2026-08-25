@@ -50,6 +50,12 @@ pub(super) fn exercise_recording_controls(
     exercise_replay_controls(ui, state, surface);
     exercise_output_reconciliation(ui, state, &output);
 
+    exercise_transition_callbacks(ui, state);
+
+    exercise_scene_properties_dialog(ui, state, surface);
+}
+
+fn exercise_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     state
         .borrow_mut()
         .dispatch(UiCommand::SelectPreviewScene {
@@ -72,6 +78,25 @@ pub(super) fn exercise_recording_controls(
         FrameTransition::FadeToColor {
             progress_milli,
             color: [0, 255, 0, 128],
+        } if progress_milli < 1_000
+    ));
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("restore program scene before slide");
+    ui.invoke_slide_transition("450".into());
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("Slide callback should start a transition");
+    assert!(matches!(
+        transition.transition(),
+        FrameTransition::Slide {
+            progress_milli,
+            direction: obs_rs_media::SlideDirection::Left,
         } if progress_milli < 1_000
     ));
 
@@ -111,8 +136,6 @@ pub(super) fn exercise_recording_controls(
     assert!(ui
         .get_status_message()
         .contains("Transition color must be #RRGGBB or #RRGGBBAA"));
-
-    exercise_scene_properties_dialog(ui, state, surface);
 }
 
 fn exercise_scene_properties_dialog(
@@ -176,6 +199,26 @@ fn exercise_scene_properties_dialog(
         transition.kind(),
         obs_rs_media::TransitionKind::FadeToColor {
             color: [0, 255, 0, 128]
+        }
+    );
+
+    ui.set_scene_name("Slide scene".into());
+    ui.set_scene_transition_index(4);
+    ui.set_scene_transition_duration("600".into());
+    ui.invoke_rename_scene();
+    let transition = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(SceneSpec::transition_override)
+        .expect("slide override");
+    assert_eq!(transition.duration_millis(), 600);
+    assert_eq!(
+        transition.kind(),
+        obs_rs_media::TransitionKind::Slide {
+            direction: obs_rs_media::SlideDirection::Left,
         }
     );
 

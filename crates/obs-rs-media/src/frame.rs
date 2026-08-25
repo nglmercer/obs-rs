@@ -1,7 +1,4 @@
-use super::{
-    error::MediaError, format::VideoFormat, time::Timestamp, transform::FrameTransform,
-    transition::FrameTransition,
-};
+use super::{error::MediaError, format::VideoFormat, time::Timestamp, transform::FrameTransform};
 use crate::metrics::{record_copy_on_write, record_owned_buffer, record_shared_clone};
 use rayon::prelude::*;
 use std::{
@@ -212,7 +209,7 @@ impl VideoFrame {
         }
     }
 
-    fn pixels_mut(&mut self) -> &mut [u8] {
+    pub(crate) fn pixels_mut(&mut self) -> &mut [u8] {
         if Arc::strong_count(&self.pixels) > 1 {
             record_copy_on_write(self.pixels.len());
         }
@@ -446,86 +443,6 @@ impl VideoFrame {
             },
         );
         Ok(())
-    }
-
-    /// Produces a deterministic transition between two same-format frames.
-    ///
-    /// `destination` is taken by value and becomes the result buffer: a cut
-    /// returns it untouched and a cross-fade blends `source` into it in place,
-    /// so neither path copies a frame. The destination timestamp is used for the
-    /// result. Cross-fades and fade-to-color transitions interpolate every RGBA
-    /// byte with integer arithmetic, which makes offline previews and live
-    /// output use the same correctness oracle.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MediaError::FormatMismatch`] for different formats or
-    /// [`MediaError::InvalidTransition`] for an invalid transition progress value.
-    pub fn transitioned(
-        source: &Self,
-        mut destination: Self,
-        transition: FrameTransition,
-    ) -> Result<Self, MediaError> {
-        if source.format != destination.format {
-            return Err(MediaError::FormatMismatch {
-                expected: source.format,
-                actual: destination.format,
-            });
-        }
-
-        match transition {
-            FrameTransition::Cut => Ok(destination),
-            FrameTransition::CrossFade { progress_milli } => {
-                if progress_milli > 1_000 {
-                    return Err(MediaError::InvalidTransition { progress_milli });
-                }
-                let destination_weight = u32::from(progress_milli);
-                let source_weight = 1_000 - destination_weight;
-                // Both buffers have the same format and therefore the same
-                // length, so this is a straight paired walk with no branching
-                // and no intermediate allocation.
-                for (target, source_byte) in
-                    destination.pixels_mut().iter_mut().zip(source.pixels())
-                {
-                    let value = u32::from(*source_byte) * source_weight
-                        + u32::from(*target) * destination_weight;
-                    *target = to_byte((value + 500) / 1_000);
-                }
-                Ok(destination)
-            }
-            FrameTransition::FadeToColor {
-                progress_milli,
-                color,
-            } => {
-                if progress_milli > 1_000 {
-                    return Err(MediaError::InvalidTransition { progress_milli });
-                }
-                if progress_milli <= 500 {
-                    let color_weight = u32::from(progress_milli).saturating_mul(2);
-                    let source_weight = 1_000 - color_weight;
-                    for (index, (target, source_byte)) in destination
-                        .pixels_mut()
-                        .iter_mut()
-                        .zip(source.pixels())
-                        .enumerate()
-                    {
-                        let value = u32::from(*source_byte) * source_weight
-                            + u32::from(color[index % 4]) * color_weight;
-                        *target = to_byte((value + 500) / 1_000);
-                    }
-                } else {
-                    let destination_weight =
-                        u32::from(progress_milli.saturating_sub(500)).saturating_mul(2);
-                    let color_weight = 1_000 - destination_weight;
-                    for (index, target) in destination.pixels_mut().iter_mut().enumerate() {
-                        let value = u32::from(color[index % 4]) * color_weight
-                            + u32::from(*target) * destination_weight;
-                        *target = to_byte((value + 500) / 1_000);
-                    }
-                }
-                Ok(destination)
-            }
-        }
     }
 
     /// Applies a nearest-neighbor transform into a new transparent frame.
@@ -909,7 +826,7 @@ fn fnv_step(hash: u64, byte: u8) -> u64 {
     clippy::cast_possible_truncation,
     reason = "min constrains the value to 0..=255, so the cast is exact"
 )]
-fn to_byte(value: u32) -> u8 {
+pub(crate) fn to_byte(value: u32) -> u8 {
     value.min(u32::from(u8::MAX)) as u8
 }
 

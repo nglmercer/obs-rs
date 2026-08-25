@@ -259,6 +259,12 @@ impl DesktopState {
             } => {
                 FrameTransition::fade_to_color(progress_milli, color).map_err(UiError::Media)?;
             }
+            FrameTransition::Slide {
+                progress_milli,
+                direction,
+            } => {
+                FrameTransition::slide(progress_milli, direction).map_err(UiError::Media)?;
+            }
             FrameTransition::Cut => {}
         }
         self.transition = transition;
@@ -367,6 +373,10 @@ impl DesktopState {
             FrameTransition::FadeToColor { color, .. } => FrameTransition::FadeToColor {
                 progress_milli,
                 color,
+            },
+            FrameTransition::Slide { direction, .. } => FrameTransition::Slide {
+                progress_milli,
+                direction,
             },
         };
         Some(TransitionSnapshot::new(

@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use obs_rs_media::{FrameTransition, RawVideoFrame, TransitionKind, VideoFrame};
+use obs_rs_media::{FrameTransition, RawVideoFrame, SlideDirection, TransitionKind, VideoFrame};
 use obs_rs_project::{Profile, ProjectCommand, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{DataTransfer, Image, Model, ModelRc, SharedString, VecModel, Weak};
@@ -825,6 +825,16 @@ pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTra
             "{} {progress_milli}/1000 #{:02X}{:02X}{:02X}{:02X}",
             text.fade_to_color, color[0], color[1], color[2], color[3]
         ),
+        FrameTransition::Slide {
+            progress_milli,
+            direction,
+        } => format!(
+            "{} {progress_milli}/1000 ({})",
+            text.slide,
+            match direction {
+                SlideDirection::Left => "left",
+            }
+        ),
     })
 }
 
@@ -833,6 +843,7 @@ pub(crate) fn transition_kind(transition: FrameTransition) -> &'static str {
         FrameTransition::Cut => "cut",
         FrameTransition::CrossFade { .. } => "cross_fade",
         FrameTransition::FadeToColor { .. } => "fade_to_color",
+        FrameTransition::Slide { .. } => "slide",
     }
 }
 
@@ -852,6 +863,7 @@ fn scene_transition_fields(scene: Option<&SceneSpec>) -> (i32, String, String) {
                 color[0], color[1], color[2], color[3]
             ),
         ),
+        TransitionKind::Slide { .. } => (4, "#000000FF".to_owned()),
     };
     (index, transition.duration_millis().to_string(), color)
 }

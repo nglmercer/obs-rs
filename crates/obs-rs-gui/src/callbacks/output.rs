@@ -2,7 +2,8 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_engine::OutputLifecycle;
 use obs_rs_media::{
-    parse_rgba8_hex, FrameTransition, RawVideoFrame, TransitionKind, TransitionSpec, VideoFrame,
+    parse_rgba8_hex, FrameTransition, RawVideoFrame, SlideDirection, TransitionKind,
+    TransitionSpec, VideoFrame,
 };
 use obs_rs_ui::{
     DesktopState, UiCommand, DEFAULT_TRANSITION_DURATION_MILLIS, MAX_TRANSITION_DURATION_MILLIS,
@@ -263,6 +264,8 @@ fn install_transition_callbacks(
         );
     });
 
+    install_slide_transition_callback(ui, state, surface);
+
     let weak = ui.as_weak();
     let color_state = Rc::clone(state);
     let color_surface = Rc::clone(surface);
@@ -300,6 +303,42 @@ fn install_transition_callbacks(
     });
 
     install_scene_transition_override_callbacks(ui, state, surface);
+}
+
+fn install_slide_transition_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let weak = ui.as_weak();
+    let slide_state = Rc::clone(state);
+    let slide_surface = Rc::clone(surface);
+    ui.on_slide_transition(move |duration| {
+        let duration = match duration.trim().parse::<u32>() {
+            Ok(duration)
+                if (MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS)
+                    .contains(&duration) =>
+            {
+                duration
+            }
+            _ => {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_status_message("Transition duration must be 1–60000 ms".into());
+                }
+                return;
+            }
+        };
+        let transition = match FrameTransition::slide(500, SlideDirection::Left) {
+            Ok(transition) => transition,
+            Err(error) => {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_status_message(format!("Transition failed: {error}").into());
+                }
+                return;
+            }
+        };
+        take_transition_and_refresh(&weak, &slide_state, &slide_surface, transition, duration);
+    });
 }
 
 fn install_scene_transition_override_callbacks(
@@ -372,6 +411,12 @@ pub(crate) fn scene_transition_spec(
                 .ok_or_else(|| "Transition color must be #RRGGBB or #RRGGBBAA".to_owned())?;
             TransitionSpec::new(TransitionKind::FadeToColor { color }, duration)
         }
+        "slide" => TransitionSpec::new(
+            TransitionKind::Slide {
+                direction: SlideDirection::Left,
+            },
+            duration,
+        ),
         _ => return Err("Transition override failed: unknown transition kind".to_owned()),
     }
     .map_err(|error| format!("Transition override failed: {error}"))
