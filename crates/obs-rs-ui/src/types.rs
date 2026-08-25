@@ -253,6 +253,8 @@ pub enum UiAction {
     ToggleMicrophoneMute,
     /// Toggle the desktop-audio mixer channel mute state.
     ToggleDesktopMute,
+    /// Toggle the desktop between the Studio and single-canvas views.
+    ToggleStudioMode,
 }
 
 /// A validated, sortable keyboard shortcut description.

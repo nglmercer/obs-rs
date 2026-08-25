@@ -285,6 +285,7 @@ pub(crate) struct AppSettings {
     pub(crate) hotkey_stop_replay: String,
     pub(crate) hotkey_toggle_microphone_mute: String,
     pub(crate) hotkey_toggle_desktop_mute: String,
+    pub(crate) hotkey_toggle_studio_mode: String,
     pub(crate) preview_border_color: String,
     pub(crate) program_border_color: String,
     pub(crate) project_path: String,
@@ -393,6 +394,9 @@ impl Default for AppSettings {
             hotkey_stop_replay: "Ctrl+Alt+F8".to_owned(),
             hotkey_toggle_microphone_mute: String::new(),
             hotkey_toggle_desktop_mute: String::new(),
+            // Keep this opt-in until the user chooses a key that fits their
+            // existing desktop/window-manager bindings.
+            hotkey_toggle_studio_mode: String::new(),
             preview_border_color: "#60A5FA".to_owned(),
             program_border_color: "#F87171".to_owned(),
             project_path: user_file(PROJECT_FILE),

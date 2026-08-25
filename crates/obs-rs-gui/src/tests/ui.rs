@@ -37,6 +37,9 @@ fn ui_layout_can_render_a_reference_snapshot() {
     let next_shortcut = Shortcut::parse("F7")
         .expect("next-scene shortcut syntax")
         .expect("next-scene shortcut binding");
+    let studio_shortcut = Shortcut::parse("Ctrl+Shift+S")
+        .expect("studio-mode shortcut syntax")
+        .expect("studio-mode shortcut binding");
     state
         .borrow_mut()
         .replace_shortcuts(&[
@@ -44,6 +47,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
             (cut_shortcut, UiAction::CutTransition),
             (previous_shortcut, UiAction::PreviousPreviewScene),
             (next_shortcut, UiAction::NextPreviewScene),
+            (studio_shortcut, UiAction::ToggleStudioMode),
         ])
         .expect("shortcut table");
     crate::callbacks::install_shortcut_callbacks(&ui, &state);
@@ -51,6 +55,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+t".into()), 15);
     assert_eq!(ui.invoke_trigger_shortcut("f6".into()), 16);
     assert_eq!(ui.invoke_trigger_shortcut("f7".into()), 17);
+    assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+s".into()), 18);
     assert_eq!(ui.invoke_trigger_shortcut("Ctrl+X".into()), 0);
     let persisted_tree = DockNode::Split {
         axis: crate::dock_tree::DockAxis::Vertical,
@@ -130,6 +135,19 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui.set_multiview_audio_db(-12.0);
     ui.set_show_safe_areas(true);
     ui.show().expect("testing window should show");
+    ui.set_view_mode(1);
+    ui.invoke_toggle_studio_mode();
+    assert_eq!(
+        ui.get_view_mode(),
+        0,
+        "Studio Mode callback enters Studio view"
+    );
+    ui.invoke_toggle_studio_mode();
+    assert_eq!(
+        ui.get_view_mode(),
+        1,
+        "Studio Mode callback returns to canvas view"
+    );
     let multiview_snapshot = ui
         .window()
         .take_snapshot()

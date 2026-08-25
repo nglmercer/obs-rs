@@ -263,6 +263,15 @@ pub(crate) fn install_dock_callbacks_with_layout(
     });
 
     let weak = ui.as_weak();
+    ui.on_toggle_studio_mode(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let current = ui.get_view_mode();
+        ui.set_view_mode(i32::from(current == 0));
+    });
+
+    let weak = ui.as_weak();
     let tree_controller = Rc::clone(&controller);
     ui.on_resize_panel(move |index, delta| {
         let Some(ui) = weak.upgrade() else {

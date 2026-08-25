@@ -102,6 +102,10 @@ pub(crate) fn shortcut_bindings(
             settings.hotkey_toggle_desktop_mute.as_str(),
             UiAction::ToggleDesktopMute,
         ),
+        (
+            settings.hotkey_toggle_studio_mode.as_str(),
+            UiAction::ToggleStudioMode,
+        ),
     ];
     let mut bindings = Vec::with_capacity(values.len());
     for (text, action) in values {
@@ -137,6 +141,7 @@ pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
         settings.hotkey_stop_replay.as_str(),
         settings.hotkey_toggle_microphone_mute.as_str(),
         settings.hotkey_toggle_desktop_mute.as_str(),
+        settings.hotkey_toggle_studio_mode.as_str(),
     ];
     let mut counts = BTreeMap::new();
     for value in values {

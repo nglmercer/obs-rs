@@ -42,6 +42,7 @@ export component AppNavbar inherits Rectangle {
     in property <string> hotkey-save-project;
     in property <string> hotkey-cut-transition;
     in property <string> hotkey-fade-transition;
+    in property <string> hotkey-toggle-studio-mode;
     in property <bool> studio-mode;
     in property <int> view-mode;
     callback menu-action(string);
@@ -159,6 +160,7 @@ export component AppNavbar inherits Rectangle {
             spacing: 1px;
             MenuEntry {
                 label: I18n.text.menu_studio_mode;
+                shortcut: root.hotkey-toggle-studio-mode;
                 checkable: true;
                 checked: root.studio-mode;
                 clicked => { root.select-view-mode(-1); view-popup.close(); }

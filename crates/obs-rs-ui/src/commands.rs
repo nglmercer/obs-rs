@@ -138,7 +138,8 @@ impl DesktopState {
             | UiAction::FadeTransition
             | UiAction::SaveReplayBuffer
             | UiAction::StartReplayBuffer
-            | UiAction::StopReplayBuffer => Err(UiError::FrontendActionRequired(action)),
+            | UiAction::StopReplayBuffer
+            | UiAction::ToggleStudioMode => Err(UiError::FrontendActionRequired(action)),
         }
     }
 

@@ -235,6 +235,11 @@ impl AppSettings {
                 "hotkey_toggle_desktop_mute",
                 &defaults.hotkey_toggle_desktop_mute,
             ),
+            hotkey_toggle_studio_mode: hotkey(
+                config,
+                "hotkey_toggle_studio_mode",
+                &defaults.hotkey_toggle_studio_mode,
+            ),
             preview_border_color: colour_text(
                 config,
                 "preview_border_color",
@@ -439,6 +444,10 @@ impl AppSettings {
             (
                 "hotkey_toggle_desktop_mute",
                 self.hotkey_toggle_desktop_mute.clone(),
+            ),
+            (
+                "hotkey_toggle_studio_mode",
+                self.hotkey_toggle_studio_mode.clone(),
             ),
             ("preview_border_color", self.preview_border_color.clone()),
             ("program_border_color", self.program_border_color.clone()),

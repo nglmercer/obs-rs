@@ -32,6 +32,7 @@ fn settings_round_trip_through_the_config_document() {
         hotkey_stop_replay: "Ctrl+Alt+R".to_owned(),
         hotkey_toggle_microphone_mute: "Ctrl+M".to_owned(),
         hotkey_toggle_desktop_mute: "Ctrl+Shift+M".to_owned(),
+        hotkey_toggle_studio_mode: "Ctrl+Shift+S".to_owned(),
         preview_border_color: "#00FF88".to_owned(),
         last_preview_scene: "source_scene".to_owned(),
         last_program_scene: "program".to_owned(),
@@ -117,6 +118,9 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
     config
         .set("hotkey_previous_scene", " Shift + F6 ")
         .expect("hotkey key");
+    config
+        .set("hotkey_toggle_studio_mode", "Ctrl+Shift+S")
+        .expect("hotkey key");
 
     let decoded = AppSettings::from_config(&config);
 
@@ -128,6 +132,11 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
     assert!(decoded.hotkey_stop_recording.is_empty());
     assert_eq!(decoded.hotkey_cut_transition, "Alt+C");
     assert_eq!(decoded.hotkey_previous_scene, "Shift+F6");
+    assert!(shortcut_bindings(&decoded)
+        .expect("shortcut bindings")
+        .iter()
+        .any(|(shortcut, action)| shortcut.to_string() == "Ctrl+Shift+S"
+            && *action == UiAction::ToggleStudioMode));
     assert!(shortcut_bindings(&decoded)
         .expect("shortcut bindings")
         .iter()

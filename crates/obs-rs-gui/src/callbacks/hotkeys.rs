@@ -31,6 +31,7 @@ const TOGGLE_DESKTOP_MUTE: i32 = 14;
 const CUT_TRANSITION: i32 = 15;
 const PREVIOUS_PREVIEW_SCENE: i32 = 16;
 const NEXT_PREVIEW_SCENE: i32 = 17;
+const TOGGLE_STUDIO_MODE: i32 = 18;
 
 pub(crate) fn install_shortcut_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let shortcut_state = Rc::clone(state);
@@ -64,6 +65,7 @@ fn action_code(action: UiAction) -> i32 {
         UiAction::StopReplayBuffer => STOP_REPLAY_BUFFER,
         UiAction::ToggleMicrophoneMute => TOGGLE_MICROPHONE_MUTE,
         UiAction::ToggleDesktopMute => TOGGLE_DESKTOP_MUTE,
+        UiAction::ToggleStudioMode => TOGGLE_STUDIO_MODE,
     }
 }
 
@@ -91,13 +93,14 @@ mod tests {
             UiAction::StopReplayBuffer,
             UiAction::ToggleMicrophoneMute,
             UiAction::ToggleDesktopMute,
+            UiAction::ToggleStudioMode,
         ];
         let mut codes = actions.into_iter().map(action_code).collect::<Vec<_>>();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(
             codes,
-            (SWAP_PREVIEW_PROGRAM..=NEXT_PREVIEW_SCENE).collect::<Vec<_>>()
+            (SWAP_PREVIEW_PROGRAM..=TOGGLE_STUDIO_MODE).collect::<Vec<_>>()
         );
         assert!(!codes.contains(&NO_ACTION));
     }

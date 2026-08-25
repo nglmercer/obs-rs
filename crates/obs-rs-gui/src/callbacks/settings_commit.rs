@@ -445,6 +445,10 @@ pub(super) fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSetti
         window.get_hotkey_toggle_desktop_mute().as_str(),
         &settings.hotkey_toggle_desktop_mute,
     );
+    settings.hotkey_toggle_studio_mode = crate::settings::validated_hotkey(
+        window.get_hotkey_toggle_studio_mode().as_str(),
+        &settings.hotkey_toggle_studio_mode,
+    );
 }
 
 /// Reads the canvas-only settings as one validated presentation policy.

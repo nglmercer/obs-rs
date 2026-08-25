@@ -188,6 +188,7 @@ export component MainWindow inherits Window {
         callback trigger-shortcut(string) -> int;
         callback toggle-recording();
         callback toggle-streaming();
+        callback toggle-studio-mode();
         callback toggle-replay-buffer();
         callback save-replay-buffer();
         callback recover-recording();
@@ -207,6 +208,7 @@ export component MainWindow inherits Window {
         in property <string> hotkey-previous-scene;
         in property <string> hotkey-next-scene;
         in property <string> hotkey-save-replay;
+        in property <string> hotkey-toggle-studio-mode;
         callback select-preview(string);
         callback select-program(string);
         callback duplicate-scene(string);
@@ -411,6 +413,9 @@ export component MainWindow inherits Window {
             } else if (action == 14) {
                 root.toggle-mixer-mute("desktop");
                 true
+            } else if (action == 18) {
+                root.toggle-studio-mode();
+                true
             } else {
                 false
             }
@@ -575,6 +580,7 @@ export component MainWindow inherits Window {
                 hotkey-save-project: root.hotkey-save-project;
                 hotkey-cut-transition: root.hotkey-cut-transition;
                 hotkey-fade-transition: root.hotkey-fade-transition;
+                hotkey-toggle-studio-mode: root.hotkey-toggle-studio-mode;
                 view-mode: root.view-mode;
                 set-locale(code) => { root.set-locale(code); }
                 select-collection(id) => { root.request-collection(id); }

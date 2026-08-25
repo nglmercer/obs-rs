@@ -16,6 +16,7 @@ pub(super) fn apply_to_studio(ui: &MainWindow, settings: &AppSettings) {
     ui.set_hotkey_redo(settings.hotkey_redo.as_str().into());
     ui.set_hotkey_previous_scene(settings.hotkey_previous_scene.as_str().into());
     ui.set_hotkey_next_scene(settings.hotkey_next_scene.as_str().into());
+    ui.set_hotkey_toggle_studio_mode(settings.hotkey_toggle_studio_mode.as_str().into());
     ui.set_hotkey_save_project(settings.hotkey_save_project.as_str().into());
     ui.set_hotkey_cut_transition(settings.hotkey_cut_transition.as_str().into());
     ui.set_hotkey_fade_transition(settings.hotkey_fade_transition.as_str().into());

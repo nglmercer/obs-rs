@@ -30,6 +30,13 @@ same callback boundary. Pure index tests and a real testing-backend pointer
 fixture cover both directions and invalid drop inputs. Scene collection
 drag/drop across documents and native accessibility behavior remain open.
 
+The hotkey table now includes a persisted `ToggleStudioMode` action. Settings
+validation, conflict detection, action code 18, the View-menu projection, and
+the Rust-owned callback all use the same bounded binding. The callback toggles
+the existing view-mode state without introducing a second Studio-mode owner;
+the default is intentionally unbound. Global OS registration, push-to-talk/mute,
+and the remaining OBS action catalog remain open.
+
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation
 when every crossed parent scale is uniform and unmirrored. Media, project,
