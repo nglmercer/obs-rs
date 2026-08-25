@@ -145,6 +145,7 @@ impl DesktopState {
             | UiAction::ToggleSelectedSourceProjector => {
                 Err(UiError::FrontendActionRequired(action))
             }
+            UiAction::TogglePreviewSceneProjector => Err(UiError::FrontendActionRequired(action)),
         }
     }
 

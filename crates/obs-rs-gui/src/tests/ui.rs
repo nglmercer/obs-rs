@@ -49,6 +49,9 @@ fn ui_layout_can_render_a_reference_snapshot() {
     let projector_shortcut = Shortcut::parse("Ctrl+Shift+P")
         .expect("selected-source projector shortcut syntax")
         .expect("selected-source projector shortcut binding");
+    let scene_projector_shortcut = Shortcut::parse("Ctrl+Shift+R")
+        .expect("preview-scene projector shortcut syntax")
+        .expect("preview-scene projector shortcut binding");
     state
         .borrow_mut()
         .replace_shortcuts(&[
@@ -63,6 +66,10 @@ fn ui_layout_can_render_a_reference_snapshot() {
             ),
             (lock_shortcut, UiAction::ToggleSelectedSourceLock),
             (projector_shortcut, UiAction::ToggleSelectedSourceProjector),
+            (
+                scene_projector_shortcut,
+                UiAction::TogglePreviewSceneProjector,
+            ),
         ])
         .expect("shortcut table");
     crate::callbacks::install_shortcut_callbacks(&ui, &state);
@@ -74,6 +81,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+v".into()), 19);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+l".into()), 20);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+p".into()), 21);
+    assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+r".into()), 22);
     assert_eq!(ui.invoke_trigger_shortcut("Ctrl+X".into()), 0);
     let persisted_tree = DockNode::Split {
         axis: crate::dock_tree::DockAxis::Vertical,

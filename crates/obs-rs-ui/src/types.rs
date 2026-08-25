@@ -261,6 +261,8 @@ pub enum UiAction {
     ToggleSelectedSourceLock,
     /// Toggle the projector for the currently selected source item.
     ToggleSelectedSourceProjector,
+    /// Toggle the projector for the current Preview scene.
+    TogglePreviewSceneProjector,
 }
 
 /// A validated, sortable keyboard shortcut description.

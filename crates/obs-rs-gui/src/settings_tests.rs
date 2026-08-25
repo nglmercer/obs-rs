@@ -36,6 +36,7 @@ fn settings_round_trip_through_the_config_document() {
         hotkey_toggle_selected_source_visibility: "Ctrl+Shift+V".to_owned(),
         hotkey_toggle_selected_source_lock: "Ctrl+Shift+L".to_owned(),
         hotkey_toggle_selected_source_projector: "Ctrl+Shift+P".to_owned(),
+        hotkey_toggle_preview_scene_projector: "Ctrl+Shift+R".to_owned(),
         preview_border_color: "#00FF88".to_owned(),
         last_preview_scene: "source_scene".to_owned(),
         last_program_scene: "program".to_owned(),
@@ -133,6 +134,9 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
     config
         .set("hotkey_toggle_selected_source_projector", "Ctrl+Shift+P")
         .expect("hotkey key");
+    config
+        .set("hotkey_toggle_preview_scene_projector", "Ctrl+Shift+R")
+        .expect("hotkey key");
 
     let decoded = AppSettings::from_config(&config);
 
@@ -164,6 +168,11 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
         .iter()
         .any(|(shortcut, action)| shortcut.to_string() == "Ctrl+Shift+P"
             && *action == UiAction::ToggleSelectedSourceProjector));
+    assert!(shortcut_bindings(&decoded)
+        .expect("shortcut bindings")
+        .iter()
+        .any(|(shortcut, action)| shortcut.to_string() == "Ctrl+Shift+R"
+            && *action == UiAction::TogglePreviewSceneProjector));
     assert!(shortcut_bindings(&decoded)
         .expect("shortcut bindings")
         .iter()

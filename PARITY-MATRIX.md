@@ -103,6 +103,16 @@ Empty selections, groups, and Scene references are rejected at the UI
 boundary; the default remains unbound. Live multi-monitor evidence and global
 registration remain incomplete.
 
+## Latest verified package: Preview-scene projector hotkey
+
+On 2026-08-25, `STUDIO-003`/`HOTKEY-001` gained a typed
+`TogglePreviewSceneProjector` action. The bounded shortcut table, persisted
+Hotkeys field, English/Spanish settings row, action code 22, and Slint
+execution path reuse the existing scene-projector callback with the current
+Preview scene target. Empty or `none` Preview targets are rejected at the UI
+boundary; the default remains unbound. Live multi-monitor evidence and global
+registration remain incomplete.
+
 ## Latest verified package: exact nested leaf crop/rotation slice
 
 On 2026-08-25, nested group and Scene-reference flattening gained a bounded
@@ -663,6 +673,11 @@ Reconciliation note: `STUDIO-003`/`HOTKEY-001` now also include the optional
 persisted selected-source projector binding and GUI action code 21. It reuses
 the existing projector lifecycle and rejects groups/Scene references rather
 than opening an invalid source feed; global registration remains partial.
+
+Reconciliation note: `STUDIO-003`/`HOTKEY-001` now also include the optional
+persisted Preview-scene projector binding and GUI action code 22. It reuses the
+existing target-bearing scene-projector lifecycle and leaves the default
+unbound; live multi-monitor evidence and global registration remain partial.
 
 ## Baseline conclusion
 

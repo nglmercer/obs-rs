@@ -237,6 +237,26 @@ fn selected_source_projector_shortcut_is_a_frontend_action() {
 }
 
 #[test]
+fn preview_scene_projector_shortcut_is_a_frontend_action() {
+    let mut state = DesktopState::new(project());
+    let shortcut =
+        Shortcut::new(1 | Shortcut::SHIFT, "R").expect("preview-scene projector shortcut");
+    state
+        .replace_shortcuts(&[(shortcut.clone(), UiAction::TogglePreviewSceneProjector)])
+        .expect("preview-scene projector shortcut table");
+    assert_eq!(
+        state.shortcut_action(&shortcut),
+        Some(UiAction::TogglePreviewSceneProjector)
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::TriggerShortcut { shortcut }),
+        Err(UiError::FrontendActionRequired(
+            UiAction::TogglePreviewSceneProjector
+        ))
+    );
+}
+
+#[test]
 fn replay_start_and_stop_shortcuts_are_frontend_actions() {
     let mut state = DesktopState::new(project());
     let start = Shortcut::new(0, "F9").expect("shortcut");

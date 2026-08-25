@@ -55,6 +55,12 @@ the UI refuses empty selections, groups, and Scene references before opening
 the source feed. Multi-monitor evidence and global OS registration remain
 open.
 
+The Preview-scene projector hotkey now reuses the existing target-bearing
+scene-projector callback. Bounded action code 22 is persisted and
+conflict-checked, and the UI refuses an empty or `none` Preview target before
+opening the feed. Multi-monitor evidence and global OS registration remain
+open.
+
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation
 when every crossed parent scale is uniform and unmirrored. Media, project,

@@ -287,6 +287,7 @@ pub(super) fn catalog() -> UiText {
         hotkey_toggle_selected_source_visibility: s("Toggle selected source visibility"),
         hotkey_toggle_selected_source_lock: s("Toggle selected source lock"),
         hotkey_toggle_selected_source_projector: s("Toggle selected source projector"),
+        hotkey_toggle_preview_scene_projector: s("Toggle Preview scene projector"),
             hotkeys_hint: s("Use names like Space, F1, or Ctrl+Shift+R. Leave a field empty to unbind it."),
             hotkeys_conflict: s("Duplicate hotkeys"),
             group_colors: s("Colors"),

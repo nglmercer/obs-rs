@@ -255,6 +255,11 @@ impl AppSettings {
                 "hotkey_toggle_selected_source_projector",
                 &defaults.hotkey_toggle_selected_source_projector,
             ),
+            hotkey_toggle_preview_scene_projector: hotkey(
+                config,
+                "hotkey_toggle_preview_scene_projector",
+                &defaults.hotkey_toggle_preview_scene_projector,
+            ),
             preview_border_color: colour_text(
                 config,
                 "preview_border_color",
@@ -475,6 +480,10 @@ impl AppSettings {
             (
                 "hotkey_toggle_selected_source_projector",
                 self.hotkey_toggle_selected_source_projector.clone(),
+            ),
+            (
+                "hotkey_toggle_preview_scene_projector",
+                self.hotkey_toggle_preview_scene_projector.clone(),
             ),
             ("preview_border_color", self.preview_border_color.clone()),
             ("program_border_color", self.program_border_color.clone()),

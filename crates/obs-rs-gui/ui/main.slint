@@ -433,6 +433,11 @@ export component MainWindow inherits Window {
                 && !root.selected-source-is-scene) {
                 root.open-source-projector();
                 true
+            } else if (action == 22
+                && root.preview-scene != ""
+                && root.preview-scene != "none") {
+                root.open-scene-projector(root.preview-scene);
+                true
             } else {
                 false
             }

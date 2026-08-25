@@ -35,6 +35,7 @@ const TOGGLE_STUDIO_MODE: i32 = 18;
 const TOGGLE_SELECTED_SOURCE_VISIBILITY: i32 = 19;
 const TOGGLE_SELECTED_SOURCE_LOCK: i32 = 20;
 const TOGGLE_SELECTED_SOURCE_PROJECTOR: i32 = 21;
+const TOGGLE_PREVIEW_SCENE_PROJECTOR: i32 = 22;
 
 pub(crate) fn install_shortcut_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let shortcut_state = Rc::clone(state);
@@ -72,6 +73,7 @@ fn action_code(action: UiAction) -> i32 {
         UiAction::ToggleSelectedSourceVisibility => TOGGLE_SELECTED_SOURCE_VISIBILITY,
         UiAction::ToggleSelectedSourceLock => TOGGLE_SELECTED_SOURCE_LOCK,
         UiAction::ToggleSelectedSourceProjector => TOGGLE_SELECTED_SOURCE_PROJECTOR,
+        UiAction::TogglePreviewSceneProjector => TOGGLE_PREVIEW_SCENE_PROJECTOR,
     }
 }
 
@@ -103,13 +105,14 @@ mod tests {
             UiAction::ToggleSelectedSourceVisibility,
             UiAction::ToggleSelectedSourceLock,
             UiAction::ToggleSelectedSourceProjector,
+            UiAction::TogglePreviewSceneProjector,
         ];
         let mut codes = actions.into_iter().map(action_code).collect::<Vec<_>>();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(
             codes,
-            (SWAP_PREVIEW_PROGRAM..=TOGGLE_SELECTED_SOURCE_PROJECTOR).collect::<Vec<_>>()
+            (SWAP_PREVIEW_PROGRAM..=TOGGLE_PREVIEW_SCENE_PROJECTOR).collect::<Vec<_>>()
         );
         assert!(!codes.contains(&NO_ACTION));
     }

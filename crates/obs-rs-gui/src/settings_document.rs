@@ -118,6 +118,10 @@ pub(crate) fn shortcut_bindings(
             settings.hotkey_toggle_selected_source_projector.as_str(),
             UiAction::ToggleSelectedSourceProjector,
         ),
+        (
+            settings.hotkey_toggle_preview_scene_projector.as_str(),
+            UiAction::TogglePreviewSceneProjector,
+        ),
     ];
     let mut bindings = Vec::with_capacity(values.len());
     for (text, action) in values {
@@ -157,6 +161,7 @@ pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
         settings.hotkey_toggle_selected_source_visibility.as_str(),
         settings.hotkey_toggle_selected_source_lock.as_str(),
         settings.hotkey_toggle_selected_source_projector.as_str(),
+        settings.hotkey_toggle_preview_scene_projector.as_str(),
     ];
     let mut counts = BTreeMap::new();
     for value in values {
