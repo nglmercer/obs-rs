@@ -416,6 +416,11 @@ export component MainWindow inherits Window {
             } else if (action == 18) {
                 root.toggle-studio-mode();
                 true
+            } else if (action == 19
+                && root.selected-source != ""
+                && root.selected-source != "none") {
+                root.toggle-source-visibility(root.selected-source);
+                true
             } else {
                 false
             }

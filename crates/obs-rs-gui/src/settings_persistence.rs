@@ -240,6 +240,11 @@ impl AppSettings {
                 "hotkey_toggle_studio_mode",
                 &defaults.hotkey_toggle_studio_mode,
             ),
+            hotkey_toggle_selected_source_visibility: hotkey(
+                config,
+                "hotkey_toggle_selected_source_visibility",
+                &defaults.hotkey_toggle_selected_source_visibility,
+            ),
             preview_border_color: colour_text(
                 config,
                 "preview_border_color",
@@ -448,6 +453,10 @@ impl AppSettings {
             (
                 "hotkey_toggle_studio_mode",
                 self.hotkey_toggle_studio_mode.clone(),
+            ),
+            (
+                "hotkey_toggle_selected_source_visibility",
+                self.hotkey_toggle_selected_source_visibility.clone(),
             ),
             ("preview_border_color", self.preview_border_color.clone()),
             ("program_border_color", self.program_border_color.clone()),

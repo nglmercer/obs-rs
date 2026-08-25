@@ -195,6 +195,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> hotkey-toggle-microphone-mute;
     in-out property <string> hotkey-toggle-desktop-mute;
     in-out property <string> hotkey-toggle-studio-mode;
+    in-out property <string> hotkey-toggle-selected-source-visibility;
     in-out property <string> hotkeys-conflict;
     // Accessibility
     in-out property <string> preview-border-color;
@@ -615,6 +616,7 @@ export component SettingsWindow inherits Window {
                         hotkey-toggle-microphone-mute <=> root.hotkey-toggle-microphone-mute;
                         hotkey-toggle-desktop-mute <=> root.hotkey-toggle-desktop-mute;
                         hotkey-toggle-studio-mode <=> root.hotkey-toggle-studio-mode;
+                        hotkey-toggle-selected-source-visibility <=> root.hotkey-toggle-selected-source-visibility;
                         conflict-warning: root.hotkeys-conflict;
                         changed => { root.dirty = true; }
                     }

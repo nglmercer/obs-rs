@@ -73,6 +73,16 @@ The default remains unbound to avoid stealing a desktop/window-manager key;
 global OS registration, push-to-talk/mute, and the remaining OBS action set
 remain incomplete.
 
+## Latest verified package: selected-source visibility hotkey
+
+On 2026-08-25, `SOURCE-001`/`HOTKEY-001` gained a typed
+`ToggleSelectedSourceVisibility` action. The bounded shortcut table, persisted
+Hotkeys field, English/Spanish settings row, action code 19, and Slint
+execution path reuse the existing Rust source-visibility callback. The action
+refuses an empty or `none` selected target at the UI boundary; its default
+remains unbound. Global registration, Interact, and the remaining source
+context-menu actions remain incomplete.
+
 ## Latest verified package: exact nested leaf crop/rotation slice
 
 On 2026-08-25, nested group and Scene-reference flattening gained a bounded
@@ -618,6 +628,11 @@ Reconciliation note: `DOCK-004`/`PLUGIN-001` now include bounded plugin dock
 metadata registration and runtime diagnostics. This is an extension contract,
 not yet a dynamic custom-dock UI; Slint surfaces still expose only the built-in
 docks until the plugin-host packet is implemented.
+
+Reconciliation note: `SOURCE-001`/`HOTKEY-001` now also include the optional
+persisted selected-source visibility binding and GUI action code 19. It routes
+through the existing source callback and leaves the default unbound; global
+registration and the remaining source action catalog remain partial.
 
 ## Baseline conclusion
 

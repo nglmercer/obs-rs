@@ -449,6 +449,12 @@ pub(super) fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSetti
         window.get_hotkey_toggle_studio_mode().as_str(),
         &settings.hotkey_toggle_studio_mode,
     );
+    settings.hotkey_toggle_selected_source_visibility = crate::settings::validated_hotkey(
+        window
+            .get_hotkey_toggle_selected_source_visibility()
+            .as_str(),
+        &settings.hotkey_toggle_selected_source_visibility,
+    );
 }
 
 /// Reads the canvas-only settings as one validated presentation policy.

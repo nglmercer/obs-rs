@@ -40,6 +40,9 @@ fn ui_layout_can_render_a_reference_snapshot() {
     let studio_shortcut = Shortcut::parse("Ctrl+Shift+S")
         .expect("studio-mode shortcut syntax")
         .expect("studio-mode shortcut binding");
+    let visibility_shortcut = Shortcut::parse("Ctrl+Shift+V")
+        .expect("selected-source visibility shortcut syntax")
+        .expect("selected-source visibility shortcut binding");
     state
         .borrow_mut()
         .replace_shortcuts(&[
@@ -48,6 +51,10 @@ fn ui_layout_can_render_a_reference_snapshot() {
             (previous_shortcut, UiAction::PreviousPreviewScene),
             (next_shortcut, UiAction::NextPreviewScene),
             (studio_shortcut, UiAction::ToggleStudioMode),
+            (
+                visibility_shortcut,
+                UiAction::ToggleSelectedSourceVisibility,
+            ),
         ])
         .expect("shortcut table");
     crate::callbacks::install_shortcut_callbacks(&ui, &state);
@@ -56,6 +63,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(ui.invoke_trigger_shortcut("f6".into()), 16);
     assert_eq!(ui.invoke_trigger_shortcut("f7".into()), 17);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+s".into()), 18);
+    assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+v".into()), 19);
     assert_eq!(ui.invoke_trigger_shortcut("Ctrl+X".into()), 0);
     let persisted_tree = DockNode::Split {
         axis: crate::dock_tree::DockAxis::Vertical,

@@ -255,6 +255,8 @@ pub enum UiAction {
     ToggleDesktopMute,
     /// Toggle the desktop between the Studio and single-canvas views.
     ToggleStudioMode,
+    /// Toggle visibility for the currently selected source item.
+    ToggleSelectedSourceVisibility,
 }
 
 /// A validated, sortable keyboard shortcut description.

@@ -32,6 +32,7 @@ const CUT_TRANSITION: i32 = 15;
 const PREVIOUS_PREVIEW_SCENE: i32 = 16;
 const NEXT_PREVIEW_SCENE: i32 = 17;
 const TOGGLE_STUDIO_MODE: i32 = 18;
+const TOGGLE_SELECTED_SOURCE_VISIBILITY: i32 = 19;
 
 pub(crate) fn install_shortcut_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let shortcut_state = Rc::clone(state);
@@ -66,6 +67,7 @@ fn action_code(action: UiAction) -> i32 {
         UiAction::ToggleMicrophoneMute => TOGGLE_MICROPHONE_MUTE,
         UiAction::ToggleDesktopMute => TOGGLE_DESKTOP_MUTE,
         UiAction::ToggleStudioMode => TOGGLE_STUDIO_MODE,
+        UiAction::ToggleSelectedSourceVisibility => TOGGLE_SELECTED_SOURCE_VISIBILITY,
     }
 }
 
@@ -94,13 +96,14 @@ mod tests {
             UiAction::ToggleMicrophoneMute,
             UiAction::ToggleDesktopMute,
             UiAction::ToggleStudioMode,
+            UiAction::ToggleSelectedSourceVisibility,
         ];
         let mut codes = actions.into_iter().map(action_code).collect::<Vec<_>>();
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(
             codes,
-            (SWAP_PREVIEW_PROGRAM..=TOGGLE_STUDIO_MODE).collect::<Vec<_>>()
+            (SWAP_PREVIEW_PROGRAM..=TOGGLE_SELECTED_SOURCE_VISIBILITY).collect::<Vec<_>>()
         );
         assert!(!codes.contains(&NO_ACTION));
     }

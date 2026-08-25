@@ -139,7 +139,10 @@ impl DesktopState {
             | UiAction::SaveReplayBuffer
             | UiAction::StartReplayBuffer
             | UiAction::StopReplayBuffer
-            | UiAction::ToggleStudioMode => Err(UiError::FrontendActionRequired(action)),
+            | UiAction::ToggleStudioMode
+            | UiAction::ToggleSelectedSourceVisibility => {
+                Err(UiError::FrontendActionRequired(action))
+            }
         }
     }
 

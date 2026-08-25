@@ -37,6 +37,12 @@ the existing view-mode state without introducing a second Studio-mode owner;
 the default is intentionally unbound. Global OS registration, push-to-talk/mute,
 and the remaining OBS action catalog remain open.
 
+The selected-source visibility hotkey now reuses the existing typed source
+callback. Bounded action code 19 is persisted, conflict-checked, and rejected
+when the UI has no valid selected source, so source visibility remains owned by
+the project command path. Interact, context-menu completion, and global OS
+registration remain open.
+
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation
 when every crossed parent scale is uniform and unmirrored. Media, project,

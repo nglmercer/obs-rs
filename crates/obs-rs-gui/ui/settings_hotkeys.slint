@@ -41,6 +41,7 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-toggle-microphone-mute;
     in-out property <string> hotkey-toggle-desktop-mute;
     in-out property <string> hotkey-toggle-studio-mode;
+    in-out property <string> hotkey-toggle-selected-source-visibility;
     in property <string> conflict-warning;
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -188,6 +189,14 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-toggle-studio-mode;
                 placeholder-text: "Ctrl+Shift+S";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_selected_source_visibility;
+            SettingsField {
+                text <=> root.hotkey-toggle-selected-source-visibility;
+                placeholder-text: "Ctrl+Shift+V";
                 edited => { root.changed(); }
             }
         }
