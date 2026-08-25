@@ -273,6 +273,10 @@ export component SceneContextMenuArea inherits Rectangle {
     in property <string> scene-id;
     in property <bool> can-remove;
 
+    // Stable scene identity for screen readers and pointer-test fixtures.
+    accessible-role: button;
+    accessible-label: root.scene-id;
+
     callback select-scene(string);
     callback add-scene();
     callback duplicate-scene(string);

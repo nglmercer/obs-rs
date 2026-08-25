@@ -535,6 +535,11 @@ actions; global OS registration remains incomplete.
 | PRODUCT-003 | Reliability and soak | Hours-long record/stream sessions survive device, GPU, network, and output failures with bounded memory. | A/V 300-tick soak and bounded worker tests pass; no multi-hour production output/device/GPU/network soak has been run. | Partial | Portable/Linux slice | `obs-rs-linux-check` A/V soak passes; release benchmark misses deadlines. | `crates/obs-rs-clock`, `crates/obs-rs-engine`, `crates/obs-rs-video` | Performance agent, fault-injection matrix |
 | PRODUCT-004 | Packaging and updates | Signed installers, platform packaging, plugin updates, rollback, and diagnostics ship for all targets. | Release artifact script and signed update-manifest primitives exist; production packaging/signing/update channels are not complete. | Partial | All | Script/unit coverage only. | `scripts/release-artifacts.sh`, `crates/obs-rs-update` | Platform agents, release pipeline |
 
+Reconciliation note: scene-dock rows now expose an explicit button role and
+stable scene-ID accessibility label, matching the existing source-row identity
+contract. The testing backend discovers the Preview row by that label; native
+screen-reader behavior and the remaining focus audit are still open.
+
 ## Baseline conclusion
 
 The first milestone is correctly identified as **fast OBS shell**: fix the

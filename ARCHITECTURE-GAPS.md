@@ -40,6 +40,11 @@ UI locale, including safe fallback for persisted unknown kinds. Existing
 filter instance names remain user-editable project data and are not rewritten
 when the locale changes.
 
+The scene-dock accessibility packet now gives each scene row an explicit button
+role and stable scene-ID label, matching the existing source-row contract. A
+real testing-backend fixture finds the Preview scene by that label; the full
+screen-reader and native platform audit remains open.
+
 The scene-item identity packet now also covers atomic root/group reparenting:
 `MoveSceneItemToParent` validates source and destination paths before moving the
 owned item, and the Sources dock projects the same destinations for nested rows.

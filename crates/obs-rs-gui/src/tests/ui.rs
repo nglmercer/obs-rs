@@ -102,6 +102,9 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(after_nudge.translate_x(), before_nudge.translate_x() + 3);
     assert_eq!(after_nudge.translate_y(), before_nudge.translate_y() - 2);
     refresh_ui(&ui, &state, &surface);
+    assert!(
+        ElementHandle::find_by_accessible_label(&ui, "preview").any(|row| row.size().height > 30.0)
+    );
     ui.set_view_mode(2);
     ui.set_multiview_status("Output: recording idle · stream idle".into());
     ui.set_multiview_metrics("frames=12 · dropped=1 · audio blocks=24 · queued=0 B".into());
