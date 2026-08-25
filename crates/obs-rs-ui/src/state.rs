@@ -16,7 +16,7 @@ use super::{
 };
 
 mod selection;
-use super::helpers::scene_item_at_target;
+use super::helpers::profile_scene_item_at_target;
 
 /// The last Preview/Program choices for one in-memory profile.
 #[derive(Clone, Debug, Default)]
@@ -211,8 +211,9 @@ impl DesktopState {
                     .project
                     .project()
                     .active_profile_spec()
-                    .and_then(|profile| profile.scene(preview_scene))
-                    .and_then(|scene| scene_item_at_target(scene, &id))
+                    .and_then(|profile| {
+                        profile_scene_item_at_target(profile, preview_scene.as_str(), &id)
+                    })
                     .cloned()
                     .ok_or(UiError::UnknownSelection {
                         kind: "scene item",

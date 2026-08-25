@@ -254,6 +254,21 @@ packet and continues to use the separate `MoveSceneItemToParent` contract.
 > cross-owner reparenting, alongside crop/rotation semantics at transformed
 > boundaries.
 
+## Latest verified package: nested scene-reference grouping
+
+On 2026-08-24, `GroupSceneItems` and `UngroupSceneItem` now resolve flattened
+targets through `Scene` references before applying the existing atomic
+same-owner operation. Leaves below one referenced scene can be grouped or
+ungrouped while preserving the parent reference and the owner's order,
+transforms, locks, and visibility. Mixed-owner selections are rejected before
+mutation. The Sources-dock availability check and toolkit-neutral selection
+resolver now validate the same paths; project, UI-state, and GUI fixtures cover
+selection, grouping, ungrouping, owner-scene mutation, and parent preservation.
+
+> SCENE-002/SOURCE-001 reconciliation: same-owner nested Scene-reference
+> grouping and ungrouping are now covered. Cross-owner reparenting and
+> transformed-boundary crop/rotation remain open.
+
 ## Latest verified package: dock-header pointer drag
 
 On 2026-08-24, the GUI dock fixture now drives a visible `DockHeader` through
@@ -329,14 +344,15 @@ project/scene/output, collection, recovery, remux, and rename dialog flows.
 > nested source actions. Ctrl+A uses that same visible-row projection and
 > bounded selection limit; source and group rename now resolve the same target
 > path, including root and nested group names.
-> Group selected items is now one atomic same-parent project command: the dock
-> keeps multi-selection on right-click, accepts root or nested siblings,
-> rejects mixed-parent or locked selections, preserves parent order and item
-> state, and selects the new path-addressed group after the command. Undo
-> removes the grouping as one edit.
-> Ungroup is now the inverse atomic command for root and nested group paths: it
-> validates lock and child-ID collisions, restores children at the former
-> parent position, and selects the exposed root or nested child paths.
+> Group selected items is now one atomic same-owner project command: the dock
+> keeps multi-selection on right-click, accepts root, nested-group, or
+> same-owner Scene-reference siblings, rejects mixed-owner or locked
+> selections, preserves parent order and item state, and selects the new
+> path-addressed group after the command. Undo removes the grouping as one edit.
+> Ungroup is the inverse atomic command for root, nested-group, and
+> same-owner Scene-reference group paths: it validates lock and child-ID
+> collisions, restores children at the former owner position, and selects the
+> exposed root or nested child paths.
 > This closes dock selection projection, but does not claim nested canvas
 > geometry parity.
 

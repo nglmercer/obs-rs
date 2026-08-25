@@ -181,6 +181,7 @@ fn exercise_scene_reference_source_dialogs(
     );
     exercise_scene_reference_group_rename(ui, state);
     ui.set_active_modal(0);
+    exercise_scene_reference_grouping(ui, state, surface);
 
     ui.invoke_toggle_source_visibility("transform-child-ref/background".into());
     assert!(!state
@@ -243,6 +244,101 @@ fn exercise_scene_reference_group_rename(ui: &MainWindow, state: &Rc<RefCell<Des
         Some("Nested group"),
         "nested Scene-reference rename must update the owning group"
     );
+}
+
+fn exercise_scene_reference_grouping(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let mut child = SceneSpec::new("group-child", "Group child").expect("group child scene");
+    child
+        .add_item(SceneItemSpec::new("group-first", "background").expect("first child"))
+        .expect("first child attach");
+    child
+        .add_item(SceneItemSpec::new("group-second", "background").expect("second child"))
+        .expect("second child attach");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        }))
+        .expect("add grouping child scene");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: SceneItemSpec::for_scene("group-child-ref", "group-child")
+                .expect("grouping scene reference"),
+        }))
+        .expect("add grouping scene reference");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSources {
+            ids: vec![
+                "group-child-ref/group-first".to_owned(),
+                "group-child-ref/group-second".to_owned(),
+            ],
+            additive: false,
+        })
+        .expect("select scene-reference siblings for grouping");
+    refresh_ui(ui, state, surface);
+    assert!(ui.get_can_group_sources());
+    ui.invoke_group_sources();
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("group-child-ref/group"),
+        "grouping selects the path-addressed owner group"
+    );
+    {
+        let state_ref = state.borrow();
+        let child = state_ref
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("group-child"))
+            .expect("grouping owner scene");
+        let grouped = child
+            .item("group")
+            .and_then(SceneItemSpec::group)
+            .expect("grouping owner group");
+        assert_eq!(grouped.items().len(), 2);
+        assert!(state_ref
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(|scene| scene.item("group-child-ref"))
+            .is_some());
+    }
+
+    ui.invoke_ungroup_source("group-child-ref/group".into());
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec![
+            "group-child-ref/group-first",
+            "group-child-ref/group-second"
+        ],
+        "ungroup selects the exposed Scene-reference children"
+    );
+    let state_ref = state.borrow();
+    let child = state_ref
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("group-child"))
+        .expect("ungrouping owner scene");
+    assert!(child.item("group").is_none());
+    assert_eq!(child.items().len(), 2);
+    assert!(state_ref
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("group-child-ref"))
+        .is_some());
 }
 
 fn exercise_scene_reference_transform_menu(

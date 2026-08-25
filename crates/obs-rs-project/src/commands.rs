@@ -18,11 +18,11 @@ mod source_definitions;
 
 use filters::legacy_filter_spec;
 use groups::{
-    duplicate_group_item, duplicate_scene_item_target, group_scene_items, move_group_item,
+    duplicate_group_item, duplicate_scene_item_target, group_scene_items_target, move_group_item,
     move_scene_item_target, move_scene_item_to_parent, paste_group_item, remove_group_item,
     remove_scene_item_target, remove_scene_items, set_group_item_locked, set_group_item_transform,
     set_group_item_visibility, set_scene_item_group_name_target, set_scene_item_locked_target,
-    set_scene_item_transform_target, set_scene_item_visibility_target, ungroup_scene_item,
+    set_scene_item_transform_target, set_scene_item_visibility_target, ungroup_scene_item_target,
 };
 
 pub(super) use source_definitions::copy_identity;
@@ -80,12 +80,12 @@ impl Project {
                 scene,
                 items,
                 group,
-            } => group_scene_items(self, &profile, &scene, &items, group),
+            } => group_scene_items_target(self, &profile, &scene, &items, group),
             ProjectCommand::UngroupSceneItem {
                 profile,
                 scene,
                 group,
-            } => ungroup_scene_item(self, &profile, &scene, &group),
+            } => ungroup_scene_item_target(self, &profile, &scene, &group),
             ProjectCommand::RemoveSceneItem {
                 profile,
                 scene,

@@ -9,8 +9,8 @@ use obs_rs_project::ProjectCommand;
 use super::{
     error::UiError,
     helpers::{
-        first_scene_id, first_source_id, project_has_scene, project_has_source,
-        scene_item_at_target,
+        first_scene_id, first_source_id, profile_scene_item_at_target, project_has_scene,
+        project_has_source,
     },
     state::{ActiveTransition, DesktopState},
     types::{TransitionSnapshot, UiAction, UiCommand, UiNotice},
@@ -98,13 +98,7 @@ impl DesktopState {
                 kind: "profile",
                 id: project.active_profile().to_string(),
             })?;
-        let scene = profile
-            .scene(preview_scene)
-            .ok_or_else(|| UiError::UnknownSelection {
-                kind: "scene",
-                id: preview_scene.to_owned(),
-            })?;
-        if scene_item_at_target(scene, id).is_some() {
+        if profile_scene_item_at_target(profile, preview_scene, id).is_some() {
             Ok(())
         } else {
             Err(UiError::UnknownSelection {

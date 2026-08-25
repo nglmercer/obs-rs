@@ -31,6 +31,14 @@ modal edit, and the project plus GUI fixtures prove one undo step and clean
 inheritance. Per-scene transition selection still does not replace the broader
 Studio Mode transition workflow or production output parity.
 
+The nested Scene-reference grouping packet now resolves the selected flattened
+targets to one owning scene and group path before invoking the existing atomic
+group/ungroup mutations. The project command, toolkit-neutral selection
+validation, Sources-dock availability projection, and GUI callback all retain
+the parent reference while changing the owner scene. Mixed-owner selections
+remain rejected; cross-owner reparenting and transformed-boundary crop/rotation
+remain separate gaps.
+
 The keyboard source-deletion packet keeps the Delete key as a presentation
 boundary only: the focused Sources dock and the editable canvas `FocusScope`
 call the existing Rust `remove-source` callback. The canvas editor explicitly
@@ -156,13 +164,14 @@ select-underneath on the next plain click, and Ctrl-toggle of the top layer
 through the real pointer boundary. The pure hit-test oracle and the live event
 path now exercise the same ordered selection owner.
 
-The Sources dock now exposes one atomic same-parent grouping command. It
-preserves the parent order and child transforms for root or nested selections,
-rejects mixed-parent or locked selections, keeps the new path-addressed group
-selected, and leaves the performance/presentation path unchanged. Ungrouping is
-its inverse for root and nested group paths: child IDs are validated before
-mutation, children replace the group at its former parent position, and the UI
-selects the resulting root or nested child paths.
+The Sources dock now exposes one atomic same-owner grouping command. It
+preserves the parent order and child transforms for root, nested-group, or
+same-owner Scene-reference selections, rejects mixed-owner or locked
+selections, keeps the new path-addressed group selected, and leaves the
+performance/presentation path unchanged. Ungrouping is its inverse for root,
+nested-group, and same-owner Scene-reference group paths: child IDs are
+validated before mutation, children replace the group at its former owner
+position, and the UI selects the resulting root or nested child paths.
 
 | ID | Gap | Current evidence | Consequence | Required target | Dependencies / first packet |
 | --- | --- | --- | --- | --- | --- |
@@ -193,8 +202,9 @@ the parent reference transform unchanged. Removal now follows the same owner
 scene route and preserves the parent reference. Nested group rename remains
 inside the supported command path through the same owner-scene resolver.
 Duplication now follows the same route and can clone the profile source;
-same-owner reorder now follows the same route, while cross-owner reparenting
-and transformed-boundary crop/rotation remain open.
+same-owner reorder now follows the same route. Grouping and ungrouping now use
+the same-owner resolver as well, while cross-owner reparenting and
+transformed-boundary crop/rotation remain open.
 
 ```text
 truthful baseline / lint and test gate

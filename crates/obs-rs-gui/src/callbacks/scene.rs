@@ -1,6 +1,6 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
-use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec};
+use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale, MAX_CANVAS_SELECTIONS};
 use slint::ComponentHandle;
 
@@ -144,18 +144,28 @@ fn unique_group_identity(
     parent_path: &[String],
 ) -> Result<(String, String), Box<dyn Error>> {
     let project = state.project_session().project();
-    let scene = project
+    let profile = project
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
+        .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+    let scene = profile
+        .scene(scene_id)
         .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
     let parent_items = if parent_path.is_empty() {
         scene.items()
     } else {
         let parent_target = parent_path.join("/");
-        crate::callbacks::item_for_target(scene, parent_target.as_str())
-            .and_then(SceneItemSpec::group)
-            .map(obs_rs_project::GroupSpec::items)
-            .ok_or_else(|| std::io::Error::other("grouping parent is missing"))?
+        let parent = canvas_item_for_target(profile, scene_id, parent_target.as_str())
+            .ok_or_else(|| std::io::Error::other("grouping parent is missing"))?;
+        if let Some(group) = parent.group() {
+            group.items()
+        } else if let Some(child_scene) = parent.scene_id() {
+            profile
+                .scene(child_scene)
+                .map(SceneSpec::items)
+                .ok_or_else(|| std::io::Error::other("referenced grouping scene is missing"))?
+        } else {
+            return Err(std::io::Error::other("grouping parent is not a container").into());
+        }
     };
     for ordinal in 1..=MAX_CANVAS_SELECTIONS.saturating_add(1) {
         let id = if ordinal == 1 {
@@ -178,8 +188,7 @@ fn group_child_targets(
     let project = state.project_session().project();
     let group = project
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
-        .and_then(|scene| crate::callbacks::item_for_target(scene, group_target))
+        .and_then(|profile| canvas_item_for_target(profile, scene_id, group_target))
         .and_then(SceneItemSpec::group)
         .ok_or_else(|| std::io::Error::other("source is not a group"))?;
     let parent_path = crate::callbacks::source_parent_path(group_target)

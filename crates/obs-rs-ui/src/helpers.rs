@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use obs_rs_audio::AudioFormat;
 use obs_rs_audio::{AudioMixer, AudioSourceId};
-use obs_rs_project::{Project, SceneItemSpec, SceneSpec};
+use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec};
 use obs_rs_util::Identifier;
 
 use super::{
@@ -108,10 +108,9 @@ pub(crate) fn project_has_source(
     scene_id: &Identifier,
     source_target: &str,
 ) -> bool {
-    project
-        .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
-        .is_some_and(|scene| scene_item_at_target(scene, source_target).is_some())
+    project.active_profile_spec().is_some_and(|profile| {
+        profile_scene_item_at_target(profile, scene_id.as_str(), source_target).is_some()
+    })
 }
 
 const MAX_SCENE_ITEM_PATH_DEPTH: usize = 64;
@@ -128,13 +127,28 @@ pub(crate) fn scene_item_target_parts(target: &str) -> Option<Vec<&str>> {
     (!parts.is_empty()).then_some(parts)
 }
 
-/// Resolves a top-level or nested group item without rebuilding project state.
-pub(crate) fn scene_item_at_target<'a>(
-    scene: &'a SceneSpec,
+/// Resolves one flattened scene-item path through groups and Scene references.
+/// The project model remains the only source of truth; this is just a bounded
+/// read-only lookup for UI validation and selection reconciliation.
+pub(crate) fn profile_scene_item_at_target<'a>(
+    profile: &'a Profile,
+    scene_id: &str,
     target: &str,
 ) -> Option<&'a SceneItemSpec> {
     let parts = scene_item_target_parts(target)?;
-    scene_item_at_parts(scene, &parts)
+    let mut items = profile.scene(scene_id)?.items();
+    for (index, part) in parts.iter().enumerate() {
+        let item = items.iter().find(|item| item.id().as_str() == *part)?;
+        if index + 1 == parts.len() {
+            return Some(item);
+        }
+        if let Some(group) = item.group() {
+            items = group.items();
+        } else {
+            items = profile.scene(item.scene_id()?)?.items();
+        }
+    }
+    None
 }
 
 /// Resolves one outer-to-inner scene-item path.

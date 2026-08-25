@@ -176,6 +176,41 @@ fn desktop_state_selects_nested_group_targets_without_duplicate_state() {
 }
 
 #[test]
+fn desktop_state_selects_scene_reference_targets() {
+    let mut state = DesktopState::new(project());
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    child
+        .add_item(SceneItemSpec::for_source("source").expect("child source"))
+        .expect("child source attach");
+    state
+        .dispatch(UiCommand::Project(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        }))
+        .expect("add child scene");
+    state
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: SceneItemSpec::for_scene("child-ref", "child").expect("scene reference"),
+        }))
+        .expect("add scene reference");
+
+    state
+        .dispatch(UiCommand::SelectSource {
+            id: "child-ref/source".to_owned(),
+        })
+        .expect("scene-reference selection");
+    assert_eq!(state.selected_source(), Some("child-ref/source"));
+    state
+        .dispatch(UiCommand::ToggleSourceSelection {
+            id: "child-ref/source".to_owned(),
+        })
+        .expect("scene-reference selection toggle");
+    assert_eq!(state.selected_source(), None);
+}
+
+#[test]
 fn desktop_state_supports_bounded_multi_selection_and_active_item() {
     let mut state = DesktopState::new(project());
     state

@@ -61,9 +61,10 @@ pub enum ProjectCommand {
         scene: String,
         item: SceneItemSpec,
     },
-    /// Atomically wraps two or more scene items from the same parent in a new
-    /// group. Item targets use root IDs or outer-to-inner paths such as
-    /// `overlay-group/source`.
+    /// Atomically wraps two or more scene items from the same owner parent in
+    /// a new group. Item targets use root IDs or outer-to-inner paths such as
+    /// `overlay-group/source` and `scene-reference/source`; a Scene-reference
+    /// boundary is resolved only when all selected targets share its owner.
     GroupSceneItems {
         profile: String,
         scene: String,
@@ -72,8 +73,9 @@ pub enum ProjectCommand {
         items: Vec<String>,
         group: SceneItemSpec,
     },
-    /// Atomically expands one unlocked group back into its parent. The target
-    /// is a root group ID or an outer-to-inner group path.
+    /// Atomically expands one unlocked group back into its owner parent. The
+    /// target is a root group ID or an outer-to-inner group path, including a
+    /// path below a Scene reference.
     UngroupSceneItem {
         profile: String,
         scene: String,

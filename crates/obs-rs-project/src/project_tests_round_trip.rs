@@ -411,6 +411,98 @@ fn nested_scene_group_name_routes_to_the_owner_scene() {
 }
 
 #[test]
+fn nested_scene_item_grouping_and_ungrouping_route_to_the_owner_scene() {
+    let mut project = project();
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    child
+        .add_item(SceneItemSpec::new("first", "background").expect("first child"))
+        .expect("first child attach");
+    child
+        .add_item(SceneItemSpec::new("second", "background").expect("second child"))
+        .expect("second child attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: SceneItemSpec::for_scene("child-ref", "child").expect("scene reference"),
+        })
+        .expect("add scene reference");
+
+    let before_invalid = project.clone();
+    let error = project
+        .apply(ProjectCommand::GroupSceneItems {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec!["child-ref/first".to_owned(), "background".to_owned()],
+            group: SceneItemSpec::for_group("invalid-group", "Invalid group")
+                .expect("invalid group target"),
+        })
+        .expect_err("different scene owners must reject grouping atomically");
+    assert_eq!(error, ProjectError::InvalidGroupSelection);
+    assert_eq!(project, before_invalid);
+
+    project
+        .apply(ProjectCommand::GroupSceneItems {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec!["child-ref/second".to_owned(), "child-ref/first".to_owned()],
+            group: SceneItemSpec::for_group("child-group", "Child group").expect("child group"),
+        })
+        .expect("group scene-reference leaves");
+
+    let profile = project.profile("live").expect("profile");
+    let child = profile.scene("child").expect("owner scene");
+    let grouped = child
+        .item("child-group")
+        .and_then(SceneItemSpec::group)
+        .expect("owner group");
+    assert_eq!(
+        grouped
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["first", "second"]
+    );
+    assert!(profile
+        .scene("main")
+        .and_then(|scene| scene.item("child-ref"))
+        .is_some());
+
+    project
+        .apply(ProjectCommand::UngroupSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group: "child-ref/child-group".to_owned(),
+        })
+        .expect("ungroup scene-reference group");
+
+    let profile = project.profile("live").expect("profile");
+    let child = profile.scene("child").expect("owner scene");
+    assert!(child.item("child-group").is_none());
+    assert_eq!(
+        child
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["first", "second"]
+    );
+    assert!(profile
+        .scene("main")
+        .and_then(|scene| scene.item("child-ref"))
+        .is_some());
+}
+
+#[test]
 #[allow(
     clippy::too_many_lines,
     reason = "this regression exercises projection, owner routing, and atomic failures together"

@@ -648,7 +648,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     ui.set_selected_source_first(selected_source_first);
     ui.set_selected_source_last(selected_source_last);
     ui.set_can_paste(state.can_paste_source());
-    let can_group_sources = selected_scene.is_some_and(|scene| {
+    let can_group_sources = profile.is_some_and(|profile| {
         let selected = state.selected_sources().collect::<Vec<_>>();
         let Some(parent_path) = crate::callbacks::common_source_parent(selected.iter().copied())
         else {
@@ -658,13 +658,18 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             true
         } else {
             let parent_target = parent_path.join("/");
-            crate::callbacks::item_for_target(scene, parent_target.as_str())
-                .is_some_and(SceneItemSpec::is_group)
+            crate::callbacks::canvas::canvas_item_for_target(
+                profile,
+                source_scene,
+                parent_target.as_str(),
+            )
+            .is_some_and(|item| item.is_group() || item.is_scene_reference())
         };
         selected.len() >= 2
             && parent_exists
             && selected.iter().all(|target| {
-                crate::callbacks::item_for_target(scene, target).is_some_and(|item| !item.locked())
+                crate::callbacks::canvas::canvas_item_for_target(profile, source_scene, target)
+                    .is_some_and(|item| !item.locked())
             })
     });
     ui.set_can_group_sources(can_group_sources);
