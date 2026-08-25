@@ -13,6 +13,7 @@ mod metrics;
 mod pixel;
 mod scale;
 mod stinger;
+mod stinger_loader;
 mod time;
 mod transform;
 mod transition;
@@ -42,6 +43,11 @@ pub use stinger::{
     MAX_STINGER_FRAME_DURATION_NANOS, MAX_STINGER_MEMORY_BYTES, MAX_STINGER_RESOURCE_PATH_BYTES,
     MAX_STINGER_TRANSITION_POINT_MILLI, MIN_STINGER_FRAME_DURATION_NANOS,
     MIN_STINGER_TRANSITION_POINT_MILLI,
+};
+pub use stinger_loader::{
+    StingerLoadCancellation, StingerLoadQueueError, StingerLoadRequest, StingerLoadResult,
+    StingerLoadWorker, StingerResourceLoader, STINGER_LOAD_QUEUE_CAPACITY,
+    STINGER_LOAD_RESULT_CAPACITY,
 };
 pub use time::{sleep_precise, FrameRate, Timestamp, SLEEP_SPIN_WINDOW};
 pub use transform::FrameTransform;

@@ -25,6 +25,14 @@ round-trips it while schema 7 documents remain readable. This is still
 metadata only: no project parse or command performs filesystem or decoder I/O,
 and worker-side loading plus the GUI properties workflow remain open.
 
+The worker-boundary packet now provides a capacity-one request queue and
+capacity-one result queue, non-blocking submission/polling, typed request IDs,
+cooperative cancellation, and a decoder-independent `StingerResourceLoader`
+contract. Its thread is detached during teardown so UI/render owners never
+join native resource work. A concrete file/container decoder, target-format
+conversion, stale-result policy in the engine, and GUI resource workflow remain
+open.
+
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks
 support inversion and bounded 0..=1000 softness, and the CPU/reference path

@@ -13,5 +13,7 @@ mod composition;
 mod frames;
 #[path = "media_tests_stinger.rs"]
 mod stinger;
+#[path = "media_tests_stinger_loader.rs"]
+mod stinger_loader;
 #[path = "media_tests_transitions.rs"]
 mod transitions;

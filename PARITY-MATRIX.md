@@ -47,6 +47,10 @@ schema 8 now persists a bounded resource path, transition point, preload flag,
 and hardware-decode preference through a scene-owned `StingerSpec` and typed
 project command. Worker-side decoding, track mattes, fade/audio monitoring
 policy, and the properties/file-picker workflow remain incomplete.
+The separate resource-worker boundary is now bounded at one pending request
+and one result, supports non-blocking polling and typed request IDs, and
+honors cooperative cancellation; it still has no concrete file/container
+decoder or target-format conversion implementation.
 
 ## Latest verified package: portable Luma Wipe transition
 
