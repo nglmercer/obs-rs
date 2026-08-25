@@ -182,6 +182,37 @@ pub(super) fn set_scene_item_locked_target(
     }
 }
 
+/// Removes a stable flattened target from the scene that owns its leaf.
+pub(super) fn remove_scene_item_target(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    target: &str,
+) -> Result<(), ProjectError> {
+    let (group_path, item) = parse_scene_item_target(target)?;
+    let profile_id = identifier(profile, "profile id")?;
+    let profile_spec = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let (owner_scene, owner_groups) =
+        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
+    if owner_groups.is_empty() {
+        super::remove_scene_item(project, profile, owner_scene.as_str(), item.as_str())
+    } else {
+        let owner_groups = owner_groups
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        remove_group_item(
+            project,
+            profile,
+            owner_scene.as_str(),
+            &owner_groups,
+            item.as_str(),
+        )
+    }
+}
+
 pub(super) fn set_group_name(
     project: &mut Project,
     profile: &str,

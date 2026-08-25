@@ -201,6 +201,19 @@ the leaf in its owning scene while preserving the parent Scene-reference
 transform. The GUI fixture covers center alignment, flip round-trip, and the
 existing inherited-lock dialog path.
 
+## Latest verified package: nested scene-reference item removal
+
+On 2026-08-24, `RemoveSceneItem` now accepts a stable flattened
+`scene-ref/leaf` path and resolves it to the owning scene before mutation. The
+Sources-dock callback uses that generic command for root, group, and
+Scene-reference rows, so removing a referenced leaf preserves the parent
+Scene-reference item and its transform. Project and GUI fixtures cover the
+owner-scene mutation; nested reorder and duplicate remain outside this packet.
+
+> SCENE-002/SOURCE-001 reconciliation: the earlier limitation “nested
+> Scene-reference remove/reorder/duplicate” is now narrowed to reorder and
+> duplicate; nested remove is covered by this package.
+
 ## Latest verified package: dock-header pointer drag
 
 On 2026-08-24, the GUI dock fixture now drives a visible `DockHeader` through

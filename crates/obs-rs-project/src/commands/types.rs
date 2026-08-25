@@ -79,7 +79,9 @@ pub enum ProjectCommand {
         scene: String,
         group: String,
     },
-    /// Removes one scene item while retaining the source definition.
+    /// Removes one root or stable flattened scene item while retaining the
+    /// profile-wide source definition. A path such as `scene-ref/leaf` is
+    /// written to the scene that owns the leaf.
     RemoveSceneItem {
         profile: String,
         scene: String,

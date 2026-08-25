@@ -108,6 +108,8 @@ pub(super) fn exercise_scene_reference_transform_dialog(
             .translate_x(),
         expected_locked_child_x
     );
+
+    exercise_scene_reference_remove(ui, state);
 }
 
 fn exercise_scene_reference_source_dialogs(
@@ -296,4 +298,33 @@ fn exercise_scene_reference_transform_menu(
         .flip_x());
 
     child_after_center.translate_x()
+}
+
+fn exercise_scene_reference_remove(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemLocked {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: "transform-child-ref".to_owned(),
+            locked: false,
+        }))
+        .expect("unlock scene reference before removal");
+    ui.invoke_remove_source("transform-child-ref/background".into());
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background"))
+        .is_none());
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("transform-child-ref"))
+        .is_some());
 }

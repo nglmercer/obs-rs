@@ -221,19 +221,10 @@ pub(crate) fn remove_source_and_refresh(
             )
             .into());
         }
-        let command = if let Some((group_path, item)) = group_target(source_id) {
-            ProjectCommand::RemoveGroupItem {
-                profile,
-                scene,
-                group_path,
-                item,
-            }
-        } else {
-            ProjectCommand::RemoveSceneItem {
-                profile,
-                scene,
-                item: source_id.to_owned(),
-            }
+        let command = ProjectCommand::RemoveSceneItem {
+            profile,
+            scene,
+            item: source_id.to_owned(),
         };
         state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())

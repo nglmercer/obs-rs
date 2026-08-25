@@ -189,8 +189,9 @@ selects the resulting root or nested child paths.
 Latest nested Scene-reference verification covers source-name editing and
 Transform-menu callbacks: the rename modal resolves a flattened leaf to the
 profile-wide source, while geometry callbacks write the owning leaf and keep
-the parent reference transform unchanged. Nested group rename remains outside
-the supported command path.
+the parent reference transform unchanged. Removal now follows the same owner
+scene route and preserves the parent reference. Nested group rename remains
+outside the supported command path; nested reorder and duplicate remain open.
 
 ```text
 truthful baseline / lint and test gate
