@@ -192,6 +192,15 @@ the shared source name through the existing `SetSourceName` command. The GUI
 fixture covers opening the modal, editing the name, and observing the profile
 source update; nested group rename remains outside this packet.
 
+## Latest verified package: nested scene-reference Transform menu
+
+On 2026-08-24, the OBS-style Transform submenu and flip callback now read
+flattened `scene-ref/leaf` targets through the canvas resolver before issuing
+the existing atomic transform commands. Centering and horizontal flip update
+the leaf in its owning scene while preserving the parent Scene-reference
+transform. The GUI fixture covers center alignment, flip round-trip, and the
+existing inherited-lock dialog path.
+
 ## Latest verified package: dock-header pointer drag
 
 On 2026-08-24, the GUI dock fixture now drives a visible `DockHeader` through

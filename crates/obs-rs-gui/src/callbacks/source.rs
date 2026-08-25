@@ -370,8 +370,7 @@ pub(crate) fn transform_source_and_refresh(
             let project = state.project_session().project();
             let transform = project
                 .active_profile_spec()
-                .and_then(|profile| profile.scene(scene.as_str()))
-                .and_then(|scene| item_for_target(scene, source_id))
+                .and_then(|profile| canvas_item_for_target(profile, scene.as_str(), source_id))
                 .map(obs_rs_project::SceneItemSpec::transform)
                 .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
             let surface = surface.borrow();
@@ -415,8 +414,7 @@ fn update_source_transform_and_refresh(
             let project = state.project_session().project();
             project
                 .active_profile_spec()
-                .and_then(|profile| profile.scene(scene.as_str()))
-                .and_then(|scene| item_for_target(scene, source_id))
+                .and_then(|profile| canvas_item_for_target(profile, scene.as_str(), source_id))
                 .map(obs_rs_project::SceneItemSpec::transform)
                 .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?
         };

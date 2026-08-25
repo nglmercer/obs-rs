@@ -80,6 +80,8 @@ pub(super) fn exercise_scene_reference_transform_dialog(
 
     exercise_scene_reference_source_dialogs(ui, state, surface);
 
+    let expected_locked_child_x = exercise_scene_reference_transform_menu(ui, state, surface);
+
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemLocked {
@@ -104,7 +106,7 @@ pub(super) fn exercise_scene_reference_transform_dialog(
             .map(SceneItemSpec::transform)
             .expect("locked child transform")
             .translate_x(),
-        37
+        expected_locked_child_x
     );
 }
 
@@ -215,4 +217,83 @@ fn exercise_scene_reference_source_dialogs(
         .and_then(|scene| scene.item("background"))
         .expect("nested lock target restored")
         .locked());
+}
+
+fn exercise_scene_reference_transform_menu(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) -> i32 {
+    let parent_before_menu = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(|scene| scene.item("transform-child-ref"))
+        .map(SceneItemSpec::transform)
+        .expect("parent transform before menu command");
+    ui.invoke_transform_source(
+        "transform-child-ref/background".into(),
+        "center-screen".into(),
+    );
+    let child_after_center = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background"))
+        .map(SceneItemSpec::transform)
+        .expect("centered nested transform");
+    let canvas = surface.borrow().format;
+    let centered_rect =
+        crate::callbacks::canvas::item_rect(child_after_center, (canvas.width(), canvas.height()));
+    assert_eq!(
+        (
+            centered_rect.x + centered_rect.width / 2,
+            centered_rect.y + centered_rect.height / 2,
+        ),
+        (
+            i64::from(canvas.width()) / 2,
+            i64::from(canvas.height()) / 2,
+        ),
+        "Transform menu must center the leaf owned by the referenced scene"
+    );
+    assert_eq!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(|scene| scene.item("transform-child-ref"))
+            .map(SceneItemSpec::transform),
+        Some(parent_before_menu),
+        "nested Transform menu must preserve the Scene-reference transform"
+    );
+
+    ui.invoke_flip_source("transform-child-ref/background".into(), true);
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background"))
+        .map(SceneItemSpec::transform)
+        .is_some_and(FrameTransform::flip_x));
+    ui.invoke_flip_source("transform-child-ref/background".into(), true);
+    assert!(!state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background"))
+        .map(SceneItemSpec::transform)
+        .expect("nested transform after flip round trip")
+        .flip_x());
+
+    child_after_center.translate_x()
 }
