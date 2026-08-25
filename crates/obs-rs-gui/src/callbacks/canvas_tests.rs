@@ -330,6 +330,86 @@ fn nested_canvas_target_inherits_lock_from_each_group_ancestor() {
 }
 
 #[test]
+fn nested_scene_reference_canvas_projection_round_trips_local_geometry() {
+    let mut project = crate::initial_project().expect("initial project");
+    let child_transform =
+        FrameTransform::new(850, 1_100, 17, -10, false, true, 205).expect("child transform");
+    let mut child = SceneSpec::new("canvas-child", "Canvas child").expect("child scene");
+    let mut child_item = SceneItemSpec::for_source("background").expect("child item");
+    child_item.set_transform(child_transform);
+    child.add_item(child_item).expect("child item attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+
+    let parent_transform =
+        FrameTransform::new(1_400, 1_200, 26, 18, true, false, 230).expect("parent transform");
+    let mut reference =
+        SceneItemSpec::for_scene("canvas-child-ref", "canvas-child").expect("scene reference");
+    reference.set_transform(parent_transform);
+    reference.set_locked(true);
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: reference,
+        })
+        .expect("add scene reference");
+
+    let profile = project.profile("live").expect("profile");
+    let scene = profile.scene("preview").expect("preview scene");
+    let canvas = (
+        profile.video_format().width(),
+        profile.video_format().height(),
+    );
+    let parent = canvas_parent_transform(profile, "preview", "canvas-child-ref/background", canvas)
+        .expect("scene-reference parent transform");
+    assert_eq!(parent, parent_transform);
+    assert!(canvas_target_is_locked_in_profile(
+        profile,
+        "preview",
+        "canvas-child-ref/background"
+    ));
+    let effective = child_transform
+        .compose_axis_aligned(parent, canvas.0, canvas.1)
+        .expect("effective scene-reference transform");
+    assert_eq!(
+        local_transform_for_canvas_item(profile, scene, "canvas-child-ref/background", effective,),
+        Some(child_transform)
+    );
+    let rotated = effective
+        .with_rotation_milli_degrees(90_000)
+        .expect("rotated effective transform");
+    assert_eq!(
+        local_transform_for_canvas_item(profile, scene, "canvas-child-ref/background", rotated,),
+        None
+    );
+
+    let state = DesktopState::new(project);
+    let projections = canvas_item_projections(&state, "preview", canvas);
+    assert_eq!(
+        projections
+            .iter()
+            .map(|item| item.target.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "background",
+            "canvas-child-ref",
+            "canvas-child-ref/background"
+        ]
+    );
+    let projected = projections
+        .iter()
+        .find(|item| item.target == "canvas-child-ref/background")
+        .expect("scene-reference leaf is projected");
+    assert_eq!(projected.transform, effective);
+    assert_eq!(projected.parent_transform, parent);
+}
+
+#[test]
 fn dragging_the_body_moves_without_resizing() {
     let moved = drag_rect(rect(), 0, 25, -10);
 

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use obs_rs_config::Config;
 use obs_rs_media::FrameTransform;
-use obs_rs_project::{ProjectCommand, SceneItemSpec, SourceFilterSpec};
+use obs_rs_project::{ProjectCommand, SceneItemSpec, SceneSpec, SourceFilterSpec};
 
 use crate::preview::TransformDraftItem;
 
@@ -190,6 +190,65 @@ fn nested_canvas_draft_reaches_the_stable_runtime_item_and_restores_it() {
         renderer
             .runtime
             .scene_item_transform_by_id("preview", "canvas-group/background"),
+        Some(original)
+    );
+}
+
+#[test]
+fn scene_reference_canvas_draft_reaches_the_flattened_runtime_leaf() {
+    let mut project = crate::initial_project().expect("initial project");
+    let mut child = SceneSpec::new("canvas-child", "Canvas child").expect("child scene");
+    child
+        .add_item(SceneItemSpec::for_source("background").expect("child item"))
+        .expect("child item attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: SceneItemSpec::for_scene("canvas-child-ref", "canvas-child")
+                .expect("scene reference"),
+        })
+        .expect("add scene reference");
+
+    let original = project
+        .active_profile_spec()
+        .expect("profile")
+        .flatten_scene_items("preview")
+        .expect("flatten preview")
+        .into_iter()
+        .find(|item| item.item_id() == "canvas-child-ref/background")
+        .expect("scene-reference runtime item")
+        .transform();
+    let draft_transform =
+        FrameTransform::new(1_150, 950, 72, -18, false, false, 255).expect("draft transform");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
+    let draft = TransformDraft {
+        scene: "preview".to_owned(),
+        items: vec![TransformDraftItem {
+            item: "canvas-child-ref/background".to_owned(),
+            transform: draft_transform,
+            parent_transform: FrameTransform::IDENTITY,
+        }],
+    };
+
+    renderer.set_transform_draft(Some(&draft));
+    assert_eq!(
+        renderer
+            .runtime
+            .scene_item_transform_by_id("preview", "canvas-child-ref/background"),
+        Some(draft_transform)
+    );
+    renderer.set_transform_draft(None);
+    assert_eq!(
+        renderer
+            .runtime
+            .scene_item_transform_by_id("preview", "canvas-child-ref/background"),
         Some(original)
     );
 }

@@ -1,5 +1,5 @@
 use super::{
-    canvas_item_projections, canvas_target_is_locked, crop_transform, drag_rect,
+    canvas_item_projections, canvas_target_is_locked_in_profile, crop_transform, drag_rect,
     group_rotation_from_pointer, item_rect, local_item_rect, preserve_resize_aspect,
     rotate_canvas_delta, rotate_transform_around_point, rotation_from_pointer,
     selection_overlay_for_transforms, set_selection_overlay, snap_rect, snap_rotated_resize_delta,
@@ -588,8 +588,7 @@ fn canvas_target_is_locked_for_state(
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
-        .is_none_or(|scene| canvas_target_is_locked(scene, target))
+        .is_none_or(|profile| canvas_target_is_locked_in_profile(profile, scene_id, target))
 }
 
 pub(super) fn draft_rect(draft: &TransformDraft, canvas: (u32, u32)) -> Option<ItemRect> {
@@ -720,11 +719,10 @@ pub(super) fn selected_is_locked(state: &Rc<RefCell<DesktopState>>) -> bool {
     session
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene))
-        .is_some_and(|scene| {
+        .is_some_and(|profile| {
             state
                 .selected_sources()
-                .any(|target| canvas_target_is_locked(scene, target))
+                .any(|target| canvas_target_is_locked_in_profile(profile, scene, target))
         })
 }
 

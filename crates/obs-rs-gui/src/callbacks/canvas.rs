@@ -3,7 +3,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_media::FrameTransform;
-use obs_rs_project::{Profile, SceneSpec};
+use obs_rs_project::{Profile, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -101,9 +101,9 @@ pub(crate) fn canvas_item_projections(
             if !target.starts_with(prefix.as_str()) {
                 return None;
             }
-            // Scene-reference leaves are not editable from this canvas yet.
-            super::item_for_target(scene, target)?;
-            let parent_transform = group_parent_transform(scene, target, canvas)?;
+            canvas_item_for_target(profile, scene.id().as_str(), target)?;
+            let parent_transform =
+                canvas_parent_transform(profile, scene.id().as_str(), target, canvas)?;
             Some(CanvasItemProjection {
                 target: target.to_owned(),
                 transform: item.transform(),
@@ -115,9 +115,70 @@ pub(crate) fn canvas_item_projections(
     projections
 }
 
+/// Resolves a flattened canvas target through groups and scene references.
+/// The Sources dock currently exposes group paths only; the canvas may also
+/// select a visible leaf below a scene source using the runtime's stable path.
+pub(crate) fn canvas_item_for_target<'a>(
+    profile: &'a Profile,
+    scene_id: &str,
+    target: &str,
+) -> Option<&'a SceneItemSpec> {
+    let parts = target.split('/').collect::<Vec<_>>();
+    let scene = profile.scene(scene_id)?;
+    canvas_item_for_parts(profile, scene.items(), &parts)
+}
+
+fn canvas_item_for_parts<'a>(
+    profile: &'a Profile,
+    items: &'a [SceneItemSpec],
+    parts: &[&str],
+) -> Option<&'a SceneItemSpec> {
+    let (part, rest) = parts.split_first()?;
+    let item = items.iter().find(|item| item.id().as_str() == *part)?;
+    if rest.is_empty() {
+        return Some(item);
+    }
+    if let Some(group) = item.group() {
+        return canvas_item_for_parts(profile, group.items(), rest);
+    }
+    let child_scene = item.scene_id()?;
+    let scene = profile.scene(child_scene)?;
+    canvas_item_for_parts(profile, scene.items(), rest)
+}
+
+/// Returns the effective parent transform crossed by a flattened canvas leaf.
+/// Both group and scene-reference boundaries use the same axis-aligned
+/// composition rule as project flattening.
+pub(crate) fn canvas_parent_transform(
+    profile: &Profile,
+    scene_id: &str,
+    target: &str,
+    canvas: (u32, u32),
+) -> Option<FrameTransform> {
+    let mut items = profile.scene(scene_id)?.items();
+    let mut parts = target.split('/').collect::<Vec<_>>();
+    parts.pop()?;
+    let mut parent = FrameTransform::IDENTITY;
+    for part in parts {
+        let item = items.iter().find(|item| item.id().as_str() == part)?;
+        parent = item
+            .transform()
+            .compose_axis_aligned(parent, canvas.0, canvas.1)
+            .ok()?;
+        if let Some(group) = item.group() {
+            items = group.items();
+        } else {
+            let child_scene = item.scene_id()?;
+            items = profile.scene(child_scene)?.items();
+        }
+    }
+    Some(parent)
+}
+
 /// Returns the effective transform contributed by a leaf item's enclosing
 /// groups. The order matches project flattening: the innermost group is
 /// composed with the already accumulated outer transform.
+#[cfg(test)]
 pub(crate) fn group_parent_transform(
     scene: &SceneSpec,
     target: &str,
@@ -153,8 +214,9 @@ pub(crate) fn local_transform_for_canvas_item(
     target: &str,
     effective: FrameTransform,
 ) -> Option<FrameTransform> {
-    let parent = group_parent_transform(
-        scene,
+    let parent = canvas_parent_transform(
+        profile,
+        scene.id().as_str(),
         target,
         (
             profile.video_format().width(),
@@ -167,7 +229,7 @@ pub(crate) fn local_transform_for_canvas_item(
     if effective.is_cropped() || effective.is_rotated() {
         return None;
     }
-    let local = super::item_for_target(scene, target)?;
+    let local = canvas_item_for_target(profile, scene.id().as_str(), target)?;
     let width = i64::from(profile.video_format().width());
     let height = i64::from(profile.video_format().height());
     let scale_x = i64::from(effective.scale_x_milli())
@@ -230,6 +292,7 @@ pub(crate) fn local_transform_for_canvas_item(
 }
 
 /// Returns whether a canvas target or any of its enclosing groups is locked.
+#[cfg(test)]
 pub(crate) fn canvas_target_is_locked(scene: &SceneSpec, target: &str) -> bool {
     let mut items = scene.items();
     let parts = target.split('/').collect::<Vec<_>>();
@@ -248,4 +311,40 @@ pub(crate) fn canvas_target_is_locked(scene: &SceneSpec, target: &str) -> bool {
         }
     }
     false
+}
+
+/// Returns whether a flattened canvas target or any group/scene-reference
+/// ancestor is locked.
+pub(crate) fn canvas_target_is_locked_in_profile(
+    profile: &Profile,
+    scene_id: &str,
+    target: &str,
+) -> bool {
+    let mut items = match profile.scene(scene_id) {
+        Some(scene) => scene.items(),
+        None => return true,
+    };
+    let parts = target.split('/').collect::<Vec<_>>();
+    for (index, part) in parts.iter().enumerate() {
+        let Some(item) = items.iter().find(|item| item.id().as_str() == *part) else {
+            return true;
+        };
+        if item.locked() {
+            return true;
+        }
+        if index + 1 == parts.len() {
+            return false;
+        }
+        if let Some(group) = item.group() {
+            items = group.items();
+        } else if let Some(child_scene) = item.scene_id() {
+            let Some(scene) = profile.scene(child_scene) else {
+                return true;
+            };
+            items = scene.items();
+        } else {
+            return true;
+        }
+    }
+    true
 }

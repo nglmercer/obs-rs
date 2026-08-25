@@ -19,8 +19,8 @@ use filters::legacy_filter_spec;
 use groups::{
     duplicate_group_item, group_scene_items, move_group_item, move_scene_item_to_parent,
     paste_group_item, remove_group_item, remove_scene_items, set_group_item_locked,
-    set_group_item_transform, set_group_item_transform_target, set_group_item_visibility,
-    set_group_name, ungroup_scene_item,
+    set_group_item_transform, set_group_item_visibility, set_group_name,
+    set_scene_item_transform_target, ungroup_scene_item,
 };
 
 mod types;
@@ -834,7 +834,7 @@ fn set_scene_item_transforms(
             ));
         }
         if item.contains('/') {
-            set_group_item_transform_target(&mut candidate, profile, scene, &item, transform)?;
+            set_scene_item_transform_target(&mut candidate, profile, scene, &item, transform)?;
         } else {
             let item_id = identifier(&item, "scene item id")?;
             let scene_spec = scene_mut(&mut candidate, profile, scene)?;

@@ -89,9 +89,10 @@ flattened path model used by the runtime and Sources dock. Hit-testing,
 drag-box selection, snapping guides, overlays, keyboard nudge, and transform
 drafts use effective canvas coordinates; commit converts those drafts back to
 local group coordinates and sends one atomic root/nested transform batch.
-Locked ancestors are included in the edit guard. Scene-reference leaves remain
-read-only, and transformed-group crop/rotation still fails explicitly until a
-full intermediate-scene transform model exists.
+Locked ancestors are included in the edit guard. Scene-reference leaves now
+resolve through the owning referenced scene for axis-aligned local commits;
+transformed-group/scene crop/rotation still fails explicitly until a full
+intermediate-scene transform model exists.
 
 The dock-header pointer packet now drives the visible `DockHeader` through the
 testing backend rather than invoking the callback directly. It verifies drag

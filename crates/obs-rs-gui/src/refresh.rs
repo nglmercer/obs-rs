@@ -616,8 +616,9 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     let selected_source_first = selected_row.is_some_and(|row| row.first);
     let selected_source_last = selected_row.is_some_and(|row| row.last);
     let selected_source_is_nested = selected_row.is_some_and(|row| row.nested);
-    let selected_item =
-        selected_scene.and_then(|scene| crate::callbacks::item_for_target(scene, selected_source));
+    let selected_item = profile.and_then(|profile| {
+        crate::callbacks::canvas::canvas_item_for_target(profile, source_scene, selected_source)
+    });
     let selected_source_spec = selected_item.and_then(|item| {
         item.is_source()
             .then(|| profile.and_then(|profile| profile.source(item.source_id())))
@@ -634,7 +635,16 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     }
     ui.set_selected_source_move_targets(selected_move_targets);
     ui.set_selected_source_visible(selected_item.is_some_and(SceneItemSpec::visible));
-    ui.set_selected_source_locked(selected_item.is_some_and(SceneItemSpec::locked));
+    ui.set_selected_source_locked(
+        selected_item.is_some()
+            && profile.is_some_and(|profile| {
+                crate::callbacks::canvas::canvas_target_is_locked_in_profile(
+                    profile,
+                    source_scene,
+                    selected_source,
+                )
+            }),
+    );
     ui.set_selected_source_first(selected_source_first);
     ui.set_selected_source_last(selected_source_last);
     ui.set_can_paste(state.can_paste_source());
@@ -676,9 +686,15 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     );
     let overlay = selection_overlay(state, canvas);
     ui.set_item_locked(selected_scene.is_some_and(|scene| {
-        state
-            .selected_sources()
-            .any(|target| crate::callbacks::canvas::canvas_target_is_locked(scene, target))
+        profile.is_some_and(|profile| {
+            state.selected_sources().any(|target| {
+                crate::callbacks::canvas::canvas_target_is_locked_in_profile(
+                    profile,
+                    scene.id().as_str(),
+                    target,
+                )
+            })
+        })
     }));
     set_selection_overlay(ui, overlay.as_ref());
     // Only a display-backed source offers the picker, so the docks derive the

@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use super::super::{
     error::ProjectError,
     model::{
-        group_at, group_mut_at, GroupSpec, Project, SceneItemSpec, SceneSpec,
+        group_at, group_mut_at, GroupSpec, Profile, Project, SceneItemSpec, SceneSpec,
         MAX_GROUP_NESTING_DEPTH,
     },
     validation::identifier,
@@ -379,12 +379,14 @@ pub(super) fn set_group_item_transform(
     Ok(())
 }
 
-/// Applies a transform to a stable `group/child` target.
+/// Applies a transform to a stable flattened target.
 ///
-/// The batch canvas command uses this small adapter so root scene items and
-/// nested group children can share one undo boundary without exposing the
-/// group-path parser to the UI crate.
-pub(super) fn set_group_item_transform_target(
+/// The batch canvas command uses this adapter so root scene items and nested
+/// group/scene-reference children can share one undo boundary without exposing
+/// path traversal to the UI crate. The target's local transform is written to
+/// the scene that owns the leaf; its enclosing axis-aligned transforms are
+/// validated before mutation.
+pub(super) fn set_scene_item_transform_target(
     project: &mut Project,
     profile: &str,
     scene: &str,
@@ -392,21 +394,132 @@ pub(super) fn set_group_item_transform_target(
     transform: FrameTransform,
 ) -> Result<(), ProjectError> {
     let (group_path, item) = parse_scene_item_target(target)?;
-    if group_path.is_empty() {
-        return Err(ProjectError::InvalidGroupPath);
-    }
-    let group_path = group_path
-        .into_iter()
-        .map(|id| id.as_str().to_owned())
-        .collect::<Vec<_>>();
-    set_group_item_transform(
-        project,
-        profile,
+    let profile_id = identifier(profile, "profile id")?;
+    let profile_spec = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let video_format = profile_spec.video_format();
+    let (owner_scene, owner_groups) =
+        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
+    let parent_transform = flattened_target_parent_transform(
+        profile_spec,
         scene,
         &group_path,
-        item.as_str(),
-        transform,
-    )
+        video_format.width(),
+        video_format.height(),
+    )?;
+    if parent_transform != FrameTransform::IDENTITY {
+        transform
+            .compose_axis_aligned(
+                parent_transform,
+                video_format.width(),
+                video_format.height(),
+            )
+            .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(item.clone()))?;
+    }
+    if owner_groups.is_empty() {
+        super::set_scene_item_transform(
+            project,
+            profile,
+            owner_scene.as_str(),
+            item.as_str(),
+            transform,
+        )
+    } else {
+        let owner_groups = owner_groups
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        set_group_item_transform(
+            project,
+            profile,
+            owner_scene.as_str(),
+            &owner_groups,
+            item.as_str(),
+            transform,
+        )
+    }
+}
+
+/// Resolves the scene and group owner of a flattened leaf path. A scene
+/// reference changes the current scene and clears the local group path; a
+/// group keeps walking inside the current scene.
+fn resolve_flattened_target(
+    profile: &Profile,
+    scene: &str,
+    groups: &[Identifier],
+    item: &Identifier,
+) -> Result<(Identifier, Vec<Identifier>), ProjectError> {
+    let mut scene_id = identifier(scene, "scene id")?;
+    let mut owner_groups = Vec::new();
+    let mut items = profile
+        .scene(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?
+        .items();
+    for group_id in groups {
+        let parent = items
+            .iter()
+            .find(|candidate| candidate.id() == group_id)
+            .ok_or(ProjectError::InvalidGroupPath)?;
+        if let Some(group) = parent.group() {
+            owner_groups.push(group_id.clone());
+            items = group.items();
+        } else if let Some(child_scene) = parent.scene_id() {
+            scene_id = child_scene.clone();
+            owner_groups.clear();
+            items = profile
+                .scene(&scene_id)
+                .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?
+                .items();
+        } else {
+            return Err(ProjectError::InvalidGroupPath);
+        }
+    }
+    if items.iter().any(|candidate| candidate.id() == item) {
+        Ok((scene_id, owner_groups))
+    } else {
+        Err(ProjectError::UnknownSceneItem(item.clone()))
+    }
+}
+
+/// Composes the transforms crossed before a flattened leaf. This validates
+/// the same axis-aligned boundary that the runtime flattener uses, including
+/// scene references nested inside groups.
+fn flattened_target_parent_transform(
+    profile: &Profile,
+    scene: &str,
+    groups: &[Identifier],
+    width: u32,
+    height: u32,
+) -> Result<FrameTransform, ProjectError> {
+    let mut scene_id = identifier(scene, "scene id")?;
+    let mut parent_transform = FrameTransform::IDENTITY;
+    let mut items = profile
+        .scene(&scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?
+        .items();
+    for group_id in groups {
+        let parent = items
+            .iter()
+            .find(|candidate| candidate.id() == group_id)
+            .ok_or(ProjectError::InvalidGroupPath)?;
+        parent_transform = parent
+            .transform()
+            .compose_axis_aligned(parent_transform, width, height)
+            .map_err(|_| ProjectError::UnsupportedNestedSceneTransform(group_id.clone()))?;
+        if let Some(group) = parent.group() {
+            items = group.items();
+        } else if let Some(child_scene) = parent.scene_id() {
+            scene_id = child_scene.clone();
+            items = profile
+                .scene(&scene_id)
+                .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?
+                .items();
+        } else {
+            return Err(ProjectError::InvalidGroupPath);
+        }
+    }
+    Ok(parent_transform)
 }
 
 fn group_parent_transform(

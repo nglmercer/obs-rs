@@ -190,6 +190,119 @@ fn nested_scene_items_round_trip_and_reject_cycles() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "this regression exercises projection, owner routing, and atomic failures together"
+)]
+fn canvas_batch_transform_routes_scene_reference_leaves_to_the_owner_scene() {
+    let mut project = project();
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    child
+        .add_item(SceneItemSpec::for_source("background").expect("child source"))
+        .expect("child source attach");
+    let mut child_group = SceneItemSpec::for_group("child-group", "Child group").expect("group");
+    child_group
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::for_source("background").expect("group source"))
+        .expect("group source attach");
+    child.add_item(child_group).expect("group attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+
+    let parent_transform =
+        FrameTransform::new(1_500, 1_250, 18, 22, true, false, 220).expect("parent transform");
+    let mut reference = SceneItemSpec::for_scene("child-ref", "child").expect("scene reference");
+    reference.set_transform(parent_transform);
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: reference,
+        })
+        .expect("add scene reference");
+
+    let direct = FrameTransform::new(800, 900, 24, -8, false, false, 255).expect("direct leaf");
+    let grouped = FrameTransform::new(700, 1_100, -14, 12, true, false, 210).expect("grouped leaf");
+    project
+        .apply(ProjectCommand::SetSceneItemTransforms {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec![
+                ("child-ref/background".to_owned(), direct),
+                ("child-ref/child-group/background".to_owned(), grouped),
+            ],
+        })
+        .expect("scene-reference leaves update atomically");
+    let profile = project.profile("live").expect("profile");
+    let child = profile.scene("child").expect("child scene");
+    assert_eq!(
+        child.item("background").map(SceneItemSpec::transform),
+        Some(direct)
+    );
+    assert_eq!(
+        child
+            .item("child-group")
+            .and_then(SceneItemSpec::group)
+            .and_then(|group| {
+                group
+                    .items()
+                    .iter()
+                    .find(|item| item.id().as_str() == "background")
+            })
+            .map(SceneItemSpec::transform),
+        Some(grouped)
+    );
+    assert_eq!(
+        profile
+            .scene("main")
+            .and_then(|scene| scene.item("child-ref"))
+            .map(SceneItemSpec::transform),
+        Some(parent_transform)
+    );
+
+    let before_invalid = project.clone();
+    let error = project
+        .apply(ProjectCommand::SetSceneItemTransforms {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec![
+                ("child-ref/background".to_owned(), direct),
+                ("child-ref/missing".to_owned(), grouped),
+            ],
+        })
+        .expect_err("an invalid scene-reference leaf rejects the batch");
+    assert_eq!(
+        error,
+        ProjectError::UnknownSceneItem(Identifier::new("missing").expect("item id"))
+    );
+    assert_eq!(project, before_invalid);
+
+    let rotated = direct
+        .with_rotation_milli_degrees(90_000)
+        .expect("rotated transform");
+    let before_unsupported = project.clone();
+    let error = project
+        .apply(ProjectCommand::SetSceneItemTransforms {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec![("child-ref/background".to_owned(), rotated)],
+        })
+        .expect_err("transformed scene boundaries reject rotation");
+    assert_eq!(
+        error,
+        ProjectError::UnsupportedNestedSceneTransform(
+            Identifier::new("background").expect("item id")
+        )
+    );
+    assert_eq!(project, before_unsupported);
+}
+
+#[test]
 fn group_items_round_trip_flatten_and_duplicate_sources() {
     let mut project = project();
     let mut group = SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");

@@ -144,10 +144,20 @@ testing, drag-box selection, snapping guides, selection overlays, keyboard
 nudge, and transform drafts operate on the effective profile-canvas rectangle;
 release converts the draft back to the child's local transform and commits all
 selected paths through one atomic `SetSceneItemTransforms` command. Locked
-ancestors are respected. Scene-reference leaves remain intentionally
-read-only until an edit can be routed into the referenced scene, and crop or
-rotation at a transformed group boundary still returns an explicit unsupported
-result.
+ancestors are respected. Scene-reference leaves are covered by the follow-up
+package below; crop or rotation at a transformed group boundary still returns
+an explicit unsupported result.
+
+## Latest verified package: nested scene-reference canvas editing
+
+On 2026-08-24, flattened canvas targets below `Scene` sources now resolve
+through groups and scene references. Effective canvas transforms, ancestor
+locks, live preview drafts, inverse local conversion, and one atomic batch
+commit are shared with nested groups. The project command writes the leaf into
+the referenced scene that owns it, preserving the scene-reference transform
+and stable runtime path. Axis-aligned scale/translation/opacity/mirroring are
+supported; crop or rotation crossing a transformed scene/group boundary still
+returns an explicit unsupported result.
 
 ## Latest verified package: dock-header pointer drag
 
@@ -189,8 +199,14 @@ project/scene/output, collection, recovery, remux, and rename dialog flows.
 > Selection update: the Sources dock now projects and selects bounded nested
 > group paths such as `overlay-group/background`; click, context-menu opening,
 > and keyboard navigation use the same Rust-owned path selection. Canvas
-> geometry selection still projects top-level items only until nested world
-> transforms have a dedicated overlay model.
+> geometry now projects both group leaves and visible leaves below `Scene`
+> sources through the runtime's stable flattened paths; the Sources dock still
+> exposes group descendants only.
+
+> Row reconciliation: the nested scene-reference package below supersedes the
+> older `CANVAS-003`/`CANVAS-004` dependency wording. Axis-aligned scene-source
+> leaves now participate in canvas selection, drafts, and local commits; only
+> transformed-boundary crop/rotation and pointer/DPI evidence remain open.
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
