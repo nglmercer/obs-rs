@@ -15,6 +15,13 @@ only the low-level conversion slice. The project still lacks canonical
 per-source audio identity and routing, so source properties and multiple tracks
 remain intentionally open gaps.
 
+The built-in Stats dock now completes the sixth core dock boundary: ID 5 is
+part of the validated Rust-owned dock tree, layout persistence, menu visibility,
+tab projection, and floating-window forwarding. It reads existing status,
+capture-capability, preview, and output diagnostics on the established UI
+cadence, so it adds no render/capture/audio/output hot-path work. Dynamic
+plugin-rendered dock surfaces and persisted custom dock IDs remain open.
+
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation
 when every crossed parent scale is uniform and unmirrored. Media, project,

@@ -2,11 +2,12 @@ use super::*;
 
 pub(super) fn exercise_layout_restore(ui: &MainWindow) {
     let mut stored = AppSettings::default();
-    stored.layout.panel_order = vec![2, 4, 0, 1, 3];
+    stored.layout.panel_order = vec![2, 4, 0, 1, 3, 5];
     stored.layout.dock_tree =
         DockNode::from_legacy(&stored.layout.panel_order, &stored.layout.panel_weights)
             .expect("test layout should have a valid dock tree");
     stored.layout.show_transitions = false;
+    stored.layout.show_stats = false;
     stored.layout.view_mode = 0;
     stored.layout.dock_height = 300;
 
@@ -14,6 +15,7 @@ pub(super) fn exercise_layout_restore(ui: &MainWindow) {
 
     assert_eq!(ui.get_view_mode(), 0);
     assert!(!ui.get_show_transitions());
+    assert!(!ui.get_show_stats());
     assert!(ui.get_show_mixer());
     let order = ui.get_panel_order();
     assert_eq!(
@@ -69,7 +71,7 @@ pub(super) fn exercise_dock_layout(
     ui.invoke_dock_drag_start(0, 0.99, 0.5);
     ui.invoke_dock_drag_moved(0, 0.99, 0.5);
     assert!(ui.get_dock_dragging());
-    assert_eq!(ui.get_dock_drop_target(), 4);
+    assert_eq!(ui.get_dock_drop_target(), 5);
     assert!(ui.get_dock_drop_zone() > 0);
     ui.invoke_dock_drag_end(0, 0.99, 0.5);
     assert!(!ui.get_dock_dragging());
@@ -108,7 +110,7 @@ pub(super) fn exercise_dock_layout(
         .iter()
         .any(|pane| pane.panel_kind == 4 && pane.active));
     ui.invoke_split_dock_with(2, 4, 1, 500);
-    assert_eq!(read_dock_panes(ui).len(), 5);
+    assert_eq!(read_dock_panes(ui).len(), 6);
 }
 
 /// Drives a dock header through the testing backend's actual pointer path.
@@ -126,8 +128,8 @@ fn exercise_dock_header_pointer_drag(
         .collect::<Vec<_>>();
     assert_eq!(
         headers.len(),
-        5,
-        "the default layout exposes five dock headers"
+        6,
+        "the default layout exposes six dock headers"
     );
     let before = read_order(ui);
     assert_eq!(

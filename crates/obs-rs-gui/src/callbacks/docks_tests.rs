@@ -1,24 +1,24 @@
 use super::*;
 
-const ORDER: [i32; 5] = [1, 0, 2, 3, 4];
+const ORDER: [i32; 6] = [1, 0, 2, 3, 4, 5];
 
 #[test]
 fn a_dock_swaps_with_its_neighbour() {
-    assert_eq!(reorder(&ORDER, 0, -1).expect("left"), [0, 1, 2, 3, 4]);
-    assert_eq!(reorder(&ORDER, 0, 1).expect("right"), [1, 2, 0, 3, 4]);
+    assert_eq!(reorder(&ORDER, 0, -1).expect("left"), [0, 1, 2, 3, 4, 5]);
+    assert_eq!(reorder(&ORDER, 0, 1).expect("right"), [1, 2, 0, 3, 4, 5]);
 }
 
 #[test]
 fn a_dock_at_the_end_of_the_row_stays_put() {
     assert!(reorder(&ORDER, 1, -1).is_none(), "already leftmost");
-    assert!(reorder(&ORDER, 4, 1).is_none(), "already rightmost");
+    assert!(reorder(&ORDER, 5, 1).is_none(), "already rightmost");
     assert!(reorder(&ORDER, 2, 0).is_none(), "no direction");
     assert!(reorder(&ORDER, 9, 1).is_none(), "unknown dock");
 }
 
 #[test]
 fn a_splitter_drag_trades_width_between_its_neighbours() {
-    let weights = [1.0, 1.0, 1.85, 1.0, 1.4];
+    let weights = [1.0, 1.0, 1.85, 1.0, 1.4, 1.1];
 
     // Index 2 of the order sits between dock 0 and dock 2.
     let resized = resize(&weights, &ORDER, 2, 320);
@@ -85,7 +85,7 @@ fn oversized_dock_anchors_to_the_desktop_edge() {
 
 #[test]
 fn a_dock_cannot_be_collapsed_out_of_reach() {
-    let weights = [1.0, 1.0, 1.85, 1.0, 1.4];
+    let weights = [1.0, 1.0, 1.85, 1.0, 1.4, 1.1];
 
     let resized = resize(&weights, &ORDER, 2, 10_000);
 
@@ -95,7 +95,7 @@ fn a_dock_cannot_be_collapsed_out_of_reach() {
 
 #[test]
 fn a_drag_at_the_row_edge_changes_nothing() {
-    let weights = [1.0, 1.0, 1.85, 1.0, 1.4];
+    let weights = [1.0, 1.0, 1.85, 1.0, 1.4, 1.1];
 
     // There is no splitter before the first dock.
     assert_eq!(resize(&weights, &ORDER, 0, 200), weights);

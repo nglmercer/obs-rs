@@ -166,9 +166,11 @@ fn install_session(
         };
         docks.reset_floating(&ui);
         crate::settings::apply_default_layout(&ui);
-        let tree =
-            crate::dock_tree::DockNode::from_legacy(&[1, 0, 2, 3, 4], &[1.0, 1.0, 1.85, 1.0, 1.4])
-                .expect("the built-in dock layout must be valid");
+        let tree = crate::dock_tree::DockNode::from_legacy(
+            &[1, 0, 2, 3, 4, 5],
+            &[1.0, 1.0, 1.85, 1.0, 1.4, 1.1],
+        )
+        .expect("the built-in dock layout must be valid");
         docks.replace_tree(&tree, &ui);
         ui.set_status_message("Dock layout reset".into());
     });

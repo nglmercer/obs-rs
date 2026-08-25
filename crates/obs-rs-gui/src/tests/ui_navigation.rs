@@ -711,7 +711,7 @@ pub(super) fn exercise_menu_actions(
 
     // Resetting the layout restores the shipped arrangement whatever the row
     // was dragged into.
-    let reversed = vec![4, 3, 2, 1, 0];
+    let reversed = vec![4, 3, 2, 1, 0, 5];
     ui.set_panel_order(ModelRc::new(VecModel::from(reversed.clone())));
     ui.set_show_mixer(false);
     ui.invoke_reset_dock_layout();
@@ -838,7 +838,7 @@ pub(super) fn exercise_context_menus(
     let row_target = rows[1]
         .query_descendants()
         .match_inherits("TouchArea")
-        .match_predicate(|target| target.size().width > 150.0 && target.size().height > 30.0)
+        .match_predicate(|target| target.size().width > 120.0 && target.size().height > 30.0)
         .find_first()
         .expect("source row hit target");
     println!(
@@ -954,7 +954,7 @@ pub(super) fn exercise_context_menus(
     let more = ElementHandle::find_by_element_type_name(ui, "CompactButton")
         .find(|button| {
             let position = button.absolute_position();
-            position.x > 180.0 && position.x < 320.0 && position.y > 800.0
+            position.x < 180.0 && position.y > 800.0
         })
         .expect("source more button");
     more.mock_single_click(PointerEventButton::Left);

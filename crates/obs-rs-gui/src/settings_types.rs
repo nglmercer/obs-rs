@@ -458,6 +458,7 @@ impl LayoutSettings {
         ui.set_show_mixer(layout.show_mixer);
         ui.set_show_transitions(layout.show_transitions);
         ui.set_show_controls(layout.show_controls);
+        ui.set_show_stats(layout.show_stats);
         ui.set_panel_weights(ModelRc::new(VecModel::from(layout.panel_weights.clone())));
         // Docks are restored to the row; reopening their windows is left to the
         // user, so a session never starts with windows they cannot see.
@@ -498,6 +499,7 @@ impl AppSettings {
         self.layout.show_mixer = ui.get_show_mixer();
         self.layout.show_transitions = ui.get_show_transitions();
         self.layout.show_controls = ui.get_show_controls();
+        self.layout.show_stats = ui.get_show_stats();
         let weights = read_model(&ui.get_panel_weights());
         if weights.len() == DEFAULT_PANEL_WEIGHTS.len() {
             self.layout.panel_weights = weights;

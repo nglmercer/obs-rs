@@ -3,10 +3,12 @@ import { ControlsDock } from "controls_dock.slint";
 import { MixerDock } from "mixer_dock.slint";
 import { SceneDock } from "scene_dock.slint";
 import { SourceDock } from "source_dock.slint";
+import { StatsDock } from "stats_dock.slint";
 import { TransitionDock } from "transition_dock.slint";
 
 // The panel IDs are stable so the layout can be reordered without changing the
-// data model: 0 = scenes, 1 = sources, 2 = mixer, 3 = transitions, 4 = controls.
+// data model: 0 = scenes, 1 = sources, 2 = mixer, 3 = transitions, 4 = controls,
+// 5 = stats.
 export component DockSlot inherits Rectangle {
     in property <int> panel-kind;
     in property <string> locale;
@@ -37,6 +39,10 @@ export component DockSlot inherits Rectangle {
     in property <bool> remux-recovery-supported;
     in property <bool> remux-recovery-running;
     in property <bool> meters-paused;
+    in property <string> status-message;
+    in property <string> capture-capabilities;
+    in property <string> preview-metrics;
+    in property <string> output-metrics;
     // A floating dock fills its own window instead of a share of the row.
     in property <bool> floating;
     // Share of the dock row this panel takes, adjusted by the splitters.
@@ -103,7 +109,7 @@ export component DockSlot inherits Rectangle {
     // The row hands each dock a share of the width, which the splitters between
     // docks adjust. A floating dock ignores it and fills its window.
     horizontal-stretch: root.weight;
-    min-width: root.floating ? 0px : (panel-kind == 4 ? 172px : 148px);
+    min-width: root.floating ? 0px : (panel-kind == 4 ? 172px : (panel-kind == 5 ? 190px : 148px));
     background: transparent;
 
     if panel-kind == 0 : SceneDock {
@@ -248,5 +254,19 @@ export component DockSlot inherits Rectangle {
         recover-recording() => { root.recover-recording(); }
         set-view-mode(mode) => { root.set-view-mode(mode); }
         open-settings-window() => { root.open-settings-window(); }
+    }
+    if panel-kind == 5 : StatsDock {
+        floating: root.floating;
+        float-panel(kind) => { root.float-panel(kind); }
+        close-panel(kind) => { root.close-panel(kind); }
+        panel-kind: root.panel-kind;
+        status-message: root.status-message;
+        capture-capabilities: root.capture-capabilities;
+        preview-metrics: root.preview-metrics;
+        output-metrics: root.output-metrics;
+        move-panel(kind, delta) => { root.move-panel(kind, delta); }
+        dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+        dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+        dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
     }
 }

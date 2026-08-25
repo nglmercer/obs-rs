@@ -16,14 +16,15 @@ use super::{
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutSettings {
     /// Legacy projection of the tree's dock IDs: 0 scenes, 1 sources, 2 mixer,
-    /// 3 transitions, 4 controls. New layout code must mutate `dock_tree` and
-    /// refresh this projection at the toolkit boundary.
+    /// 3 transitions, 4 controls, 5 stats. New layout code must mutate
+    /// `dock_tree` and refresh this projection at the toolkit boundary.
     pub(crate) panel_order: Vec<i32>,
     pub(crate) show_scenes: bool,
     pub(crate) show_sources: bool,
     pub(crate) show_mixer: bool,
     pub(crate) show_transitions: bool,
     pub(crate) show_controls: bool,
+    pub(crate) show_stats: bool,
     /// 0 is studio mode, 1 the single-canvas default, and 2 is multiview.
     pub(crate) view_mode: i32,
     /// Height of the dock row in logical pixels.
@@ -237,11 +238,11 @@ pub(crate) fn scale_window_dimension(value: u32, ratio: f32, minimum: u32, maxim
 }
 
 /// The dock IDs a layout must contain, in the order OBS ships them.
-pub(super) const DEFAULT_PANEL_ORDER: [i32; 5] = [1, 0, 2, 3, 4];
+pub(super) const DEFAULT_PANEL_ORDER: [i32; 6] = [1, 0, 2, 3, 4, 5];
 
-/// Relative dock widths OBS ships with: the mixer is the widest strip and the
-/// controls column the narrowest.
-pub(super) const DEFAULT_PANEL_WEIGHTS: [f32; 5] = [1.0, 1.0, 1.85, 1.0, 1.4];
+/// Relative dock widths OBS-RS ships with: the mixer is the widest strip and
+/// the controls/stats columns retain distinct fixed shares.
+pub(super) const DEFAULT_PANEL_WEIGHTS: [f32; 6] = [1.0, 1.0, 1.85, 1.0, 1.4, 1.1];
 
 /// Bounds a stored width share must lie inside to be used.
 const WEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.2..=8.0;
@@ -259,6 +260,7 @@ impl Default for LayoutSettings {
             show_mixer: true,
             show_transitions: true,
             show_controls: true,
+            show_stats: true,
             view_mode: 1,
             dock_height: 248,
             panel_weights,
@@ -273,7 +275,7 @@ impl Default for LayoutSettings {
 }
 
 impl LayoutSettings {
-    /// Parses `1,0,2,3,4` into a complete dock order.
+    /// Parses `1,0,2,3,4,5` into a complete dock order.
     ///
     /// A document that names a dock twice, omits one, or contains an unknown ID
     /// is rejected wholesale: a partial layout would hide docks with no way for
@@ -285,10 +287,10 @@ impl LayoutSettings {
             .collect::<Option<Vec<_>>>()?;
         let mut sorted = order.clone();
         sorted.sort_unstable();
-        (sorted == [0, 1, 2, 3, 4]).then_some(order)
+        (sorted == [0, 1, 2, 3, 4, 5]).then_some(order)
     }
 
-    /// Parses `1.0,1.0,1.85,1.0,1.4` into one share per dock.
+    /// Parses `1.0,1.0,1.85,1.0,1.4,1.1` into one share per dock.
     ///
     /// A document with the wrong count, or a share outside the range a splitter
     /// can produce, falls back wholesale rather than leaving a dock unusable.
@@ -668,6 +670,7 @@ impl LayoutSettings {
             show_mixer: flag(config, "layout_show_mixer", defaults.show_mixer),
             show_transitions: flag(config, "layout_show_transitions", defaults.show_transitions),
             show_controls: flag(config, "layout_show_controls", defaults.show_controls),
+            show_stats: flag(config, "layout_show_stats", defaults.show_stats),
             view_mode: config
                 .get("layout_view_mode")
                 .and_then(|value| value.parse::<i32>().ok())

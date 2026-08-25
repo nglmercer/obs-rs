@@ -64,7 +64,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
             ratio_milli: 400,
             first: Box::new(DockNode::Dock(2)),
             second: Box::new(DockNode::Tabs {
-                docks: vec![3, 4],
+                docks: vec![3, 4, 5],
                 active: 0,
             }),
         }),
@@ -112,6 +112,15 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(after_nudge.translate_x(), before_nudge.translate_x() + 3);
     assert_eq!(after_nudge.translate_y(), before_nudge.translate_y() - 2);
     refresh_ui(&ui, &state, &surface);
+    ui.set_status_message("stats status".into());
+    ui.set_capture_capabilities("stats capture capabilities".into());
+    ui.set_preview_metrics("stats preview metrics".into());
+    ui.set_output_metrics("stats output metrics".into());
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(&ui, "StatsDock").count(),
+        1,
+        "the built-in Stats dock is rendered from the shared diagnostics properties"
+    );
     assert!(
         ElementHandle::find_by_accessible_label(&ui, "preview").any(|row| row.size().height > 30.0)
     );

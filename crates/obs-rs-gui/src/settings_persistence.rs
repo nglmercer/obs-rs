@@ -551,6 +551,7 @@ impl AppSettings {
                 "layout_show_controls",
                 self.layout.show_controls.to_string(),
             ),
+            ("layout_show_stats", self.layout.show_stats.to_string()),
             ("layout_view_mode", self.layout.view_mode.to_string()),
             ("layout_dock_height", self.layout.dock_height.to_string()),
             ("layout_panel_weights", self.layout.panel_weights_text()),

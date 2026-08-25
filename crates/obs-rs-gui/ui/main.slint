@@ -97,11 +97,11 @@ export component MainWindow inherits Window {
         in property <[DockSplitter]> dock-splitters;
         // OBS ships sources left of scenes; the ids stay stable so a reorder
         // never touches the data model.
-        in-out property <[int]> panel-order: [1, 0, 2, 3, 4];
+        in-out property <[int]> panel-order: [1, 0, 2, 3, 4, 5];
         // Width share per dock kind, adjusted by the splitters between docks.
-        in-out property <[float]> panel-weights: [1.0, 1.0, 1.85, 1.0, 1.4];
+        in-out property <[float]> panel-weights: [1.0, 1.0, 1.85, 1.0, 1.4, 1.1];
         // Dock kinds currently detached into their own windows.
-        in-out property <[bool]> panel-floating: [false, false, false, false, false];
+        in-out property <[bool]> panel-floating: [false, false, false, false, false, false];
         // Transient drag state is UI interaction state, not project or layout
         // state. Rust owns the target resolution; Slint only paints it.
         in-out property <bool> dock-dragging: false;
@@ -158,6 +158,7 @@ export component MainWindow inherits Window {
         in-out property <bool> show-mixer: true;
         in-out property <bool> show-transitions: true;
         in-out property <bool> show-controls: true;
+        in-out property <bool> show-stats: true;
         // Pausing freezes the last measured levels without stopping capture.
         in-out property <bool> meters-paused: false;
         // 1 project/save/export/import · 2 add scene · 3 add source · 4 output
@@ -567,6 +568,7 @@ export component MainWindow inherits Window {
                 show-mixer: root.show-mixer;
                 show-transitions: root.show-transitions;
                 show-controls: root.show-controls;
+                show-stats: root.show-stats;
                 hotkey-undo: root.hotkey-undo;
                 hotkey-redo: root.hotkey-redo;
                 hotkey-save-project: root.hotkey-save-project;
@@ -647,6 +649,8 @@ export component MainWindow inherits Window {
                         root.show-transitions = !root.show-transitions;
                     } else if action == "toggle-controls" {
                         root.show-controls = !root.show-controls;
+                    } else if action == "toggle-stats" {
+                        root.show-stats = !root.show-stats;
                     }
                 }
                 select-view-mode(mode) => { root.apply-view-mode(mode); }
@@ -770,6 +774,11 @@ export component MainWindow inherits Window {
                 show-mixer: root.show-mixer;
                 show-transitions: root.show-transitions;
                 show-controls: root.show-controls;
+                show-stats: root.show-stats;
+                status-message: root.status-message;
+                capture-capabilities: root.capture-capabilities;
+                preview-metrics: root.preview-metrics;
+                output-metrics: root.output-metrics;
                 move-panel(kind, delta) => { root.move-panel(kind, delta); }
                 resize-panel(index, delta) => { root.resize-panel(index, delta); }
                 select-dock-tab(kind) => { root.select-dock-tab(kind); }
@@ -857,6 +866,7 @@ export component MainWindow inherits Window {
                     if kind == 2 { root.show-mixer = false; }
                     if kind == 3 { root.show-transitions = false; }
                     if kind == 4 { root.show-controls = false; }
+                    if kind == 5 { root.show-stats = false; }
                 }
             }
 

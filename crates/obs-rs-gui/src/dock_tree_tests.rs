@@ -1,7 +1,7 @@
 use super::*;
 
-const ORDER: [DockId; 5] = [1, 0, 2, 3, 4];
-const WEIGHTS: [f32; 5] = [1.0, 1.0, 1.85, 1.0, 1.4];
+const ORDER: [DockId; 6] = [1, 0, 2, 3, 4, 5];
+const WEIGHTS: [f32; 6] = [1.0, 1.0, 1.85, 1.0, 1.4, 1.1];
 
 #[test]
 fn legacy_layout_becomes_a_valid_horizontal_tree() {
@@ -25,7 +25,7 @@ fn tree_encoding_round_trips_splits_tabs_and_axes() {
             ratio_milli: 400,
             first: Box::new(DockNode::Dock(2)),
             second: Box::new(DockNode::Tabs {
-                docks: vec![3, 4],
+                docks: vec![3, 4, 5],
                 active: 0,
             }),
         }),
@@ -57,7 +57,7 @@ fn pane_layout_keeps_split_rectangles_and_tab_metadata_bounded() {
             ratio_milli: 400,
             first: Box::new(DockNode::Dock(2)),
             second: Box::new(DockNode::Tabs {
-                docks: vec![3, 4],
+                docks: vec![3, 4, 5],
                 active: 0,
             }),
         }),
@@ -70,7 +70,7 @@ fn pane_layout_keeps_split_rectangles_and_tab_metadata_bounded() {
     assert_eq!((panes[0].width_milli, panes[0].height_milli), (1_000, 600));
     assert!(!panes[0].active);
     assert!(panes[1].active);
-    assert_eq!(panes[1].tab_ids, [1, 0, 0, 0, 0]);
+    assert_eq!(panes[1].tab_ids, [1, 0, 0, 0, 0, 0]);
     assert_eq!((panes[2].x_milli, panes[2].y_milli), (0, 600));
     assert_eq!((panes[2].width_milli, panes[2].height_milli), (400, 400));
     assert_eq!((panes[3].x_milli, panes[3].y_milli), (400, 600));
@@ -103,9 +103,9 @@ fn drag_drop_can_place_a_dock_before_or_after_the_target() {
     let mut tree = DockNode::from_legacy(&ORDER, &WEIGHTS).expect("tree");
 
     assert!(tree.drop_dock_with(4, 1, DockDropZone::Left));
-    assert_eq!(tree.leaf_order(), [4, 1, 0, 2, 3]);
+    assert_eq!(tree.leaf_order(), [4, 1, 0, 2, 3, 5]);
     assert!(tree.drop_dock_with(4, 1, DockDropZone::Right));
-    assert_eq!(tree.leaf_order(), [1, 4, 0, 2, 3]);
+    assert_eq!(tree.leaf_order(), [1, 4, 0, 2, 3, 5]);
     assert!(tree.is_valid());
 }
 
@@ -113,7 +113,7 @@ fn drag_drop_can_place_a_dock_before_or_after_the_target() {
 fn splitter_projection_and_resize_keep_ratios_bounded() {
     let mut tree = DockNode::from_legacy(&ORDER, &WEIGHTS).expect("tree");
     let before = tree.splitter_layout();
-    assert_eq!(before.len(), 4);
+    assert_eq!(before.len(), 5);
     assert_eq!(before[0].axis, DockAxis::Horizontal);
     assert!(tree.resize_splitter(before[0].id, 100));
     assert_eq!(
@@ -137,7 +137,7 @@ fn tab_and_split_mutations_are_atomic_and_preserve_all_docks() {
     assert!(tree.activate_tab(3));
     assert!(tree.split_dock_with(2, 3, DockAxis::Vertical, 500));
     assert!(tree.is_valid());
-    assert_eq!(tree.leaf_order(), [1, 0, 3, 4, 2]);
+    assert_eq!(tree.leaf_order(), [1, 0, 3, 4, 2, 5]);
     assert!(!tree.split_dock_with(0, 1, DockAxis::Horizontal, 10));
     assert!(tree.is_valid());
 }

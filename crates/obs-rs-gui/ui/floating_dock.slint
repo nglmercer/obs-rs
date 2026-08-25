@@ -41,6 +41,10 @@ export component FloatingDockWindow inherits Window {
     in property <bool> remux-recovery-supported;
     in property <bool> remux-recovery-running;
     in property <bool> meters-paused;
+    in property <string> status-message;
+    in property <string> capture-capabilities;
+    in property <string> preview-metrics;
+    in property <string> output-metrics;
 
     callback open-modal(int);
     callback select-preview(string);
@@ -123,6 +127,10 @@ export component FloatingDockWindow inherits Window {
         remux-recovery-supported: root.remux-recovery-supported;
         remux-recovery-running: root.remux-recovery-running;
         meters-paused: root.meters-paused;
+        status-message: root.status-message;
+        capture-capabilities: root.capture-capabilities;
+        preview-metrics: root.preview-metrics;
+        output-metrics: root.output-metrics;
         // A floating dock cannot be reordered, and its header button returns it
         // to the row instead of detaching it again.
         move-panel(kind, delta) => { }

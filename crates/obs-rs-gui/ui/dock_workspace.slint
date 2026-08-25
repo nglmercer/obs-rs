@@ -49,6 +49,11 @@ export component DockWorkspace inherits Rectangle {
     in property <bool> show-mixer;
     in property <bool> show-transitions;
     in property <bool> show-controls;
+    in property <bool> show-stats;
+    in property <string> status-message;
+    in property <string> capture-capabilities;
+    in property <string> preview-metrics;
+    in property <string> output-metrics;
 
     callback move-panel(int, int);
     callback resize-panel(int, int);
@@ -120,6 +125,7 @@ export component DockWorkspace inherits Rectangle {
             || (kind == 2 && root.show-mixer)
             || (kind == 3 && root.show-transitions)
             || (kind == 4 && root.show-controls)
+            || (kind == 5 && root.show-stats)
     }
 
     function panel-floating-now(kind: int) -> bool {
@@ -128,6 +134,7 @@ export component DockWorkspace inherits Rectangle {
             || (kind == 2 && root.panel-floating[2])
             || (kind == 3 && root.panel-floating[3])
             || (kind == 4 && root.panel-floating[4])
+            || (kind == 5 && root.panel-floating[5])
     }
 
     function panel-label(kind: int) -> string {
@@ -135,7 +142,8 @@ export component DockWorkspace inherits Rectangle {
             : kind == 1 ? I18n.text.sources_title
             : kind == 2 ? I18n.text.mixer_title
             : kind == 3 ? I18n.text.transition_title
-            : I18n.text.controls_title
+            : kind == 4 ? I18n.text.controls_title
+            : I18n.text.stats_title
     }
 
     function normalized-x(value: float) -> float {
@@ -198,6 +206,12 @@ export component DockWorkspace inherits Rectangle {
                     active: pane.tab-index == 4;
                     horizontal-stretch: 1;
                     clicked => { root.select-dock-tab(pane.tab-e); }
+                }
+                if pane.tab-count > 5 : TabButton {
+                    label: root.panel-label(pane.tab-f);
+                    active: pane.tab-index == 5;
+                    horizontal-stretch: 1;
+                    clicked => { root.select-dock-tab(pane.tab-f); }
                 }
             }
         }
@@ -267,6 +281,10 @@ export component DockWorkspace inherits Rectangle {
             remux-recovery-supported: root.remux-recovery-supported;
             remux-recovery-running: root.remux-recovery-running;
             meters-paused: root.meters-paused;
+            status-message: root.status-message;
+            capture-capabilities: root.capture-capabilities;
+            preview-metrics: root.preview-metrics;
+            output-metrics: root.output-metrics;
             dock-drag-start(kind, x, y) => {
                 root.dock-drag-start(kind, root.normalized-x(x), root.normalized-y(y));
             }

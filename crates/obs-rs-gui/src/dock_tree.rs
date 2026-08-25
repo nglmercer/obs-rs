@@ -8,7 +8,7 @@ use std::{cmp::Ordering, fmt::Write as _};
 
 pub(crate) type DockId = i32;
 
-pub(crate) const DOCK_IDS: [DockId; 5] = [0, 1, 2, 3, 4];
+pub(crate) const DOCK_IDS: [DockId; 6] = [0, 1, 2, 3, 4, 5];
 pub(crate) const MAX_DOCK_LAYOUT_BYTES: usize = 4_096;
 const DOCK_LAYOUT_VERSION: &str = "v1:";
 const MAX_DOCK_NODES: usize = 31;
@@ -69,7 +69,8 @@ pub(crate) enum DockNode {
     },
     /// Several docks sharing one region, with one visible tab.
     Tabs { docks: Vec<DockId>, active: usize },
-    /// One leaf dock: 0 scenes, 1 sources, 2 mixer, 3 transitions, 4 controls.
+    /// One leaf dock: 0 scenes, 1 sources, 2 mixer, 3 transitions, 4 controls,
+    /// 5 stats.
     Dock(DockId),
 }
 
@@ -159,7 +160,7 @@ impl DockNode {
     }
 
     /// Computes the visible splitter edges without exposing the tree to the
-    /// toolkit. There can be at most four splitters for the five built-in
+    /// toolkit. There can be at most five splitters for the six built-in
     /// docks, so the projection remains bounded by construction.
     pub(crate) fn splitter_layout(&self) -> Vec<DockSplitterLayout> {
         let mut splitters = Vec::new();
@@ -445,7 +446,7 @@ impl DockNode {
                 tab_group: u8::MAX,
                 tab_index: 0,
                 tab_count: 1,
-                tab_ids: [*dock_id, 0, 0, 0, 0],
+                tab_ids: [*dock_id, 0, 0, 0, 0, 0],
                 active: true,
             }),
         }

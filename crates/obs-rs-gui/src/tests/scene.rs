@@ -129,11 +129,11 @@ fn app_settings_round_trip_the_window_layout() {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("obs-rs-gui-layout-{token}.toml"));
     let mut settings = AppSettings::default();
-    settings.layout.panel_order = vec![4, 3, 2, 1, 0];
+    settings.layout.panel_order = vec![4, 3, 2, 1, 0, 5];
     settings.layout.show_mixer = false;
     settings.layout.view_mode = 0;
     settings.layout.dock_height = 320;
-    settings.layout.panel_weights = vec![1.5, 0.8, 2.0, 1.0, 1.2];
+    settings.layout.panel_weights = vec![1.5, 0.8, 2.0, 1.0, 1.2, 1.1];
     settings.layout.dock_tree =
         DockNode::from_legacy(&settings.layout.panel_order, &settings.layout.panel_weights)
             .expect("test layout should have a valid dock tree");

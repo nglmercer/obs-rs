@@ -17,8 +17,11 @@ use crate::{
     DockPane, DockSplitter, FloatingDockWindow, MainWindow,
 };
 
+#[path = "docks_sync.rs"]
+mod docks_sync;
+
 /// The dock kinds, in the order their IDs are numbered.
-pub(crate) const PANEL_KINDS: [i32; 5] = [0, 1, 2, 3, 4];
+pub(crate) const PANEL_KINDS: [i32; 6] = [0, 1, 2, 3, 4, 5];
 
 /// Narrowest and widest share a dock may be dragged to.
 ///
@@ -55,32 +58,7 @@ impl DockController {
     /// the same models the row uses instead of keeping its own copy.
     pub(crate) fn sync(&self, ui: &MainWindow) {
         for window in self.windows.borrow().iter().flatten() {
-            window.set_locale(ui.get_locale());
-            window.set_scene_rows(ui.get_scene_rows());
-            window.set_source_rows(ui.get_source_rows());
-            window.set_mixer_rows(ui.get_mixer_rows());
-            window.set_source_scene(ui.get_source_scene());
-            window.set_preview_scene(ui.get_preview_scene());
-            window.set_selected_source(ui.get_selected_source());
-            window.set_selected_source_is_screen(ui.get_selected_source_is_screen());
-            window.set_selected_source_is_group(ui.get_selected_source_is_group());
-            window.set_selected_source_is_scene(ui.get_selected_source_is_scene());
-            window.set_selected_source_is_nested(ui.get_selected_source_is_nested());
-            window.set_selected_source_visible(ui.get_selected_source_visible());
-            window.set_selected_source_locked(ui.get_selected_source_locked());
-            window.set_selected_source_first(ui.get_selected_source_first());
-            window.set_selected_source_last(ui.get_selected_source_last());
-            window.set_selected_source_move_targets(ui.get_selected_source_move_targets());
-            window.set_source_count(ui.get_source_count());
-            window.set_can_paste(ui.get_can_paste());
-            window.set_can_group_sources(ui.get_can_group_sources());
-            window.set_transition(ui.get_transition());
-            window.set_transition_kind(ui.get_transition_kind());
-            window.set_recording(ui.get_recording());
-            window.set_streaming(ui.get_streaming());
-            window.set_remux_recovery_supported(ui.get_remux_recovery_supported());
-            window.set_remux_recovery_running(ui.get_remux_recovery_running());
-            window.set_meters_paused(ui.get_meters_paused());
+            docks_sync::sync_floating_window(window, ui);
         }
     }
 
@@ -244,7 +222,7 @@ pub(crate) fn install_dock_callbacks_with_layout(
         .cloned()
         .or_else(|| DockNode::from_legacy(&initial_order, &initial_weights))
         .unwrap_or_else(|| {
-            DockNode::from_legacy(&[1, 0, 2, 3, 4], &[1.0, 1.0, 1.85, 1.0, 1.4])
+            DockNode::from_legacy(&[1, 0, 2, 3, 4, 5], &[1.0, 1.0, 1.85, 1.0, 1.4, 1.1])
                 .expect("the built-in dock layout must be valid")
         });
     let controller = Rc::new(DockController {
@@ -478,6 +456,7 @@ fn set_panes(ui: &MainWindow, tree: &DockNode) {
             tab_c: pane.tab_ids[2],
             tab_d: pane.tab_ids[3],
             tab_e: pane.tab_ids[4],
+            tab_f: pane.tab_ids[5],
             active: pane.active,
         })
         .collect::<Vec<_>>();
@@ -832,6 +811,7 @@ fn dock_title(state: &Rc<RefCell<DesktopState>>, kind: i32) -> slint::SharedStri
         1 => text.sources_title.clone(),
         2 => text.mixer_title.clone(),
         3 => text.transition_title.clone(),
+        5 => text.stats_title.clone(),
         _ => text.controls_title.clone(),
     })
 }

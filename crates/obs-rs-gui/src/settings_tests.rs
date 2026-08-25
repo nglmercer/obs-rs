@@ -171,7 +171,7 @@ fn dock_tree_round_trips_without_losing_legacy_order() {
             ratio_milli: 400,
             first: Box::new(DockNode::Dock(2)),
             second: Box::new(DockNode::Tabs {
-                docks: vec![3, 4],
+                docks: vec![3, 4, 5],
                 active: 1,
             }),
         }),
@@ -183,7 +183,7 @@ fn dock_tree_round_trips_without_losing_legacy_order() {
     let decoded = AppSettings::from_config(&settings.to_config());
 
     assert_eq!(decoded.layout.dock_tree, tree);
-    assert_eq!(decoded.layout.panel_order, vec![1, 0, 2, 3, 4]);
+    assert_eq!(decoded.layout.panel_order, vec![1, 0, 2, 3, 4, 5]);
 }
 
 #[test]

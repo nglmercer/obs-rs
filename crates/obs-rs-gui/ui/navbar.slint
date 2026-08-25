@@ -36,6 +36,7 @@ export component AppNavbar inherits Rectangle {
     in property <bool> show-mixer;
     in property <bool> show-transitions;
     in property <bool> show-controls;
+    in property <bool> show-stats;
     in property <string> hotkey-undo;
     in property <string> hotkey-redo;
     in property <string> hotkey-save-project;
@@ -178,7 +179,7 @@ export component AppNavbar inherits Rectangle {
         x: docks-button.x;
         y: root.height;
         width: 224px;
-        height: 196px;
+        height: 220px;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -211,6 +212,12 @@ export component AppNavbar inherits Rectangle {
                 checkable: true;
                 checked: root.show-controls;
                 clicked => { root.menu-action("toggle-controls"); docks-popup.close(); }
+            }
+            MenuEntry {
+                label: I18n.text.menu_stats;
+                checkable: true;
+                checked: root.show-stats;
+                clicked => { root.menu-action("toggle-stats"); docks-popup.close(); }
             }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
             MenuEntry { label: I18n.text.menu_reset_layout; clicked => { root.menu-action("reset-layout"); docks-popup.close(); } }
