@@ -4,7 +4,9 @@ use obs_rs_config::Config;
 use obs_rs_media::{
     FrameFilter, FrameRate, FrameTransform, FrameTransition, Timestamp, VideoFormat,
 };
-use obs_rs_plugin_api::{Plugin, PluginApiVersion, PluginManifest, SourceFactory, VideoRequest};
+use obs_rs_plugin_api::{
+    DockDescriptor, Plugin, PluginApiVersion, PluginManifest, SourceFactory, VideoRequest,
+};
 use obs_rs_util::Identifier;
 use std::sync::Arc;
 
@@ -35,6 +37,25 @@ impl Plugin for FutureApiPlugin {
 
     fn source_factories(&self) -> &[Arc<dyn SourceFactory>] {
         &[]
+    }
+}
+
+struct DockPlugin {
+    manifest: PluginManifest,
+    docks: Vec<DockDescriptor>,
+}
+
+impl Plugin for DockPlugin {
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn source_factories(&self) -> &[Arc<dyn SourceFactory>] {
+        &[]
+    }
+
+    fn dock_descriptors(&self) -> &[DockDescriptor] {
+        &self.docks
     }
 }
 
@@ -124,6 +145,74 @@ fn runtime_limits_contain_plugin_scene_source_and_filter_resources() {
             limit: 1
         })
     );
+}
+
+#[test]
+fn registers_plugin_docks_in_a_bounded_plugin_namespace() {
+    let plugin = DockPlugin {
+        manifest: PluginManifest::new("dock_plugin", "Dock plugin", "1.0.0").expect("manifest"),
+        docks: vec![
+            DockDescriptor::new("stats", "Plugin stats").expect("stats dock"),
+            DockDescriptor::new("events", "Plugin events").expect("events dock"),
+        ],
+    };
+    let mut runtime = Runtime::new();
+    runtime
+        .register_plugin(&plugin)
+        .expect("plugin docks register atomically");
+
+    let docks = runtime
+        .plugin_docks()
+        .map(|(plugin, dock)| (plugin.as_str().to_owned(), dock.id().as_str().to_owned()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        docks,
+        vec![
+            ("dock_plugin".to_owned(), "events".to_owned()),
+            ("dock_plugin".to_owned(), "stats".to_owned()),
+        ]
+    );
+    assert_eq!(runtime.usage().docks(), 2);
+}
+
+#[test]
+fn plugin_dock_registration_rejects_duplicate_and_oversized_lists_atomically() {
+    let duplicate = DockPlugin {
+        manifest: PluginManifest::new("duplicate_docks", "Duplicate docks", "1.0.0")
+            .expect("manifest"),
+        docks: vec![
+            DockDescriptor::new("stats", "Stats").expect("stats dock"),
+            DockDescriptor::new("stats", "Stats again").expect("duplicate dock"),
+        ],
+    };
+    let mut runtime = Runtime::new();
+    assert_eq!(
+        runtime.register_plugin(&duplicate),
+        Err(RuntimeError::DuplicatePluginDock {
+            plugin: Identifier::new("duplicate_docks").expect("plugin id"),
+            dock: Identifier::new("stats").expect("dock id"),
+        })
+    );
+    assert_eq!(runtime.plugins().len(), 0);
+    assert_eq!(runtime.usage().docks(), 0);
+
+    let docks = (0..=obs_rs_plugin_api::MAX_PLUGIN_DOCKS)
+        .map(|index| DockDescriptor::new(&format!("dock_{index}"), "Plugin dock").expect("dock"))
+        .collect();
+    let oversized = DockPlugin {
+        manifest: PluginManifest::new("oversized_docks", "Oversized docks", "1.0.0")
+            .expect("manifest"),
+        docks,
+    };
+    assert_eq!(
+        runtime.register_plugin(&oversized),
+        Err(RuntimeError::ResourceLimitExceeded {
+            resource: "plugin docks",
+            limit: obs_rs_plugin_api::MAX_PLUGIN_DOCKS,
+        })
+    );
+    assert_eq!(runtime.plugins().len(), 0);
+    assert_eq!(runtime.usage().docks(), 0);
 }
 
 #[test]

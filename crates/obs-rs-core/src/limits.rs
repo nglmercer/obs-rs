@@ -42,6 +42,16 @@ impl RuntimeLimits {
         self.source_kinds
     }
 
+    /// Returns the maximum plugin-dock count derived from the plugin quota.
+    ///
+    /// Keeping this derived preserves the six-argument constructor while still
+    /// bounding extension metadata independently from scene and source state.
+    #[must_use]
+    pub const fn max_docks(self) -> usize {
+        self.plugins
+            .saturating_mul(obs_rs_plugin_api::MAX_PLUGIN_DOCKS)
+    }
+
     /// Returns the maximum scene count.
     #[must_use]
     pub const fn max_scenes(self) -> usize {
@@ -88,6 +98,7 @@ impl Default for RuntimeLimits {
 pub struct RuntimeUsage {
     pub(crate) plugins: usize,
     pub(crate) source_kinds: usize,
+    pub(crate) docks: usize,
     pub(crate) scenes: usize,
     pub(crate) sources: usize,
     pub(crate) filters: usize,
@@ -104,6 +115,12 @@ impl RuntimeUsage {
     #[must_use]
     pub const fn source_kinds(self) -> usize {
         self.source_kinds
+    }
+
+    /// Returns the number of registered plugin dock descriptors.
+    #[must_use]
+    pub const fn docks(self) -> usize {
+        self.docks
     }
 
     /// Returns the number of named scenes.

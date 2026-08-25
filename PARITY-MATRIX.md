@@ -28,6 +28,17 @@ Stereo, 2.1, Quad, 5.1, and 7.1 by speaker role, while unknown `Discrete`
 layouts retain the index-based fallback. This does not claim per-source audio
 routing, adaptive clock correction, or multiple recording tracks.
 
+## Latest verified package: bounded plugin dock metadata
+
+On 2026-08-25, the plugin contract gained validated dock descriptors with
+bounded titles and an optional `Plugin::dock_descriptors()` contribution. The
+headless runtime registers them atomically under the `(plugin, dock)` namespace,
+rejects duplicate declarations and lists above the per-plugin limit, exposes
+deterministic metadata and usage counts, and keeps toolkit/native handles out
+of the plugin boundary. Existing source-only plugins remain compatible. A
+dynamic Slint dock surface, persisted custom-dock tree IDs, permissions, and
+subprocess UI hosting remain incomplete.
+
 ## Latest verified package: exact nested leaf crop/rotation slice
 
 On 2026-08-25, nested group and Scene-reference flattening gained a bounded
@@ -566,6 +577,11 @@ screen-reader behavior and the remaining focus audit are still open.
 Reconciliation note: SCENE-001 now also has real keyboard navigation evidence
 for the persisted scene order in the docked and floating-panel callback chain.
 The broader collection lifecycle and native accessibility audit remain partial.
+
+Reconciliation note: `DOCK-004`/`PLUGIN-001` now include bounded plugin dock
+metadata registration and runtime diagnostics. This is an extension contract,
+not yet a dynamic custom-dock UI; Slint surfaces still expose only the built-in
+docks until the plugin-host packet is implemented.
 
 ## Baseline conclusion
 

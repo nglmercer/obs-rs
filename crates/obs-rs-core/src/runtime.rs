@@ -1,8 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform, RenderDelayBuffer};
-use obs_rs_plugin_api::{Plugin, PluginApiVersion, PluginManifest};
+use obs_rs_plugin_api::{Plugin, PluginApiVersion, PluginManifest, MAX_PLUGIN_DOCKS};
 use obs_rs_util::Identifier;
 
 use super::{
@@ -10,7 +13,7 @@ use super::{
     ids::SourceId,
     limits::{RuntimeLimits, RuntimeUsage},
     metrics::CompositorMetrics,
-    registry::{Registry, Scene, SourceInstance},
+    registry::{RegisteredDock, Registry, Scene, SourceInstance},
 };
 
 const MAX_RUNTIME_SCENE_ITEM_ID_BYTES: usize = 4_096;
@@ -81,6 +84,7 @@ impl Runtime {
         RuntimeUsage {
             plugins: self.registry.plugins.len(),
             source_kinds: self.registry.sources.len(),
+            docks: self.registry.docks.len(),
             scenes: self.scenes.len(),
             sources: self.sources.len(),
             filters,
@@ -139,6 +143,39 @@ impl Runtime {
             }
         }
 
+        let dock_descriptors = plugin.dock_descriptors();
+        if dock_descriptors.len() > MAX_PLUGIN_DOCKS {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "plugin docks",
+                limit: MAX_PLUGIN_DOCKS,
+            });
+        }
+        let dock_count = self
+            .registry
+            .docks
+            .len()
+            .checked_add(dock_descriptors.len())
+            .ok_or(RuntimeError::ResourceLimitExceeded {
+                resource: "docks",
+                limit: self.limits.max_docks(),
+            })?;
+        if dock_count > self.limits.max_docks() {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "docks",
+                limit: self.limits.max_docks(),
+            });
+        }
+        let mut plugin_dock_keys = BTreeSet::new();
+        for descriptor in dock_descriptors {
+            let key = (manifest.id().clone(), descriptor.id().clone());
+            if !plugin_dock_keys.insert(key.clone()) || self.registry.docks.contains_key(&key) {
+                return Err(RuntimeError::DuplicatePluginDock {
+                    plugin: key.0,
+                    dock: key.1,
+                });
+            }
+        }
+
         self.registry
             .plugins
             .insert(manifest.id().clone(), manifest.clone());
@@ -146,6 +183,16 @@ impl Runtime {
             self.registry
                 .sources
                 .insert(factory.kind().clone(), Arc::clone(factory));
+        }
+        for descriptor in dock_descriptors {
+            let key = (manifest.id().clone(), descriptor.id().clone());
+            self.registry.docks.insert(
+                key,
+                RegisteredDock {
+                    plugin: manifest.id().clone(),
+                    descriptor: descriptor.clone(),
+                },
+            );
         }
         Ok(())
     }
@@ -166,6 +213,18 @@ impl Runtime {
     #[must_use]
     pub fn source_kinds(&self) -> impl ExactSizeIterator<Item = &Identifier> {
         self.registry.sources.keys()
+    }
+
+    /// Returns registered plugin dock metadata in deterministic namespace
+    /// order. The UI host can use this list without receiving plugin handles.
+    #[must_use]
+    pub fn plugin_docks(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&Identifier, &obs_rs_plugin_api::DockDescriptor)> {
+        self.registry
+            .docks
+            .values()
+            .map(|dock| (&dock.plugin, &dock.descriptor))
     }
 
     /// Creates a named scene.

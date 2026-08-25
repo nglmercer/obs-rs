@@ -264,6 +264,12 @@ position, and the UI selects the resulting root or nested child paths.
 | GAP-016 | Visual QA does not yet compare the same states | Slint can render deterministic settings fixtures in English and Spanish; live compositor screenshots and OBS fixture capture are unavailable in this environment. | Spacing, focus, hover, menus, dock proportions, and canvas behavior can regress without a measurable diff. | Reference fixture catalog, scripted workflows, screenshot diff thresholds, and platform/DPI/locale matrix. | Work 033; QA Agent. |
 | GAP-017 | Reliability evidence is shorter than the product target | 300-tick A/V soak and bounded worker tests pass; no multi-hour stream/record/device/GPU/network soak is present. | Memory growth, reconnect storms, output failure recovery, and device loss remain unproven. | 30-minute and multi-hour fault-injection soaks with RSS, queue, deadline, copy, error, and recovery telemetry. | Work 035; Performance + QA Agents. |
 
+Reconciliation note: the plugin contract now carries bounded dock descriptors,
+and the core runtime registers them atomically under a plugin-scoped namespace
+with usage accounting. Dynamic Slint/plugin surfaces, permissions, and
+subprocess UI hosting remain open; this packet only closes the metadata and
+runtime-registration boundary.
+
 ## Dependency graph
 
 Latest nested Scene-reference verification covers source-name editing and

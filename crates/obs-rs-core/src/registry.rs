@@ -4,7 +4,7 @@ use std::{
 };
 
 use obs_rs_media::{FrameFilter, FrameTransform, RenderDelayBuffer, VideoFrame};
-use obs_rs_plugin_api::{PluginManifest, Source, SourceFactory};
+use obs_rs_plugin_api::{DockDescriptor, PluginManifest, Source, SourceFactory};
 use obs_rs_util::Identifier;
 
 pub(crate) struct Registry {
@@ -12,6 +12,9 @@ pub(crate) struct Registry {
     pub(crate) plugins: BTreeMap<Identifier, PluginManifest>,
     /// Ordered because [`Runtime::source_kinds`] documents identifier order.
     pub(crate) sources: BTreeMap<Identifier, Arc<dyn SourceFactory>>,
+    /// Ordered by plugin and plugin-local dock ID so diagnostics and future UI
+    /// hosts receive deterministic extension metadata.
+    pub(crate) docks: BTreeMap<(Identifier, Identifier), RegisteredDock>,
 }
 
 impl Registry {
@@ -19,8 +22,16 @@ impl Registry {
         Self {
             plugins: BTreeMap::new(),
             sources: BTreeMap::new(),
+            docks: BTreeMap::new(),
         }
     }
+}
+
+/// Metadata retained for one registered plugin dock. The runtime owns this
+/// copy; no toolkit or native window object crosses the plugin boundary.
+pub(crate) struct RegisteredDock {
+    pub(crate) plugin: Identifier,
+    pub(crate) descriptor: DockDescriptor,
 }
 
 pub(crate) struct SourceInstance {

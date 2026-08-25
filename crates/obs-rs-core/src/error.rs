@@ -29,6 +29,13 @@ pub enum RuntimeError {
     DuplicatePlugin(Identifier),
     /// A source kind is already owned by another factory.
     DuplicateSourceKind(Identifier),
+    /// A plugin has already declared this plugin-local dock ID.
+    DuplicatePluginDock {
+        /// Owning plugin identifier.
+        plugin: Identifier,
+        /// Plugin-local dock identifier.
+        dock: Identifier,
+    },
     /// A scene name is already in use.
     DuplicateScene(Identifier),
     /// No factory is registered for a source kind.
@@ -81,6 +88,12 @@ impl fmt::Display for RuntimeError {
             Self::DuplicatePlugin(id) => write!(formatter, "plugin {id} is already registered"),
             Self::DuplicateSourceKind(kind) => {
                 write!(formatter, "source kind {kind} is already registered")
+            }
+            Self::DuplicatePluginDock { plugin, dock } => {
+                write!(
+                    formatter,
+                    "plugin {plugin} dock {dock} is already registered"
+                )
             }
             Self::DuplicateScene(name) => write!(formatter, "scene {name} already exists"),
             Self::UnknownSourceKind(kind) => {

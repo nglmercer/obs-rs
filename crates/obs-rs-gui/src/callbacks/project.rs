@@ -274,7 +274,7 @@ fn export_diagnostics(
         bundle.insert_text(
             "runtime",
             &format!(
-                "render_calls={} source_requests={} source_frames={} empty_sources={} failed_sources={} contract_violations={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_scenes={} limit_sources={} limit_filters_per_source={}",
+                "render_calls={} source_requests={} source_frames={} empty_sources={} failed_sources={} contract_violations={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_docks={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_docks={} limit_scenes={} limit_sources={} limit_filters_per_source={}",
                 metrics.render_calls(),
                 metrics.source_requests(),
                 metrics.source_frames(),
@@ -286,11 +286,13 @@ fn export_diagnostics(
                 metrics.blended_layers(),
                 usage.plugins(),
                 usage.source_kinds(),
+                usage.docks(),
                 usage.scenes(),
                 usage.sources(),
                 usage.filters(),
                 limits.max_plugins(),
                 limits.max_source_kinds(),
+                limits.max_docks(),
                 limits.max_scenes(),
                 limits.max_sources(),
                 limits.max_filters_per_source()
