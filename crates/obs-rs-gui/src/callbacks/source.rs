@@ -445,21 +445,11 @@ pub(crate) fn duplicate_source_and_refresh(
             None
         };
         let scene_for_selection = scene.clone();
-        let command = if let Some((group_path, item)) = group_target(source_id) {
-            ProjectCommand::DuplicateGroupItem {
-                profile,
-                scene,
-                group_path,
-                item,
-                mode: SceneItemDuplicateMode::DuplicateSource,
-            }
-        } else {
-            ProjectCommand::DuplicateSceneItem {
-                profile,
-                scene,
-                item: source_id.to_owned(),
-                mode: SceneItemDuplicateMode::DuplicateSource,
-            }
+        let command = ProjectCommand::DuplicateSceneItem {
+            profile,
+            scene,
+            item: source_id.to_owned(),
+            mode: SceneItemDuplicateMode::DuplicateSource,
         };
         state.borrow_mut().dispatch(UiCommand::Project(command))?;
         if let Some(before_root_items) = before_root_items {

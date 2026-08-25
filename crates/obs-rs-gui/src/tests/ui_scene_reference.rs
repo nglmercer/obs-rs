@@ -310,6 +310,15 @@ fn exercise_scene_reference_remove(ui: &MainWindow, state: &Rc<RefCell<DesktopSt
             locked: false,
         }))
         .expect("unlock scene reference before removal");
+    ui.invoke_duplicate_source("transform-child-ref/background".into());
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .is_some_and(|scene| scene.item("background_copy").is_some()));
+
     ui.invoke_remove_source("transform-child-ref/background".into());
     assert!(state
         .borrow()
@@ -319,6 +328,14 @@ fn exercise_scene_reference_remove(ui: &MainWindow, state: &Rc<RefCell<DesktopSt
         .and_then(|profile| profile.scene("transform-child"))
         .and_then(|scene| scene.item("background"))
         .is_none());
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background_copy"))
+        .is_some());
     assert!(state
         .borrow()
         .project_session()

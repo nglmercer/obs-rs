@@ -214,6 +214,16 @@ owner-scene mutation; nested reorder and duplicate remain outside this packet.
 > Scene-reference remove/reorder/duplicate” is now narrowed to reorder and
 > duplicate; nested remove is covered by this package.
 
+## Latest verified package: nested scene-reference item duplication
+
+On 2026-08-24, `DuplicateSceneItem` now resolves a flattened
+`scene-ref/leaf` target to the owner scene/group before applying the existing
+reference or source-clone mode. The Sources-dock callback uses that generic
+command for root, group, and Scene-reference rows. The project and GUI
+fixtures cover source cloning in the referenced scene, preserving the parent
+reference, and removing only the original leaf afterward; nested reorder is
+the remaining item-management gap in this sequence.
+
 ## Latest verified package: dock-header pointer drag
 
 On 2026-08-24, the GUI dock fixture now drives a visible `DockHeader` through

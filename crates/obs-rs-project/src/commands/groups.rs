@@ -908,6 +908,39 @@ pub(super) fn duplicate_group_item(
     paste_group_item(project, profile, scene, group_path, original, mode)
 }
 
+/// Duplicates a stable flattened target in the scene/group that owns it.
+pub(super) fn duplicate_scene_item_target(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    target: &str,
+    mode: SceneItemDuplicateMode,
+) -> Result<(), ProjectError> {
+    let (group_path, item) = parse_scene_item_target(target)?;
+    let profile_id = identifier(profile, "profile id")?;
+    let profile_spec = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let (owner_scene, owner_groups) =
+        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
+    if owner_groups.is_empty() {
+        super::duplicate_scene_item(project, profile, owner_scene.as_str(), item.as_str(), mode)
+    } else {
+        let owner_groups = owner_groups
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        duplicate_group_item(
+            project,
+            profile,
+            owner_scene.as_str(),
+            &owner_groups,
+            item.as_str(),
+            mode,
+        )
+    }
+}
+
 pub(super) fn paste_group_item(
     project: &mut Project,
     profile: &str,
