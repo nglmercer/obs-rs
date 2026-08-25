@@ -1,12 +1,13 @@
 use super::{
-    crop_transform, drag_rect, group_rotation_from_pointer, item_rect, local_item_rect,
-    preserve_resize_aspect, rotate_canvas_delta, rotate_transform_around_point,
-    rotation_from_pointer, selection_overlay_for_transforms, set_selection_overlay, snap_rect,
-    snap_rotated_resize_delta, transform_for_rect, transform_for_rotated_local_rect,
-    transform_with_geometry, visible_source_extent, CanvasResizeModifiers, CanvasState, CanvasZoom,
-    ComponentHandle, DesktopState, FrameTransform, ItemRect, MainWindow, PreviewSurface, Rc,
-    RefCell, SceneItemSpec, SelectionOverlay, SnapGuides, SnapSettings, TransformDraft,
-    TransformDraftItem, UiCommand, MAX_SNAP_GUIDES, MINIMUM_ITEM_PIXELS,
+    canvas_item_projections, canvas_target_is_locked, crop_transform, drag_rect,
+    group_rotation_from_pointer, item_rect, local_item_rect, preserve_resize_aspect,
+    rotate_canvas_delta, rotate_transform_around_point, rotation_from_pointer,
+    selection_overlay_for_transforms, set_selection_overlay, snap_rect, snap_rotated_resize_delta,
+    transform_for_rect, transform_for_rotated_local_rect, transform_with_geometry,
+    visible_source_extent, CanvasResizeModifiers, CanvasState, CanvasZoom, ComponentHandle,
+    DesktopState, FrameTransform, ItemRect, MainWindow, PreviewSurface, Rc, RefCell,
+    SelectionOverlay, SnapGuides, SnapSettings, TransformDraft, TransformDraftItem, UiCommand,
+    MAX_SNAP_GUIDES, MINIMUM_ITEM_PIXELS,
 };
 
 #[derive(Clone)]
@@ -191,41 +192,30 @@ pub(crate) fn install_canvas_callbacks(
         let Some(scene) = nudge_state.borrow().preview_scene().map(str::to_owned) else {
             return;
         };
-        let (profile, transforms) = {
-            let state = nudge_state.borrow();
-            let profile = state
-                .project_session()
-                .project()
-                .active_profile()
-                .to_string();
-            let Some(scene_spec) = state
-                .project_session()
-                .project()
-                .active_profile_spec()
-                .and_then(|profile| profile.scene(scene.as_str()))
-            else {
-                return;
-            };
-            let transforms = state
-                .selected_sources()
-                .filter_map(|id| scene_spec.item(id))
-                .filter(|item| !item.locked())
-                .map(|item| {
-                    let transform = item.transform();
-                    (
-                        item.id().to_string(),
-                        transform_with_geometry(
-                            transform,
-                            transform.scale_x_milli(),
-                            transform.scale_y_milli(),
-                            i64::from(transform.translate_x()).saturating_add(i64::from(dx)),
-                            i64::from(transform.translate_y()).saturating_add(i64::from(dy)),
-                        ),
-                    )
-                })
-                .collect::<Vec<_>>();
-            (profile, transforms)
-        };
+        let canvas = canvas_size(&ui);
+        let profile = nudge_state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile()
+            .to_string();
+        let transforms = selected_transforms(&nudge_state, &scene, canvas)
+            .into_iter()
+            .filter(|item| !canvas_target_is_locked_for_state(&nudge_state, &scene, &item.item))
+            .map(|item| {
+                let transform = item.transform;
+                (
+                    item.item,
+                    transform_with_geometry(
+                        transform,
+                        transform.scale_x_milli(),
+                        transform.scale_y_milli(),
+                        i64::from(transform.translate_x()).saturating_add(i64::from(dx)),
+                        i64::from(transform.translate_y()).saturating_add(i64::from(dy)),
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
         if transforms.is_empty() {
             return;
         }
@@ -332,11 +322,11 @@ pub(crate) fn install_canvas_callbacks(
         let Some(scene) = rotation_state.borrow().preview_scene().map(str::to_owned) else {
             return;
         };
-        let items = selected_transforms(&rotation_state, &scene);
+        let canvas = canvas_size(&ui);
+        let items = selected_transforms(&rotation_state, &scene, canvas);
         if items.is_empty() {
             return;
         }
-        let canvas = canvas_size(&ui);
         let Some(group) = items
             .iter()
             .map(|item| item_rect(item.transform, canvas))
@@ -423,7 +413,7 @@ pub(crate) fn install_canvas_callbacks(
         let mut draft_slot = drag_controller.draft.borrow_mut();
         let needs_new_draft = draft_slot.as_ref().is_none_or(|draft| draft.scene != scene);
         if needs_new_draft {
-            let items = selected_transforms(&drag_state, &scene);
+            let items = selected_transforms(&drag_state, &scene, canvas);
             if items.is_empty() {
                 return;
             }
@@ -573,26 +563,33 @@ pub(crate) fn install_canvas_callbacks(
 pub(super) fn selected_transforms(
     state: &Rc<RefCell<DesktopState>>,
     scene_id: &str,
+    canvas: (u32, u32),
 ) -> Vec<TransformDraftItem> {
     let state = state.borrow();
-    let Some(scene) = state
+    canvas_item_projections(&state, scene_id, canvas)
+        .into_iter()
+        .filter(|item| state.is_source_selected(item.target.as_str()))
+        .map(|item| TransformDraftItem {
+            item: item.target,
+            transform: item.transform,
+            parent_transform: item.parent_transform,
+        })
+        .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
+        .collect()
+}
+
+fn canvas_target_is_locked_for_state(
+    state: &Rc<RefCell<DesktopState>>,
+    scene_id: &str,
+    target: &str,
+) -> bool {
+    let state = state.borrow();
+    state
         .project_session()
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene_id))
-    else {
-        return Vec::new();
-    };
-    state
-        .selected_sources()
-        .filter_map(|id| {
-            scene.item(id).map(|item| TransformDraftItem {
-                item: id.to_owned(),
-                transform: item.transform(),
-            })
-        })
-        .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
-        .collect()
+        .is_none_or(|scene| canvas_target_is_locked(scene, target))
 }
 
 pub(super) fn draft_rect(draft: &TransformDraft, canvas: (u32, u32)) -> Option<ItemRect> {
@@ -677,19 +674,10 @@ pub(super) fn source_ids_in_rect(
     let Some(scene_id) = state.preview_scene() else {
         return Vec::new();
     };
-    let Some(scene) = state
-        .project_session()
-        .project()
-        .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
-    else {
-        return Vec::new();
-    };
-    scene
-        .items()
-        .iter()
-        .filter(|item| item.visible() && item_rect(item.transform(), canvas).intersects(selection))
-        .map(|item| item.id().as_str().to_owned())
+    canvas_item_projections(&state, scene_id, canvas)
+        .into_iter()
+        .filter(|item| item_rect(item.transform, canvas).intersects(selection))
+        .map(|item| item.target)
         .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
         .collect()
 }
@@ -734,11 +722,9 @@ pub(super) fn selected_is_locked(state: &Rc<RefCell<DesktopState>>) -> bool {
         .active_profile_spec()
         .and_then(|profile| profile.scene(scene))
         .is_some_and(|scene| {
-            scene
-                .items()
-                .iter()
-                .filter(|item| state.is_source_selected(item.id().as_str()))
-                .any(SceneItemSpec::locked)
+            state
+                .selected_sources()
+                .any(|target| canvas_target_is_locked(scene, target))
         })
 }
 
@@ -752,16 +738,15 @@ pub(super) fn source_at(
 ) -> Option<String> {
     let state = state.borrow();
     let scene = state.preview_scene()?;
-    let session = state.project_session();
-    let scene = session.project().active_profile_spec()?.scene(scene)?;
+    let projections = canvas_item_projections(&state, scene, canvas);
     first_selectable_hit(
-        scene.items().iter().rev().filter_map(|item| {
-            if !item.visible() || !item_rect(item.transform(), canvas).contains(x, y) {
+        projections.iter().rev().filter_map(|item| {
+            if !item_rect(item.transform, canvas).contains(x, y) {
                 return None;
             }
             Some((
-                item.id().as_str(),
-                state.is_source_selected(item.id().as_str()),
+                item.target.as_str(),
+                state.is_source_selected(item.target.as_str()),
             ))
         }),
         select_below,
@@ -778,23 +763,11 @@ pub(super) fn scene_snap_guides(
 ) -> SnapGuides {
     let mut guides = SnapGuides::with_canvas(canvas);
     let state = state.borrow();
-    let Some(scene) = state
-        .project_session()
-        .project()
-        .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
-    else {
-        return guides;
-    };
-    for item in scene.items() {
-        if excluded
-            .iter()
-            .any(|selected| selected.item == item.id().as_str())
-            || !item.visible()
-        {
+    for item in canvas_item_projections(&state, scene_id, canvas) {
+        if excluded.iter().any(|selected| selected.item == item.target) {
             continue;
         }
-        guides.push_rect(item_rect(item.transform(), canvas));
+        guides.push_rect(item_rect(item.transform, canvas));
         if guides.x_len == MAX_SNAP_GUIDES && guides.y_len == MAX_SNAP_GUIDES {
             break;
         }

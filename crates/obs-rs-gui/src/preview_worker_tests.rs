@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use obs_rs_config::Config;
-use obs_rs_project::{ProjectCommand, SourceFilterSpec};
+use obs_rs_media::FrameTransform;
+use obs_rs_project::{ProjectCommand, SceneItemSpec, SourceFilterSpec};
+
+use crate::preview::TransformDraftItem;
 
 use super::*;
 
@@ -134,6 +137,61 @@ fn preview_diagnostics_report_an_unavailable_persisted_filter() {
                     .to_owned()
             ]
         );
+}
+
+#[test]
+fn nested_canvas_draft_reaches_the_stable_runtime_item_and_restores_it() {
+    let mut project = crate::initial_project().expect("initial project");
+    let mut group = SceneItemSpec::for_group("canvas-group", "Canvas group").expect("group");
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::for_source("background").expect("group child"))
+        .expect("group child attach");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: group,
+        })
+        .expect("add group");
+
+    let original = project
+        .active_profile_spec()
+        .expect("profile")
+        .flatten_scene_items("preview")
+        .expect("flatten preview")
+        .into_iter()
+        .find(|item| item.item_id() == "canvas-group/background")
+        .expect("nested runtime item")
+        .transform();
+    let draft_transform =
+        FrameTransform::new(1_250, 900, 90, 30, false, false, 255).expect("draft transform");
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
+    let draft = TransformDraft {
+        scene: "preview".to_owned(),
+        items: vec![TransformDraftItem {
+            item: "canvas-group/background".to_owned(),
+            transform: draft_transform,
+            parent_transform: FrameTransform::IDENTITY,
+        }],
+    };
+
+    renderer.set_transform_draft(Some(&draft));
+    assert_eq!(
+        renderer
+            .runtime
+            .scene_item_transform_by_id("preview", "canvas-group/background"),
+        Some(draft_transform)
+    );
+
+    renderer.set_transform_draft(None);
+    assert_eq!(
+        renderer
+            .runtime
+            .scene_item_transform_by_id("preview", "canvas-group/background"),
+        Some(original)
+    );
 }
 
 #[test]

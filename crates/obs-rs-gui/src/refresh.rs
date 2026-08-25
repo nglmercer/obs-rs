@@ -676,9 +676,9 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     );
     let overlay = selection_overlay(state, canvas);
     ui.set_item_locked(selected_scene.is_some_and(|scene| {
-        state.selected_sources().any(|target| {
-            crate::callbacks::item_for_target(scene, target).is_some_and(SceneItemSpec::locked)
-        })
+        state
+            .selected_sources()
+            .any(|target| crate::callbacks::canvas::canvas_target_is_locked(scene, target))
     }));
     set_selection_overlay(ui, overlay.as_ref());
     // Only a display-backed source offers the picker, so the docks derive the

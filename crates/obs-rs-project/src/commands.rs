@@ -19,7 +19,8 @@ use filters::legacy_filter_spec;
 use groups::{
     duplicate_group_item, group_scene_items, move_group_item, move_scene_item_to_parent,
     paste_group_item, remove_group_item, remove_scene_items, set_group_item_locked,
-    set_group_item_transform, set_group_item_visibility, set_group_name, ungroup_scene_item,
+    set_group_item_transform, set_group_item_transform_target, set_group_item_visibility,
+    set_group_name, ungroup_scene_item,
 };
 
 mod types;
@@ -820,27 +821,33 @@ fn set_scene_item_transforms(
     scene: &str,
     items: Vec<(String, FrameTransform)>,
 ) -> Result<(), ProjectError> {
-    let scene = scene_mut(project, profile, scene)?;
-    let mut updates = Vec::with_capacity(items.len());
+    // Canvas gestures can address a nested group child with its stable
+    // `group/child` path. Apply the complete batch to a clone so a malformed
+    // or locked later target cannot leave an earlier target half-mutated.
+    let mut candidate = project.clone();
     let mut seen = HashSet::with_capacity(items.len());
     for (item, transform) in items {
-        let item = identifier(&item, "scene item id")?;
         if !seen.insert(item.clone()) {
-            return Err(ProjectError::UnknownSceneItem(item));
+            return Err(identifier(&item, "scene item id").map_or(
+                ProjectError::InvalidGroupSelection,
+                ProjectError::UnknownSceneItem,
+            ));
         }
-        if !scene.has_item(&item) {
-            return Err(ProjectError::UnknownSceneItem(item));
+        if item.contains('/') {
+            set_group_item_transform_target(&mut candidate, profile, scene, &item, transform)?;
+        } else {
+            let item_id = identifier(&item, "scene item id")?;
+            let scene_spec = scene_mut(&mut candidate, profile, scene)?;
+            if !scene_spec.has_item(&item_id) {
+                return Err(ProjectError::UnknownSceneItem(item_id));
+            }
+            scene_spec
+                .item_mut(&item_id)
+                .expect("validated scene item exists")
+                .set_transform(transform);
         }
-        updates.push((item, transform));
     }
-    for (item, transform) in updates {
-        // Every item was validated before any mutation, so this lookup cannot
-        // fail and the command remains atomic from the caller's perspective.
-        scene
-            .item_mut(&item)
-            .expect("validated scene item exists")
-            .set_transform(transform);
-    }
+    *project = candidate;
     Ok(())
 }
 

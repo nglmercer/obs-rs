@@ -1,5 +1,7 @@
 use super::*;
 
+use obs_rs_project::{ProjectCommand, SceneItemSpec};
+
 const CANVAS: (u32, u32) = (1_920, 1_080);
 
 fn rect() -> ItemRect {
@@ -240,6 +242,91 @@ fn an_identity_transform_covers_the_whole_canvas() {
             height: 1_080
         }
     );
+}
+
+#[test]
+fn nested_group_canvas_projection_uses_stable_leaf_paths_and_round_trips_local_geometry() {
+    let mut project = crate::initial_project().expect("initial project");
+    let mut group = SceneItemSpec::for_group("canvas-group", "Canvas group").expect("group");
+    let group_transform =
+        FrameTransform::new(1_500, 1_250, 48, 24, true, false, 230).expect("group transform");
+    group.set_transform(group_transform);
+    let child_transform =
+        FrameTransform::new(800, 700, 36, -12, false, false, 210).expect("child transform");
+    let mut child = SceneItemSpec::for_source("background").expect("child");
+    child.set_transform(child_transform);
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(child)
+        .expect("group child");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: group,
+        })
+        .expect("add canvas group");
+
+    let profile = project.profile("live").expect("profile");
+    let scene = profile.scene("preview").expect("scene");
+    let canvas = (
+        profile.video_format().width(),
+        profile.video_format().height(),
+    );
+    let parent = group_parent_transform(scene, "canvas-group/background", canvas)
+        .expect("group parent transform");
+    assert_eq!(parent, group_transform);
+    let effective = child_transform
+        .compose_axis_aligned(parent, canvas.0, canvas.1)
+        .expect("effective transform");
+    assert_eq!(
+        local_transform_for_canvas_item(profile, scene, "canvas-group/background", effective),
+        Some(child_transform)
+    );
+
+    let state = DesktopState::new(project);
+    let projections = canvas_item_projections(&state, "preview", canvas);
+    assert_eq!(
+        projections
+            .iter()
+            .map(|item| item.target.as_str())
+            .collect::<Vec<_>>(),
+        vec!["background", "canvas-group", "canvas-group/background"]
+    );
+    let projected = projections
+        .iter()
+        .find(|item| item.target == "canvas-group/background")
+        .expect("nested leaf is projected");
+    assert_eq!(projected.transform, effective);
+    assert_eq!(projected.parent_transform, parent);
+}
+
+#[test]
+fn nested_canvas_target_inherits_lock_from_each_group_ancestor() {
+    let mut project = crate::initial_project().expect("initial project");
+    let mut group = SceneItemSpec::for_group("locked-group", "Locked group").expect("group");
+    group.set_locked(true);
+    group
+        .group_mut()
+        .expect("group target")
+        .add_item(SceneItemSpec::for_source("background").expect("group child"))
+        .expect("group child");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: group,
+        })
+        .expect("add locked group");
+    let scene = project
+        .profile("live")
+        .and_then(|profile| profile.scene("preview"))
+        .expect("scene");
+
+    assert!(canvas_target_is_locked(scene, "locked-group/background"));
+    assert!(canvas_target_is_locked(scene, "locked-group/missing"));
+    assert!(!canvas_target_is_locked(scene, "background"));
 }
 
 #[test]
@@ -943,6 +1030,7 @@ fn multi_selection_geometry_timing_report() {
                 255,
             )
             .expect("transform"),
+            parent_transform: FrameTransform::IDENTITY,
         })
         .collect::<Vec<_>>();
     let runs = 200;

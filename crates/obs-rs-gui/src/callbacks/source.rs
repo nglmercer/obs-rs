@@ -785,14 +785,44 @@ pub(crate) fn apply_source_transforms_to(
     scene: &str,
     transforms: Vec<(String, FrameTransform)>,
 ) {
-    let result =
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let local_transforms = {
+            let state_ref = state.borrow();
+            let profile_spec = state_ref
+                .project_session()
+                .project()
+                .profile(profile)
+                .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+            let scene_spec = profile_spec
+                .scene(scene)
+                .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
+            transforms
+                .into_iter()
+                .map(|(target, transform)| {
+                    let local = crate::callbacks::canvas::local_transform_for_canvas_item(
+                        profile_spec,
+                        scene_spec,
+                        target.as_str(),
+                        transform,
+                    )
+                    .ok_or_else(|| {
+                        std::io::Error::other(format!(
+                            "nested canvas transform is not representable for {target}"
+                        ))
+                    })?;
+                    Ok((target, local))
+                })
+                .collect::<Result<Vec<_>, Box<dyn Error>>>()?
+        };
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemTransforms {
                 profile: profile.to_owned(),
                 scene: scene.to_owned(),
-                items: transforms,
-            }));
+                items: local_transforms,
+            }))
+            .map_err(|error| Box::new(error) as Box<dyn Error>)
+    })();
     if let Err(error) = result {
         ui.set_status_message(format!("Source transform failed: {error}").into());
     } else {

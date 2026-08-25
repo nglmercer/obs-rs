@@ -3,7 +3,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use obs_rs_media::FrameTransform;
-use obs_rs_project::SceneItemSpec;
+use obs_rs_project::{Profile, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -52,3 +52,200 @@ use canvas_transform::{
 pub(crate) use canvas_transform::{
     drag_rect, selection_overlay, set_selection_overlay, transform_for_command,
 };
+
+/// One visible leaf that the editable canvas can address through the same
+/// stable path as the Sources dock.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CanvasItemProjection {
+    pub(crate) target: String,
+    /// The transform after the item's enclosing groups have been applied.
+    /// Canvas hit-testing and handles operate in this profile-canvas space.
+    pub(crate) transform: FrameTransform,
+    /// The transform contributed by enclosing groups. It is retained so a
+    /// canvas edit can be converted back to the item's local project state.
+    pub(crate) parent_transform: FrameTransform,
+}
+
+/// Returns visible root items plus nested source/group leaves that have a
+/// path-addressable project item. Scene-reference leaves are deliberately
+/// omitted until the editor can route an edit into the referenced scene without
+/// changing the parent scene.
+pub(crate) fn canvas_item_projections(
+    state: &DesktopState,
+    scene_id: &str,
+    canvas: (u32, u32),
+) -> Vec<CanvasItemProjection> {
+    let Some(profile) = state.project_session().project().active_profile_spec() else {
+        return Vec::new();
+    };
+    let Some(scene) = profile.scene(scene_id) else {
+        return Vec::new();
+    };
+    let Ok(flattened) = profile.flatten_scene_items(scene_id) else {
+        return Vec::new();
+    };
+    let mut projections = Vec::new();
+    // Keep the group leaves beside their root item rather than appending all
+    // nested leaves after every root. This mirrors flattening/draw order, so
+    // hit-testing and snapping cannot make a child of an earlier group appear
+    // above a later root source.
+    for root in scene.items().iter().filter(|item| item.visible()) {
+        projections.push(CanvasItemProjection {
+            target: root.id().as_str().to_owned(),
+            transform: root.transform(),
+            parent_transform: FrameTransform::IDENTITY,
+        });
+        let prefix = format!("{}/", root.id());
+        projections.extend(flattened.iter().filter_map(|item| {
+            let target = item.item_id();
+            if !target.starts_with(prefix.as_str()) {
+                return None;
+            }
+            // Scene-reference leaves are not editable from this canvas yet.
+            super::item_for_target(scene, target)?;
+            let parent_transform = group_parent_transform(scene, target, canvas)?;
+            Some(CanvasItemProjection {
+                target: target.to_owned(),
+                transform: item.transform(),
+                parent_transform,
+            })
+        }));
+    }
+    projections.truncate(obs_rs_ui::MAX_CANVAS_SELECTIONS.saturating_mul(4));
+    projections
+}
+
+/// Returns the effective transform contributed by a leaf item's enclosing
+/// groups. The order matches project flattening: the innermost group is
+/// composed with the already accumulated outer transform.
+pub(crate) fn group_parent_transform(
+    scene: &SceneSpec,
+    target: &str,
+    canvas: (u32, u32),
+) -> Option<FrameTransform> {
+    let mut parts = target.split('/').collect::<Vec<_>>();
+    parts.pop()?;
+    if parts.is_empty() {
+        return Some(FrameTransform::IDENTITY);
+    }
+    let mut items = scene.items();
+    let mut parent = FrameTransform::IDENTITY;
+    for group_id in parts {
+        let group_item = items.iter().find(|item| item.id().as_str() == group_id)?;
+        let group = group_item.group()?;
+        parent = group_item
+            .transform()
+            .compose_axis_aligned(parent, canvas.0, canvas.1)
+            .ok()?;
+        items = group.items();
+    }
+    Some(parent)
+}
+
+/// Converts an effective canvas transform back to the local transform of a
+/// path-addressed group child. Root items need no conversion. A transformed
+/// group intentionally accepts only the axis-aligned local subset; crop or
+/// rotation at that boundary still returns `None` instead of being silently
+/// approximated.
+pub(crate) fn local_transform_for_canvas_item(
+    profile: &Profile,
+    scene: &SceneSpec,
+    target: &str,
+    effective: FrameTransform,
+) -> Option<FrameTransform> {
+    let parent = group_parent_transform(
+        scene,
+        target,
+        (
+            profile.video_format().width(),
+            profile.video_format().height(),
+        ),
+    )?;
+    if parent == FrameTransform::IDENTITY {
+        return Some(effective);
+    }
+    if effective.is_cropped() || effective.is_rotated() {
+        return None;
+    }
+    let local = super::item_for_target(scene, target)?;
+    let width = i64::from(profile.video_format().width());
+    let height = i64::from(profile.video_format().height());
+    let scale_x = i64::from(effective.scale_x_milli())
+        .saturating_mul(1_000)
+        .checked_div(i64::from(parent.scale_x_milli()))?;
+    let scale_y = i64::from(effective.scale_y_milli())
+        .saturating_mul(1_000)
+        .checked_div(i64::from(parent.scale_y_milli()))?;
+    let scale_x =
+        u32::try_from(scale_x.clamp(1, i64::from(FrameTransform::MAX_SCALE_MILLI))).ok()?;
+    let scale_y =
+        u32::try_from(scale_y.clamp(1, i64::from(FrameTransform::MAX_SCALE_MILLI))).ok()?;
+    let inverse_translation = |effective_translation: i32,
+                               parent_translation: i32,
+                               parent_scale: u32,
+                               local_scale: u32,
+                               dimension: i64,
+                               parent_flipped: bool|
+     -> Option<i32> {
+        let origin = i64::from(effective_translation)
+            .saturating_sub(i64::from(parent_translation))
+            .saturating_mul(1_000)
+            .checked_div(i64::from(parent_scale))?;
+        let extent = dimension
+            .saturating_mul(i64::from(local_scale))
+            .checked_div(1_000)?;
+        let local_translation = if parent_flipped {
+            dimension.saturating_sub(extent).saturating_sub(origin)
+        } else {
+            origin
+        };
+        i32::try_from(local_translation).ok()
+    };
+    let translate_x = inverse_translation(
+        effective.translate_x(),
+        parent.translate_x(),
+        parent.scale_x_milli(),
+        scale_x,
+        width,
+        parent.flip_x(),
+    )?;
+    let translate_y = inverse_translation(
+        effective.translate_y(),
+        parent.translate_y(),
+        parent.scale_y_milli(),
+        scale_y,
+        height,
+        parent.flip_y(),
+    )?;
+    FrameTransform::new(
+        scale_x,
+        scale_y,
+        translate_x,
+        translate_y,
+        effective.flip_x() != parent.flip_x(),
+        effective.flip_y() != parent.flip_y(),
+        local.transform().opacity(),
+    )
+    .ok()
+}
+
+/// Returns whether a canvas target or any of its enclosing groups is locked.
+pub(crate) fn canvas_target_is_locked(scene: &SceneSpec, target: &str) -> bool {
+    let mut items = scene.items();
+    let parts = target.split('/').collect::<Vec<_>>();
+    for (index, part) in parts.iter().enumerate() {
+        let Some(item) = items.iter().find(|item| item.id().as_str() == *part) else {
+            return true;
+        };
+        if item.locked() {
+            return true;
+        }
+        if index + 1 < parts.len() {
+            let Some(group) = item.group() else {
+                return true;
+            };
+            items = group.items();
+        }
+    }
+    false
+}

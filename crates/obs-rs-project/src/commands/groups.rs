@@ -379,6 +379,36 @@ pub(super) fn set_group_item_transform(
     Ok(())
 }
 
+/// Applies a transform to a stable `group/child` target.
+///
+/// The batch canvas command uses this small adapter so root scene items and
+/// nested group children can share one undo boundary without exposing the
+/// group-path parser to the UI crate.
+pub(super) fn set_group_item_transform_target(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    target: &str,
+    transform: FrameTransform,
+) -> Result<(), ProjectError> {
+    let (group_path, item) = parse_scene_item_target(target)?;
+    if group_path.is_empty() {
+        return Err(ProjectError::InvalidGroupPath);
+    }
+    let group_path = group_path
+        .into_iter()
+        .map(|id| id.as_str().to_owned())
+        .collect::<Vec<_>>();
+    set_group_item_transform(
+        project,
+        profile,
+        scene,
+        &group_path,
+        item.as_str(),
+        transform,
+    )
+}
+
 fn group_parent_transform(
     project: &Project,
     profile: &str,

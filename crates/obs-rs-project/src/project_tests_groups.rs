@@ -35,6 +35,76 @@ pub(super) fn project_with_nested_group() -> Project {
 }
 
 #[test]
+fn canvas_batch_transform_accepts_nested_group_targets_atomically() {
+    let mut project = project_with_nested_group();
+    let first =
+        FrameTransform::new(1_200, 900, 42, -8, false, false, 255).expect("first transform");
+    let nested =
+        FrameTransform::new(800, 1_100, -12, 16, true, false, 220).expect("nested transform");
+
+    project
+        .apply(ProjectCommand::SetSceneItemTransforms {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec![
+                ("overlay-group/first".to_owned(), first),
+                ("overlay-group/inner-group/nested".to_owned(), nested),
+            ],
+        })
+        .expect("nested canvas batch applies");
+    let scene = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .expect("scene");
+    assert_eq!(
+        scene
+            .item("overlay-group")
+            .and_then(SceneItemSpec::group)
+            .and_then(|group| group
+                .items()
+                .iter()
+                .find(|item| item.id().as_str() == "first"))
+            .map(SceneItemSpec::transform),
+        Some(first)
+    );
+    assert_eq!(
+        scene
+            .item("overlay-group")
+            .and_then(SceneItemSpec::group)
+            .and_then(|group| {
+                group
+                    .items()
+                    .iter()
+                    .find(|item| item.id().as_str() == "inner-group")
+            })
+            .and_then(SceneItemSpec::group)
+            .and_then(|group| group
+                .items()
+                .iter()
+                .find(|item| item.id().as_str() == "nested"))
+            .map(SceneItemSpec::transform),
+        Some(nested)
+    );
+
+    let before_invalid = project.clone();
+    let error = project
+        .apply(ProjectCommand::SetSceneItemTransforms {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            items: vec![
+                ("overlay-group/second".to_owned(), first),
+                ("overlay-group/missing".to_owned(), nested),
+            ],
+        })
+        .expect_err("an invalid nested target rejects the whole batch");
+    assert_eq!(
+        error,
+        ProjectError::UnknownSceneItem(Identifier::new("missing").expect("item id"))
+    );
+    assert_eq!(project, before_invalid);
+}
+
+#[test]
 fn group_child_commands_are_path_addressed_and_atomic() {
     let mut project = project_with_nested_group();
     let group_path = vec!["overlay-group".to_owned()];

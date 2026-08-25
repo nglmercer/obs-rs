@@ -2,7 +2,7 @@ use super::{
     aspect_preserved_size, item_rect, local_item_rect, oriented_handle_points,
     rounded_canvas_coordinate, selection_overlay_for_transforms, snap_delta, visible_source_extent,
     CanvasTransformCommand, DesktopState, FrameTransform, ItemRect, MainWindow, ModelRc,
-    SceneItemSpec, SelectionOverlay, SnapGuides, SnapSettings, VecModel, MINIMUM_ITEM_PIXELS,
+    SelectionOverlay, SnapGuides, SnapSettings, VecModel, MINIMUM_ITEM_PIXELS,
     RESIZE_MODIFIER_CONTROL, RESIZE_MODIFIER_SHIFT, UNIT_SCALE_MILLI,
 };
 
@@ -198,17 +198,11 @@ pub(crate) fn selection_overlay(
     canvas: (u32, u32),
 ) -> Option<SelectionOverlay> {
     let scene_id = state.preview_scene()?;
-    let scene = state
-        .project_session()
-        .project()
-        .active_profile_spec()?
-        .scene(scene_id)?;
-    let transforms = scene
-        .items()
-        .iter()
-        .filter(|item| state.is_source_selected(item.id().as_str()))
+    let transforms = super::canvas_item_projections(state, scene_id, canvas)
+        .into_iter()
+        .filter(|item| state.is_source_selected(item.target.as_str()))
         .take(obs_rs_ui::MAX_CANVAS_SELECTIONS)
-        .map(SceneItemSpec::transform)
+        .map(|item| item.transform)
         .collect::<Vec<_>>();
     selection_overlay_for_transforms(&transforms, canvas)
 }

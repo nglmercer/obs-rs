@@ -12,7 +12,7 @@ use obs_rs_engine::{compile_filter_report, FilterCompilation, MAX_FILTER_DIAGNOS
 use obs_rs_media::{FrameScaler, FrameTransform, FrameTransition, ScaleFilter};
 use obs_rs_media::{RawVideoFrame, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::VideoRequest;
-use obs_rs_project::{Profile, Project, SceneItemSpec, SourceSpec};
+use obs_rs_project::{Profile, Project, SourceSpec};
 use obs_rs_render::{RenderBackend, RenderTarget, RenderTargetRole, SceneLayer};
 
 mod compositor;
@@ -88,7 +88,12 @@ struct CachedSceneLayers {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TransformDraftItem {
     pub(crate) item: String,
+    /// Effective profile-canvas transform used by the live overlay and
+    /// renderer while the gesture is in progress.
     pub(crate) transform: FrameTransform,
+    /// Transform contributed by enclosing groups. The commit boundary uses it
+    /// to convert the effective draft back into local project coordinates.
+    pub(crate) parent_transform: FrameTransform,
 }
 
 /// Scene-item transforms being dragged on the canvas.

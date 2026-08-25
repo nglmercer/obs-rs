@@ -366,23 +366,25 @@ impl PreviewRenderer {
     /// committed drag or the untouched original if the drag was abandoned.
     pub(crate) fn set_transform_draft(&mut self, draft: Option<&TransformDraft>) {
         let target = draft.and_then(|draft| {
-            let scene = self
-                .applied
-                .active_profile_spec()?
-                .scene(draft.scene.as_str())?;
+            let profile = self.applied.active_profile_spec()?;
+            let scene = profile.scene(draft.scene.as_str())?;
+            // Group leaves are attached to the runtime with the same stable
+            // path that the project flattener returns. Keep that lookup here
+            // so a pointer draft updates the live nested layer instead of
+            // being silently discarded by the root-item check below.
+            let flattened = profile.flatten_scene_items(draft.scene.as_str()).ok()?;
             let mut targets = Vec::with_capacity(draft.items.len());
             for item in &draft.items {
-                if scene
-                    .item(item.item.as_str())
-                    .is_some_and(|item| item.is_scene_reference() || item.is_group())
-                {
-                    return None;
-                }
-                let is_visible = scene
-                    .items()
-                    .iter()
-                    .find(|candidate| candidate.id().as_str() == item.item)
-                    .is_some_and(SceneItemSpec::visible);
+                let is_visible = if let Some(scene_item) = scene.item(item.item.as_str()) {
+                    if scene_item.is_scene_reference() || scene_item.is_group() {
+                        return None;
+                    }
+                    scene_item.visible()
+                } else {
+                    flattened
+                        .iter()
+                        .any(|candidate| candidate.item_id() == item.item)
+                };
                 if !is_visible {
                     return None;
                 }
@@ -390,15 +392,18 @@ impl PreviewRenderer {
             }
             Some((draft.scene.clone(), targets))
         });
-        if let Some((scene, sources)) = self.applied_draft.clone() {
-            let same_targets = target.as_ref().is_some_and(|(next_scene, next)| {
-                next_scene == &scene
+        let same_targets = match (&self.applied_draft, &target) {
+            (Some((scene, sources)), Some((next_scene, next))) => {
+                next_scene == scene
                     && next
                         .iter()
                         .map(|(item_id, _)| item_id)
                         .eq(sources.iter().map(|(item_id, _)| item_id))
-            });
-            if !same_targets {
+            }
+            _ => false,
+        };
+        if !same_targets {
+            if let Some((scene, sources)) = self.applied_draft.take() {
                 for (item_id, committed) in sources {
                     let _ = self
                         .runtime
@@ -407,26 +412,50 @@ impl PreviewRenderer {
                 // A scene composed only of still sources caches its picture, so
                 // the cache has to go when the drag stops moving it.
                 self.invalidate_static_scene_cache(&scene);
-                self.applied_draft = None;
             }
         }
         let (Some(_draft), Some((scene, targets))) = (draft, target) else {
             return;
         };
-        let mut applied = Vec::with_capacity(targets.len());
+        let committed = if same_targets {
+            self.applied_draft
+                .as_ref()
+                .map(|(_, sources)| sources.clone())
+                .unwrap_or_default()
+        } else {
+            let Some(committed) = targets
+                .iter()
+                .map(|(item_id, _)| {
+                    self.runtime
+                        .scene_item_transform_by_id(&scene, item_id)
+                        .map(|transform| (item_id.clone(), transform))
+                })
+                .collect::<Option<Vec<_>>>()
+            else {
+                return;
+            };
+            committed
+        };
         for (item_id, transform) in targets {
             if self
                 .runtime
                 .set_scene_item_transform_by_id(&scene, &item_id, transform)
                 .is_err()
             {
+                for (committed_item, committed_transform) in committed {
+                    let _ = self.runtime.set_scene_item_transform_by_id(
+                        &scene,
+                        &committed_item,
+                        committed_transform,
+                    );
+                }
+                self.invalidate_static_scene_cache(&scene);
                 return;
             }
-            applied.push((item_id, transform));
         }
-        if !applied.is_empty() {
+        if !same_targets && !committed.is_empty() {
             self.invalidate_static_scene_cache(&scene);
-            self.applied_draft = Some((scene, applied));
+            self.applied_draft = Some((scene, committed));
         }
     }
 
