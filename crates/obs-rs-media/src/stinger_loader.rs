@@ -4,7 +4,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -170,9 +170,15 @@ where
 /// queues.
 pub struct StingerLoadWorker {
     sender: SyncSender<StingerLoadRequest>,
-    receiver: Receiver<StingerLoadResult>,
+    result: Arc<Mutex<StingerLoadResultSlot>>,
     cancellation: StingerLoadCancellation,
     _join: thread::JoinHandle<()>,
+}
+
+#[derive(Default)]
+struct StingerLoadResultSlot {
+    latest_request_id: Option<u64>,
+    result: Option<StingerLoadResult>,
 }
 
 impl StingerLoadWorker {
@@ -184,15 +190,16 @@ impl StingerLoadWorker {
     /// worker cannot be created.
     pub fn spawn(loader: impl StingerResourceLoader) -> Result<Self, std::io::Error> {
         let (sender, requests) = mpsc::sync_channel(STINGER_LOAD_QUEUE_CAPACITY);
-        let (results, receiver) = mpsc::sync_channel(STINGER_LOAD_RESULT_CAPACITY);
+        let result = Arc::new(Mutex::new(StingerLoadResultSlot::default()));
+        let thread_result = Arc::clone(&result);
         let cancellation = StingerLoadCancellation::new();
         let thread_cancellation = cancellation.clone();
         let join = thread::Builder::new()
             .name("obs-rs-stinger-loader".to_owned())
-            .spawn(move || run_loader(loader, requests, results, thread_cancellation))?;
+            .spawn(move || run_loader(loader, requests, thread_result, thread_cancellation))?;
         Ok(Self {
             sender,
-            receiver,
+            result,
             cancellation,
             _join: join,
         })
@@ -209,17 +216,35 @@ impl StingerLoadWorker {
         if self.cancellation.is_cancelled() {
             return Err(StingerLoadQueueError::Stopped);
         }
+        let request_id = request.request_id();
+        let Ok(mut slot) = self.result.try_lock() else {
+            return Err(StingerLoadQueueError::Full);
+        };
+        let previous_request_id = slot.latest_request_id;
+        let previous_result = slot.result.take();
+        slot.latest_request_id = Some(request_id);
         match self.sender.try_send(request) {
             Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => Err(StingerLoadQueueError::Full),
-            Err(TrySendError::Disconnected(_)) => Err(StingerLoadQueueError::Stopped),
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                // The new request was not accepted, so restore the previous
+                // freshness state and result slot. The lock is held while the
+                // non-blocking send runs, preventing an in-flight completion
+                // from observing a half-updated request identity.
+                slot.latest_request_id = previous_request_id;
+                slot.result = previous_result;
+                Err(if self.cancellation.is_cancelled() {
+                    StingerLoadQueueError::Stopped
+                } else {
+                    StingerLoadQueueError::Full
+                })
+            }
         }
     }
 
-    /// Polls one completed result without waiting for the worker.
+    /// Polls one completed result without waiting for the worker or its slot.
     #[must_use]
     pub fn try_take_result(&self) -> Option<StingerLoadResult> {
-        self.receiver.try_recv().ok()
+        self.result.try_lock().ok()?.result.take()
     }
 
     /// Requests cancellation without joining or blocking the caller.
@@ -249,7 +274,7 @@ impl Drop for StingerLoadWorker {
 fn run_loader(
     mut loader: impl StingerResourceLoader,
     requests: Receiver<StingerLoadRequest>,
-    results: SyncSender<StingerLoadResult>,
+    result: Arc<Mutex<StingerLoadResultSlot>>,
     cancellation: StingerLoadCancellation,
 ) {
     while !cancellation.is_cancelled() {
@@ -262,10 +287,17 @@ fn run_loader(
             break;
         }
         let request_id = request.request_id();
-        let result = loader.load(&request, &cancellation);
+        let outcome = loader.load(&request, &cancellation);
         if cancellation.is_cancelled() {
             break;
         }
-        let _ = results.try_send(StingerLoadResult { request_id, result });
+        if let Ok(mut slot) = result.lock() {
+            if slot.latest_request_id == Some(request_id) {
+                slot.result = Some(StingerLoadResult {
+                    request_id,
+                    result: outcome,
+                });
+            }
+        }
     }
 }

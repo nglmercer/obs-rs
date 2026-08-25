@@ -23,7 +23,7 @@ normalized transition point, preload flag, and hardware-decode preference to
 the scene model. `SetSceneStingerOverride` owns the mutation and schema 8
 round-trips it while schema 7 documents remain readable. This is still
 metadata only: no project parse or command performs filesystem or decoder I/O,
-and worker-side loading plus the GUI properties workflow remain open.
+and the project/UI workflow still does not own a resolved clip cache.
 
 The worker-boundary packet now provides a capacity-one request queue and
 capacity-one result queue, non-blocking submission/polling, typed request IDs,
@@ -32,8 +32,10 @@ contract. Its thread is detached during teardown so UI/render owners never
 join native resource work. The optional native GStreamer adapter now resolves a
 local file/container into negotiated RGBA frames, with a bounded sample count,
 resident memory budget, polling cancellation, and typed resource failures.
-Engine integration, stale-result application policy, hardware-decode selection,
-non-GStreamer platform adapters, and the GUI resource workflow remain open.
+The result slot now discards completions whose request ID is no longer current
+and never blocks submit/poll callers; engine/UI application, hardware-decode
+selection, non-GStreamer platform adapters, and the GUI resource workflow
+remain open.
 
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks
