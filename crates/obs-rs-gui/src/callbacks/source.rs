@@ -1,6 +1,6 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
-use slint::Weak;
+use slint::{DataTransfer, Weak};
 
 use obs_rs_config::Config;
 use obs_rs_media::FrameTransform;
@@ -172,6 +172,110 @@ pub(crate) fn move_source_to_group_and_refresh(
                 // drag/drop packet can use another validated index.
                 target_index: 0,
             }))?;
+        state.borrow_mut().dispatch(UiCommand::SelectSource {
+            id: new_target.clone(),
+        })?;
+        Ok(new_target)
+    })();
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(_) => refresh_ui(&ui, state, surface),
+        Err(error) => ui.set_status_message(format!("Move source failed: {error}").into()),
+    }
+}
+
+/// Applies one Sources-dock pointer drop through the same typed reparenting
+/// command used by the context menu. A container target receives the item at
+/// its front; a leaf target inserts before or after that leaf according to the
+/// bounded drop mode supplied by Slint.
+pub(crate) fn move_source_by_drop_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    data: &DataTransfer,
+    target: &str,
+    mode: i32,
+) {
+    let result: Result<String, Box<dyn Error>> = (|| {
+        let source_id = data
+            .plain_text()
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+            .to_string();
+        if source_id.is_empty() {
+            return Err(std::io::Error::other("source drag payload is empty").into());
+        }
+        if mode != 0 && mode != 1 && mode != 2 {
+            return Err(std::io::Error::other("source drop mode is invalid").into());
+        }
+        let (profile, scene, destination, target_index) = {
+            let state = state.borrow();
+            let (profile, scene, _, locked) = source_display_state(&state, &source_id)?;
+            if locked {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "source is locked",
+                )
+                .into());
+            }
+            if source_id == target && mode != 0 {
+                return Ok(source_id);
+            }
+            let project = state.project_session().project();
+            let profile_spec = project
+                .active_profile_spec()
+                .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+            let target_item = canvas_item_for_target(profile_spec, scene.as_str(), target)
+                .ok_or_else(|| std::io::Error::other("drop target is not in the preview scene"))?;
+            if target_item.is_group() || target_item.is_scene_reference() {
+                (profile, scene, target.to_owned(), 0)
+            } else {
+                let (target_index, _) = source_order_state(&state, scene.as_str(), target)?;
+                let source_parent = crate::callbacks::source_parent_path(&source_id)
+                    .ok_or_else(|| std::io::Error::other("source target is invalid"))?;
+                let destination_path = crate::callbacks::source_parent_path(target)
+                    .ok_or_else(|| std::io::Error::other("drop target is invalid"))?;
+                let source_index = source_order_state(&state, scene.as_str(), &source_id)?.0;
+                let requested = if mode == 2 {
+                    target_index.saturating_add(1)
+                } else {
+                    target_index
+                };
+                let target_index = if source_parent == destination_path && source_index < requested
+                {
+                    requested.saturating_sub(1)
+                } else {
+                    requested
+                };
+                (profile, scene, destination_path.join("/"), target_index)
+            }
+        };
+        let item_id = source_id
+            .rsplit('/')
+            .next()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| std::io::Error::other("source target is invalid"))?;
+        let destination_path = if destination.is_empty() {
+            Vec::new()
+        } else {
+            destination.split('/').map(str::to_owned).collect()
+        };
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::MoveSceneItemToParent {
+                profile,
+                scene,
+                item: source_id,
+                destination: destination_path,
+                target_index,
+            }))?;
+        let new_target = if destination.is_empty() {
+            item_id.clone()
+        } else {
+            format!("{destination}/{item_id}")
+        };
         state.borrow_mut().dispatch(UiCommand::SelectSource {
             id: new_target.clone(),
         })?;

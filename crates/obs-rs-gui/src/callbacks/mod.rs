@@ -58,10 +58,11 @@ pub(crate) use source::selected_target;
 pub(crate) use source::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
     apply_source_transform_to, apply_source_transforms_to, duplicate_source_and_refresh,
-    flip_source_and_refresh, item_for_target, move_source_and_refresh, move_source_to_and_refresh,
-    move_source_to_group_and_refresh, remove_scene_and_refresh, remove_source_and_refresh,
-    reset_source_transform_and_refresh, scene_item_target, source_target, source_target_is_locked,
-    source_transform_document, target_settings_document, toggle_source_locked_and_refresh,
+    flip_source_and_refresh, item_for_target, move_source_and_refresh,
+    move_source_by_drop_and_refresh, move_source_to_and_refresh, move_source_to_group_and_refresh,
+    remove_scene_and_refresh, remove_source_and_refresh, reset_source_transform_and_refresh,
+    scene_item_target, source_target, source_target_is_locked, source_transform_document,
+    target_settings_document, toggle_source_locked_and_refresh,
     toggle_source_visibility_and_refresh, transform_source_and_refresh, SceneItemTarget,
     SourceTarget,
 };

@@ -1,5 +1,10 @@
 use super::*;
 
+#[path = "ui_source_drag_drop.rs"]
+mod source_drag_drop;
+
+pub(super) use source_drag_drop::exercise_source_pointer_drag_and_drop;
+
 /// Verifies that the focused Sources dock uses the same Rust removal callback
 /// as the canvas, including the locked-item failure path.
 pub(super) fn exercise_source_keyboard_delete(

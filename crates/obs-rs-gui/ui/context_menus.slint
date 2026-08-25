@@ -21,6 +21,11 @@ export component SourceContextMenuArea inherits Rectangle {
     in property <bool> can-group;
     in property <[MoveTarget]> move-targets;
 
+    // The stable path is also the accessibility/test identity for a source
+    // row; it avoids making pointer automation depend on scroll position.
+    accessible-role: button;
+    accessible-label: root.source-id;
+
     callback select-source(string);
     callback select-source-with-mode(string, int);
     callback open-properties(string);

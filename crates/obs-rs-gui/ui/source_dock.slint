@@ -60,6 +60,7 @@ export component SourceDock inherits Rectangle {
     callback paste-duplicate(string);
     callback remove-source(string);
     callback remove-selected-sources();
+    callback drop-source(data-transfer, string, int);
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -120,6 +121,9 @@ export component SourceDock inherits Rectangle {
 
                     ScrollView {
                         vertical-stretch: 1;
+                        // Source-row drag/drop owns vertical pointer gestures. Wheel
+                        // scrolling remains available through ScrollView's scroll events.
+                        mouse-drag-pan-enabled: false;
                     // Rows stack from the top of the dock the way a
                     // list widget does, instead of centring in the view.
                     VerticalLayout {
@@ -174,56 +178,84 @@ export component SourceDock inherits Rectangle {
                         background: source.selected ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;
-                        TouchArea {
+                        DragArea {
                             width: 100%;
                             height: 100%;
-                            clicked => {
-                                source-focus.focus();
-                            }
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.down
-                                    && event.button == PointerEventButton.left {
+                            data: source.drag-data;
+                            allow-move: true;
+                            drag-finished(action) => { }
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                property <int> pending-select-mode: 0;
+                                clicked => {
                                     source-focus.focus();
-                                    let mode = event.modifiers.control
-                                        ? 2
-                                        : (event.modifiers.shift ? 3 : 0);
-                                    select-source-with-mode(source.id, mode);
+                                    select-source-with-mode(source.id, self.pending-select-mode);
                                 }
-                                if event.kind == PointerEventKind.down
-                                    && event.button == PointerEventButton.right {
-                                    source-focus.focus();
-                                    if !source.selected { select-source(source.id); }
-                                    source-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.down
+                                        && event.button == PointerEventButton.left {
+                                        source-focus.focus();
+                                        self.pending-select-mode = event.modifiers.control
+                                            ? 2
+                                            : (event.modifiers.shift ? 3 : 0);
+                                    }
+                                    if event.kind == PointerEventKind.down
+                                        && event.button == PointerEventButton.right {
+                                        source-focus.focus();
+                                        if !source.selected { select-source(source.id); }
+                                        source-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
+                                    }
+                                }
+                            }
+                            HorizontalBox {
+                                padding-left: 7px;
+                                padding-right: 4px;
+                                spacing: 5px;
+                                VerticalBox {
+                                    spacing: 1px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: source.name;
+                                        color: Palette.tokens.text;
+                                        font-size: 11px;
+                                        overflow: elide;
+                                    }
+                                }
+                                CompactButton {
+                                    icon-name: source.visible ? "eye" : "eye-off";
+                                    hint: source.visible
+                                        ? I18n.text.source_hide
+                                        : I18n.text.source_show;
+                                    clicked => toggle-source-visibility(source.id);
+                                }
+                                CompactButton {
+                                    icon-name: source.locked ? "lock" : "unlock";
+                                    hint: source.locked
+                                        ? I18n.text.source_unlock
+                                        : I18n.text.source_lock;
+                                    clicked => toggle-source-locked(source.id);
                                 }
                             }
                         }
-                        HorizontalBox {
-                            padding-left: 7px;
-                            padding-right: 4px;
-                            spacing: 5px;
-                            VerticalBox {
-                                spacing: 1px;
-                                horizontal-stretch: 1;
-                                Text {
-                                    text: source.name;
-                                    color: Palette.tokens.text;
-                                    font-size: 11px;
-                                    overflow: elide;
-                                }
+                        DropArea {
+                            width: 100%;
+                            height: 100%;
+                            enabled: !source.locked;
+                            can-drop(_) => { DragAction.move }
+                            dropped(event) => {
+                                let mode = source.container
+                                    ? 0
+                                    : (event.position.y < self.height / 2 ? 1 : 2);
+                                root.drop-source(event.data, source.target, mode);
+                                event.proposed-action
                             }
-                            CompactButton {
-                                icon-name: source.visible ? "eye" : "eye-off";
-                                hint: source.visible
-                                    ? I18n.text.source_hide
-                                    : I18n.text.source_show;
-                                clicked => toggle-source-visibility(source.id);
-                            }
-                            CompactButton {
-                                icon-name: source.locked ? "lock" : "unlock";
-                                hint: source.locked
-                                    ? I18n.text.source_unlock
-                                    : I18n.text.source_lock;
-                                clicked => toggle-source-locked(source.id);
+                            Rectangle {
+                                width: parent.width;
+                                height: parent.height;
+                                background: transparent;
+                                border-width: parent.has-drag ? 2px : 0px;
+                                border-color: Palette.tokens.accent;
                             }
                         }
                     }

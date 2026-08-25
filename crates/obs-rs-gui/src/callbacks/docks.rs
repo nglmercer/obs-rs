@@ -749,6 +749,7 @@ fn forward_to_studio(
         id,
         destination
     );
+    forward!(on_drop_source, invoke_drop_source, data, target, mode);
     forward!(on_reset_source_transform, invoke_reset_source_transform, id);
     forward!(on_flip_source, invoke_flip_source, id, horizontal);
     forward!(on_transform_source, invoke_transform_source, id, action);

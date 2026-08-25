@@ -148,6 +148,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_sources::exercise_source_keyboard_delete(&ui, &state, &surface);
     ui_sources::exercise_multi_source_keyboard_delete(&ui, &state, &surface);
     ui_sources::exercise_source_mouse_selection(&ui, &state, &surface);
+    ui_sources::exercise_source_pointer_drag_and_drop(&ui, &state, &surface);
     ui_layout::render_monitor_window();
     ui_sources::exercise_add_source_window(&ui, &state, &surface);
     ui_sources::exercise_capture_device_properties_window(&ui, &state, &surface);

@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc, time::Instant};
 use obs_rs_media::{FrameTransition, RawVideoFrame, TransitionKind, VideoFrame};
 use obs_rs_project::{Profile, ProjectCommand, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
-use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
+use slint::{DataTransfer, Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::preview_worker::{multiview_grid_dimensions, MAX_MULTIVIEW_SCENES};
 use crate::{
@@ -186,6 +186,10 @@ fn append_source_rows_inner(
             locked: item.locked(),
             first: index == 0,
             last: index + 1 == items.len(),
+            parent_path: group_path.join("/").into(),
+            index: i32::try_from(index).unwrap_or(i32::MAX),
+            container: is_group || item.is_scene_reference(),
+            drag_data: DataTransfer::from(SharedString::from(target.clone())),
             move_targets: ModelRc::new(VecModel::from(move_targets_for_row(
                 target.as_str(),
                 group_path,

@@ -22,8 +22,10 @@ Stable paths are recomputed after the move so selection does not point at the
 old parent. Its flattened-target adapter now resolves both source and
 destination owners across Scene-reference boundaries and commits cross-scene
 moves transactionally, including lock, collision, depth, and cycle validation.
-Direct pointer drag/drop, nested crop/rotation semantics, and the broader
-save/recovery lifecycle remain open.
+Sources-dock pointer drag/drop is now covered for group and leaf targets with
+bounded before/after insertion and locked-container rejection. Canvas and
+Scene-reference pointer drag/drop, transformed-boundary crop/rotation
+semantics, and the broader save/recovery lifecycle remain open.
 
 The Scene properties packet now keeps scene name and optional transition
 override in the same Rust-owned `SetSceneProperties` command. The dialog
@@ -45,7 +47,8 @@ The nested Scene-reference reparenting packet now resolves both source and
 destination paths through the same owner resolver. A bounded two-scene
 transaction moves the existing item without cloning it, while the UI projects
 referenced scenes and their group destinations and restores the flattened
-selection path. Full pointer drag/drop evidence and transformed-boundary
+selection path. Sources-dock pointer drag/drop is covered for group and leaf
+targets; canvas/Scene-reference GUI drag/drop and transformed-boundary
 crop/rotation remain separate gaps.
 
 The keyboard source-deletion packet keeps the Delete key as a presentation
@@ -78,6 +81,18 @@ ascending/descending contiguous range selection, and toggle removal while
 re-querying rows after each model refresh. Drag-box selection and complete
 nested-row pointer evidence remain open. The fixture still fails later when
 this host exposes no native capture-device row.
+
+The Sources-dock pointer drag/drop packet gives each visible row a typed
+`DataTransfer` payload and uses Slint `DragArea`/`DropArea` only as the input
+boundary. The Rust callback resolves flattened source and destination paths,
+dispatches the existing `MoveSceneItemToParent` command, and refreshes the
+single project/UI state owner. Container rows insert at the front; leaf rows
+use bounded before/after zones. The GUI fixture proves vertical drags into a
+group and a nested leaf, stable selection paths, order changes, and rejection
+when the destination container is locked. Mouse-drag panning is disabled for
+the source-row viewport so the Flickable cannot steal the gesture; wheel
+scrolling remains available. Canvas/Scene-reference GUI drag/drop and
+transformed-boundary crop/rotation remain open.
 
 The keyboard follow-up now sends Shift+Up/Down/Home/End through the same
 contiguous range resolver instead of treating Shift as one-row additive state.
@@ -213,8 +228,10 @@ inside the supported command path through the same owner-scene resolver.
 Duplication now follows the same route and can clone the profile source;
 same-owner reorder now follows the same route. Grouping and ungrouping now use
 the same-owner resolver as well, and reparenting resolves both source and
-destination owners. Full pointer drag/drop and transformed-boundary
-crop/rotation remain open.
+destination owners. Sources-dock pointer drag/drop now covers group and leaf
+targets through the same command boundary, with selection recovery and locked
+destination rejection. Full canvas/Scene-reference pointer drag/drop and
+transformed-boundary crop/rotation remain open.
 
 ```text
 truthful baseline / lint and test gate

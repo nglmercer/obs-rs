@@ -8,9 +8,9 @@ use crate::{
     apply_scene_properties_and_refresh, apply_source_name_and_refresh,
     apply_source_settings_and_refresh, callbacks::canvas::canvas_item_for_target,
     dispatch_and_refresh, duplicate_scene_and_refresh, duplicate_source_and_refresh,
-    flip_source_and_refresh, move_source_and_refresh, move_source_to_and_refresh,
-    move_source_to_group_and_refresh, refresh_ui, remove_scene_and_refresh,
-    remove_selected_sources_and_refresh, remove_source_and_refresh,
+    flip_source_and_refresh, move_source_and_refresh, move_source_by_drop_and_refresh,
+    move_source_to_and_refresh, move_source_to_group_and_refresh, refresh_ui,
+    remove_scene_and_refresh, remove_selected_sources_and_refresh, remove_source_and_refresh,
     reset_source_transform_and_refresh, toggle_source_locked_and_refresh,
     toggle_source_visibility_and_refresh, transform_source_and_refresh, MainWindow, PreviewSurface,
 };
@@ -505,6 +505,20 @@ fn install_source_list_callbacks(
             &move_group_surface,
             id.as_str(),
             destination.as_str(),
+        );
+    });
+
+    let weak = ui.as_weak();
+    let drop_state = Rc::clone(state);
+    let drop_surface = Rc::clone(surface);
+    ui.on_drop_source(move |data, target, mode| {
+        move_source_by_drop_and_refresh(
+            &weak,
+            &drop_state,
+            &drop_surface,
+            &data,
+            target.as_str(),
+            mode,
         );
     });
 
