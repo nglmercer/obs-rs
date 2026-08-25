@@ -478,8 +478,9 @@ transformed-boundary crop/rotation and live DPI remain open.
 Reconciliation note: the source-filter editor now offers bounded localized
 property schemas for all currently compiled audio kinds: Gain, Invert Polarity,
 Limiter, Compressor, Expander, and Noise Gate. This is GUI configuration and
-persistence coverage; automatic source-level routing remains intentionally
-open.
+persistence coverage. The catalog and row kind labels also project bounded
+English/Spanish names from the active locale without rewriting user-authored
+instance names; automatic source-level routing remains intentionally open.
 
 ## Audio and production workflow
 

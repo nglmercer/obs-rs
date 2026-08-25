@@ -35,6 +35,11 @@ property schemas, alongside Noise Gate. This closes the GUI configuration
 slice only; automatic source-level audio-filter routing, sidechains, and the
 remaining filter graph are still separate gaps.
 
+The same filter catalog now projects English and Spanish names from the active
+UI locale, including safe fallback for persisted unknown kinds. Existing
+filter instance names remain user-editable project data and are not rewritten
+when the locale changes.
+
 The scene-item identity packet now also covers atomic root/group reparenting:
 `MoveSceneItemToParent` validates source and destination paths before moving the
 owned item, and the Sources dock projects the same destinations for nested rows.

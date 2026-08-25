@@ -9,7 +9,7 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_config::Config;
 use obs_rs_project::{ProjectCommand, SourceFilterCategory, SourceFilterSpec};
-use obs_rs_ui::{DesktopState, UiCommand};
+use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
@@ -21,6 +21,7 @@ use crate::{
 struct FilterDefinition {
     kind: &'static str,
     name: &'static str,
+    spanish: &'static str,
     category: SourceFilterCategory,
 }
 
@@ -28,94 +29,121 @@ const FILTER_DEFINITIONS: [FilterDefinition; 18] = [
     FilterDefinition {
         kind: "gain",
         name: "Gain",
+        spanish: "Ganancia",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {
         kind: "invert_polarity",
         name: "Invert Polarity",
+        spanish: "Invertir polaridad",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {
         kind: "limiter",
         name: "Limiter",
+        spanish: "Limitador",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {
         kind: "expander",
         name: "Expander",
+        spanish: "Expansor",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {
         kind: "noise_gate",
         name: "Noise Gate",
+        spanish: "Puerta de ruido",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {
         kind: "compressor",
         name: "Compressor",
+        spanish: "Compresor",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {
         kind: "grayscale",
         name: "Grayscale",
+        spanish: "Escala de grises",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "brightness",
         name: "Brightness",
+        spanish: "Brillo",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "opacity",
         name: "Opacity",
+        spanish: "Opacidad",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "crop_pad",
         name: "Crop/Pad",
+        spanish: "Recorte/Relleno",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "color_correction",
         name: "Color Correction",
+        spanish: "Corrección de color",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "color_multiply_add",
         name: "Color Multiply/Add",
+        spanish: "Multiplicar/Añadir color",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "luma_key",
         name: "Luma Key",
+        spanish: "Clave de luma",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "color_key",
         name: "Color Key",
+        spanish: "Clave de color",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "chroma_key",
         name: "Chroma Key",
+        spanish: "Clave de croma",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "sharpen",
         name: "Sharpen",
+        spanish: "Nitidez",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "scroll",
         name: "Scroll",
+        spanish: "Desplazamiento",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "render_delay",
         name: "Render Delay",
+        spanish: "Retardo de renderizado",
         category: SourceFilterCategory::Effect,
     },
 ];
+
+impl FilterDefinition {
+    fn display_name(self, locale: UiLocale) -> &'static str {
+        match locale {
+            UiLocale::English => self.name,
+            UiLocale::Spanish => self.spanish,
+        }
+    }
+}
 
 /// Owns the standalone Filters window and its selected instance ID.
 pub(crate) struct SourceFiltersController {
@@ -321,10 +349,11 @@ fn add_filter(
 ) -> Result<(), Box<dyn Error>> {
     let definition =
         definition(kind).ok_or_else(|| std::io::Error::other("unknown filter kind"))?;
+    let locale = state.borrow().locale();
     let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let id = unique_filter_id(state, &source, kind);
-    let name = filter_instance_name(definition.name, definition.kind, &id);
+    let name = filter_instance_name(definition.display_name(locale), definition.kind, &id);
     let filter = SourceFilterSpec::with_category(
         &id,
         &name,
@@ -617,7 +646,7 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
     let make_row = |filter: &SourceFilterSpec| SourceFilterRow {
         id: filter.id().as_str().into(),
         name: filter.name().into(),
-        kind: filter_display_name(filter.kind().as_str()).into(),
+        kind: filter_display_name(filter.kind().as_str(), locale).into(),
         category: filter.category().id().into(),
         enabled: filter.enabled(),
         selected: filter.id().as_str() == selected,
@@ -656,7 +685,7 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
     controller.window.set_selected_filter_kind(
         selected_filter
             .map_or_else(String::new, |filter| {
-                filter_display_name(filter.kind().as_str()).to_owned()
+                filter_display_name(filter.kind().as_str(), locale).to_owned()
             })
             .into(),
     );
@@ -687,7 +716,7 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
 
     let names = FILTER_DEFINITIONS
         .iter()
-        .map(|definition| SharedString::from(definition.name))
+        .map(|definition| SharedString::from(definition.display_name(locale)))
         .collect::<Vec<_>>();
     let kinds = FILTER_DEFINITIONS
         .iter()
@@ -701,8 +730,8 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
         .set_available_filter_kinds(ModelRc::new(VecModel::from(kinds)));
 }
 
-fn filter_display_name(kind: &str) -> &str {
-    definition(kind).map_or(kind, |definition| definition.name)
+fn filter_display_name(kind: &str, locale: UiLocale) -> &str {
+    definition(kind).map_or(kind, |definition| definition.display_name(locale))
 }
 
 // Keep the public test surface small while allowing headless GUI tests to
@@ -712,4 +741,24 @@ pub(crate) fn source_filters_window(
     controller: &Rc<SourceFiltersController>,
 ) -> &SourceFiltersWindow {
     controller.window()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_catalog_has_bounded_bilingual_names() {
+        assert_eq!(FILTER_DEFINITIONS.len(), 18);
+        assert!(FILTER_DEFINITIONS
+            .iter()
+            .all(|definition| !definition.name.is_empty() && !definition.spanish.is_empty()));
+        assert_eq!(filter_display_name("gain", UiLocale::English), "Gain");
+        assert_eq!(filter_display_name("gain", UiLocale::Spanish), "Ganancia");
+        assert_eq!(
+            filter_display_name("invert_polarity", UiLocale::Spanish),
+            "Invertir polaridad"
+        );
+        assert_eq!(filter_display_name("unknown", UiLocale::Spanish), "unknown");
+    }
 }
