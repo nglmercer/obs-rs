@@ -26,6 +26,7 @@ mod error;
 mod helpers;
 mod snapshot;
 mod state;
+mod stinger_loader;
 mod types;
 mod web;
 
@@ -35,6 +36,7 @@ mod tests;
 pub use console::{parse_console_command, ConsoleCommand, ConsoleCommandError};
 pub use error::UiError;
 pub use state::DesktopState;
+pub use stinger_loader::{StingerLoadSession, StingerLoadState};
 pub use types::{
     MixerChannel, ProjectSceneSelection, SceneView, Shortcut, StingerSnapshot, TransitionSnapshot,
     UiAction, UiCommand, UiLocale, UiNotice,

@@ -37,6 +37,15 @@ and never blocks submit/poll callers; engine/UI application, hardware-decode
 selection, non-GStreamer platform adapters, and the GUI resource workflow
 remain open.
 
+The toolkit-neutral `StingerLoadSession` now owns the transient current request
+and resolved clip around that worker. It clears the renderable clip only after
+an accepted request, preserves the current state when the bounded queue is
+full, rejects a loader result whose format does not match the active canvas,
+and invalidates old completions when the target format changes. It exposes the
+typed failure without moving resource metadata or decoded pixels into a second
+project state store; the GUI still needs to instantiate the platform adapter
+and connect properties/file-picker actions to this session.
+
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks
 support inversion and bounded 0..=1000 softness, and the CPU/reference path

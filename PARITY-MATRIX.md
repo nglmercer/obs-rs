@@ -55,6 +55,11 @@ bounded preloading, returning typed unreadable/decoder/frame/timeout failures;
 the one-slot result policy discards stale request IDs without blocking submit
 or poll callers. Engine/UI application, hardware-decode selection, other
 platform adapters, and the properties/file-picker workflow remain incomplete.
+The toolkit-neutral `StingerLoadSession` now owns only the transient current
+request/clip, preserves state on a full queue, validates the target format,
+and invalidates old completions when the canvas format changes; the GUI has
+not yet wired its native adapter or properties/file-picker actions to that
+session.
 
 ## Latest verified package: portable Luma Wipe transition
 

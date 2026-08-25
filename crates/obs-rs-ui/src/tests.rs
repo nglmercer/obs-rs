@@ -42,3 +42,5 @@ mod persistence;
 mod selection;
 #[path = "ui_tests_shortcuts.rs"]
 mod shortcuts;
+#[path = "ui_tests_stinger_loader.rs"]
+mod stinger_loader;
