@@ -1,6 +1,6 @@
-use std::fmt;
+use std::{fmt, sync::Arc};
 
-use obs_rs_media::{FrameTransition, TransitionSpec};
+use obs_rs_media::{FrameTransition, MediaError, StingerClip, TransitionSpec};
 use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 
 use super::{error::UiError, MAX_SHORTCUT_KEY_BYTES, MAX_SHORTCUT_TEXT_BYTES};
@@ -38,6 +38,14 @@ pub struct TransitionSnapshot {
     source_scene: String,
     destination_scene: String,
     transition: FrameTransition,
+    stinger: Option<StingerSnapshot>,
+}
+
+/// Renderer-facing Stinger data backed by a preloaded, bounded clip.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StingerSnapshot {
+    clip: Arc<StingerClip>,
+    progress_milli: u16,
 }
 
 impl TransitionSnapshot {
@@ -52,7 +60,35 @@ impl TransitionSnapshot {
             source_scene: source_scene.into(),
             destination_scene: destination_scene.into(),
             transition,
+            stinger: None,
         }
+    }
+
+    /// Creates a renderer-facing snapshot for a preloaded Stinger clip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransition`] when the progress is
+    /// outside the normalized 0..=1000 range.
+    #[must_use = "handle the transition snapshot result"]
+    pub fn new_stinger(
+        source_scene: impl Into<String>,
+        destination_scene: impl Into<String>,
+        clip: Arc<StingerClip>,
+        progress_milli: u16,
+    ) -> Result<Self, MediaError> {
+        if progress_milli > 1_000 {
+            return Err(MediaError::InvalidTransition { progress_milli });
+        }
+        Ok(Self {
+            source_scene: source_scene.into(),
+            destination_scene: destination_scene.into(),
+            transition: FrameTransition::Cut,
+            stinger: Some(StingerSnapshot {
+                clip,
+                progress_milli,
+            }),
+        })
     }
 
     /// Returns the scene being transitioned away from.
@@ -71,6 +107,26 @@ impl TransitionSnapshot {
     #[must_use]
     pub const fn transition(&self) -> FrameTransition {
         self.transition
+    }
+
+    /// Returns the optional preloaded Stinger payload.
+    #[must_use]
+    pub fn stinger(&self) -> Option<&StingerSnapshot> {
+        self.stinger.as_ref()
+    }
+}
+
+impl StingerSnapshot {
+    /// Returns the immutable preloaded clip.
+    #[must_use]
+    pub fn clip(&self) -> &StingerClip {
+        &self.clip
+    }
+
+    /// Returns the bounded normalized render progress.
+    #[must_use]
+    pub const fn progress_milli(&self) -> u16 {
+        self.progress_milli
     }
 }
 
@@ -458,6 +514,11 @@ pub enum UiCommand {
     /// Send the selected preview scene to program using one bounded transition.
     TakePreview {
         transition: FrameTransition,
+        duration_ms: u32,
+    },
+    /// Send the selected preview scene to program using a preloaded Stinger.
+    TakeStinger {
+        clip: Arc<StingerClip>,
         duration_ms: u32,
     },
     /// Persist or clear the transition override for the selected preview

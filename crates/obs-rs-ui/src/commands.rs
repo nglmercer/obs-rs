@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
+use std::{collections::BTreeMap, sync::Arc};
 
 use obs_rs_audio::{AudioFormat, AudioMixer};
 use obs_rs_audio::{MAX_GAIN_MILLI, MAX_PAN_MILLI, MIN_PAN_MILLI};
-use obs_rs_media::{FrameTransition, TransitionSpec};
+use obs_rs_media::{FrameTransition, StingerClip, TransitionSpec};
 use obs_rs_project::ProjectCommand;
 
 use super::{
@@ -293,6 +293,23 @@ impl DesktopState {
         transition: FrameTransition,
         duration_ms: u32,
     ) -> Result<&'static str, UiError> {
+        self.take_preview_with_stinger(transition, duration_ms, None)
+    }
+
+    pub(crate) fn take_stinger(
+        &mut self,
+        clip: Arc<StingerClip>,
+        duration_ms: u32,
+    ) -> Result<&'static str, UiError> {
+        self.take_preview_with_stinger(FrameTransition::Cut, duration_ms, Some(clip))
+    }
+
+    fn take_preview_with_stinger(
+        &mut self,
+        transition: FrameTransition,
+        duration_ms: u32,
+        stinger: Option<Arc<StingerClip>>,
+    ) -> Result<&'static str, UiError> {
         if !(MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS).contains(&duration_ms)
         {
             return Err(UiError::InvalidTransitionDuration(duration_ms));
@@ -304,28 +321,33 @@ impl DesktopState {
                 kind: "preview scene",
                 id: "none".to_owned(),
             })?;
-        let (transition, duration_ms) = self
-            .project
-            .project()
-            .active_profile_spec()
-            .and_then(|profile| profile.scene(&preview))
-            .and_then(obs_rs_project::SceneSpec::transition_override)
-            .map(|override_spec| {
-                (
-                    override_spec.at_progress(500).map_err(UiError::Media),
-                    override_spec.duration_millis(),
-                )
-            })
-            .map_or(
-                Ok((transition, duration_ms)),
-                |(transition, duration_ms)| transition.map(|transition| (transition, duration_ms)),
-            )?;
+        let (transition, duration_ms) = if stinger.is_some() {
+            (transition, duration_ms)
+        } else {
+            self.project
+                .project()
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(&preview))
+                .and_then(obs_rs_project::SceneSpec::transition_override)
+                .map(|override_spec| {
+                    (
+                        override_spec.at_progress(500).map_err(UiError::Media),
+                        override_spec.duration_millis(),
+                    )
+                })
+                .map_or(
+                    Ok((transition, duration_ms)),
+                    |(transition, duration_ms)| {
+                        transition.map(|transition| (transition, duration_ms))
+                    },
+                )?
+        };
         let source = self.program_scene.clone();
         self.set_transition(transition)?;
         self.program_scene = Some(preview);
         self.active_transition = match (source, self.program_scene.clone(), transition) {
             (Some(source_scene), Some(destination_scene), FrameTransition::Cut)
-                if source_scene != destination_scene =>
+                if source_scene != destination_scene && stinger.is_none() =>
             {
                 None
             }
@@ -336,6 +358,7 @@ impl DesktopState {
                     source_scene,
                     destination_scene,
                     transition,
+                    stinger,
                     started_at: Instant::now(),
                     duration: Duration::from_millis(u64::from(duration_ms)),
                 })
@@ -384,6 +407,15 @@ impl DesktopState {
             .unwrap_or(1_000)
             .min(999);
         let progress_milli = u16::try_from(progress).unwrap_or(999);
+        if let Some(clip) = active.stinger.as_ref() {
+            return TransitionSnapshot::new_stinger(
+                active.source_scene.as_str(),
+                active.destination_scene.as_str(),
+                Arc::clone(clip),
+                progress_milli,
+            )
+            .ok();
+        }
         let transition = match active.transition {
             FrameTransition::Cut => return None,
             FrameTransition::CrossFade { .. } => FrameTransition::CrossFade { progress_milli },

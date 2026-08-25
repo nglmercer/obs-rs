@@ -681,6 +681,16 @@ fn render_program_scene(
         if transition.destination_scene() != scene {
             return Err("program transition destination does not match program scene".to_owned());
         }
+        if let Some(stinger) = transition.stinger() {
+            return renderer
+                .render_stinger_transition_preview(
+                    transition.source_scene(),
+                    transition.destination_scene(),
+                    format,
+                    stinger,
+                )
+                .map_err(|error| error.to_string());
+        }
         return renderer
             .render_transition_preview(
                 transition.source_scene(),
@@ -702,6 +712,13 @@ fn render_program_transition(
     let Some(transition) = transition else {
         return Ok(None);
     };
+    if let Some(stinger) = transition.stinger() {
+        return renderer.render_stinger_transition(
+            transition.source_scene(),
+            transition.destination_scene(),
+            stinger,
+        );
+    }
     renderer.render_transition(
         transition.source_scene(),
         transition.destination_scene(),

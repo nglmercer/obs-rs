@@ -488,6 +488,54 @@ fn take_preview_exposes_a_bounded_transient_transition() {
 }
 
 #[test]
+fn take_stinger_exposes_the_preloaded_clip_without_file_io() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("program scene");
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let clip = std::sync::Arc::new(
+        obs_rs_media::StingerClip::new(
+            vec![
+                obs_rs_media::VideoFrame::solid(format, Timestamp::ZERO, [0, 0, 0, 0]),
+                obs_rs_media::VideoFrame::solid(format, Timestamp::ZERO, [255, 255, 255, 128]),
+            ],
+            vec![100_000_000, 100_000_000],
+            500,
+        )
+        .expect("preloaded stinger clip"),
+    );
+    state
+        .dispatch(UiCommand::TakeStinger {
+            clip: std::sync::Arc::clone(&clip),
+            duration_ms: 100,
+        })
+        .expect("take stinger");
+
+    let snapshot = state
+        .transition_snapshot(Instant::now())
+        .expect("stinger is active");
+    let stinger = snapshot.stinger().expect("stinger payload");
+    assert_eq!(stinger.clip().frame_count(), 2);
+    assert_eq!(stinger.clip().transition_point_milli(), 500);
+    assert!(stinger.progress_milli() < 1_000);
+    assert_eq!(snapshot.transition(), FrameTransition::Cut);
+    assert_eq!(
+        crate::TransitionSnapshot::new_stinger(
+            "program",
+            "preview",
+            std::sync::Arc::clone(&clip),
+            1_001,
+        ),
+        Err(MediaError::InvalidTransition {
+            progress_milli: 1_001,
+        })
+    );
+}
+
+#[test]
 fn mixer_commands_update_real_audio_controls() {
     let mut state = DesktopState::new(project());
     state

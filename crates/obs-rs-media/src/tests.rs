@@ -11,5 +11,7 @@ mod color;
 mod composition;
 #[path = "media_tests_frames.rs"]
 mod frames;
+#[path = "media_tests_stinger.rs"]
+mod stinger;
 #[path = "media_tests_transitions.rs"]
 mod transitions;

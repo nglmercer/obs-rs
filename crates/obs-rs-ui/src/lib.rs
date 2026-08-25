@@ -36,7 +36,7 @@ pub use console::{parse_console_command, ConsoleCommand, ConsoleCommandError};
 pub use error::UiError;
 pub use state::DesktopState;
 pub use types::{
-    MixerChannel, ProjectSceneSelection, SceneView, Shortcut, TransitionSnapshot, UiAction,
-    UiCommand, UiLocale, UiNotice,
+    MixerChannel, ProjectSceneSelection, SceneView, Shortcut, StingerSnapshot, TransitionSnapshot,
+    UiAction, UiCommand, UiLocale, UiNotice,
 };
 pub use web::{parse_web_request, WebRequestError, WebRoute};

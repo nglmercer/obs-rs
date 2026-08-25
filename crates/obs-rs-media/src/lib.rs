@@ -12,6 +12,7 @@ mod frame_transitions;
 mod metrics;
 mod pixel;
 mod scale;
+mod stinger;
 mod time;
 mod transform;
 mod transition;
@@ -36,6 +37,11 @@ pub use metrics::{
 };
 pub use pixel::{PixelFormat, RawVideoFrame};
 pub use scale::{FrameScaler, ScaleFilter};
+pub use stinger::{
+    StingerClip, MAX_STINGER_DURATION_NANOS, MAX_STINGER_FRAMES, MAX_STINGER_FRAME_DURATION_NANOS,
+    MAX_STINGER_MEMORY_BYTES, MAX_STINGER_TRANSITION_POINT_MILLI, MIN_STINGER_FRAME_DURATION_NANOS,
+    MIN_STINGER_TRANSITION_POINT_MILLI,
+};
 pub use time::{sleep_precise, FrameRate, Timestamp, SLEEP_SPIN_WINDOW};
 pub use transform::FrameTransform;
 pub use transition::{

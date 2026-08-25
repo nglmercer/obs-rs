@@ -298,6 +298,58 @@ fn program_transition_uses_the_same_worker_renderer_for_preview_and_output() {
 }
 
 #[test]
+fn stinger_transition_scales_one_preloaded_clip_for_preview_and_output() {
+    let project = crate::initial_project().expect("project");
+    let canvas = project
+        .active_profile_spec()
+        .expect("profile")
+        .video_format();
+    let format = PreviewRenderer::preview_format_for_canvas(canvas);
+    let clip = std::sync::Arc::new(
+        obs_rs_media::StingerClip::new(
+            vec![
+                obs_rs_media::VideoFrame::solid(
+                    canvas,
+                    obs_rs_media::Timestamp::ZERO,
+                    [0, 0, 0, 0],
+                ),
+                obs_rs_media::VideoFrame::solid(
+                    canvas,
+                    obs_rs_media::Timestamp::ZERO,
+                    [255, 0, 0, 255],
+                ),
+            ],
+            vec![100_000_000, 100_000_000],
+            500,
+        )
+        .expect("preloaded stinger"),
+    );
+    let snapshot =
+        TransitionSnapshot::new_stinger("preview", "program", clip, 750).expect("snapshot");
+    assert_eq!(
+        snapshot
+            .stinger()
+            .expect("stinger snapshot")
+            .progress_milli(),
+        750
+    );
+    assert!(snapshot
+        .stinger()
+        .expect("stinger snapshot")
+        .clip()
+        .destination_visible(750));
+
+    let mut renderer = PreviewRenderer::new(&project, 0).expect("renderer");
+    let preview = wait_for_frame(|| {
+        render_program_scene(&mut renderer, Some("program"), format, Some(&snapshot))
+    });
+    let output = wait_for_frame(|| render_program_transition(&mut renderer, Some(&snapshot)));
+
+    assert_eq!(preview.pixel(0, 0), Some([255, 0, 0, 255]));
+    assert_eq!(output.pixel(0, 0), Some([255, 0, 0, 255]));
+}
+
+#[test]
 fn matching_preview_consumers_share_one_scene_capture() {
     let project = crate::initial_project().expect("initial project");
     let canvas = project

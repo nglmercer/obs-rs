@@ -3,6 +3,7 @@
     reason = "preview implementation modules share the renderer boundary namespace"
 )]
 use super::*;
+use obs_rs_ui::StingerSnapshot;
 
 const SCENE_LAYER_CACHE_CAPACITY: usize = 8;
 
@@ -272,6 +273,76 @@ impl PreviewRenderer {
             RenderTarget::new(RenderTargetRole::ProgramPreview, format),
             transition,
         )
+    }
+
+    /// Renders a preloaded Stinger clip over the shared source/destination
+    /// scene pair without opening a second media runtime.
+    pub(crate) fn render_stinger_transition(
+        &mut self,
+        source_scene: &str,
+        destination_scene: &str,
+        stinger: &StingerSnapshot,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        self.render_stinger_transition_target(
+            source_scene,
+            destination_scene,
+            RenderTarget::new(RenderTargetRole::Program, self.format),
+            stinger,
+        )
+    }
+
+    /// Renders a preloaded Stinger clip into the bounded GUI program target.
+    pub(crate) fn render_stinger_transition_preview(
+        &mut self,
+        source_scene: &str,
+        destination_scene: &str,
+        format: VideoFormat,
+        stinger: &StingerSnapshot,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        self.render_stinger_transition_target(
+            source_scene,
+            destination_scene,
+            RenderTarget::new(RenderTargetRole::ProgramPreview, format),
+            stinger,
+        )
+    }
+
+    fn render_stinger_transition_target(
+        &mut self,
+        source_scene: &str,
+        destination_scene: &str,
+        target: RenderTarget,
+        stinger: &StingerSnapshot,
+    ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
+        let source = self.render_target(source_scene, target)?;
+        let destination = self.render_target(destination_scene, target)?;
+        if self.deferred_readback() && (source.is_none() || destination.is_none()) {
+            return Ok(None);
+        }
+        match (source, destination) {
+            (None, None) => Ok(None),
+            (source, destination) => {
+                let source = source.unwrap_or_else(|| {
+                    VideoFrame::solid(target.format(), self.timestamp, [0, 0, 0, 0])
+                });
+                let destination = destination.unwrap_or_else(|| {
+                    VideoFrame::solid(target.format(), self.timestamp, [0, 0, 0, 0])
+                });
+                let overlay = stinger
+                    .clip()
+                    .frame_at_progress(stinger.progress_milli(), destination.timestamp())?;
+                let overlay = if overlay.format() == target.format() {
+                    overlay
+                } else {
+                    self.scale_frame(&overlay, target.format())?
+                };
+                stinger
+                    .clip()
+                    .render_with_overlay(&source, destination, &overlay, stinger.progress_milli())
+                    .map(Some)
+                    .map_err(Into::into)
+            }
+        }
     }
 
     fn render_transition_target(

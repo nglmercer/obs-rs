@@ -7,6 +7,16 @@ independent reviewer.
 
 ## Latest verified packet
 
+The bounded Stinger runtime packet now accepts already-decoded RGBA frames as
+one validated, preloaded clip. Frame count, per-frame duration, total duration,
+transition point, format consistency, and resident RGBA storage are all
+bounded before the clip enters the runtime. The same immutable clip can feed
+the full program target and the smaller GUI preview target; the preview worker
+scales the selected frame at the presentation boundary, and render-time file
+or decoder I/O is impossible. This is intentionally only a runtime slice:
+persistent media paths, asynchronous decoding, track matte layout, fade/audio
+monitoring policy, and the Stinger properties/file-picker workflow remain open.
+
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks
 support inversion and bounded 0..=1000 softness, and the CPU/reference path
@@ -14,7 +24,8 @@ blends directly into the destination buffer without allocating a full-frame
 mask. Scene overrides, console commands, bilingual controls, and persistence
 round-trip through the same `TransitionSpec`; media, project, UI, and GUI
 workflow tests cover the implemented slice. OBS's asset-backed mask catalog,
-external pattern resources, and Stinger transition remain open capabilities.
+external pattern resources, and the full Stinger workflow remain open
+capabilities.
 
 The provider-to-mix `AudioResampler` now consumes the typed standard layout
 metadata instead of treating every channel count as an unlabeled index list.

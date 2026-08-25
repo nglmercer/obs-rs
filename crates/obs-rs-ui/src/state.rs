@@ -1,8 +1,11 @@
-use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+};
 
 use obs_rs_audio::{AudioBuffer, AudioFormat, AudioMixer, AudioSourceId};
-use obs_rs_media::{FrameTransition, Timestamp};
+use obs_rs_media::{FrameTransition, StingerClip, Timestamp};
 use obs_rs_project::{Project, ProjectCommand, ProjectFileStore, ProjectSession, SceneItemSpec};
 use obs_rs_util::Identifier;
 
@@ -35,6 +38,7 @@ pub(crate) struct ActiveTransition {
     pub(crate) source_scene: Identifier,
     pub(crate) destination_scene: Identifier,
     pub(crate) transition: FrameTransition,
+    pub(crate) stinger: Option<Arc<StingerClip>>,
     pub(crate) started_at: Instant,
     pub(crate) duration: Duration,
 }
@@ -238,6 +242,7 @@ impl DesktopState {
                 transition,
                 duration_ms,
             } => self.take_preview(transition, duration_ms)?,
+            UiCommand::TakeStinger { clip, duration_ms } => self.take_stinger(clip, duration_ms)?,
             UiCommand::SetPreviewSceneTransition { transition } => {
                 let message = self.set_preview_scene_transition(transition)?;
                 self.active_transition = None;
