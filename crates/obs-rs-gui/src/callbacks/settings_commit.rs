@@ -459,6 +459,12 @@ pub(super) fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSetti
         window.get_hotkey_toggle_selected_source_lock().as_str(),
         &settings.hotkey_toggle_selected_source_lock,
     );
+    settings.hotkey_toggle_selected_source_projector = crate::settings::validated_hotkey(
+        window
+            .get_hotkey_toggle_selected_source_projector()
+            .as_str(),
+        &settings.hotkey_toggle_selected_source_projector,
+    );
 }
 
 /// Reads the canvas-only settings as one validated presentation policy.

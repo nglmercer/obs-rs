@@ -43,6 +43,7 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-toggle-studio-mode;
     in-out property <string> hotkey-toggle-selected-source-visibility;
     in-out property <string> hotkey-toggle-selected-source-lock;
+    in-out property <string> hotkey-toggle-selected-source-projector;
     in property <string> conflict-warning;
     callback changed();
     spacing: Metrics.ui.page-spacing;
@@ -206,6 +207,14 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-toggle-selected-source-lock;
                 placeholder-text: "Ctrl+Shift+L";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_selected_source_projector;
+            SettingsField {
+                text <=> root.hotkey-toggle-selected-source-projector;
+                placeholder-text: "Ctrl+Shift+P";
                 edited => { root.changed(); }
             }
         }

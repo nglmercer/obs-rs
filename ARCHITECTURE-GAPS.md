@@ -49,6 +49,12 @@ when the UI has no valid selected source, so lock state remains owned by the
 project command path. Interact, context-menu completion, and global OS
 registration remain open.
 
+The selected-source projector hotkey now reuses the existing shared-feed
+projector callback. Bounded action code 21 is persisted and conflict-checked;
+the UI refuses empty selections, groups, and Scene references before opening
+the source feed. Multi-monitor evidence and global OS registration remain
+open.
+
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation
 when every crossed parent scale is uniform and unmirrored. Media, project,

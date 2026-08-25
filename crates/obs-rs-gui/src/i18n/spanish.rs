@@ -288,6 +288,7 @@ pub(super) fn catalog() -> UiText {
         hotkey_toggle_studio_mode: s("Alternar modo de estudio"),
         hotkey_toggle_selected_source_visibility: s("Alternar visibilidad de la fuente seleccionada"),
         hotkey_toggle_selected_source_lock: s("Alternar bloqueo de la fuente seleccionada"),
+        hotkey_toggle_selected_source_projector: s("Alternar proyector de la fuente seleccionada"),
             hotkeys_hint: s("Usa nombres como Space, F1 o Ctrl+Shift+R. Deja el campo vacío para desasignarlo."),
             hotkeys_conflict: s("Atajos duplicados"),
             group_colors: s("Colores"),

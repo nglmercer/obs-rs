@@ -197,6 +197,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> hotkey-toggle-studio-mode;
     in-out property <string> hotkey-toggle-selected-source-visibility;
     in-out property <string> hotkey-toggle-selected-source-lock;
+    in-out property <string> hotkey-toggle-selected-source-projector;
     in-out property <string> hotkeys-conflict;
     // Accessibility
     in-out property <string> preview-border-color;
@@ -619,6 +620,7 @@ export component SettingsWindow inherits Window {
                         hotkey-toggle-studio-mode <=> root.hotkey-toggle-studio-mode;
                         hotkey-toggle-selected-source-visibility <=> root.hotkey-toggle-selected-source-visibility;
                         hotkey-toggle-selected-source-lock <=> root.hotkey-toggle-selected-source-lock;
+                        hotkey-toggle-selected-source-projector <=> root.hotkey-toggle-selected-source-projector;
                         conflict-warning: root.hotkeys-conflict;
                         changed => { root.dirty = true; }
                     }

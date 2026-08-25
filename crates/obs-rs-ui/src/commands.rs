@@ -141,7 +141,10 @@ impl DesktopState {
             | UiAction::StopReplayBuffer
             | UiAction::ToggleStudioMode
             | UiAction::ToggleSelectedSourceVisibility
-            | UiAction::ToggleSelectedSourceLock => Err(UiError::FrontendActionRequired(action)),
+            | UiAction::ToggleSelectedSourceLock
+            | UiAction::ToggleSelectedSourceProjector => {
+                Err(UiError::FrontendActionRequired(action))
+            }
         }
     }
 

@@ -93,6 +93,16 @@ requires a non-empty, non-`none` selected target and remains unbound by
 default. Global registration, Interact, and the remaining source action
 catalog remain incomplete.
 
+## Latest verified package: selected-source projector hotkey
+
+On 2026-08-25, `STUDIO-003`/`HOTKEY-001` gained a typed
+`ToggleSelectedSourceProjector` action. The bounded shortcut table, persisted
+Hotkeys field, English/Spanish settings row, action code 21, and Slint
+execution path reuse the existing shared-feed source-projector callback.
+Empty selections, groups, and Scene references are rejected at the UI
+boundary; the default remains unbound. Live multi-monitor evidence and global
+registration remain incomplete.
+
 ## Latest verified package: exact nested leaf crop/rotation slice
 
 On 2026-08-25, nested group and Scene-reference flattening gained a bounded
@@ -648,6 +658,11 @@ Reconciliation note: `SOURCE-001`/`HOTKEY-001` now also include the optional
 persisted selected-source lock binding and GUI action code 20. It routes through
 the existing source-lock callback and leaves the default unbound; global
 registration and the remaining source action catalog remain partial.
+
+Reconciliation note: `STUDIO-003`/`HOTKEY-001` now also include the optional
+persisted selected-source projector binding and GUI action code 21. It reuses
+the existing projector lifecycle and rejects groups/Scene references rather
+than opening an invalid source feed; global registration remains partial.
 
 ## Baseline conclusion
 

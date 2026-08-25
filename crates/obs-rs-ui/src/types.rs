@@ -259,6 +259,8 @@ pub enum UiAction {
     ToggleSelectedSourceVisibility,
     /// Toggle locking for the currently selected source item.
     ToggleSelectedSourceLock,
+    /// Toggle the projector for the currently selected source item.
+    ToggleSelectedSourceProjector,
 }
 
 /// A validated, sortable keyboard shortcut description.

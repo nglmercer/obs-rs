@@ -119,6 +119,12 @@ pub(super) fn load_draft(
     window.set_hotkey_toggle_selected_source_lock(
         settings.hotkey_toggle_selected_source_lock.as_str().into(),
     );
+    window.set_hotkey_toggle_selected_source_projector(
+        settings
+            .hotkey_toggle_selected_source_projector
+            .as_str()
+            .into(),
+    );
     window.set_hotkeys_conflict(hotkey_conflicts(&settings).join(", ").into());
     window.set_preview_border_color(settings.preview_border_color.as_str().into());
     window.set_program_border_color(settings.program_border_color.as_str().into());

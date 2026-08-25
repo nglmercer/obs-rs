@@ -426,6 +426,13 @@ export component MainWindow inherits Window {
                 && root.selected-source != "none") {
                 root.toggle-source-locked(root.selected-source);
                 true
+            } else if (action == 21
+                && root.selected-source != ""
+                && root.selected-source != "none"
+                && !root.selected-source-is-group
+                && !root.selected-source-is-scene) {
+                root.open-source-projector();
+                true
             } else {
                 false
             }
