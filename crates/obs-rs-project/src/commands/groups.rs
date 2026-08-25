@@ -104,6 +104,84 @@ pub(super) fn set_group_item_visibility(
     Ok(())
 }
 
+/// Applies visibility to a stable flattened target.
+pub(super) fn set_scene_item_visibility_target(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    target: &str,
+    visible: bool,
+) -> Result<(), ProjectError> {
+    let (group_path, item) = parse_scene_item_target(target)?;
+    let profile_id = identifier(profile, "profile id")?;
+    let profile_spec = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let (owner_scene, owner_groups) =
+        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
+    if owner_groups.is_empty() {
+        super::set_scene_item_visibility(
+            project,
+            profile,
+            owner_scene.as_str(),
+            item.as_str(),
+            visible,
+        )
+    } else {
+        let owner_groups = owner_groups
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        set_group_item_visibility(
+            project,
+            profile,
+            owner_scene.as_str(),
+            &owner_groups,
+            item.as_str(),
+            visible,
+        )
+    }
+}
+
+/// Applies lock state to a stable flattened target.
+pub(super) fn set_scene_item_locked_target(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    target: &str,
+    locked: bool,
+) -> Result<(), ProjectError> {
+    let (group_path, item) = parse_scene_item_target(target)?;
+    let profile_id = identifier(profile, "profile id")?;
+    let profile_spec = project
+        .profile(&profile_id)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+    let (owner_scene, owner_groups) =
+        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
+    if owner_groups.is_empty() {
+        super::set_scene_item_locked(
+            project,
+            profile,
+            owner_scene.as_str(),
+            item.as_str(),
+            locked,
+        )
+    } else {
+        let owner_groups = owner_groups
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        set_group_item_locked(
+            project,
+            profile,
+            owner_scene.as_str(),
+            &owner_groups,
+            item.as_str(),
+            locked,
+        )
+    }
+}
+
 pub(super) fn set_group_name(
     project: &mut Project,
     profile: &str,

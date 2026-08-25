@@ -20,7 +20,8 @@ use groups::{
     duplicate_group_item, group_scene_items, move_group_item, move_scene_item_to_parent,
     paste_group_item, remove_group_item, remove_scene_items, set_group_item_locked,
     set_group_item_transform, set_group_item_visibility, set_group_name,
-    set_scene_item_transform_target, ungroup_scene_item,
+    set_scene_item_locked_target, set_scene_item_transform_target,
+    set_scene_item_visibility_target, ungroup_scene_item,
 };
 
 mod types;
@@ -953,6 +954,9 @@ fn set_scene_item_visibility(
     item: &str,
     visible: bool,
 ) -> Result<(), ProjectError> {
+    if item.contains('/') {
+        return set_scene_item_visibility_target(project, profile, scene, item, visible);
+    }
     item_mut(project, profile, scene, item)?.set_visible(visible);
     Ok(())
 }
@@ -964,6 +968,9 @@ fn set_scene_item_locked(
     item: &str,
     locked: bool,
 ) -> Result<(), ProjectError> {
+    if item.contains('/') {
+        return set_scene_item_locked_target(project, profile, scene, item, locked);
+    }
     item_mut(project, profile, scene, item)?.set_locked(locked);
     Ok(())
 }

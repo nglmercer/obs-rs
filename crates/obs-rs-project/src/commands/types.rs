@@ -259,6 +259,8 @@ pub enum ProjectCommand {
         filters: Vec<FrameFilter>,
     },
     /// Changes whether one scene item participates in scene composition.
+    /// `item` may be a root ID or a stable flattened group/Scene-reference
+    /// path; nested paths are written to the scene that owns the leaf.
     SetSceneItemVisibility {
         profile: String,
         scene: String,
@@ -266,6 +268,7 @@ pub enum ProjectCommand {
         visible: bool,
     },
     /// Changes whether one scene item is protected from desktop editing.
+    /// `item` accepts the same stable flattened paths as visibility.
     SetSceneItemLocked {
         profile: String,
         scene: String,

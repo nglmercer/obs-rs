@@ -156,4 +156,46 @@ fn exercise_scene_reference_source_dialogs(
         "nested source filters must edit the shared source definition"
     );
     filters_window.invoke_close_window();
+
+    ui.invoke_toggle_source_visibility("transform-child-ref/background".into());
+    assert!(!state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background"))
+        .expect("nested visibility target")
+        .visible());
+    ui.invoke_toggle_source_visibility("transform-child-ref/background".into());
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background"))
+        .expect("nested visibility target restored")
+        .visible());
+
+    ui.invoke_toggle_source_locked("transform-child-ref/background".into());
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background"))
+        .expect("nested lock target")
+        .locked());
+    ui.invoke_toggle_source_locked("transform-child-ref/background".into());
+    assert!(!state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .and_then(|scene| scene.item("background"))
+        .expect("nested lock target restored")
+        .locked());
 }

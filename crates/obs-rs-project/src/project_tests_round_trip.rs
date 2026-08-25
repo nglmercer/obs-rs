@@ -190,6 +190,58 @@ fn nested_scene_items_round_trip_and_reject_cycles() {
 }
 
 #[test]
+fn nested_scene_item_visibility_and_lock_route_to_the_owner_scene() {
+    let mut project = project();
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    child
+        .add_item(SceneItemSpec::for_source("background").expect("child source"))
+        .expect("child source attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: SceneItemSpec::for_scene("child-ref", "child").expect("scene reference"),
+        })
+        .expect("add scene reference");
+
+    project
+        .apply(ProjectCommand::SetSceneItemVisibility {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "child-ref/background".to_owned(),
+            visible: false,
+        })
+        .expect("hide scene-reference leaf");
+    project
+        .apply(ProjectCommand::SetSceneItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "child-ref/background".to_owned(),
+            locked: true,
+        })
+        .expect("lock scene-reference leaf");
+
+    let profile = project.profile("live").expect("profile");
+    let child_leaf = profile
+        .scene("child")
+        .and_then(|scene| scene.item("background"))
+        .expect("owner scene leaf");
+    assert!(!child_leaf.visible());
+    assert!(child_leaf.locked());
+    assert!(!profile
+        .scene("main")
+        .and_then(|scene| scene.item("child-ref"))
+        .expect("scene reference")
+        .locked());
+}
+
+#[test]
 #[allow(
     clippy::too_many_lines,
     reason = "this regression exercises projection, owner routing, and atomic failures together"

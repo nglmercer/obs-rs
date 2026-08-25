@@ -16,7 +16,10 @@ pub(crate) use source_targets::{
 };
 
 use crate::{
-    callbacks::canvas::{transform_for_command, CanvasTransformCommand},
+    callbacks::canvas::{
+        canvas_item_for_target, canvas_target_is_locked_in_profile, transform_for_command,
+        CanvasTransformCommand,
+    },
     refresh_ui, MainWindow, PreviewSurface,
 };
 
@@ -252,21 +255,11 @@ pub(crate) fn toggle_source_visibility_and_refresh(
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let (profile, scene, visible, _) = source_display_state(&state.borrow(), source_id)?;
-        let command = if let Some((group_path, item)) = group_target(source_id) {
-            ProjectCommand::SetGroupItemVisibility {
-                profile,
-                scene,
-                group_path,
-                item,
-                visible: !visible,
-            }
-        } else {
-            ProjectCommand::SetSceneItemVisibility {
-                profile,
-                scene,
-                item: source_id.to_owned(),
-                visible: !visible,
-            }
+        let command = ProjectCommand::SetSceneItemVisibility {
+            profile,
+            scene,
+            item: source_id.to_owned(),
+            visible: !visible,
         };
         state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
@@ -288,21 +281,11 @@ pub(crate) fn toggle_source_locked_and_refresh(
 ) {
     let result: Result<(), Box<dyn Error>> = (|| {
         let (profile, scene, _, locked) = source_display_state(&state.borrow(), source_id)?;
-        let command = if let Some((group_path, item)) = group_target(source_id) {
-            ProjectCommand::SetGroupItemLocked {
-                profile,
-                scene,
-                group_path,
-                item,
-                locked: !locked,
-            }
-        } else {
-            ProjectCommand::SetSceneItemLocked {
-                profile,
-                scene,
-                item: source_id.to_owned(),
-                locked: !locked,
-            }
+        let command = ProjectCommand::SetSceneItemLocked {
+            profile,
+            scene,
+            item: source_id.to_owned(),
+            locked: !locked,
         };
         state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
@@ -688,17 +671,10 @@ fn source_display_state(
     let profile = project
         .active_profile_spec()
         .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
-    let scene = profile
-        .scene(scene_id)
-        .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
-    let item = item_for_target(scene, source_id)
+    let item = canvas_item_for_target(profile, scene_id, source_id)
         .ok_or_else(|| std::io::Error::other("source is not in the preview scene"))?;
-    Ok((
-        profile_id,
-        scene_id.to_owned(),
-        item.visible(),
-        item.locked(),
-    ))
+    let locked = canvas_target_is_locked_in_profile(profile, scene_id, source_id);
+    Ok((profile_id, scene_id.to_owned(), item.visible(), locked))
 }
 
 pub(crate) fn apply_source_settings_and_refresh(
