@@ -39,9 +39,12 @@ and never blocks submit/poll callers. The GUI now constructs the native loader
 behind the engine boundary and preloads only the selected scene's
 `preload=true` resource from the refresh timer, reporting ready and typed
 failure states without waiting on the worker. Scene properties now edit the
-resource metadata through one `SetSceneProperties` history entry. Explicit
-Take wiring, actual hardware-decode selection, non-GStreamer platform
-adapters, and the file-picker workflow remain open.
+resource metadata through one `SetSceneProperties` history entry. The docked
+and floating Transition panels now route an explicit `Take Stinger` callback
+through the ready clip only; invalid duration, not-ready, typed failure,
+stopped-loader, and dispatch errors are visible without callback-side I/O.
+Actual hardware-decode selection, non-GStreamer platform adapters, and the
+file-picker workflow remain open.
 
 The toolkit-neutral `StingerLoadSession` now owns the transient current request
 and resolved clip around that worker. It clears the renderable clip only after
@@ -51,7 +54,8 @@ and invalidates old completions when the target format changes. It exposes the
 typed failure without moving resource metadata or decoded pixels into a second
 project state store; the GUI resource session is now connected to the native
 adapter, and the scene-properties fields are synchronized from the project.
-The file-picker and explicit Take actions remain open.
+The file-picker remains open. Explicit Take is intentionally limited to a
+ready `preload=true` clip; on-demand loading from the button is still open.
 
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks

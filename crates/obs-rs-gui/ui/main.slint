@@ -208,6 +208,7 @@ export component MainWindow inherits Window {
         callback recover-recording();
         callback recover-remux-candidate(string);
         callback cut-transition();
+        callback take-stinger(string);
         callback fade-transition();
         callback fade-transition-duration(string);
         callback slide-transition(string);
@@ -860,6 +861,7 @@ export component MainWindow inherits Window {
                 toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
                 toggle-meters-paused() => { root.toggle-meters-paused(); }
                 cut-transition() => { root.cut-transition(); }
+                take-stinger(duration) => { root.take-stinger(duration); }
                 fade-transition() => { root.fade-transition(); }
                 fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
                 slide-transition(duration) => { root.slide-transition(duration); }

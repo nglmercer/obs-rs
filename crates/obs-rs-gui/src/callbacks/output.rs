@@ -11,6 +11,7 @@ use obs_rs_ui::{
 };
 use slint::{ComponentHandle, Weak};
 
+use crate::StingerLoadController;
 use crate::{
     dispatch_and_refresh, refresh_output_ui, refresh_ui, MainWindow, OutputRuntime, PreviewSurface,
 };
@@ -305,6 +306,49 @@ fn install_transition_callbacks(
     });
 
     install_scene_transition_override_callbacks(ui, state, surface);
+}
+
+/// Installs the explicit Stinger Take action on the shared `MainWindow`.
+///
+/// The callback only clones a worker-published `Arc<StingerClip>` and dispatches
+/// a bounded UI command. Resource loading remains owned by the preview timer
+/// and its dedicated worker, so a button press never performs file or decoder
+/// I/O on the UI thread.
+pub(crate) fn install_stinger_take_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    stinger_loader: &Rc<RefCell<StingerLoadController>>,
+) {
+    let weak = ui.as_weak();
+    let take_state = Rc::clone(state);
+    let take_surface = Rc::clone(surface);
+    let take_loader = Rc::clone(stinger_loader);
+    ui.on_take_stinger(move |duration_value| {
+        let Some(duration_ms) = parse_transition_duration(&weak, duration_value.as_str()) else {
+            return;
+        };
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        let clip = match take_loader.borrow().ready_clip() {
+            Ok(clip) => clip,
+            Err(error) => {
+                ui.set_status_message(format!("Stinger Take failed: {error}").into());
+                return;
+            }
+        };
+        let result = take_state
+            .borrow_mut()
+            .dispatch(UiCommand::TakeStinger { clip, duration_ms });
+        match result {
+            Ok(()) => {
+                refresh_ui(&ui, &take_state, &take_surface);
+                ui.set_status_message("Stinger Take sent to Program".into());
+            }
+            Err(error) => ui.set_status_message(format!("Stinger Take failed: {error}").into()),
+        }
+    });
 }
 
 fn install_luma_transition_callback(

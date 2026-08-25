@@ -99,6 +99,7 @@ export component DockSlot inherits Rectangle {
     callback toggle-mixer-mute(string);
     callback toggle-meters-paused();
     callback cut-transition();
+    callback take-stinger(string);
     callback fade-transition();
     callback fade-transition-duration(string);
     callback slide-transition(string);
@@ -247,6 +248,7 @@ export component DockSlot inherits Rectangle {
         dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
         dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         cut-transition() => { root.cut-transition(); }
+        take-stinger(duration) => { root.take-stinger(duration); }
         fade-transition() => { root.fade-transition(); }
             fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
             slide-transition(duration) => { root.slide-transition(duration); }

@@ -23,6 +23,7 @@ export component TransitionDock inherits Rectangle {
     callback float-panel(int);
     callback close-panel(int);
     callback cut-transition();
+    callback take-stinger(string);
     callback fade-transition();
     callback fade-transition-duration(string);
     callback slide-transition(string);
@@ -186,6 +187,10 @@ export component TransitionDock inherits Rectangle {
                     Button {
                         text: I18n.text.cut;
                         clicked => cut-transition();
+                    }
+                    Button {
+                        text: I18n.text.take_stinger;
+                        clicked => take-stinger(root.duration);
                     }
                 }
             }

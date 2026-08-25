@@ -498,6 +498,7 @@ pub(super) fn catalog() -> UiText {
         add_transition: s("Añadir transición"),
         remove_transition: s("Eliminar transición"),
         cut: s("Corte"),
+        take_stinger: s("Tomar Stinger"),
         controls_title: s("Controles"),
         stats_title: s("Estadísticas"),
         stop_streaming: s("Detener transmisión"),

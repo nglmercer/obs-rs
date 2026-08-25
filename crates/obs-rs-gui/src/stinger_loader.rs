@@ -1,9 +1,10 @@
 //! GUI-side preloading boundary for scene-owned Stinger resources.
 
 use obs_rs_engine::GStreamerStingerLoader;
-use obs_rs_media::{MediaError, StingerLoadQueueError, StingerSpec, VideoFormat};
+use obs_rs_media::{MediaError, StingerClip, StingerLoadQueueError, StingerSpec, VideoFormat};
 use obs_rs_project::Project;
 use obs_rs_ui::{StingerLoadSession, StingerLoadState};
+use std::{fmt, sync::Arc};
 
 /// One non-blocking event produced while the GUI keeps a scene Stinger warm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,6 +15,29 @@ pub(crate) enum StingerLoadEvent {
     Ready,
     /// The worker returned a typed media failure.
     Failed(MediaError),
+}
+
+/// Failure reported when the explicit Take action cannot use a ready clip.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StingerTakeError {
+    /// The selected resource is not preloaded and ready yet.
+    NotReady,
+    /// The worker produced a typed media failure for the current resource.
+    Failed(MediaError),
+    /// The loader session was cancelled during shutdown.
+    Stopped,
+}
+
+impl fmt::Display for StingerTakeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotReady => formatter.write_str(
+                "Stinger is not ready; enable preload and wait for the resource to finish loading",
+            ),
+            Self::Failed(error) => write!(formatter, "Stinger resource failed: {error}"),
+            Self::Stopped => formatter.write_str("Stinger loader stopped"),
+        }
+    }
 }
 
 /// Owns the GUI-facing Stinger preload session without copying project state.
@@ -96,6 +120,23 @@ impl StingerLoadController {
             | StingerLoadState::Stopped => return Ok(None),
         };
         Ok(Some(event))
+    }
+
+    /// Returns the immutable clip already published by the preload worker.
+    ///
+    /// This is deliberately a state lookup only. Explicit Take never opens a
+    /// file, polls a decoder, or waits for the worker; callers must surface
+    /// [`StingerTakeError::NotReady`] and let the normal refresh cadence retry
+    /// the preload.
+    pub(crate) fn ready_clip(&self) -> Result<Arc<StingerClip>, StingerTakeError> {
+        match self.session.state() {
+            StingerLoadState::Ready { clip, .. } => Ok(Arc::clone(clip)),
+            StingerLoadState::Failed { error, .. } => Err(StingerTakeError::Failed(*error)),
+            StingerLoadState::Stopped => Err(StingerTakeError::Stopped),
+            StingerLoadState::Idle | StingerLoadState::Loading { .. } => {
+                Err(StingerTakeError::NotReady)
+            }
+        }
     }
 
     /// Returns the current transient session state for diagnostics/tests.

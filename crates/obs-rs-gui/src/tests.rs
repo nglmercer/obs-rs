@@ -12,8 +12,8 @@ use super::{
 };
 use i_slint_backend_testing::ElementHandle;
 use obs_rs_media::{
-    FrameRate, FrameTransform, FrameTransition, ScaleFilter, StingerSpec, Timestamp, VideoFormat,
-    VideoFrame,
+    FrameRate, FrameTransform, FrameTransition, ScaleFilter, StingerClip, StingerLoadCancellation,
+    StingerLoadRequest, StingerSpec, Timestamp, VideoFormat, VideoFrame,
 };
 use obs_rs_output::{encode_png, MemoryMuxer, OutputProfileKind, PacketKind, RTMP_SERVICE_PRESETS};
 use obs_rs_plugin_api::VideoRequest;

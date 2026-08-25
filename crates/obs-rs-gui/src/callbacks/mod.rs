@@ -43,7 +43,10 @@ pub(crate) use docks::install_dock_callbacks_with_layout;
 pub(crate) use hotkeys::install_shortcut_callbacks;
 pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
-pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
+pub(crate) use output::{
+    install_mixer_callbacks, install_output_callbacks, install_stinger_take_callback,
+    push_program_frame,
+};
 pub(crate) use project::{
     apply_scene_properties_and_refresh, duplicate_scene_and_refresh, install_project_callbacks,
     project_store,

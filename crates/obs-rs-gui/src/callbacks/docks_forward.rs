@@ -93,6 +93,7 @@ pub(super) fn forward_to_studio(
     forward!(on_toggle_mixer_mute, invoke_toggle_mixer_mute, id);
     forward!(on_toggle_meters_paused, invoke_toggle_meters_paused);
     forward!(on_cut_transition, invoke_cut_transition);
+    forward!(on_take_stinger, invoke_take_stinger, duration);
     forward!(on_fade_transition, invoke_fade_transition);
     forward!(
         on_fade_transition_duration,

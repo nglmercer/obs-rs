@@ -54,8 +54,9 @@ pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks,
     install_dock_callbacks_with_layout, install_menu_callbacks, install_monitor_window,
     install_settings_window, install_setup_window, install_source_filters_window,
-    install_source_properties_window, install_source_transform_window, selection_overlay,
-    set_selection_overlay, start_preview_timer, PeerWindows, ProjectorController,
+    install_source_properties_window, install_source_transform_window,
+    install_stinger_take_callback, selection_overlay, set_selection_overlay, start_preview_timer,
+    PeerWindows, ProjectorController,
 };
 #[cfg(test)]
 pub(crate) use fixtures::source_settings;
@@ -248,6 +249,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     refresh_output_ui(&ui, &output);
     install_callbacks(&ui, &state, &surface, &output);
+    install_stinger_take_callback(&ui, &state, &surface, &stinger_loader);
     // Keeps the canvas drag state and the detached docks alive for the session.
     let canvas = install_canvas_callbacks(&ui, &state, &surface);
     // Menu-bar actions and the projector windows they open.

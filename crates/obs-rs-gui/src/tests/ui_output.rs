@@ -1,4 +1,5 @@
 use super::*;
+use crate::StingerLoadController;
 
 pub(super) fn exercise_recording_controls(
     ui: &MainWindow,
@@ -51,8 +52,86 @@ pub(super) fn exercise_recording_controls(
     exercise_output_reconciliation(ui, state, &output);
 
     exercise_transition_callbacks(ui, state);
+    exercise_stinger_take_callback(ui, state, surface);
 
     exercise_scene_properties_dialog(ui, state, surface);
+}
+
+/// Exercises the explicit Take path with a worker-injected clip. The first
+/// click proves that a loading resource fails visibly without doing I/O; the
+/// second proves that only the already-published bounded clip reaches the
+/// toolkit-neutral state transition.
+fn exercise_stinger_take_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let format = surface.borrow().format;
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectPreviewScene {
+            id: "preview".to_owned(),
+        })
+        .expect("Stinger fixture should select preview");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("Stinger fixture should select program");
+    let spec = StingerSpec::new("test://stinger", 500, true, false).expect("stinger spec");
+    let loader = StingerLoadController::with_loader(
+        |request: &StingerLoadRequest, _cancellation: &StingerLoadCancellation| {
+            StingerClip::new(
+                vec![VideoFrame::solid(
+                    request.target_format(),
+                    Timestamp::ZERO,
+                    [0, 255, 0, 255],
+                )],
+                vec![100_000_000],
+                500,
+            )
+        },
+        format,
+    )
+    .expect("stinger test loader");
+    let loader = Rc::new(RefCell::new(loader));
+    crate::callbacks::install_stinger_take_callback(ui, state, surface, &loader);
+
+    ui.invoke_take_stinger("450".into());
+    assert!(ui.get_status_message().contains("Stinger Take failed"));
+    assert!(ui.get_status_message().contains("not ready"));
+
+    assert!(loader
+        .borrow_mut()
+        .sync_spec(Some(&spec), format)
+        .expect("stinger request")
+        .is_some());
+    let ready = (0..100).any(|_| {
+        let event = loader
+            .borrow_mut()
+            .sync_spec(Some(&spec), format)
+            .expect("stinger poll");
+        if matches!(event, Some(crate::stinger_loader::StingerLoadEvent::Ready)) {
+            true
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            false
+        }
+    });
+    assert!(
+        ready,
+        "test Stinger should become ready without blocking the callback"
+    );
+
+    ui.invoke_take_stinger("450".into());
+    assert_eq!(ui.get_status_message(), "Stinger Take sent to Program");
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("Stinger Take should start a transition");
+    assert!(transition.stinger().is_some());
+    assert_eq!(transition.transition(), FrameTransition::Cut);
 }
 
 fn exercise_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
