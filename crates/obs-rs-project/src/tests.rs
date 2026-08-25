@@ -87,3 +87,5 @@ mod migration;
 mod round_trip;
 #[path = "project_tests_transition_luma.rs"]
 mod transition_luma;
+#[path = "project_tests_transition_stinger.rs"]
+mod transition_stinger;

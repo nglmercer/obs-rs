@@ -1,7 +1,7 @@
 //! Public project mutation command values.
 
 use obs_rs_config::Config;
-use obs_rs_media::{FrameFilter, FrameTransform, TransitionSpec, VideoFormat};
+use obs_rs_media::{FrameFilter, FrameTransform, StingerSpec, TransitionSpec, VideoFormat};
 use obs_rs_output::OutputProfileKind;
 
 use super::super::model::{
@@ -149,6 +149,14 @@ pub enum ProjectCommand {
         profile: String,
         scene: String,
         transition: Option<TransitionSpec>,
+    },
+    /// Replaces the optional persistent Stinger resource used by a scene.
+    /// Decoding is deliberately performed by a worker after this command
+    /// changes project state.
+    SetSceneStingerOverride {
+        profile: String,
+        scene: String,
+        stinger: Option<StingerSpec>,
     },
     /// Moves one scene to an existing position in the profile scene order.
     MoveScene {

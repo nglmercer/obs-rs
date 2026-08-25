@@ -13,10 +13,10 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
         Err(ProjectError::InvalidDocument { .. })
     ));
 
-    let future = encoded.replace(r#""version": 7"#, r#""version": 8"#);
+    let future = encoded.replace(r#""version": 8"#, r#""version": 9"#);
     let error = Project::parse(&future).expect_err("a newer schema is not guessed at");
     assert!(
-        format!("{error}").contains("unsupported project schema version 8"),
+        format!("{error}").contains("unsupported project schema version 9"),
         "{error}"
     );
 }
@@ -25,7 +25,7 @@ fn parser_rejects_a_document_without_the_format_and_version_tags() {
 fn parser_reports_the_line_a_syntax_error_is_on() {
     let broken = project()
         .serialize()
-        .replace(r#""version": 7"#, r#""version": ?"#);
+        .replace(r#""version": 8"#, r#""version": ?"#);
 
     let error = Project::parse(&broken).expect_err("malformed JSON is rejected");
     match error {
@@ -764,7 +764,7 @@ fn previous_schema_preserves_serialized_scene_array_order_without_scene_order_me
         .expect("scene order end");
     let mut previous = encoded;
     previous.replace_range(order_start..order_end, "");
-    previous = previous.replace(r#""version": 7"#, r#""version": 5"#);
+    previous = previous.replace(r#""version": 8"#, r#""version": 5"#);
 
     let decoded = Project::parse(&previous).expect("version five project");
     let scene_ids = decoded

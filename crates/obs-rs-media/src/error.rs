@@ -33,6 +33,9 @@ pub enum MediaError {
     StingerTooLarge { bytes: usize },
     /// A stinger clip duration exceeds the bounded playback duration.
     StingerDurationTooLong { duration_nanos: u64 },
+    /// A persisted stinger resource path is empty, oversized, or contains a
+    /// control character.
+    InvalidStingerResourcePath { bytes: usize },
     /// A pixel layout requires dimensions that the format does not provide.
     UnsupportedPixelDimensions { pixel_format: PixelFormat },
     /// Two frames cannot be combined because their formats differ.
@@ -93,6 +96,10 @@ impl fmt::Display for MediaError {
             Self::StingerDurationTooLong { duration_nanos } => write!(
                 formatter,
                 "stinger duration {duration_nanos} ns exceeds the 120s limit"
+            ),
+            Self::InvalidStingerResourcePath { bytes } => write!(
+                formatter,
+                "stinger resource path has {bytes} bytes; expected 1..=1024 bytes without control characters"
             ),
             Self::UnsupportedPixelDimensions { pixel_format } => write!(
                 formatter,

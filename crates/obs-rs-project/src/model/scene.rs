@@ -6,7 +6,7 @@ use std::{
 };
 
 use obs_rs_config::Config;
-use obs_rs_media::{FrameTransform, TransitionSpec};
+use obs_rs_media::{FrameTransform, StingerSpec, TransitionSpec};
 use obs_rs_util::Identifier;
 
 use super::super::{error::ProjectError, validation::identifier};
@@ -723,6 +723,9 @@ pub struct SceneSpec {
     /// Optional transition policy applied when this scene is taken to program.
     /// `None` inherits the desktop's current transition selection.
     pub(crate) transition_override: Option<TransitionSpec>,
+    /// Optional persistent Stinger resource used by the scene transition.
+    /// The decoded clip is resolved outside project state on a worker.
+    pub(crate) stinger_override: Option<StingerSpec>,
     /// Composition order, which is part of the scene's meaning.
     pub(crate) items: Vec<SceneItemSpec>,
     /// O(1) item lookup and membership mirror. Values are indices into the
@@ -745,6 +748,7 @@ impl SceneSpec {
             id: identifier(id, "scene id")?,
             name: name.to_owned(),
             transition_override: None,
+            stinger_override: None,
             items: Vec::new(),
             item_ids: HashMap::new(),
         })
@@ -771,6 +775,17 @@ impl SceneSpec {
     /// Replaces the optional transition policy used when this scene is taken.
     pub fn set_transition_override(&mut self, transition: Option<TransitionSpec>) {
         self.transition_override = transition;
+    }
+
+    /// Returns the optional persistent Stinger resource used by this scene.
+    #[must_use]
+    pub fn stinger_override(&self) -> Option<&StingerSpec> {
+        self.stinger_override.as_ref()
+    }
+
+    /// Replaces the optional persistent Stinger resource used by this scene.
+    pub fn set_stinger_override(&mut self, stinger: Option<StingerSpec>) {
+        self.stinger_override = stinger;
     }
 
     /// Returns scene items in compositor order.

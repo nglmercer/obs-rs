@@ -138,7 +138,7 @@ fn version_one_scene_sources_migrate_to_registry_and_items() {
     assert_eq!(profile.source("camera").expect("source").filters().len(), 1);
 
     let encoded = migrated.serialize();
-    assert!(encoded.contains(r#""version": 7"#), "{encoded}");
+    assert!(encoded.contains(r#""version": 8"#), "{encoded}");
     assert!(encoded.contains(r#""items""#), "{encoded}");
     assert_eq!(
         Project::parse(&encoded).expect("new format parses"),

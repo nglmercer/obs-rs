@@ -22,8 +22,8 @@ use super::{
 };
 use obs_rs_config::Config;
 use obs_rs_media::{
-    FrameRate, FrameTransform, LumaWipePattern, SlideDirection, TransitionKind, TransitionSpec,
-    VideoFormat,
+    FrameRate, FrameTransform, LumaWipePattern, SlideDirection, StingerSpec, TransitionKind,
+    TransitionSpec, VideoFormat,
 };
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::{Identifier, Json};
@@ -35,7 +35,9 @@ use crate::RenderBackendPreference;
 const FORMAT_TAG: &str = "obs-rs-project";
 
 /// Schema version this build writes.
-const FORMAT_VERSION: u32 = 7;
+const FORMAT_VERSION: u32 = 8;
+/// The format before persistent Stinger resource references were added.
+const TRANSITION_FORMAT_VERSION: u32 = 7;
 /// The format before per-scene transition policies were persisted.
 const SCENE_ORDER_FORMAT_VERSION: u32 = 6;
 /// The previous format, which had no explicit scene-order member.
@@ -95,10 +97,11 @@ impl Project {
             Some(GROUP_FORMAT_VERSION) => GROUP_FORMAT_VERSION,
             Some(PREVIOUS_FORMAT_VERSION) => PREVIOUS_FORMAT_VERSION,
             Some(SCENE_ORDER_FORMAT_VERSION) => SCENE_ORDER_FORMAT_VERSION,
+            Some(TRANSITION_FORMAT_VERSION) => TRANSITION_FORMAT_VERSION,
             Some(FORMAT_VERSION) => FORMAT_VERSION,
             Some(version) => {
                 return Err(invalid(format!(
-                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {NESTED_SCENE_FORMAT_VERSION}, {GROUP_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, {SCENE_ORDER_FORMAT_VERSION}, and {FORMAT_VERSION}"
+                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {NESTED_SCENE_FORMAT_VERSION}, {GROUP_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, {SCENE_ORDER_FORMAT_VERSION}, {TRANSITION_FORMAT_VERSION}, and {FORMAT_VERSION}"
                 )))
             }
             None => return Err(invalid("missing or invalid `version`")),
@@ -175,6 +178,13 @@ fn encode_scene(scene: &SceneSpec) -> Json {
             scene
                 .transition_override
                 .map_or(Json::Null, encode_transition),
+        ),
+        (
+            "stinger",
+            scene
+                .stinger_override
+                .as_ref()
+                .map_or(Json::Null, encode_stinger),
         ),
         (
             "items",
@@ -346,10 +356,17 @@ fn decode_profile(project: &mut Project, value: &Json, version: u32) -> Result<(
 
 fn decode_scene(value: &Json, profile: &Profile, version: u32) -> Result<SceneSpec, ProjectError> {
     let mut scene = SceneSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
-    if version >= FORMAT_VERSION {
+    if version >= TRANSITION_FORMAT_VERSION {
         if let Some(transition) = value.get("transition") {
             if !matches!(transition, Json::Null) {
                 scene.set_transition_override(Some(decode_transition(transition)?));
+            }
+        }
+    }
+    if version >= FORMAT_VERSION {
+        if let Some(stinger) = value.get("stinger") {
+            if !matches!(stinger, Json::Null) {
+                scene.set_stinger_override(Some(decode_stinger(stinger)?));
             }
         }
     }
@@ -405,6 +422,18 @@ fn encode_transition(transition: TransitionSpec) -> Json {
         members.push(("softness_milli", Json::number(softness_milli)));
     }
     Json::object(members)
+}
+
+fn encode_stinger(stinger: &StingerSpec) -> Json {
+    Json::object([
+        ("path", Json::string(stinger.resource_path())),
+        (
+            "transition_point_milli",
+            Json::number(stinger.transition_point_milli()),
+        ),
+        ("preload", Json::Bool(stinger.preload())),
+        ("hardware_decode", Json::Bool(stinger.hardware_decode())),
+    ])
 }
 
 fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
@@ -486,6 +515,16 @@ fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
         other => return Err(invalid(format!("unknown scene transition kind: {other}"))),
     };
     transition.map_err(ProjectError::Media)
+}
+
+fn decode_stinger(value: &Json) -> Result<StingerSpec, ProjectError> {
+    StingerSpec::new(
+        string_member(value, "path")?,
+        number_member(value, "transition_point_milli")?,
+        bool_member(value, "preload")?,
+        bool_member(value, "hardware_decode")?,
+    )
+    .map_err(ProjectError::Media)
 }
 
 fn validate_item_sources(profile: &Profile, item: &SceneItemSpec) -> Result<(), ProjectError> {

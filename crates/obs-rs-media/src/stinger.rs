@@ -18,6 +18,19 @@ pub const MAX_STINGER_DURATION_NANOS: u64 = 120_000_000_000;
 pub const MIN_STINGER_TRANSITION_POINT_MILLI: u16 = 1;
 /// Largest safe interior transition point accepted by the portable model.
 pub const MAX_STINGER_TRANSITION_POINT_MILLI: u16 = 999;
+/// Maximum UTF-8 byte length of a persisted Stinger resource path.
+pub const MAX_STINGER_RESOURCE_PATH_BYTES: usize = 1_024;
+
+fn validate_transition_point(transition_point_milli: u16) -> Result<(), MediaError> {
+    if !(MIN_STINGER_TRANSITION_POINT_MILLI..=MAX_STINGER_TRANSITION_POINT_MILLI)
+        .contains(&transition_point_milli)
+    {
+        return Err(MediaError::InvalidStingerTransitionPoint {
+            transition_point_milli,
+        });
+    }
+    Ok(())
+}
 
 /// One preloaded Stinger frame and its playback duration.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +50,74 @@ pub struct StingerClip {
     frames: Arc<Vec<StingerFrame>>,
     duration_nanos: u64,
     transition_point_milli: u16,
+}
+
+/// A validated persistent reference to a Stinger resource.
+///
+/// This value intentionally contains metadata only. It does not inspect the
+/// filesystem, open a decoder, or retain decoded pixels; a worker-side loader
+/// can resolve it into [`StingerClip`] before a render request is published.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StingerSpec {
+    resource_path: String,
+    transition_point_milli: u16,
+    preload: bool,
+    hardware_decode: bool,
+}
+
+impl StingerSpec {
+    /// Creates a validated persistent resource reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidStingerResourcePath`] for an empty,
+    /// oversized, or control-containing path, or
+    /// [`MediaError::InvalidStingerTransitionPoint`] for an unsafe cut point.
+    pub fn new(
+        resource_path: impl Into<String>,
+        transition_point_milli: u16,
+        preload: bool,
+        hardware_decode: bool,
+    ) -> Result<Self, MediaError> {
+        let resource_path = resource_path.into();
+        let path_bytes = resource_path.len();
+        if !(1..=MAX_STINGER_RESOURCE_PATH_BYTES).contains(&path_bytes)
+            || resource_path.chars().any(char::is_control)
+        {
+            return Err(MediaError::InvalidStingerResourcePath { bytes: path_bytes });
+        }
+        validate_transition_point(transition_point_milli)?;
+        Ok(Self {
+            resource_path,
+            transition_point_milli,
+            preload,
+            hardware_decode,
+        })
+    }
+
+    /// Returns the path or resource identifier to resolve on a worker.
+    #[must_use]
+    pub fn resource_path(&self) -> &str {
+        &self.resource_path
+    }
+
+    /// Returns the normalized scene-cut point.
+    #[must_use]
+    pub const fn transition_point_milli(&self) -> u16 {
+        self.transition_point_milli
+    }
+
+    /// Returns whether the decoder should preload the resource before taking.
+    #[must_use]
+    pub const fn preload(&self) -> bool {
+        self.preload
+    }
+
+    /// Returns whether the platform decoder may use hardware acceleration.
+    #[must_use]
+    pub const fn hardware_decode(&self) -> bool {
+        self.hardware_decode
+    }
 }
 
 impl StingerClip {
@@ -61,13 +142,7 @@ impl StingerClip {
                 actual: frame_durations_nanos.len(),
             });
         }
-        if !(MIN_STINGER_TRANSITION_POINT_MILLI..=MAX_STINGER_TRANSITION_POINT_MILLI)
-            .contains(&transition_point_milli)
-        {
-            return Err(MediaError::InvalidStingerTransitionPoint {
-                transition_point_milli,
-            });
-        }
+        validate_transition_point(transition_point_milli)?;
 
         let format = frames[0].format();
         let mut resident_bytes = 0_usize;

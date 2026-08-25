@@ -58,6 +58,7 @@
             }
           ],
           "name": "Intermission",
+          "stinger": null,
           "transition": null
         },
         {
@@ -85,6 +86,7 @@
             }
           ],
           "name": "Preview",
+          "stinger": null,
           "transition": null
         },
         {
@@ -112,6 +114,7 @@
             }
           ],
           "name": "Program",
+          "stinger": null,
           "transition": null
         }
       ],
@@ -173,5 +176,5 @@
     }
   ],
   "title": "OBS-RS Studio",
-  "version": 7
+  "version": 8
 }

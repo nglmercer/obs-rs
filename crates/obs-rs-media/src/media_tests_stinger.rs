@@ -88,6 +88,41 @@ fn stinger_clip_rejects_bad_progress_and_format_mismatch() {
 }
 
 #[test]
+fn stinger_spec_validates_persistent_resource_metadata_without_io() {
+    let spec = StingerSpec::new("assets/intro.webm", 625, true, false).expect("stinger spec");
+    assert_eq!(spec.resource_path(), "assets/intro.webm");
+    assert_eq!(spec.transition_point_milli(), 625);
+    assert!(spec.preload());
+    assert!(!spec.hardware_decode());
+
+    assert_eq!(
+        StingerSpec::new("", 500, true, false),
+        Err(MediaError::InvalidStingerResourcePath { bytes: 0 })
+    );
+    assert_eq!(
+        StingerSpec::new("assets/intro\n.webm", 500, true, false),
+        Err(MediaError::InvalidStingerResourcePath { bytes: 18 })
+    );
+    assert_eq!(
+        StingerSpec::new(
+            "x".repeat(MAX_STINGER_RESOURCE_PATH_BYTES + 1),
+            500,
+            true,
+            false
+        ),
+        Err(MediaError::InvalidStingerResourcePath {
+            bytes: MAX_STINGER_RESOURCE_PATH_BYTES + 1,
+        })
+    );
+    assert_eq!(
+        StingerSpec::new("assets/intro.webm", 0, true, false),
+        Err(MediaError::InvalidStingerTransitionPoint {
+            transition_point_milli: 0,
+        })
+    );
+}
+
+#[test]
 #[ignore = "timing report, not a pass/fail assertion"]
 fn stinger_transition_timing_report() {
     let format =

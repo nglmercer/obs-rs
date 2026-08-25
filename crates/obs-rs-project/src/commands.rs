@@ -177,6 +177,15 @@ impl Project {
                 scene.set_transition_override(transition);
                 Ok(())
             }
+            ProjectCommand::SetSceneStingerOverride {
+                profile,
+                scene,
+                stinger,
+            } => {
+                let scene = scene_mut(self, &profile, &scene)?;
+                scene.set_stinger_override(stinger);
+                Ok(())
+            }
             ProjectCommand::MoveScene {
                 profile,
                 scene,
