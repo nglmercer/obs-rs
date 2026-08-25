@@ -13,6 +13,8 @@ pub enum UiError {
     Project(ProjectError),
     /// A requested profile or scene is not in the current project.
     UnknownSelection { kind: &'static str, id: String },
+    /// A scene-navigation command must move exactly one step backward or forward.
+    InvalidSceneNavigation(i8),
     /// A shortcut key is empty or too long.
     InvalidShortcut,
     /// A shortcut is not currently bound.
@@ -55,6 +57,10 @@ impl fmt::Display for UiError {
             Self::UnknownSelection { kind, id } => {
                 write!(formatter, "unknown {kind} selection {id}")
             }
+            Self::InvalidSceneNavigation(direction) => write!(
+                formatter,
+                "scene navigation direction {direction} is outside -1..=1"
+            ),
             Self::InvalidShortcut => formatter.write_str("shortcut key is empty or too long"),
             Self::UnknownShortcut(shortcut) => {
                 write!(formatter, "shortcut {} is not bound", shortcut.key())

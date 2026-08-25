@@ -31,16 +31,26 @@ fn ui_layout_can_render_a_reference_snapshot() {
     let cut_shortcut = Shortcut::parse("Ctrl+T")
         .expect("cut shortcut syntax")
         .expect("cut shortcut binding");
+    let previous_shortcut = Shortcut::parse("F6")
+        .expect("previous-scene shortcut syntax")
+        .expect("previous-scene shortcut binding");
+    let next_shortcut = Shortcut::parse("F7")
+        .expect("next-scene shortcut syntax")
+        .expect("next-scene shortcut binding");
     state
         .borrow_mut()
         .replace_shortcuts(&[
             (shortcut, UiAction::Undo),
             (cut_shortcut, UiAction::CutTransition),
+            (previous_shortcut, UiAction::PreviousPreviewScene),
+            (next_shortcut, UiAction::NextPreviewScene),
         ])
         .expect("shortcut table");
     crate::callbacks::install_shortcut_callbacks(&ui, &state);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+z".into()), 6);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+t".into()), 15);
+    assert_eq!(ui.invoke_trigger_shortcut("f6".into()), 16);
+    assert_eq!(ui.invoke_trigger_shortcut("f7".into()), 17);
     assert_eq!(ui.invoke_trigger_shortcut("Ctrl+X".into()), 0);
     let persisted_tree = DockNode::Split {
         axis: crate::dock_tree::DockAxis::Vertical,

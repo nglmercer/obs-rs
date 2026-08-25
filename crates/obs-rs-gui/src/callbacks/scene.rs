@@ -42,6 +42,8 @@ fn install_scene_selection_callbacks(
         );
     });
 
+    install_adjacent_preview_scene_callback(ui, state, surface);
+
     let weak = ui.as_weak();
     let preview_state = Rc::clone(state);
     let preview_surface = Rc::clone(surface);
@@ -53,7 +55,6 @@ fn install_scene_selection_callbacks(
             UiCommand::SelectPreviewScene { id: id.to_string() },
         );
     });
-
     let weak = ui.as_weak();
     let program_state = Rc::clone(state);
     let program_surface = Rc::clone(surface);
@@ -134,6 +135,25 @@ fn install_scene_selection_callbacks(
             &locale_state,
             &locale_surface,
             UiCommand::SetLocale { locale },
+        );
+    });
+}
+
+fn install_adjacent_preview_scene_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let weak = ui.as_weak();
+    let adjacent_state = Rc::clone(state);
+    let adjacent_surface = Rc::clone(surface);
+    ui.on_navigate_preview_scene(move |direction| {
+        let direction = i8::try_from(direction).unwrap_or(0);
+        dispatch_and_refresh(
+            &weak,
+            &adjacent_state,
+            &adjacent_surface,
+            UiCommand::SelectAdjacentPreviewScene { direction },
         );
     });
 }

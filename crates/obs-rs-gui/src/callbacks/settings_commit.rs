@@ -385,6 +385,14 @@ pub(super) fn read_draft(controller: &SettingsController) -> AppSettings {
 pub(super) fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSettings) {
     settings.hotkey_swap =
         crate::settings::validated_hotkey(window.get_hotkey_swap().as_str(), &settings.hotkey_swap);
+    settings.hotkey_previous_scene = crate::settings::validated_hotkey(
+        window.get_hotkey_previous_scene().as_str(),
+        &settings.hotkey_previous_scene,
+    );
+    settings.hotkey_next_scene = crate::settings::validated_hotkey(
+        window.get_hotkey_next_scene().as_str(),
+        &settings.hotkey_next_scene,
+    );
     settings.hotkey_start_recording = crate::settings::validated_hotkey(
         window.get_hotkey_start_recording().as_str(),
         &settings.hotkey_start_recording,

@@ -20,6 +20,8 @@ fn settings_round_trip_through_the_config_document() {
         audio_input_sync_offset_millis: 125,
         desktop_audio_sync_offset_millis: 2_500,
         hotkey_swap: "F1".to_owned(),
+        hotkey_previous_scene: "Alt+F6".to_owned(),
+        hotkey_next_scene: "Alt+F7".to_owned(),
         hotkey_undo: "Alt+U".to_owned(),
         hotkey_redo: "Alt+Y".to_owned(),
         hotkey_save_project: "Alt+S".to_owned(),
@@ -112,6 +114,9 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
     config
         .set("hotkey_cut_transition", " option + c ")
         .expect("hotkey key");
+    config
+        .set("hotkey_previous_scene", " Shift + F6 ")
+        .expect("hotkey key");
 
     let decoded = AppSettings::from_config(&config);
 
@@ -122,6 +127,7 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
     );
     assert!(decoded.hotkey_stop_recording.is_empty());
     assert_eq!(decoded.hotkey_cut_transition, "Alt+C");
+    assert_eq!(decoded.hotkey_previous_scene, "Shift+F6");
     assert!(shortcut_bindings(&decoded)
         .expect("shortcut bindings")
         .iter()

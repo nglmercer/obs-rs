@@ -178,6 +178,8 @@ export component SettingsWindow inherits Window {
     in property <bool> downscale-active;
     // Hotkeys
     in-out property <string> hotkey-swap;
+    in-out property <string> hotkey-previous-scene;
+    in-out property <string> hotkey-next-scene;
     in-out property <string> hotkey-start-recording;
     in-out property <string> hotkey-stop-recording;
     in-out property <string> hotkey-start-streaming;
@@ -595,6 +597,8 @@ export component SettingsWindow inherits Window {
                     }
                     if root.category == 6 : HotkeysPage {
                         hotkey-swap <=> root.hotkey-swap;
+                        hotkey-previous-scene <=> root.hotkey-previous-scene;
+                        hotkey-next-scene <=> root.hotkey-next-scene;
                         hotkey-start-recording <=> root.hotkey-start-recording;
                         hotkey-stop-recording <=> root.hotkey-stop-recording;
                         hotkey-start-streaming <=> root.hotkey-start-streaming;

@@ -267,6 +267,8 @@ pub(super) fn catalog() -> UiText {
             video_hint: s("Changing the canvas rebuilds the renderer and is stored with the active profile."),
             group_hotkeys: s("Studio hotkeys"),
             hotkey_swap: s("Swap preview / program"),
+            hotkey_previous_scene: s("Previous preview scene"),
+            hotkey_next_scene: s("Next preview scene"),
             hotkey_start_recording: s("Start recording"),
             hotkey_stop_recording: s("Stop recording"),
             hotkey_start_streaming: s("Start streaming"),

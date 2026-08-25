@@ -24,6 +24,8 @@ import { Metrics, Palette } from "palette.slint";
 
 export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-swap;
+    in-out property <string> hotkey-previous-scene;
+    in-out property <string> hotkey-next-scene;
     in-out property <string> hotkey-start-recording;
     in-out property <string> hotkey-stop-recording;
     in-out property <string> hotkey-start-streaming;
@@ -49,6 +51,22 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-swap;
                 placeholder-text: "Space";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_previous_scene;
+            SettingsField {
+                text <=> root.hotkey-previous-scene;
+                placeholder-text: "F6";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_next_scene;
+            SettingsField {
+                text <=> root.hotkey-next-scene;
+                placeholder-text: "F7";
                 edited => { root.changed(); }
             }
         }

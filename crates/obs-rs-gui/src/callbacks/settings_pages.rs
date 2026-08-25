@@ -92,6 +92,8 @@ pub(super) fn load_draft(
     window.set_restore_project(settings.restore_project);
     window.set_save_project_on_exit(settings.save_project_on_exit);
     window.set_hotkey_swap(settings.hotkey_swap.as_str().into());
+    window.set_hotkey_previous_scene(settings.hotkey_previous_scene.as_str().into());
+    window.set_hotkey_next_scene(settings.hotkey_next_scene.as_str().into());
     window.set_hotkey_start_recording(settings.hotkey_start_recording.as_str().into());
     window.set_hotkey_stop_recording(settings.hotkey_stop_recording.as_str().into());
     window.set_hotkey_start_streaming(settings.hotkey_start_streaming.as_str().into());

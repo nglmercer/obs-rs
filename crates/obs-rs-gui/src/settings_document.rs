@@ -48,6 +48,14 @@ pub(crate) fn shortcut_bindings(
     let values = [
         (settings.hotkey_swap.as_str(), UiAction::SwapPreviewProgram),
         (
+            settings.hotkey_previous_scene.as_str(),
+            UiAction::PreviousPreviewScene,
+        ),
+        (
+            settings.hotkey_next_scene.as_str(),
+            UiAction::NextPreviewScene,
+        ),
+        (
             settings.hotkey_start_recording.as_str(),
             UiAction::StartRecording,
         ),
@@ -113,6 +121,8 @@ pub(crate) fn shortcut_bindings(
 pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
     let values = [
         settings.hotkey_swap.as_str(),
+        settings.hotkey_previous_scene.as_str(),
+        settings.hotkey_next_scene.as_str(),
         settings.hotkey_start_recording.as_str(),
         settings.hotkey_stop_recording.as_str(),
         settings.hotkey_start_streaming.as_str(),

@@ -181,6 +181,9 @@ impl DesktopState {
                     .collect();
                 "preview scene selected"
             }
+            UiCommand::SelectAdjacentPreviewScene { direction } => {
+                self.select_adjacent_preview_scene(direction)?
+            }
             UiCommand::SelectProgramScene { id } => {
                 self.ensure_scene(&id)?;
                 self.program_scene = Some(identifier(&id, "scene")?);
@@ -287,6 +290,53 @@ impl DesktopState {
         };
         self.notice(message)?;
         Ok(())
+    }
+
+    fn select_adjacent_preview_scene(&mut self, direction: i8) -> Result<&'static str, UiError> {
+        if !matches!(direction, -1 | 1) {
+            return Err(UiError::InvalidSceneNavigation(direction));
+        }
+        let scene_order = self
+            .project
+            .project()
+            .active_profile_spec()
+            .map(|profile| profile.scene_order().cloned().collect::<Vec<_>>())
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "profile",
+                id: self.project.project().active_profile().to_string(),
+            })?;
+        if scene_order.is_empty() {
+            return Err(UiError::UnknownSelection {
+                kind: "scene",
+                id: "none".to_owned(),
+            });
+        }
+
+        let current = self
+            .preview_scene
+            .as_ref()
+            .and_then(|scene| scene_order.iter().position(|candidate| candidate == scene))
+            .unwrap_or(0);
+        let last = scene_order.len().saturating_sub(1);
+        let next = if direction == 1 {
+            if current == last {
+                0
+            } else {
+                current + 1
+            }
+        } else if current == 0 {
+            last
+        } else {
+            current - 1
+        };
+        let scene = scene_order[next].clone();
+        self.preview_scene = Some(scene.clone());
+        self.active_transition = None;
+        self.selected_sources = first_source_id(self.project.project(), &scene)
+            .map(|id| id.to_string())
+            .into_iter()
+            .collect();
+        Ok("preview scene selected")
     }
 
     /// Saves the current project through the crash-safe project-file store.

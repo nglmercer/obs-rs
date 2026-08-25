@@ -221,6 +221,10 @@ impl MixerChannel {
 pub enum UiAction {
     /// Swap the selected preview and program scenes.
     SwapPreviewProgram,
+    /// Select the previous scene in the profile's persistent scene order.
+    PreviousPreviewScene,
+    /// Select the next scene in the profile's persistent scene order.
+    NextPreviewScene,
     /// Begin a recording output.
     StartRecording,
     /// Stop a recording output.
@@ -419,6 +423,8 @@ pub enum UiCommand {
     SelectProfile { id: String },
     /// Select the scene shown in preview.
     SelectPreviewScene { id: String },
+    /// Select the previous or next scene in the active profile's scene order.
+    SelectAdjacentPreviewScene { direction: i8 },
     /// Select the scene sent to program output.
     SelectProgramScene { id: String },
     /// Select a source item from the current preview scene.

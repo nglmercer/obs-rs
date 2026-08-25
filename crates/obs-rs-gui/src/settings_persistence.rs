@@ -175,6 +175,12 @@ impl AppSettings {
                 .filter(|offset| AUDIO_SYNC_OFFSET_RANGE.contains(offset))
                 .unwrap_or(defaults.desktop_audio_sync_offset_millis),
             hotkey_swap: hotkey(config, "hotkey_swap", &defaults.hotkey_swap),
+            hotkey_previous_scene: hotkey(
+                config,
+                "hotkey_previous_scene",
+                &defaults.hotkey_previous_scene,
+            ),
+            hotkey_next_scene: hotkey(config, "hotkey_next_scene", &defaults.hotkey_next_scene),
             hotkey_start_recording: hotkey(
                 config,
                 "hotkey_start_recording",
@@ -403,6 +409,8 @@ impl AppSettings {
                 self.desktop_audio_sync_offset_millis.to_string(),
             ),
             ("hotkey_swap", self.hotkey_swap.clone()),
+            ("hotkey_previous_scene", self.hotkey_previous_scene.clone()),
+            ("hotkey_next_scene", self.hotkey_next_scene.clone()),
             (
                 "hotkey_start_recording",
                 self.hotkey_start_recording.clone(),

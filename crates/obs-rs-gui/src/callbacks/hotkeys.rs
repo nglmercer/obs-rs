@@ -29,6 +29,8 @@ const STOP_REPLAY_BUFFER: i32 = 12;
 const TOGGLE_MICROPHONE_MUTE: i32 = 13;
 const TOGGLE_DESKTOP_MUTE: i32 = 14;
 const CUT_TRANSITION: i32 = 15;
+const PREVIOUS_PREVIEW_SCENE: i32 = 16;
+const NEXT_PREVIEW_SCENE: i32 = 17;
 
 pub(crate) fn install_shortcut_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let shortcut_state = Rc::clone(state);
@@ -46,6 +48,8 @@ pub(crate) fn install_shortcut_callbacks(ui: &MainWindow, state: &Rc<RefCell<Des
 fn action_code(action: UiAction) -> i32 {
     match action {
         UiAction::SwapPreviewProgram => SWAP_PREVIEW_PROGRAM,
+        UiAction::PreviousPreviewScene => PREVIOUS_PREVIEW_SCENE,
+        UiAction::NextPreviewScene => NEXT_PREVIEW_SCENE,
         UiAction::StartRecording => START_RECORDING,
         UiAction::StopRecording => STOP_RECORDING,
         UiAction::StartStreaming => START_STREAMING,
@@ -71,6 +75,8 @@ mod tests {
     fn action_codes_are_stable_and_nonzero() {
         let actions = [
             UiAction::SwapPreviewProgram,
+            UiAction::PreviousPreviewScene,
+            UiAction::NextPreviewScene,
             UiAction::StartRecording,
             UiAction::StopRecording,
             UiAction::StartStreaming,
@@ -91,7 +97,7 @@ mod tests {
         codes.dedup();
         assert_eq!(
             codes,
-            (SWAP_PREVIEW_PROGRAM..=CUT_TRANSITION).collect::<Vec<_>>()
+            (SWAP_PREVIEW_PROGRAM..=NEXT_PREVIEW_SCENE).collect::<Vec<_>>()
         );
         assert!(!codes.contains(&NO_ACTION));
     }

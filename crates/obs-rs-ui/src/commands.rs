@@ -115,6 +115,12 @@ impl DesktopState {
                 self.active_transition = None;
                 Ok(())
             }
+            UiAction::PreviousPreviewScene => {
+                self.dispatch(UiCommand::SelectAdjacentPreviewScene { direction: -1 })
+            }
+            UiAction::NextPreviewScene => {
+                self.dispatch(UiCommand::SelectAdjacentPreviewScene { direction: 1 })
+            }
             UiAction::StartRecording => self.dispatch(UiCommand::StartRecording),
             UiAction::StopRecording => self.dispatch(UiCommand::StopRecording),
             UiAction::StartStreaming => self.dispatch(UiCommand::StartStreaming),

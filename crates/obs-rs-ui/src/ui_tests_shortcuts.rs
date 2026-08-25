@@ -28,6 +28,32 @@ fn shortcuts_trigger_actions_and_reject_duplicates() {
 }
 
 #[test]
+fn scene_navigation_shortcuts_follow_persistent_order_and_wrap() {
+    let mut state = DesktopState::new(project());
+    assert_eq!(state.preview_scene(), Some("preview"));
+
+    state
+        .dispatch_action(UiAction::NextPreviewScene)
+        .expect("next preview scene");
+    assert_eq!(state.preview_scene(), Some("program"));
+
+    state
+        .dispatch(UiCommand::SelectAdjacentPreviewScene { direction: 1 })
+        .expect("next preview scene should wrap");
+    assert_eq!(state.preview_scene(), Some("source_scene"));
+
+    state
+        .dispatch_action(UiAction::PreviousPreviewScene)
+        .expect("previous preview scene");
+    assert_eq!(state.preview_scene(), Some("program"));
+
+    assert_eq!(
+        state.dispatch(UiCommand::SelectAdjacentPreviewScene { direction: 0 }),
+        Err(UiError::InvalidSceneNavigation(0))
+    );
+}
+
+#[test]
 fn shortcut_table_replaces_atomically_and_routes_frontend_actions() {
     let mut state = DesktopState::new(project());
     let old = Shortcut::new(0, "F8").expect("old shortcut");

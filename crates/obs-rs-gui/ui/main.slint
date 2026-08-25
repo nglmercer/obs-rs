@@ -180,6 +180,7 @@ export component MainWindow inherits Window {
         in-out property <bool> setup-active: false;
 
         callback swap-scenes();
+        callback navigate-preview-scene(int);
         // Returns a bounded action ID for the canonical key label supplied by
         // the event bridge. Rust owns parsing and lookup; Slint only executes
         // the already-resolved UI action.
@@ -202,6 +203,8 @@ export component MainWindow inherits Window {
         in property <string> hotkey-save-project;
         in property <string> hotkey-cut-transition;
         in property <string> hotkey-fade-transition;
+        in property <string> hotkey-previous-scene;
+        in property <string> hotkey-next-scene;
         in property <string> hotkey-save-replay;
         callback select-preview(string);
         callback select-program(string);
@@ -357,6 +360,12 @@ export component MainWindow inherits Window {
         function execute-shortcut(action: int) -> bool {
             if (action == 1) {
                 root.swap-scenes();
+                true
+            } else if (action == 16) {
+                root.navigate-preview-scene(-1);
+                true
+            } else if (action == 17) {
+                root.navigate-preview-scene(1);
                 true
             } else if (action == 2 && !root.recording) {
                 root.request-recording();

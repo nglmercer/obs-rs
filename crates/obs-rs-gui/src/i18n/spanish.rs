@@ -269,6 +269,8 @@ pub(super) fn catalog() -> UiText {
             video_hint: s("Cambiar el lienzo reconstruye el renderizador y se guarda con el perfil activo."),
             group_hotkeys: s("Atajos del estudio"),
             hotkey_swap: s("Intercambiar previsualización / programa"),
+            hotkey_previous_scene: s("Escena de previsualización anterior"),
+            hotkey_next_scene: s("Siguiente escena de previsualización"),
             hotkey_start_recording: s("Iniciar grabación"),
             hotkey_stop_recording: s("Detener grabación"),
             hotkey_start_streaming: s("Iniciar transmisión"),

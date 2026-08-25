@@ -741,6 +741,11 @@ pub(super) fn exercise_context_menus(
 ) {
     let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
     crate::callbacks::install_callbacks(ui, state, surface, &output);
+    ui.invoke_select_preview("preview".into());
+    ui.invoke_navigate_preview_scene(1);
+    assert_eq!(state.borrow().preview_scene(), Some("program"));
+    ui.invoke_navigate_preview_scene(-1);
+    assert_eq!(state.borrow().preview_scene(), Some("preview"));
     ui.invoke_new_project();
     ui.invoke_add_scene("intro".into(), "Intro".into());
     assert_eq!(state.borrow().preview_scene(), Some("intro"));
