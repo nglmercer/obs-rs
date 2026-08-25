@@ -33,9 +33,12 @@ join native resource work. The optional native GStreamer adapter now resolves a
 local file/container into negotiated RGBA frames, with a bounded sample count,
 resident memory budget, polling cancellation, and typed resource failures.
 The result slot now discards completions whose request ID is no longer current
-and never blocks submit/poll callers; engine/UI application, hardware-decode
-selection, non-GStreamer platform adapters, and the GUI resource workflow
-remain open.
+and never blocks submit/poll callers. The GUI now constructs the native loader
+behind the engine boundary and preloads only the selected scene's
+`preload=true` resource from the refresh timer, reporting ready and typed
+failure states without waiting on the worker. Explicit Take wiring,
+hardware-decode selection, non-GStreamer platform adapters, and the
+properties/file-picker workflow remain open.
 
 The toolkit-neutral `StingerLoadSession` now owns the transient current request
 and resolved clip around that worker. It clears the renderable clip only after
@@ -43,8 +46,8 @@ an accepted request, preserves the current state when the bounded queue is
 full, rejects a loader result whose format does not match the active canvas,
 and invalidates old completions when the target format changes. It exposes the
 typed failure without moving resource metadata or decoded pixels into a second
-project state store; the GUI still needs to instantiate the platform adapter
-and connect properties/file-picker actions to this session.
+project state store; the GUI resource session is now connected to the native
+adapter, while properties/file-picker and explicit Take actions remain open.
 
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks

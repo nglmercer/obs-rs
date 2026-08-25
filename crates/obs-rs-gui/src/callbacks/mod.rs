@@ -28,7 +28,7 @@ use crate::preview::TransformDraft;
 use crate::{
     preview_worker::{RenderTargets, MAX_MULTIVIEW_SCENES},
     refresh_output_ui, refresh_preview_frames_for_view, MainWindow, OutputRuntime, PreviewRenderer,
-    PreviewSurface, PreviewWorker,
+    PreviewSurface, PreviewWorker, StingerLoadController,
 };
 
 pub(crate) use add_source::install_add_source_window;
@@ -232,6 +232,7 @@ pub(crate) fn start_preview_timer(
     projectors: &Rc<ProjectorController>,
     docks: &Rc<docks::DockController>,
     canvas: &Rc<CanvasController>,
+    stinger_loader: &Rc<RefCell<StingerLoadController>>,
 ) -> Timer {
     let timer = Timer::default();
     let weak = ui.as_weak();
@@ -242,6 +243,7 @@ pub(crate) fn start_preview_timer(
     let projectors = Rc::clone(projectors);
     let docks = Rc::clone(docks);
     let canvas = Rc::clone(canvas);
+    let stinger_loader = Rc::clone(stinger_loader);
     let mut last_output_ui_refresh = Instant::now()
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
@@ -285,6 +287,25 @@ pub(crate) fn start_preview_timer(
         } else {
             WindowRenderState::Hidden
         };
+        let stinger_event = {
+            let state = state.borrow();
+            stinger_loader
+                .borrow_mut()
+                .sync(state.project_session().project(), preview_scene.as_deref())
+        };
+        match stinger_event {
+            Ok(Some(crate::stinger_loader::StingerLoadEvent::Requested)) => {
+                ui.set_status_message("Preloading scene Stinger…".into());
+            }
+            Ok(Some(crate::stinger_loader::StingerLoadEvent::Ready)) => {
+                ui.set_status_message("Scene Stinger ready".into());
+            }
+            Ok(Some(crate::stinger_loader::StingerLoadEvent::Failed(error))) => {
+                ui.set_status_message(format!("Scene Stinger failed: {error}").into());
+            }
+            Ok(None) => {}
+            Err(error) => ui.set_status_message(error.into()),
+        }
         let projector_demand = match (projectors.wants_preview(), projectors.wants_program()) {
             (false, false) => ProjectorRenderDemand::None,
             (true, false) => ProjectorRenderDemand::Preview,

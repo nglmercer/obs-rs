@@ -28,6 +28,7 @@ mod properties;
 mod refresh;
 mod settings;
 mod settings_model;
+mod stinger_loader;
 mod view;
 
 #[cfg(test)]
@@ -70,6 +71,7 @@ pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames_for_view, refresh_ui,
 };
 pub(crate) use settings::AppSettings;
+pub(crate) use stinger_loader::StingerLoadController;
 pub(crate) use view::{
     AddSourceText, AddSourceWindow, DockPane, DockSplitter, FloatingDockWindow, I18n, LocaleOption,
     MainWindow, Metrics, MixerRow, MonitorRow, MonitorText, MonitorWindow, MoveTarget,
@@ -139,6 +141,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Revision 0 is the "nothing observed yet" sentinel, so the first refresh
     // always syncs the surface against the live session.
     let surface = Rc::new(RefCell::new(PreviewSurface::new(&project, 0)?));
+    let stinger_loader = Rc::new(RefCell::new(StingerLoadController::native(
+        surface.borrow().format,
+    )?));
     {
         // The canvas size drives the zoom readout under the preview.
         let format = surface.borrow().format;
@@ -344,6 +349,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         &projectors,
         &docks,
         &canvas,
+        &stinger_loader,
     );
     ui.run()?;
     // Closing the window is the ordinary way to leave OBS, so the layout and

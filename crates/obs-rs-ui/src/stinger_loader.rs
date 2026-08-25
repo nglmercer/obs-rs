@@ -162,6 +162,16 @@ impl StingerLoadSession {
         self.state = StingerLoadState::Idle;
     }
 
+    /// Clears the current request or clip while keeping the worker reusable.
+    ///
+    /// A completion from the cleared request may still arrive on the worker;
+    /// `poll` consumes and discards it because no request is current.
+    pub fn clear(&mut self) {
+        if !self.is_cancelled() {
+            self.state = StingerLoadState::Idle;
+        }
+    }
+
     /// Requests cancellation and marks the session permanently stopped.
     pub fn cancel(&mut self) {
         self.worker.cancel();
