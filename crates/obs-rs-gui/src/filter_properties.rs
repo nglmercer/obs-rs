@@ -6,8 +6,16 @@
 //! component or another comma-separated serialization format.
 
 use obs_rs_audio::{
-    MAX_NOISE_GATE_THRESHOLD_DB_MILLI, MAX_NOISE_GATE_TIME_MS, MIN_NOISE_GATE_THRESHOLD_DB_MILLI,
-    MIN_NOISE_GATE_TIME_MS,
+    MAX_COMPRESSOR_ATTACK_MS, MAX_COMPRESSOR_OUTPUT_GAIN_DB_MILLI, MAX_COMPRESSOR_RATIO_MILLI,
+    MAX_COMPRESSOR_RELEASE_MS, MAX_COMPRESSOR_THRESHOLD_DB_MILLI, MAX_EXPANDER_ATTACK_MS,
+    MAX_EXPANDER_OUTPUT_GAIN_DB_MILLI, MAX_EXPANDER_RATIO_MILLI, MAX_EXPANDER_RELEASE_MS,
+    MAX_EXPANDER_THRESHOLD_DB_MILLI, MAX_GAIN_DB_MILLI, MAX_LIMITER_RELEASE_MS,
+    MAX_LIMITER_THRESHOLD_DB_MILLI, MAX_NOISE_GATE_THRESHOLD_DB_MILLI, MAX_NOISE_GATE_TIME_MS,
+    MIN_COMPRESSOR_ATTACK_MS, MIN_COMPRESSOR_OUTPUT_GAIN_DB_MILLI, MIN_COMPRESSOR_RATIO_MILLI,
+    MIN_COMPRESSOR_RELEASE_MS, MIN_COMPRESSOR_THRESHOLD_DB_MILLI, MIN_EXPANDER_ATTACK_MS,
+    MIN_EXPANDER_OUTPUT_GAIN_DB_MILLI, MIN_EXPANDER_RATIO_MILLI, MIN_EXPANDER_RELEASE_MS,
+    MIN_EXPANDER_THRESHOLD_DB_MILLI, MIN_GAIN_DB_MILLI, MIN_LIMITER_RELEASE_MS,
+    MIN_LIMITER_THRESHOLD_DB_MILLI, MIN_NOISE_GATE_THRESHOLD_DB_MILLI, MIN_NOISE_GATE_TIME_MS,
 };
 use obs_rs_config::Config;
 use obs_rs_media::{
@@ -31,6 +39,120 @@ struct Field {
     maximum: i32,
     default: &'static str,
 }
+
+const GAIN: [Field; 1] = [Field {
+    key: "db_milli",
+    english: "Gain",
+    spanish: "Ganancia",
+    minimum: MIN_GAIN_DB_MILLI,
+    maximum: MAX_GAIN_DB_MILLI,
+    default: "0",
+}];
+
+const LIMITER: [Field; 2] = [
+    Field {
+        key: "threshold_db_milli",
+        english: "Threshold",
+        spanish: "Umbral",
+        minimum: MIN_LIMITER_THRESHOLD_DB_MILLI,
+        maximum: MAX_LIMITER_THRESHOLD_DB_MILLI,
+        default: "-6000",
+    },
+    Field {
+        key: "release_ms",
+        english: "Release",
+        spanish: "Liberación",
+        minimum: MIN_LIMITER_RELEASE_MS as i32,
+        maximum: MAX_LIMITER_RELEASE_MS as i32,
+        default: "60",
+    },
+];
+
+const COMPRESSOR: [Field; 5] = [
+    Field {
+        key: "ratio_milli",
+        english: "Ratio",
+        spanish: "Relación",
+        minimum: MIN_COMPRESSOR_RATIO_MILLI as i32,
+        maximum: MAX_COMPRESSOR_RATIO_MILLI as i32,
+        default: "10000",
+    },
+    Field {
+        key: "threshold_db_milli",
+        english: "Threshold",
+        spanish: "Umbral",
+        minimum: MIN_COMPRESSOR_THRESHOLD_DB_MILLI,
+        maximum: MAX_COMPRESSOR_THRESHOLD_DB_MILLI,
+        default: "-18000",
+    },
+    Field {
+        key: "attack_ms",
+        english: "Attack",
+        spanish: "Ataque",
+        minimum: MIN_COMPRESSOR_ATTACK_MS as i32,
+        maximum: MAX_COMPRESSOR_ATTACK_MS as i32,
+        default: "6",
+    },
+    Field {
+        key: "release_ms",
+        english: "Release",
+        spanish: "Liberación",
+        minimum: MIN_COMPRESSOR_RELEASE_MS as i32,
+        maximum: MAX_COMPRESSOR_RELEASE_MS as i32,
+        default: "60",
+    },
+    Field {
+        key: "output_gain_db_milli",
+        english: "Output gain",
+        spanish: "Ganancia de salida",
+        minimum: MIN_COMPRESSOR_OUTPUT_GAIN_DB_MILLI,
+        maximum: MAX_COMPRESSOR_OUTPUT_GAIN_DB_MILLI,
+        default: "0",
+    },
+];
+
+const EXPANDER: [Field; 5] = [
+    Field {
+        key: "ratio_milli",
+        english: "Ratio",
+        spanish: "Relación",
+        minimum: MIN_EXPANDER_RATIO_MILLI as i32,
+        maximum: MAX_EXPANDER_RATIO_MILLI as i32,
+        default: "10000",
+    },
+    Field {
+        key: "threshold_db_milli",
+        english: "Threshold",
+        spanish: "Umbral",
+        minimum: MIN_EXPANDER_THRESHOLD_DB_MILLI,
+        maximum: MAX_EXPANDER_THRESHOLD_DB_MILLI,
+        default: "-18000",
+    },
+    Field {
+        key: "attack_ms",
+        english: "Attack",
+        spanish: "Ataque",
+        minimum: MIN_EXPANDER_ATTACK_MS as i32,
+        maximum: MAX_EXPANDER_ATTACK_MS as i32,
+        default: "10",
+    },
+    Field {
+        key: "release_ms",
+        english: "Release",
+        spanish: "Liberación",
+        minimum: MIN_EXPANDER_RELEASE_MS as i32,
+        maximum: MAX_EXPANDER_RELEASE_MS as i32,
+        default: "100",
+    },
+    Field {
+        key: "output_gain_db_milli",
+        english: "Output gain",
+        spanish: "Ganancia de salida",
+        minimum: MIN_EXPANDER_OUTPUT_GAIN_DB_MILLI,
+        maximum: MAX_EXPANDER_OUTPUT_GAIN_DB_MILLI,
+        default: "0",
+    },
+];
 
 const BRIGHTNESS: [Field; 1] = [Field {
     key: "milli",
@@ -398,6 +520,10 @@ const NOISE_GATE: [Field; 5] = [
 
 fn fields(kind: &str) -> &'static [Field] {
     match kind {
+        "gain" => &GAIN,
+        "limiter" => &LIMITER,
+        "compressor" => &COMPRESSOR,
+        "expander" => &EXPANDER,
         "brightness" => &BRIGHTNESS,
         "opacity" => &OPACITY,
         "crop_pad" => &CROP_PAD,
@@ -600,5 +726,33 @@ mod tests {
         assert_eq!(rows[3].minimum, 0);
         assert_eq!(rows[4].maximum, i32::from(MAX_NOISE_GATE_TIME_MS));
         assert_eq!(rows[0].label, "Umbral de apertura");
+    }
+
+    #[test]
+    fn supported_audio_filter_schemas_are_bounded_and_localized() {
+        let gain = rows("gain", "", UiLocale::English);
+        assert_eq!(gain.len(), 1);
+        assert_eq!(gain[0].minimum, MIN_GAIN_DB_MILLI);
+        assert_eq!(gain[0].maximum, MAX_GAIN_DB_MILLI);
+        assert_eq!(gain[0].text, "0");
+
+        let limiter = rows("limiter", "", UiLocale::English);
+        assert_eq!(limiter.len(), 2);
+        assert_eq!(limiter[0].minimum, MIN_LIMITER_THRESHOLD_DB_MILLI);
+        assert_eq!(limiter[1].maximum, i32::from(MAX_LIMITER_RELEASE_MS));
+
+        let compressor = rows("compressor", "", UiLocale::Spanish);
+        assert_eq!(compressor.len(), 5);
+        assert_eq!(compressor[0].minimum, i32::from(MIN_COMPRESSOR_RATIO_MILLI));
+        assert_eq!(compressor[1].maximum, MAX_COMPRESSOR_THRESHOLD_DB_MILLI);
+        assert_eq!(compressor[4].label, "Ganancia de salida");
+
+        let expander = rows("expander", "", UiLocale::English);
+        assert_eq!(expander.len(), 5);
+        assert_eq!(expander[0].maximum, i32::from(MAX_EXPANDER_RATIO_MILLI));
+        assert_eq!(expander[2].maximum, i32::from(MAX_EXPANDER_ATTACK_MS));
+        assert_eq!(expander[4].minimum, MIN_EXPANDER_OUTPUT_GAIN_DB_MILLI);
+
+        assert!(rows("invert_polarity", "", UiLocale::English).is_empty());
     }
 }

@@ -29,6 +29,12 @@ callback, with a stable action code that does not renumber existing bindings;
 the default is intentionally unbound. Global registration, scene-specific
 actions, and the remaining OBS hotkey catalog remain open.
 
+The audio-filter editor packet now exposes the already-compiled Gain, Invert
+Polarity, Limiter, Compressor, and Expander kinds with bounded localized
+property schemas, alongside Noise Gate. This closes the GUI configuration
+slice only; automatic source-level audio-filter routing, sidechains, and the
+remaining filter graph are still separate gaps.
+
 The scene-item identity packet now also covers atomic root/group reparenting:
 `MoveSceneItemToParent` validates source and destination paths before moving the
 owned item, and the Sources dock projects the same destinations for nested rows.

@@ -446,6 +446,18 @@ pub(super) fn render_source_filters_window(
     window.invoke_edit_property("loop".into(), "false".into());
     window.invoke_add_filter("render_delay".into());
     window.invoke_edit_property("milliseconds".into(), "100".into());
+    window.invoke_add_filter("gain".into());
+    window.invoke_edit_property("db_milli".into(), "3000".into());
+    window.invoke_add_filter("invert_polarity".into());
+    window.invoke_add_filter("limiter".into());
+    window.invoke_edit_property("threshold_db_milli".into(), "-6000".into());
+    window.invoke_edit_property("release_ms".into(), "80".into());
+    window.invoke_add_filter("compressor".into());
+    window.invoke_edit_property("ratio_milli".into(), "12000".into());
+    window.invoke_edit_property("output_gain_db_milli".into(), "1500".into());
+    window.invoke_add_filter("expander".into());
+    window.invoke_edit_property("ratio_milli".into(), "8000".into());
+    window.invoke_edit_property("attack_ms".into(), "12".into());
     window.invoke_add_filter("noise_gate".into());
     window.invoke_edit_property("open_threshold_db_milli".into(), "-26000".into());
     window.invoke_edit_property("close_threshold_db_milli".into(), "-32000".into());
@@ -457,7 +469,7 @@ pub(super) fn render_source_filters_window(
         .active_profile_spec()
         .and_then(|profile| profile.source("background"))
         .expect("background source after filter edits");
-    assert_eq!(source.filters().len(), 11);
+    assert_eq!(source.filters().len(), 16);
     assert_eq!(source.filters()[0].id().as_str(), "grayscale");
     assert_eq!(source.filters()[0].name(), "Scene grayscale");
     let brightness = source
@@ -538,6 +550,39 @@ pub(super) fn render_source_filters_window(
         noise_gate.settings().get("close_threshold_db_milli"),
         Some("-32000")
     );
+    let gain = source
+        .filters()
+        .iter()
+        .find(|filter| filter.kind().as_str() == "gain")
+        .expect("gain filter");
+    assert_eq!(gain.settings().get("db_milli"), Some("3000"));
+    assert!(source
+        .filters()
+        .iter()
+        .any(|filter| filter.kind().as_str() == "invert_polarity"));
+    let limiter = source
+        .filters()
+        .iter()
+        .find(|filter| filter.kind().as_str() == "limiter")
+        .expect("limiter filter");
+    assert_eq!(limiter.settings().get("release_ms"), Some("80"));
+    let compressor = source
+        .filters()
+        .iter()
+        .find(|filter| filter.kind().as_str() == "compressor")
+        .expect("compressor filter");
+    assert_eq!(compressor.settings().get("ratio_milli"), Some("12000"));
+    assert_eq!(
+        compressor.settings().get("output_gain_db_milli"),
+        Some("1500")
+    );
+    let expander = source
+        .filters()
+        .iter()
+        .find(|filter| filter.kind().as_str() == "expander")
+        .expect("expander filter");
+    assert_eq!(expander.settings().get("ratio_milli"), Some("8000"));
+    assert_eq!(expander.settings().get("attack_ms"), Some("12"));
     drop(state_ref);
 
     window.invoke_select_filter("color_key".into());
@@ -551,6 +596,16 @@ pub(super) fn render_source_filters_window(
     window.invoke_select_filter("render_delay".into());
     window.invoke_remove_filter();
     window.invoke_select_filter("noise_gate".into());
+    window.invoke_remove_filter();
+    window.invoke_select_filter("expander".into());
+    window.invoke_remove_filter();
+    window.invoke_select_filter("compressor".into());
+    window.invoke_remove_filter();
+    window.invoke_select_filter("limiter".into());
+    window.invoke_remove_filter();
+    window.invoke_select_filter("invert_polarity".into());
+    window.invoke_remove_filter();
+    window.invoke_select_filter("gain".into());
     window.invoke_remove_filter();
     window.invoke_select_filter("luma_key".into());
     window.invoke_remove_filter();

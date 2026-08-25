@@ -24,7 +24,27 @@ struct FilterDefinition {
     category: SourceFilterCategory,
 }
 
-const FILTER_DEFINITIONS: [FilterDefinition; 14] = [
+const FILTER_DEFINITIONS: [FilterDefinition; 18] = [
+    FilterDefinition {
+        kind: "gain",
+        name: "Gain",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "invert_polarity",
+        name: "Invert Polarity",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "limiter",
+        name: "Limiter",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "expander",
+        name: "Expander",
+        category: SourceFilterCategory::AudioVideo,
+    },
     FilterDefinition {
         kind: "noise_gate",
         name: "Noise Gate",
