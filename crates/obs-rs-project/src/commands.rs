@@ -19,10 +19,10 @@ mod source_definitions;
 use filters::legacy_filter_spec;
 use groups::{
     duplicate_group_item, duplicate_scene_item_target, group_scene_items, move_group_item,
-    move_scene_item_to_parent, paste_group_item, remove_group_item, remove_scene_item_target,
-    remove_scene_items, set_group_item_locked, set_group_item_transform, set_group_item_visibility,
-    set_group_name, set_scene_item_locked_target, set_scene_item_transform_target,
-    set_scene_item_visibility_target, ungroup_scene_item,
+    move_scene_item_target, move_scene_item_to_parent, paste_group_item, remove_group_item,
+    remove_scene_item_target, remove_scene_items, set_group_item_locked, set_group_item_transform,
+    set_group_item_visibility, set_group_name, set_scene_item_locked_target,
+    set_scene_item_transform_target, set_scene_item_visibility_target, ungroup_scene_item,
 };
 
 pub(super) use source_definitions::copy_identity;
@@ -289,7 +289,13 @@ impl Project {
                 scene,
                 item,
                 target_index,
-            } => move_scene_item(self, &profile, &scene, &item, target_index),
+            } => {
+                if item.contains('/') {
+                    move_scene_item_target(self, &profile, &scene, &item, target_index)
+                } else {
+                    move_scene_item(self, &profile, &scene, &item, target_index)
+                }
+            }
             ProjectCommand::MoveSceneItemToParent {
                 profile,
                 scene,

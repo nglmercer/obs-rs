@@ -224,6 +224,23 @@ fixtures cover source cloning in the referenced scene, preserving the parent
 reference, and removing only the original leaf afterward; nested reorder is
 the remaining item-management gap in this sequence.
 
+## Latest verified package: nested scene-reference item reordering
+
+On 2026-08-24, `MoveSceneItem` now resolves a stable flattened
+`scene-ref/leaf` target to the scene or group that owns the leaf before applying
+the existing same-parent reorder operation. The Sources-dock callbacks use the
+same generic command for root, group, and Scene-reference rows, while the
+owner's ordered child list is used for bounded target-index validation. The
+project fixture proves the parent reference remains unchanged; the GUI fixture
+proves duplicate, reorder, and remove as one nested workflow. Reparenting a
+Scene-reference leaf across scene boundaries remains intentionally outside this
+packet and continues to use the separate `MoveSceneItemToParent` contract.
+
+> SCENE-002/SOURCE-001 reconciliation: same-owner nested Scene-reference
+> reorder is now covered. The remaining nested item-management gap is
+> cross-owner reparenting, alongside crop/rotation semantics at transformed
+> boundaries.
+
 ## Latest verified package: dock-header pointer drag
 
 On 2026-08-24, the GUI dock fixture now drives a visible `DockHeader` through

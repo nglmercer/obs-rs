@@ -4,7 +4,7 @@ use slint::Weak;
 
 use obs_rs_config::Config;
 use obs_rs_media::FrameTransform;
-use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec, SceneSpec};
+use obs_rs_project::{Profile, ProjectCommand, SceneItemDuplicateMode, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 
 #[path = "source_targets.rs"]
@@ -74,21 +74,11 @@ pub(crate) fn move_source_and_refresh(
         let target_index = usize::try_from(target)
             .map_err(|_| std::io::Error::other("source cannot move above the scene"))?
             .min(source_count.saturating_sub(1));
-        let command = if let Some((group_path, item)) = group_target(source_id) {
-            ProjectCommand::MoveGroupItem {
-                profile,
-                scene,
-                group_path,
-                item,
-                target_index,
-            }
-        } else {
-            ProjectCommand::MoveSceneItem {
-                profile,
-                scene,
-                item: source_id.to_owned(),
-                target_index,
-            }
+        let command = ProjectCommand::MoveSceneItem {
+            profile,
+            scene,
+            item: source_id.to_owned(),
+            target_index,
         };
         state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
@@ -122,21 +112,11 @@ pub(crate) fn move_source_to_and_refresh(
         let target_index = usize::try_from(target_index)
             .map_err(|_| std::io::Error::other("source order is invalid"))?
             .min(source_count.saturating_sub(1));
-        let command = if let Some((group_path, item)) = group_target(source_id) {
-            ProjectCommand::MoveGroupItem {
-                profile,
-                scene,
-                group_path,
-                item,
-                target_index,
-            }
-        } else {
-            ProjectCommand::MoveSceneItem {
-                profile,
-                scene,
-                item: source_id.to_owned(),
-                target_index,
-            }
+        let command = ProjectCommand::MoveSceneItem {
+            profile,
+            scene,
+            item: source_id.to_owned(),
+            target_index,
         };
         state.borrow_mut().dispatch(UiCommand::Project(command))?;
         Ok(())
@@ -619,6 +599,24 @@ fn group_items_for_path<'a>(scene: &'a SceneSpec, path: &[String]) -> Option<&'a
     Some(items)
 }
 
+fn flattened_parent_items<'a>(
+    profile: &'a Profile,
+    scene_id: &str,
+    path: &[String],
+) -> Option<&'a [SceneItemSpec]> {
+    let mut items = profile.scene(scene_id)?.items();
+    for parent_id in path {
+        let parent = items.iter().find(|item| item.id().as_str() == parent_id)?;
+        items = if let Some(group) = parent.group() {
+            group.items()
+        } else {
+            let child_scene = parent.scene_id()?;
+            profile.scene(child_scene)?.items()
+        };
+    }
+    Some(items)
+}
+
 pub(crate) fn item_for_target<'a>(scene: &'a SceneSpec, target: &str) -> Option<&'a SceneItemSpec> {
     if let Some((group_path, item_id)) = group_target(target) {
         group_items_for_path(scene, &group_path)?
@@ -634,18 +632,21 @@ fn source_order_state(
     scene_id: &str,
     target: &str,
 ) -> Result<(usize, usize), Box<dyn Error>> {
-    let scene = state
+    let profile = state
         .project_session()
         .project()
         .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
+        .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+    let scene = profile
+        .scene(scene_id)
         .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
     let (group_path, item_id) =
         group_target(target).map_or((None, target.to_owned()), |(path, item)| (Some(path), item));
-    let items = group_path
-        .as_deref()
-        .and_then(|path| group_items_for_path(scene, path))
-        .unwrap_or_else(|| scene.items());
+    let items = match group_path.as_deref() {
+        Some(path) => flattened_parent_items(profile, scene_id, path)
+            .ok_or_else(|| std::io::Error::other("source parent is not in the preview scene"))?,
+        None => scene.items(),
+    };
     let index = items
         .iter()
         .position(|item| item.id().as_str() == item_id)

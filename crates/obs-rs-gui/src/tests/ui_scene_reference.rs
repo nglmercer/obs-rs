@@ -319,6 +319,18 @@ fn exercise_scene_reference_remove(ui: &MainWindow, state: &Rc<RefCell<DesktopSt
         .and_then(|profile| profile.scene("transform-child"))
         .is_some_and(|scene| scene.item("background_copy").is_some()));
 
+    ui.invoke_move_source_to("transform-child-ref/background".into(), 1);
+    let state_ref = state.borrow();
+    let child = state_ref
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("transform-child"))
+        .expect("owner scene after nested reorder");
+    assert_eq!(child.items()[0].id().as_str(), "background_copy");
+    assert_eq!(child.items()[1].id().as_str(), "background");
+    drop(state_ref);
+
     ui.invoke_remove_source("transform-child-ref/background".into());
     assert!(state
         .borrow()

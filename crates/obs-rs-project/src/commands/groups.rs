@@ -15,6 +15,12 @@ use super::super::{
 use super::types::SceneItemDuplicateMode;
 use super::{copy_identity, duplicate_item_sources, validate_scene_item};
 
+mod scene_targets;
+pub(super) use scene_targets::{
+    duplicate_scene_item_target, move_scene_item_target, remove_scene_item_target,
+    set_scene_item_locked_target, set_scene_item_visibility_target,
+};
+
 fn parse_group_path(path: &[String]) -> Result<Vec<Identifier>, ProjectError> {
     if path.is_empty() || path.len() > MAX_GROUP_NESTING_DEPTH {
         return Err(ProjectError::InvalidGroupPath);
@@ -102,115 +108,6 @@ pub(super) fn set_group_item_visibility(
         .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?
         .set_visible(visible);
     Ok(())
-}
-
-/// Applies visibility to a stable flattened target.
-pub(super) fn set_scene_item_visibility_target(
-    project: &mut Project,
-    profile: &str,
-    scene: &str,
-    target: &str,
-    visible: bool,
-) -> Result<(), ProjectError> {
-    let (group_path, item) = parse_scene_item_target(target)?;
-    let profile_id = identifier(profile, "profile id")?;
-    let profile_spec = project
-        .profile(&profile_id)
-        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-    let (owner_scene, owner_groups) =
-        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
-    if owner_groups.is_empty() {
-        super::set_scene_item_visibility(
-            project,
-            profile,
-            owner_scene.as_str(),
-            item.as_str(),
-            visible,
-        )
-    } else {
-        let owner_groups = owner_groups
-            .into_iter()
-            .map(|id| id.as_str().to_owned())
-            .collect::<Vec<_>>();
-        set_group_item_visibility(
-            project,
-            profile,
-            owner_scene.as_str(),
-            &owner_groups,
-            item.as_str(),
-            visible,
-        )
-    }
-}
-
-/// Applies lock state to a stable flattened target.
-pub(super) fn set_scene_item_locked_target(
-    project: &mut Project,
-    profile: &str,
-    scene: &str,
-    target: &str,
-    locked: bool,
-) -> Result<(), ProjectError> {
-    let (group_path, item) = parse_scene_item_target(target)?;
-    let profile_id = identifier(profile, "profile id")?;
-    let profile_spec = project
-        .profile(&profile_id)
-        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-    let (owner_scene, owner_groups) =
-        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
-    if owner_groups.is_empty() {
-        super::set_scene_item_locked(
-            project,
-            profile,
-            owner_scene.as_str(),
-            item.as_str(),
-            locked,
-        )
-    } else {
-        let owner_groups = owner_groups
-            .into_iter()
-            .map(|id| id.as_str().to_owned())
-            .collect::<Vec<_>>();
-        set_group_item_locked(
-            project,
-            profile,
-            owner_scene.as_str(),
-            &owner_groups,
-            item.as_str(),
-            locked,
-        )
-    }
-}
-
-/// Removes a stable flattened target from the scene that owns its leaf.
-pub(super) fn remove_scene_item_target(
-    project: &mut Project,
-    profile: &str,
-    scene: &str,
-    target: &str,
-) -> Result<(), ProjectError> {
-    let (group_path, item) = parse_scene_item_target(target)?;
-    let profile_id = identifier(profile, "profile id")?;
-    let profile_spec = project
-        .profile(&profile_id)
-        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-    let (owner_scene, owner_groups) =
-        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
-    if owner_groups.is_empty() {
-        super::remove_scene_item(project, profile, owner_scene.as_str(), item.as_str())
-    } else {
-        let owner_groups = owner_groups
-            .into_iter()
-            .map(|id| id.as_str().to_owned())
-            .collect::<Vec<_>>();
-        remove_group_item(
-            project,
-            profile,
-            owner_scene.as_str(),
-            &owner_groups,
-            item.as_str(),
-        )
-    }
 }
 
 pub(super) fn set_group_name(
@@ -906,39 +803,6 @@ pub(super) fn duplicate_group_item(
         .cloned()
         .ok_or_else(|| ProjectError::UnknownSceneItem(item_id.clone()))?;
     paste_group_item(project, profile, scene, group_path, original, mode)
-}
-
-/// Duplicates a stable flattened target in the scene/group that owns it.
-pub(super) fn duplicate_scene_item_target(
-    project: &mut Project,
-    profile: &str,
-    scene: &str,
-    target: &str,
-    mode: SceneItemDuplicateMode,
-) -> Result<(), ProjectError> {
-    let (group_path, item) = parse_scene_item_target(target)?;
-    let profile_id = identifier(profile, "profile id")?;
-    let profile_spec = project
-        .profile(&profile_id)
-        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-    let (owner_scene, owner_groups) =
-        resolve_flattened_target(profile_spec, scene, &group_path, &item)?;
-    if owner_groups.is_empty() {
-        super::duplicate_scene_item(project, profile, owner_scene.as_str(), item.as_str(), mode)
-    } else {
-        let owner_groups = owner_groups
-            .into_iter()
-            .map(|id| id.as_str().to_owned())
-            .collect::<Vec<_>>();
-        duplicate_group_item(
-            project,
-            profile,
-            owner_scene.as_str(),
-            &owner_groups,
-            item.as_str(),
-            mode,
-        )
-    }
 }
 
 pub(super) fn paste_group_item(

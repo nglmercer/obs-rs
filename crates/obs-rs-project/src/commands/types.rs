@@ -232,7 +232,12 @@ pub enum ProjectCommand {
         filter: String,
         target_index: usize,
     },
-    /// Reorders one scene item within a scene.
+    /// Reorders one scene item within its owning scene or group.
+    ///
+    /// `item` may be a root ID or a stable flattened path such as
+    /// `overlay-group/source` or `scene-reference/source`. A Scene-reference
+    /// path is resolved to the referenced scene that owns the leaf; the
+    /// reference item itself is not moved or mutated.
     MoveSceneItem {
         profile: String,
         scene: String,

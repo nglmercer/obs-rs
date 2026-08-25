@@ -323,6 +323,49 @@ fn nested_scene_item_duplicate_routes_to_the_owner_scene() {
 }
 
 #[test]
+fn nested_scene_item_move_routes_to_the_owner_scene() {
+    let mut project = project();
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    child
+        .add_item(SceneItemSpec::for_source("background").expect("first child source"))
+        .expect("first child source attach");
+    child
+        .add_item(SceneItemSpec::new("background-second", "background").expect("second child"))
+        .expect("second child source attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: SceneItemSpec::for_scene("child-ref", "child").expect("scene reference"),
+        })
+        .expect("add scene reference");
+
+    project
+        .apply(ProjectCommand::MoveSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "child-ref/background".to_owned(),
+            target_index: 1,
+        })
+        .expect("move scene-reference leaf");
+
+    let profile = project.profile("live").expect("profile");
+    let child = profile.scene("child").expect("owner scene");
+    assert_eq!(child.items()[0].id().as_str(), "background-second");
+    assert_eq!(child.items()[1].id().as_str(), "background");
+    assert!(profile
+        .scene("main")
+        .and_then(|scene| scene.item("child-ref"))
+        .is_some());
+}
+
+#[test]
 #[allow(
     clippy::too_many_lines,
     reason = "this regression exercises projection, owner routing, and atomic failures together"

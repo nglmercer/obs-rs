@@ -192,7 +192,8 @@ profile-wide source, while geometry callbacks write the owning leaf and keep
 the parent reference transform unchanged. Removal now follows the same owner
 scene route and preserves the parent reference. Nested group rename remains
 outside the supported command path. Duplication now follows the same route and
-can clone the profile source; nested reorder remains open.
+can clone the profile source; same-owner reorder now follows the same route,
+while cross-owner reparenting remains open.
 
 ```text
 truthful baseline / lint and test gate
