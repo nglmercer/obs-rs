@@ -22,6 +22,14 @@ capture-capability, preview, and output diagnostics on the established UI
 cadence, so it adds no render/capture/audio/output hot-path work. Dynamic
 plugin-rendered dock surfaces and persisted custom dock IDs remain open.
 
+The Scenes dock now carries a bounded typed drag payload per row and routes
+before/after drops through the existing `MoveScene` project command. Rust owns
+profile/target validation, index adjustment after source removal, selection of
+the moved scene, and failure reporting; docked and floating panels share the
+same callback boundary. Pure index tests and a real testing-backend pointer
+fixture cover both directions and invalid drop inputs. Scene collection
+drag/drop across documents and native accessibility behavior remain open.
+
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation
 when every crossed parent scale is uniform and unmirrored. Media, project,

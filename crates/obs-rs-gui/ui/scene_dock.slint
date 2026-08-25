@@ -24,6 +24,7 @@ export component SceneDock inherits Rectangle {
     callback select-program(string);
     callback duplicate-scene(string);
     callback move-scene(string, int);
+    callback drop-scene(data-transfer, string, int);
     callback remove-scene(string);
     callback open-scene-projector(string);
 
@@ -91,41 +92,66 @@ export component SceneDock inherits Rectangle {
                             open-scene-projector(id) => { root.open-scene-projector(id); }
                             rename-scene(id) => { root.select-preview(id); root.open-modal(5); }
                             move-scene(id, delta) => { root.select-preview(id); root.move-scene(id, delta); }
+                            drop-scene(data, target, mode) => { root.drop-scene(data, target, mode); }
                             remove-scene(id) => { root.select-preview(id); root.remove-scene(id); }
                             background: scene.role != "" ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
                             border-width: 1px;
                             border-color: Palette.tokens.border;
-                            HorizontalBox {
-                                padding-left: 8px;
-                                padding-right: 8px;
-                                spacing: 5px;
-                                VerticalBox {
-                                    spacing: 1px;
-                                    horizontal-stretch: 1;
-                                    Text {
-                                        text: scene.name;
-                                        color: Palette.tokens.text;
-                                        font-size: 12px;
-                                        overflow: elide;
+                            DragArea {
+                                width: 100%;
+                                height: 100%;
+                                data: scene.drag-data;
+                                allow-move: true;
+                                drag-finished(action) => { }
+                                TouchArea {
+                                    clicked => {
+                                        scene-focus.focus();
+                                        select-preview(scene.id);
+                                    }
+                                    double-clicked => {
+                                        scene-focus.focus();
+                                        select-program(scene.id);
+                                    }
+                                    pointer-event(event) => {
+                                        if event.kind == PointerEventKind.down
+                                            && event.button == PointerEventButton.right {
+                                            scene-focus.focus();
+                                            select-preview(scene.id);
+                                            scene-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
+                                        }
+                                    }
+                                }
+                                HorizontalBox {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    spacing: 5px;
+                                    VerticalBox {
+                                        spacing: 1px;
+                                        horizontal-stretch: 1;
+                                        Text {
+                                            text: scene.name;
+                                            color: Palette.tokens.text;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                        }
                                     }
                                 }
                             }
-                            TouchArea {
-                                clicked => {
-                                    scene-focus.focus();
-                                    select-preview(scene.id);
+                            DropArea {
+                                width: 100%;
+                                height: 100%;
+                                can-drop(_) => { DragAction.move }
+                                dropped(event) => {
+                                    let mode = event.position.y < self.height / 2 ? 1 : 2;
+                                    root.drop-scene(event.data, scene.id, mode);
+                                    event.proposed-action
                                 }
-                                double-clicked => {
-                                    scene-focus.focus();
-                                    select-program(scene.id);
-                                }
-                                pointer-event(event) => {
-                                    if event.kind == PointerEventKind.down
-                                        && event.button == PointerEventButton.right {
-                                        scene-focus.focus();
-                                        select-preview(scene.id);
-                                        scene-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
-                                    }
+                                Rectangle {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    background: transparent;
+                                    border-width: parent.has-drag ? 2px : 0px;
+                                    border-color: Palette.tokens.accent;
                                 }
                             }
                         }

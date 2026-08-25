@@ -162,6 +162,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     std::fs::remove_file(path).expect("remove snapshot");
 
     ui_canvas::exercise_canvas_pointer_fixture(&ui, &state, &surface);
+    ui_scene_drag_drop::exercise_scene_pointer_drag_and_drop(&ui, &state, &surface);
     ui.hide().expect("testing window should hide");
 
     // The settings window is a second top-level window with its own globals, so

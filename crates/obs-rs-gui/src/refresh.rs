@@ -539,6 +539,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
                 role: roles.role(state, scene.id().as_str()),
                 id: scene.id().as_str().into(),
                 name: scene.name().into(),
+                drag_data: DataTransfer::from(SharedString::from(scene.id().as_str())),
             })
             .collect::<Vec<_>>()
     });

@@ -49,6 +49,18 @@ refresh cadence. It does not request work from render, capture, audio, or
 output hot paths. Plugin-provided dynamic dock surfaces remain a separate open
 capability.
 
+## Latest verified package: Scene-dock drag/drop reorder
+
+On 2026-08-25, the Scenes dock gained a real before/after DragArea/DropArea
+workflow for persisted profile scene order. Each row carries a bounded typed
+`DataTransfer`; Rust resolves the active profile, adjusts the insertion index
+after removing the dragged row, rejects malformed payloads/modes/targets, and
+selects the moved Preview scene through the existing state owner. Docked and
+floating surfaces share the same callback chain. Pure index tests and a
+testing-backend pointer fixture cover upward, downward, same-row, and invalid
+drop cases. Scene-specific hotkeys, global registration, and broader
+collection lifecycle behavior remain open.
+
 ## Latest verified package: exact nested leaf crop/rotation slice
 
 On 2026-08-25, nested group and Scene-reference flattening gained a bounded
@@ -584,9 +596,11 @@ stable scene-ID accessibility label, matching the existing source-row identity
 contract. The testing backend discovers the Preview row by that label; native
 screen-reader behavior and the remaining focus audit are still open.
 
-Reconciliation note: SCENE-001 now also has real keyboard navigation evidence
-for the persisted scene order in the docked and floating-panel callback chain.
-The broader collection lifecycle and native accessibility audit remain partial.
+Reconciliation note: SCENE-001 now also has real keyboard navigation and
+testing-backend pointer drag/drop evidence for the persisted scene order in the
+docked and floating-panel callback chain. `SceneRow.drag-data` remains a UI
+projection; Rust owns validation and `ProjectCommand::MoveScene` mutation. The
+broader collection lifecycle and native accessibility audit remain partial.
 
 Reconciliation note: `DOCK-004`/`PLUGIN-001` now include bounded plugin dock
 metadata registration and runtime diagnostics. This is an extension contract,

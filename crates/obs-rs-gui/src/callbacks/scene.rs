@@ -2,7 +2,7 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale, MAX_CANVAS_SELECTIONS};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, DataTransfer};
 
 use crate::{
     apply_scene_properties_and_refresh, apply_source_name_and_refresh,
@@ -88,6 +88,8 @@ fn install_scene_selection_callbacks(
         move_scene_and_refresh(&weak, &move_state, &move_surface, id.as_str(), delta);
     });
 
+    install_scene_drop_callback(ui, state, surface);
+
     let weak = ui.as_weak();
     let rename_state = Rc::clone(state);
     let rename_surface = Rc::clone(surface);
@@ -135,6 +137,26 @@ fn install_scene_selection_callbacks(
             &locale_state,
             &locale_surface,
             UiCommand::SetLocale { locale },
+        );
+    });
+}
+
+fn install_scene_drop_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let weak = ui.as_weak();
+    let drop_state = Rc::clone(state);
+    let drop_surface = Rc::clone(surface);
+    ui.on_drop_scene(move |data, target, mode| {
+        move_scene_by_drop_and_refresh(
+            &weak,
+            &drop_state,
+            &drop_surface,
+            &data,
+            target.as_str(),
+            mode,
         );
     });
 }
@@ -301,6 +323,100 @@ fn move_scene_and_refresh(
             target_index,
         }),
     );
+}
+
+/// Applies one Scene-dock pointer drop through the existing ordered scene
+/// command. The drop mode is 1 for before the target row and 2 for after it;
+/// Rust adjusts the requested index after removing the dragged scene so a
+/// downward move cannot land one row too far.
+pub(crate) fn move_scene_by_drop_and_refresh(
+    weak: &slint::Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    data: &DataTransfer,
+    target: &str,
+    mode: i32,
+) {
+    let result: Result<(), Box<dyn Error>> = (|| {
+        let source = data
+            .plain_text()
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+            .to_string();
+        if source.is_empty() {
+            return Err(std::io::Error::other("scene drag payload is empty").into());
+        }
+        if mode != 1 && mode != 2 {
+            return Err(std::io::Error::other("scene drop mode is invalid").into());
+        }
+
+        let (profile, target_index) = {
+            let state = state.borrow();
+            let project = state.project_session().project();
+            let profile = project
+                .active_profile_spec()
+                .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
+            let scenes = profile.scenes().collect::<Vec<_>>();
+            let source_index = scenes
+                .iter()
+                .position(|scene| scene.id().as_str() == source)
+                .ok_or_else(|| {
+                    std::io::Error::other("dragged scene is not in the active profile")
+                })?;
+            let target_index = scenes
+                .iter()
+                .position(|scene| scene.id().as_str() == target)
+                .ok_or_else(|| std::io::Error::other("drop target is not in the active profile"))?;
+            let target_index =
+                scene_drop_target_index(source_index, target_index, mode, scenes.len())
+                    .ok_or_else(|| std::io::Error::other("scene drop target is invalid"))?;
+            (project.active_profile().to_string(), target_index)
+        };
+
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::MoveScene {
+                profile,
+                scene: source.clone(),
+                target_index,
+            }))?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectPreviewScene { id: source })?;
+        Ok(())
+    })();
+
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    match result {
+        Ok(()) => refresh_ui(&ui, state, surface),
+        Err(error) => ui.set_status_message(format!("Move scene failed: {error}").into()),
+    }
+}
+
+/// Converts a row-relative before/after drop into the final scene-order index.
+/// The source is removed before insertion, so a downward move needs one less
+/// index than the target row's original position.
+fn scene_drop_target_index(
+    source_index: usize,
+    target_index: usize,
+    mode: i32,
+    scene_count: usize,
+) -> Option<usize> {
+    if (mode != 1 && mode != 2)
+        || source_index >= scene_count
+        || target_index >= scene_count
+        || scene_count == 0
+    {
+        return None;
+    }
+    let requested = target_index.checked_add(usize::from(mode == 2))?;
+    let target_index = if source_index < requested {
+        requested.checked_sub(1)?
+    } else {
+        requested
+    };
+    (target_index < scene_count).then_some(target_index)
 }
 
 #[allow(
@@ -798,7 +914,26 @@ fn install_source_property_callbacks(
 
 #[cfg(test)]
 mod tests {
-    use super::{source_navigation_index, source_selection_range};
+    use super::{scene_drop_target_index, source_navigation_index, source_selection_range};
+
+    #[test]
+    fn scene_drop_indices_account_for_removing_the_source() {
+        assert_eq!(scene_drop_target_index(2, 0, 1, 5), Some(0));
+        assert_eq!(scene_drop_target_index(2, 1, 2, 5), Some(2));
+        assert_eq!(scene_drop_target_index(0, 2, 1, 5), Some(1));
+        assert_eq!(scene_drop_target_index(0, 2, 2, 5), Some(2));
+        assert_eq!(scene_drop_target_index(1, 1, 1, 5), Some(1));
+        assert_eq!(scene_drop_target_index(1, 1, 2, 5), Some(1));
+    }
+
+    #[test]
+    fn scene_drop_indices_reject_invalid_modes_and_rows() {
+        assert_eq!(scene_drop_target_index(0, 1, 0, 3), None);
+        assert_eq!(scene_drop_target_index(0, 1, 3, 3), None);
+        assert_eq!(scene_drop_target_index(3, 1, 1, 3), None);
+        assert_eq!(scene_drop_target_index(0, 3, 1, 3), None);
+        assert_eq!(scene_drop_target_index(0, 0, 2, 0), None);
+    }
 
     #[test]
     fn source_navigation_is_bounded_and_non_wrapping() {
