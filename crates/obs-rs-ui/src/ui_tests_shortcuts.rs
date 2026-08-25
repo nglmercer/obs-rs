@@ -54,6 +54,35 @@ fn scene_navigation_shortcuts_follow_persistent_order_and_wrap() {
 }
 
 #[test]
+fn scene_dock_navigation_selects_edges_without_changing_persistent_order() {
+    let mut state = DesktopState::new(project());
+    state
+        .dispatch(UiCommand::SelectAdjacentPreviewScene { direction: 2 })
+        .expect("last preview scene");
+    assert_eq!(state.preview_scene(), Some("source_scene"));
+
+    state
+        .dispatch(UiCommand::SelectAdjacentPreviewScene { direction: -2 })
+        .expect("first preview scene");
+    assert_eq!(state.preview_scene(), Some("preview"));
+    assert_eq!(
+        state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .expect("active profile")
+            .scene_order()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec!["preview", "program", "source_scene"]
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::SelectAdjacentPreviewScene { direction: 3 }),
+        Err(UiError::InvalidSceneNavigation(3))
+    );
+}
+
+#[test]
 fn shortcut_table_replaces_atomically_and_routes_frontend_actions() {
     let mut state = DesktopState::new(project());
     let old = Shortcut::new(0, "F8").expect("old shortcut");

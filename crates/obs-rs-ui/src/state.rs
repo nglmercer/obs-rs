@@ -293,7 +293,7 @@ impl DesktopState {
     }
 
     fn select_adjacent_preview_scene(&mut self, direction: i8) -> Result<&'static str, UiError> {
-        if !matches!(direction, -1 | 1) {
+        if !matches!(direction, -2 | -1 | 1 | 2) {
             return Err(UiError::InvalidSceneNavigation(direction));
         }
         let scene_order = self
@@ -318,16 +318,24 @@ impl DesktopState {
             .and_then(|scene| scene_order.iter().position(|candidate| candidate == scene))
             .unwrap_or(0);
         let last = scene_order.len().saturating_sub(1);
-        let next = if direction == 1 {
-            if current == last {
-                0
-            } else {
-                current + 1
+        let next = match direction {
+            -2 => 0,
+            -1 => {
+                if current == 0 {
+                    last
+                } else {
+                    current - 1
+                }
             }
-        } else if current == 0 {
-            last
-        } else {
-            current - 1
+            1 => {
+                if current == last {
+                    0
+                } else {
+                    current + 1
+                }
+            }
+            2 => last,
+            _ => unreachable!("scene navigation direction was validated above"),
         };
         let scene = scene_order[next].clone();
         self.preview_scene = Some(scene.clone());

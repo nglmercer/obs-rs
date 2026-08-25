@@ -61,6 +61,7 @@ export component DockWorkspace inherits Rectangle {
     callback close-panel(int);
     callback open-modal(int);
     callback select-preview(string);
+    callback navigate-preview-scene(int);
     callback select-program(string);
     callback duplicate-scene(string);
     callback move-scene(string, int);
@@ -280,6 +281,7 @@ export component DockWorkspace inherits Rectangle {
             close-panel(kind) => { root.close-panel(kind); }
             open-modal(modal) => { root.open-modal(modal); }
             select-preview(id) => { root.select-preview(id); }
+            navigate-preview-scene(direction) => { root.navigate-preview-scene(direction); }
             select-program(id) => { root.select-program(id); }
             duplicate-scene(id) => { root.duplicate-scene(id); }
             move-scene(id, delta) => { root.move-scene(id, delta); }

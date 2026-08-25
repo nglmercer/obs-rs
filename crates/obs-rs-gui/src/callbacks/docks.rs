@@ -720,6 +720,11 @@ fn forward_to_studio(
     }
 
     forward!(on_select_preview, invoke_select_preview, id);
+    forward!(
+        on_navigate_preview_scene,
+        invoke_navigate_preview_scene,
+        direction
+    );
     forward!(on_select_program, invoke_select_program, id);
     forward!(on_duplicate_scene, invoke_duplicate_scene, id);
     forward!(on_move_scene, invoke_move_scene, id, delta);

@@ -50,6 +50,7 @@ export component DockSlot inherits Rectangle {
     callback close-panel(int);
     callback open-modal(int);
     callback select-preview(string);
+    callback navigate-preview-scene(int);
     callback select-program(string);
     callback duplicate-scene(string);
     callback move-scene(string, int);
@@ -119,6 +120,7 @@ export component DockSlot inherits Rectangle {
         dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
         open-modal(modal) => { root.open-modal(modal); }
         select-preview(id) => { root.select-preview(id); }
+        navigate-preview-scene(direction) => { root.navigate-preview-scene(direction); }
         select-program(id) => { root.select-program(id); }
         duplicate-scene(id) => { root.duplicate-scene(id); }
         move-scene(id, delta) => { root.move-scene(id, delta); }

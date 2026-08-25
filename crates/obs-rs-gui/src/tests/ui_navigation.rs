@@ -13,6 +13,7 @@ pub(super) fn exercise_group_source_callbacks(
 ) {
     let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
     crate::callbacks::install_callbacks(ui, state, surface, &output);
+    exercise_scene_keyboard_navigation(ui, state);
 
     // A failed Save must leave the pending action armed so the user can fix
     // the path and try again instead of silently discarding the project.
@@ -728,6 +729,35 @@ pub(super) fn exercise_menu_actions(
         ui.get_collection_rows().row_count() >= 1,
         "the open document is always listed as a collection"
     );
+}
+
+/// Drives the Scenes dock through its real focus and keyboard boundary. The
+/// callback remains the same one used by the floating dock, so this verifies
+/// that the list does not acquire a second scene-order owner in Slint.
+fn exercise_scene_keyboard_navigation(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    ui.invoke_select_preview("preview".into());
+    let row = ElementHandle::find_by_accessible_label(ui, "preview")
+        .find(|row| row.size().height > 30.0)
+        .expect("preview scene row");
+    let target = row
+        .query_descendants()
+        .match_inherits("TouchArea")
+        .find_first()
+        .expect("preview scene row focus target");
+    target.mock_single_click(PointerEventButton::Left);
+
+    for (key, expected) in [
+        (Key::DownArrow, "program"),
+        (Key::End, "program"),
+        (Key::UpArrow, "preview"),
+        (Key::Home, "intermission"),
+    ] {
+        ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: key.into() });
+        ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: key.into() });
+        assert_eq!(state.borrow().preview_scene(), Some(expected));
+    }
 }
 
 #[allow(

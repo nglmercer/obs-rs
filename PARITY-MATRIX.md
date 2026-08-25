@@ -61,6 +61,17 @@ machine; the GUI only bridges stable action codes 16 and 17. The defaults are
 canonicalization checks. Global OS registration and scene-specific bindings
 remain open.
 
+## Latest verified package: keyboard Scene-dock navigation
+
+On 2026-08-25, the Scenes dock gained a focused keyboard boundary shared by
+docked and floating panels. Up/Down select the previous/next scene with the
+same circular profile-order policy as the local navigation hotkeys, while Home
+and End select the first/last persisted scene. Rust remains the only owner of
+the Preview selection and source-selection refresh; Slint only forwards the
+bounded direction. The toolkit-neutral edge/navigation tests and the real
+testing-backend GUI fixture pass. Native screen-reader and platform focus
+behavior remain open.
+
 ## Latest verified package: scene-item reparenting
 
 On 2026-08-24, `SCENE-002`/`SOURCE-001` gained an atomic
@@ -551,6 +562,10 @@ Reconciliation note: scene-dock rows now expose an explicit button role and
 stable scene-ID accessibility label, matching the existing source-row identity
 contract. The testing backend discovers the Preview row by that label; native
 screen-reader behavior and the remaining focus audit are still open.
+
+Reconciliation note: SCENE-001 now also has real keyboard navigation evidence
+for the persisted scene order in the docked and floating-panel callback chain.
+The broader collection lifecycle and native accessibility audit remain partial.
 
 ## Baseline conclusion
 

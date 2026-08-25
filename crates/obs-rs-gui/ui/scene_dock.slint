@@ -19,6 +19,8 @@ export component SceneDock inherits Rectangle {
     callback close-panel(int);
     callback open-modal(int);
     callback select-preview(string);
+    // direction: -2 = first, -1 = previous, 1 = next, 2 = last.
+    callback navigate-preview-scene(int);
     callback select-program(string);
     callback duplicate-scene(string);
     callback move-scene(string, int);
@@ -47,54 +49,87 @@ export component SceneDock inherits Rectangle {
             VerticalBox {
                 padding: 8px;
                 spacing: 6px;
-                ScrollView {
+                scene-focus := FocusScope {
                     vertical-stretch: 1;
-                    // Rows stack from the top of the dock the way a
-                    // list widget does, instead of centring in the view.
-                    VerticalLayout {
-                        alignment: start;
-                        spacing: 1px;
-                    for scene in scene-rows : scene-menu := SceneContextMenuArea {
-                        height: 38px;
-                        scene-id: scene.id;
-                        can-remove: scene-rows.length > 1;
-                        select-scene(id) => { root.select-preview(id); }
-                        add-scene() => { root.open-modal(2); }
-                        duplicate-scene(id) => { root.select-preview(id); root.duplicate-scene(id); }
-                        open-scene-projector(id) => { root.open-scene-projector(id); }
-                        rename-scene(id) => { root.select-preview(id); root.open-modal(5); }
-                        move-scene(id, delta) => { root.select-preview(id); root.move-scene(id, delta); }
-                        remove-scene(id) => { root.select-preview(id); root.remove-scene(id); }
-                        background: scene.role != "" ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
-                        border-width: 1px;
-                        border-color: Palette.tokens.border;
-                        HorizontalBox {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            spacing: 5px;
-                            VerticalBox {
-                                spacing: 1px;
-                                horizontal-stretch: 1;
-                                Text {
-                                    text: scene.name;
-                                    color: Palette.tokens.text;
-                                    font-size: 12px;
-                                    overflow: elide;
-                                }
-                            }
+                    focus-on-click: true;
+                    focus-on-tab-navigation: true;
+                    key-pressed(event) => {
+                        if !event.modifiers.control
+                            && !event.modifiers.alt
+                            && (event.text == Key.UpArrow
+                                || event.text == Key.DownArrow
+                                || event.text == Key.Home
+                                || event.text == Key.End) {
+                            let direction = event.text == Key.UpArrow
+                                ? -1
+                                : (event.text == Key.DownArrow
+                                    ? 1
+                                    : (event.text == Key.Home ? -2 : 2));
+                            root.navigate-preview-scene(direction);
+                            return accept;
                         }
-                        TouchArea {
-                            clicked => select-preview(scene.id);
-                            double-clicked => select-program(scene.id);
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.down
-                                    && event.button == PointerEventButton.right {
-                                    select-preview(scene.id);
-                                    scene-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
-                                }
-                            }
-                        }
+                        reject
                     }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+                        // Rows stack from the top of the dock the way a
+                        // list widget does, instead of centring in the view.
+                        VerticalLayout {
+                            alignment: start;
+                            spacing: 1px;
+                        for scene in scene-rows : scene-menu := SceneContextMenuArea {
+                            height: 38px;
+                            scene-id: scene.id;
+                            can-remove: scene-rows.length > 1;
+                            select-scene(id) => {
+                                scene-focus.focus();
+                                root.select-preview(id);
+                            }
+                            add-scene() => { root.open-modal(2); }
+                            duplicate-scene(id) => { root.select-preview(id); root.duplicate-scene(id); }
+                            open-scene-projector(id) => { root.open-scene-projector(id); }
+                            rename-scene(id) => { root.select-preview(id); root.open-modal(5); }
+                            move-scene(id, delta) => { root.select-preview(id); root.move-scene(id, delta); }
+                            remove-scene(id) => { root.select-preview(id); root.remove-scene(id); }
+                            background: scene.role != "" ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
+                            border-width: 1px;
+                            border-color: Palette.tokens.border;
+                            HorizontalBox {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 5px;
+                                VerticalBox {
+                                    spacing: 1px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: scene.name;
+                                        color: Palette.tokens.text;
+                                        font-size: 12px;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    scene-focus.focus();
+                                    select-preview(scene.id);
+                                }
+                                double-clicked => {
+                                    scene-focus.focus();
+                                    select-program(scene.id);
+                                }
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.down
+                                        && event.button == PointerEventButton.right {
+                                        scene-focus.focus();
+                                        select-preview(scene.id);
+                                        scene-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
+                                    }
+                                }
+                            }
+                        }
+                        }
                     }
                 }
                 HorizontalBox {
