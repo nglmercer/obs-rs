@@ -6,8 +6,6 @@ use obs_rs_ui::DesktopState;
 
 use crate::callbacks::canvas::{canvas_item_for_target, canvas_target_is_locked_in_profile};
 
-use super::item_for_target;
-
 /// A stable reference to one scene item and the source definition it shows.
 ///
 /// Anything that outlives the click that started it — a dialog the user leaves
@@ -65,10 +63,8 @@ pub(crate) fn scene_item_target(state: &DesktopState, item: &str) -> Option<Scen
 pub(crate) fn source_target(state: &DesktopState, item: &str) -> Option<SourceTarget> {
     let project = state.project_session().project();
     let scene = state.preview_scene()?.to_owned();
-    let source = project
-        .active_profile_spec()?
-        .scene(scene.as_str())
-        .and_then(|scene| item_for_target(scene, item))?;
+    let profile = project.active_profile_spec()?;
+    let source = canvas_item_for_target(profile, scene.as_str(), item)?;
     let source = source.is_source().then(|| source.source_id().to_string())?;
     Some(SourceTarget {
         profile: project.active_profile().to_string(),
@@ -85,13 +81,11 @@ pub(crate) fn selected_target(state: &DesktopState) -> Option<SourceTarget> {
 
 /// Returns the lock state for a target that may be a nested group path.
 pub(crate) fn source_target_is_locked(state: &DesktopState, target: &SourceTarget) -> bool {
-    state
-        .project_session()
-        .project()
-        .profile(target.profile.as_str())
-        .and_then(|profile| profile.scene(target.scene.as_str()))
-        .and_then(|scene| item_for_target(scene, target.item.as_str()))
-        .is_some_and(obs_rs_project::SceneItemSpec::locked)
+    let project = state.project_session().project();
+    let Some(profile) = project.profile(target.profile.as_str()) else {
+        return true;
+    };
+    canvas_target_is_locked_in_profile(profile, target.scene.as_str(), target.item.as_str())
 }
 
 /// Returns a target's settings document from the live project.

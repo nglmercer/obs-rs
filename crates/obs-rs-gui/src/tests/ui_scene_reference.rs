@@ -78,6 +78,8 @@ pub(super) fn exercise_scene_reference_transform_dialog(
     assert_eq!(parent_after, parent_transform);
     drop(state_ref);
 
+    exercise_scene_reference_source_dialogs(ui, state, surface);
+
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemLocked {
@@ -104,4 +106,54 @@ pub(super) fn exercise_scene_reference_transform_dialog(
             .translate_x(),
         37
     );
+}
+
+fn exercise_scene_reference_source_dialogs(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let properties = crate::install_source_properties_window(ui, state, surface)
+        .expect("scene-reference properties window should instantiate");
+    ui.invoke_open_source_properties_for("transform-child-ref/background".into());
+    let properties_window =
+        crate::callbacks::source_properties::SourcePropertiesController::window(&properties);
+    assert_eq!(properties_window.get_source_name(), "Background");
+    assert_eq!(properties_window.get_source_kind(), "color_source");
+    properties_window.invoke_edit_property("width".into(), "900".into());
+    properties_window.invoke_accept_properties();
+    assert_eq!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.source("background"))
+            .and_then(|source| source.settings().get("width")),
+        Some("900"),
+        "nested source properties must edit the shared source definition"
+    );
+
+    let filters = crate::install_source_filters_window(ui, state, surface)
+        .expect("scene-reference filters window should instantiate");
+    ui.invoke_open_source_filters_for("transform-child-ref/background".into());
+    let filters_window = crate::callbacks::source_filters::source_filters_window(&filters);
+    assert_eq!(filters_window.get_source_name(), "Background");
+    filters_window.invoke_add_filter("compressor".into());
+    assert!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.source("background"))
+            .is_some_and(|source| {
+                source
+                    .filters()
+                    .iter()
+                    .any(|filter| filter.kind().as_str() == "compressor")
+            }),
+        "nested source filters must edit the shared source definition"
+    );
+    filters_window.invoke_close_window();
 }

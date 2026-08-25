@@ -354,12 +354,14 @@ impl ProjectorController {
         let profile = state.project_session().project().active_profile_spec();
         match feed {
             ProjectorFeed::Source => self.source_target.borrow().as_ref().is_some_and(|target| {
-                profile
-                    .and_then(|profile| profile.scene(target.scene.as_str()))
-                    .and_then(|scene| {
-                        crate::callbacks::source::item_for_target(scene, target.item.as_str())
-                    })
+                profile.is_some_and(|profile| {
+                    crate::callbacks::canvas::canvas_item_for_target(
+                        profile,
+                        target.scene.as_str(),
+                        target.item.as_str(),
+                    )
                     .is_some_and(obs_rs_project::SceneItemSpec::is_source)
+                })
             }),
             ProjectorFeed::Scene => self.scene_target.borrow().as_ref().is_some_and(|target| {
                 profile
@@ -891,5 +893,52 @@ fn close_projector(projectors: &Rc<ProjectorController>, feed: ProjectorFeed) {
             projectors.scene_target.borrow_mut().take();
         }
         ProjectorFeed::Program | ProjectorFeed::Preview | ProjectorFeed::Multiview => {}
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    use obs_rs_project::{ProjectCommand, SceneItemSpec, SceneSpec};
+    use obs_rs_ui::UiCommand;
+
+    #[test]
+    fn source_projector_accepts_a_scene_reference_leaf() {
+        let (state, _) = crate::tests::canvas_fixture();
+        let mut child = SceneSpec::new("projector-child", "Projector child").expect("child scene");
+        child
+            .add_item(SceneItemSpec::for_source("background").expect("child source"))
+            .expect("child source attach");
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddScene {
+                profile: "live".to_owned(),
+                scene: child,
+            }))
+            .expect("add projector child scene");
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+                profile: "live".to_owned(),
+                scene: "preview".to_owned(),
+                item: SceneItemSpec::for_scene("projector-child-ref", "projector-child")
+                    .expect("scene reference"),
+            }))
+            .expect("add projector scene reference");
+
+        let controller = ProjectorController::new();
+        *controller.source_target.borrow_mut() = Some(SourceProjectorTarget {
+            scene: "preview".to_owned(),
+            item: "projector-child-ref/background".to_owned(),
+        });
+        assert!(controller.target_is_available(ProjectorFeed::Source, &state));
+
+        controller
+            .source_target
+            .borrow_mut()
+            .as_mut()
+            .expect("source projector target")
+            .item = "projector-child-ref".to_owned();
+        assert!(!controller.target_is_available(ProjectorFeed::Source, &state));
     }
 }
