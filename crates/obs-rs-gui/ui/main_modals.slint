@@ -44,6 +44,7 @@ export component MainModals inherits Rectangle {
     in-out property <string> scene-stinger-transition-point: "500";
     in-out property <bool> scene-stinger-preload: true;
     in-out property <bool> scene-stinger-hardware-decode: false;
+    in-out property <bool> scene-stinger-picker-enabled: false;
     in-out property <string> source-name-draft;
     in-out property <string> source-rename-target;
     in-out property <string> collection-name;
@@ -64,6 +65,7 @@ export component MainModals inherits Rectangle {
     callback resolve-discard(int);
     callback add-scene(string, string);
     callback rename-scene();
+    callback browse-scene-stinger();
     callback apply-source-name();
     callback duplicate-collection(string);
     callback rename-collection(string);
@@ -160,7 +162,9 @@ export component MainModals inherits Rectangle {
         stinger-transition-point <=> root.scene-stinger-transition-point;
         stinger-preload <=> root.scene-stinger-preload;
         stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
+        stinger-picker-enabled: root.scene-stinger-picker-enabled;
         rename-scene() => { root.rename-scene(); }
+        browse-scene-stinger() => { root.browse-scene-stinger(); }
         close => { root.active-modal = 0; }
         accepted => { root.active-modal = 0; }
     }

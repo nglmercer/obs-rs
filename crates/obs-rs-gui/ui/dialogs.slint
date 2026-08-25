@@ -113,7 +113,9 @@ export component RenameSceneDialog inherits ModalShell {
     in-out property <string> stinger-transition-point: "500";
     in-out property <bool> stinger-preload: true;
     in-out property <bool> stinger-hardware-decode: false;
+    in property <bool> stinger-picker-enabled: false;
     callback rename-scene();
+    callback browse-scene-stinger();
 
     title: I18n.text.scene_properties;
     subtitle: I18n.text.scene_dialog_description;
@@ -168,9 +170,18 @@ export component RenameSceneDialog inherits ModalShell {
         MutedText { text: I18n.text.transition_override_hint; }
         FieldHeading { text: I18n.text.stinger_title; }
         FieldHeading { text: I18n.text.stinger_resource_path; }
-        LineEdit {
-            text <=> root.stinger-path;
-            placeholder-text: "assets/transition.webm";
+        HorizontalBox {
+            spacing: 6px;
+            LineEdit {
+                text <=> root.stinger-path;
+                placeholder-text: "assets/transition.webm";
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: I18n.text.settings_ui.browse;
+                enabled: root.stinger-picker-enabled;
+                clicked => browse-scene-stinger();
+            }
         }
         FieldHeading { text: I18n.text.stinger_transition_point; }
         LineEdit {
@@ -186,6 +197,9 @@ export component RenameSceneDialog inherits ModalShell {
             checked <=> root.stinger-hardware-decode;
         }
         MutedText { text: I18n.text.stinger_hint; }
+        if !root.stinger-picker-enabled : MutedText {
+            text: I18n.text.stinger_picker_unavailable;
+        }
     }
 }
 

@@ -489,6 +489,7 @@ pub(super) fn catalog() -> UiText {
         stinger_preload: s("Preload resource"),
         stinger_hardware_decode: s("Prefer hardware decode"),
         stinger_hint: s("Leave the path empty to clear the Stinger. Decoding stays off the UI thread."),
+        stinger_picker_unavailable: s("No system file picker was found; type the resource path manually."),
         add_transition: s("Add transition"),
         remove_transition: s("Remove transition"),
         cut: s("Cut"),

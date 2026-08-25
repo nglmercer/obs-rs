@@ -17,8 +17,11 @@ or decoder I/O is impossible. This is intentionally only a runtime slice:
 persistent resource resolution, asynchronous decoding, track matte layout,
 fade/audio monitoring policy remain open. The scene-properties dialog now
 exposes the persisted path, transition point, preload flag, and hardware-decode
-preference through the same undoable project command; a native file picker is
-still open.
+preference through the same undoable project command. Scene Properties now has
+an asynchronous desktop file picker for the resource path on Linux
+(`zenity`/`kdialog`), macOS (`osascript`), and Windows (PowerShell) when the
+platform capability is present; the chooser process is bounded and never runs
+on the UI thread.
 
 The persistent Stinger configuration packet now adds a bounded resource path,
 normalized transition point, preload flag, and hardware-decode preference to
@@ -43,8 +46,10 @@ resource metadata through one `SetSceneProperties` history entry. The docked
 and floating Transition panels now route an explicit `Take Stinger` callback
 through the ready clip only; invalid duration, not-ready, typed failure,
 stopped-loader, and dispatch errors are visible without callback-side I/O.
-Actual hardware-decode selection, non-GStreamer platform adapters, and the
-file-picker workflow remain open.
+Actual hardware-decode selection and non-GStreamer platform adapters remain
+open. The file-picker workflow is now available through the capability-backed
+Scene Properties button; unsupported desktops keep the bounded manual-path
+field and an explicit unavailable state.
 
 The toolkit-neutral `StingerLoadSession` now owns the transient current request
 and resolved clip around that worker. It clears the renderable clip only after
@@ -54,8 +59,9 @@ and invalidates old completions when the target format changes. It exposes the
 typed failure without moving resource metadata or decoded pixels into a second
 project state store; the GUI resource session is now connected to the native
 adapter, and the scene-properties fields are synchronized from the project.
-The file-picker remains open. Explicit Take is intentionally limited to a
-ready `preload=true` clip; on-demand loading from the button is still open.
+The file picker is now asynchronous and capability-backed, but Explicit Take
+remains intentionally limited to a ready `preload=true` clip; on-demand
+loading from the button is still open.
 
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks

@@ -127,6 +127,7 @@ export component MainWindow inherits Window {
         in-out property <string> scene-stinger-transition-point: "500";
         in-out property <bool> scene-stinger-preload: true;
         in-out property <bool> scene-stinger-hardware-decode: false;
+        in-out property <bool> scene-stinger-picker-enabled: false;
         in property <string> scene-properties-version;
         in property <string> selected-source;
         in property <bool> selected-source-visible: false;
@@ -209,6 +210,7 @@ export component MainWindow inherits Window {
         callback recover-remux-candidate(string);
         callback cut-transition();
         callback take-stinger(string);
+        callback browse-scene-stinger();
         callback fade-transition();
         callback fade-transition-duration(string);
         callback slide-transition(string);
@@ -941,6 +943,7 @@ export component MainWindow inherits Window {
         scene-stinger-transition-point <=> root.scene-stinger-transition-point;
         scene-stinger-preload <=> root.scene-stinger-preload;
         scene-stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
+        scene-stinger-picker-enabled <=> root.scene-stinger-picker-enabled;
         source-name-draft <=> root.source-name-draft;
         source-rename-target <=> root.source-rename-target;
         collection-name <=> root.collection-name;
@@ -960,6 +963,7 @@ export component MainWindow inherits Window {
         resolve-discard(action) => { root.resolve-discard(action); }
         add-scene(id, name) => { root.add-scene(id, name); }
         rename-scene() => { root.rename-scene(); }
+        browse-scene-stinger() => { root.browse-scene-stinger(); }
         apply-source-name() => { root.apply-source-name(); }
         duplicate-collection(name) => { root.duplicate-collection(name); }
         rename-collection(name) => { root.rename-collection(name); }

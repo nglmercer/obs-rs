@@ -14,6 +14,7 @@ mod source_batch;
 pub(crate) mod source_filters;
 pub(crate) mod source_properties;
 pub(crate) mod source_transform;
+mod stinger_picker;
 
 use std::{
     cell::RefCell,
@@ -73,6 +74,7 @@ pub(crate) use source_batch::remove_selected_sources_and_refresh;
 pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
 pub(crate) use source_transform::install_source_transform_window;
+pub(crate) use stinger_picker::install_stinger_file_picker;
 
 /// Keep source-row paths bounded at the UI boundary. The path contains both
 /// group IDs and the addressed child ID, so it is one segment deeper than the

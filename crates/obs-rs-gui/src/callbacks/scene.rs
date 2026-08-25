@@ -21,6 +21,7 @@ pub(crate) fn install_scene_callbacks(
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
 ) {
+    super::install_stinger_file_picker(ui);
     install_scene_selection_callbacks(ui, state, surface);
     install_source_list_callbacks(ui, state, surface);
     install_source_property_callbacks(ui, state, surface);

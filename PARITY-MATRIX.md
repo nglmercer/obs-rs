@@ -46,8 +46,9 @@ and preview/output geometry. This does not claim full OBS Stinger parity:
 schema 8 now persists a bounded resource path, transition point, preload flag,
 and hardware-decode preference through a scene-owned `StingerSpec` and typed
 project command. Scene Properties edits those fields as one undoable command.
-Worker-side decoding, track mattes, fade/audio monitoring policy, and the
-file-picker workflow remain incomplete.
+Worker-side decoding, track mattes, and fade/audio monitoring policy remain
+incomplete; the current GUI packet now supplies the bounded asynchronous
+picker described below.
 The separate resource-worker boundary is now bounded at one pending request
 and one result, supports non-blocking polling and typed request IDs, and
 honors cooperative cancellation. The optional native GStreamer adapter now
@@ -56,7 +57,10 @@ bounded preloading, returning typed unreadable/decoder/frame/timeout failures;
 the one-slot result policy discards stale request IDs without blocking submit
 or poll callers. Engine/UI application is now connected for selected-scene
 preload and scene-properties persistence; actual hardware-decode selection,
-other platform adapters, and the file-picker workflow remain incomplete.
+other platform adapters remain incomplete. Scene Properties now launches a
+capability-backed asynchronous file picker on Linux (`zenity`/`kdialog`),
+macOS (`osascript`), and Windows (PowerShell) when available; the selected
+path returns through the Slint event loop with bounded UTF-8/path-size checks.
 The toolkit-neutral `StingerLoadSession` now owns only the transient current
 request/clip, preserves state on a full queue, validates the target format,
 and invalidates old completions when the canvas format changes. The GUI now
@@ -67,8 +71,14 @@ the UI. The docked and floating Transition panels expose an explicit `Take
 Stinger` action that parses the configured duration, clones only the ready
 worker-published clip, and dispatches the existing typed `TakeStinger` command.
 Not-ready, typed decode failure, stopped-loader, invalid-duration, and state
-dispatch errors are visible in the status surface. Actual hardware-decode
-selection and file-picker actions remain incomplete.
+dispatch errors are visible in the status surface. The picker reports
+unavailable, already-open, cancelled, spawn, and selection errors without
+blocking the UI. Actual hardware-decode selection, on-demand Take, and
+non-GStreamer adapters remain incomplete.
+
+The asynchronous picker boundary is implemented in
+`crates/obs-rs-gui/src/callbacks/stinger_picker.rs`; the capability is
+disabled when no supported desktop chooser is discoverable on `PATH`.
 
 ## Latest verified package: portable Luma Wipe transition
 
