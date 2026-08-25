@@ -39,8 +39,9 @@ selection follows the item’s new path. Cycles, locked ancestors, duplicate
 destination IDs, and invalid order positions fail without mutation. Project
 tests cover root/group and group/group moves plus failure atomicity; the GUI
 fixture covers destination projection, callback execution, selection recovery,
-and cleanup. Nested crop/rotation semantics and full drag/drop reparenting remain
-open.
+and cleanup. The later Scene-reference package extends this same contract
+across owner scenes; transformed-boundary crop/rotation and full pointer
+drag/drop evidence remain open.
 
 ## Latest verified package: scene properties
 
@@ -250,9 +251,26 @@ Scene-reference leaf across scene boundaries remains intentionally outside this
 packet and continues to use the separate `MoveSceneItemToParent` contract.
 
 > SCENE-002/SOURCE-001 reconciliation: same-owner nested Scene-reference
-> reorder is now covered. The remaining nested item-management gap is
-> cross-owner reparenting, alongside crop/rotation semantics at transformed
+> reorder and cross-owner reparenting are now covered. Full pointer drag/drop
+> evidence remains open, alongside crop/rotation semantics at transformed
 > boundaries.
+
+## Latest verified package: nested scene-reference reparenting
+
+On 2026-08-24, `MoveSceneItemToParent` now resolves both the source item and
+destination container through flattened group/`Scene`-reference paths. A move
+can therefore cross from a parent scene into a referenced scene (or back),
+without reopening sources or duplicating scene state. The command validates
+crossed locks, local destination bounds, duplicate IDs, group-depth/cycle
+constraints, and scene-reference cycles before publishing a transactional
+two-scene mutation. Move-target projection includes referenced scenes and
+their nested groups; the project and GUI fixtures cover both directions,
+selection-path recovery, locked-boundary rejection, and self-descendant
+rejection.
+
+> SCENE-002/SOURCE-001 reconciliation: cross-owner nested Scene-reference
+> reparenting is now covered. Full pointer drag/drop evidence and transformed-
+> boundary crop/rotation remain open.
 
 ## Latest verified package: nested scene-reference grouping
 
@@ -266,8 +284,9 @@ resolver now validate the same paths; project, UI-state, and GUI fixtures cover
 selection, grouping, ungrouping, owner-scene mutation, and parent preservation.
 
 > SCENE-002/SOURCE-001 reconciliation: same-owner nested Scene-reference
-> grouping and ungrouping are now covered. Cross-owner reparenting and
-> transformed-boundary crop/rotation remain open.
+> grouping, ungrouping, and cross-owner reparenting are now covered. Full
+> pointer drag/drop evidence and transformed-boundary crop/rotation remain
+> open.
 
 ## Latest verified package: dock-header pointer drag
 

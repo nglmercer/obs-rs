@@ -505,6 +505,157 @@ fn nested_scene_item_grouping_and_ungrouping_route_to_the_owner_scene() {
 #[test]
 #[allow(
     clippy::too_many_lines,
+    reason = "one regression covers both directions, lock rejection, and cycle atomicity"
+)]
+fn nested_scene_item_reparenting_routes_between_owner_scenes() {
+    let mut project = project();
+    let original_transform = project
+        .profile("live")
+        .and_then(|profile| profile.scene("main"))
+        .and_then(|scene| scene.item("background"))
+        .map(SceneItemSpec::transform)
+        .expect("root transform");
+    let mut child = SceneSpec::new("child", "Child").expect("child scene");
+    let mut child_group =
+        SceneItemSpec::for_group("child-group", "Child group").expect("child destination group");
+    child_group
+        .group_mut()
+        .expect("child destination group body")
+        .add_item(SceneItemSpec::new("existing", "background").expect("existing child"))
+        .expect("existing child attach");
+    child
+        .add_item(child_group)
+        .expect("child destination group attach");
+    child
+        .add_item(SceneItemSpec::new("child-source", "background").expect("child source"))
+        .expect("child source attach");
+    project
+        .apply(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child,
+        })
+        .expect("add child scene");
+    let mut reference =
+        SceneItemSpec::for_scene("child-ref", "child").expect("child scene reference");
+    reference.set_transform(
+        FrameTransform::new(1_250, 1_100, 15, -12, true, false, 230).expect("reference transform"),
+    );
+    project
+        .apply(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: reference,
+        })
+        .expect("add child scene reference");
+
+    project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "background".to_owned(),
+            destination: vec!["child-ref".to_owned(), "child-group".to_owned()],
+            target_index: 1,
+        })
+        .expect("move root item into referenced scene group");
+    let profile = project.profile("live").expect("profile");
+    assert!(profile
+        .scene("main")
+        .and_then(|scene| scene.item("background"))
+        .is_none());
+    let child_group = profile
+        .scene("child")
+        .and_then(|scene| scene.item("child-group"))
+        .and_then(SceneItemSpec::group)
+        .expect("referenced destination group");
+    assert_eq!(
+        child_group
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["existing", "background"]
+    );
+    assert_eq!(child_group.items()[1].transform(), original_transform);
+
+    project
+        .apply(ProjectCommand::SetSceneItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "child-ref".to_owned(),
+            locked: true,
+        })
+        .expect("lock scene reference boundary");
+    let before_locked = project.clone();
+    let error = project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "child-ref/child-source".to_owned(),
+            destination: Vec::new(),
+            target_index: 0,
+        })
+        .expect_err("locked scene-reference boundary must reject reparenting");
+    assert_eq!(
+        error,
+        ProjectError::LockedSceneItem(Identifier::new("child-ref").expect("reference id"))
+    );
+    assert_eq!(project, before_locked);
+    project
+        .apply(ProjectCommand::SetSceneItemLocked {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "child-ref".to_owned(),
+            locked: false,
+        })
+        .expect("unlock scene reference boundary");
+
+    project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "child-ref/child-source".to_owned(),
+            destination: Vec::new(),
+            target_index: 0,
+        })
+        .expect("move referenced child to the parent scene");
+    let profile = project.profile("live").expect("profile");
+    assert_eq!(
+        profile
+            .scene("main")
+            .expect("main scene")
+            .items()
+            .iter()
+            .map(SceneItemSpec::id)
+            .map(Identifier::as_str)
+            .collect::<Vec<_>>(),
+        vec!["child-source", "child-ref"]
+    );
+    assert!(profile
+        .scene("child")
+        .is_some_and(|scene| scene.item("child-source").is_none()));
+    assert!(profile
+        .scene("main")
+        .and_then(|scene| scene.item("child-ref"))
+        .is_some());
+
+    let before_cycle = project.clone();
+    let error = project
+        .apply(ProjectCommand::MoveSceneItemToParent {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "child-ref/child-group".to_owned(),
+            destination: vec!["child-ref".to_owned(), "child-group".to_owned()],
+            target_index: 0,
+        })
+        .expect_err("a group cannot be reparented below itself");
+    assert_eq!(error, ProjectError::InvalidGroupPath);
+    assert_eq!(project, before_cycle);
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
     reason = "this regression exercises projection, owner routing, and atomic failures together"
 )]
 fn canvas_batch_transform_routes_scene_reference_leaves_to_the_owner_scene() {

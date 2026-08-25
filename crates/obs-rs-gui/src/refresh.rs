@@ -54,24 +54,36 @@ struct GroupDestination {
 }
 
 fn collect_group_destinations(
+    profile: &Profile,
     items: &[SceneItemSpec],
     parent_path: &[String],
     ancestors_unlocked: bool,
     destinations: &mut Vec<GroupDestination>,
 ) {
     for item in items {
-        let Some(group) = item.group() else {
-            continue;
-        };
         let mut path = parent_path.to_vec();
         path.push(item.id().to_string());
         let enabled = ancestors_unlocked && !item.locked();
-        destinations.push(GroupDestination {
-            path: path.clone(),
-            name: format!("{}{}", "  ".repeat(path.len()), group.name()),
-            enabled,
-        });
-        collect_group_destinations(group.items(), &path, enabled, destinations);
+        if let Some(group) = item.group() {
+            destinations.push(GroupDestination {
+                path: path.clone(),
+                name: format!("{}{}", "  ".repeat(path.len()), group.name()),
+                enabled,
+            });
+            collect_group_destinations(profile, group.items(), &path, enabled, destinations);
+        } else if let Some(child_scene) = item.scene_id() {
+            let Some(scene) = profile.scene(child_scene) else {
+                continue;
+            };
+            destinations.push(GroupDestination {
+                path: path.clone(),
+                name: format!("{}{}", "  ".repeat(path.len()), scene.name()),
+                enabled,
+            });
+            if path.len() < MAX_SOURCE_ROW_DEPTH {
+                collect_group_destinations(profile, scene.items(), &path, enabled, destinations);
+            }
+        }
     }
 }
 
@@ -109,7 +121,7 @@ pub(crate) fn append_source_rows(
     group_path: &mut Vec<String>,
 ) {
     let mut destinations = Vec::new();
-    collect_group_destinations(items, &[], true, &mut destinations);
+    collect_group_destinations(profile, items, &[], true, &mut destinations);
     let root_name = crate::i18n::with_catalog(state.locale(), |text| text.scene_root.to_string());
     append_source_rows_inner(
         rows,

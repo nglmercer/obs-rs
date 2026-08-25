@@ -284,3 +284,80 @@ pub(crate) fn move_scene_item_target(
         )
     }
 }
+
+pub(crate) fn move_scene_item_to_parent_target(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    item: &str,
+    destination: &[String],
+    target_index: usize,
+) -> Result<(), ProjectError> {
+    let (source_parent_path, item_id) =
+        super::parse_scene_item_target(item).map_err(|_| ProjectError::InvalidGroupPath)?;
+    let destination_path = if destination.is_empty() {
+        Vec::new()
+    } else {
+        super::parse_group_path(destination)?
+    };
+    let profile_id = identifier(profile, "profile id")?;
+    let (source_scene, source_groups, destination_scene, destination_groups) = {
+        let profile_spec = project
+            .profile(&profile_id)
+            .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+        let (source_scene, source_groups) =
+            super::resolve_flattened_target(profile_spec, scene, &source_parent_path, &item_id)?;
+        let (destination_scene, destination_groups) =
+            super::resolve_flattened_parent(profile_spec, scene, &destination_path)?;
+
+        let mut source_target = source_parent_path.clone();
+        source_target.push(item_id.clone());
+        if destination_path.starts_with(&source_target) {
+            return Err(ProjectError::InvalidGroupPath);
+        }
+        super::flattened_path_is_unlocked(profile_spec, scene, &source_parent_path)?;
+        super::flattened_path_is_unlocked(profile_spec, scene, &destination_path)?;
+        (
+            source_scene,
+            source_groups,
+            destination_scene,
+            destination_groups,
+        )
+    };
+
+    let local_source = {
+        let mut path = source_groups
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>();
+        path.push(item_id.as_str().to_owned());
+        path.join("/")
+    };
+    let local_destination = destination_groups
+        .iter()
+        .map(|id| id.as_str().to_owned())
+        .collect::<Vec<_>>();
+    if source_scene == destination_scene {
+        super::move_scene_item_to_parent(
+            project,
+            profile,
+            source_scene.as_str(),
+            &local_source,
+            &local_destination,
+            target_index,
+        )
+    } else {
+        super::move_scene_item_between_parents(
+            project,
+            &super::SceneItemMoveRequest {
+                profile,
+                source_scene: &source_scene,
+                source_parent_path: &source_groups,
+                item_id: &item_id,
+                destination_scene: &destination_scene,
+                destination_path: &destination_groups,
+                target_index,
+            },
+        )
+    }
+}

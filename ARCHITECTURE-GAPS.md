@@ -19,8 +19,11 @@ The scene-item identity packet now also covers atomic root/group reparenting:
 `MoveSceneItemToParent` validates source and destination paths before moving the
 owned item, and the Sources dock projects the same destinations for nested rows.
 Stable paths are recomputed after the move so selection does not point at the
-old parent. Direct group drag/drop, nested crop/rotation semantics, and the
-broader save/recovery lifecycle remain open.
+old parent. Its flattened-target adapter now resolves both source and
+destination owners across Scene-reference boundaries and commits cross-scene
+moves transactionally, including lock, collision, depth, and cycle validation.
+Direct pointer drag/drop, nested crop/rotation semantics, and the broader
+save/recovery lifecycle remain open.
 
 The Scene properties packet now keeps scene name and optional transition
 override in the same Rust-owned `SetSceneProperties` command. The dialog
@@ -36,8 +39,14 @@ targets to one owning scene and group path before invoking the existing atomic
 group/ungroup mutations. The project command, toolkit-neutral selection
 validation, Sources-dock availability projection, and GUI callback all retain
 the parent reference while changing the owner scene. Mixed-owner selections
-remain rejected; cross-owner reparenting and transformed-boundary crop/rotation
-remain separate gaps.
+remain rejected; transformed-boundary crop/rotation remains a separate gap.
+
+The nested Scene-reference reparenting packet now resolves both source and
+destination paths through the same owner resolver. A bounded two-scene
+transaction moves the existing item without cloning it, while the UI projects
+referenced scenes and their group destinations and restores the flattened
+selection path. Full pointer drag/drop evidence and transformed-boundary
+crop/rotation remain separate gaps.
 
 The keyboard source-deletion packet keeps the Delete key as a presentation
 boundary only: the focused Sources dock and the editable canvas `FocusScope`
@@ -203,8 +212,9 @@ scene route and preserves the parent reference. Nested group rename remains
 inside the supported command path through the same owner-scene resolver.
 Duplication now follows the same route and can clone the profile source;
 same-owner reorder now follows the same route. Grouping and ungrouping now use
-the same-owner resolver as well, while cross-owner reparenting and
-transformed-boundary crop/rotation remain open.
+the same-owner resolver as well, and reparenting resolves both source and
+destination owners. Full pointer drag/drop and transformed-boundary
+crop/rotation remain open.
 
 ```text
 truthful baseline / lint and test gate

@@ -251,8 +251,10 @@ pub enum ProjectCommand {
     ///
     /// `item` is a root ID or an outer-to-inner path such as
     /// `overlay-group/source`. `destination` is the enclosing group path;
-    /// an empty path means the scene root. The item keeps its stable ID,
-    /// transform, visibility, and lock state.
+    /// an empty path means the scene root. Both paths may cross a
+    /// Scene-reference boundary, in which case the item is moved between the
+    /// owning scenes while keeping its stable ID, transform, visibility, and
+    /// lock state.
     MoveSceneItemToParent {
         profile: String,
         scene: String,

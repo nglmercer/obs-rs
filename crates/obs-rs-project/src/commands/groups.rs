@@ -15,11 +15,16 @@ use super::super::{
 use super::types::SceneItemDuplicateMode;
 use super::{copy_identity, duplicate_item_sources, validate_scene_item};
 
+mod reparent;
 mod scene_targets;
+pub(super) use reparent::{
+    flattened_path_is_unlocked, move_scene_item_between_parents, resolve_flattened_parent,
+    SceneItemMoveRequest,
+};
 pub(super) use scene_targets::{
     duplicate_scene_item_target, group_scene_items_target, move_scene_item_target,
-    remove_scene_item_target, set_scene_item_group_name_target, set_scene_item_locked_target,
-    set_scene_item_visibility_target, ungroup_scene_item_target,
+    move_scene_item_to_parent_target, remove_scene_item_target, set_scene_item_group_name_target,
+    set_scene_item_locked_target, set_scene_item_visibility_target, ungroup_scene_item_target,
 };
 
 fn parse_group_path(path: &[String]) -> Result<Vec<Identifier>, ProjectError> {
@@ -448,42 +453,21 @@ pub(super) fn set_scene_item_transform_target(
     }
 }
 
-/// Resolves the scene and group owner of a flattened leaf path. A scene
-/// reference changes the current scene and clears the local group path; a
-/// group keeps walking inside the current scene.
-fn resolve_flattened_target(
+pub(super) fn resolve_flattened_target(
     profile: &Profile,
     scene: &str,
     groups: &[Identifier],
     item: &Identifier,
 ) -> Result<(Identifier, Vec<Identifier>), ProjectError> {
-    let mut scene_id = identifier(scene, "scene id")?;
-    let mut owner_groups = Vec::new();
-    let mut items = profile
-        .scene(&scene_id)
-        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?
-        .items();
-    for group_id in groups {
-        let parent = items
-            .iter()
-            .find(|candidate| candidate.id() == group_id)
-            .ok_or(ProjectError::InvalidGroupPath)?;
-        if let Some(group) = parent.group() {
-            owner_groups.push(group_id.clone());
-            items = group.items();
-        } else if let Some(child_scene) = parent.scene_id() {
-            scene_id = child_scene.clone();
-            owner_groups.clear();
-            items = profile
-                .scene(&scene_id)
-                .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?
-                .items();
-        } else {
-            return Err(ProjectError::InvalidGroupPath);
-        }
-    }
-    if items.iter().any(|candidate| candidate.id() == item) {
-        Ok((scene_id, owner_groups))
+    let (owner_scene, owner_groups) = resolve_flattened_parent(profile, scene, groups)?;
+    let scene = profile
+        .scene(&owner_scene)
+        .ok_or_else(|| ProjectError::UnknownScene(owner_scene.clone()))?;
+    if parent_items(scene, &owner_groups)?
+        .iter()
+        .any(|candidate| candidate.id() == item)
+    {
+        Ok((owner_scene, owner_groups))
     } else {
         Err(ProjectError::UnknownSceneItem(item.clone()))
     }

@@ -274,6 +274,16 @@ fn exercise_scene_reference_grouping(
                 .expect("grouping scene reference"),
         }))
         .expect("add grouping scene reference");
+    refresh_ui(ui, state, surface);
+    let root_move_targets = ui
+        .get_source_rows()
+        .iter()
+        .find(|row| row.target == "background")
+        .expect("root source row for Scene-reference destination");
+    assert!(root_move_targets
+        .move_targets
+        .iter()
+        .any(|target| target.id == "group-child-ref" && target.enabled));
     state
         .borrow_mut()
         .dispatch(UiCommand::SelectSources {
@@ -323,22 +333,65 @@ fn exercise_scene_reference_grouping(
         ],
         "ungroup selects the exposed Scene-reference children"
     );
-    let state_ref = state.borrow();
-    let child = state_ref
+    {
+        let state_ref = state.borrow();
+        let child = state_ref
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("group-child"))
+            .expect("ungrouping owner scene");
+        assert!(child.item("group").is_none());
+        assert_eq!(child.items().len(), 2);
+        assert!(state_ref
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .and_then(|scene| scene.item("group-child-ref"))
+            .is_some());
+    }
+    exercise_scene_reference_cross_owner_reparenting(ui, state);
+}
+
+fn exercise_scene_reference_cross_owner_reparenting(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+) {
+    ui.invoke_move_source_to_group("group-child-ref/group-first".into(), "".into());
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("group-first"),
+        "cross-owner reparenting selects the new root path"
+    );
+    assert!(state
+        .borrow()
         .project_session()
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.scene("group-child"))
-        .expect("ungrouping owner scene");
-    assert!(child.item("group").is_none());
-    assert_eq!(child.items().len(), 2);
-    assert!(state_ref
+        .is_some_and(|scene| scene.item("group-first").is_none()));
+    assert!(state
+        .borrow()
         .project_session()
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.scene("preview"))
-        .and_then(|scene| scene.item("group-child-ref"))
-        .is_some());
+        .is_some_and(|scene| scene.item("group-first").is_some()));
+
+    ui.invoke_move_source_to_group("group-first".into(), "group-child-ref".into());
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("group-child-ref/group-first"),
+        "cross-owner reparenting restores the flattened child path"
+    );
+    assert!(state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("group-child"))
+        .is_some_and(|scene| scene.item("group-first").is_some()));
 }
 
 fn exercise_scene_reference_transform_menu(
