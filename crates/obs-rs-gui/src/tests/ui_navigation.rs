@@ -1,4 +1,5 @@
 use super::ui_layout::read_order;
+use super::ui_scene_reference;
 use super::*;
 
 #[allow(
@@ -542,6 +543,8 @@ pub(super) fn exercise_group_source_callbacks(
         .and_then(|scene| scene.item("ungroup-target"))
         .and_then(obs_rs_project::SceneItemSpec::group)
         .is_some_and(|group| group.items().len() == 1 && group.items()[0].is_group()));
+
+    ui_scene_reference::exercise_scene_reference_transform_dialog(ui, state, surface);
 }
 
 /// Opens the File menu through its actual pointer target and proves its popup

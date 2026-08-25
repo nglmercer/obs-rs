@@ -24,6 +24,9 @@ mod canvas_transform;
 #[cfg(test)]
 #[path = "canvas_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "canvas_transform_tests.rs"]
+mod transform_tests;
 
 #[cfg(test)]
 use canvas_controller::{first_selectable_hit, map_rect_into_group};
@@ -66,10 +69,10 @@ pub(crate) struct CanvasItemProjection {
     pub(crate) parent_transform: FrameTransform,
 }
 
-/// Returns visible root items plus nested source/group leaves that have a
-/// path-addressable project item. Scene-reference leaves are deliberately
-/// omitted until the editor can route an edit into the referenced scene without
-/// changing the parent scene.
+/// Returns visible root items plus nested source/group/Scene-reference leaves
+/// that have a path-addressable project item. Scene-reference leaves retain
+/// their flattened runtime path so editors can route changes to the owning
+/// scene without changing the parent scene item.
 pub(crate) fn canvas_item_projections(
     state: &DesktopState,
     scene_id: &str,
@@ -204,10 +207,10 @@ pub(crate) fn group_parent_transform(
 }
 
 /// Converts an effective canvas transform back to the local transform of a
-/// path-addressed group child. Root items need no conversion. A transformed
-/// group intentionally accepts only the axis-aligned local subset; crop or
-/// rotation at that boundary still returns `None` instead of being silently
-/// approximated.
+/// path-addressed group or Scene-reference child. Root items need no
+/// conversion. A transformed boundary intentionally accepts only the
+/// axis-aligned local subset; crop or rotation at that boundary still returns
+/// `None` instead of being silently approximated.
 pub(crate) fn local_transform_for_canvas_item(
     profile: &Profile,
     scene: &SceneSpec,

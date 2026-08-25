@@ -91,8 +91,9 @@ drafts use effective canvas coordinates; commit converts those drafts back to
 local group coordinates and sends one atomic root/nested transform batch.
 Locked ancestors are included in the edit guard. Scene-reference leaves now
 resolve through the owning referenced scene for axis-aligned local commits;
-transformed-group/scene crop/rotation still fails explicitly until a full
-intermediate-scene transform model exists.
+the standalone Transform dialog uses the same flattened target resolver and
+rejects inherited locks. Transformed-group/scene crop/rotation still fails
+explicitly until a full intermediate-scene transform model exists.
 
 The dock-header pointer packet now drives the visible `DockHeader` through the
 testing backend rather than invoking the callback directly. It verifies drag

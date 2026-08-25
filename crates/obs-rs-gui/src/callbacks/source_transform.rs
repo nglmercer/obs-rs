@@ -7,8 +7,9 @@ use obs_rs_ui::DesktopState;
 use slint::ComponentHandle;
 
 use crate::{
-    apply_source_transform_to, item_for_target, scene_item_target, source_transform_document, I18n,
-    MainWindow, Palette, PreviewSurface, SceneItemTarget, SourceTransformWindow,
+    apply_source_transform_to, callbacks::canvas::canvas_item_for_target, scene_item_target,
+    source_transform_document, I18n, MainWindow, Palette, PreviewSurface, SceneItemTarget,
+    SourceTransformWindow,
 };
 
 /// Owns the scene-item transform dialog.
@@ -155,8 +156,7 @@ fn populate_from_project(
         .project()
         .profile(target.profile.as_str());
     let item = profile
-        .and_then(|profile| profile.scene(target.scene.as_str()))
-        .and_then(|scene| item_for_target(scene, target.item.as_str()));
+        .and_then(|profile| canvas_item_for_target(profile, target.scene.as_str(), &target.item));
     let source_name = item.and_then(|item| {
         profile.and_then(|profile| {
             if item.is_scene_reference() {
