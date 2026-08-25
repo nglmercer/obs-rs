@@ -25,6 +25,7 @@ pub(super) fn exercise_canvas_pointer_fixture(
     exercise_drag_selection(ui, state);
     exercise_overlapping_selection(ui, state, surface);
     exercise_pan_and_zoom(ui);
+    exercise_nested_canvas_pointer(ui, state, surface);
     restore_canvas_pointer_scene(ui, state, surface);
 }
 
@@ -500,6 +501,206 @@ fn exercise_pan_and_zoom(ui: &MainWindow) {
         (initial_zoom, zoom_pan.0, zoom_pan.1),
         "wheel zoom state is restored for the remaining fixture"
     );
+}
+
+fn exercise_nested_canvas_pointer(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    setup_nested_canvas_pointer_scene(state);
+    refresh_ui(ui, state, surface);
+    exercise_nested_group_handle(ui, state);
+    exercise_nested_scene_reference_handle(ui, state);
+    cleanup_nested_canvas_pointer_scene(state);
+    refresh_ui(ui, state, surface);
+}
+
+fn setup_nested_canvas_pointer_scene(state: &Rc<RefCell<DesktopState>>) {
+    let mut group = SceneItemSpec::for_group("canvas-nested-group", "Canvas nested group")
+        .expect("nested canvas group");
+    let mut group_child =
+        SceneItemSpec::new("canvas-nested-group-child", "background").expect("nested group child");
+    group_child.set_transform(
+        FrameTransform::new(250, 250, 100, 100, false, false, u8::MAX)
+            .expect("nested group child transform"),
+    );
+    group.set_transform(
+        FrameTransform::new(400, 400, 300, 200, false, false, u8::MAX)
+            .expect("nested group transform"),
+    );
+    group
+        .group_mut()
+        .expect("nested group body")
+        .add_item(group_child)
+        .expect("attach nested group child");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: group,
+        }))
+        .expect("add nested canvas group");
+
+    let mut child_scene =
+        SceneSpec::new("canvas-nested-scene", "Canvas nested scene").expect("nested canvas scene");
+    let mut reference_leaf = SceneItemSpec::new("canvas-nested-reference-leaf", "background")
+        .expect("nested Scene-reference leaf");
+    reference_leaf.set_transform(
+        FrameTransform::new(250, 250, 100, 100, false, false, u8::MAX)
+            .expect("nested Scene-reference leaf transform"),
+    );
+    child_scene
+        .add_item(reference_leaf)
+        .expect("attach nested Scene-reference leaf");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddScene {
+            profile: "live".to_owned(),
+            scene: child_scene,
+        }))
+        .expect("add nested canvas scene");
+    let mut reference = SceneItemSpec::for_scene("canvas-nested-reference", "canvas-nested-scene")
+        .expect("nested canvas reference");
+    reference.set_transform(
+        FrameTransform::new(400, 400, 800, 650, false, false, u8::MAX)
+            .expect("nested canvas reference transform"),
+    );
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: reference,
+        }))
+        .expect("add nested canvas reference");
+}
+
+fn exercise_nested_group_handle(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    let canvas = canvas_surface(ui);
+    click_canvas_at(ui, canvas_point(ui, &canvas, 436, 294));
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["canvas-nested-group/canvas-nested-group-child"],
+        "canvas pointer selects a nested group leaf by its stable path"
+    );
+    assert!(
+        ui.get_item_active(),
+        "nested group leaf exposes an active overlay"
+    );
+    assert!(!ui.get_item_locked(), "nested group leaf remains editable");
+    let group_parent_before = canvas_target_transform(state, "canvas-nested-group");
+    let group_child_before =
+        canvas_target_transform(state, "canvas-nested-group/canvas-nested-group-child");
+    let group_handle_x = ui
+        .get_item_handle_x()
+        .row_data(4)
+        .expect("nested group bottom-right handle x");
+    let group_handle_y = ui
+        .get_item_handle_y()
+        .row_data(4)
+        .expect("nested group bottom-right handle y");
+    let canvas = canvas_surface(ui);
+    drag_canvas_at(
+        ui,
+        canvas_point(ui, &canvas, group_handle_x, group_handle_y),
+        LogicalPosition::new(
+            canvas_point(ui, &canvas, group_handle_x, group_handle_y).x + 18.0,
+            canvas_point(ui, &canvas, group_handle_x, group_handle_y).y + 12.0,
+        ),
+        PointerEventButton::Left,
+    );
+    let group_parent_after = canvas_target_transform(state, "canvas-nested-group");
+    let group_child_after =
+        canvas_target_transform(state, "canvas-nested-group/canvas-nested-group-child");
+    assert_ne!(
+        group_child_after, group_child_before,
+        "nested group handle drag updates the local child transform"
+    );
+    assert_eq!(
+        group_parent_after, group_parent_before,
+        "nested group pointer drag preserves the container transform"
+    );
+}
+
+fn exercise_nested_scene_reference_handle(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    let canvas = canvas_surface(ui);
+    click_canvas_at(ui, canvas_point(ui, &canvas, 936, 744));
+    assert_eq!(
+        state.borrow().selected_sources().collect::<Vec<_>>(),
+        vec!["canvas-nested-reference/canvas-nested-reference-leaf"],
+        "canvas pointer selects a Scene-reference leaf by its stable path"
+    );
+    let reference_parent_before = canvas_target_transform(state, "canvas-nested-reference");
+    let reference_leaf_before = canvas_target_transform(
+        state,
+        "canvas-nested-reference/canvas-nested-reference-leaf",
+    );
+    let reference_handle_x = ui
+        .get_item_handle_x()
+        .row_data(4)
+        .expect("Scene-reference bottom-right handle x");
+    let reference_handle_y = ui
+        .get_item_handle_y()
+        .row_data(4)
+        .expect("Scene-reference bottom-right handle y");
+    let canvas = canvas_surface(ui);
+    drag_canvas_at(
+        ui,
+        canvas_point(ui, &canvas, reference_handle_x, reference_handle_y),
+        LogicalPosition::new(
+            canvas_point(ui, &canvas, reference_handle_x, reference_handle_y).x + 18.0,
+            canvas_point(ui, &canvas, reference_handle_x, reference_handle_y).y + 12.0,
+        ),
+        PointerEventButton::Left,
+    );
+    let reference_parent_after = canvas_target_transform(state, "canvas-nested-reference");
+    let reference_leaf_after = canvas_target_transform(
+        state,
+        "canvas-nested-reference/canvas-nested-reference-leaf",
+    );
+    assert_ne!(
+        reference_leaf_after, reference_leaf_before,
+        "Scene-reference handle drag updates the owning scene leaf"
+    );
+    assert_eq!(
+        reference_parent_after, reference_parent_before,
+        "Scene-reference pointer drag preserves the parent reference transform"
+    );
+}
+
+fn cleanup_nested_canvas_pointer_scene(state: &Rc<RefCell<DesktopState>>) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveSceneItems {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            items: vec![
+                "canvas-nested-group".to_owned(),
+                "canvas-nested-reference".to_owned(),
+            ],
+        }))
+        .expect("remove nested canvas roots");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::RemoveScene {
+            profile: "live".to_owned(),
+            scene: "canvas-nested-scene".to_owned(),
+        }))
+        .expect("remove nested canvas scene");
+}
+
+fn canvas_target_transform(state: &Rc<RefCell<DesktopState>>, target: &str) -> FrameTransform {
+    let state = state.borrow();
+    let profile = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .expect("active profile for nested canvas target");
+    crate::callbacks::canvas::canvas_item_for_target(profile, "preview", target)
+        .expect("nested canvas target")
+        .transform()
 }
 
 fn restore_canvas_pointer_scene(

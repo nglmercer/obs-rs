@@ -111,8 +111,9 @@ selects one intersecting source with a plain drag, adds a second intersecting
 source with Ctrl-drag, and verifies both middle-button and Space+drag pan. The
 fixture removes its temporary sources, restores the starter background,
 selection, pan, and wheel-zoom state, and leaves transform/presentation state
-unchanged. Nested geometry, transform-handle pointer coverage, live DPI, and
-the later native capture-device prerequisite remain open.
+unchanged. Nested group/Scene-reference handle coverage is now provided by a
+separate fixture; live DPI and the later native capture-device prerequisite
+remain open.
 
 The same canvas pointer fixture also inserts two overlapping temporary items:
 a plain click selects the top layer, a second plain click walks to the selected
@@ -136,6 +137,16 @@ covers the real modifier path for crop; live DPI evidence remains open.
 The same GUI fixture now inserts a temporary group at a visible row boundary,
 clicks its nested child through the real SourceContextMenuArea pointer target,
 and verifies the stable `group/child` selection path before removing the group.
+
+## Latest verified package: nested canvas pointer transform handles
+
+On 2026-08-25, the GUI canvas fixture now drives the real testing-backend
+pointer path through a nested group leaf and a leaf below a Scene-reference.
+Each leaf is selected by its stable flattened path, its bottom-right resize
+handle changes the owning local transform, and the enclosing group or scene
+reference remains unchanged. The fixture removes both temporary roots and the
+child scene after the assertion. This adds nested pointer/handle evidence
+without claiming transformed-boundary crop/rotation or live DPI parity.
 
 ## Latest verified package: nested group canvas projection
 
@@ -354,8 +365,10 @@ project/scene/output, collection, recovery, remux, and rename dialog flows.
 > Row reconciliation: the nested scene-reference package below supersedes the
 > older `CANVAS-003`/`CANVAS-004` dependency wording. Axis-aligned scene-source
 > leaves now participate in canvas selection, drafts, local commits, and the
-> standalone Transform dialog; only transformed-boundary crop/rotation and
-> pointer/DPI evidence remain open.
+> standalone Transform dialog. The real GUI fixture now covers nested group and
+> Scene-reference selection plus resize handles; transformed-boundary
+> crop/rotation, body-drag behavior in the testing backend, and live DPI
+> evidence remain open.
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

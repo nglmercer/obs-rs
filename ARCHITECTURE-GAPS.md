@@ -104,9 +104,9 @@ pointer path against the editable surface. It maps the current fit zoom and
 pan into letterboxed coordinates, proves blank-space drag-box replacement,
 Ctrl-additive selection, both middle-button and Space+drag pan, and a selected
 source's bottom-right resize handle, then removes temporary items and restores
-the starter scene and transient pan. Crop handles, nested geometry, live DPI,
-and the native capture device prerequisite remain outside this evidence; the
-same fixture also verifies a real wheel event changes continuous zoom and
+the starter scene and transient pan. Transformed-boundary crop/rotation, live
+DPI, and the native capture device prerequisite remain outside this evidence;
+the same fixture also verifies a real wheel event changes continuous zoom and
 restores the anchored viewport state, while the separate rotation-handle
 gesture observes one fixed-point angle commit and the Alt left-middle handle
 gesture changes source crop without changing horizontal scene scale.
@@ -187,6 +187,13 @@ overlapping temporary top-level items to prove top-layer selection,
 select-underneath on the next plain click, and Ctrl-toggle of the top layer
 through the real pointer boundary. The pure hit-test oracle and the live event
 path now exercise the same ordered selection owner.
+
+The nested canvas pointer packet now drives real resize-handle gestures for a
+group leaf and a Scene-reference leaf. Each fixture asserts the stable
+flattened selection path, local transform mutation, and unchanged enclosing
+transform, then removes its temporary group/reference scene. Body-drag
+behavior through the testing backend, transformed-boundary crop/rotation, and
+live DPI evidence remain open.
 
 The Sources dock now exposes one atomic same-owner grouping command. It
 preserves the parent order and child transforms for root, nested-group, or
