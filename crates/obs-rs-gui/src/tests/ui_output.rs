@@ -99,6 +99,7 @@ fn exercise_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopStat
             direction: obs_rs_media::SlideDirection::Left,
         } if progress_milli < 1_000
     ));
+    exercise_directional_transition_callbacks(ui, state);
 
     state
         .borrow_mut()
@@ -155,6 +156,46 @@ fn exercise_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopStat
     assert!(ui
         .get_status_message()
         .contains("Transition color must be #RRGGBB or #RRGGBBAA"));
+}
+
+fn exercise_directional_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("restore program scene before directional slide");
+    ui.invoke_slide_transition_direction("450".into(), 1);
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("directional Slide callback should start a transition");
+    assert!(matches!(
+        transition.transition(),
+        FrameTransition::Slide {
+            progress_milli,
+            direction: obs_rs_media::SlideDirection::Right,
+        } if progress_milli < 1_000
+    ));
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("restore program scene before directional swipe");
+    ui.invoke_swipe_transition_direction("450".into(), 2);
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("directional Swipe callback should start a transition");
+    assert!(matches!(
+        transition.transition(),
+        FrameTransition::Swipe {
+            progress_milli,
+            direction: obs_rs_media::SlideDirection::Up,
+        } if progress_milli < 1_000
+    ));
 }
 
 fn exercise_scene_properties_dialog(
@@ -242,6 +283,7 @@ fn exercise_scene_transition_variants(ui: &MainWindow, state: &Rc<RefCell<Deskto
 
     ui.set_scene_name("Slide scene".into());
     ui.set_scene_transition_index(4);
+    ui.set_scene_transition_direction_index(1);
     ui.set_scene_transition_duration("600".into());
     ui.invoke_rename_scene();
     let transition = state
@@ -256,12 +298,13 @@ fn exercise_scene_transition_variants(ui: &MainWindow, state: &Rc<RefCell<Deskto
     assert_eq!(
         transition.kind(),
         obs_rs_media::TransitionKind::Slide {
-            direction: obs_rs_media::SlideDirection::Left,
+            direction: obs_rs_media::SlideDirection::Right,
         }
     );
 
     ui.set_scene_name("Swipe scene".into());
     ui.set_scene_transition_index(5);
+    ui.set_scene_transition_direction_index(2);
     ui.set_scene_transition_duration("650".into());
     ui.invoke_rename_scene();
     let transition = state
@@ -276,7 +319,7 @@ fn exercise_scene_transition_variants(ui: &MainWindow, state: &Rc<RefCell<Deskto
     assert_eq!(
         transition.kind(),
         obs_rs_media::TransitionKind::Swipe {
-            direction: obs_rs_media::SlideDirection::Left,
+            direction: obs_rs_media::SlideDirection::Up,
         }
     );
 }

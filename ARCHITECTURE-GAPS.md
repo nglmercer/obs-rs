@@ -71,9 +71,12 @@ ignored until they are promoted to the pinned performance suite.
 
 The portable transition direction model now accepts left, right, up, and down
 for both Slide and Swipe, with axis-aware in-place traversal and bounded JSON
-and console parsing. The existing dock and scene-properties projections still
-choose left by default; a visual direction selector is the next transition UI
-packet.
+and console parsing. The Transition dock, floating Transition dock, and
+scene-properties dialog expose localized bounded direction selectors and pass
+the selected index through typed callbacks. Persisted scene overrides project
+their selected direction back into the scene-properties dialog, while legacy
+callback entry points remain compatible by defaulting to left. Stinger, luma,
+`swipe_in`, and other slide variants remain open.
 
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation

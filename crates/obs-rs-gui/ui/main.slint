@@ -35,6 +35,7 @@ export component MainWindow inherits Window {
         in property <string> program-scene;
         in property <string> transition;
         in property <string> transition-kind;
+        in-out property <int> transition-direction-index: 0;
         in property <bool> recording;
         in property <bool> streaming;
         in property <bool> replay-buffering;
@@ -111,6 +112,7 @@ export component MainWindow inherits Window {
         in property <string> scene-name-version;
         in-out property <string> scene-name;
         in-out property <int> scene-transition-index: 0;
+        in-out property <int> scene-transition-direction-index: 0;
         in-out property <string> scene-transition-duration;
         in-out property <string> scene-transition-color;
         in property <string> scene-properties-version;
@@ -198,8 +200,11 @@ export component MainWindow inherits Window {
         callback fade-transition-duration(string);
         callback slide-transition(string);
         callback swipe-transition(string);
+        callback slide-transition-direction(string, int);
+        callback swipe-transition-direction(string, int);
         callback fade-to-color(string, string);
         callback set-scene-transition(string, string, string);
+        callback set-scene-transition-direction(string, string, string, int);
         callback clear-scene-transition();
         // Display-only menu labels. Runtime matching uses the typed table.
         in property <string> hotkey-undo;
@@ -793,6 +798,7 @@ export component MainWindow inherits Window {
                 can-group-sources: root.can-group-sources;
                 transition: root.transition;
                 transition-kind: root.transition-kind;
+                transition-direction-index <=> root.transition-direction-index;
                 recording: root.recording;
                 streaming: root.streaming;
                 replay-buffering: root.replay-buffering;
@@ -883,8 +889,17 @@ export component MainWindow inherits Window {
                 fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
                 slide-transition(duration) => { root.slide-transition(duration); }
                 swipe-transition(duration) => { root.swipe-transition(duration); }
+                slide-transition-direction(duration, direction) => {
+                    root.slide-transition-direction(duration, direction);
+                }
+                swipe-transition-direction(duration, direction) => {
+                    root.swipe-transition-direction(duration, direction);
+                }
                 fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
                 set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
+                set-scene-transition-direction(kind, duration, color, direction) => {
+                    root.set-scene-transition-direction(kind, duration, color, direction);
+                }
                 clear-scene-transition() => { root.clear-scene-transition(); }
                 toggle-recording() => { root.request-recording(); }
                 toggle-streaming() => { root.request-streaming(); }
@@ -934,6 +949,7 @@ export component MainWindow inherits Window {
         new-scene-name <=> root.new-scene-name;
         scene-name <=> root.scene-name;
         scene-transition-index <=> root.scene-transition-index;
+        scene-transition-direction-index <=> root.scene-transition-direction-index;
         scene-transition-duration <=> root.scene-transition-duration;
         scene-transition-color <=> root.scene-transition-color;
         source-name-draft <=> root.source-name-draft;

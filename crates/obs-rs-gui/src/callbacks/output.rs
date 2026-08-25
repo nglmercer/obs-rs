@@ -315,30 +315,20 @@ fn install_slide_transition_callback(
     let slide_state = Rc::clone(state);
     let slide_surface = Rc::clone(surface);
     ui.on_slide_transition(move |duration| {
-        let duration = match duration.trim().parse::<u32>() {
-            Ok(duration)
-                if (MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS)
-                    .contains(&duration) =>
-            {
-                duration
-            }
-            _ => {
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_status_message("Transition duration must be 1–60000 ms".into());
-                }
-                return;
-            }
-        };
-        let transition = match FrameTransition::slide(500, SlideDirection::Left) {
-            Ok(transition) => transition,
-            Err(error) => {
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_status_message(format!("Transition failed: {error}").into());
-                }
-                return;
-            }
-        };
-        take_transition_and_refresh(&weak, &slide_state, &slide_surface, transition, duration);
+        apply_slide_transition(&weak, &slide_state, &slide_surface, duration.as_str(), 0);
+    });
+
+    let weak = ui.as_weak();
+    let slide_state = Rc::clone(state);
+    let slide_surface = Rc::clone(surface);
+    ui.on_slide_transition_direction(move |duration, direction_index| {
+        apply_slide_transition(
+            &weak,
+            &slide_state,
+            &slide_surface,
+            duration.as_str(),
+            direction_index,
+        );
     });
 }
 
@@ -351,31 +341,106 @@ fn install_swipe_transition_callback(
     let swipe_state = Rc::clone(state);
     let swipe_surface = Rc::clone(surface);
     ui.on_swipe_transition(move |duration| {
-        let duration = match duration.trim().parse::<u32>() {
-            Ok(duration)
-                if (MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS)
-                    .contains(&duration) =>
-            {
-                duration
-            }
-            _ => {
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_status_message("Transition duration must be 1–60000 ms".into());
-                }
-                return;
-            }
-        };
-        let transition = match FrameTransition::swipe(500, SlideDirection::Left) {
-            Ok(transition) => transition,
-            Err(error) => {
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_status_message(format!("Transition failed: {error}").into());
-                }
-                return;
-            }
-        };
-        take_transition_and_refresh(&weak, &swipe_state, &swipe_surface, transition, duration);
+        apply_swipe_transition(&weak, &swipe_state, &swipe_surface, duration.as_str(), 0);
     });
+
+    let weak = ui.as_weak();
+    let swipe_state = Rc::clone(state);
+    let swipe_surface = Rc::clone(surface);
+    ui.on_swipe_transition_direction(move |duration, direction_index| {
+        apply_swipe_transition(
+            &weak,
+            &swipe_state,
+            &swipe_surface,
+            duration.as_str(),
+            direction_index,
+        );
+    });
+}
+
+fn apply_slide_transition(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    duration_value: &str,
+    direction_index: i32,
+) {
+    let Some(duration) = parse_transition_duration(weak, duration_value) else {
+        return;
+    };
+    let direction = match slide_direction_from_index(direction_index) {
+        Ok(direction) => direction,
+        Err(error) => {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(error.into());
+            }
+            return;
+        }
+    };
+    if let Some(ui) = weak.upgrade() {
+        ui.set_transition_direction_index(direction_index);
+    }
+    let transition = match FrameTransition::slide(500, direction) {
+        Ok(transition) => transition,
+        Err(error) => {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(format!("Transition failed: {error}").into());
+            }
+            return;
+        }
+    };
+    take_transition_and_refresh(weak, state, surface, transition, duration);
+}
+
+fn apply_swipe_transition(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    duration_value: &str,
+    direction_index: i32,
+) {
+    let Some(duration) = parse_transition_duration(weak, duration_value) else {
+        return;
+    };
+    let direction = match slide_direction_from_index(direction_index) {
+        Ok(direction) => direction,
+        Err(error) => {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(error.into());
+            }
+            return;
+        }
+    };
+    if let Some(ui) = weak.upgrade() {
+        ui.set_transition_direction_index(direction_index);
+    }
+    let transition = match FrameTransition::swipe(500, direction) {
+        Ok(transition) => transition,
+        Err(error) => {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(format!("Transition failed: {error}").into());
+            }
+            return;
+        }
+    };
+    take_transition_and_refresh(weak, state, surface, transition, duration);
+}
+
+fn parse_transition_duration(weak: &Weak<MainWindow>, value: &str) -> Option<u32> {
+    match value.trim().parse::<u32>() {
+        Ok(duration)
+            if (MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS)
+                .contains(&duration) =>
+        {
+            Some(duration)
+        }
+        _ => {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message("Transition duration must be 1–60000 ms".into());
+            }
+            None
+        }
+    }
 }
 
 fn install_scene_transition_override_callbacks(
@@ -387,23 +452,38 @@ fn install_scene_transition_override_callbacks(
     let override_state = Rc::clone(state);
     let override_surface = Rc::clone(surface);
     ui.on_set_scene_transition(move |kind, duration, color| {
-        let result = scene_transition_spec(kind.as_str(), duration.as_str(), color.as_str()).map(
-            |transition| {
-                override_state
-                    .borrow_mut()
-                    .dispatch(UiCommand::SetPreviewSceneTransition {
-                        transition: Some(transition),
-                    })
-            },
+        let result = set_scene_transition_override(
+            &override_state,
+            kind.as_str(),
+            duration.as_str(),
+            color.as_str(),
+            0,
         );
         let Some(ui) = weak.upgrade() else {
             return;
         };
         match result {
-            Ok(Ok(())) => refresh_ui(&ui, &override_state, &override_surface),
-            Ok(Err(error)) => {
-                ui.set_status_message(format!("Transition override failed: {error}").into());
-            }
+            Ok(()) => refresh_ui(&ui, &override_state, &override_surface),
+            Err(error) => ui.set_status_message(error.into()),
+        }
+    });
+
+    let weak = ui.as_weak();
+    let override_state = Rc::clone(state);
+    let override_surface = Rc::clone(surface);
+    ui.on_set_scene_transition_direction(move |kind, duration, color, direction_index| {
+        let result = set_scene_transition_override(
+            &override_state,
+            kind.as_str(),
+            duration.as_str(),
+            color.as_str(),
+            direction_index,
+        );
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(()) => refresh_ui(&ui, &override_state, &override_surface),
             Err(error) => ui.set_status_message(error.into()),
         }
     });
@@ -427,10 +507,27 @@ fn install_scene_transition_override_callbacks(
     });
 }
 
+fn set_scene_transition_override(
+    state: &Rc<RefCell<DesktopState>>,
+    kind: &str,
+    duration: &str,
+    color: &str,
+    direction_index: i32,
+) -> Result<(), String> {
+    let transition = scene_transition_spec(kind, duration, color, direction_index)?;
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SetPreviewSceneTransition {
+            transition: Some(transition),
+        })
+        .map_err(|error| format!("Transition override failed: {error}"))
+}
+
 pub(crate) fn scene_transition_spec(
     kind: &str,
     duration: &str,
     color: &str,
+    direction_index: i32,
 ) -> Result<TransitionSpec, String> {
     let duration = duration
         .trim()
@@ -450,19 +547,29 @@ pub(crate) fn scene_transition_spec(
         }
         "slide" => TransitionSpec::new(
             TransitionKind::Slide {
-                direction: SlideDirection::Left,
+                direction: slide_direction_from_index(direction_index)?,
             },
             duration,
         ),
         "swipe" => TransitionSpec::new(
             TransitionKind::Swipe {
-                direction: SlideDirection::Left,
+                direction: slide_direction_from_index(direction_index)?,
             },
             duration,
         ),
         _ => return Err("Transition override failed: unknown transition kind".to_owned()),
     }
     .map_err(|error| format!("Transition override failed: {error}"))
+}
+
+pub(crate) fn slide_direction_from_index(index: i32) -> Result<SlideDirection, String> {
+    match index {
+        0 => Ok(SlideDirection::Left),
+        1 => Ok(SlideDirection::Right),
+        2 => Ok(SlideDirection::Up),
+        3 => Ok(SlideDirection::Down),
+        _ => Err("Transition direction selection is invalid".to_owned()),
+    }
 }
 
 pub(crate) fn take_transition_and_refresh(

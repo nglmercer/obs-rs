@@ -4,6 +4,7 @@ use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec, Scen
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale, MAX_CANVAS_SELECTIONS};
 use slint::{ComponentHandle, DataTransfer};
 
+use super::project::ScenePropertiesDraft;
 use crate::{
     apply_scene_properties_and_refresh, apply_source_name_and_refresh,
     apply_source_settings_and_refresh, callbacks::canvas::canvas_item_for_target,
@@ -89,24 +90,7 @@ fn install_scene_selection_callbacks(
     });
 
     install_scene_drop_callback(ui, state, surface);
-
-    let weak = ui.as_weak();
-    let rename_state = Rc::clone(state);
-    let rename_surface = Rc::clone(surface);
-    ui.on_rename_scene(move || {
-        let Some(ui) = weak.upgrade() else {
-            return;
-        };
-        apply_scene_properties_and_refresh(
-            &ui,
-            &rename_state,
-            &rename_surface,
-            ui.get_scene_name().as_str(),
-            ui.get_scene_transition_index(),
-            ui.get_scene_transition_duration().as_str(),
-            ui.get_scene_transition_color().as_str(),
-        );
-    });
+    install_scene_properties_callback(ui, state, surface);
 
     let weak = ui.as_weak();
     let profile_state = Rc::clone(state);
@@ -137,6 +121,33 @@ fn install_scene_selection_callbacks(
             &locale_state,
             &locale_surface,
             UiCommand::SetLocale { locale },
+        );
+    });
+}
+
+fn install_scene_properties_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let weak = ui.as_weak();
+    let rename_state = Rc::clone(state);
+    let rename_surface = Rc::clone(surface);
+    ui.on_rename_scene(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        apply_scene_properties_and_refresh(
+            &ui,
+            &rename_state,
+            &rename_surface,
+            &ScenePropertiesDraft {
+                name: ui.get_scene_name().as_str(),
+                transition_index: ui.get_scene_transition_index(),
+                transition_direction_index: ui.get_scene_transition_direction_index(),
+                duration: ui.get_scene_transition_duration().as_str(),
+                color: ui.get_scene_transition_color().as_str(),
+            },
         );
     });
 }
@@ -913,80 +924,5 @@ fn install_source_property_callbacks(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{scene_drop_target_index, source_navigation_index, source_selection_range};
-
-    #[test]
-    fn scene_drop_indices_account_for_removing_the_source() {
-        assert_eq!(scene_drop_target_index(2, 0, 1, 5), Some(0));
-        assert_eq!(scene_drop_target_index(2, 1, 2, 5), Some(2));
-        assert_eq!(scene_drop_target_index(0, 2, 1, 5), Some(1));
-        assert_eq!(scene_drop_target_index(0, 2, 2, 5), Some(2));
-        assert_eq!(scene_drop_target_index(1, 1, 1, 5), Some(1));
-        assert_eq!(scene_drop_target_index(1, 1, 2, 5), Some(1));
-    }
-
-    #[test]
-    fn scene_drop_indices_reject_invalid_modes_and_rows() {
-        assert_eq!(scene_drop_target_index(0, 1, 0, 3), None);
-        assert_eq!(scene_drop_target_index(0, 1, 3, 3), None);
-        assert_eq!(scene_drop_target_index(3, 1, 1, 3), None);
-        assert_eq!(scene_drop_target_index(0, 3, 1, 3), None);
-        assert_eq!(scene_drop_target_index(0, 0, 2, 0), None);
-    }
-
-    #[test]
-    fn source_navigation_is_bounded_and_non_wrapping() {
-        assert_eq!(source_navigation_index(None, 3, 1), Some(0));
-        assert_eq!(source_navigation_index(None, 3, -1), Some(2));
-        assert_eq!(source_navigation_index(Some(1), 3, -1), Some(0));
-        assert_eq!(source_navigation_index(Some(1), 3, 1), Some(2));
-        assert_eq!(source_navigation_index(Some(0), 3, -1), None);
-        assert_eq!(source_navigation_index(Some(2), 3, 1), None);
-        assert_eq!(source_navigation_index(Some(1), 3, -2), Some(0));
-        assert_eq!(source_navigation_index(Some(1), 3, 2), Some(2));
-        assert_eq!(source_navigation_index(Some(9), 3, 1), Some(0));
-        assert_eq!(source_navigation_index(None, 0, 1), None);
-        assert_eq!(source_navigation_index(Some(1), 3, 99), None);
-    }
-
-    #[test]
-    fn source_selection_range_is_contiguous_and_bounded() {
-        let targets = vec![
-            "first".to_owned(),
-            "second".to_owned(),
-            "third".to_owned(),
-            "fourth".to_owned(),
-        ];
-        assert_eq!(
-            source_selection_range(Some("second"), "fourth", &targets),
-            Some(
-                vec!["second", "third", "fourth"]
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect()
-            )
-        );
-        assert_eq!(
-            source_selection_range(Some("fourth"), "second", &targets),
-            Some(
-                vec!["second", "third", "fourth"]
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect()
-            )
-        );
-        assert_eq!(
-            source_selection_range(None, "third", &targets),
-            Some(vec!["third".to_owned()])
-        );
-        assert_eq!(
-            source_selection_range(Some("missing"), "third", &targets),
-            Some(vec!["third".to_owned()])
-        );
-        assert_eq!(
-            source_selection_range(Some("first"), "missing", &targets),
-            None
-        );
-    }
-}
+#[path = "scene_tests.rs"]
+mod tests;

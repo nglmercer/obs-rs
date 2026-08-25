@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use obs_rs_media::{FrameTransition, RawVideoFrame, TransitionKind, VideoFrame};
+use obs_rs_media::{FrameTransition, RawVideoFrame, SlideDirection, TransitionKind, VideoFrame};
 use obs_rs_project::{Profile, ProjectCommand, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{DataTransfer, Image, Model, ModelRc, SharedString, VecModel, Weak};
@@ -592,9 +592,11 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_scene_name(selected_scene_name.into());
         ui.set_scene_name_version(ui.get_scene_name().clone());
     }
-    let (transition_index, transition_duration, transition_color) =
+    let (transition_index, transition_direction_index, transition_duration, transition_color) =
         scene_transition_fields(selected_scene);
-    let properties_version = format!("{transition_index}|{transition_duration}|{transition_color}");
+    let properties_version = format!(
+        "{transition_index}|{transition_direction_index}|{transition_duration}|{transition_color}"
+    );
     // Refresh ticks continue while a modal is open. Do not replace text the
     // user is editing; the next tick after acceptance/cancel synchronizes the
     // dialog fields with the selected scene again.
@@ -602,6 +604,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         && ui.get_scene_properties_version().as_str() != properties_version
     {
         ui.set_scene_transition_index(transition_index);
+        ui.set_scene_transition_direction_index(transition_direction_index);
         ui.set_scene_transition_duration(transition_duration.into());
         ui.set_scene_transition_color(transition_color.into());
         ui.set_scene_properties_version(properties_version.into());
@@ -856,24 +859,43 @@ pub(crate) fn transition_kind(transition: FrameTransition) -> &'static str {
 
 /// Projects the persisted per-scene transition into the compact dialog model.
 /// Index zero deliberately means inheritance from the desktop transition.
-fn scene_transition_fields(scene: Option<&SceneSpec>) -> (i32, String, String) {
+fn scene_transition_fields(scene: Option<&SceneSpec>) -> (i32, i32, String, String) {
     let Some(transition) = scene.and_then(SceneSpec::transition_override) else {
-        return (0, "300".to_owned(), "#000000FF".to_owned());
+        return (0, 0, "300".to_owned(), "#000000FF".to_owned());
     };
-    let (index, color) = match transition.kind() {
-        TransitionKind::Cut => (1, "#000000FF".to_owned()),
-        TransitionKind::CrossFade => (2, "#000000FF".to_owned()),
+    let (index, direction_index, color) = match transition.kind() {
+        TransitionKind::Cut => (1, 0, "#000000FF".to_owned()),
+        TransitionKind::CrossFade => (2, 0, "#000000FF".to_owned()),
         TransitionKind::FadeToColor { color } => (
             3,
+            0,
             format!(
                 "#{:02X}{:02X}{:02X}{:02X}",
                 color[0], color[1], color[2], color[3]
             ),
         ),
-        TransitionKind::Slide { .. } => (4, "#000000FF".to_owned()),
-        TransitionKind::Swipe { .. } => (5, "#000000FF".to_owned()),
+        TransitionKind::Slide { direction } => {
+            (4, slide_direction_index(direction), "#000000FF".to_owned())
+        }
+        TransitionKind::Swipe { direction } => {
+            (5, slide_direction_index(direction), "#000000FF".to_owned())
+        }
     };
-    (index, transition.duration_millis().to_string(), color)
+    (
+        index,
+        direction_index,
+        transition.duration_millis().to_string(),
+        color,
+    )
+}
+
+fn slide_direction_index(direction: SlideDirection) -> i32 {
+    match direction {
+        SlideDirection::Left => 0,
+        SlideDirection::Right => 1,
+        SlideDirection::Up => 2,
+        SlideDirection::Down => 3,
+    }
 }
 
 #[cfg(test)]
