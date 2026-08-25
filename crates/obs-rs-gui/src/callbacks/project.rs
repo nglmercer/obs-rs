@@ -406,6 +406,9 @@ pub(crate) fn apply_scene_properties_and_refresh(
             4 => Some(
                 scene_transition_spec("slide", duration, color).map_err(std::io::Error::other)?,
             ),
+            5 => Some(
+                scene_transition_spec("swipe", duration, color).map_err(std::io::Error::other)?,
+            ),
             _ => {
                 return Err(std::io::Error::other("Scene transition selection is invalid").into());
             }

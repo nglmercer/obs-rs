@@ -468,6 +468,7 @@ pub(super) fn catalog() -> UiText {
         transition_override_hint: s("This scene uses this transition when it is taken to Program."),
         fade: s("Fade"),
         slide: s("Slide from left"),
+        swipe: s("Swipe from left"),
         fade_to_color: s("Fade to color"),
         duration: s("Duration"),
         add_transition: s("Add transition"),

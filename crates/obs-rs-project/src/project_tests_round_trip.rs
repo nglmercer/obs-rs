@@ -82,6 +82,25 @@ fn slide_transition_override_round_trips_its_direction() {
 }
 
 #[test]
+fn swipe_transition_override_round_trips_its_direction() {
+    let mut project = project();
+    let transition = TransitionSpec::swipe_left(650).expect("swipe transition");
+    project
+        .apply(ProjectCommand::SetSceneTransitionOverride {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            transition: Some(transition),
+        })
+        .expect("set swipe transition");
+
+    let encoded = project.serialize();
+    assert!(encoded.contains(r#""kind": "swipe""#), "{encoded}");
+    assert!(encoded.contains(r#""direction": "left""#), "{encoded}");
+    let decoded = Project::parse(&encoded).expect("swipe project parses");
+    assert_eq!(decoded, project);
+}
+
+#[test]
 fn scene_properties_change_name_and_transition_as_one_history_edit() {
     let mut session = ProjectSession::new(project());
     let transition = TransitionSpec::cross_fade(900).expect("transition");

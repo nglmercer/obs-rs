@@ -474,6 +474,7 @@ pub(super) fn catalog() -> UiText {
         transition_override_hint: s("Esta escena usa esta transición al pasarla a Programa."),
         fade: s("Desvanecimiento"),
         slide: s("Deslizar desde la izquierda"),
+        swipe: s("Deslizar contenido desde la izquierda"),
         fade_to_color: s("Desvanecer a color"),
         duration: s("Duración"),
         add_transition: s("Añadir transición"),

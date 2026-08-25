@@ -835,6 +835,16 @@ pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTra
                 SlideDirection::Left => "left",
             }
         ),
+        FrameTransition::Swipe {
+            progress_milli,
+            direction,
+        } => format!(
+            "{} {progress_milli}/1000 ({})",
+            text.swipe,
+            match direction {
+                SlideDirection::Left => "left",
+            }
+        ),
     })
 }
 
@@ -844,6 +854,7 @@ pub(crate) fn transition_kind(transition: FrameTransition) -> &'static str {
         FrameTransition::CrossFade { .. } => "cross_fade",
         FrameTransition::FadeToColor { .. } => "fade_to_color",
         FrameTransition::Slide { .. } => "slide",
+        FrameTransition::Swipe { .. } => "swipe",
     }
 }
 
@@ -864,6 +875,7 @@ fn scene_transition_fields(scene: Option<&SceneSpec>) -> (i32, String, String) {
             ),
         ),
         TransitionKind::Slide { .. } => (4, "#000000FF".to_owned()),
+        TransitionKind::Swipe { .. } => (5, "#000000FF".to_owned()),
     };
     (index, transition.duration_millis().to_string(), color)
 }

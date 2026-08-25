@@ -265,6 +265,12 @@ impl DesktopState {
             } => {
                 FrameTransition::slide(progress_milli, direction).map_err(UiError::Media)?;
             }
+            FrameTransition::Swipe {
+                progress_milli,
+                direction,
+            } => {
+                FrameTransition::swipe(progress_milli, direction).map_err(UiError::Media)?;
+            }
             FrameTransition::Cut => {}
         }
         self.transition = transition;
@@ -375,6 +381,10 @@ impl DesktopState {
                 color,
             },
             FrameTransition::Slide { direction, .. } => FrameTransition::Slide {
+                progress_milli,
+                direction,
+            },
+            FrameTransition::Swipe { direction, .. } => FrameTransition::Swipe {
                 progress_milli,
                 direction,
             },

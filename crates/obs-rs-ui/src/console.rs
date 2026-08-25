@@ -204,7 +204,7 @@ fn parse_transition_value<'a>(
     command: &'static str,
     mut words: impl Iterator<Item = &'a str>,
 ) -> Result<FrameTransition, ConsoleCommandError> {
-    let kind = required_word(&mut words, "cut, fade, color, or slide")?;
+    let kind = required_word(&mut words, "cut, fade, color, slide, or swipe")?;
     Ok(match kind {
         "cut" => {
             ensure_no_extra(command, words)?;
@@ -248,6 +248,19 @@ fn parse_transition_value<'a>(
                         value: progress.to_owned(),
                     })?;
             FrameTransition::slide(progress, SlideDirection::Left)
+                .map_err(ConsoleCommandError::InvalidTransition)?
+        }
+        "swipe" => {
+            let progress = required_word(&mut words, "swipe progress in 0..1000")?;
+            ensure_no_extra(command, words)?;
+            let progress =
+                progress
+                    .parse::<u16>()
+                    .map_err(|_| ConsoleCommandError::InvalidArgument {
+                        command,
+                        value: progress.to_owned(),
+                    })?;
+            FrameTransition::swipe(progress, SlideDirection::Left)
                 .map_err(ConsoleCommandError::InvalidTransition)?
         }
         value => {

@@ -19,6 +19,7 @@ export component TransitionDock inherits Rectangle {
     callback fade-transition();
     callback fade-transition-duration(string);
     callback slide-transition(string);
+    callback swipe-transition(string);
     callback fade-to-color(string, string);
     callback set-scene-transition(string, string, string);
     callback clear-scene-transition();
@@ -57,6 +58,11 @@ export component TransitionDock inherits Rectangle {
                     text: I18n.text.slide;
                     height: 30px;
                     clicked => slide-transition(root.duration);
+                }
+                Button {
+                    text: I18n.text.swipe;
+                    height: 30px;
+                    clicked => swipe-transition(root.duration);
                 }
                 HorizontalBox {
                     spacing: 5px;

@@ -100,6 +100,25 @@ fn exercise_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopStat
         } if progress_milli < 1_000
     ));
 
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("restore program scene before swipe");
+    ui.invoke_swipe_transition("450".into());
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("Swipe callback should start a transition");
+    assert!(matches!(
+        transition.transition(),
+        FrameTransition::Swipe {
+            progress_milli,
+            direction: obs_rs_media::SlideDirection::Left,
+        } if progress_milli < 1_000
+    ));
+
     ui.invoke_set_scene_transition("fade_to_color".into(), "450".into(), "#00FF0080".into());
     let override_spec = state
         .borrow()
@@ -181,6 +200,25 @@ fn exercise_scene_properties_dialog(
         assert!(scene.transition_override().is_none());
     }
 
+    exercise_scene_transition_variants(ui, state);
+
+    ui.set_scene_name("Inherited scene".into());
+    ui.set_scene_transition_index(0);
+    ui.invoke_rename_scene();
+    {
+        let state = state.borrow();
+        let scene = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scene("preview"))
+            .expect("inherited scene");
+        assert_eq!(scene.name(), "Inherited scene");
+        assert!(scene.transition_override().is_none());
+    }
+}
+
+fn exercise_scene_transition_variants(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     ui.set_scene_name("Color scene".into());
     ui.set_scene_transition_index(3);
     ui.set_scene_transition_duration("450".into());
@@ -222,20 +260,25 @@ fn exercise_scene_properties_dialog(
         }
     );
 
-    ui.set_scene_name("Inherited scene".into());
-    ui.set_scene_transition_index(0);
+    ui.set_scene_name("Swipe scene".into());
+    ui.set_scene_transition_index(5);
+    ui.set_scene_transition_duration("650".into());
     ui.invoke_rename_scene();
-    {
-        let state = state.borrow();
-        let scene = state
-            .project_session()
-            .project()
-            .active_profile_spec()
-            .and_then(|profile| profile.scene("preview"))
-            .expect("inherited scene");
-        assert_eq!(scene.name(), "Inherited scene");
-        assert!(scene.transition_override().is_none());
-    }
+    let transition = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(SceneSpec::transition_override)
+        .expect("swipe override");
+    assert_eq!(transition.duration_millis(), 650);
+    assert_eq!(
+        transition.kind(),
+        obs_rs_media::TransitionKind::Swipe {
+            direction: obs_rs_media::SlideDirection::Left,
+        }
+    );
 }
 
 /// Drives the actual Controls-dock replay actions and verifies that the

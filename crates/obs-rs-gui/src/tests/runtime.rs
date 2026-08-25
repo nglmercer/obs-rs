@@ -175,6 +175,16 @@ fn transition_labels_are_user_facing() {
         ),
         "Slide from left 500/1000 (left)"
     );
+    assert_eq!(
+        transition_label_for_locale(
+            UiLocale::English,
+            FrameTransition::Swipe {
+                progress_milli: 500,
+                direction: obs_rs_media::SlideDirection::Left,
+            },
+        ),
+        "Swipe from left 500/1000 (left)"
+    );
 }
 
 #[test]

@@ -138,6 +138,60 @@ fn slide_policy_round_trips_through_a_render_sample() {
 }
 
 #[test]
+fn swipe_from_left_reveals_the_stationary_destination() {
+    let format =
+        VideoFormat::new(4, 1, FrameRate::new(60, 1).expect("valid rate")).expect("swipe format");
+    let source = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255],
+    )
+    .expect("source frame");
+    let destination = VideoFrame::new(
+        format,
+        Timestamp::from_millis(10),
+        vec![9, 0, 0, 255, 8, 0, 0, 255, 7, 0, 0, 255, 6, 0, 0, 255],
+    )
+    .expect("destination frame");
+
+    let halfway = VideoFrame::transitioned(
+        &source,
+        destination,
+        FrameTransition::swipe(500, SlideDirection::Left).expect("swipe transition"),
+    )
+    .expect("halfway swipe");
+    assert_eq!(halfway.pixel(0, 0), Some([3, 0, 0, 255]));
+    assert_eq!(halfway.pixel(1, 0), Some([4, 0, 0, 255]));
+    assert_eq!(halfway.pixel(2, 0), Some([7, 0, 0, 255]));
+    assert_eq!(halfway.pixel(3, 0), Some([6, 0, 0, 255]));
+    assert_eq!(halfway.timestamp(), Timestamp::from_millis(10));
+}
+
+#[test]
+fn swipe_policy_round_trips_through_a_render_sample() {
+    let policy = TransitionSpec::swipe_left(600).expect("swipe policy");
+    assert_eq!(
+        policy.kind(),
+        TransitionKind::Swipe {
+            direction: SlideDirection::Left,
+        }
+    );
+    assert_eq!(
+        policy.at_progress(250).expect("swipe sample"),
+        FrameTransition::Swipe {
+            progress_milli: 250,
+            direction: SlideDirection::Left,
+        }
+    );
+    assert_eq!(
+        FrameTransition::swipe(1_001, SlideDirection::Left),
+        Err(MediaError::InvalidTransition {
+            progress_milli: 1_001,
+        })
+    );
+}
+
+#[test]
 #[ignore = "timing report, not a pass/fail assertion"]
 fn slide_transition_timing_report() {
     let format = VideoFormat::new(640, 360, FrameRate::new(60, 1).expect("valid rate"))
@@ -159,6 +213,33 @@ fn slide_transition_timing_report() {
     }
     println!(
         "slide transition: {runs} frames x 640x360 = {:?} total (about {:?}/frame), checksum={checksum}",
+        started.elapsed(),
+        started.elapsed() / runs,
+    );
+}
+
+#[test]
+#[ignore = "timing report, not a pass/fail assertion"]
+fn swipe_transition_timing_report() {
+    let format = VideoFormat::new(640, 360, FrameRate::new(60, 1).expect("valid rate"))
+        .expect("swipe format");
+    let source = VideoFrame::solid(format, Timestamp::ZERO, [16, 32, 64, 255]);
+    let destination = VideoFrame::solid(format, Timestamp::from_millis(10), [64, 32, 16, 255]);
+    let runs = 20_u32;
+    let started = Instant::now();
+    let mut checksum = 0_u64;
+    for progress in 0..runs {
+        let progress = u16::try_from(progress * 1_000 / runs).expect("progress fits");
+        let frame = VideoFrame::transitioned(
+            &source,
+            destination.clone(),
+            FrameTransition::swipe(progress, SlideDirection::Left).expect("swipe sample"),
+        )
+        .expect("swipe frame");
+        checksum = checksum.saturating_add(u64::from(frame.pixel(0, 0).expect("pixel")[0]));
+    }
+    println!(
+        "swipe transition: {runs} frames x 640x360 = {:?} total (about {:?}/frame), checksum={checksum}",
         started.elapsed(),
         started.elapsed() / runs,
     );

@@ -94,6 +94,54 @@ impl VideoFrame {
                 apply_slide(source, &mut destination, progress_milli, direction);
                 Ok(destination)
             }
+            FrameTransition::Swipe {
+                progress_milli,
+                direction,
+            } => {
+                if progress_milli > 1_000 {
+                    return Err(MediaError::InvalidTransition { progress_milli });
+                }
+                apply_swipe(source, &mut destination, progress_milli, direction);
+                Ok(destination)
+            }
+        }
+    }
+}
+
+/// Applies the bounded swipe transition in place without allocating a second
+/// frame. Unlike slide, the destination stays fixed and only fills the area
+/// uncovered by the source.
+fn apply_swipe(
+    source: &VideoFrame,
+    destination: &mut VideoFrame,
+    progress_milli: u16,
+    direction: SlideDirection,
+) {
+    let width = destination.format().width_index();
+    let height = destination.format().height_index();
+    let progress_pixels = u64::from(progress_milli)
+        .saturating_mul(u64::from(destination.format().width()))
+        .checked_div(1_000)
+        .and_then(|pixels| usize::try_from(pixels).ok())
+        .unwrap_or(width)
+        .min(width);
+    let source_pixels = source.pixels();
+    let target_pixels = destination.pixels_mut();
+
+    match direction {
+        SlideDirection::Left => {
+            let source_end = width.saturating_sub(progress_pixels);
+            for row in 0..height {
+                let row_start = row * width * 4;
+                for x in 0..source_end {
+                    let target_start = row_start + x * 4;
+                    let source_start = row_start + (x + progress_pixels) * 4;
+                    let source_pixel: [u8; 4] = source_pixels[source_start..source_start + 4]
+                        .try_into()
+                        .expect("RGBA pixel has four bytes");
+                    target_pixels[target_start..target_start + 4].copy_from_slice(&source_pixel);
+                }
+            }
         }
     }
 }

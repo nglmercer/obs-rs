@@ -366,6 +366,7 @@ fn encode_transition(transition: TransitionSpec) -> Json {
         TransitionKind::CrossFade => ("cross_fade", None, None),
         TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color), None),
         TransitionKind::Slide { direction } => ("slide", None, Some(direction)),
+        TransitionKind::Swipe { direction } => ("swipe", None, Some(direction)),
     };
     let mut members = vec![
         ("kind", Json::string(kind)),
@@ -420,6 +421,13 @@ fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
                 other => return Err(invalid(format!("unknown slide direction: {other}"))),
             };
             TransitionSpec::new(TransitionKind::Slide { direction }, duration_millis)
+        }
+        "swipe" => {
+            let direction = match string_member(value, "direction")? {
+                "left" => SlideDirection::Left,
+                other => return Err(invalid(format!("unknown swipe direction: {other}"))),
+            };
+            TransitionSpec::new(TransitionKind::Swipe { direction }, duration_millis)
         }
         other => return Err(invalid(format!("unknown scene transition kind: {other}"))),
     };
