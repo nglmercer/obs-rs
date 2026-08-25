@@ -3,7 +3,7 @@
 use super::{
     error::MediaError,
     frame::{to_byte, VideoFrame},
-    transition::{FrameTransition, SlideDirection},
+    transition::{FrameTransition, LumaWipePattern, SlideDirection},
 };
 
 impl VideoFrame {
@@ -22,7 +22,7 @@ impl VideoFrame {
     /// [`MediaError::InvalidTransition`] for an invalid transition progress value.
     pub fn transitioned(
         source: &Self,
-        mut destination: Self,
+        destination: Self,
         transition: FrameTransition,
     ) -> Result<Self, MediaError> {
         if source.format() != destination.format() {
@@ -35,84 +35,239 @@ impl VideoFrame {
         match transition {
             FrameTransition::Cut => Ok(destination),
             FrameTransition::CrossFade { progress_milli } => {
-                if progress_milli > 1_000 {
-                    return Err(MediaError::InvalidTransition { progress_milli });
-                }
-                let destination_weight = u32::from(progress_milli);
-                let source_weight = 1_000 - destination_weight;
-                // Both buffers have the same format and therefore the same
-                // length, so this is a straight paired walk with no branching
-                // and no intermediate allocation.
-                for (target, source_byte) in
-                    destination.pixels_mut().iter_mut().zip(source.pixels())
-                {
-                    let value = u32::from(*source_byte) * source_weight
-                        + u32::from(*target) * destination_weight;
-                    *target = to_byte((value + 500) / 1_000);
-                }
-                Ok(destination)
+                apply_cross_fade(source, destination, progress_milli)
             }
             FrameTransition::FadeToColor {
                 progress_milli,
                 color,
-            } => {
-                if progress_milli > 1_000 {
-                    return Err(MediaError::InvalidTransition { progress_milli });
-                }
-                if progress_milli <= 500 {
-                    let color_weight = u32::from(progress_milli).saturating_mul(2);
-                    let source_weight = 1_000 - color_weight;
-                    for (index, (target, source_byte)) in destination
-                        .pixels_mut()
-                        .iter_mut()
-                        .zip(source.pixels())
-                        .enumerate()
-                    {
-                        let value = u32::from(*source_byte) * source_weight
-                            + u32::from(color[index % 4]) * color_weight;
-                        *target = to_byte((value + 500) / 1_000);
-                    }
-                } else {
-                    let destination_weight =
-                        u32::from(progress_milli.saturating_sub(500)).saturating_mul(2);
-                    let color_weight = 1_000 - destination_weight;
-                    for (index, target) in destination.pixels_mut().iter_mut().enumerate() {
-                        let value = u32::from(color[index % 4]) * color_weight
-                            + u32::from(*target) * destination_weight;
-                        *target = to_byte((value + 500) / 1_000);
-                    }
-                }
-                Ok(destination)
-            }
+            } => apply_fade_to_color(source, destination, progress_milli, color),
             FrameTransition::Slide {
                 progress_milli,
                 direction,
-            } => {
-                if progress_milli > 1_000 {
-                    return Err(MediaError::InvalidTransition { progress_milli });
-                }
-                apply_slide(source, &mut destination, progress_milli, direction);
-                Ok(destination)
-            }
+            } => apply_slide_transition(source, destination, progress_milli, direction),
             FrameTransition::Swipe {
                 progress_milli,
                 direction,
                 swipe_in,
-            } => {
-                if progress_milli > 1_000 {
-                    return Err(MediaError::InvalidTransition { progress_milli });
+            } => apply_swipe_transition(source, destination, progress_milli, direction, swipe_in),
+            FrameTransition::LumaWipe {
+                progress_milli,
+                pattern,
+                invert,
+                softness_milli,
+            } => apply_luma_wipe_transition(
+                source,
+                destination,
+                progress_milli,
+                pattern,
+                invert,
+                softness_milli,
+            ),
+        }
+    }
+}
+
+fn validate_transition_progress(progress_milli: u16) -> Result<(), MediaError> {
+    if progress_milli > 1_000 {
+        return Err(MediaError::InvalidTransition { progress_milli });
+    }
+    Ok(())
+}
+
+fn apply_cross_fade(
+    source: &VideoFrame,
+    mut destination: VideoFrame,
+    progress_milli: u16,
+) -> Result<VideoFrame, MediaError> {
+    validate_transition_progress(progress_milli)?;
+    let destination_weight = u32::from(progress_milli);
+    let source_weight = 1_000 - destination_weight;
+    // Both buffers have the same format and therefore the same length, so this
+    // is a straight paired walk with no branching and no intermediate
+    // allocation.
+    for (target, source_byte) in destination.pixels_mut().iter_mut().zip(source.pixels()) {
+        let value =
+            u32::from(*source_byte) * source_weight + u32::from(*target) * destination_weight;
+        *target = to_byte((value + 500) / 1_000);
+    }
+    Ok(destination)
+}
+
+fn apply_fade_to_color(
+    source: &VideoFrame,
+    mut destination: VideoFrame,
+    progress_milli: u16,
+    color: [u8; 4],
+) -> Result<VideoFrame, MediaError> {
+    validate_transition_progress(progress_milli)?;
+    if progress_milli <= 500 {
+        let color_weight = u32::from(progress_milli).saturating_mul(2);
+        let source_weight = 1_000 - color_weight;
+        for (index, (target, source_byte)) in destination
+            .pixels_mut()
+            .iter_mut()
+            .zip(source.pixels())
+            .enumerate()
+        {
+            let value = u32::from(*source_byte) * source_weight
+                + u32::from(color[index % 4]) * color_weight;
+            *target = to_byte((value + 500) / 1_000);
+        }
+    } else {
+        let destination_weight = u32::from(progress_milli.saturating_sub(500)).saturating_mul(2);
+        let color_weight = 1_000 - destination_weight;
+        for (index, target) in destination.pixels_mut().iter_mut().enumerate() {
+            let value = u32::from(color[index % 4]) * color_weight
+                + u32::from(*target) * destination_weight;
+            *target = to_byte((value + 500) / 1_000);
+        }
+    }
+    Ok(destination)
+}
+
+fn apply_slide_transition(
+    source: &VideoFrame,
+    mut destination: VideoFrame,
+    progress_milli: u16,
+    direction: SlideDirection,
+) -> Result<VideoFrame, MediaError> {
+    validate_transition_progress(progress_milli)?;
+    apply_slide(source, &mut destination, progress_milli, direction);
+    Ok(destination)
+}
+
+fn apply_swipe_transition(
+    source: &VideoFrame,
+    mut destination: VideoFrame,
+    progress_milli: u16,
+    direction: SlideDirection,
+    swipe_in: bool,
+) -> Result<VideoFrame, MediaError> {
+    validate_transition_progress(progress_milli)?;
+    apply_swipe(
+        source,
+        &mut destination,
+        progress_milli,
+        direction,
+        swipe_in,
+    );
+    Ok(destination)
+}
+
+fn apply_luma_wipe_transition(
+    source: &VideoFrame,
+    mut destination: VideoFrame,
+    progress_milli: u16,
+    pattern: LumaWipePattern,
+    invert: bool,
+    softness_milli: u16,
+) -> Result<VideoFrame, MediaError> {
+    validate_transition_progress(progress_milli)?;
+    if softness_milli > 1_000 {
+        return Err(MediaError::InvalidLumaWipeSoftness { softness_milli });
+    }
+    apply_luma_wipe(
+        source,
+        &mut destination,
+        progress_milli,
+        pattern,
+        invert,
+        softness_milli,
+    );
+    Ok(destination)
+}
+
+/// Applies the portable linear subset of OBS's luminance-mask transition.
+/// The destination remains the output buffer, so the operation does not need
+/// a second full-frame allocation.
+fn apply_luma_wipe(
+    source: &VideoFrame,
+    destination: &mut VideoFrame,
+    progress_milli: u16,
+    pattern: LumaWipePattern,
+    invert: bool,
+    softness_milli: u16,
+) {
+    let width = destination.format().width_index();
+    let height = destination.format().height_index();
+    let time_milli = u32::from(progress_milli)
+        .saturating_mul(1_000_u32.saturating_add(u32::from(softness_milli)))
+        / 1_000;
+    let source_pixels = source.pixels();
+    let target_pixels = destination.pixels_mut();
+
+    for y in 0..height {
+        for x in 0..width {
+            let mut luma = luma_value_milli(pattern, width, height, x, y);
+            if invert {
+                luma = 1_000_u32.saturating_sub(luma);
+            }
+            let (source_weight, destination_weight) =
+                luma_weights(luma, time_milli, softness_milli, progress_milli);
+            let target_start = pixel_start(width, x, y);
+            if destination_weight == 0 {
+                let source_pixel: [u8; 4] = source_pixels[target_start..target_start + 4]
+                    .try_into()
+                    .expect("RGBA pixel has four bytes");
+                target_pixels[target_start..target_start + 4].copy_from_slice(&source_pixel);
+            } else if source_weight != 0 {
+                let source_start = target_start;
+                for channel in 0..4 {
+                    let value = u32::from(source_pixels[source_start + channel])
+                        .saturating_mul(source_weight)
+                        .saturating_add(
+                            u32::from(target_pixels[target_start + channel])
+                                .saturating_mul(destination_weight),
+                        );
+                    target_pixels[target_start + channel] = to_byte((value + 500) / 1_000);
                 }
-                apply_swipe(
-                    source,
-                    &mut destination,
-                    progress_milli,
-                    direction,
-                    swipe_in,
-                );
-                Ok(destination)
             }
         }
     }
+}
+
+fn luma_value_milli(
+    pattern: LumaWipePattern,
+    width: usize,
+    height: usize,
+    x: usize,
+    y: usize,
+) -> u32 {
+    let (coordinate, extent) = match pattern {
+        LumaWipePattern::LinearHorizontal => (x, width),
+        LumaWipePattern::LinearVertical => (y, height),
+    };
+    let denominator = extent.saturating_sub(1);
+    if denominator == 0 {
+        return 0;
+    }
+    u32::try_from(coordinate.saturating_mul(1_000) / denominator).unwrap_or(1_000)
+}
+
+fn luma_weights(
+    luma_milli: u32,
+    time_milli: u32,
+    softness_milli: u16,
+    progress_milli: u16,
+) -> (u32, u32) {
+    if softness_milli == 0 {
+        return if luma_milli <= u32::from(progress_milli) {
+            (0, 1_000)
+        } else {
+            (1_000, 0)
+        };
+    }
+    let softness = u32::from(softness_milli);
+    let lower = time_milli.saturating_sub(softness);
+    if luma_milli <= lower {
+        return (0, 1_000);
+    }
+    if luma_milli >= time_milli {
+        return (1_000, 0);
+    }
+    let destination_weight = time_milli.saturating_sub(luma_milli).saturating_mul(1_000) / softness;
+    let destination_weight = destination_weight.min(1_000);
+    (1_000 - destination_weight, destination_weight)
 }
 
 /// Returns the number of pixels in the axis a transition moves along.

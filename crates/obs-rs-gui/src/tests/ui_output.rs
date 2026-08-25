@@ -121,6 +121,8 @@ fn exercise_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopStat
         } if progress_milli < 1_000
     ));
 
+    exercise_luma_transition_callback(ui, state);
+
     ui.invoke_set_scene_transition("fade_to_color".into(), "450".into(), "#00FF0080".into());
     let override_spec = state
         .borrow()
@@ -157,6 +159,29 @@ fn exercise_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopStat
     assert!(ui
         .get_status_message()
         .contains("Transition color must be #RRGGBB or #RRGGBBAA"));
+}
+
+fn exercise_luma_transition_callback(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("restore program scene before luma wipe");
+    ui.invoke_luma_transition("450".into(), 1, true, "85".into());
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("Luma Wipe callback should start a transition");
+    assert!(matches!(
+        transition.transition(),
+        FrameTransition::LumaWipe {
+            progress_milli,
+            pattern: obs_rs_media::LumaWipePattern::LinearVertical,
+            invert: true,
+            softness_milli: 85,
+        } if progress_milli < 1_000
+    ));
 }
 
 fn exercise_directional_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
@@ -344,6 +369,31 @@ fn exercise_scene_transition_variants(ui: &MainWindow, state: &Rc<RefCell<Deskto
         obs_rs_media::TransitionKind::Swipe {
             direction: obs_rs_media::SlideDirection::Up,
             swipe_in: true,
+        }
+    );
+
+    ui.set_scene_name("Luma scene".into());
+    ui.set_scene_transition_index(6);
+    ui.set_scene_transition_luma_pattern_index(1);
+    ui.set_scene_transition_luma_invert(true);
+    ui.set_scene_transition_luma_softness("85".into());
+    ui.set_scene_transition_duration("700".into());
+    ui.invoke_rename_scene();
+    let transition = state
+        .borrow()
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.scene("preview"))
+        .and_then(SceneSpec::transition_override)
+        .expect("luma wipe override");
+    assert_eq!(transition.duration_millis(), 700);
+    assert_eq!(
+        transition.kind(),
+        obs_rs_media::TransitionKind::LumaWipe {
+            pattern: obs_rs_media::LumaWipePattern::LinearVertical,
+            invert: true,
+            softness_milli: 85,
         }
     );
 }

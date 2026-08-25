@@ -1,6 +1,9 @@
 use std::fmt;
 
-use obs_rs_media::{parse_rgba8_hex, FrameTransition, MediaError, SlideDirection};
+use obs_rs_media::{
+    parse_rgba8_hex, FrameTransition, LumaWipePattern, MediaError, SlideDirection,
+    DEFAULT_LUMA_WIPE_SOFTNESS_MILLI,
+};
 
 use super::{
     types::{UiCommand, UiLocale},
@@ -204,7 +207,10 @@ fn parse_transition_value<'a>(
     command: &'static str,
     mut words: impl Iterator<Item = &'a str>,
 ) -> Result<FrameTransition, ConsoleCommandError> {
-    let kind = required_word(&mut words, "cut, fade, color, slide, swipe, or swipe_in")?;
+    let kind = required_word(
+        &mut words,
+        "cut, fade, color, slide, swipe, swipe_in, or luma",
+    )?;
     Ok(match kind {
         "cut" => {
             ensure_no_extra(command, words)?;
@@ -244,6 +250,7 @@ fn parse_transition_value<'a>(
         }
         "swipe" => parse_swipe_value(command, &mut words, false)?,
         "swipe_in" => parse_swipe_value(command, &mut words, true)?,
+        "luma" | "luma_wipe" => parse_luma_wipe_value(command, &mut words)?,
         value => {
             return Err(ConsoleCommandError::InvalidArgument {
                 command,
@@ -251,6 +258,49 @@ fn parse_transition_value<'a>(
             });
         }
     })
+}
+
+fn parse_luma_wipe_value<'a>(
+    command: &'static str,
+    words: &mut impl Iterator<Item = &'a str>,
+) -> Result<FrameTransition, ConsoleCommandError> {
+    let pattern_value = required_word(words, "luma pattern linear-h or linear-v")?;
+    let pattern = LumaWipePattern::parse(pattern_value).ok_or_else(|| {
+        ConsoleCommandError::InvalidArgument {
+            command,
+            value: pattern_value.to_owned(),
+        }
+    })?;
+    let progress_value = required_word(words, "luma progress in 0..1000")?;
+    let progress_milli =
+        progress_value
+            .parse::<u16>()
+            .map_err(|_| ConsoleCommandError::InvalidArgument {
+                command,
+                value: progress_value.to_owned(),
+            })?;
+    let softness_milli = match words.next() {
+        Some(value) => value
+            .parse::<u16>()
+            .map_err(|_| ConsoleCommandError::InvalidArgument {
+                command,
+                value: value.to_owned(),
+            })?,
+        None => DEFAULT_LUMA_WIPE_SOFTNESS_MILLI,
+    };
+    let invert = match words.next() {
+        None | Some("normal" | "false") => false,
+        Some("invert" | "true") => true,
+        Some(value) => {
+            return Err(ConsoleCommandError::InvalidArgument {
+                command,
+                value: value.to_owned(),
+            });
+        }
+    };
+    ensure_no_extra(command, words)?;
+    FrameTransition::luma_wipe(progress_milli, pattern, invert, softness_milli)
+        .map_err(ConsoleCommandError::InvalidTransition)
 }
 
 fn parse_swipe_value<'a>(

@@ -35,6 +35,9 @@ export component MainModals inherits Rectangle {
     in-out property <int> scene-transition-index: 0;
     in-out property <int> scene-transition-direction-index: 0;
     in-out property <bool> scene-transition-swipe-in: false;
+    in-out property <int> scene-transition-luma-pattern-index: 0;
+    in-out property <bool> scene-transition-luma-invert: false;
+    in-out property <string> scene-transition-luma-softness: "30";
     in-out property <string> scene-transition-duration;
     in-out property <string> scene-transition-color;
     in-out property <string> source-name-draft;
@@ -144,6 +147,9 @@ export component MainModals inherits Rectangle {
         transition-index <=> root.scene-transition-index;
         transition-direction-index <=> root.scene-transition-direction-index;
         transition-swipe-in <=> root.scene-transition-swipe-in;
+        transition-luma-pattern-index <=> root.scene-transition-luma-pattern-index;
+        transition-luma-invert <=> root.scene-transition-luma-invert;
+        transition-luma-softness <=> root.scene-transition-luma-softness;
         transition-duration <=> root.scene-transition-duration;
         transition-color <=> root.scene-transition-color;
         rename-scene() => { root.rename-scene(); }

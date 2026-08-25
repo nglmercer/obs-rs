@@ -120,6 +120,14 @@ pub(super) fn forward_to_studio(
     );
     forward!(on_fade_to_color, invoke_fade_to_color, color, duration);
     forward!(
+        on_luma_transition,
+        invoke_luma_transition,
+        duration,
+        pattern,
+        invert,
+        softness
+    );
+    forward!(
         on_set_scene_transition,
         invoke_set_scene_transition,
         kind,
@@ -142,6 +150,15 @@ pub(super) fn forward_to_studio(
         color,
         direction,
         swipe_in
+    );
+    forward!(
+        on_set_scene_transition_luma,
+        invoke_set_scene_transition_luma,
+        kind,
+        duration,
+        pattern,
+        invert,
+        softness
     );
     forward!(on_clear_scene_transition, invoke_clear_scene_transition);
     forward!(on_toggle_recording, invoke_toggle_recording);

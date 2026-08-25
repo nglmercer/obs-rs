@@ -5,7 +5,7 @@ use obs_rs_project::{ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
-use super::output::scene_transition_spec;
+use super::output::{scene_transition_spec, SceneTransitionInput};
 use crate::{refresh_ui, source_settings_for_canvas, MainWindow, OutputRuntime, PreviewSurface};
 
 const DISCARD_NEW_PROJECT: i32 = 4;
@@ -374,6 +374,9 @@ pub(crate) struct ScenePropertiesDraft<'a> {
     pub(super) transition_index: i32,
     pub(super) transition_direction_index: i32,
     pub(super) transition_swipe_in: bool,
+    pub(super) transition_luma_pattern_index: i32,
+    pub(super) transition_luma_invert: bool,
+    pub(super) transition_luma_softness: &'a str,
     pub(super) duration: &'a str,
     pub(super) color: &'a str,
 }
@@ -388,8 +391,21 @@ pub(crate) fn apply_scene_properties_and_refresh(
     let transition_index = draft.transition_index;
     let transition_direction_index = draft.transition_direction_index;
     let transition_swipe_in = draft.transition_swipe_in;
+    let transition_luma_pattern_index = draft.transition_luma_pattern_index;
+    let transition_luma_invert = draft.transition_luma_invert;
+    let transition_luma_softness = draft.transition_luma_softness;
     let duration = draft.duration;
     let color = draft.color;
+    let transition_input = |kind| SceneTransitionInput {
+        kind,
+        duration,
+        color,
+        direction_index: transition_direction_index,
+        swipe_in: transition_swipe_in,
+        luma_pattern_index: transition_luma_pattern_index,
+        luma_invert: transition_luma_invert,
+        luma_softness: transition_luma_softness,
+    };
     let result: Result<(), Box<dyn Error>> = (|| {
         let profile = state
             .borrow()
@@ -405,54 +421,25 @@ pub(crate) fn apply_scene_properties_and_refresh(
         let transition = match transition_index {
             0 => None,
             1 => Some(
-                scene_transition_spec(
-                    "cut",
-                    duration,
-                    color,
-                    transition_direction_index,
-                    transition_swipe_in,
-                )
-                .map_err(std::io::Error::other)?,
+                scene_transition_spec(&transition_input("cut")).map_err(std::io::Error::other)?,
             ),
             2 => Some(
-                scene_transition_spec(
-                    "cross_fade",
-                    duration,
-                    color,
-                    transition_direction_index,
-                    transition_swipe_in,
-                )
-                .map_err(std::io::Error::other)?,
+                scene_transition_spec(&transition_input("cross_fade"))
+                    .map_err(std::io::Error::other)?,
             ),
             3 => Some(
-                scene_transition_spec(
-                    "fade_to_color",
-                    duration,
-                    color,
-                    transition_direction_index,
-                    transition_swipe_in,
-                )
-                .map_err(std::io::Error::other)?,
+                scene_transition_spec(&transition_input("fade_to_color"))
+                    .map_err(std::io::Error::other)?,
             ),
             4 => Some(
-                scene_transition_spec(
-                    "slide",
-                    duration,
-                    color,
-                    transition_direction_index,
-                    transition_swipe_in,
-                )
-                .map_err(std::io::Error::other)?,
+                scene_transition_spec(&transition_input("slide")).map_err(std::io::Error::other)?,
             ),
             5 => Some(
-                scene_transition_spec(
-                    "swipe",
-                    duration,
-                    color,
-                    transition_direction_index,
-                    transition_swipe_in,
-                )
-                .map_err(std::io::Error::other)?,
+                scene_transition_spec(&transition_input("swipe")).map_err(std::io::Error::other)?,
+            ),
+            6 => Some(
+                scene_transition_spec(&transition_input("luma_wipe"))
+                    .map_err(std::io::Error::other)?,
             ),
             _ => {
                 return Err(std::io::Error::other("Scene transition selection is invalid").into());

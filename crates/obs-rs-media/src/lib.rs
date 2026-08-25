@@ -39,7 +39,8 @@ pub use scale::{FrameScaler, ScaleFilter};
 pub use time::{sleep_precise, FrameRate, Timestamp, SLEEP_SPIN_WINDOW};
 pub use transform::FrameTransform;
 pub use transition::{
-    parse_rgba8_hex, FrameTransition, SlideDirection, TransitionKind, TransitionSpec,
-    DEFAULT_TRANSITION_DURATION_MILLIS, MAX_TRANSITION_DURATION_MILLIS,
+    parse_rgba8_hex, FrameTransition, LumaWipePattern, SlideDirection, TransitionKind,
+    TransitionSpec, DEFAULT_LUMA_WIPE_SOFTNESS_MILLI, DEFAULT_TRANSITION_DURATION_MILLIS,
+    MAX_LUMA_WIPE_SOFTNESS_MILLI, MAX_TRANSITION_DURATION_MILLIS, MIN_LUMA_WIPE_SOFTNESS_MILLI,
     MIN_TRANSITION_DURATION_MILLIS,
 };

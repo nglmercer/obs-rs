@@ -85,3 +85,5 @@ mod history;
 mod migration;
 #[path = "project_tests_round_trip.rs"]
 mod round_trip;
+#[path = "project_tests_transition_luma.rs"]
+mod transition_luma;

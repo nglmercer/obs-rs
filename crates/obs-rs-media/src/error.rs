@@ -19,6 +19,8 @@ pub enum MediaError {
     /// A persisted or requested scene transition duration is outside the
     /// inclusive supported range.
     InvalidTransitionDuration { duration_millis: u32 },
+    /// A Luma Wipe softness value is outside the inclusive 0..=1000 range.
+    InvalidLumaWipeSoftness { softness_milli: u16 },
     /// A pixel layout requires dimensions that the format does not provide.
     UnsupportedPixelDimensions { pixel_format: PixelFormat },
     /// Two frames cannot be combined because their formats differ.
@@ -50,6 +52,10 @@ impl fmt::Display for MediaError {
             Self::InvalidTransitionDuration { duration_millis } => write!(
                 formatter,
                 "scene transition duration {duration_millis} ms is outside 1..=60000"
+            ),
+            Self::InvalidLumaWipeSoftness { softness_milli } => write!(
+                formatter,
+                "luma wipe softness {softness_milli} is outside 0..=1000"
             ),
             Self::UnsupportedPixelDimensions { pixel_format } => write!(
                 formatter,

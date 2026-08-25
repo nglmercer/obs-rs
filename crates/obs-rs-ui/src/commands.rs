@@ -273,6 +273,15 @@ impl DesktopState {
                 FrameTransition::swipe_with_mode(progress_milli, direction, swipe_in)
                     .map_err(UiError::Media)?;
             }
+            FrameTransition::LumaWipe {
+                progress_milli,
+                pattern,
+                invert,
+                softness_milli,
+            } => {
+                FrameTransition::luma_wipe(progress_milli, pattern, invert, softness_milli)
+                    .map_err(UiError::Media)?;
+            }
             FrameTransition::Cut => {}
         }
         self.transition = transition;
@@ -394,6 +403,17 @@ impl DesktopState {
                 progress_milli,
                 direction,
                 swipe_in,
+            },
+            FrameTransition::LumaWipe {
+                pattern,
+                invert,
+                softness_milli,
+                ..
+            } => FrameTransition::LumaWipe {
+                progress_milli,
+                pattern,
+                invert,
+                softness_milli,
             },
         };
         Some(TransitionSnapshot::new(

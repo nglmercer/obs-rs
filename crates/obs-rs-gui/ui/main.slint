@@ -37,6 +37,9 @@ export component MainWindow inherits Window {
         in property <string> transition-kind;
         in-out property <int> transition-direction-index: 0;
         in-out property <bool> swipe-in: false;
+        in-out property <int> luma-pattern-index: 0;
+        in-out property <bool> luma-invert: false;
+        in-out property <string> luma-softness: "30";
         in property <bool> recording;
         in property <bool> streaming;
         in property <bool> replay-buffering;
@@ -115,6 +118,9 @@ export component MainWindow inherits Window {
         in-out property <int> scene-transition-index: 0;
         in-out property <int> scene-transition-direction-index: 0;
         in-out property <bool> scene-transition-swipe-in: false;
+        in-out property <int> scene-transition-luma-pattern-index: 0;
+        in-out property <bool> scene-transition-luma-invert: false;
+        in-out property <string> scene-transition-luma-softness: "30";
         in-out property <string> scene-transition-duration;
         in-out property <string> scene-transition-color;
         in property <string> scene-properties-version;
@@ -206,9 +212,11 @@ export component MainWindow inherits Window {
         callback swipe-transition-direction(string, int);
         callback swipe-transition-direction-mode(string, int, bool);
         callback fade-to-color(string, string);
+        callback luma-transition(string, int, bool, string);
         callback set-scene-transition(string, string, string);
         callback set-scene-transition-direction(string, string, string, int);
         callback set-scene-transition-direction-mode(string, string, string, int, bool);
+        callback set-scene-transition-luma(string, string, int, bool, string);
         callback clear-scene-transition();
         // Display-only menu labels. Runtime matching uses the typed table.
         in property <string> hotkey-undo;
@@ -804,6 +812,9 @@ export component MainWindow inherits Window {
                 transition-kind: root.transition-kind;
                 transition-direction-index <=> root.transition-direction-index;
                 swipe-in <=> root.swipe-in;
+                luma-pattern-index <=> root.luma-pattern-index;
+                luma-invert <=> root.luma-invert;
+                luma-softness <=> root.luma-softness;
                 recording: root.recording;
                 streaming: root.streaming;
                 replay-buffering: root.replay-buffering;
@@ -811,12 +822,12 @@ export component MainWindow inherits Window {
                 remux-recovery-supported: root.remux-recovery-supported;
                 remux-recovery-running: root.remux-recovery-running;
                 meters-paused: root.meters-paused;
-                show-scenes: root.show-scenes;
-                show-sources: root.show-sources;
-                show-mixer: root.show-mixer;
-                show-transitions: root.show-transitions;
-                show-controls: root.show-controls;
-                show-stats: root.show-stats;
+                show-scenes <=> root.show-scenes;
+                show-sources <=> root.show-sources;
+                show-mixer <=> root.show-mixer;
+                show-transitions <=> root.show-transitions;
+                show-controls <=> root.show-controls;
+                show-stats <=> root.show-stats;
                 status-message: root.status-message;
                 capture-capabilities: root.capture-capabilities;
                 preview-metrics: root.preview-metrics;
@@ -828,23 +839,12 @@ export component MainWindow inherits Window {
                 dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
                 dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
                 resize-dock-splitter(id, delta) => { root.resize-dock-splitter(id, delta); }
-                open-modal(modal) => {
-                    // Adding a source has its own window now; the remaining
-                    // modal windows are routed through the existing callbacks.
-                    if modal == 3 {
-                        root.open-add-source-window();
-                    } else if modal == 6 {
-                        root.open-source-properties-window();
-                    } else if modal == 13 {
-                        root.open-source-filters-window();
-                    } else if modal == 14 {
-                        root.open-source-transform-window();
-                    } else if modal == 8 {
-                        root.open-monitor-window();
-                    } else {
-                        root.active-modal = modal;
-                    }
-                }
+                open-main-modal(modal) => { root.active-modal = modal; }
+                open-add-source-window() => { root.open-add-source-window(); }
+                open-source-properties-window() => { root.open-source-properties-window(); }
+                open-source-filters-window() => { root.open-source-filters-window(); }
+                open-source-transform-window() => { root.open-source-transform-window(); }
+                open-monitor-window() => { root.open-monitor-window(); }
                 select-preview(id) => { root.select-preview(id); }
                 navigate-preview-scene(direction) => { root.navigate-preview-scene(direction); }
                 select-program(id) => { root.select-program(id); }
@@ -904,12 +904,18 @@ export component MainWindow inherits Window {
                     root.swipe-transition-direction-mode(duration, direction, swipe-in);
                 }
                 fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
+                luma-transition(duration, pattern, invert, softness) => {
+                    root.luma-transition(duration, pattern, invert, softness);
+                }
                 set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
                 set-scene-transition-direction(kind, duration, color, direction) => {
                     root.set-scene-transition-direction(kind, duration, color, direction);
                 }
                 set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in) => {
                     root.set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in);
+                }
+                set-scene-transition-luma(kind, duration, pattern, invert, softness) => {
+                    root.set-scene-transition-luma(kind, duration, pattern, invert, softness);
                 }
                 clear-scene-transition() => { root.clear-scene-transition(); }
                 toggle-recording() => { root.request-recording(); }
@@ -920,14 +926,6 @@ export component MainWindow inherits Window {
                 open-settings-window() => { root.open-settings-window(); }
                 set-view-mode(mode) => { root.apply-view-mode(mode); }
                 float-panel(kind) => { root.float-panel(kind); }
-                close-panel(kind) => {
-                    if kind == 0 { root.show-scenes = false; }
-                    if kind == 1 { root.show-sources = false; }
-                    if kind == 2 { root.show-mixer = false; }
-                    if kind == 3 { root.show-transitions = false; }
-                    if kind == 4 { root.show-controls = false; }
-                    if kind == 5 { root.show-stats = false; }
-                }
             }
 
             StatusBar {
@@ -962,6 +960,9 @@ export component MainWindow inherits Window {
         scene-transition-index <=> root.scene-transition-index;
         scene-transition-direction-index <=> root.scene-transition-direction-index;
         scene-transition-swipe-in <=> root.scene-transition-swipe-in;
+        scene-transition-luma-pattern-index <=> root.scene-transition-luma-pattern-index;
+        scene-transition-luma-invert <=> root.scene-transition-luma-invert;
+        scene-transition-luma-softness <=> root.scene-transition-luma-softness;
         scene-transition-duration <=> root.scene-transition-duration;
         scene-transition-color <=> root.scene-transition-color;
         source-name-draft <=> root.source-name-draft;

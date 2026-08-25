@@ -197,6 +197,18 @@ fn transition_labels_are_user_facing() {
         ),
         "Swipe In 500/1000 (left)"
     );
+    assert_eq!(
+        transition_label_for_locale(
+            UiLocale::English,
+            FrameTransition::LumaWipe {
+                progress_milli: 500,
+                pattern: obs_rs_media::LumaWipePattern::LinearVertical,
+                invert: true,
+                softness_milli: 85,
+            },
+        ),
+        "Luma Wipe linear-v 500/1000 (softness 85, invert)"
+    );
 }
 
 #[test]

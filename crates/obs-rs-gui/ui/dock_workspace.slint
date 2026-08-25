@@ -39,6 +39,9 @@ export component DockWorkspace inherits Rectangle {
     in property <string> transition-kind;
     in-out property <int> transition-direction-index: 0;
     in-out property <bool> swipe-in: false;
+    in-out property <int> luma-pattern-index: 0;
+    in-out property <bool> luma-invert: false;
+    in-out property <string> luma-softness: "30";
     in property <bool> recording;
     in property <bool> streaming;
     in property <bool> replay-buffering;
@@ -46,12 +49,12 @@ export component DockWorkspace inherits Rectangle {
     in property <bool> remux-recovery-supported;
     in property <bool> remux-recovery-running;
     in property <bool> meters-paused;
-    in property <bool> show-scenes;
-    in property <bool> show-sources;
-    in property <bool> show-mixer;
-    in property <bool> show-transitions;
-    in property <bool> show-controls;
-    in property <bool> show-stats;
+    in-out property <bool> show-scenes;
+    in-out property <bool> show-sources;
+    in-out property <bool> show-mixer;
+    in-out property <bool> show-transitions;
+    in-out property <bool> show-controls;
+    in-out property <bool> show-stats;
     in property <string> status-message;
     in property <string> capture-capabilities;
     in property <string> preview-metrics;
@@ -65,8 +68,13 @@ export component DockWorkspace inherits Rectangle {
     callback dock-drag-end(int, float, float);
     callback resize-dock-splitter(int, float);
     callback float-panel(int);
-    callback close-panel(int);
     callback open-modal(int);
+    callback open-main-modal(int);
+    callback open-add-source-window();
+    callback open-source-properties-window();
+    callback open-source-filters-window();
+    callback open-source-transform-window();
+    callback open-monitor-window();
     callback select-preview(string);
     callback navigate-preview-scene(int);
     callback select-program(string);
@@ -114,9 +122,11 @@ export component DockWorkspace inherits Rectangle {
     callback swipe-transition-direction(string, int);
     callback swipe-transition-direction-mode(string, int, bool);
     callback fade-to-color(string, string);
+    callback luma-transition(string, int, bool, string);
     callback set-scene-transition(string, string, string);
     callback set-scene-transition-direction(string, string, string, int);
     callback set-scene-transition-direction-mode(string, string, string, int, bool);
+    callback set-scene-transition-luma(string, string, int, bool, string);
     callback clear-scene-transition();
     callback set-view-mode(int);
     callback toggle-recording();
@@ -286,6 +296,9 @@ export component DockWorkspace inherits Rectangle {
             transition-kind: root.transition-kind;
             transition-direction-index <=> root.transition-direction-index;
             swipe-in <=> root.swipe-in;
+            luma-pattern-index <=> root.luma-pattern-index;
+            luma-invert <=> root.luma-invert;
+            luma-softness <=> root.luma-softness;
             recording: root.recording;
             streaming: root.streaming;
             replay-buffering: root.replay-buffering;
@@ -308,8 +321,29 @@ export component DockWorkspace inherits Rectangle {
             }
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
             float-panel(kind) => { root.float-panel(kind); }
-            close-panel(kind) => { root.close-panel(kind); }
-            open-modal(modal) => { root.open-modal(modal); }
+            close-panel(kind) => {
+                if kind == 0 { root.show-scenes = false; }
+                if kind == 1 { root.show-sources = false; }
+                if kind == 2 { root.show-mixer = false; }
+                if kind == 3 { root.show-transitions = false; }
+                if kind == 4 { root.show-controls = false; }
+                if kind == 5 { root.show-stats = false; }
+            }
+            open-modal(modal) => {
+                if modal == 3 {
+                    root.open-add-source-window();
+                } else if modal == 6 {
+                    root.open-source-properties-window();
+                } else if modal == 13 {
+                    root.open-source-filters-window();
+                } else if modal == 14 {
+                    root.open-source-transform-window();
+                } else if modal == 8 {
+                    root.open-monitor-window();
+                } else {
+                    root.open-main-modal(modal);
+                }
+            }
             select-preview(id) => { root.select-preview(id); }
             navigate-preview-scene(direction) => { root.navigate-preview-scene(direction); }
             select-program(id) => { root.select-program(id); }
@@ -369,12 +403,18 @@ export component DockWorkspace inherits Rectangle {
                 root.swipe-transition-direction-mode(duration, direction, swipe-in);
             }
             fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
+            luma-transition(duration, pattern, invert, softness) => {
+                root.luma-transition(duration, pattern, invert, softness);
+            }
             set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
             set-scene-transition-direction(kind, duration, color, direction) => {
                 root.set-scene-transition-direction(kind, duration, color, direction);
             }
             set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in) => {
                 root.set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in);
+            }
+            set-scene-transition-luma(kind, duration, pattern, invert, softness) => {
+                root.set-scene-transition-luma(kind, duration, pattern, invert, softness);
             }
             clear-scene-transition() => { root.clear-scene-transition(); }
             set-view-mode(mode) => { root.set-view-mode(mode); }

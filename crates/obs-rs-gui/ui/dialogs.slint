@@ -2,6 +2,7 @@ import { Button, CheckBox, ComboBox, HorizontalBox, LineEdit, TextEdit, Vertical
 import { FieldHeading, ModalShell, MutedText } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { TransitionDirectionField } from "transition_direction.slint";
+import { TransitionLumaField } from "transition_luma.slint";
 
 export component ProjectDialog inherits ModalShell {
     in property <string> locale;
@@ -103,6 +104,9 @@ export component RenameSceneDialog inherits ModalShell {
     in-out property <int> transition-index: 0;
     in-out property <int> transition-direction-index: 0;
     in-out property <bool> transition-swipe-in: false;
+    in-out property <int> transition-luma-pattern-index: 0;
+    in-out property <bool> transition-luma-invert: false;
+    in-out property <string> transition-luma-softness: "30";
     in-out property <string> transition-duration;
     in-out property <string> transition-color;
     callback rename-scene();
@@ -129,7 +133,8 @@ export component RenameSceneDialog inherits ModalShell {
                 I18n.text.fade,
                 I18n.text.fade_to_color,
                 I18n.text.slide,
-                I18n.text.swipe
+                I18n.text.swipe,
+                I18n.text.luma_wipe
             ];
             current-index: root.transition-index;
             selected(value) => { root.transition-index = self.current-index; }
@@ -140,6 +145,11 @@ export component RenameSceneDialog inherits ModalShell {
         if root.transition-index == 5 : CheckBox {
             text: I18n.text.swipe_in;
             checked <=> root.transition-swipe-in;
+        }
+        if root.transition-index == 6 : TransitionLumaField {
+            pattern-index <=> root.transition-luma-pattern-index;
+            invert <=> root.transition-luma-invert;
+            softness <=> root.transition-luma-softness;
         }
         if root.transition-index != 0 : FieldHeading { text: I18n.text.duration; }
         if root.transition-index != 0 : LineEdit {

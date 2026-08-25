@@ -1,15 +1,20 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use obs_rs_media::{FrameTransition, RawVideoFrame, SlideDirection, TransitionKind, VideoFrame};
+use obs_rs_media::{RawVideoFrame, VideoFrame};
 use obs_rs_project::{Profile, ProjectCommand, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{DataTransfer, Image, Model, ModelRc, SharedString, VecModel, Weak};
 
 use crate::preview_worker::{multiview_grid_dimensions, MAX_MULTIVIEW_SCENES};
+#[path = "refresh_transitions.rs"]
+mod refresh_transitions;
 use crate::{
     frame_to_image, project_store, selection_overlay, set_selection_overlay, LocaleOption,
     MainWindow, MixerRow, MoveTarget, MultiviewScene, OutputRuntime, PreviewSurface, PreviewWorker,
     ProfileRow, SceneRow, SourceRow,
+};
+pub(crate) use refresh_transitions::{
+    scene_transition_fields, transition_kind, transition_label_for_locale,
 };
 
 thread_local! {
@@ -592,15 +597,17 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_scene_name(selected_scene_name.into());
         ui.set_scene_name_version(ui.get_scene_name().clone());
     }
-    let (
-        transition_index,
-        transition_direction_index,
-        transition_swipe_in,
-        transition_duration,
-        transition_color,
-    ) = scene_transition_fields(selected_scene);
+    let transition_fields = scene_transition_fields(selected_scene);
     let properties_version = format!(
-        "{transition_index}|{transition_direction_index}|{transition_swipe_in}|{transition_duration}|{transition_color}"
+        "{}|{}|{}|{}|{}|{}|{}|{}",
+        transition_fields.index,
+        transition_fields.direction_index,
+        transition_fields.swipe_in,
+        transition_fields.luma_pattern_index,
+        transition_fields.luma_invert,
+        transition_fields.duration,
+        transition_fields.color,
+        transition_fields.softness
     );
     // Refresh ticks continue while a modal is open. Do not replace text the
     // user is editing; the next tick after acceptance/cancel synchronizes the
@@ -608,11 +615,14 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     if ui.get_active_modal() != 5
         && ui.get_scene_properties_version().as_str() != properties_version
     {
-        ui.set_scene_transition_index(transition_index);
-        ui.set_scene_transition_direction_index(transition_direction_index);
-        ui.set_scene_transition_swipe_in(transition_swipe_in);
-        ui.set_scene_transition_duration(transition_duration.into());
-        ui.set_scene_transition_color(transition_color.into());
+        ui.set_scene_transition_index(transition_fields.index);
+        ui.set_scene_transition_direction_index(transition_fields.direction_index);
+        ui.set_scene_transition_swipe_in(transition_fields.swipe_in);
+        ui.set_scene_transition_luma_pattern_index(transition_fields.luma_pattern_index);
+        ui.set_scene_transition_luma_invert(transition_fields.luma_invert);
+        ui.set_scene_transition_duration(transition_fields.duration.into());
+        ui.set_scene_transition_color(transition_fields.color.into());
+        ui.set_scene_transition_luma_softness(transition_fields.softness.into());
         ui.set_scene_properties_version(properties_version.into());
     }
 
@@ -819,175 +829,6 @@ impl SceneRoleLabels {
     }
 }
 
-pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTransition) -> String {
-    // Borrows the two strings it needs from the cached catalog instead of
-    // materializing a whole catalog for them.
-    crate::i18n::with_catalog(locale, |text| match transition {
-        FrameTransition::Cut => text.cut.to_string(),
-        FrameTransition::CrossFade { progress_milli } => {
-            format!("{} {progress_milli}/1000", text.fade)
-        }
-        FrameTransition::FadeToColor {
-            progress_milli,
-            color,
-        } => format!(
-            "{} {progress_milli}/1000 #{:02X}{:02X}{:02X}{:02X}",
-            text.fade_to_color, color[0], color[1], color[2], color[3]
-        ),
-        FrameTransition::Slide {
-            progress_milli,
-            direction,
-        } => format!(
-            "{} {progress_milli}/1000 ({})",
-            text.slide,
-            direction.as_str()
-        ),
-        FrameTransition::Swipe {
-            progress_milli,
-            direction,
-            swipe_in,
-        } => {
-            let label = if swipe_in {
-                &text.swipe_in
-            } else {
-                &text.swipe
-            };
-            format!("{} {progress_milli}/1000 ({})", label, direction.as_str())
-        }
-    })
-}
-
-pub(crate) fn transition_kind(transition: FrameTransition) -> &'static str {
-    match transition {
-        FrameTransition::Cut => "cut",
-        FrameTransition::CrossFade { .. } => "cross_fade",
-        FrameTransition::FadeToColor { .. } => "fade_to_color",
-        FrameTransition::Slide { .. } => "slide",
-        FrameTransition::Swipe { .. } => "swipe",
-    }
-}
-
-/// Projects the persisted per-scene transition into the compact dialog model.
-/// Index zero deliberately means inheritance from the desktop transition.
-fn scene_transition_fields(scene: Option<&SceneSpec>) -> (i32, i32, bool, String, String) {
-    let Some(transition) = scene.and_then(SceneSpec::transition_override) else {
-        return (0, 0, false, "300".to_owned(), "#000000FF".to_owned());
-    };
-    let (index, direction_index, swipe_in, color) = match transition.kind() {
-        TransitionKind::Cut => (1, 0, false, "#000000FF".to_owned()),
-        TransitionKind::CrossFade => (2, 0, false, "#000000FF".to_owned()),
-        TransitionKind::FadeToColor { color } => (
-            3,
-            0,
-            false,
-            format!(
-                "#{:02X}{:02X}{:02X}{:02X}",
-                color[0], color[1], color[2], color[3]
-            ),
-        ),
-        TransitionKind::Slide { direction } => (
-            4,
-            slide_direction_index(direction),
-            false,
-            "#000000FF".to_owned(),
-        ),
-        TransitionKind::Swipe {
-            direction,
-            swipe_in,
-        } => (
-            5,
-            slide_direction_index(direction),
-            swipe_in,
-            "#000000FF".to_owned(),
-        ),
-    };
-    (
-        index,
-        direction_index,
-        swipe_in,
-        transition.duration_millis().to_string(),
-        color,
-    )
-}
-
-fn slide_direction_index(direction: SlideDirection) -> i32 {
-    match direction {
-        SlideDirection::Left => 0,
-        SlideDirection::Right => 1,
-        SlideDirection::Up => 2,
-        SlideDirection::Down => 3,
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use obs_rs_project::{ProjectCommand, SceneItemSpec};
-
-    #[test]
-    fn source_rows_expose_nested_group_targets_and_relative_order() {
-        let mut project = crate::initial_project().expect("initial project");
-        let mut group = SceneItemSpec::for_group("overlay-group", "Overlay group").expect("group");
-        group
-            .group_mut()
-            .expect("group target")
-            .add_item(SceneItemSpec::for_source("background").expect("group child"))
-            .expect("group child attach");
-        project
-            .apply(ProjectCommand::AddSceneItem {
-                profile: "live".to_owned(),
-                scene: "preview".to_owned(),
-                item: group,
-            })
-            .expect("add group");
-        let mut state = DesktopState::new(project);
-        {
-            let profile = state
-                .project_session()
-                .project()
-                .active_profile_spec()
-                .expect("profile");
-            let scene = profile.scene("preview").expect("preview scene");
-            let mut rows = Vec::new();
-            append_source_rows(&mut rows, profile, scene.items(), &state, &mut Vec::new());
-
-            let group_row = rows
-                .iter()
-                .find(|row| row.target == "overlay-group")
-                .expect("group row");
-            assert!(group_row.group);
-            assert!(!group_row.nested);
-            assert_eq!(group_row.count, 2);
-
-            let child_row = rows
-                .iter()
-                .find(|row| row.target == "overlay-group/background")
-                .expect("group child row");
-            assert!(!child_row.group);
-            assert!(child_row.nested);
-            assert!(!child_row.selected);
-            assert_eq!(child_row.count, 1);
-            assert_eq!(child_row.order.as_str(), "1");
-        }
-
-        state
-            .dispatch(UiCommand::SelectSource {
-                id: "overlay-group/background".to_owned(),
-            })
-            .expect("nested source selection");
-        let profile = state
-            .project_session()
-            .project()
-            .active_profile_spec()
-            .expect("profile after selection");
-        let scene = profile
-            .scene("preview")
-            .expect("preview scene after selection");
-        let mut rows = Vec::new();
-        append_source_rows(&mut rows, profile, scene.items(), &state, &mut Vec::new());
-        assert!(rows
-            .iter()
-            .find(|row| row.target == "overlay-group/background")
-            .is_some_and(|row| row.selected));
-    }
-}
+#[path = "refresh_tests.rs"]
+mod tests;

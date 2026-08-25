@@ -7,6 +7,45 @@ pub const MAX_TRANSITION_DURATION_MILLIS: u32 = 60_000;
 /// Default scene-transition duration in milliseconds.
 pub const DEFAULT_TRANSITION_DURATION_MILLIS: u32 = 300;
 
+/// Smallest accepted Luma Wipe softness, represented in thousandths.
+pub const MIN_LUMA_WIPE_SOFTNESS_MILLI: u16 = 0;
+/// Largest accepted Luma Wipe softness, represented in thousandths.
+pub const MAX_LUMA_WIPE_SOFTNESS_MILLI: u16 = 1_000;
+/// Default Luma Wipe softness, matching OBS's default of approximately .03.
+pub const DEFAULT_LUMA_WIPE_SOFTNESS_MILLI: u16 = 30;
+
+/// Built-in Luma Wipe patterns that do not require external assets or native
+/// plugin state. More OBS asset-backed patterns can be added without changing
+/// the transition renderer boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LumaWipePattern {
+    /// A left-to-right linear luminance ramp.
+    LinearHorizontal,
+    /// A top-to-bottom linear luminance ramp.
+    LinearVertical,
+}
+
+impl LumaWipePattern {
+    /// Returns the stable serialized pattern identifier.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LinearHorizontal => "linear-h",
+            Self::LinearVertical => "linear-v",
+        }
+    }
+
+    /// Parses a stable serialized pattern identifier.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "linear-h" => Some(Self::LinearHorizontal),
+            "linear-v" => Some(Self::LinearVertical),
+            _ => None,
+        }
+    }
+}
+
 /// Direction supported by the bounded portable slide and swipe transitions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SlideDirection {
@@ -93,6 +132,14 @@ pub enum FrameTransition {
         direction: SlideDirection,
         swipe_in: bool,
     },
+    /// Reveals the destination according to a bounded built-in luminance
+    /// pattern. `softness_milli` controls the edge blend width.
+    LumaWipe {
+        progress_milli: u16,
+        pattern: LumaWipePattern,
+        invert: bool,
+        softness_milli: u16,
+    },
 }
 
 /// The persistent kind of a scene transition.
@@ -111,6 +158,13 @@ pub enum TransitionKind {
     Swipe {
         direction: SlideDirection,
         swipe_in: bool,
+    },
+    /// Reveals the destination according to a bounded built-in luminance
+    /// pattern. `softness_milli` controls the edge blend width.
+    LumaWipe {
+        pattern: LumaWipePattern,
+        invert: bool,
+        softness_milli: u16,
     },
 }
 
@@ -138,6 +192,11 @@ impl TransitionSpec {
             || duration_millis > MAX_TRANSITION_DURATION_MILLIS
         {
             return Err(MediaError::InvalidTransitionDuration { duration_millis });
+        }
+        if let TransitionKind::LumaWipe { softness_milli, .. } = kind {
+            if softness_milli > MAX_LUMA_WIPE_SOFTNESS_MILLI {
+                return Err(MediaError::InvalidLumaWipeSoftness { softness_milli });
+            }
         }
         Ok(Self {
             kind,
@@ -221,6 +280,29 @@ impl TransitionSpec {
         )
     }
 
+    /// Creates a validated portable Luma Wipe policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransitionDuration`] or
+    /// [`MediaError::InvalidLumaWipeSoftness`] when the policy is outside its
+    /// bounded range.
+    pub const fn luma_wipe(
+        duration_millis: u32,
+        pattern: LumaWipePattern,
+        invert: bool,
+        softness_milli: u16,
+    ) -> Result<Self, MediaError> {
+        Self::new(
+            TransitionKind::LumaWipe {
+                pattern,
+                invert,
+                softness_milli,
+            },
+            duration_millis,
+        )
+    }
+
     /// Converts one render-time sample into a persistent policy.
     ///
     /// # Errors
@@ -243,6 +325,16 @@ impl TransitionSpec {
             } => TransitionKind::Swipe {
                 direction,
                 swipe_in,
+            },
+            FrameTransition::LumaWipe {
+                pattern,
+                invert,
+                softness_milli,
+                ..
+            } => TransitionKind::LumaWipe {
+                pattern,
+                invert,
+                softness_milli,
             },
         };
         Self::new(kind, duration_millis)
@@ -280,6 +372,11 @@ impl TransitionSpec {
                 direction,
                 swipe_in,
             } => FrameTransition::swipe_with_mode(progress_milli, direction, swipe_in),
+            TransitionKind::LumaWipe {
+                pattern,
+                invert,
+                softness_milli,
+            } => FrameTransition::luma_wipe(progress_milli, pattern, invert, softness_milli),
         }
     }
 }
@@ -384,5 +481,32 @@ impl FrameTransition {
         direction: SlideDirection,
     ) -> Result<Self, MediaError> {
         Self::swipe_with_mode(progress_milli, direction, true)
+    }
+
+    /// Creates a Luma Wipe sample at a validated progress value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransition`] or
+    /// [`MediaError::InvalidLumaWipeSoftness`] when a sample value is outside
+    /// its bounded range.
+    pub const fn luma_wipe(
+        progress_milli: u16,
+        pattern: LumaWipePattern,
+        invert: bool,
+        softness_milli: u16,
+    ) -> Result<Self, MediaError> {
+        if progress_milli > 1_000 {
+            return Err(MediaError::InvalidTransition { progress_milli });
+        }
+        if softness_milli > MAX_LUMA_WIPE_SOFTNESS_MILLI {
+            return Err(MediaError::InvalidLumaWipeSoftness { softness_milli });
+        }
+        Ok(Self::LumaWipe {
+            progress_milli,
+            pattern,
+            invert,
+            softness_milli,
+        })
     }
 }

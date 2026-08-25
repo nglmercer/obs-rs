@@ -331,6 +331,35 @@ fn console_parser_covers_directional_transitions() {
             duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
         }))
     );
+    assert_eq!(
+        parse_console_command("transition luma linear-v 500 85 invert"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::LumaWipe {
+                progress_milli: 500,
+                pattern: obs_rs_media::LumaWipePattern::LinearVertical,
+                invert: true,
+                softness_milli: 85,
+            },
+        }))
+    );
+    assert_eq!(
+        parse_console_command("transition luma linear-h 500"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::LumaWipe {
+                progress_milli: 500,
+                pattern: obs_rs_media::LumaWipePattern::LinearHorizontal,
+                invert: false,
+                softness_milli: obs_rs_media::DEFAULT_LUMA_WIPE_SOFTNESS_MILLI,
+            },
+        }))
+    );
+    assert!(matches!(
+        parse_console_command("transition luma burst 500"),
+        Err(ConsoleCommandError::InvalidArgument {
+            command: "transition",
+            ..
+        })
+    ));
 }
 
 #[test]

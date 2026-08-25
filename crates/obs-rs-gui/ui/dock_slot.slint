@@ -34,6 +34,9 @@ export component DockSlot inherits Rectangle {
     in property <string> transition-kind;
     in-out property <int> transition-direction-index: 0;
     in-out property <bool> swipe-in: false;
+    in-out property <int> luma-pattern-index: 0;
+    in-out property <bool> luma-invert: false;
+    in-out property <string> luma-softness: "30";
     in property <bool> recording;
     in property <bool> streaming;
     in property <bool> replay-buffering;
@@ -104,9 +107,11 @@ export component DockSlot inherits Rectangle {
     callback swipe-transition-direction(string, int);
     callback swipe-transition-direction-mode(string, int, bool);
     callback fade-to-color(string, string);
+    callback luma-transition(string, int, bool, string);
     callback set-scene-transition(string, string, string);
     callback set-scene-transition-direction(string, string, string, int);
     callback set-scene-transition-direction-mode(string, string, string, int, bool);
+    callback set-scene-transition-luma(string, string, int, bool, string);
     callback clear-scene-transition();
     callback set-view-mode(int);
     callback toggle-recording();
@@ -234,6 +239,9 @@ export component DockSlot inherits Rectangle {
         transition-kind: root.transition-kind;
         transition-direction-index <=> root.transition-direction-index;
         swipe-in <=> root.swipe-in;
+        luma-pattern-index <=> root.luma-pattern-index;
+        luma-invert <=> root.luma-invert;
+        luma-softness <=> root.luma-softness;
         move-panel(kind, delta) => { root.move-panel(kind, delta); }
         dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
         dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
@@ -253,12 +261,18 @@ export component DockSlot inherits Rectangle {
                 root.swipe-transition-direction-mode(duration, direction, swipe-in);
             }
             fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
+            luma-transition(duration, pattern, invert, softness) => {
+                root.luma-transition(duration, pattern, invert, softness);
+            }
             set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
             set-scene-transition-direction(kind, duration, color, direction) => {
                 root.set-scene-transition-direction(kind, duration, color, direction);
             }
             set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in) => {
                 root.set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in);
+            }
+            set-scene-transition-luma(kind, duration, pattern, invert, softness) => {
+                root.set-scene-transition-luma(kind, duration, pattern, invert, softness);
             }
         clear-scene-transition() => { root.clear-scene-transition(); }
     }

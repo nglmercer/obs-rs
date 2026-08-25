@@ -2,8 +2,8 @@ use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_engine::OutputLifecycle;
 use obs_rs_media::{
-    parse_rgba8_hex, FrameTransition, RawVideoFrame, SlideDirection, TransitionKind,
-    TransitionSpec, VideoFrame,
+    parse_rgba8_hex, FrameTransition, LumaWipePattern, RawVideoFrame, SlideDirection,
+    TransitionKind, TransitionSpec, VideoFrame, MAX_LUMA_WIPE_SOFTNESS_MILLI,
 };
 use obs_rs_ui::{
     DesktopState, UiCommand, DEFAULT_TRANSITION_DURATION_MILLIS, MAX_TRANSITION_DURATION_MILLIS,
@@ -266,6 +266,7 @@ fn install_transition_callbacks(
 
     install_slide_transition_callback(ui, state, surface);
     install_swipe_transition_callback(ui, state, surface);
+    install_luma_transition_callback(ui, state, surface);
 
     let weak = ui.as_weak();
     let color_state = Rc::clone(state);
@@ -304,6 +305,75 @@ fn install_transition_callbacks(
     });
 
     install_scene_transition_override_callbacks(ui, state, surface);
+}
+
+fn install_luma_transition_callback(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let weak = ui.as_weak();
+    let luma_state = Rc::clone(state);
+    let luma_surface = Rc::clone(surface);
+    ui.on_luma_transition(move |duration, pattern_index, invert, softness| {
+        apply_luma_transition(
+            &weak,
+            &luma_state,
+            &luma_surface,
+            duration.as_str(),
+            pattern_index,
+            invert,
+            softness.as_str(),
+        );
+    });
+}
+
+fn apply_luma_transition(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    duration_value: &str,
+    pattern_index: i32,
+    invert: bool,
+    softness_value: &str,
+) {
+    let Some(duration) = parse_transition_duration(weak, duration_value) else {
+        return;
+    };
+    let pattern = match luma_pattern_from_index(pattern_index) {
+        Ok(pattern) => pattern,
+        Err(error) => {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(error.into());
+            }
+            return;
+        }
+    };
+    let softness_milli = match parse_luma_softness(softness_value) {
+        Ok(softness) => softness,
+        Err(error) => {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(error.into());
+            }
+            return;
+        }
+    };
+    if let Some(ui) = weak.upgrade() {
+        ui.set_transition_kind("luma_wipe".into());
+        ui.set_luma_pattern_index(pattern_index);
+        ui.set_luma_invert(invert);
+        ui.set_luma_softness(softness_value.trim().into());
+    }
+    let transition = match FrameTransition::luma_wipe(500, pattern, invert, softness_milli) {
+        Ok(transition) => transition,
+        Err(error) => {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(format!("Transition failed: {error}").into());
+            }
+            return;
+        }
+    };
+    take_transition_and_refresh(weak, state, surface, transition, duration);
 }
 
 fn install_slide_transition_callback(
@@ -538,6 +608,27 @@ fn install_scene_transition_override_callbacks(
     );
 
     let weak = ui.as_weak();
+    let override_state = Rc::clone(state);
+    let override_surface = Rc::clone(surface);
+    ui.on_set_scene_transition_luma(move |kind, duration, pattern, invert, softness| {
+        let result = set_scene_transition_luma_override(
+            &override_state,
+            kind.as_str(),
+            duration.as_str(),
+            pattern,
+            invert,
+            softness.as_str(),
+        );
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        match result {
+            Ok(()) => refresh_ui(&ui, &override_state, &override_surface),
+            Err(error) => ui.set_status_message(error.into()),
+        }
+    });
+
+    let weak = ui.as_weak();
     let clear_state = Rc::clone(state);
     let clear_surface = Rc::clone(surface);
     ui.on_clear_scene_transition(move || {
@@ -564,7 +655,16 @@ fn set_scene_transition_override(
     direction_index: i32,
     swipe_in: bool,
 ) -> Result<(), String> {
-    let transition = scene_transition_spec(kind, duration, color, direction_index, swipe_in)?;
+    let transition = scene_transition_spec(&SceneTransitionInput {
+        kind,
+        duration,
+        color,
+        direction_index,
+        swipe_in,
+        luma_pattern_index: 0,
+        luma_invert: false,
+        luma_softness: "30",
+    })?;
     state
         .borrow_mut()
         .dispatch(UiCommand::SetPreviewSceneTransition {
@@ -573,14 +673,48 @@ fn set_scene_transition_override(
         .map_err(|error| format!("Transition override failed: {error}"))
 }
 
-pub(crate) fn scene_transition_spec(
+fn set_scene_transition_luma_override(
+    state: &Rc<RefCell<DesktopState>>,
     kind: &str,
     duration: &str,
-    color: &str,
-    direction_index: i32,
-    swipe_in: bool,
+    pattern_index: i32,
+    invert: bool,
+    softness: &str,
+) -> Result<(), String> {
+    let transition = scene_transition_spec(&SceneTransitionInput {
+        kind,
+        duration,
+        color: "#000000FF",
+        direction_index: 0,
+        swipe_in: false,
+        luma_pattern_index: pattern_index,
+        luma_invert: invert,
+        luma_softness: softness,
+    })?;
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SetPreviewSceneTransition {
+            transition: Some(transition),
+        })
+        .map_err(|error| format!("Transition override failed: {error}"))
+}
+
+pub(crate) struct SceneTransitionInput<'a> {
+    pub(crate) kind: &'a str,
+    pub(crate) duration: &'a str,
+    pub(crate) color: &'a str,
+    pub(crate) direction_index: i32,
+    pub(crate) swipe_in: bool,
+    pub(crate) luma_pattern_index: i32,
+    pub(crate) luma_invert: bool,
+    pub(crate) luma_softness: &'a str,
+}
+
+pub(crate) fn scene_transition_spec(
+    input: &SceneTransitionInput<'_>,
 ) -> Result<TransitionSpec, String> {
-    let duration = duration
+    let duration = input
+        .duration
         .trim()
         .parse::<u32>()
         .ok()
@@ -588,30 +722,59 @@ pub(crate) fn scene_transition_spec(
             (MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS).contains(duration)
         })
         .ok_or_else(|| "Transition duration must be 1–60000 ms".to_owned())?;
-    match kind {
+    match input.kind {
         "cut" => TransitionSpec::new(TransitionKind::Cut, duration),
         "cross_fade" => TransitionSpec::new(TransitionKind::CrossFade, duration),
         "fade_to_color" => {
-            let color = parse_rgba8_hex(color.trim())
+            let color = parse_rgba8_hex(input.color.trim())
                 .ok_or_else(|| "Transition color must be #RRGGBB or #RRGGBBAA".to_owned())?;
             TransitionSpec::new(TransitionKind::FadeToColor { color }, duration)
         }
         "slide" => TransitionSpec::new(
             TransitionKind::Slide {
-                direction: slide_direction_from_index(direction_index)?,
+                direction: slide_direction_from_index(input.direction_index)?,
             },
             duration,
         ),
         "swipe" => TransitionSpec::new(
             TransitionKind::Swipe {
-                direction: slide_direction_from_index(direction_index)?,
-                swipe_in,
+                direction: slide_direction_from_index(input.direction_index)?,
+                swipe_in: input.swipe_in,
             },
             duration,
         ),
+        "luma_wipe" => {
+            let pattern = luma_pattern_from_index(input.luma_pattern_index)?;
+            let softness_milli = parse_luma_softness(input.luma_softness)?;
+            TransitionSpec::new(
+                TransitionKind::LumaWipe {
+                    pattern,
+                    invert: input.luma_invert,
+                    softness_milli,
+                },
+                duration,
+            )
+        }
         _ => return Err("Transition override failed: unknown transition kind".to_owned()),
     }
     .map_err(|error| format!("Transition override failed: {error}"))
+}
+
+pub(crate) fn luma_pattern_from_index(index: i32) -> Result<LumaWipePattern, String> {
+    match index {
+        0 => Ok(LumaWipePattern::LinearHorizontal),
+        1 => Ok(LumaWipePattern::LinearVertical),
+        _ => Err("Luma Wipe pattern selection is invalid".to_owned()),
+    }
+}
+
+pub(crate) fn parse_luma_softness(value: &str) -> Result<u16, String> {
+    value
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|softness| *softness <= MAX_LUMA_WIPE_SOFTNESS_MILLI)
+        .ok_or_else(|| "Luma Wipe softness must be 0–1000‰".to_owned())
 }
 
 pub(crate) fn slide_direction_from_index(index: i32) -> Result<SlideDirection, String> {

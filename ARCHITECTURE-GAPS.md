@@ -7,6 +7,15 @@ independent reviewer.
 
 ## Latest verified packet
 
+The portable Luma Wipe packet now adds a typed luminance-mask transition to the
+media, project, UI, and GUI boundaries. Linear horizontal and vertical masks
+support inversion and bounded 0..=1000 softness, and the CPU/reference path
+blends directly into the destination buffer without allocating a full-frame
+mask. Scene overrides, console commands, bilingual controls, and persistence
+round-trip through the same `TransitionSpec`; media, project, UI, and GUI
+workflow tests cover the implemented slice. OBS's asset-backed mask catalog,
+external pattern resources, and Stinger transition remain open capabilities.
+
 The provider-to-mix `AudioResampler` now consumes the typed standard layout
 metadata instead of treating every channel count as an unlabeled index list.
 Speaker-role conversion is bounded and covered by a release timing probe;

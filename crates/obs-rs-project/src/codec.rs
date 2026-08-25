@@ -22,7 +22,8 @@ use super::{
 };
 use obs_rs_config::Config;
 use obs_rs_media::{
-    FrameRate, FrameTransform, SlideDirection, TransitionKind, TransitionSpec, VideoFormat,
+    FrameRate, FrameTransform, LumaWipePattern, SlideDirection, TransitionKind, TransitionSpec,
+    VideoFormat,
 };
 use obs_rs_output::OutputProfileKind;
 use obs_rs_util::{Identifier, Json};
@@ -361,15 +362,26 @@ fn decode_scene(value: &Json, profile: &Profile, version: u32) -> Result<SceneSp
 }
 
 fn encode_transition(transition: TransitionSpec) -> Json {
-    let (kind, color, direction, swipe_in) = match transition.kind() {
-        TransitionKind::Cut => ("cut", None, None, None),
-        TransitionKind::CrossFade => ("cross_fade", None, None, None),
-        TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color), None, None),
-        TransitionKind::Slide { direction } => ("slide", None, Some(direction), None),
+    let (kind, color, direction, swipe_in, luma) = match transition.kind() {
+        TransitionKind::Cut => ("cut", None, None, None, None),
+        TransitionKind::CrossFade => ("cross_fade", None, None, None, None),
+        TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color), None, None, None),
+        TransitionKind::Slide { direction } => ("slide", None, Some(direction), None, None),
         TransitionKind::Swipe {
             direction,
             swipe_in,
-        } => ("swipe", None, Some(direction), Some(swipe_in)),
+        } => ("swipe", None, Some(direction), Some(swipe_in), None),
+        TransitionKind::LumaWipe {
+            pattern,
+            invert,
+            softness_milli,
+        } => (
+            "luma_wipe",
+            None,
+            None,
+            None,
+            Some((pattern, invert, softness_milli)),
+        ),
     };
     let mut members = vec![
         ("kind", Json::string(kind)),
@@ -386,6 +398,11 @@ fn encode_transition(transition: TransitionSpec) -> Json {
     }
     if let Some(swipe_in) = swipe_in {
         members.push(("swipe_in", Json::Bool(swipe_in)));
+    }
+    if let Some((pattern, invert, softness_milli)) = luma {
+        members.push(("pattern", Json::string(pattern.as_str())));
+        members.push(("invert", Json::Bool(invert)));
+        members.push(("softness_milli", Json::number(softness_milli)));
     }
     Json::object(members)
 }
@@ -439,6 +456,29 @@ fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
                 TransitionKind::Swipe {
                     direction,
                     swipe_in,
+                },
+                duration_millis,
+            )
+        }
+        "luma_wipe" => {
+            let pattern_value = string_member(value, "pattern")?;
+            let pattern = LumaWipePattern::parse(pattern_value)
+                .ok_or_else(|| invalid(format!("unknown luma wipe pattern: {pattern_value}")))?;
+            let invert = value
+                .get("invert")
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .ok_or_else(|| invalid("luma wipe invert must be a boolean"))
+                })
+                .transpose()?
+                .unwrap_or(false);
+            let softness_milli = number_member(value, "softness_milli")?;
+            TransitionSpec::new(
+                TransitionKind::LumaWipe {
+                    pattern,
+                    invert,
+                    softness_milli,
                 },
                 duration_millis,
             )

@@ -3,6 +3,7 @@ import { CompactButton, DockHeader } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
 import { TransitionDirectionField } from "transition_direction.slint";
+import { TransitionLumaField } from "transition_luma.slint";
 
 export component TransitionDock inherits Rectangle {
     in property <string> locale;
@@ -10,6 +11,9 @@ export component TransitionDock inherits Rectangle {
     in property <string> transition-kind;
     in-out property <int> transition-direction-index: 0;
     in-out property <bool> swipe-in: false;
+    in-out property <int> luma-pattern-index: 0;
+    in-out property <bool> luma-invert: false;
+    in-out property <string> luma-softness: "30";
     in property <int> panel-kind;
     in property <bool> floating;
     callback move-panel(int, int);
@@ -27,9 +31,11 @@ export component TransitionDock inherits Rectangle {
     callback swipe-transition-direction(string, int);
     callback swipe-transition-direction-mode(string, int, bool);
     callback fade-to-color(string, string);
+    callback luma-transition(string, int, bool, string);
     callback set-scene-transition(string, string, string);
     callback set-scene-transition-direction(string, string, string, int);
     callback set-scene-transition-direction-mode(string, string, string, int, bool);
+    callback set-scene-transition-luma(string, string, int, bool, string);
     callback clear-scene-transition();
     property <string> duration: "300";
     property <string> fade-color: "#000000FF";
@@ -125,19 +131,47 @@ export component TransitionDock inherits Rectangle {
                     height: 30px;
                     clicked => fade-to-color(root.fade-color, root.duration);
                 }
+                TransitionLumaField {
+                    visible: root.transition-kind == "luma_wipe";
+                    pattern-index <=> root.luma-pattern-index;
+                    invert <=> root.luma-invert;
+                    softness <=> root.luma-softness;
+                }
+                Button {
+                    text: I18n.text.luma_wipe;
+                    height: 30px;
+                    clicked => luma-transition(
+                        root.duration,
+                        root.luma-pattern-index,
+                        root.luma-invert,
+                        root.luma-softness
+                    );
+                }
                 Rectangle { vertical-stretch: 1; }
                 HorizontalBox {
                     spacing: 4px;
                     CompactButton {
                         icon-name: "add";
                         hint: I18n.text.add_transition;
-                        clicked => set-scene-transition-direction-mode(
-                            root.transition-kind,
-                            root.duration,
-                            root.fade-color,
-                            root.transition-direction-index,
-                            root.swipe-in
-                        );
+                        clicked => {
+                            if root.transition-kind == "luma_wipe" {
+                                set-scene-transition-luma(
+                                    root.transition-kind,
+                                    root.duration,
+                                    root.luma-pattern-index,
+                                    root.luma-invert,
+                                    root.luma-softness
+                                );
+                            } else {
+                                set-scene-transition-direction-mode(
+                                    root.transition-kind,
+                                    root.duration,
+                                    root.fade-color,
+                                    root.transition-direction-index,
+                                    root.swipe-in
+                                );
+                            }
+                        }
                     }
                     CompactButton {
                         icon-name: "remove";

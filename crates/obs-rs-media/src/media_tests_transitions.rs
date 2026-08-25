@@ -316,6 +316,101 @@ fn directional_frames() -> (VideoFrame, VideoFrame) {
 }
 
 #[test]
+fn luma_wipe_linear_patterns_reveal_destination_and_round_trip_policy() {
+    let format =
+        VideoFormat::new(3, 1, FrameRate::new(60, 1).expect("valid rate")).expect("format");
+    let source = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![10, 0, 0, 255, 10, 0, 0, 255, 10, 0, 0, 255],
+    )
+    .expect("source");
+    let destination = VideoFrame::new(
+        format,
+        Timestamp::from_millis(10),
+        vec![200, 0, 0, 255, 200, 0, 0, 255, 200, 0, 0, 255],
+    )
+    .expect("destination");
+
+    let frame = VideoFrame::transitioned(
+        &source,
+        destination.clone(),
+        FrameTransition::luma_wipe(500, LumaWipePattern::LinearHorizontal, false, 0)
+            .expect("hard luma wipe"),
+    )
+    .expect("horizontal wipe");
+    assert_eq!(frame.pixel(0, 0).map(|pixel| pixel[0]), Some(200));
+    assert_eq!(frame.pixel(1, 0).map(|pixel| pixel[0]), Some(200));
+    assert_eq!(frame.pixel(2, 0).map(|pixel| pixel[0]), Some(10));
+
+    let inverted = VideoFrame::transitioned(
+        &source,
+        destination,
+        FrameTransition::luma_wipe(500, LumaWipePattern::LinearHorizontal, true, 0)
+            .expect("inverted luma wipe"),
+    )
+    .expect("inverted wipe");
+    assert_eq!(inverted.pixel(0, 0).map(|pixel| pixel[0]), Some(10));
+    assert_eq!(inverted.pixel(1, 0).map(|pixel| pixel[0]), Some(200));
+    assert_eq!(inverted.pixel(2, 0).map(|pixel| pixel[0]), Some(200));
+
+    let policy = TransitionSpec::luma_wipe(
+        650,
+        LumaWipePattern::LinearVertical,
+        true,
+        DEFAULT_LUMA_WIPE_SOFTNESS_MILLI,
+    )
+    .expect("luma policy");
+    assert_eq!(
+        policy.kind(),
+        TransitionKind::LumaWipe {
+            pattern: LumaWipePattern::LinearVertical,
+            invert: true,
+            softness_milli: DEFAULT_LUMA_WIPE_SOFTNESS_MILLI,
+        }
+    );
+    assert_eq!(
+        policy.at_progress(250).expect("luma sample"),
+        FrameTransition::LumaWipe {
+            progress_milli: 250,
+            pattern: LumaWipePattern::LinearVertical,
+            invert: true,
+            softness_milli: DEFAULT_LUMA_WIPE_SOFTNESS_MILLI,
+        }
+    );
+}
+
+#[test]
+fn luma_wipe_softness_blends_the_transition_edge_without_allocating_a_mask() {
+    let format =
+        VideoFormat::new(3, 1, FrameRate::new(60, 1).expect("valid rate")).expect("format");
+    let source = VideoFrame::solid(format, Timestamp::ZERO, [10, 20, 30, 255]);
+    let destination = VideoFrame::solid(format, Timestamp::from_millis(10), [200, 210, 220, 255]);
+    let frame = VideoFrame::transitioned(
+        &source,
+        destination,
+        FrameTransition::luma_wipe(500, LumaWipePattern::LinearHorizontal, false, 200)
+            .expect("soft luma wipe"),
+    )
+    .expect("soft wipe");
+
+    assert_eq!(frame.pixel(0, 0), Some([200, 210, 220, 255]));
+    assert_eq!(frame.pixel(1, 0), Some([105, 115, 125, 255]));
+    assert_eq!(frame.pixel(2, 0), Some([10, 20, 30, 255]));
+    assert_eq!(
+        FrameTransition::luma_wipe(
+            500,
+            LumaWipePattern::LinearHorizontal,
+            false,
+            MAX_LUMA_WIPE_SOFTNESS_MILLI + 1,
+        ),
+        Err(MediaError::InvalidLumaWipeSoftness {
+            softness_milli: MAX_LUMA_WIPE_SOFTNESS_MILLI + 1,
+        })
+    );
+}
+
+#[test]
 #[ignore = "timing report, not a pass/fail assertion"]
 fn slide_transition_timing_report() {
     let format = VideoFormat::new(640, 360, FrameRate::new(60, 1).expect("valid rate"))
