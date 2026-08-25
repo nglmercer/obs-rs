@@ -127,6 +127,8 @@ fn snap_distance_is_bounded_at_the_canvas_boundary() {
         draft: RefCell::new(None),
         rotation: RefCell::new(None),
         state: RefCell::new(CanvasState::default()),
+        pending_selection_below: RefCell::new(None),
+        body_moved: Cell::new(false),
     };
     assert_eq!(
         controller.set_snap_distance(24).snapping.distance,

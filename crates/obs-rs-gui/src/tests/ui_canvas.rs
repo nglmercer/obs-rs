@@ -579,7 +579,8 @@ fn setup_nested_canvas_pointer_scene(state: &Rc<RefCell<DesktopState>>) {
 
 fn exercise_nested_group_handle(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let canvas = canvas_surface(ui);
-    click_canvas_at(ui, canvas_point(ui, &canvas, 436, 294));
+    let body_start = canvas_point(ui, &canvas, 436, 294);
+    click_canvas_at(ui, body_start);
     assert_eq!(
         state.borrow().selected_sources().collect::<Vec<_>>(),
         vec!["canvas-nested-group/canvas-nested-group-child"],
@@ -591,7 +592,26 @@ fn exercise_nested_group_handle(ui: &MainWindow, state: &Rc<RefCell<DesktopState
     );
     assert!(!ui.get_item_locked(), "nested group leaf remains editable");
     let group_parent_before = canvas_target_transform(state, "canvas-nested-group");
-    let group_child_before =
+    let group_child_before_body =
+        canvas_target_transform(state, "canvas-nested-group/canvas-nested-group-child");
+    drag_canvas_at(
+        ui,
+        body_start,
+        LogicalPosition::new(body_start.x + 18.0, body_start.y + 12.0),
+        PointerEventButton::Left,
+    );
+    let group_parent_after_body = canvas_target_transform(state, "canvas-nested-group");
+    let group_child_after_body =
+        canvas_target_transform(state, "canvas-nested-group/canvas-nested-group-child");
+    assert_ne!(
+        group_child_after_body, group_child_before_body,
+        "nested group body drag updates the local child transform"
+    );
+    assert_eq!(
+        group_parent_after_body, group_parent_before,
+        "nested group body drag preserves the container transform"
+    );
+    let group_child_before_handle =
         canvas_target_transform(state, "canvas-nested-group/canvas-nested-group-child");
     let group_handle_x = ui
         .get_item_handle_x()
@@ -615,7 +635,7 @@ fn exercise_nested_group_handle(ui: &MainWindow, state: &Rc<RefCell<DesktopState
     let group_child_after =
         canvas_target_transform(state, "canvas-nested-group/canvas-nested-group-child");
     assert_ne!(
-        group_child_after, group_child_before,
+        group_child_after, group_child_before_handle,
         "nested group handle drag updates the local child transform"
     );
     assert_eq!(
@@ -626,14 +646,38 @@ fn exercise_nested_group_handle(ui: &MainWindow, state: &Rc<RefCell<DesktopState
 
 fn exercise_nested_scene_reference_handle(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let canvas = canvas_surface(ui);
-    click_canvas_at(ui, canvas_point(ui, &canvas, 936, 744));
+    let body_start = canvas_point(ui, &canvas, 936, 744);
+    click_canvas_at(ui, body_start);
     assert_eq!(
         state.borrow().selected_sources().collect::<Vec<_>>(),
         vec!["canvas-nested-reference/canvas-nested-reference-leaf"],
         "canvas pointer selects a Scene-reference leaf by its stable path"
     );
     let reference_parent_before = canvas_target_transform(state, "canvas-nested-reference");
-    let reference_leaf_before = canvas_target_transform(
+    let reference_leaf_before_body = canvas_target_transform(
+        state,
+        "canvas-nested-reference/canvas-nested-reference-leaf",
+    );
+    drag_canvas_at(
+        ui,
+        body_start,
+        LogicalPosition::new(body_start.x + 18.0, body_start.y + 12.0),
+        PointerEventButton::Left,
+    );
+    let reference_parent_after_body = canvas_target_transform(state, "canvas-nested-reference");
+    let reference_leaf_after_body = canvas_target_transform(
+        state,
+        "canvas-nested-reference/canvas-nested-reference-leaf",
+    );
+    assert_ne!(
+        reference_leaf_after_body, reference_leaf_before_body,
+        "Scene-reference body drag updates the owning scene leaf"
+    );
+    assert_eq!(
+        reference_parent_after_body, reference_parent_before,
+        "Scene-reference body drag preserves the parent reference transform"
+    );
+    let reference_leaf_before_handle = canvas_target_transform(
         state,
         "canvas-nested-reference/canvas-nested-reference-leaf",
     );
@@ -661,7 +705,7 @@ fn exercise_nested_scene_reference_handle(ui: &MainWindow, state: &Rc<RefCell<De
         "canvas-nested-reference/canvas-nested-reference-leaf",
     );
     assert_ne!(
-        reference_leaf_after, reference_leaf_before,
+        reference_leaf_after, reference_leaf_before_handle,
         "Scene-reference handle drag updates the owning scene leaf"
     );
     assert_eq!(
@@ -762,6 +806,12 @@ fn click_canvas_at(ui: &MainWindow, position: LogicalPosition) {
     });
 }
 
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "testing coordinates are bounded desktop/canvas dimensions"
+)]
 fn drag_canvas_at(
     ui: &MainWindow,
     start: LogicalPosition,
@@ -774,8 +824,22 @@ fn drag_canvas_at(
         position: start,
         button,
     });
-    ui.window()
-        .dispatch_event(WindowEvent::PointerMoved { position: end });
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    let distance = (dx * dx + dy * dy).sqrt();
+    if distance > f32::EPSILON {
+        let steps = ((distance / 5.0).ceil() as usize).max(2);
+        for step in 1..steps {
+            let progress = step as f32 / steps as f32;
+            let position = LogicalPosition::new(start.x + dx * progress, start.y + dy * progress);
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+            ui.window()
+                .dispatch_event(WindowEvent::PointerMoved { position });
+        }
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
+        ui.window()
+            .dispatch_event(WindowEvent::PointerMoved { position: end });
+    }
     ui.window().dispatch_event(WindowEvent::PointerReleased {
         position: end,
         button,

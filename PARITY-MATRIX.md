@@ -148,6 +148,16 @@ reference remains unchanged. The fixture removes both temporary roots and the
 child scene after the assertion. This adds nested pointer/handle evidence
 without claiming transformed-boundary crop/rotation or live DPI parity.
 
+## Latest verified package: nested canvas body gestures
+
+On 2026-08-25, the same fixture now covers body drags for both nested targets.
+The pointer controller defers select-underneath until release, so a real drag
+keeps the selected leaf instead of retargeting its group/reference ancestor or
+an overlapping source. The drag commits one local transform change while the
+enclosing transform remains unchanged; the existing overlapping-source click
+fixture still proves plain select-underneath and Ctrl-toggle behavior.
+Transformed-boundary crop/rotation and live DPI remain open.
+
 ## Latest verified package: nested group canvas projection
 
 On 2026-08-24, the editable canvas now consumes the same flattened, stable
@@ -341,6 +351,13 @@ project/scene/output, collection, recovery, remux, and rename dialog flows.
 1,000-line modularization threshold.
 
 ## Core, scheduling, and rendering
+
+### Matrix correction — 2026-08-25
+
+The `CANVAS-003` and `CANVAS-004` rows below predate the latest GUI fixture
+wording. Their current evidence includes nested group/Scene-reference body
+drags and resize handles, plus deferred select-underneath semantics; only
+transformed-boundary crop/rotation and live DPI remain open.
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

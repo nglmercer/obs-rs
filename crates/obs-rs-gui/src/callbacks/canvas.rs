@@ -1,6 +1,6 @@
 //! Interactive scene-item editing on the preview canvas.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::Cell, cell::RefCell, rc::Rc};
 
 use obs_rs_media::FrameTransform;
 use obs_rs_project::{Profile, SceneItemSpec, SceneSpec};

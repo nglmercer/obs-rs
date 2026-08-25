@@ -96,6 +96,9 @@ export component CanvasEditor inherits Rectangle {
 
     // The whole-canvas area handles selection clicks and dragging the item.
     surface := TouchArea {
+        // Keep the transparent selection outline and safe-area guides from
+        // intercepting a new body gesture. Resize/rotation grips use z=2.
+        z: 1;
         mouse-cursor: root.panning
             ? MouseCursor.grabbing
             : (root.space-held
@@ -244,6 +247,7 @@ export component CanvasEditor inherits Rectangle {
     // supplied in canvas coordinates by Rust so it follows rotated items and
     // remains outside the axis-aligned selection bounds.
     if root.rotation-handle-active : Rectangle {
+        z: 2;
         visible: root.active && !root.locked;
         x: root.view-x + root.rotation-handle-x * root.view-scale * 1px - 6px;
         y: root.view-y + root.rotation-handle-y * root.view-scale * 1px - 6px;
@@ -307,6 +311,7 @@ export component CanvasEditor inherits Rectangle {
         { id: 7, fx: 0.0, fy: 1.0, cursor: MouseCursor.nesw-resize },
         { id: 8, fx: 0.0, fy: 0.5, cursor: MouseCursor.ew-resize },
     ] : Rectangle {
+        z: 2;
         visible: root.active && !root.locked;
         x: root.view-x + root.handle-x[handle.id - 1] * root.view-scale * 1px
             - root.handle-size / 2;

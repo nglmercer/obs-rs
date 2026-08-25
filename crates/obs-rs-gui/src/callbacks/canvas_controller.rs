@@ -4,7 +4,7 @@ use super::{
     rotate_canvas_delta, rotate_transform_around_point, rotation_from_pointer,
     selection_overlay_for_transforms, set_selection_overlay, snap_rect, snap_rotated_resize_delta,
     transform_for_rect, transform_for_rotated_local_rect, transform_with_geometry,
-    visible_source_extent, CanvasResizeModifiers, CanvasState, CanvasZoom, ComponentHandle,
+    visible_source_extent, CanvasResizeModifiers, CanvasState, CanvasZoom, Cell, ComponentHandle,
     DesktopState, FrameTransform, ItemRect, MainWindow, PreviewSurface, Rc, RefCell,
     SelectionOverlay, SnapGuides, SnapSettings, TransformDraft, TransformDraftItem, UiCommand,
     MAX_SNAP_GUIDES, MINIMUM_ITEM_PIXELS,
@@ -21,6 +21,8 @@ pub(crate) struct CanvasController {
     pub(super) draft: RefCell<Option<TransformDraft>>,
     pub(super) rotation: RefCell<Option<RotationGesture>>,
     pub(super) state: RefCell<CanvasState>,
+    pub(super) pending_selection_below: RefCell<Option<String>>,
+    pub(super) body_moved: Cell<bool>,
 }
 
 impl CanvasController {
@@ -43,6 +45,22 @@ impl CanvasController {
 
     fn clear_rotation(&self) {
         self.rotation.replace(None);
+    }
+
+    fn begin_body_gesture(&self, selection_below: Option<String>) {
+        self.pending_selection_below.replace(selection_below);
+        self.body_moved.set(false);
+    }
+
+    fn mark_body_moved(&self) {
+        self.body_moved.set(true);
+    }
+
+    fn take_body_gesture(&self) -> (Option<String>, bool) {
+        (
+            self.pending_selection_below.borrow_mut().take(),
+            self.body_moved.replace(false),
+        )
     }
 
     /// Returns the transient viewport state used by the canvas presentation.
@@ -179,6 +197,8 @@ pub(crate) fn install_canvas_callbacks(
         draft: RefCell::new(None),
         rotation: RefCell::new(None),
         state: RefCell::new(CanvasState::default()),
+        pending_selection_below: RefCell::new(None),
+        body_moved: Cell::new(false),
     });
     install_zoom_callbacks(ui, &controller);
 
@@ -240,27 +260,55 @@ pub(crate) fn install_canvas_callbacks(
         pointer_controller.clear_rotation();
         pointer_controller.draft.borrow_mut().take();
         let canvas = canvas_size(&ui);
-        // A plain click follows OBS's preview behavior: if the current
-        // topmost item is already selected, walk down through the hit stack
-        // so an obscured source can be reached without first moving it.
-        // Ctrl-click remains an explicit toggle of the topmost hit.
-        let hit = source_at(
-            &pointer_state,
-            canvas,
-            i64::from(x),
-            i64::from(y),
-            !additive,
-        );
+        // A plain click follows OBS's preview behavior: a selected topmost
+        // item stays the gesture target while the pointer is down, so a body
+        // drag cannot retarget an ancestor or an obscured source. If the
+        // pointer is released without movement, the pending hit below is
+        // selected instead. Ctrl-click remains an explicit toggle of the
+        // topmost hit.
+        let top_hit = source_at(&pointer_state, canvas, i64::from(x), i64::from(y), false);
+        let selected_top = !additive
+            && top_hit
+                .as_deref()
+                .is_some_and(|target| pointer_state.borrow().is_source_selected(target));
+        let selection_below = if selected_top {
+            source_at(&pointer_state, canvas, i64::from(x), i64::from(y), true)
+                .filter(|target| top_hit.as_deref() != Some(target.as_str()))
+        } else {
+            None
+        };
+        let hit = if selected_top {
+            top_hit
+        } else {
+            source_at(
+                &pointer_state,
+                canvas,
+                i64::from(x),
+                i64::from(y),
+                !additive,
+            )
+        };
         if let Some(id) = hit {
-            let command = if additive {
-                UiCommand::ToggleSourceSelection { id }
+            if selected_top {
+                pointer_controller.begin_body_gesture(selection_below);
             } else {
-                UiCommand::SelectSource { id }
-            };
-            crate::dispatch_and_refresh(&ui.as_weak(), &pointer_state, &pointer_surface, command);
+                pointer_controller.begin_body_gesture(None);
+                let command = if additive {
+                    UiCommand::ToggleSourceSelection { id }
+                } else {
+                    UiCommand::SelectSource { id }
+                };
+                crate::dispatch_and_refresh(
+                    &ui.as_weak(),
+                    &pointer_state,
+                    &pointer_surface,
+                    command,
+                );
+            }
             ui.set_canvas_pointer_mode(1);
             set_selection_box_properties(&ui, None);
         } else {
+            pointer_controller.begin_body_gesture(None);
             if !additive {
                 crate::dispatch_and_refresh(
                     &ui.as_weak(),
@@ -500,6 +548,9 @@ pub(crate) fn install_canvas_callbacks(
                 item.transform = transform_for_rect(item.transform, next_rect, canvas);
             }
         }
+        if handle == 0 {
+            drag_controller.mark_body_moved();
+        }
         let overlay = draft_overlay(draft, canvas);
         drop(draft_slot);
         // The drag stays out of the project until the pointer is released: the
@@ -522,7 +573,19 @@ pub(crate) fn install_canvas_callbacks(
             return;
         };
         commit_controller.clear_rotation();
+        let (selection_below, body_moved) = commit_controller.take_body_gesture();
         let Some(draft) = commit_controller.draft.borrow_mut().take() else {
+            ui.set_canvas_pointer_mode(0);
+            if !body_moved {
+                if let Some(id) = selection_below {
+                    crate::dispatch_and_refresh(
+                        &ui.as_weak(),
+                        &commit_state,
+                        &commit_surface,
+                        UiCommand::SelectSource { id },
+                    );
+                }
+            }
             return;
         };
         let profile = commit_state
@@ -686,6 +749,7 @@ pub(super) fn source_ids_in_rect(
 /// OBS walks down through already-selected hits when a normal click lands on
 /// a stack of overlapping sources. Ctrl-click calls the same hit test with
 /// `select_below = false`, preserving the topmost-toggle behavior.
+#[cfg(test)]
 pub(super) fn first_selectable_hit<'a, I>(hits: I, select_below: bool) -> Option<&'a str>
 where
     I: IntoIterator<Item = (&'a str, bool)>,
@@ -737,19 +801,42 @@ pub(super) fn source_at(
     let state = state.borrow();
     let scene = state.preview_scene()?;
     let projections = canvas_item_projections(&state, scene, canvas);
-    first_selectable_hit(
-        projections.iter().rev().filter_map(|item| {
-            if !item_rect(item.transform, canvas).contains(x, y) {
-                return None;
-            }
-            Some((
+    let hits = projections
+        .iter()
+        .rev()
+        .filter(|item| item_rect(item.transform, canvas).contains(x, y))
+        .map(|item| {
+            (
                 item.target.as_str(),
                 state.is_source_selected(item.target.as_str()),
-            ))
-        }),
-        select_below,
-    )
-    .map(str::to_owned)
+            )
+        })
+        .collect::<Vec<_>>();
+    if !select_below {
+        return hits.first().map(|(target, _)| (*target).to_owned());
+    }
+
+    let mut selected_hits = Vec::new();
+    for (target, selected) in hits {
+        if selected {
+            selected_hits.push(target);
+            continue;
+        }
+        if selected_hits
+            .iter()
+            .any(|selected| is_target_ancestor(target, selected))
+        {
+            continue;
+        }
+        return Some(target.to_owned());
+    }
+    selected_hits.first().map(|target| (*target).to_owned())
+}
+
+fn is_target_ancestor(candidate: &str, selected: &str) -> bool {
+    selected
+        .strip_prefix(candidate)
+        .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 /// Builds the bounded canvas and source guides for one transform gesture.

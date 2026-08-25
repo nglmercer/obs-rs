@@ -181,19 +181,22 @@ Selection projection update: nested Sources rows now resolve through the same
 bounded `DesktopState` path selection as top-level rows. Clicks, context-menu
 opening, and depth-first keyboard navigation can select targets such as
 `group/child`; Ctrl+A uses the same bounded visible-row projection. Nested
-canvas geometry remains intentionally separate until world-transform
-projection is implemented. The canvas pointer fixture now also uses two
+canvas geometry now uses the same stable path projection for selection, body
+gestures, and transform handles; transformed-boundary semantics remain
+separate until an intermediate-scene transform model exists. The canvas
+pointer fixture now also uses two
 overlapping temporary top-level items to prove top-layer selection,
 select-underneath on the next plain click, and Ctrl-toggle of the top layer
 through the real pointer boundary. The pure hit-test oracle and the live event
 path now exercise the same ordered selection owner.
 
-The nested canvas pointer packet now drives real resize-handle gestures for a
-group leaf and a Scene-reference leaf. Each fixture asserts the stable
-flattened selection path, local transform mutation, and unchanged enclosing
-transform, then removes its temporary group/reference scene. Body-drag
-behavior through the testing backend, transformed-boundary crop/rotation, and
-live DPI evidence remain open.
+The nested canvas pointer packet now drives real body and resize-handle
+gestures for a group leaf and a Scene-reference leaf. Each fixture asserts the
+stable flattened selection path, local transform mutation, and unchanged
+enclosing transform, then removes its temporary group/reference scene. The
+pointer controller defers select-underneath until a no-movement release, so
+body drags cannot retarget an ancestor or overlapping source. Transformed-
+boundary crop/rotation and live DPI evidence remain open.
 
 The Sources dock now exposes one atomic same-owner grouping command. It
 preserves the parent order and child transforms for root, nested-group, or
