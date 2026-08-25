@@ -83,6 +83,16 @@ refuses an empty or `none` selected target at the UI boundary; its default
 remains unbound. Global registration, Interact, and the remaining source
 context-menu actions remain incomplete.
 
+## Latest verified package: selected-source lock hotkey
+
+On 2026-08-25, `SOURCE-001`/`HOTKEY-001` gained a typed
+`ToggleSelectedSourceLock` action. The bounded shortcut table, persisted
+Hotkeys field, English/Spanish settings row, action code 20, and Slint
+execution path reuse the existing Rust source-lock callback. The action
+requires a non-empty, non-`none` selected target and remains unbound by
+default. Global registration, Interact, and the remaining source action
+catalog remain incomplete.
+
 ## Latest verified package: exact nested leaf crop/rotation slice
 
 On 2026-08-25, nested group and Scene-reference flattening gained a bounded
@@ -632,6 +642,11 @@ docks until the plugin-host packet is implemented.
 Reconciliation note: `SOURCE-001`/`HOTKEY-001` now also include the optional
 persisted selected-source visibility binding and GUI action code 19. It routes
 through the existing source callback and leaves the default unbound; global
+registration and the remaining source action catalog remain partial.
+
+Reconciliation note: `SOURCE-001`/`HOTKEY-001` now also include the optional
+persisted selected-source lock binding and GUI action code 20. It routes through
+the existing source-lock callback and leaves the default unbound; global
 registration and the remaining source action catalog remain partial.
 
 ## Baseline conclusion

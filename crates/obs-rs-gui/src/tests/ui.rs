@@ -43,6 +43,9 @@ fn ui_layout_can_render_a_reference_snapshot() {
     let visibility_shortcut = Shortcut::parse("Ctrl+Shift+V")
         .expect("selected-source visibility shortcut syntax")
         .expect("selected-source visibility shortcut binding");
+    let lock_shortcut = Shortcut::parse("Ctrl+Shift+L")
+        .expect("selected-source lock shortcut syntax")
+        .expect("selected-source lock shortcut binding");
     state
         .borrow_mut()
         .replace_shortcuts(&[
@@ -55,6 +58,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
                 visibility_shortcut,
                 UiAction::ToggleSelectedSourceVisibility,
             ),
+            (lock_shortcut, UiAction::ToggleSelectedSourceLock),
         ])
         .expect("shortcut table");
     crate::callbacks::install_shortcut_callbacks(&ui, &state);
@@ -64,6 +68,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(ui.invoke_trigger_shortcut("f7".into()), 17);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+s".into()), 18);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+v".into()), 19);
+    assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+l".into()), 20);
     assert_eq!(ui.invoke_trigger_shortcut("Ctrl+X".into()), 0);
     let persisted_tree = DockNode::Split {
         axis: crate::dock_tree::DockAxis::Vertical,

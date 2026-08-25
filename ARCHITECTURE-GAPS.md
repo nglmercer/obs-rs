@@ -43,6 +43,12 @@ when the UI has no valid selected source, so source visibility remains owned by
 the project command path. Interact, context-menu completion, and global OS
 registration remain open.
 
+The selected-source lock hotkey now reuses the existing typed source-lock
+callback. Bounded action code 20 is persisted, conflict-checked, and rejected
+when the UI has no valid selected source, so lock state remains owned by the
+project command path. Interact, context-menu completion, and global OS
+registration remain open.
+
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation
 when every crossed parent scale is uniform and unmirrored. Media, project,

@@ -245,6 +245,11 @@ impl AppSettings {
                 "hotkey_toggle_selected_source_visibility",
                 &defaults.hotkey_toggle_selected_source_visibility,
             ),
+            hotkey_toggle_selected_source_lock: hotkey(
+                config,
+                "hotkey_toggle_selected_source_lock",
+                &defaults.hotkey_toggle_selected_source_lock,
+            ),
             preview_border_color: colour_text(
                 config,
                 "preview_border_color",
@@ -457,6 +462,10 @@ impl AppSettings {
             (
                 "hotkey_toggle_selected_source_visibility",
                 self.hotkey_toggle_selected_source_visibility.clone(),
+            ),
+            (
+                "hotkey_toggle_selected_source_lock",
+                self.hotkey_toggle_selected_source_lock.clone(),
             ),
             ("preview_border_color", self.preview_border_color.clone()),
             ("program_border_color", self.program_border_color.clone()),

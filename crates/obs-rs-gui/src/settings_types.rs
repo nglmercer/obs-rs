@@ -287,6 +287,7 @@ pub(crate) struct AppSettings {
     pub(crate) hotkey_toggle_desktop_mute: String,
     pub(crate) hotkey_toggle_studio_mode: String,
     pub(crate) hotkey_toggle_selected_source_visibility: String,
+    pub(crate) hotkey_toggle_selected_source_lock: String,
     pub(crate) preview_border_color: String,
     pub(crate) program_border_color: String,
     pub(crate) project_path: String,
@@ -399,6 +400,7 @@ impl Default for AppSettings {
             // existing desktop/window-manager bindings.
             hotkey_toggle_studio_mode: String::new(),
             hotkey_toggle_selected_source_visibility: String::new(),
+            hotkey_toggle_selected_source_lock: String::new(),
             preview_border_color: "#60A5FA".to_owned(),
             program_border_color: "#F87171".to_owned(),
             project_path: user_file(PROJECT_FILE),

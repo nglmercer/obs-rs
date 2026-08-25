@@ -198,6 +198,25 @@ fn selected_source_visibility_shortcut_is_a_frontend_action() {
 }
 
 #[test]
+fn selected_source_lock_shortcut_is_a_frontend_action() {
+    let mut state = DesktopState::new(project());
+    let shortcut = Shortcut::new(1 | Shortcut::SHIFT, "L").expect("selected-source lock shortcut");
+    state
+        .replace_shortcuts(&[(shortcut.clone(), UiAction::ToggleSelectedSourceLock)])
+        .expect("selected-source lock shortcut table");
+    assert_eq!(
+        state.shortcut_action(&shortcut),
+        Some(UiAction::ToggleSelectedSourceLock)
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::TriggerShortcut { shortcut }),
+        Err(UiError::FrontendActionRequired(
+            UiAction::ToggleSelectedSourceLock
+        ))
+    );
+}
+
+#[test]
 fn replay_start_and_stop_shortcuts_are_frontend_actions() {
     let mut state = DesktopState::new(project());
     let start = Shortcut::new(0, "F9").expect("shortcut");

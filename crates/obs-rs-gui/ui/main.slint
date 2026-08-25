@@ -421,6 +421,11 @@ export component MainWindow inherits Window {
                 && root.selected-source != "none") {
                 root.toggle-source-visibility(root.selected-source);
                 true
+            } else if (action == 20
+                && root.selected-source != ""
+                && root.selected-source != "none") {
+                root.toggle-source-locked(root.selected-source);
+                true
             } else {
                 false
             }

@@ -257,6 +257,8 @@ pub enum UiAction {
     ToggleStudioMode,
     /// Toggle visibility for the currently selected source item.
     ToggleSelectedSourceVisibility,
+    /// Toggle locking for the currently selected source item.
+    ToggleSelectedSourceLock,
 }
 
 /// A validated, sortable keyboard shortcut description.
