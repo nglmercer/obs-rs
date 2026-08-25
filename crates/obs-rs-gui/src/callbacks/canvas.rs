@@ -22,6 +22,9 @@ mod canvas_model;
 #[path = "canvas_transform.rs"]
 mod canvas_transform;
 #[cfg(test)]
+#[path = "canvas_projection_tests.rs"]
+mod projection_tests;
+#[cfg(test)]
 #[path = "canvas_tests.rs"]
 mod tests;
 #[cfg(test)]
@@ -208,9 +211,10 @@ pub(crate) fn group_parent_transform(
 
 /// Converts an effective canvas transform back to the local transform of a
 /// path-addressed group or Scene-reference child. Root items need no
-/// conversion. A transformed boundary intentionally accepts only the
-/// axis-aligned local subset; crop or rotation at that boundary still returns
-/// `None` instead of being silently approximated.
+/// conversion. A transformed boundary accepts a leaf crop exactly and
+/// accepts leaf rotation only under a uniform, unmirrored parent scale.
+/// Parent crop/rotation and a rotated leaf under non-uniform or mirrored
+/// ancestry return `None` instead of being silently approximated.
 pub(crate) fn local_transform_for_canvas_item(
     profile: &Profile,
     scene: &SceneSpec,
@@ -229,7 +233,12 @@ pub(crate) fn local_transform_for_canvas_item(
     if parent == FrameTransform::IDENTITY {
         return Some(effective);
     }
-    if effective.is_cropped() || effective.is_rotated() {
+    if parent.is_cropped() || parent.is_rotated() {
+        return None;
+    }
+    if effective.is_rotated()
+        && (parent.scale_x_milli() != parent.scale_y_milli() || parent.flip_x() || parent.flip_y())
+    {
         return None;
     }
     let local = canvas_item_for_target(profile, scene.id().as_str(), target)?;
@@ -245,44 +254,32 @@ pub(crate) fn local_transform_for_canvas_item(
         u32::try_from(scale_x.clamp(1, i64::from(FrameTransform::MAX_SCALE_MILLI))).ok()?;
     let scale_y =
         u32::try_from(scale_y.clamp(1, i64::from(FrameTransform::MAX_SCALE_MILLI))).ok()?;
-    let inverse_translation = |effective_translation: i32,
-                               parent_translation: i32,
-                               parent_scale: u32,
-                               local_scale: u32,
-                               dimension: i64,
-                               parent_flipped: bool|
-     -> Option<i32> {
-        let origin = i64::from(effective_translation)
-            .saturating_sub(i64::from(parent_translation))
-            .saturating_mul(1_000)
-            .checked_div(i64::from(parent_scale))?;
-        let extent = dimension
-            .saturating_mul(i64::from(local_scale))
-            .checked_div(1_000)?;
-        let local_translation = if parent_flipped {
-            dimension.saturating_sub(extent).saturating_sub(origin)
-        } else {
-            origin
-        };
-        i32::try_from(local_translation).ok()
-    };
-    let translate_x = inverse_translation(
+    let visible_width =
+        width.checked_sub(i64::from(effective.crop_left()) + i64::from(effective.crop_right()))?;
+    let visible_height =
+        height.checked_sub(i64::from(effective.crop_top()) + i64::from(effective.crop_bottom()))?;
+    if visible_width <= 0 || visible_height <= 0 {
+        return None;
+    }
+    let translate_x = inverse_nested_translation(
         effective.translate_x(),
         parent.translate_x(),
         parent.scale_x_milli(),
         scale_x,
         width,
+        visible_width,
         parent.flip_x(),
     )?;
-    let translate_y = inverse_translation(
+    let translate_y = inverse_nested_translation(
         effective.translate_y(),
         parent.translate_y(),
         parent.scale_y_milli(),
         scale_y,
         height,
+        visible_height,
         parent.flip_y(),
     )?;
-    FrameTransform::new(
+    let candidate = FrameTransform::new(
         scale_x,
         scale_y,
         translate_x,
@@ -291,7 +288,43 @@ pub(crate) fn local_transform_for_canvas_item(
         effective.flip_y() != parent.flip_y(),
         local.transform().opacity(),
     )
-    .ok()
+    .ok()?
+    .with_rotation_milli_degrees(effective.rotation_milli_degrees())
+    .ok()?
+    .with_crop(
+        effective.crop_left(),
+        effective.crop_top(),
+        effective.crop_right(),
+        effective.crop_bottom(),
+    )
+    .ok()?;
+    Some(candidate)
+}
+
+fn inverse_nested_translation(
+    effective_translation: i32,
+    parent_translation: i32,
+    parent_scale: u32,
+    local_scale: u32,
+    canvas_dimension: i64,
+    visible_dimension: i64,
+    parent_flipped: bool,
+) -> Option<i32> {
+    let origin = i64::from(effective_translation)
+        .saturating_sub(i64::from(parent_translation))
+        .saturating_mul(1_000)
+        .checked_div(i64::from(parent_scale))?;
+    let extent = visible_dimension
+        .saturating_mul(i64::from(local_scale))
+        .checked_div(1_000)?;
+    let local_translation = if parent_flipped {
+        canvas_dimension
+            .saturating_sub(extent)
+            .saturating_sub(origin)
+    } else {
+        origin
+    };
+    i32::try_from(local_translation).ok()
 }
 
 /// Returns whether a canvas target or any of its enclosing groups is locked.

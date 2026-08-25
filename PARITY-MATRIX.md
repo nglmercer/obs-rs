@@ -28,6 +28,17 @@ Stereo, 2.1, Quad, 5.1, and 7.1 by speaker role, while unknown `Discrete`
 layouts retain the index-based fallback. This does not claim per-source audio
 routing, adaptive clock correction, or multiple recording tracks.
 
+## Latest verified package: exact nested leaf crop/rotation slice
+
+On 2026-08-25, nested group and Scene-reference flattening gained a bounded
+exact slice for leaf transforms. Crop is preserved across an axis-aligned
+parent, including parent mirroring, and leaf rotation is preserved when the
+crossed parent scale is uniform and unmirrored. Media, project, GUI inverse,
+and canvas projection tests cover the behavior. Parent crop/rotation and a
+rotated leaf under non-uniform or mirrored ancestry still return an explicit
+unsupported result; those cases require an intermediate-scene clipping/shear
+model.
+
 ## Latest verified package: scene-item reparenting
 
 On 2026-08-24, `SCENE-002`/`SOURCE-001` gained an atomic
@@ -383,9 +394,15 @@ transformed-boundary crop/rotation and live DPI remain open.
 > older `CANVAS-003`/`CANVAS-004` dependency wording. Axis-aligned scene-source
 > leaves now participate in canvas selection, drafts, local commits, and the
 > standalone Transform dialog. The real GUI fixture now covers nested group and
-> Scene-reference selection plus resize handles; transformed-boundary
-> crop/rotation, body-drag behavior in the testing backend, and live DPI
-> evidence remain open.
+> Scene-reference selection plus resize handles; leaf crop and leaf rotation
+> now compose across a uniform, unmirrored parent, while parent-boundary crop/
+> rotation, body-drag behavior in the testing backend, and live DPI evidence
+> remain open.
+
+> Transform reconciliation: the nested transform slice is exact for leaf crop
+> across axis-aligned parents (including mirroring) and leaf rotation across
+> uniform, unmirrored parents. A parent crop/rotation or a rotated leaf under
+> non-uniform/mirrored ancestry remains an explicit unsupported capability.
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

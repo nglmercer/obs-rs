@@ -308,36 +308,60 @@ impl FrameTransform {
         })
     }
 
-    /// Composes axis-aligned nested transforms using the profile canvas bounds.
+    /// Composes nested transforms that remain representable by one frame.
     ///
     /// This is the flattening path for nested scenes and groups. In addition to
     /// scale, translation, and opacity, it preserves horizontal and vertical
     /// mirroring by reflecting the child visible rectangle around the parent
-    /// canvas before combining its fixed-point geometry. Cropping and rotation
-    /// remain rejected because their source-edge and centre semantics require a
-    /// transformed intermediate canvas.
+    /// canvas before combining its fixed-point geometry. A leaf crop is exact
+    /// because the cropped source rectangle remains the same source rectangle
+    /// after an axis-aligned parent scale. A leaf rotation is exact only under
+    /// a uniform, unmirrored parent scale; a non-uniform scale would introduce
+    /// shear, and a reflected boundary changes the rotation ordering.
+    ///
+    /// Crop or rotation on the parent is still rejected. That operation clips
+    /// or rotates an intermediate scene canvas and therefore needs a richer
+    /// layer representation than one flattened [`FrameTransform`].
     ///
     /// `canvas_width` and `canvas_height` are the dimensions of the nested
     /// scene/group canvas, not the current viewport.
     ///
     /// # Errors
     ///
-    /// Returns [`MediaError::InvalidTransform`] when the canvas is empty, either
-    /// transform uses cropping or rotation, or a composed value exceeds the
-    /// bounded representation.
+    /// Returns [`MediaError::InvalidTransform`] when the canvas is empty, the
+    /// parent uses cropping or rotation, a rotated child crosses a non-uniform
+    /// or mirrored parent, a crop consumes the nested canvas, or a composed
+    /// value exceeds the bounded representation.
     pub fn compose_axis_aligned(
         self,
         parent: Self,
         canvas_width: u32,
         canvas_height: u32,
     ) -> Result<Self, MediaError> {
-        if canvas_width == 0
-            || canvas_height == 0
-            || self.is_cropped()
-            || parent.is_cropped()
-            || self.is_rotated()
-            || parent.is_rotated()
+        if canvas_width == 0 || canvas_height == 0 || parent.is_cropped() || parent.is_rotated() {
+            return Err(MediaError::InvalidTransform);
+        }
+        if self.is_rotated()
+            && (parent.scale_x_milli != parent.scale_y_milli || parent.flip_x || parent.flip_y)
         {
+            return Err(MediaError::InvalidTransform);
+        }
+
+        let visible_width = canvas_width
+            .checked_sub(
+                self.crop_left
+                    .checked_add(self.crop_right)
+                    .ok_or(MediaError::InvalidTransform)?,
+            )
+            .ok_or(MediaError::InvalidTransform)?;
+        let visible_height = canvas_height
+            .checked_sub(
+                self.crop_top
+                    .checked_add(self.crop_bottom)
+                    .ok_or(MediaError::InvalidTransform)?,
+            )
+            .ok_or(MediaError::InvalidTransform)?;
+        if visible_width == 0 || visible_height == 0 {
             return Err(MediaError::InvalidTransform);
         }
 
@@ -357,6 +381,7 @@ impl FrameTransform {
             self.scale_x_milli,
             parent.scale_x_milli,
             canvas_width,
+            visible_width,
             parent.flip_x,
         )
         .ok_or(MediaError::InvalidTransform)?;
@@ -366,6 +391,7 @@ impl FrameTransform {
             self.scale_y_milli,
             parent.scale_y_milli,
             canvas_height,
+            visible_height,
             parent.flip_y,
         )
         .ok_or(MediaError::InvalidTransform)?;
@@ -386,7 +412,11 @@ impl FrameTransform {
             flip_x: self.flip_x != parent.flip_x,
             flip_y: self.flip_y != parent.flip_y,
             opacity: u8::try_from(opacity).unwrap_or(u8::MAX),
-            ..Self::IDENTITY
+            rotation_milli_degrees: self.rotation_milli_degrees,
+            crop_left: self.crop_left,
+            crop_top: self.crop_top,
+            crop_right: self.crop_right,
+            crop_bottom: self.crop_bottom,
         })
     }
 }
@@ -397,9 +427,10 @@ fn compose_axis_aligned_translation(
     child_scale_milli: u32,
     parent_scale_milli: u32,
     canvas_dimension: u32,
+    visible_dimension: u32,
     parent_flipped: bool,
 ) -> Option<i64> {
-    let child_extent = i64::from(canvas_dimension)
+    let child_extent = i64::from(visible_dimension)
         .checked_mul(i64::from(child_scale_milli))?
         .checked_div(1_000)?;
     let child_origin = if parent_flipped {

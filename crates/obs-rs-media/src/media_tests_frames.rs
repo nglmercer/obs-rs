@@ -166,7 +166,7 @@ fn simple_nested_transforms_compose_without_approximating_unsupported_features()
 }
 
 #[test]
-fn axis_aligned_nested_transforms_compose_mirroring_around_canvas_bounds() {
+fn axis_aligned_nested_transforms_compose_crop_and_mirroring_around_canvas_bounds() {
     let child = FrameTransform::new(500, 500, 1, 2, true, false, 200).expect("child transform");
     let parent =
         FrameTransform::new(2_000, 2_000, 3, 4, true, true, 128).expect("parent transform");
@@ -183,13 +183,43 @@ fn axis_aligned_nested_transforms_compose_mirroring_around_canvas_bounds() {
     assert_eq!(composed.opacity(), 100);
 
     let cropped = child.with_crop(1, 0, 0, 0).expect("bounded crop");
-    assert_eq!(
-        cropped.compose_axis_aligned(parent, 8, 6),
-        Err(MediaError::InvalidTransform)
-    );
+    let cropped_composed = cropped
+        .compose_axis_aligned(parent, 8, 6)
+        .expect("cropped leaf composition");
+    assert_eq!(cropped_composed.scale_x_milli(), 1_000);
+    assert_eq!(cropped_composed.scale_y_milli(), 1_000);
+    assert_eq!(cropped_composed.translate_x(), 11);
+    assert_eq!(cropped_composed.translate_y(), 6);
+    assert!(!cropped_composed.flip_x());
+    assert!(cropped_composed.flip_y());
+    assert_eq!(cropped_composed.crop_left(), 1);
+    assert_eq!(cropped_composed.crop_top(), 0);
+    assert_eq!(cropped_composed.crop_right(), 0);
+    assert_eq!(cropped_composed.crop_bottom(), 0);
+
     let rotated = child.with_rotation_degrees(15).expect("bounded rotation");
     assert_eq!(
         rotated.compose_axis_aligned(parent, 8, 6),
+        Err(MediaError::InvalidTransform)
+    );
+
+    let uniform_parent =
+        FrameTransform::new(2_000, 2_000, 3, 4, false, false, 128).expect("uniform parent");
+    let rotated_composed = rotated
+        .compose_axis_aligned(uniform_parent, 8, 6)
+        .expect("uniform parent preserves leaf rotation");
+    assert_eq!(rotated_composed.scale_x_milli(), 1_000);
+    assert_eq!(rotated_composed.scale_y_milli(), 1_000);
+    assert_eq!(rotated_composed.translate_x(), 5);
+    assert_eq!(rotated_composed.translate_y(), 8);
+    assert!(rotated_composed.flip_x());
+    assert!(!rotated_composed.flip_y());
+    assert_eq!(rotated_composed.rotation_milli_degrees(), 15_000);
+
+    let non_uniform_parent =
+        FrameTransform::new(2_000, 1_500, 3, 4, false, false, 128).expect("non-uniform parent");
+    assert_eq!(
+        rotated.compose_axis_aligned(non_uniform_parent, 8, 6),
         Err(MediaError::InvalidTransform)
     );
     assert_eq!(

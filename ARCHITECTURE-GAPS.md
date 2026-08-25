@@ -15,6 +15,14 @@ only the low-level conversion slice. The project still lacks canonical
 per-source audio identity and routing, so source properties and multiple tracks
 remain intentionally open gaps.
 
+The nested transformed-leaf packet now preserves crop when a leaf crosses an
+axis-aligned group or Scene-reference boundary, and preserves leaf rotation
+when every crossed parent scale is uniform and unmirrored. Media, project,
+canvas inverse, and GUI projection tests cover the supported slice. Crop or
+rotation on a parent boundary, plus rotated leaves under non-uniform or
+mirrored ancestry, still fail explicitly because those cases need an
+intermediate-scene clipping/shear representation.
+
 The scene-item identity packet now also covers atomic root/group reparenting:
 `MoveSceneItemToParent` validates source and destination paths before moving the
 owned item, and the Sources dock projects the same destinations for nested rows.
@@ -24,8 +32,8 @@ destination owners across Scene-reference boundaries and commits cross-scene
 moves transactionally, including lock, collision, depth, and cycle validation.
 Sources-dock pointer drag/drop is now covered for group and leaf targets with
 bounded before/after insertion and locked-container rejection. Canvas and
-Scene-reference pointer drag/drop, transformed-boundary crop/rotation
-semantics, and the broader save/recovery lifecycle remain open.
+Scene-reference pointer drag/drop, the remaining full transformed-boundary
+crop/rotation semantics, and the broader save/recovery lifecycle remain open.
 
 The Scene properties packet now keeps scene name and optional transition
 override in the same Rust-owned `SetSceneProperties` command. The dialog
@@ -41,15 +49,16 @@ targets to one owning scene and group path before invoking the existing atomic
 group/ungroup mutations. The project command, toolkit-neutral selection
 validation, Sources-dock availability projection, and GUI callback all retain
 the parent reference while changing the owner scene. Mixed-owner selections
-remain rejected; transformed-boundary crop/rotation remains a separate gap.
+remain rejected; the remaining parent-boundary crop/rotation semantics remain
+a separate gap.
 
 The nested Scene-reference reparenting packet now resolves both source and
 destination paths through the same owner resolver. A bounded two-scene
 transaction moves the existing item without cloning it, while the UI projects
 referenced scenes and their group destinations and restores the flattened
 selection path. Sources-dock pointer drag/drop is covered for group and leaf
-targets; canvas/Scene-reference GUI drag/drop and transformed-boundary
-crop/rotation remain separate gaps.
+targets; canvas/Scene-reference GUI drag/drop and the remaining full
+transformed-boundary crop/rotation semantics remain separate gaps.
 
 The keyboard source-deletion packet keeps the Delete key as a presentation
 boundary only: the focused Sources dock and the editable canvas `FocusScope`
@@ -91,8 +100,8 @@ use bounded before/after zones. The GUI fixture proves vertical drags into a
 group and a nested leaf, stable selection paths, order changes, and rejection
 when the destination container is locked. Mouse-drag panning is disabled for
 the source-row viewport so the Flickable cannot steal the gesture; wheel
-scrolling remains available. Canvas/Scene-reference GUI drag/drop and
-transformed-boundary crop/rotation remain open.
+scrolling remains available. Canvas/Scene-reference GUI drag/drop and the
+remaining full transformed-boundary crop/rotation semantics remain open.
 
 The keyboard follow-up now sends Shift+Up/Down/Home/End through the same
 contiguous range resolver instead of treating Shift as one-row additive state.
@@ -124,8 +133,10 @@ local group coordinates and sends one atomic root/nested transform batch.
 Locked ancestors are included in the edit guard. Scene-reference leaves now
 resolve through the owning referenced scene for axis-aligned local commits;
 the standalone Transform dialog uses the same flattened target resolver and
-rejects inherited locks. Transformed-group/scene crop/rotation still fails
-explicitly until a full intermediate-scene transform model exists.
+rejects inherited locks. Leaf crop and leaf rotation under a uniform,
+unmirrored parent now compose through this boundary; parent crop/rotation and
+rotated leaves under non-uniform or mirrored ancestry still fail explicitly
+until a full intermediate-scene transform model exists.
 
 The dock-header pointer packet now drives the visible `DockHeader` through the
 testing backend rather than invoking the callback directly. It verifies drag
@@ -182,8 +193,10 @@ bounded `DesktopState` path selection as top-level rows. Clicks, context-menu
 opening, and depth-first keyboard navigation can select targets such as
 `group/child`; Ctrl+A uses the same bounded visible-row projection. Nested
 canvas geometry now uses the same stable path projection for selection, body
-gestures, and transform handles; transformed-boundary semantics remain
-separate until an intermediate-scene transform model exists. The canvas
+gestures, and transform handles. Leaf crop and leaf rotation under a uniform,
+unmirrored parent now compose through this boundary; parent crop/rotation and
+rotated leaves under non-uniform or mirrored ancestry remain separate until an
+intermediate-scene transform model exists. The canvas
 pointer fixture now also uses two
 overlapping temporary top-level items to prove top-layer selection,
 select-underneath on the next plain click, and Ctrl-toggle of the top layer
@@ -195,8 +208,9 @@ gestures for a group leaf and a Scene-reference leaf. Each fixture asserts the
 stable flattened selection path, local transform mutation, and unchanged
 enclosing transform, then removes its temporary group/reference scene. The
 pointer controller defers select-underneath until a no-movement release, so
-body drags cannot retarget an ancestor or overlapping source. Transformed-
-boundary crop/rotation and live DPI evidence remain open.
+body drags cannot retarget an ancestor or overlapping source. The supported
+leaf crop/uniform-rotation slice is covered by project/media/canvas oracles;
+full parent-boundary crop/rotation and live DPI evidence remain open.
 
 The Sources dock now exposes one atomic same-owner grouping command. It
 preserves the parent order and child transforms for root, nested-group, or
@@ -240,8 +254,8 @@ same-owner reorder now follows the same route. Grouping and ungrouping now use
 the same-owner resolver as well, and reparenting resolves both source and
 destination owners. Sources-dock pointer drag/drop now covers group and leaf
 targets through the same command boundary, with selection recovery and locked
-destination rejection. Full canvas/Scene-reference pointer drag/drop and
-transformed-boundary crop/rotation remain open.
+destination rejection. Full canvas/Scene-reference pointer drag/drop and the
+remaining full transformed-boundary crop/rotation semantics remain open.
 
 ```text
 truthful baseline / lint and test gate

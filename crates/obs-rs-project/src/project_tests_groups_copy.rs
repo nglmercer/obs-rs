@@ -183,7 +183,7 @@ fn group_child_paste_supports_nested_destinations_and_copy_modes() {
 }
 
 #[test]
-fn group_child_transform_is_path_addressed_and_rejects_unsupported_parent_composition() {
+fn group_child_transform_is_path_addressed_and_supports_exact_uniform_parent_composition() {
     let mut project = project_with_nested_group();
     let child_transform =
         FrameTransform::new(1_250, 900, 12, -8, false, false, 220).expect("child transform");
@@ -215,19 +215,58 @@ fn group_child_transform_is_path_addressed_and_rejects_unsupported_parent_compos
             transform: group_transform,
         })
         .expect("set group transform");
-    let before_invalid = project.clone();
-    let rotated = child_transform
+    let cropped_rotated = child_transform
         .with_rotation_degrees(15)
-        .expect("rotated child transform");
+        .expect("rotated child transform")
+        .with_crop(40, 20, 60, 30)
+        .expect("cropped rotated child transform");
+    project
+        .apply(ProjectCommand::SetGroupItemTransform {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            group_path: vec!["overlay-group".to_owned()],
+            item: "first".to_owned(),
+            transform: cropped_rotated,
+        })
+        .expect("uniform group preserves exact leaf crop and rotation");
+    let profile = project.profile("live").expect("profile");
+    let flattened = profile
+        .flatten_scene_items("main")
+        .expect("flatten uniformly transformed group")
+        .into_iter()
+        .find(|item| item.item_id() == "overlay-group/first")
+        .expect("flattened group child");
+    assert_eq!(
+        flattened.transform(),
+        cropped_rotated
+            .compose_axis_aligned(
+                group_transform,
+                profile.video_format().width(),
+                profile.video_format().height()
+            )
+            .expect("flattened crop and rotation")
+    );
+
+    let non_uniform_group =
+        FrameTransform::new(1_100, 900, 4, 6, false, false, 255).expect("non-uniform group");
+    project
+        .apply(ProjectCommand::SetSceneItemTransform {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            item: "overlay-group".to_owned(),
+            transform: non_uniform_group,
+        })
+        .expect("set non-uniform group transform");
+    let before_invalid = project.clone();
     let error = project
         .apply(ProjectCommand::SetGroupItemTransform {
             profile: "live".to_owned(),
             scene: "main".to_owned(),
             group_path: vec!["overlay-group".to_owned()],
             item: "first".to_owned(),
-            transform: rotated,
+            transform: cropped_rotated,
         })
-        .expect_err("rotation cannot cross a transformed group boundary");
+        .expect_err("rotation cannot cross a non-uniform group boundary");
     assert_eq!(
         error,
         ProjectError::UnsupportedNestedSceneTransform(Identifier::new("first").expect("id"))

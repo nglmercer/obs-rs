@@ -5,6 +5,12 @@
 **Rule:** A failure is recorded here even when it may be environment-specific;
 it must be reproduced or explicitly classified before the coordinator closes it.
 
+**Nested-transform qualification (2026-08-25):** leaf crop now composes across
+axis-aligned group/Scene-reference parents, and leaf rotation composes across
+uniform, unmirrored parents. Parent crop/rotation and rotated leaves under
+non-uniform or mirrored ancestry remain intentionally unsupported pending an
+intermediate-scene clipping/shear model.
+
 | ID | Type | Observed behavior | Impact | Reproduction / evidence | Next owner / disposition |
 | --- | --- | --- | --- | --- | --- |
 | BUG-001 | Quality gate | Resolved: strict Clippy previously failed with `-D warnings` in existing project/benchmark/UI code. | The required verification command is now clean, so new phase work cannot hide behind baseline lint drift. | `cargo clippy --workspace --all-targets --all-features -- -D warnings` passes after documentation, formatting, and narrow lint fixes. | Coordinator: keep the strict gate in every phase packet. |
