@@ -67,6 +67,10 @@ pub(crate) fn shortcut_bindings(
         (settings.hotkey_redo.as_str(), UiAction::Redo),
         (settings.hotkey_save_project.as_str(), UiAction::SaveProject),
         (
+            settings.hotkey_cut_transition.as_str(),
+            UiAction::CutTransition,
+        ),
+        (
             settings.hotkey_fade_transition.as_str(),
             UiAction::FadeTransition,
         ),
@@ -116,6 +120,7 @@ pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
         settings.hotkey_undo.as_str(),
         settings.hotkey_redo.as_str(),
         settings.hotkey_save_project.as_str(),
+        settings.hotkey_cut_transition.as_str(),
         settings.hotkey_fade_transition.as_str(),
         settings.hotkey_save_replay.as_str(),
         settings.hotkey_start_replay.as_str(),

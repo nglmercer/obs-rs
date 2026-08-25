@@ -23,6 +23,12 @@ rotation on a parent boundary, plus rotated leaves under non-uniform or
 mirrored ancestry, still fail explicitly because those cases need an
 intermediate-scene clipping/shear representation.
 
+The Studio Mode hotkey packet now adds an optional persisted local Cut
+transition binding. It uses the existing bounded `Shortcut` table and GUI Cut
+callback, with a stable action code that does not renumber existing bindings;
+the default is intentionally unbound. Global registration, scene-specific
+actions, and the remaining OBS hotkey catalog remain open.
+
 The scene-item identity packet now also covers atomic root/group reparenting:
 `MoveSceneItemToParent` validates source and destination paths before moving the
 owned item, and the Sources dock projects the same destinations for nested rows.

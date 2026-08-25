@@ -200,6 +200,7 @@ export component MainWindow inherits Window {
         in property <string> hotkey-undo;
         in property <string> hotkey-redo;
         in property <string> hotkey-save-project;
+        in property <string> hotkey-cut-transition;
         in property <string> hotkey-fade-transition;
         in property <string> hotkey-save-replay;
         callback select-preview(string);
@@ -377,6 +378,9 @@ export component MainWindow inherits Window {
                 true
             } else if (action == 8) {
                 root.save-project();
+                true
+            } else if (action == 15) {
+                root.cut-transition();
                 true
             } else if (action == 9) {
                 root.fade-transition();
@@ -557,6 +561,7 @@ export component MainWindow inherits Window {
                 hotkey-undo: root.hotkey-undo;
                 hotkey-redo: root.hotkey-redo;
                 hotkey-save-project: root.hotkey-save-project;
+                hotkey-cut-transition: root.hotkey-cut-transition;
                 hotkey-fade-transition: root.hotkey-fade-transition;
                 view-mode: root.view-mode;
                 set-locale(code) => { root.set-locale(code); }

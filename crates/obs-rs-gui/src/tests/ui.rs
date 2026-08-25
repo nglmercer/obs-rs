@@ -28,12 +28,19 @@ fn ui_layout_can_render_a_reference_snapshot() {
     let shortcut = Shortcut::parse("Ctrl+Z")
         .expect("shortcut syntax")
         .expect("shortcut binding");
+    let cut_shortcut = Shortcut::parse("Ctrl+T")
+        .expect("cut shortcut syntax")
+        .expect("cut shortcut binding");
     state
         .borrow_mut()
-        .replace_shortcuts(&[(shortcut, UiAction::Undo)])
+        .replace_shortcuts(&[
+            (shortcut, UiAction::Undo),
+            (cut_shortcut, UiAction::CutTransition),
+        ])
         .expect("shortcut table");
     crate::callbacks::install_shortcut_callbacks(&ui, &state);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+z".into()), 6);
+    assert_eq!(ui.invoke_trigger_shortcut("ctrl+t".into()), 15);
     assert_eq!(ui.invoke_trigger_shortcut("Ctrl+X".into()), 0);
     let persisted_tree = DockNode::Split {
         axis: crate::dock_tree::DockAxis::Vertical,

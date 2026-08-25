@@ -99,6 +99,7 @@ pub(super) fn load_draft(
     window.set_hotkey_undo(settings.hotkey_undo.as_str().into());
     window.set_hotkey_redo(settings.hotkey_redo.as_str().into());
     window.set_hotkey_save_project(settings.hotkey_save_project.as_str().into());
+    window.set_hotkey_cut_transition(settings.hotkey_cut_transition.as_str().into());
     window.set_hotkey_fade_transition(settings.hotkey_fade_transition.as_str().into());
     window.set_hotkey_save_replay(settings.hotkey_save_replay.as_str().into());
     window.set_hotkey_start_replay(settings.hotkey_start_replay.as_str().into());

@@ -39,6 +39,16 @@ rotated leaf under non-uniform or mirrored ancestry still return an explicit
 unsupported result; those cases require an intermediate-scene clipping/shear
 model.
 
+## Latest verified package: local Cut transition hotkey
+
+On 2026-08-25, Studio Mode gained a typed local Cut transition hotkey. The
+setting is an optional, persisted shortcut with the same bounded parser and
+conflict validation as the existing actions. Rust resolves it to a stable GUI
+action code and Slint invokes the existing Cut callback, so the hotkey sends
+the selected Preview scene to Program through the same transition path as the
+button. The default remains unbound; global registration and scene-specific
+hotkey actions remain open.
+
 ## Latest verified package: scene-item reparenting
 
 On 2026-08-24, `SCENE-002`/`SOURCE-001` gained an atomic
@@ -490,6 +500,11 @@ transformed-boundary crop/rotation and live DPI remain open.
 | OUTPUT-006 | Services, authentication, reconnect, diagnostics | Service presets, keys/tokens, congestion, keyframes, reconnect, delay, and dropped-frame diagnostics are user-facing. | Settings now expose a bounded compile-time catalog of 82 RTMP-family choices (Custom plus 81 entries) derived from the pinned OBS 32.2.2 catalog. Stable service IDs resolve display names; selecting a service applies its first pinned-OBS ingest endpoint and protocol while keeping the server editable, and the server picker exposes the additional pinned regional/backup choices for Twitch, YouTube RTMPS, Loola.tv, and Restream.io. Stream keys remain secret-typed/redacted. The three pinned rows whose primary workflows are HLS or HTTP/API are intentionally omitted until matching typed targets exist. Reference and native sessions now share a typed lifecycle contract for bounded poll/reconnect/close control. Reconnect attempts use a capped exponential schedule and return a typed deferred outcome without sleeping, while native health polling may consume its own reconnect budget when it detects a live sink failure. Native telemetry now also reports submitted/dropped/reconnect counters, bounded video/audio appsrc queue bytes, and maximum submit latency through the engine snapshot and diagnostics strings. Signed catalog updates, the remaining services' regional/multiple-server choices, account auth, congestion policy, keyframe negotiation, and service-specific diagnostics remain absent. | Partial | Desktop; Linux native transport boundary | Output service-catalog/redaction/endpoint/lifecycle/backoff tests; catalog cardinality/ID/endpoint/additional-server tests; GStreamer native telemetry and engine production-stream bounds tests; GUI settings model/render and service-to-server callback coverage; no live service test. The catalog follows the [OBS 32.2.2 RTMP service catalog](https://raw.githubusercontent.com/obsproject/obs-studio/32.2.2/plugins/rtmp-services/data/services.json). | `crates/obs-rs-output/src/{config.rs,stream.rs,stream/session.rs,types.rs}`, `crates/obs-rs-engine/src/lib.rs`, `crates/obs-rs-output-gstreamer/src/native.rs`, `crates/obs-rs-gui/{src/{callbacks/settings.rs,tests.rs},ui/{settings_pages.slint,settings_window.slint}}` | Signed catalog updates, remaining regional/multiple-server choices, transport media/session split, auth lifecycle, congestion/keyframe diagnostics |
 
 ## Settings, profiles, and input
+
+Reconciliation note: `HOTKEY-001` now also includes the optional local Cut
+transition action. Its default is unbound, and the setting is persisted and
+compiled into the same bounded local action table as Fade and the output
+actions; global OS registration remains incomplete.
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

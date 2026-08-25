@@ -128,6 +128,7 @@ impl DesktopState {
                 id: "desktop".to_owned(),
             }),
             UiAction::SaveProject
+            | UiAction::CutTransition
             | UiAction::FadeTransition
             | UiAction::SaveReplayBuffer
             | UiAction::StartReplayBuffer

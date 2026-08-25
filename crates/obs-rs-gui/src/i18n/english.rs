@@ -274,6 +274,7 @@ pub(super) fn catalog() -> UiText {
             hotkey_undo: s("Undo"),
         hotkey_redo: s("Redo"),
         hotkey_save_project: s("Save project"),
+        hotkey_cut_transition: s("Cut transition"),
         hotkey_fade_transition: s("Fade transition"),
         hotkey_save_replay: s("Save replay"),
         hotkey_start_replay: s("Start replay buffer"),

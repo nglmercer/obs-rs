@@ -31,6 +31,7 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-undo;
     in-out property <string> hotkey-redo;
     in-out property <string> hotkey-save-project;
+    in-out property <string> hotkey-cut-transition;
     in-out property <string> hotkey-fade-transition;
     in-out property <string> hotkey-save-replay;
     in-out property <string> hotkey-start-replay;
@@ -104,6 +105,14 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-save-project;
                 placeholder-text: "Ctrl+S";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_cut_transition;
+            SettingsField {
+                text <=> root.hotkey-cut-transition;
+                placeholder-text: "Ctrl+T";
                 edited => { root.changed(); }
             }
         }

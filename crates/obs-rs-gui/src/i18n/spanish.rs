@@ -276,6 +276,7 @@ pub(super) fn catalog() -> UiText {
             hotkey_undo: s("Deshacer"),
         hotkey_redo: s("Rehacer"),
         hotkey_save_project: s("Guardar proyecto"),
+        hotkey_cut_transition: s("Transición de corte"),
         hotkey_fade_transition: s("Transición de fundido"),
         hotkey_save_replay: s("Guardar repetición"),
         hotkey_start_replay: s("Iniciar búfer de repetición"),

@@ -23,6 +23,7 @@ fn settings_round_trip_through_the_config_document() {
         hotkey_undo: "Alt+U".to_owned(),
         hotkey_redo: "Alt+Y".to_owned(),
         hotkey_save_project: "Alt+S".to_owned(),
+        hotkey_cut_transition: "Alt+C".to_owned(),
         hotkey_fade_transition: "Alt+F".to_owned(),
         hotkey_save_replay: "Alt+R".to_owned(),
         hotkey_start_replay: "Shift+Alt+R".to_owned(),
@@ -108,6 +109,9 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
         .set("hotkey_start_recording", "Ctrl+Ctrl+R")
         .expect("hotkey key");
     config.set("hotkey_stop_recording", "").expect("hotkey key");
+    config
+        .set("hotkey_cut_transition", " option + c ")
+        .expect("hotkey key");
 
     let decoded = AppSettings::from_config(&config);
 
@@ -117,6 +121,12 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
         defaults.hotkey_start_recording
     );
     assert!(decoded.hotkey_stop_recording.is_empty());
+    assert_eq!(decoded.hotkey_cut_transition, "Alt+C");
+    assert!(shortcut_bindings(&decoded)
+        .expect("shortcut bindings")
+        .iter()
+        .any(|(shortcut, action)| shortcut.to_string() == "Alt+C"
+            && *action == UiAction::CutTransition));
     assert_eq!(validated_hotkey("ctrl + r", "F1"), "Ctrl+R");
     assert_eq!(validated_hotkey("Ctrl+", "F1"), "F1");
 }
@@ -130,6 +140,7 @@ fn hotkey_conflicts_use_canonical_shortcuts_and_ignore_unbindings() {
         hotkey_undo: " control + r ".to_owned(),
         hotkey_redo: String::new(),
         hotkey_save_project: "CTRL+R".to_owned(),
+        hotkey_cut_transition: String::new(),
         hotkey_fade_transition: String::new(),
         hotkey_save_replay: String::new(),
         hotkey_start_replay: String::new(),

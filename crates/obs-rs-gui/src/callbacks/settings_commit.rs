@@ -409,6 +409,10 @@ pub(super) fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSetti
         window.get_hotkey_save_project().as_str(),
         &settings.hotkey_save_project,
     );
+    settings.hotkey_cut_transition = crate::settings::validated_hotkey(
+        window.get_hotkey_cut_transition().as_str(),
+        &settings.hotkey_cut_transition,
+    );
     settings.hotkey_fade_transition = crate::settings::validated_hotkey(
         window.get_hotkey_fade_transition().as_str(),
         &settings.hotkey_fade_transition,

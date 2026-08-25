@@ -235,6 +235,8 @@ pub enum UiAction {
     Redo,
     /// Save the current project through the frontend's project-file boundary.
     SaveProject,
+    /// Send the selected preview scene to program using a cut.
+    CutTransition,
     /// Start a cross-fade through the frontend's transition/output boundary.
     FadeTransition,
     /// Save the active replay buffer through the frontend's output boundary.

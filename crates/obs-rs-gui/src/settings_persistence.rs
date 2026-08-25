@@ -202,6 +202,11 @@ impl AppSettings {
                 "hotkey_save_project",
                 &defaults.hotkey_save_project,
             ),
+            hotkey_cut_transition: hotkey(
+                config,
+                "hotkey_cut_transition",
+                &defaults.hotkey_cut_transition,
+            ),
             hotkey_fade_transition: hotkey(
                 config,
                 "hotkey_fade_transition",
@@ -411,6 +416,7 @@ impl AppSettings {
             ("hotkey_undo", self.hotkey_undo.clone()),
             ("hotkey_redo", self.hotkey_redo.clone()),
             ("hotkey_save_project", self.hotkey_save_project.clone()),
+            ("hotkey_cut_transition", self.hotkey_cut_transition.clone()),
             (
                 "hotkey_fade_transition",
                 self.hotkey_fade_transition.clone(),

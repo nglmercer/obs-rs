@@ -89,6 +89,23 @@ fn save_replay_shortcut_is_a_frontend_action() {
 }
 
 #[test]
+fn cut_transition_shortcut_is_a_frontend_action() {
+    let mut state = DesktopState::new(project());
+    let shortcut = Shortcut::new(0, "T").expect("cut shortcut");
+    state
+        .replace_shortcuts(&[(shortcut.clone(), UiAction::CutTransition)])
+        .expect("cut shortcut table");
+    assert_eq!(
+        state.shortcut_action(&shortcut),
+        Some(UiAction::CutTransition)
+    );
+    assert_eq!(
+        state.dispatch(UiCommand::TriggerShortcut { shortcut }),
+        Err(UiError::FrontendActionRequired(UiAction::CutTransition))
+    );
+}
+
+#[test]
 fn replay_start_and_stop_shortcuts_are_frontend_actions() {
     let mut state = DesktopState::new(project());
     let start = Shortcut::new(0, "F9").expect("shortcut");
