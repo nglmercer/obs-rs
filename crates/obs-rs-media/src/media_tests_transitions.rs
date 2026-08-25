@@ -192,6 +192,82 @@ fn swipe_policy_round_trips_through_a_render_sample() {
 }
 
 #[test]
+fn slide_supports_all_reference_directions() {
+    let (source, destination) = directional_frames();
+    let cases = [
+        (SlideDirection::Left, [[2_u8, 9], [4, 7]]),
+        (SlideDirection::Right, [[8, 1], [6, 3]]),
+        (SlideDirection::Up, [[3, 4], [9, 8]]),
+        (SlideDirection::Down, [[7, 6], [1, 2]]),
+    ];
+
+    for (direction, expected) in cases {
+        let frame = VideoFrame::transitioned(
+            &source,
+            destination.clone(),
+            FrameTransition::slide(500, direction).expect("slide direction"),
+        )
+        .expect("directional slide");
+        for y in 0..2 {
+            for x in 0..2 {
+                assert_eq!(
+                    frame.pixel(x, y).map(|pixel| pixel[0]),
+                    Some(expected[y as usize][x as usize]),
+                    "direction {direction:?} at ({x}, {y})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn swipe_supports_all_reference_directions() {
+    let (source, destination) = directional_frames();
+    let cases = [
+        (SlideDirection::Left, [[2_u8, 8], [4, 6]]),
+        (SlideDirection::Right, [[9, 1], [7, 3]]),
+        (SlideDirection::Up, [[3, 4], [7, 6]]),
+        (SlideDirection::Down, [[9, 8], [1, 2]]),
+    ];
+
+    for (direction, expected) in cases {
+        let frame = VideoFrame::transitioned(
+            &source,
+            destination.clone(),
+            FrameTransition::swipe(500, direction).expect("swipe direction"),
+        )
+        .expect("directional swipe");
+        for y in 0..2 {
+            for x in 0..2 {
+                assert_eq!(
+                    frame.pixel(x, y).map(|pixel| pixel[0]),
+                    Some(expected[y as usize][x as usize]),
+                    "direction {direction:?} at ({x}, {y})"
+                );
+            }
+        }
+    }
+}
+
+fn directional_frames() -> (VideoFrame, VideoFrame) {
+    let format =
+        VideoFormat::new(2, 2, FrameRate::new(60, 1).expect("valid rate")).expect("format");
+    let source = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255],
+    )
+    .expect("source frame");
+    let destination = VideoFrame::new(
+        format,
+        Timestamp::from_millis(10),
+        vec![9, 0, 0, 255, 8, 0, 0, 255, 7, 0, 0, 255, 6, 0, 0, 255],
+    )
+    .expect("destination frame");
+    (source, destination)
+}
+
+#[test]
 #[ignore = "timing report, not a pass/fail assertion"]
 fn slide_transition_timing_report() {
     let format = VideoFormat::new(640, 360, FrameRate::new(60, 1).expect("valid rate"))
@@ -199,22 +275,33 @@ fn slide_transition_timing_report() {
     let source = VideoFrame::solid(format, Timestamp::ZERO, [16, 32, 64, 255]);
     let destination = VideoFrame::solid(format, Timestamp::from_millis(10), [64, 32, 16, 255]);
     let runs = 20_u32;
+    let directions = [
+        SlideDirection::Left,
+        SlideDirection::Right,
+        SlideDirection::Up,
+        SlideDirection::Down,
+    ];
+    let samples = runs.saturating_mul(
+        u32::try_from(directions.len()).expect("direction count fits in a sample count"),
+    );
     let started = Instant::now();
     let mut checksum = 0_u64;
-    for progress in 0..runs {
-        let progress = u16::try_from(progress * 1_000 / runs).expect("progress fits");
-        let frame = VideoFrame::transitioned(
-            &source,
-            destination.clone(),
-            FrameTransition::slide(progress, SlideDirection::Left).expect("slide sample"),
-        )
-        .expect("slide frame");
-        checksum = checksum.saturating_add(u64::from(frame.pixel(0, 0).expect("pixel")[0]));
+    for direction in directions {
+        for progress in 0..runs {
+            let progress = u16::try_from(progress * 1_000 / runs).expect("progress fits");
+            let frame = VideoFrame::transitioned(
+                &source,
+                destination.clone(),
+                FrameTransition::slide(progress, direction).expect("slide sample"),
+            )
+            .expect("slide frame");
+            checksum = checksum.saturating_add(u64::from(frame.pixel(0, 0).expect("pixel")[0]));
+        }
     }
     println!(
-        "slide transition: {runs} frames x 640x360 = {:?} total (about {:?}/frame), checksum={checksum}",
+        "slide transition: {samples} frames x 640x360 = {:?} total (about {:?}/frame), checksum={checksum}",
         started.elapsed(),
-        started.elapsed() / runs,
+        started.elapsed() / samples,
     );
 }
 
@@ -226,22 +313,33 @@ fn swipe_transition_timing_report() {
     let source = VideoFrame::solid(format, Timestamp::ZERO, [16, 32, 64, 255]);
     let destination = VideoFrame::solid(format, Timestamp::from_millis(10), [64, 32, 16, 255]);
     let runs = 20_u32;
+    let directions = [
+        SlideDirection::Left,
+        SlideDirection::Right,
+        SlideDirection::Up,
+        SlideDirection::Down,
+    ];
+    let samples = runs.saturating_mul(
+        u32::try_from(directions.len()).expect("direction count fits in a sample count"),
+    );
     let started = Instant::now();
     let mut checksum = 0_u64;
-    for progress in 0..runs {
-        let progress = u16::try_from(progress * 1_000 / runs).expect("progress fits");
-        let frame = VideoFrame::transitioned(
-            &source,
-            destination.clone(),
-            FrameTransition::swipe(progress, SlideDirection::Left).expect("swipe sample"),
-        )
-        .expect("swipe frame");
-        checksum = checksum.saturating_add(u64::from(frame.pixel(0, 0).expect("pixel")[0]));
+    for direction in directions {
+        for progress in 0..runs {
+            let progress = u16::try_from(progress * 1_000 / runs).expect("progress fits");
+            let frame = VideoFrame::transitioned(
+                &source,
+                destination.clone(),
+                FrameTransition::swipe(progress, direction).expect("swipe sample"),
+            )
+            .expect("swipe frame");
+            checksum = checksum.saturating_add(u64::from(frame.pixel(0, 0).expect("pixel")[0]));
+        }
     }
     println!(
-        "swipe transition: {runs} frames x 640x360 = {:?} total (about {:?}/frame), checksum={checksum}",
+        "swipe transition: {samples} frames x 640x360 = {:?} total (about {:?}/frame), checksum={checksum}",
         started.elapsed(),
-        started.elapsed() / runs,
+        started.elapsed() / samples,
     );
 }
 

@@ -379,12 +379,7 @@ fn encode_transition(transition: TransitionSpec) -> Json {
         ));
     }
     if let Some(direction) = direction {
-        members.push((
-            "direction",
-            Json::string(match direction {
-                SlideDirection::Left => "left",
-            }),
-        ));
+        members.push(("direction", Json::string(direction.as_str())));
     }
     Json::object(members)
 }
@@ -416,17 +411,15 @@ fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
             )
         }
         "slide" => {
-            let direction = match string_member(value, "direction")? {
-                "left" => SlideDirection::Left,
-                other => return Err(invalid(format!("unknown slide direction: {other}"))),
-            };
+            let direction_value = string_member(value, "direction")?;
+            let direction = SlideDirection::parse(direction_value)
+                .ok_or_else(|| invalid(format!("unknown slide direction: {direction_value}")))?;
             TransitionSpec::new(TransitionKind::Slide { direction }, duration_millis)
         }
         "swipe" => {
-            let direction = match string_member(value, "direction")? {
-                "left" => SlideDirection::Left,
-                other => return Err(invalid(format!("unknown swipe direction: {other}"))),
-            };
+            let direction_value = string_member(value, "direction")?;
+            let direction = SlideDirection::parse(direction_value)
+                .ok_or_else(|| invalid(format!("unknown swipe direction: {direction_value}")))?;
             TransitionSpec::new(TransitionKind::Swipe { direction }, duration_millis)
         }
         other => return Err(invalid(format!("unknown scene transition kind: {other}"))),

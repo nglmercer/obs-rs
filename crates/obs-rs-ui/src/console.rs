@@ -238,29 +238,13 @@ fn parse_transition_value<'a>(
                 .map_err(ConsoleCommandError::InvalidTransition)?
         }
         "slide" => {
-            let progress = required_word(&mut words, "slide progress in 0..1000")?;
-            ensure_no_extra(command, words)?;
-            let progress =
-                progress
-                    .parse::<u16>()
-                    .map_err(|_| ConsoleCommandError::InvalidArgument {
-                        command,
-                        value: progress.to_owned(),
-                    })?;
-            FrameTransition::slide(progress, SlideDirection::Left)
+            let (direction, progress) = parse_directional_progress(command, &mut words)?;
+            FrameTransition::slide(progress, direction)
                 .map_err(ConsoleCommandError::InvalidTransition)?
         }
         "swipe" => {
-            let progress = required_word(&mut words, "swipe progress in 0..1000")?;
-            ensure_no_extra(command, words)?;
-            let progress =
-                progress
-                    .parse::<u16>()
-                    .map_err(|_| ConsoleCommandError::InvalidArgument {
-                        command,
-                        value: progress.to_owned(),
-                    })?;
-            FrameTransition::swipe(progress, SlideDirection::Left)
+            let (direction, progress) = parse_directional_progress(command, &mut words)?;
+            FrameTransition::swipe(progress, direction)
                 .map_err(ConsoleCommandError::InvalidTransition)?
         }
         value => {
@@ -270,6 +254,33 @@ fn parse_transition_value<'a>(
             });
         }
     })
+}
+
+fn parse_directional_progress<'a>(
+    command: &'static str,
+    words: &mut impl Iterator<Item = &'a str>,
+) -> Result<(SlideDirection, u16), ConsoleCommandError> {
+    let first = required_word(words, "transition direction or progress")?;
+    let (direction, progress) = if let Ok(progress) = first.parse::<u16>() {
+        (SlideDirection::Left, progress)
+    } else {
+        let direction =
+            SlideDirection::parse(first).ok_or_else(|| ConsoleCommandError::InvalidArgument {
+                command,
+                value: first.to_owned(),
+            })?;
+        let progress = required_word(words, "transition progress")?;
+        let progress =
+            progress
+                .parse::<u16>()
+                .map_err(|_| ConsoleCommandError::InvalidArgument {
+                    command,
+                    value: progress.to_owned(),
+                })?;
+        (direction, progress)
+    };
+    ensure_no_extra(command, words)?;
+    Ok((direction, progress))
 }
 
 fn parse_transition_color(

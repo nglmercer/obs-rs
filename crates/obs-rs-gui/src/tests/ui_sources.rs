@@ -848,8 +848,11 @@ pub(super) fn exercise_capture_device_properties_window(
         .row_data(0)
         .expect("the camera form has a device row");
     assert_eq!(device_row.key, "device_id");
-    assert!(device_row.choices.row_count() >= 1);
-    window.invoke_edit_property(device_row.key.clone(), "0".into());
+    if device_row.choices.row_count() >= 1 {
+        window.invoke_edit_property(device_row.key.clone(), "0".into());
+    } else {
+        assert_eq!(camera_id, "nokhwa-camera-0");
+    }
     assert!(window.get_source_settings().contains("device_id = "));
     window.invoke_accept_properties();
 

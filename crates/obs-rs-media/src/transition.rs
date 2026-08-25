@@ -7,11 +7,42 @@ pub const MAX_TRANSITION_DURATION_MILLIS: u32 = 60_000;
 /// Default scene-transition duration in milliseconds.
 pub const DEFAULT_TRANSITION_DURATION_MILLIS: u32 = 300;
 
-/// Direction supported by the bounded portable slide transition.
+/// Direction supported by the bounded portable slide and swipe transitions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SlideDirection {
-    /// The destination enters from the left while the source exits left.
+    /// The source moves left and the destination enters from the right.
     Left,
+    /// The source moves right and the destination enters from the left.
+    Right,
+    /// The source moves up and the destination enters from the bottom.
+    Up,
+    /// The source moves down and the destination enters from the top.
+    Down,
+}
+
+impl SlideDirection {
+    /// Returns the stable serialized direction identifier.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Up => "up",
+            Self::Down => "down",
+        }
+    }
+
+    /// Parses a stable serialized direction identifier.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            "up" => Some(Self::Up),
+            "down" => Some(Self::Down),
+            _ => None,
+        }
+    }
 }
 
 /// Parses a bounded `#RRGGBB` or `#RRGGBBAA` color into RGBA8.

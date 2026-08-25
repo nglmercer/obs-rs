@@ -61,14 +61,19 @@ conflict-checked, and the UI refuses an empty or `none` Preview target before
 opening the feed. Multi-monitor evidence and global OS registration remain
 open.
 
-The transition catalog now includes bounded left-direction Slide and Swipe
-samples. The portable renderer moves source/destination pixels in place: Slide
-moves both layers, while Swipe moves only the source and leaves the destination
-stationary. Project JSON, scene properties, the Transition dock, and the
-console share one typed `TransitionSpec`. Stinger, luma, arbitrary swipe
-directions, `swipe_in`, and other slide variants remain open; the 640x360 timing
-reports are intentionally ignored until they are promoted to the pinned
-performance suite.
+The transition catalog now includes bounded Slide and Swipe samples in the four
+reference directions. The portable renderer moves source/destination pixels in
+place: Slide moves both layers, while Swipe moves only the source and leaves the
+destination stationary. Project JSON, scene properties, the Transition dock,
+and the console share one typed `TransitionSpec`. Stinger, luma, `swipe_in`, and
+other slide variants remain open; the 640x360 timing reports are intentionally
+ignored until they are promoted to the pinned performance suite.
+
+The portable transition direction model now accepts left, right, up, and down
+for both Slide and Swipe, with axis-aware in-place traversal and bounded JSON
+and console parsing. The existing dock and scene-properties projections still
+choose left by default; a visual direction selector is the next transition UI
+packet.
 
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation

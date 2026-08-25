@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use obs_rs_media::{FrameTransition, RawVideoFrame, SlideDirection, TransitionKind, VideoFrame};
+use obs_rs_media::{FrameTransition, RawVideoFrame, TransitionKind, VideoFrame};
 use obs_rs_project::{Profile, ProjectCommand, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{DataTransfer, Image, Model, ModelRc, SharedString, VecModel, Weak};
@@ -831,9 +831,7 @@ pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTra
         } => format!(
             "{} {progress_milli}/1000 ({})",
             text.slide,
-            match direction {
-                SlideDirection::Left => "left",
-            }
+            direction.as_str()
         ),
         FrameTransition::Swipe {
             progress_milli,
@@ -841,9 +839,7 @@ pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTra
         } => format!(
             "{} {progress_milli}/1000 ({})",
             text.swipe,
-            match direction {
-                SlideDirection::Left => "left",
-            }
+            direction.as_str()
         ),
     })
 }

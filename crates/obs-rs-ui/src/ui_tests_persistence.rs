@@ -214,24 +214,7 @@ fn console_parser_covers_state_and_output_commands() {
             duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
         }))
     );
-    assert_eq!(
-        parse_console_command("transition slide 500"),
-        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
-            transition: FrameTransition::Slide {
-                progress_milli: 500,
-                direction: obs_rs_media::SlideDirection::Left,
-            },
-        }))
-    );
-    assert_eq!(
-        parse_console_command("transition swipe 500"),
-        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
-            transition: FrameTransition::Swipe {
-                progress_milli: 500,
-                direction: obs_rs_media::SlideDirection::Left,
-            },
-        }))
-    );
+    console_parser_covers_directional_transitions();
     assert_eq!(
         parse_console_command("transition color 500 #00FF00"),
         Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
@@ -285,6 +268,46 @@ fn console_parser_covers_state_and_output_commands() {
             ..
         })
     ));
+}
+
+fn console_parser_covers_directional_transitions() {
+    assert_eq!(
+        parse_console_command("transition slide 500"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::Slide {
+                progress_milli: 500,
+                direction: obs_rs_media::SlideDirection::Left,
+            },
+        }))
+    );
+    assert_eq!(
+        parse_console_command("transition swipe 500"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::Swipe {
+                progress_milli: 500,
+                direction: obs_rs_media::SlideDirection::Left,
+            },
+        }))
+    );
+    assert_eq!(
+        parse_console_command("transition slide right 500"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::Slide {
+                progress_milli: 500,
+                direction: obs_rs_media::SlideDirection::Right,
+            },
+        }))
+    );
+    assert_eq!(
+        parse_console_command("take swipe up 250"),
+        Ok(ConsoleCommand::Apply(UiCommand::TakePreview {
+            transition: FrameTransition::Swipe {
+                progress_milli: 250,
+                direction: obs_rs_media::SlideDirection::Up,
+            },
+            duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
+        }))
+    );
 }
 
 #[test]

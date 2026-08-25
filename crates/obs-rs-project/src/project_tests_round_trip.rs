@@ -101,6 +101,35 @@ fn swipe_transition_override_round_trips_its_direction() {
 }
 
 #[test]
+fn directional_slide_and_swipe_overrides_round_trip() {
+    let directions = [
+        (obs_rs_media::SlideDirection::Right, "right"),
+        (obs_rs_media::SlideDirection::Up, "up"),
+        (obs_rs_media::SlideDirection::Down, "down"),
+    ];
+    for (direction, serialized) in directions {
+        let mut project = project();
+        for kind in [
+            obs_rs_media::TransitionKind::Slide { direction },
+            obs_rs_media::TransitionKind::Swipe { direction },
+        ] {
+            let transition = obs_rs_media::TransitionSpec::new(kind, 700).expect("transition");
+            project
+                .apply(ProjectCommand::SetSceneTransitionOverride {
+                    profile: "live".to_owned(),
+                    scene: "main".to_owned(),
+                    transition: Some(transition),
+                })
+                .expect("set directional transition");
+            let encoded = project.serialize();
+            assert!(encoded.contains(&format!("\"direction\": \"{serialized}\"")));
+            let decoded = Project::parse(&encoded).expect("directional project parses");
+            assert_eq!(decoded, project);
+        }
+    }
+}
+
+#[test]
 fn scene_properties_change_name_and_transition_as_one_history_edit() {
     let mut session = ProjectSession::new(project());
     let transition = TransitionSpec::cross_fade(900).expect("transition");
