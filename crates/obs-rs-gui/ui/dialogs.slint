@@ -1,4 +1,4 @@
-import { Button, ComboBox, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 import { FieldHeading, ModalShell, MutedText } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { TransitionDirectionField } from "transition_direction.slint";
@@ -102,6 +102,7 @@ export component RenameSceneDialog inherits ModalShell {
     in-out property <string> scene-name;
     in-out property <int> transition-index: 0;
     in-out property <int> transition-direction-index: 0;
+    in-out property <bool> transition-swipe-in: false;
     in-out property <string> transition-duration;
     in-out property <string> transition-color;
     callback rename-scene();
@@ -110,7 +111,7 @@ export component RenameSceneDialog inherits ModalShell {
     subtitle: I18n.text.scene_dialog_description;
     accept-label: I18n.text.settings_ui.apply;
     cancel-label: I18n.text.cancel;
-    panel-height: 410px;
+    panel-height: 440px;
     accepted => rename-scene();
 
     VerticalBox {
@@ -135,6 +136,10 @@ export component RenameSceneDialog inherits ModalShell {
         }
         if root.transition-index == 4 || root.transition-index == 5 : TransitionDirectionField {
             direction-index <=> root.transition-direction-index;
+        }
+        if root.transition-index == 5 : CheckBox {
+            text: I18n.text.swipe_in;
+            checked <=> root.transition-swipe-in;
         }
         if root.transition-index != 0 : FieldHeading { text: I18n.text.duration; }
         if root.transition-index != 0 : LineEdit {

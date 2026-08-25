@@ -373,6 +373,7 @@ pub(crate) struct ScenePropertiesDraft<'a> {
     pub(super) name: &'a str,
     pub(super) transition_index: i32,
     pub(super) transition_direction_index: i32,
+    pub(super) transition_swipe_in: bool,
     pub(super) duration: &'a str,
     pub(super) color: &'a str,
 }
@@ -386,6 +387,7 @@ pub(crate) fn apply_scene_properties_and_refresh(
     let name = draft.name;
     let transition_index = draft.transition_index;
     let transition_direction_index = draft.transition_direction_index;
+    let transition_swipe_in = draft.transition_swipe_in;
     let duration = draft.duration;
     let color = draft.color;
     let result: Result<(), Box<dyn Error>> = (|| {
@@ -403,24 +405,54 @@ pub(crate) fn apply_scene_properties_and_refresh(
         let transition = match transition_index {
             0 => None,
             1 => Some(
-                scene_transition_spec("cut", duration, color, transition_direction_index)
-                    .map_err(std::io::Error::other)?,
+                scene_transition_spec(
+                    "cut",
+                    duration,
+                    color,
+                    transition_direction_index,
+                    transition_swipe_in,
+                )
+                .map_err(std::io::Error::other)?,
             ),
             2 => Some(
-                scene_transition_spec("cross_fade", duration, color, transition_direction_index)
-                    .map_err(std::io::Error::other)?,
+                scene_transition_spec(
+                    "cross_fade",
+                    duration,
+                    color,
+                    transition_direction_index,
+                    transition_swipe_in,
+                )
+                .map_err(std::io::Error::other)?,
             ),
             3 => Some(
-                scene_transition_spec("fade_to_color", duration, color, transition_direction_index)
-                    .map_err(std::io::Error::other)?,
+                scene_transition_spec(
+                    "fade_to_color",
+                    duration,
+                    color,
+                    transition_direction_index,
+                    transition_swipe_in,
+                )
+                .map_err(std::io::Error::other)?,
             ),
             4 => Some(
-                scene_transition_spec("slide", duration, color, transition_direction_index)
-                    .map_err(std::io::Error::other)?,
+                scene_transition_spec(
+                    "slide",
+                    duration,
+                    color,
+                    transition_direction_index,
+                    transition_swipe_in,
+                )
+                .map_err(std::io::Error::other)?,
             ),
             5 => Some(
-                scene_transition_spec("swipe", duration, color, transition_direction_index)
-                    .map_err(std::io::Error::other)?,
+                scene_transition_spec(
+                    "swipe",
+                    duration,
+                    color,
+                    transition_direction_index,
+                    transition_swipe_in,
+                )
+                .map_err(std::io::Error::other)?,
             ),
             _ => {
                 return Err(std::io::Error::other("Scene transition selection is invalid").into());

@@ -85,10 +85,13 @@ pub enum FrameTransition {
         progress_milli: u16,
         direction: SlideDirection,
     },
-    /// Swipes the source out while the destination fills the revealed area.
+    /// Swipes the source out while the destination fills the revealed area,
+    /// or brings the destination in over the stationary source when
+    /// `swipe_in` is true.
     Swipe {
         progress_milli: u16,
         direction: SlideDirection,
+        swipe_in: bool,
     },
 }
 
@@ -103,8 +106,12 @@ pub enum TransitionKind {
     FadeToColor { color: [u8; 4] },
     /// Slides the destination in from the configured direction.
     Slide { direction: SlideDirection },
-    /// Swipes the source out in the configured direction.
-    Swipe { direction: SlideDirection },
+    /// Swipes the source out in the configured direction, or brings the
+    /// destination in when `swipe_in` is true.
+    Swipe {
+        direction: SlideDirection,
+        swipe_in: bool,
+    },
 }
 
 /// A validated transition policy that can be persisted on a scene.
@@ -192,6 +199,23 @@ impl TransitionSpec {
         Self::new(
             TransitionKind::Swipe {
                 direction: SlideDirection::Left,
+                swipe_in: false,
+            },
+            duration_millis,
+        )
+    }
+
+    /// Creates the bounded left-direction swipe-in policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransitionDuration`] when the duration is
+    /// outside the bounded scene-transition range.
+    pub const fn swipe_in_left(duration_millis: u32) -> Result<Self, MediaError> {
+        Self::new(
+            TransitionKind::Swipe {
+                direction: SlideDirection::Left,
+                swipe_in: true,
             },
             duration_millis,
         )
@@ -212,7 +236,14 @@ impl TransitionSpec {
             FrameTransition::CrossFade { .. } => TransitionKind::CrossFade,
             FrameTransition::FadeToColor { color, .. } => TransitionKind::FadeToColor { color },
             FrameTransition::Slide { direction, .. } => TransitionKind::Slide { direction },
-            FrameTransition::Swipe { direction, .. } => TransitionKind::Swipe { direction },
+            FrameTransition::Swipe {
+                direction,
+                swipe_in,
+                ..
+            } => TransitionKind::Swipe {
+                direction,
+                swipe_in,
+            },
         };
         Self::new(kind, duration_millis)
     }
@@ -245,9 +276,10 @@ impl TransitionSpec {
             TransitionKind::Slide { direction } => {
                 FrameTransition::slide(progress_milli, direction)
             }
-            TransitionKind::Swipe { direction } => {
-                FrameTransition::swipe(progress_milli, direction)
-            }
+            TransitionKind::Swipe {
+                direction,
+                swipe_in,
+            } => FrameTransition::swipe_with_mode(progress_milli, direction, swipe_in),
         }
     }
 }
@@ -314,12 +346,43 @@ impl FrameTransition {
     /// Returns [`MediaError::InvalidTransition`] when `progress_milli` is
     /// greater than `1000`.
     pub const fn swipe(progress_milli: u16, direction: SlideDirection) -> Result<Self, MediaError> {
+        Self::swipe_with_mode(progress_milli, direction, false)
+    }
+
+    /// Creates a swipe sample with an explicit incoming/outgoing mode.
+    ///
+    /// `swipe_in = false` moves the source out and leaves the destination
+    /// stationary. `swipe_in = true` moves the destination in over the source.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransition`] when `progress_milli` is
+    /// greater than `1000`.
+    pub const fn swipe_with_mode(
+        progress_milli: u16,
+        direction: SlideDirection,
+        swipe_in: bool,
+    ) -> Result<Self, MediaError> {
         if progress_milli > 1_000 {
             return Err(MediaError::InvalidTransition { progress_milli });
         }
         Ok(Self::Swipe {
             progress_milli,
             direction,
+            swipe_in,
         })
+    }
+
+    /// Creates an incoming swipe sample.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransition`] when `progress_milli` is
+    /// greater than `1000`.
+    pub const fn swipe_in(
+        progress_milli: u16,
+        direction: SlideDirection,
+    ) -> Result<Self, MediaError> {
+        Self::swipe_with_mode(progress_milli, direction, true)
     }
 }

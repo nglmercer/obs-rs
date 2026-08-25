@@ -286,6 +286,7 @@ fn console_parser_covers_directional_transitions() {
             transition: FrameTransition::Swipe {
                 progress_milli: 500,
                 direction: obs_rs_media::SlideDirection::Left,
+                swipe_in: false,
             },
         }))
     );
@@ -304,6 +305,28 @@ fn console_parser_covers_directional_transitions() {
             transition: FrameTransition::Swipe {
                 progress_milli: 250,
                 direction: obs_rs_media::SlideDirection::Up,
+                swipe_in: false,
+            },
+            duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
+        }))
+    );
+    assert_eq!(
+        parse_console_command("transition swipe in right 500"),
+        Ok(ConsoleCommand::Apply(UiCommand::SetTransition {
+            transition: FrameTransition::Swipe {
+                progress_milli: 500,
+                direction: obs_rs_media::SlideDirection::Right,
+                swipe_in: true,
+            },
+        }))
+    );
+    assert_eq!(
+        parse_console_command("take swipe_in up 250"),
+        Ok(ConsoleCommand::Apply(UiCommand::TakePreview {
+            transition: FrameTransition::Swipe {
+                progress_milli: 250,
+                direction: obs_rs_media::SlideDirection::Up,
+                swipe_in: true,
             },
             duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
         }))

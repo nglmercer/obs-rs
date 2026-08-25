@@ -474,6 +474,7 @@ pub(super) fn catalog() -> UiText {
         fade: s("Fade"),
         slide: s("Slide"),
         swipe: s("Swipe"),
+        swipe_in: s("Swipe In"),
         fade_to_color: s("Fade to color"),
         duration: s("Duration"),
         add_transition: s("Add transition"),

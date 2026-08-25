@@ -268,8 +268,10 @@ impl DesktopState {
             FrameTransition::Swipe {
                 progress_milli,
                 direction,
+                swipe_in,
             } => {
-                FrameTransition::swipe(progress_milli, direction).map_err(UiError::Media)?;
+                FrameTransition::swipe_with_mode(progress_milli, direction, swipe_in)
+                    .map_err(UiError::Media)?;
             }
             FrameTransition::Cut => {}
         }
@@ -384,9 +386,14 @@ impl DesktopState {
                 progress_milli,
                 direction,
             },
-            FrameTransition::Swipe { direction, .. } => FrameTransition::Swipe {
+            FrameTransition::Swipe {
+                direction,
+                swipe_in,
+                ..
+            } => FrameTransition::Swipe {
                 progress_milli,
                 direction,
+                swipe_in,
             },
         };
         Some(TransitionSnapshot::new(

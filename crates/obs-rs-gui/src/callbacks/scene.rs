@@ -145,6 +145,7 @@ fn install_scene_properties_callback(
                 name: ui.get_scene_name().as_str(),
                 transition_index: ui.get_scene_transition_index(),
                 transition_direction_index: ui.get_scene_transition_direction_index(),
+                transition_swipe_in: ui.get_scene_transition_swipe_in(),
                 duration: ui.get_scene_transition_duration().as_str(),
                 color: ui.get_scene_transition_color().as_str(),
             },

@@ -101,6 +101,25 @@ fn swipe_transition_override_round_trips_its_direction() {
 }
 
 #[test]
+fn swipe_in_transition_override_round_trips_its_mode() {
+    let mut project = project();
+    let transition = TransitionSpec::swipe_in_left(650).expect("swipe-in transition");
+    project
+        .apply(ProjectCommand::SetSceneTransitionOverride {
+            profile: "live".to_owned(),
+            scene: "main".to_owned(),
+            transition: Some(transition),
+        })
+        .expect("set swipe-in transition");
+
+    let encoded = project.serialize();
+    assert!(encoded.contains(r#""kind": "swipe""#), "{encoded}");
+    assert!(encoded.contains(r#""swipe_in": true"#), "{encoded}");
+    let decoded = Project::parse(&encoded).expect("swipe-in project parses");
+    assert_eq!(decoded, project);
+}
+
+#[test]
 fn directional_slide_and_swipe_overrides_round_trip() {
     let directions = [
         (obs_rs_media::SlideDirection::Right, "right"),
@@ -111,7 +130,10 @@ fn directional_slide_and_swipe_overrides_round_trip() {
         let mut project = project();
         for kind in [
             obs_rs_media::TransitionKind::Slide { direction },
-            obs_rs_media::TransitionKind::Swipe { direction },
+            obs_rs_media::TransitionKind::Swipe {
+                direction,
+                swipe_in: false,
+            },
         ] {
             let transition = obs_rs_media::TransitionSpec::new(kind, 700).expect("transition");
             project

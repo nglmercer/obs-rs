@@ -63,11 +63,13 @@ open.
 
 The transition catalog now includes bounded Slide and Swipe samples in the four
 reference directions. The portable renderer moves source/destination pixels in
-place: Slide moves both layers, while Swipe moves only the source and leaves the
-destination stationary. Project JSON, scene properties, the Transition dock,
-and the console share one typed `TransitionSpec`. Stinger, luma, `swipe_in`, and
-other slide variants remain open; the 640x360 timing reports are intentionally
-ignored until they are promoted to the pinned performance suite.
+place: Slide moves both layers, Swipe moves only the source for the outgoing
+variant, and `swipe_in` moves the destination over the stationary source.
+Project JSON, scene properties, the Transition dock, and the console share one
+typed `TransitionSpec`; missing `swipe_in` fields in older documents default to
+the outgoing behavior. Stinger, luma, and other slide variants remain open; the
+640x360 timing reports are intentionally ignored until they are promoted to the
+pinned performance suite.
 
 The portable transition direction model now accepts left, right, up, and down
 for both Slide and Swipe, with axis-aware in-place traversal and bounded JSON
@@ -76,7 +78,7 @@ scene-properties dialog expose localized bounded direction selectors and pass
 the selected index through typed callbacks. Persisted scene overrides project
 their selected direction back into the scene-properties dialog, while legacy
 callback entry points remain compatible by defaulting to left. Stinger, luma,
-`swipe_in`, and other slide variants remain open.
+and other slide variants remain open.
 
 The nested transformed-leaf packet now preserves crop when a leaf crosses an
 axis-aligned group or Scene-reference boundary, and preserves leaf rotation

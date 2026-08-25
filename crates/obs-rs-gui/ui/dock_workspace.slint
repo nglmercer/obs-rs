@@ -38,6 +38,7 @@ export component DockWorkspace inherits Rectangle {
     in property <string> transition;
     in property <string> transition-kind;
     in-out property <int> transition-direction-index: 0;
+    in-out property <bool> swipe-in: false;
     in property <bool> recording;
     in property <bool> streaming;
     in property <bool> replay-buffering;
@@ -111,9 +112,11 @@ export component DockWorkspace inherits Rectangle {
     callback swipe-transition(string);
     callback slide-transition-direction(string, int);
     callback swipe-transition-direction(string, int);
+    callback swipe-transition-direction-mode(string, int, bool);
     callback fade-to-color(string, string);
     callback set-scene-transition(string, string, string);
     callback set-scene-transition-direction(string, string, string, int);
+    callback set-scene-transition-direction-mode(string, string, string, int, bool);
     callback clear-scene-transition();
     callback set-view-mode(int);
     callback toggle-recording();
@@ -282,6 +285,7 @@ export component DockWorkspace inherits Rectangle {
             transition: root.transition;
             transition-kind: root.transition-kind;
             transition-direction-index <=> root.transition-direction-index;
+            swipe-in <=> root.swipe-in;
             recording: root.recording;
             streaming: root.streaming;
             replay-buffering: root.replay-buffering;
@@ -361,10 +365,16 @@ export component DockWorkspace inherits Rectangle {
             swipe-transition-direction(duration, direction) => {
                 root.swipe-transition-direction(duration, direction);
             }
+            swipe-transition-direction-mode(duration, direction, swipe-in) => {
+                root.swipe-transition-direction-mode(duration, direction, swipe-in);
+            }
             fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
             set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
             set-scene-transition-direction(kind, duration, color, direction) => {
                 root.set-scene-transition-direction(kind, duration, color, direction);
+            }
+            set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in) => {
+                root.set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in);
             }
             clear-scene-transition() => { root.clear-scene-transition(); }
             set-view-mode(mode) => { root.set-view-mode(mode); }

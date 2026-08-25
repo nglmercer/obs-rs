@@ -480,6 +480,7 @@ pub(super) fn catalog() -> UiText {
         fade: s("Desvanecimiento"),
         slide: s("Deslizar"),
         swipe: s("Deslizar contenido"),
+        swipe_in: s("Deslizar contenido al entrar"),
         fade_to_color: s("Desvanecer a color"),
         duration: s("Duración"),
         add_transition: s("Añadir transición"),

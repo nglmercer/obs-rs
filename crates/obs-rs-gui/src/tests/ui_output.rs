@@ -117,6 +117,7 @@ fn exercise_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopStat
         FrameTransition::Swipe {
             progress_milli,
             direction: obs_rs_media::SlideDirection::Left,
+            swipe_in: false,
         } if progress_milli < 1_000
     ));
 
@@ -194,6 +195,27 @@ fn exercise_directional_transition_callbacks(ui: &MainWindow, state: &Rc<RefCell
         FrameTransition::Swipe {
             progress_milli,
             direction: obs_rs_media::SlideDirection::Up,
+            swipe_in: false,
+        } if progress_milli < 1_000
+    ));
+
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectProgramScene {
+            id: "program".to_owned(),
+        })
+        .expect("restore program scene before swipe-in");
+    ui.invoke_swipe_transition_direction_mode("450".into(), 3, true);
+    let transition = state
+        .borrow_mut()
+        .transition_snapshot(std::time::Instant::now())
+        .expect("swipe-in callback should start a transition");
+    assert!(matches!(
+        transition.transition(),
+        FrameTransition::Swipe {
+            progress_milli,
+            direction: obs_rs_media::SlideDirection::Down,
+            swipe_in: true,
         } if progress_milli < 1_000
     ));
 }
@@ -305,6 +327,7 @@ fn exercise_scene_transition_variants(ui: &MainWindow, state: &Rc<RefCell<Deskto
     ui.set_scene_name("Swipe scene".into());
     ui.set_scene_transition_index(5);
     ui.set_scene_transition_direction_index(2);
+    ui.set_scene_transition_swipe_in(true);
     ui.set_scene_transition_duration("650".into());
     ui.invoke_rename_scene();
     let transition = state
@@ -320,6 +343,7 @@ fn exercise_scene_transition_variants(ui: &MainWindow, state: &Rc<RefCell<Deskto
         transition.kind(),
         obs_rs_media::TransitionKind::Swipe {
             direction: obs_rs_media::SlideDirection::Up,
+            swipe_in: true,
         }
     );
 }

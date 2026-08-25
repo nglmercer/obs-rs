@@ -341,7 +341,14 @@ fn install_swipe_transition_callback(
     let swipe_state = Rc::clone(state);
     let swipe_surface = Rc::clone(surface);
     ui.on_swipe_transition(move |duration| {
-        apply_swipe_transition(&weak, &swipe_state, &swipe_surface, duration.as_str(), 0);
+        apply_swipe_transition(
+            &weak,
+            &swipe_state,
+            &swipe_surface,
+            duration.as_str(),
+            0,
+            false,
+        );
     });
 
     let weak = ui.as_weak();
@@ -354,6 +361,21 @@ fn install_swipe_transition_callback(
             &swipe_surface,
             duration.as_str(),
             direction_index,
+            false,
+        );
+    });
+
+    let weak = ui.as_weak();
+    let swipe_state = Rc::clone(state);
+    let swipe_surface = Rc::clone(surface);
+    ui.on_swipe_transition_direction_mode(move |duration, direction_index, swipe_in| {
+        apply_swipe_transition(
+            &weak,
+            &swipe_state,
+            &swipe_surface,
+            duration.as_str(),
+            direction_index,
+            swipe_in,
         );
     });
 }
@@ -398,6 +420,7 @@ fn apply_swipe_transition(
     surface: &Rc<RefCell<PreviewSurface>>,
     duration_value: &str,
     direction_index: i32,
+    swipe_in: bool,
 ) {
     let Some(duration) = parse_transition_duration(weak, duration_value) else {
         return;
@@ -413,8 +436,9 @@ fn apply_swipe_transition(
     };
     if let Some(ui) = weak.upgrade() {
         ui.set_transition_direction_index(direction_index);
+        ui.set_swipe_in(swipe_in);
     }
-    let transition = match FrameTransition::swipe(500, direction) {
+    let transition = match FrameTransition::swipe_with_mode(500, direction, swipe_in) {
         Ok(transition) => transition,
         Err(error) => {
             if let Some(ui) = weak.upgrade() {
@@ -458,6 +482,7 @@ fn install_scene_transition_override_callbacks(
             duration.as_str(),
             color.as_str(),
             0,
+            false,
         );
         let Some(ui) = weak.upgrade() else {
             return;
@@ -478,6 +503,7 @@ fn install_scene_transition_override_callbacks(
             duration.as_str(),
             color.as_str(),
             direction_index,
+            false,
         );
         let Some(ui) = weak.upgrade() else {
             return;
@@ -487,6 +513,29 @@ fn install_scene_transition_override_callbacks(
             Err(error) => ui.set_status_message(error.into()),
         }
     });
+
+    let weak = ui.as_weak();
+    let override_state = Rc::clone(state);
+    let override_surface = Rc::clone(surface);
+    ui.on_set_scene_transition_direction_mode(
+        move |kind, duration, color, direction_index, swipe_in| {
+            let result = set_scene_transition_override(
+                &override_state,
+                kind.as_str(),
+                duration.as_str(),
+                color.as_str(),
+                direction_index,
+                swipe_in,
+            );
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(()) => refresh_ui(&ui, &override_state, &override_surface),
+                Err(error) => ui.set_status_message(error.into()),
+            }
+        },
+    );
 
     let weak = ui.as_weak();
     let clear_state = Rc::clone(state);
@@ -513,8 +562,9 @@ fn set_scene_transition_override(
     duration: &str,
     color: &str,
     direction_index: i32,
+    swipe_in: bool,
 ) -> Result<(), String> {
-    let transition = scene_transition_spec(kind, duration, color, direction_index)?;
+    let transition = scene_transition_spec(kind, duration, color, direction_index, swipe_in)?;
     state
         .borrow_mut()
         .dispatch(UiCommand::SetPreviewSceneTransition {
@@ -528,6 +578,7 @@ pub(crate) fn scene_transition_spec(
     duration: &str,
     color: &str,
     direction_index: i32,
+    swipe_in: bool,
 ) -> Result<TransitionSpec, String> {
     let duration = duration
         .trim()
@@ -554,6 +605,7 @@ pub(crate) fn scene_transition_spec(
         "swipe" => TransitionSpec::new(
             TransitionKind::Swipe {
                 direction: slide_direction_from_index(direction_index)?,
+                swipe_in,
             },
             duration,
         ),

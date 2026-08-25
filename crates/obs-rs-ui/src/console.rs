@@ -204,7 +204,7 @@ fn parse_transition_value<'a>(
     command: &'static str,
     mut words: impl Iterator<Item = &'a str>,
 ) -> Result<FrameTransition, ConsoleCommandError> {
-    let kind = required_word(&mut words, "cut, fade, color, slide, or swipe")?;
+    let kind = required_word(&mut words, "cut, fade, color, slide, swipe, or swipe_in")?;
     Ok(match kind {
         "cut" => {
             ensure_no_extra(command, words)?;
@@ -242,11 +242,8 @@ fn parse_transition_value<'a>(
             FrameTransition::slide(progress, direction)
                 .map_err(ConsoleCommandError::InvalidTransition)?
         }
-        "swipe" => {
-            let (direction, progress) = parse_directional_progress(command, &mut words)?;
-            FrameTransition::swipe(progress, direction)
-                .map_err(ConsoleCommandError::InvalidTransition)?
-        }
+        "swipe" => parse_swipe_value(command, &mut words, false)?,
+        "swipe_in" => parse_swipe_value(command, &mut words, true)?,
         value => {
             return Err(ConsoleCommandError::InvalidArgument {
                 command,
@@ -256,11 +253,35 @@ fn parse_transition_value<'a>(
     })
 }
 
+fn parse_swipe_value<'a>(
+    command: &'static str,
+    words: &mut impl Iterator<Item = &'a str>,
+    default_swipe_in: bool,
+) -> Result<FrameTransition, ConsoleCommandError> {
+    let first = required_word(words, "swipe direction, mode, or progress")?;
+    let (swipe_in, first) = match first {
+        "in" => (true, required_word(words, "swipe direction or progress")?),
+        "out" => (false, required_word(words, "swipe direction or progress")?),
+        _ => (default_swipe_in, first),
+    };
+    let (direction, progress) = parse_directional_progress_from_first(command, words, first)?;
+    FrameTransition::swipe_with_mode(progress, direction, swipe_in)
+        .map_err(ConsoleCommandError::InvalidTransition)
+}
+
 fn parse_directional_progress<'a>(
     command: &'static str,
     words: &mut impl Iterator<Item = &'a str>,
 ) -> Result<(SlideDirection, u16), ConsoleCommandError> {
     let first = required_word(words, "transition direction or progress")?;
+    parse_directional_progress_from_first(command, words, first)
+}
+
+fn parse_directional_progress_from_first<'a>(
+    command: &'static str,
+    words: &mut impl Iterator<Item = &'a str>,
+    first: &'a str,
+) -> Result<(SlideDirection, u16), ConsoleCommandError> {
     let (direction, progress) = if let Ok(progress) = first.parse::<u16>() {
         (SlideDirection::Left, progress)
     } else {

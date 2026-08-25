@@ -361,12 +361,15 @@ fn decode_scene(value: &Json, profile: &Profile, version: u32) -> Result<SceneSp
 }
 
 fn encode_transition(transition: TransitionSpec) -> Json {
-    let (kind, color, direction) = match transition.kind() {
-        TransitionKind::Cut => ("cut", None, None),
-        TransitionKind::CrossFade => ("cross_fade", None, None),
-        TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color), None),
-        TransitionKind::Slide { direction } => ("slide", None, Some(direction)),
-        TransitionKind::Swipe { direction } => ("swipe", None, Some(direction)),
+    let (kind, color, direction, swipe_in) = match transition.kind() {
+        TransitionKind::Cut => ("cut", None, None, None),
+        TransitionKind::CrossFade => ("cross_fade", None, None, None),
+        TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color), None, None),
+        TransitionKind::Slide { direction } => ("slide", None, Some(direction), None),
+        TransitionKind::Swipe {
+            direction,
+            swipe_in,
+        } => ("swipe", None, Some(direction), Some(swipe_in)),
     };
     let mut members = vec![
         ("kind", Json::string(kind)),
@@ -380,6 +383,9 @@ fn encode_transition(transition: TransitionSpec) -> Json {
     }
     if let Some(direction) = direction {
         members.push(("direction", Json::string(direction.as_str())));
+    }
+    if let Some(swipe_in) = swipe_in {
+        members.push(("swipe_in", Json::Bool(swipe_in)));
     }
     Json::object(members)
 }
@@ -420,7 +426,22 @@ fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
             let direction_value = string_member(value, "direction")?;
             let direction = SlideDirection::parse(direction_value)
                 .ok_or_else(|| invalid(format!("unknown swipe direction: {direction_value}")))?;
-            TransitionSpec::new(TransitionKind::Swipe { direction }, duration_millis)
+            let swipe_in = value
+                .get("swipe_in")
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .ok_or_else(|| invalid("swipe_in must be a boolean"))
+                })
+                .transpose()?
+                .unwrap_or(false);
+            TransitionSpec::new(
+                TransitionKind::Swipe {
+                    direction,
+                    swipe_in,
+                },
+                duration_millis,
+            )
         }
         other => return Err(invalid(format!("unknown scene transition kind: {other}"))),
     };

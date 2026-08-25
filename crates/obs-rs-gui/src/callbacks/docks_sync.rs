@@ -29,6 +29,7 @@ pub(super) fn sync_floating_window(window: &FloatingDockWindow, ui: &MainWindow)
     window.set_transition(ui.get_transition());
     window.set_transition_kind(ui.get_transition_kind());
     window.set_transition_direction_index(ui.get_transition_direction_index());
+    window.set_swipe_in(ui.get_swipe_in());
     window.set_recording(ui.get_recording());
     window.set_streaming(ui.get_streaming());
     window.set_remux_recovery_supported(ui.get_remux_recovery_supported());

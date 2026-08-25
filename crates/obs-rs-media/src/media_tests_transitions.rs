@@ -168,12 +168,59 @@ fn swipe_from_left_reveals_the_stationary_destination() {
 }
 
 #[test]
+fn swipe_in_from_left_brings_destination_over_the_stationary_source() {
+    let format =
+        VideoFormat::new(4, 1, FrameRate::new(60, 1).expect("valid rate")).expect("swipe format");
+    let source = VideoFrame::new(
+        format,
+        Timestamp::ZERO,
+        vec![1, 0, 0, 255, 2, 0, 0, 255, 3, 0, 0, 255, 4, 0, 0, 255],
+    )
+    .expect("source frame");
+    let destination = VideoFrame::new(
+        format,
+        Timestamp::from_millis(10),
+        vec![9, 0, 0, 255, 8, 0, 0, 255, 7, 0, 0, 255, 6, 0, 0, 255],
+    )
+    .expect("destination frame");
+
+    let halfway = VideoFrame::transitioned(
+        &source,
+        destination,
+        FrameTransition::swipe_in(500, SlideDirection::Left).expect("swipe-in transition"),
+    )
+    .expect("halfway swipe-in");
+    assert_eq!(halfway.pixel(0, 0), Some([1, 0, 0, 255]));
+    assert_eq!(halfway.pixel(1, 0), Some([2, 0, 0, 255]));
+    assert_eq!(halfway.pixel(2, 0), Some([9, 0, 0, 255]));
+    assert_eq!(halfway.pixel(3, 0), Some([8, 0, 0, 255]));
+
+    let policy = TransitionSpec::swipe_in_left(600).expect("swipe-in policy");
+    assert_eq!(
+        policy.kind(),
+        TransitionKind::Swipe {
+            direction: SlideDirection::Left,
+            swipe_in: true,
+        }
+    );
+    assert_eq!(
+        policy.at_progress(250).expect("swipe-in sample"),
+        FrameTransition::Swipe {
+            progress_milli: 250,
+            direction: SlideDirection::Left,
+            swipe_in: true,
+        }
+    );
+}
+
+#[test]
 fn swipe_policy_round_trips_through_a_render_sample() {
     let policy = TransitionSpec::swipe_left(600).expect("swipe policy");
     assert_eq!(
         policy.kind(),
         TransitionKind::Swipe {
             direction: SlideDirection::Left,
+            swipe_in: false,
         }
     );
     assert_eq!(
@@ -181,6 +228,7 @@ fn swipe_policy_round_trips_through_a_render_sample() {
         FrameTransition::Swipe {
             progress_milli: 250,
             direction: SlideDirection::Left,
+            swipe_in: false,
         }
     );
     assert_eq!(

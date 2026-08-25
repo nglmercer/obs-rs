@@ -111,6 +111,13 @@ pub(super) fn forward_to_studio(
         duration,
         direction
     );
+    forward!(
+        on_swipe_transition_direction_mode,
+        invoke_swipe_transition_direction_mode,
+        duration,
+        direction,
+        swipe_in
+    );
     forward!(on_fade_to_color, invoke_fade_to_color, color, duration);
     forward!(
         on_set_scene_transition,
@@ -126,6 +133,15 @@ pub(super) fn forward_to_studio(
         duration,
         color,
         direction
+    );
+    forward!(
+        on_set_scene_transition_direction_mode,
+        invoke_set_scene_transition_direction_mode,
+        kind,
+        duration,
+        color,
+        direction,
+        swipe_in
     );
     forward!(on_clear_scene_transition, invoke_clear_scene_transition);
     forward!(on_toggle_recording, invoke_toggle_recording);

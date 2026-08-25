@@ -97,11 +97,18 @@ impl VideoFrame {
             FrameTransition::Swipe {
                 progress_milli,
                 direction,
+                swipe_in,
             } => {
                 if progress_milli > 1_000 {
                     return Err(MediaError::InvalidTransition { progress_milli });
                 }
-                apply_swipe(source, &mut destination, progress_milli, direction);
+                apply_swipe(
+                    source,
+                    &mut destination,
+                    progress_milli,
+                    direction,
+                    swipe_in,
+                );
                 Ok(destination)
             }
         }
@@ -148,7 +155,12 @@ fn apply_swipe(
     destination: &mut VideoFrame,
     progress_milli: u16,
     direction: SlideDirection,
+    swipe_in: bool,
 ) {
+    if swipe_in {
+        apply_swipe_in(source, destination, progress_milli, direction);
+        return;
+    }
     let width = destination.format().width_index();
     let height = destination.format().height_index();
     let progress_pixels = transition_progress_pixels(destination, progress_milli, direction);
@@ -199,6 +211,82 @@ fn apply_swipe(
                 .try_into()
                 .expect("RGBA pixel has four bytes");
             target_pixels[target_start..target_start + 4].copy_from_slice(&source_pixel);
+        }
+    }
+}
+
+/// Applies the incoming Swipe variant in place. The source remains visible
+/// outside the moving destination layer, so the destination buffer is read in
+/// movement-safe order before each target pixel is overwritten.
+fn apply_swipe_in(
+    source: &VideoFrame,
+    destination: &mut VideoFrame,
+    progress_milli: u16,
+    direction: SlideDirection,
+) {
+    let width = destination.format().width_index();
+    let height = destination.format().height_index();
+    let remaining_pixels = transition_axis_length(destination, direction).saturating_sub(
+        transition_progress_pixels(destination, progress_milli, direction),
+    );
+    let source_pixels = source.pixels();
+    let target_pixels = destination.pixels_mut();
+
+    for row in 0..height {
+        let y = if matches!(direction, SlideDirection::Up) {
+            height - 1 - row
+        } else {
+            row
+        };
+        for column in 0..width {
+            let x = if matches!(direction, SlideDirection::Left) {
+                width - 1 - column
+            } else {
+                column
+            };
+            let (sample_x, sample_y, destination_visible) = match direction {
+                SlideDirection::Left => {
+                    if x >= remaining_pixels {
+                        (x - remaining_pixels, y, true)
+                    } else {
+                        (x, y, false)
+                    }
+                }
+                SlideDirection::Right => {
+                    if x + remaining_pixels < width {
+                        (x + remaining_pixels, y, true)
+                    } else {
+                        (x, y, false)
+                    }
+                }
+                SlideDirection::Up => {
+                    if y >= remaining_pixels {
+                        (x, y - remaining_pixels, true)
+                    } else {
+                        (x, y, false)
+                    }
+                }
+                SlideDirection::Down => {
+                    if y + remaining_pixels < height {
+                        (x, y + remaining_pixels, true)
+                    } else {
+                        (x, y, false)
+                    }
+                }
+            };
+            let target_start = pixel_start(width, x, y);
+            let pixel: [u8; 4] = if destination_visible {
+                let sample_start = pixel_start(width, sample_x, sample_y);
+                target_pixels[sample_start..sample_start + 4]
+                    .try_into()
+                    .expect("RGBA pixel has four bytes")
+            } else {
+                let source_start = pixel_start(width, x, y);
+                source_pixels[source_start..source_start + 4]
+                    .try_into()
+                    .expect("RGBA pixel has four bytes")
+            };
+            target_pixels[target_start..target_start + 4].copy_from_slice(&pixel);
         }
     }
 }

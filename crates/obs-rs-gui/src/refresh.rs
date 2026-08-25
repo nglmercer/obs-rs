@@ -592,10 +592,15 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_scene_name(selected_scene_name.into());
         ui.set_scene_name_version(ui.get_scene_name().clone());
     }
-    let (transition_index, transition_direction_index, transition_duration, transition_color) =
-        scene_transition_fields(selected_scene);
+    let (
+        transition_index,
+        transition_direction_index,
+        transition_swipe_in,
+        transition_duration,
+        transition_color,
+    ) = scene_transition_fields(selected_scene);
     let properties_version = format!(
-        "{transition_index}|{transition_direction_index}|{transition_duration}|{transition_color}"
+        "{transition_index}|{transition_direction_index}|{transition_swipe_in}|{transition_duration}|{transition_color}"
     );
     // Refresh ticks continue while a modal is open. Do not replace text the
     // user is editing; the next tick after acceptance/cancel synchronizes the
@@ -605,6 +610,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     {
         ui.set_scene_transition_index(transition_index);
         ui.set_scene_transition_direction_index(transition_direction_index);
+        ui.set_scene_transition_swipe_in(transition_swipe_in);
         ui.set_scene_transition_duration(transition_duration.into());
         ui.set_scene_transition_color(transition_color.into());
         ui.set_scene_properties_version(properties_version.into());
@@ -839,11 +845,15 @@ pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTra
         FrameTransition::Swipe {
             progress_milli,
             direction,
-        } => format!(
-            "{} {progress_milli}/1000 ({})",
-            text.swipe,
-            direction.as_str()
-        ),
+            swipe_in,
+        } => {
+            let label = if swipe_in {
+                &text.swipe_in
+            } else {
+                &text.swipe
+            };
+            format!("{} {progress_milli}/1000 ({})", label, direction.as_str())
+        }
     })
 }
 
@@ -859,31 +869,42 @@ pub(crate) fn transition_kind(transition: FrameTransition) -> &'static str {
 
 /// Projects the persisted per-scene transition into the compact dialog model.
 /// Index zero deliberately means inheritance from the desktop transition.
-fn scene_transition_fields(scene: Option<&SceneSpec>) -> (i32, i32, String, String) {
+fn scene_transition_fields(scene: Option<&SceneSpec>) -> (i32, i32, bool, String, String) {
     let Some(transition) = scene.and_then(SceneSpec::transition_override) else {
-        return (0, 0, "300".to_owned(), "#000000FF".to_owned());
+        return (0, 0, false, "300".to_owned(), "#000000FF".to_owned());
     };
-    let (index, direction_index, color) = match transition.kind() {
-        TransitionKind::Cut => (1, 0, "#000000FF".to_owned()),
-        TransitionKind::CrossFade => (2, 0, "#000000FF".to_owned()),
+    let (index, direction_index, swipe_in, color) = match transition.kind() {
+        TransitionKind::Cut => (1, 0, false, "#000000FF".to_owned()),
+        TransitionKind::CrossFade => (2, 0, false, "#000000FF".to_owned()),
         TransitionKind::FadeToColor { color } => (
             3,
             0,
+            false,
             format!(
                 "#{:02X}{:02X}{:02X}{:02X}",
                 color[0], color[1], color[2], color[3]
             ),
         ),
-        TransitionKind::Slide { direction } => {
-            (4, slide_direction_index(direction), "#000000FF".to_owned())
-        }
-        TransitionKind::Swipe { direction } => {
-            (5, slide_direction_index(direction), "#000000FF".to_owned())
-        }
+        TransitionKind::Slide { direction } => (
+            4,
+            slide_direction_index(direction),
+            false,
+            "#000000FF".to_owned(),
+        ),
+        TransitionKind::Swipe {
+            direction,
+            swipe_in,
+        } => (
+            5,
+            slide_direction_index(direction),
+            swipe_in,
+            "#000000FF".to_owned(),
+        ),
     };
     (
         index,
         direction_index,
+        swipe_in,
         transition.duration_millis().to_string(),
         color,
     )
