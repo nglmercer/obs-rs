@@ -15,8 +15,10 @@ the full program target and the smaller GUI preview target; the preview worker
 scales the selected frame at the presentation boundary, and render-time file
 or decoder I/O is impossible. This is intentionally only a runtime slice:
 persistent resource resolution, asynchronous decoding, track matte layout,
-fade/audio monitoring policy, and the Stinger properties/file-picker workflow
-remain open.
+fade/audio monitoring policy remain open. The scene-properties dialog now
+exposes the persisted path, transition point, preload flag, and hardware-decode
+preference through the same undoable project command; a native file picker is
+still open.
 
 The persistent Stinger configuration packet now adds a bounded resource path,
 normalized transition point, preload flag, and hardware-decode preference to
@@ -36,9 +38,10 @@ The result slot now discards completions whose request ID is no longer current
 and never blocks submit/poll callers. The GUI now constructs the native loader
 behind the engine boundary and preloads only the selected scene's
 `preload=true` resource from the refresh timer, reporting ready and typed
-failure states without waiting on the worker. Explicit Take wiring,
-hardware-decode selection, non-GStreamer platform adapters, and the
-properties/file-picker workflow remain open.
+failure states without waiting on the worker. Scene properties now edit the
+resource metadata through one `SetSceneProperties` history entry. Explicit
+Take wiring, actual hardware-decode selection, non-GStreamer platform
+adapters, and the file-picker workflow remain open.
 
 The toolkit-neutral `StingerLoadSession` now owns the transient current request
 and resolved clip around that worker. It clears the renderable clip only after
@@ -47,7 +50,8 @@ full, rejects a loader result whose format does not match the active canvas,
 and invalidates old completions when the target format changes. It exposes the
 typed failure without moving resource metadata or decoded pixels into a second
 project state store; the GUI resource session is now connected to the native
-adapter, while properties/file-picker and explicit Take actions remain open.
+adapter, and the scene-properties fields are synchronized from the project.
+The file-picker and explicit Take actions remain open.
 
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks

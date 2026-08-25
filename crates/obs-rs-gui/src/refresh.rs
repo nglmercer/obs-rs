@@ -599,7 +599,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     }
     let transition_fields = scene_transition_fields(selected_scene);
     let properties_version = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         transition_fields.index,
         transition_fields.direction_index,
         transition_fields.swipe_in,
@@ -607,7 +607,11 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         transition_fields.luma_invert,
         transition_fields.duration,
         transition_fields.color,
-        transition_fields.softness
+        transition_fields.softness,
+        transition_fields.stinger.path,
+        transition_fields.stinger.transition_point,
+        transition_fields.stinger.preload,
+        transition_fields.stinger.hardware_decode
     );
     // Refresh ticks continue while a modal is open. Do not replace text the
     // user is editing; the next tick after acceptance/cancel synchronizes the
@@ -623,6 +627,10 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_scene_transition_duration(transition_fields.duration.into());
         ui.set_scene_transition_color(transition_fields.color.into());
         ui.set_scene_transition_luma_softness(transition_fields.softness.into());
+        ui.set_scene_stinger_path(transition_fields.stinger.path.into());
+        ui.set_scene_stinger_transition_point(transition_fields.stinger.transition_point.into());
+        ui.set_scene_stinger_preload(transition_fields.stinger.preload);
+        ui.set_scene_stinger_hardware_decode(transition_fields.stinger.hardware_decode);
         ui.set_scene_properties_version(properties_version.into());
     }
 

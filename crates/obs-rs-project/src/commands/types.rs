@@ -142,6 +142,7 @@ pub enum ProjectCommand {
         scene: String,
         name: String,
         transition: Option<TransitionSpec>,
+        stinger: Option<StingerSpec>,
     },
     /// Replaces the optional transition policy used when a scene is taken to
     /// program. `None` restores inheritance from the desktop transition.

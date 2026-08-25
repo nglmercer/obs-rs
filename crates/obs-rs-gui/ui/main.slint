@@ -1,7 +1,7 @@
 import { VerticalBox } from "std-widgets.slint";
 import { DockPane, DockSplitter, LocaleOption, MoveTarget, MultiviewScene, ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
 import { I18n } from "i18n.slint";
-import { AppNavbar } from "navbar.slint";
+import { MainNavbar } from "main_navbar.slint";
 import { StagePanel } from "stage.slint";
 import { DockWorkspace } from "dock_workspace.slint";
 import { HorizontalSplitter } from "theme.slint";
@@ -123,6 +123,10 @@ export component MainWindow inherits Window {
         in-out property <string> scene-transition-luma-softness: "30";
         in-out property <string> scene-transition-duration;
         in-out property <string> scene-transition-color;
+        in-out property <string> scene-stinger-path;
+        in-out property <string> scene-stinger-transition-point: "500";
+        in-out property <bool> scene-stinger-preload: true;
+        in-out property <bool> scene-stinger-hardware-decode: false;
         in property <string> scene-properties-version;
         in property <string> selected-source;
         in property <bool> selected-source-visible: false;
@@ -602,7 +606,7 @@ export component MainWindow inherits Window {
             padding: 0px;
             spacing: 0px;
 
-            AppNavbar {
+            MainNavbar {
                 locale: root.locale;
                 profile-rows: root.profile-rows;
                 collection-rows: root.collection-rows;
@@ -610,12 +614,12 @@ export component MainWindow inherits Window {
                 can-undo: root.can-undo;
                 can-redo: root.can-redo;
                 studio-mode: root.view-mode == 0;
-                show-sources: root.show-sources;
-                show-scenes: root.show-scenes;
-                show-mixer: root.show-mixer;
-                show-transitions: root.show-transitions;
-                show-controls: root.show-controls;
-                show-stats: root.show-stats;
+                show-sources <=> root.show-sources;
+                show-scenes <=> root.show-scenes;
+                show-mixer <=> root.show-mixer;
+                show-transitions <=> root.show-transitions;
+                show-controls <=> root.show-controls;
+                show-stats <=> root.show-stats;
                 hotkey-undo: root.hotkey-undo;
                 hotkey-redo: root.hotkey-redo;
                 hotkey-save-project: root.hotkey-save-project;
@@ -625,82 +629,48 @@ export component MainWindow inherits Window {
                 view-mode: root.view-mode;
                 set-locale(code) => { root.set-locale(code); }
                 select-collection(id) => { root.request-collection(id); }
-                menu-action(action) => {
-                    if action == "new-project" {
-                        root.request-discarding-action(4);
-                    } else if action == "exit" {
-                        root.request-discarding-action(5);
-                    } else if action == "undo" {
-                        root.undo-edit();
-                    } else if action == "redo" {
-                        root.redo-edit();
-                    } else if action == "projector-program" {
-                        root.open-projector(true);
-                    } else if action == "projector-preview" {
-                        root.open-projector(false);
-                    } else if action == "projector-multiview" {
-                        root.open-multiview-projector();
-                    } else if action == "projector-source" {
-                        root.open-source-projector();
-                    } else if action == "reset-layout" {
-                        root.reset-dock-layout();
-                    } else if action == "new-collection" {
-                        root.duplicate-collection-dialog = false;
-                        root.rename-collection-dialog = false;
-                        root.collection-name = "";
-                        root.active-modal = 9;
-                    } else if action == "duplicate-collection" {
-                        root.duplicate-collection-dialog = true;
-                        root.rename-collection-dialog = false;
-                        root.collection-name = "";
-                        root.active-modal = 9;
-                    } else if action == "rename-collection" {
-                        root.duplicate-collection-dialog = false;
-                        root.rename-collection-dialog = true;
-                        root.collection-name = root.active-collection;
-                        root.active-modal = 9;
-                    } else if action == "export-collection" {
-                        root.project-dialog-mode = 1;
-                        root.collection-transfer-path = "obs-rs-collection-export.obsrproj";
-                        root.active-modal = 1;
-                    } else if action == "import-collection" {
-                        root.request-import-collection();
-                    } else if action == "save-collection" {
-                        root.save-collection();
-                    } else if action == "documentation" {
-                        root.open-documentation();
-                    } else if action == "about" {
-                        root.active-modal = 10;
-                    } else if action == "save-project" {
-                        root.save-project();
-                    } else if action == "load-project" {
-                        root.request-load-project();
-                    } else if action == "recover-project" {
-                        root.request-recover-project();
-                    } else if action == "export-diagnostics" {
-                        root.export-diagnostics();
-                    } else if action == "settings" {
-                        root.open-settings-window();
-                    } else if action == "auto-configuration" {
-                        root.open-setup-window();
-                    } else if action == "source-properties" {
-                        root.open-source-properties-window();
-                    } else if action == "source-filters" {
-                        root.open-source-filters-window();
-                    } else if action == "toggle-sources" {
-                        root.show-sources = !root.show-sources;
-                    } else if action == "toggle-scenes" {
-                        root.show-scenes = !root.show-scenes;
-                    } else if action == "toggle-mixer" {
-                        root.show-mixer = !root.show-mixer;
-                    } else if action == "toggle-transitions" {
-                        root.show-transitions = !root.show-transitions;
-                    } else if action == "toggle-controls" {
-                        root.show-controls = !root.show-controls;
-                    } else if action == "toggle-stats" {
-                        root.show-stats = !root.show-stats;
-                    }
+                request-discarding-action(action) => { root.request-discarding-action(action); }
+                undo-edit() => { root.undo-edit(); }
+                redo-edit() => { root.redo-edit(); }
+                open-projector(program) => { root.open-projector(program); }
+                open-multiview-projector() => { root.open-multiview-projector(); }
+                open-source-projector() => { root.open-source-projector(); }
+                reset-dock-layout() => { root.reset-dock-layout(); }
+                new-collection() => {
+                    root.duplicate-collection-dialog = false;
+                    root.rename-collection-dialog = false;
+                    root.collection-name = "";
+                    root.active-modal = 9;
                 }
+                duplicate-collection() => {
+                    root.duplicate-collection-dialog = true;
+                    root.rename-collection-dialog = false;
+                    root.collection-name = "";
+                    root.active-modal = 9;
+                }
+                rename-collection() => {
+                    root.duplicate-collection-dialog = false;
+                    root.rename-collection-dialog = true;
+                    root.collection-name = root.active-collection;
+                    root.active-modal = 9;
+                }
+                export-collection() => {
+                    root.project-dialog-mode = 1;
+                    root.collection-transfer-path = "obs-rs-collection-export.obsrproj";
+                    root.active-modal = 1;
+                }
+                request-import-collection() => { root.request-import-collection(); }
+                save-collection() => { root.save-collection(); }
+                open-documentation() => { root.open-documentation(); }
+                about() => { root.active-modal = 10; }
+                save-project() => { root.save-project(); }
+                load-project() => { root.request-load-project(); }
+                recover-project() => { root.request-recover-project(); }
+                export-diagnostics() => { root.export-diagnostics(); }
+                open-settings-window() => { root.open-settings-window(); }
+                open-setup-window() => { root.open-setup-window(); }
+                open-source-properties-window() => { root.open-source-properties-window(); }
+                open-source-filters-window() => { root.open-source-filters-window(); }
                 select-view-mode(mode) => { root.apply-view-mode(mode); }
                 select-profile(id) => { root.select-profile(id); }
             }
@@ -965,6 +935,10 @@ export component MainWindow inherits Window {
         scene-transition-luma-softness <=> root.scene-transition-luma-softness;
         scene-transition-duration <=> root.scene-transition-duration;
         scene-transition-color <=> root.scene-transition-color;
+        scene-stinger-path <=> root.scene-stinger-path;
+        scene-stinger-transition-point <=> root.scene-stinger-transition-point;
+        scene-stinger-preload <=> root.scene-stinger-preload;
+        scene-stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
         source-name-draft <=> root.source-name-draft;
         source-rename-target <=> root.source-rename-target;
         collection-name <=> root.collection-name;

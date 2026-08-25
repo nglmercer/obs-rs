@@ -258,6 +258,10 @@ fn exercise_scene_properties_dialog(
     ui.set_scene_transition_index(2);
     ui.set_scene_transition_duration("900".into());
     ui.set_scene_transition_color("#000000FF".into());
+    ui.set_scene_stinger_path("assets/intro.webm".into());
+    ui.set_scene_stinger_transition_point("625".into());
+    ui.set_scene_stinger_preload(true);
+    ui.set_scene_stinger_hardware_decode(false);
     ui.invoke_rename_scene();
     {
         let state = state.borrow();
@@ -271,6 +275,10 @@ fn exercise_scene_properties_dialog(
         let transition = scene.transition_override().expect("cross-fade override");
         assert_eq!(transition.kind(), obs_rs_media::TransitionKind::CrossFade);
         assert_eq!(transition.duration_millis(), 900);
+        assert_eq!(
+            scene.stinger_override(),
+            Some(&StingerSpec::new("assets/intro.webm", 625, true, false).expect("stinger"))
+        );
     }
 
     // The dialog's name and transition are one project command and therefore
@@ -286,6 +294,7 @@ fn exercise_scene_properties_dialog(
             .expect("scene after undo");
         assert_eq!(scene.name(), "Preview");
         assert!(scene.transition_override().is_none());
+        assert!(scene.stinger_override().is_none());
     }
 
     exercise_scene_transition_variants(ui, state);

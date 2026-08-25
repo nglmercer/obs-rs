@@ -109,13 +109,17 @@ export component RenameSceneDialog inherits ModalShell {
     in-out property <string> transition-luma-softness: "30";
     in-out property <string> transition-duration;
     in-out property <string> transition-color;
+    in-out property <string> stinger-path;
+    in-out property <string> stinger-transition-point: "500";
+    in-out property <bool> stinger-preload: true;
+    in-out property <bool> stinger-hardware-decode: false;
     callback rename-scene();
 
     title: I18n.text.scene_properties;
     subtitle: I18n.text.scene_dialog_description;
     accept-label: I18n.text.settings_ui.apply;
     cancel-label: I18n.text.cancel;
-    panel-height: 440px;
+    panel-height: 610px;
     accepted => rename-scene();
 
     VerticalBox {
@@ -162,6 +166,26 @@ export component RenameSceneDialog inherits ModalShell {
             placeholder-text: "#000000FF";
         }
         MutedText { text: I18n.text.transition_override_hint; }
+        FieldHeading { text: I18n.text.stinger_title; }
+        FieldHeading { text: I18n.text.stinger_resource_path; }
+        LineEdit {
+            text <=> root.stinger-path;
+            placeholder-text: "assets/transition.webm";
+        }
+        FieldHeading { text: I18n.text.stinger_transition_point; }
+        LineEdit {
+            text <=> root.stinger-transition-point;
+            placeholder-text: "500";
+        }
+        CheckBox {
+            text: I18n.text.stinger_preload;
+            checked <=> root.stinger-preload;
+        }
+        CheckBox {
+            text: I18n.text.stinger_hardware_decode;
+            checked <=> root.stinger-hardware-decode;
+        }
+        MutedText { text: I18n.text.stinger_hint; }
     }
 }
 

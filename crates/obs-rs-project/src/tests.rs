@@ -85,6 +85,8 @@ mod history;
 mod migration;
 #[path = "project_tests_round_trip.rs"]
 mod round_trip;
+#[path = "project_tests_scene_properties.rs"]
+mod scene_properties;
 #[path = "project_tests_transition_luma.rs"]
 mod transition_luma;
 #[path = "project_tests_transition_stinger.rs"]

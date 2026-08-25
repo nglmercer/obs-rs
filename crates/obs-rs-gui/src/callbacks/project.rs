@@ -1,6 +1,7 @@
 use std::{cell::RefCell, error::Error, path::PathBuf, rc::Rc};
 
 use obs_rs_diagnostics::{AtomicDiagnosticFileWriter, DiagnosticBundle};
+use obs_rs_media::StingerSpec;
 use obs_rs_project::{ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
@@ -369,6 +370,13 @@ fn add_scene_and_refresh(
     }
 }
 
+pub(crate) struct SceneStingerDraft<'a> {
+    pub(super) path: &'a str,
+    pub(super) transition_point: &'a str,
+    pub(super) preload: bool,
+    pub(super) hardware_decode: bool,
+}
+
 pub(crate) struct ScenePropertiesDraft<'a> {
     pub(super) name: &'a str,
     pub(super) transition_index: i32,
@@ -379,6 +387,7 @@ pub(crate) struct ScenePropertiesDraft<'a> {
     pub(super) transition_luma_softness: &'a str,
     pub(super) duration: &'a str,
     pub(super) color: &'a str,
+    pub(super) stinger: SceneStingerDraft<'a>,
 }
 
 pub(crate) fn apply_scene_properties_and_refresh(
@@ -445,6 +454,22 @@ pub(crate) fn apply_scene_properties_and_refresh(
                 return Err(std::io::Error::other("Scene transition selection is invalid").into());
             }
         };
+        let stinger = if draft.stinger.path.trim().is_empty() {
+            None
+        } else {
+            let transition_point = draft
+                .stinger
+                .transition_point
+                .trim()
+                .parse::<u16>()
+                .map_err(|_| std::io::Error::other("Stinger transition point must be 1–999"))?;
+            Some(StingerSpec::new(
+                draft.stinger.path.trim(),
+                transition_point,
+                draft.stinger.preload,
+                draft.stinger.hardware_decode,
+            )?)
+        };
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::SetSceneProperties {
@@ -452,6 +477,7 @@ pub(crate) fn apply_scene_properties_and_refresh(
                 scene,
                 name: name.to_owned(),
                 transition,
+                stinger,
             }))?;
         Ok(())
     })();

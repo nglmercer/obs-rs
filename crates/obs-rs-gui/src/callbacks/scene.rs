@@ -4,7 +4,7 @@ use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode, SceneItemSpec, Scen
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale, MAX_CANVAS_SELECTIONS};
 use slint::{ComponentHandle, DataTransfer};
 
-use super::project::ScenePropertiesDraft;
+use super::project::{ScenePropertiesDraft, SceneStingerDraft};
 use crate::{
     apply_scene_properties_and_refresh, apply_source_name_and_refresh,
     apply_source_settings_and_refresh, callbacks::canvas::canvas_item_for_target,
@@ -151,6 +151,12 @@ fn install_scene_properties_callback(
                 transition_luma_softness: ui.get_scene_transition_luma_softness().as_str(),
                 duration: ui.get_scene_transition_duration().as_str(),
                 color: ui.get_scene_transition_color().as_str(),
+                stinger: SceneStingerDraft {
+                    path: ui.get_scene_stinger_path().as_str(),
+                    transition_point: ui.get_scene_stinger_transition_point().as_str(),
+                    preload: ui.get_scene_stinger_preload(),
+                    hardware_decode: ui.get_scene_stinger_hardware_decode(),
+                },
             },
         );
     });

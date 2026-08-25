@@ -60,6 +60,13 @@ pub(crate) fn transition_kind(transition: FrameTransition) -> &'static str {
     }
 }
 
+pub(crate) struct SceneStingerFields {
+    pub(crate) path: String,
+    pub(crate) transition_point: String,
+    pub(crate) preload: bool,
+    pub(crate) hardware_decode: bool,
+}
+
 pub(crate) struct SceneTransitionFields {
     pub(crate) index: i32,
     pub(crate) direction_index: i32,
@@ -69,11 +76,30 @@ pub(crate) struct SceneTransitionFields {
     pub(crate) duration: String,
     pub(crate) color: String,
     pub(crate) softness: String,
+    pub(crate) stinger: SceneStingerFields,
+}
+
+fn scene_stinger_fields(scene: Option<&SceneSpec>) -> SceneStingerFields {
+    scene.and_then(SceneSpec::stinger_override).map_or_else(
+        || SceneStingerFields {
+            path: String::new(),
+            transition_point: "500".to_owned(),
+            preload: true,
+            hardware_decode: false,
+        },
+        |stinger| SceneStingerFields {
+            path: stinger.resource_path().to_owned(),
+            transition_point: stinger.transition_point_milli().to_string(),
+            preload: stinger.preload(),
+            hardware_decode: stinger.hardware_decode(),
+        },
+    )
 }
 
 /// Projects persisted transition policy into the compact scene-properties
 /// dialog model. Index zero deliberately means inheritance.
 pub(crate) fn scene_transition_fields(scene: Option<&SceneSpec>) -> SceneTransitionFields {
+    let stinger = scene_stinger_fields(scene);
     let Some(transition) = scene.and_then(SceneSpec::transition_override) else {
         return SceneTransitionFields {
             index: 0,
@@ -84,6 +110,7 @@ pub(crate) fn scene_transition_fields(scene: Option<&SceneSpec>) -> SceneTransit
             duration: "300".to_owned(),
             color: "#000000FF".to_owned(),
             softness: "30".to_owned(),
+            stinger,
         };
     };
     let (index, direction_index, swipe_in, luma_pattern_index, luma_invert, color, softness) =
@@ -162,6 +189,7 @@ pub(crate) fn scene_transition_fields(scene: Option<&SceneSpec>) -> SceneTransit
         duration: transition.duration_millis().to_string(),
         color,
         softness,
+        stinger,
     }
 }
 

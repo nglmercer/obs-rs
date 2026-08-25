@@ -155,6 +155,7 @@ impl Project {
                 scene,
                 name,
                 transition,
+                stinger,
             } => {
                 let profile_id = identifier(&profile, "profile id")?;
                 let profile = self
@@ -166,6 +167,7 @@ impl Project {
                     .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
                 scene.set_name(&name)?;
                 scene.set_transition_override(transition);
+                scene.set_stinger_override(stinger);
                 Ok(())
             }
             ProjectCommand::SetSceneTransitionOverride {

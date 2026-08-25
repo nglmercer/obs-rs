@@ -40,6 +40,10 @@ export component MainModals inherits Rectangle {
     in-out property <string> scene-transition-luma-softness: "30";
     in-out property <string> scene-transition-duration;
     in-out property <string> scene-transition-color;
+    in-out property <string> scene-stinger-path;
+    in-out property <string> scene-stinger-transition-point: "500";
+    in-out property <bool> scene-stinger-preload: true;
+    in-out property <bool> scene-stinger-hardware-decode: false;
     in-out property <string> source-name-draft;
     in-out property <string> source-rename-target;
     in-out property <string> collection-name;
@@ -152,6 +156,10 @@ export component MainModals inherits Rectangle {
         transition-luma-softness <=> root.scene-transition-luma-softness;
         transition-duration <=> root.scene-transition-duration;
         transition-color <=> root.scene-transition-color;
+        stinger-path <=> root.scene-stinger-path;
+        stinger-transition-point <=> root.scene-stinger-transition-point;
+        stinger-preload <=> root.scene-stinger-preload;
+        stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
         rename-scene() => { root.rename-scene(); }
         close => { root.active-modal = 0; }
         accepted => { root.active-modal = 0; }
