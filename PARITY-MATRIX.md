@@ -32,7 +32,7 @@ The project codec now writes schema 8 for the bounded Stinger resource
 reference; schema 7 remains a supported read-only compatibility version for
 documents created before that field existed.
 
-## Latest verified package: bounded preloaded Stinger runtime and explicit Take
+## Latest verified package: bounded Stinger runtime and explicit Take
 
 On 2026-08-25, `STUDIO-002` gained a bounded runtime slice for Stinger
 transitions. `StingerClip` validates 1..=256 decoded RGBA frames, matching
@@ -80,8 +80,11 @@ worker-published clip, and dispatches the existing typed `TakeStinger` command.
 Not-ready, typed decode failure, stopped-loader, invalid-duration, and state
 dispatch errors are visible in the status surface. The picker reports
 unavailable, already-open, cancelled, spawn, and selection errors without
-blocking the UI. Codec-specific hardware selection, on-demand Take, and
-non-GStreamer adapters remain incomplete.
+blocking the UI. When a persisted resource is not ready, the first Take can
+now submit a bounded on-demand request through the same worker; the UI reports
+that the user should take again after the clip becomes ready. Automatic
+completion of the first click is intentionally still open. Codec-specific
+hardware selection and non-GStreamer adapters remain incomplete.
 
 The asynchronous picker boundary is implemented in
 `crates/obs-rs-gui/src/callbacks/stinger_picker.rs`; the capability is

@@ -331,8 +331,29 @@ pub(crate) fn install_stinger_take_callback(
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        let clip = match take_loader.borrow().ready_clip() {
+        let ready_result = {
+            let loader = take_loader.borrow();
+            loader.ready_clip()
+        };
+        let clip = match ready_result {
             Ok(clip) => clip,
+            Err(crate::stinger_loader::StingerTakeError::NotReady) => {
+                let request_result = {
+                    let state = take_state.borrow();
+                    take_loader
+                        .borrow_mut()
+                        .request_on_demand(state.project_session().project(), state.preview_scene())
+                };
+                match request_result {
+                    Ok(_) => ui.set_status_message(
+                        "Stinger is loading; take it again when the resource is ready".into(),
+                    ),
+                    Err(error) => {
+                        ui.set_status_message(format!("Stinger Take failed: {error}").into());
+                    }
+                }
+                return;
+            }
             Err(error) => {
                 ui.set_status_message(format!("Stinger Take failed: {error}").into());
                 return;

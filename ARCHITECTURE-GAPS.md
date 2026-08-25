@@ -63,9 +63,11 @@ and invalidates old completions when the target format changes. It exposes the
 typed failure without moving resource metadata or decoded pixels into a second
 project state store; the GUI resource session is now connected to the native
 adapter, and the scene-properties fields are synchronized from the project.
-The file picker is now asynchronous and capability-backed, but Explicit Take
-remains intentionally limited to a ready `preload=true` clip; on-demand
-loading from the button is still open.
+The file picker is now asynchronous and capability-backed. Explicit Take can
+now submit a persisted `preload=false` resource through the same bounded worker
+when no ready clip exists; the first click only starts loading and the user must
+take again after the next refresh publishes the clip. Automatic completion of
+the first click and the exact OBS workflow remain open.
 
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks

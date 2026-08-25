@@ -6,6 +6,9 @@ use obs_rs_project::Project;
 use obs_rs_ui::{StingerLoadSession, StingerLoadState};
 use std::{fmt, sync::Arc};
 
+#[cfg(test)]
+use obs_rs_project::{Profile, SceneSpec};
+
 /// One non-blocking event produced while the GUI keeps a scene Stinger warm.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StingerLoadEvent {
@@ -122,6 +125,29 @@ impl StingerLoadController {
         Ok(Some(event))
     }
 
+    /// Starts a bounded load for an explicit Take, including resources whose
+    /// persisted `preload` flag is false. The caller remains on the UI thread;
+    /// the worker and the next refresh tick own all file/decoder work.
+    pub(crate) fn request_on_demand(
+        &mut self,
+        project: &Project,
+        preview_scene: Option<&str>,
+    ) -> Result<StingerLoadEvent, String> {
+        let Some(profile) = project.active_profile_spec() else {
+            self.session.clear();
+            return Err("Stinger is not ready; no active profile is configured".to_owned());
+        };
+        let Some(spec) = preview_scene
+            .and_then(|scene| profile.scene(scene))
+            .and_then(|scene| scene.stinger_override())
+            .cloned()
+        else {
+            self.session.clear();
+            return Err("Stinger is not ready; no resource is configured".to_owned());
+        };
+        self.request_spec(spec, profile.video_format())
+    }
+
     /// Returns the immutable clip already published by the preload worker.
     ///
     /// This is deliberately a state lookup only. Explicit Take never opens a
@@ -151,6 +177,25 @@ impl StingerLoadController {
             | StingerLoadState::Ready { spec: current, .. }
             | StingerLoadState::Failed { spec: current, .. } => current == spec,
             StingerLoadState::Idle | StingerLoadState::Stopped => false,
+        }
+    }
+
+    fn request_spec(
+        &mut self,
+        spec: StingerSpec,
+        target_format: VideoFormat,
+    ) -> Result<StingerLoadEvent, String> {
+        self.session.set_target_format(target_format);
+        if self.matches_current_spec(&spec) {
+            return Ok(StingerLoadEvent::Requested);
+        }
+        self.session.clear();
+        match self.session.try_request(spec) {
+            Ok(_) => Ok(StingerLoadEvent::Requested),
+            Err(StingerLoadQueueError::Full) => {
+                Err("Stinger load queue is full; try Take again shortly".to_owned())
+            }
+            Err(StingerLoadQueueError::Stopped) => Err("Stinger preload worker stopped".to_owned()),
         }
     }
 }
@@ -250,6 +295,41 @@ mod tests {
             None
         );
         assert_eq!(controller.state(), &StingerLoadState::Idle);
+    }
+
+    #[test]
+    fn controller_can_request_a_non_preloaded_resource_on_demand() {
+        let format = format();
+        let expected = clip(format);
+        let expected_for_loader = expected.clone();
+        let mut controller = StingerLoadController::with_loader(
+            move |_request: &StingerLoadRequest, _cancellation: &StingerLoadCancellation| {
+                Ok(expected_for_loader.clone())
+            },
+            format,
+        )
+        .expect("controller");
+        let resource = spec("assets/on-demand.webm", false);
+        let mut project = Project::new("On-demand Stinger").expect("project");
+        let mut profile = Profile::new("live", "Live profile", format).expect("profile");
+        let mut scene = SceneSpec::new("main", "Main scene").expect("scene");
+        scene.set_stinger_override(Some(resource.clone()));
+        profile.add_scene(scene).expect("scene attach");
+        project.add_profile(profile).expect("profile attach");
+        assert_eq!(
+            controller
+                .request_on_demand(&project, Some("main"))
+                .expect("on-demand request"),
+            StingerLoadEvent::Requested
+        );
+        assert_eq!(
+            wait_for_event(&mut controller, &resource, format),
+            StingerLoadEvent::Ready
+        );
+        assert_eq!(
+            controller.ready_clip().expect("ready clip"),
+            Arc::new(expected)
+        );
     }
 
     #[test]
