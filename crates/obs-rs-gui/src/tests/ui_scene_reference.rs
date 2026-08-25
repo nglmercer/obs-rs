@@ -157,6 +157,23 @@ fn exercise_scene_reference_source_dialogs(
     );
     filters_window.invoke_close_window();
 
+    ui.invoke_open_source_rename("transform-child-ref/background".into());
+    assert_eq!(ui.get_source_name_draft(), "Background");
+    ui.set_source_name_draft("Nested background".into());
+    ui.invoke_apply_source_name();
+    assert_eq!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.source("background"))
+            .map(obs_rs_project::SourceSpec::name),
+        Some("Nested background"),
+        "nested Scene-reference rename must update the shared source definition"
+    );
+    ui.set_active_modal(0);
+
     ui.invoke_toggle_source_visibility("transform-child-ref/background".into());
     assert!(!state
         .borrow()

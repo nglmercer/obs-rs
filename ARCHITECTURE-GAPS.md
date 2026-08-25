@@ -186,6 +186,10 @@ selects the resulting root or nested child paths.
 
 ## Dependency graph
 
+Latest nested Scene-reference verification also covers source-name editing:
+the rename modal resolves a flattened leaf to the profile-wide source and
+keeps nested group rename outside the supported command path.
+
 ```text
 truthful baseline / lint and test gate
                 |

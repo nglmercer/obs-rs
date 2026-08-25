@@ -183,6 +183,15 @@ the leaf, so `scene-ref/leaf` changes the child item without mutating the
 parent reference. Project and GUI fixtures cover both toggles and leave
 remove/reorder/duplicate of referenced leaves explicitly outside this packet.
 
+## Latest verified package: nested scene-reference source rename
+
+On 2026-08-24, the source rename modal now resolves a flattened
+`scene-ref/leaf` target to the profile-wide source definition. Direct group
+rename behavior remains unchanged, while nested Scene-reference leaves update
+the shared source name through the existing `SetSourceName` command. The GUI
+fixture covers opening the modal, editing the name, and observing the profile
+source update; nested group rename remains outside this packet.
+
 ## Latest verified package: dock-header pointer drag
 
 On 2026-08-24, the GUI dock fixture now drives a visible `DockHeader` through

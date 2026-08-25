@@ -513,27 +513,42 @@ pub(crate) fn apply_source_name_and_refresh(
             let scene_id = state
                 .preview_scene()
                 .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
-            let scene = profile
+            if let Some(item) = profile
                 .scene(scene_id)
-                .ok_or_else(|| std::io::Error::other("preview scene is missing"))?;
-            let item = item_for_target(scene, target).ok_or_else(|| {
-                std::io::Error::other("rename target is not in the preview scene")
-            })?;
-            if item.is_group() {
-                ProjectCommand::SetGroupName {
-                    profile: project.active_profile().to_string(),
-                    scene: scene_id.to_owned(),
-                    group_path: target.split('/').map(str::to_owned).collect(),
-                    name: name.to_owned(),
+                .and_then(|scene| item_for_target(scene, target))
+            {
+                if item.is_group() {
+                    ProjectCommand::SetGroupName {
+                        profile: project.active_profile().to_string(),
+                        scene: scene_id.to_owned(),
+                        group_path: target.split('/').map(str::to_owned).collect(),
+                        name: name.to_owned(),
+                    }
+                } else if item.is_source() {
+                    ProjectCommand::SetSourceName {
+                        profile: project.active_profile().to_string(),
+                        source: item.source_id().to_string(),
+                        name: name.to_owned(),
+                    }
+                } else {
+                    return Err(
+                        std::io::Error::other("rename target is not a source or group").into(),
+                    );
                 }
-            } else if item.is_source() {
+            } else {
+                let item = canvas_item_for_target(profile, scene_id, target).ok_or_else(|| {
+                    std::io::Error::other("rename target is not in the preview scene")
+                })?;
+                if !item.is_source() {
+                    return Err(
+                        std::io::Error::other("nested group rename is not supported").into(),
+                    );
+                }
                 ProjectCommand::SetSourceName {
                     profile: project.active_profile().to_string(),
                     source: item.source_id().to_string(),
                     name: name.to_owned(),
                 }
-            } else {
-                return Err(std::io::Error::other("rename target is not a source or group").into());
             }
         };
         state.borrow_mut().dispatch(UiCommand::Project(command))?;

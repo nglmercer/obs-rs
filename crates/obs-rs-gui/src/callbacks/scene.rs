@@ -6,10 +6,11 @@ use slint::ComponentHandle;
 
 use crate::{
     apply_scene_properties_and_refresh, apply_source_name_and_refresh,
-    apply_source_settings_and_refresh, dispatch_and_refresh, duplicate_scene_and_refresh,
-    duplicate_source_and_refresh, flip_source_and_refresh, move_source_and_refresh,
-    move_source_to_and_refresh, move_source_to_group_and_refresh, refresh_ui,
-    remove_scene_and_refresh, remove_selected_sources_and_refresh, remove_source_and_refresh,
+    apply_source_settings_and_refresh, callbacks::canvas::canvas_item_for_target,
+    dispatch_and_refresh, duplicate_scene_and_refresh, duplicate_source_and_refresh,
+    flip_source_and_refresh, move_source_and_refresh, move_source_to_and_refresh,
+    move_source_to_group_and_refresh, refresh_ui, remove_scene_and_refresh,
+    remove_selected_sources_and_refresh, remove_source_and_refresh,
     reset_source_transform_and_refresh, toggle_source_locked_and_refresh,
     toggle_source_visibility_and_refresh, transform_source_and_refresh, MainWindow, PreviewSurface,
 };
@@ -591,21 +592,32 @@ fn install_source_list_callbacks(
             let project = state.project_session().project();
             project.active_profile_spec().and_then(|profile| {
                 state.preview_scene().and_then(|scene_id| {
-                    profile.scene(scene_id).and_then(|scene| {
-                        crate::callbacks::item_for_target(scene, id.as_str()).and_then(|item| {
+                    let direct_item = profile
+                        .scene(scene_id)
+                        .and_then(|scene| crate::callbacks::item_for_target(scene, id.as_str()));
+                    direct_item
+                        .and_then(|item| {
                             item.group()
                                 .map(|group| group.name().to_owned())
                                 .or_else(|| {
-                                    if item.is_source() {
+                                    item.is_source().then(|| {
                                         profile
                                             .source(item.source_id())
                                             .map(|source| source.name().to_owned())
-                                    } else {
-                                        None
-                                    }
+                                    })?
                                 })
                         })
-                    })
+                        .or_else(|| {
+                            canvas_item_for_target(profile, scene_id, id.as_str()).and_then(
+                                |item| {
+                                    item.is_source().then(|| {
+                                        profile
+                                            .source(item.source_id())
+                                            .map(|source| source.name().to_owned())
+                                    })?
+                                },
+                            )
+                        })
                 })
             })
         };
