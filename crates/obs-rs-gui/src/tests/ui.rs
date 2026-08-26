@@ -1,7 +1,7 @@
 use super::*;
 use super::{
-    ui_layout, ui_navigation, ui_output, ui_project_open, ui_slideshow, ui_source_dock_keyboard,
-    ui_source_order_keyboard, ui_sources,
+    ui_layout, ui_navigation, ui_output, ui_project_open, ui_slideshow,
+    ui_source_clipboard_modifiers, ui_source_dock_keyboard, ui_source_order_keyboard, ui_sources,
 };
 
 #[test]
@@ -285,6 +285,9 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_sources::exercise_source_keyboard_delete(&ui, &state, &surface);
     ui_sources::exercise_multi_source_keyboard_delete(&ui, &state, &surface);
     ui_source_keyboard::exercise_source_clipboard_keyboard(&ui, &state, &surface);
+    ui_source_clipboard_modifiers::exercise_source_clipboard_modifier_boundary(
+        &ui, &state, &surface,
+    );
     ui_source_dock_keyboard::exercise_source_dock_clipboard_keyboard(&ui, &state, &surface);
     ui_source_order_keyboard::exercise_source_order_keyboard(&ui, &state, &surface);
     ui_sources::exercise_source_mouse_selection(&ui, &state, &surface);

@@ -47,6 +47,8 @@ mod ui_scene_drag_drop;
 mod ui_scene_reference;
 #[path = "tests/ui_slideshow.rs"]
 mod ui_slideshow;
+#[path = "tests/ui_source_clipboard_modifiers.rs"]
+mod ui_source_clipboard_modifiers;
 #[path = "tests/ui_source_dock_keyboard.rs"]
 mod ui_source_dock_keyboard;
 #[path = "tests/ui_source_keyboard.rs"]

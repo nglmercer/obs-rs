@@ -166,13 +166,19 @@ export component MainKeyboard inherits Rectangle {
             return true;
         }
         if control
+            && !shift
+            && !alt
             && hotkey-labeler.key-name(text) == "C"
             && root.selected-source != ""
             && root.selected-source != "none" {
             root.copy-source(root.selected-source);
             return true;
         }
-        if control && hotkey-labeler.key-name(text) == "V" && root.can-paste {
+        if control
+            && !shift
+            && !alt
+            && hotkey-labeler.key-name(text) == "V"
+            && root.can-paste {
             // A selected leaf resolves to its parent in the shared paste
             // command; an empty/"none" selection pastes at the scene root.
             root.paste-reference(
@@ -205,7 +211,10 @@ export component MainKeyboard inherits Rectangle {
             }
             return true;
         }
-        if control && hotkey-labeler.key-name(text) == "A" {
+        if control
+            && !shift
+            && !alt
+            && hotkey-labeler.key-name(text) == "A" {
             root.select-all-sources();
             return true;
         }

@@ -68,6 +68,15 @@ scene item, and select-all uses the bounded visible-source projection. The
 GUI fixture verifies the workflow with dock focus and cleans up its temporary
 items; Paste Duplicate and global OS hotkey registration remain incomplete.
 
+## Latest verified package: canvas clipboard modifier boundary
+
+On 2026-08-26, the canvas-local source clipboard path now requires plain
+`Ctrl` for `Ctrl+C`, `Ctrl+V`, and `Ctrl+A`, matching the focused Sources dock.
+`Ctrl+Shift` and `Ctrl+Alt` no longer copy, paste, or select all unless a
+configured action owns the combination. The GUI fixture proves modified keys
+preserve the Rust-owned clipboard and do not create scene items; the regular
+reference-paste workflow remains unchanged.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

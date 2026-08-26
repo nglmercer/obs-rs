@@ -32,6 +32,13 @@ GUI fixture proves copy/reference-paste/select-all while the dock owns focus;
 Paste Duplicate remains context-menu-only and global registration remains a
 separate capability.
 
+The canvas clipboard boundary now applies the same modifier policy as the
+Sources dock: local copy, reference-paste, and select-all require plain
+`Ctrl`, while `Ctrl+Shift` and `Ctrl+Alt` are left available for configured
+actions. The fixture proves modified clipboard keys neither replace the
+Rust-owned clipboard nor create a scene item, and then verifies the original
+clipboard still pastes a reference. No project or UI state is duplicated.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the
