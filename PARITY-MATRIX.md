@@ -106,6 +106,16 @@ verifies its draft, commits a new name, and restores the shared scene fixture.
 macOS Return-key parity and the broader global hotkey catalog remain
 incomplete.
 
+## Latest verified package: modal keyboard boundary
+
+On 2026-08-26, active main-window modals now take keyboard focus while open.
+Unmodified `Escape` cancels the transient draft, and unmodified `Enter`
+activates the existing modal acceptance callback; unhandled modal keys no
+longer fall through to the main-window output/project shortcut boundary. The
+GUI fixture verifies both cancel-without-commit and Enter-based scene-property
+commit through the real overlay. Text-entry-specific and native accessibility
+focus behavior remain part of the broader UI audit.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

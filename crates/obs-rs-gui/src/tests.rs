@@ -35,6 +35,8 @@ mod ui;
 mod ui_canvas;
 #[path = "tests/ui_layout.rs"]
 mod ui_layout;
+#[path = "tests/ui_modal_keyboard.rs"]
+mod ui_modal_keyboard;
 #[path = "tests/ui_navigation.rs"]
 mod ui_navigation;
 #[path = "tests/ui_output.rs"]

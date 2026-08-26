@@ -60,6 +60,14 @@ modal's name and transition fields as transient UI drafts. The GUI fixture
 verifies the real modal, commit, and restoration of the shared scene fixture.
 macOS Return-key behavior and the broader global hotkey catalog remain open.
 
+The modal keyboard packet now gives the active `ModalShell` its own focused
+boundary. Unmodified `Escape` closes without committing the transient draft,
+unmodified `Enter` invokes the existing acceptance callback, and otherwise
+unhandled keys are consumed so main-window output/project shortcuts cannot
+fire through an open dialog. The GUI fixture covers cancel-without-commit and
+Enter-based scene-property commit; text-entry-specific and native
+accessibility focus behavior remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

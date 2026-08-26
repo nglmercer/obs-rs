@@ -181,7 +181,10 @@ export component MainModals inherits Rectangle {
         rename-scene() => { root.rename-scene(); }
         browse-scene-stinger() => { root.browse-scene-stinger(); }
         close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
+        accepted => {
+            root.rename-scene();
+            root.active-modal = 0;
+        }
     }
     RenameSourceDialog {
         open: root.active-modal == 12;

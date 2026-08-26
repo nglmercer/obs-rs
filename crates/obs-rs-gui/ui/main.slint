@@ -831,7 +831,7 @@ export component MainWindow inherits Window {
         locale: root.locale;
         setup-active: root.setup-active;
         pending-confirm: root.pending-confirm;
-        active-modal: root.active-modal;
+        active-modal <=> root.active-modal;
         pending-discard: root.pending-discard;
         project-path <=> root.project-path;
         collection-transfer-path <=> root.collection-transfer-path;
