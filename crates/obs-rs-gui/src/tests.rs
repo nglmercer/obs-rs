@@ -49,6 +49,8 @@ mod ui_scene_reference;
 mod ui_slideshow;
 #[path = "tests/ui_source_keyboard.rs"]
 mod ui_source_keyboard;
+#[path = "tests/ui_source_order_keyboard.rs"]
+mod ui_source_order_keyboard;
 #[path = "tests/ui_sources.rs"]
 mod ui_sources;
 

@@ -454,6 +454,9 @@ export component MainWindow inherits Window {
         selected-source: root.selected-source;
         selected-source-is-group: root.selected-source-is-group;
         selected-source-is-scene: root.selected-source-is-scene;
+        selected-source-first: root.selected-source-first;
+        selected-source-last: root.selected-source-last;
+        source-count: root.source-count;
         can-paste: root.can-paste;
         preview-scene: root.preview-scene;
         space-held <=> root.space-held;
@@ -476,6 +479,8 @@ export component MainWindow inherits Window {
         toggle-source-locked(id) => { root.toggle-source-locked(id); }
         open-source-projector() => { root.open-source-projector(); }
         open-scene-projector(id) => { root.open-scene-projector(id); }
+        move-source(id, delta) => { root.move-source(id, delta); }
+        move-source-to(id, index) => { root.move-source-to(id, index); }
         copy-source(id) => { root.copy-source(id); }
         paste-reference(target) => { root.paste-reference(target); }
         select-all-sources() => { root.select-all-sources(); }

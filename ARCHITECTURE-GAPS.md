@@ -16,6 +16,14 @@ keys through the testing backend and proves the new reference item is selected
 after paste. Paste Duplicate remains an explicit context-menu action, and
 global OS hotkeys remain a separate capability.
 
+The source-order keyboard packet now maps `Ctrl+Up`, `Ctrl+Down`, `Ctrl+Home`,
+and `Ctrl+End` from both the editable canvas and the focused Sources dock to
+the existing Rust order callbacks. Boundary presses are consumed as no-ops;
+the callback retains lock checks, nested target resolution, project history,
+and the bounded parent-local order. The GUI fixture verifies the four moves
+and leaves the temporary sources removed. Configurable/global source-order
+hotkeys are still outside this packet.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

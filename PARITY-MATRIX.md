@@ -48,6 +48,17 @@ GUI testing-backend fixture drives both keys and verifies the pasted item
 references the original source. Paste Duplicate remains an explicit context
 menu action, and global OS hotkey registration remains incomplete.
 
+## Latest verified package: source-order keyboard workflow
+
+On 2026-08-26, the editable canvas and focused Sources dock now map
+`Ctrl+Up`, `Ctrl+Down`, `Ctrl+Home`, and `Ctrl+End` to the existing bounded
+source-order commands. Arrow moves use the current parent-local order, Home
+and End move to its boundaries, and first/last presses are consumed without a
+canvas nudge. Rust retains lock validation, nested target resolution, project
+history, and persistence; the GUI fixture verifies all four actions and
+cleans up its temporary sources. Configurable/global source-order hotkeys
+remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

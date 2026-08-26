@@ -1,5 +1,8 @@
 use super::*;
-use super::{ui_layout, ui_navigation, ui_output, ui_project_open, ui_slideshow, ui_sources};
+use super::{
+    ui_layout, ui_navigation, ui_output, ui_project_open, ui_slideshow, ui_source_order_keyboard,
+    ui_sources,
+};
 
 #[test]
 #[allow(
@@ -282,6 +285,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_sources::exercise_source_keyboard_delete(&ui, &state, &surface);
     ui_sources::exercise_multi_source_keyboard_delete(&ui, &state, &surface);
     ui_source_keyboard::exercise_source_clipboard_keyboard(&ui, &state, &surface);
+    ui_source_order_keyboard::exercise_source_order_keyboard(&ui, &state, &surface);
     ui_sources::exercise_source_mouse_selection(&ui, &state, &surface);
     ui_sources::exercise_source_pointer_drag_and_drop(&ui, &state, &surface);
     ui_layout::render_monitor_window();

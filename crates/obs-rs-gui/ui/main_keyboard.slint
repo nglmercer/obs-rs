@@ -13,6 +13,9 @@ export component MainKeyboard inherits Rectangle {
     in property <string> selected-source;
     in property <bool> selected-source-is-group;
     in property <bool> selected-source-is-scene;
+    in property <bool> selected-source-first;
+    in property <bool> selected-source-last;
+    in property <int> source-count;
     in property <bool> can-paste;
     in property <string> preview-scene;
     in-out property <bool> space-held: false;
@@ -36,6 +39,8 @@ export component MainKeyboard inherits Rectangle {
     callback toggle-source-locked(string);
     callback open-source-projector();
     callback open-scene-projector(string);
+    callback move-source(string, int);
+    callback move-source-to(string, int);
     callback copy-source(string);
     callback paste-reference(string);
     callback select-all-sources();
@@ -173,6 +178,31 @@ export component MainKeyboard inherits Rectangle {
             root.paste-reference(
                 root.selected-source == "none" ? "" : root.selected-source
             );
+            return true;
+        }
+        if control
+            && !shift
+            && !alt
+            && root.selected-source != ""
+            && root.selected-source != "none"
+            && (text == Key.UpArrow
+                || text == Key.DownArrow
+                || text == Key.Home
+                || text == Key.End) {
+            // Source ordering is a scene edit, not canvas movement. The
+            // boundary consumes even a no-op at an edge so Ctrl+Up/Down can
+            // never fall through to the one-pixel canvas nudge below.
+            if text == Key.UpArrow && !root.selected-source-first {
+                root.move-source(root.selected-source, -1);
+            } else if text == Key.DownArrow && !root.selected-source-last {
+                root.move-source(root.selected-source, 1);
+            } else if text == Key.Home && !root.selected-source-first {
+                root.move-source-to(root.selected-source, 0);
+            } else if text == Key.End
+                && !root.selected-source-last
+                && root.source-count > 0 {
+                root.move-source-to(root.selected-source, root.source-count - 1);
+            }
             return true;
         }
         if control && hotkey-labeler.key-name(text) == "A" {
