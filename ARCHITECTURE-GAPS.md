@@ -12,9 +12,12 @@ The GUI dialog writes the current serialized document through the existing
 atomic `ProjectFileStore`, rejects a different existing destination before
 touching the session, and changes the active path plus selection key only after
 the write succeeds. Save, Load, Recover, and exit persistence therefore follow
-the new document path without introducing a second project state store. Native
-file-picker integration and the remaining collection/recovery UX are still
-open.
+the new document path without introducing a second project state store. The
+same bounded asynchronous desktop picker boundary now offers a Save dialog for
+the active project on Linux (`zenity`/`kdialog`), macOS (`osascript`), and
+Windows (PowerShell), returning the selected path through the Slint event loop;
+unsupported desktops keep the manual path field and an explicit unavailable
+message. The remaining collection/recovery UX is still open.
 
 The bounded Stinger runtime packet now accepts already-decoded RGBA frames as
 one validated, preloaded clip. Frame count, per-frame duration, total duration,

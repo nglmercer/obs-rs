@@ -128,7 +128,7 @@ export component MainWindow inherits Window {
         in-out property <bool> scene-stinger-preload: true;
         in-out property <bool> scene-stinger-hardware-decode: false;
         in-out property <bool> scene-stinger-hardware-decode-enabled: false;
-        in-out property <bool> scene-stinger-picker-enabled: false;
+        in-out property <bool> file-picker-enabled: false;
         in property <string> scene-properties-version;
         in property <string> selected-source;
         in property <bool> selected-source-visible: false;
@@ -212,6 +212,7 @@ export component MainWindow inherits Window {
         callback cut-transition();
         callback take-stinger(string);
         callback browse-scene-stinger();
+        callback browse-project-save-as();
         callback fade-transition();
         callback fade-transition-duration(string);
         callback slide-transition(string);
@@ -948,7 +949,7 @@ export component MainWindow inherits Window {
         scene-stinger-preload <=> root.scene-stinger-preload;
         scene-stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
         scene-stinger-hardware-decode-enabled <=> root.scene-stinger-hardware-decode-enabled;
-        scene-stinger-picker-enabled <=> root.scene-stinger-picker-enabled;
+        file-picker-enabled <=> root.file-picker-enabled;
         source-name-draft <=> root.source-name-draft;
         source-rename-target <=> root.source-rename-target;
         collection-name <=> root.collection-name;
@@ -963,6 +964,7 @@ export component MainWindow inherits Window {
         resolve-confirm() => { root.resolve-confirm(); }
         save-project() => { root.save-project(); }
         save-project-as(path) => { root.save-project-as(path); }
+        browse-project-save-as() => { root.browse-project-save-as(); }
         export-collection(path) => { root.export-collection(path); }
         import-collection(path) => { root.import-collection(path); }
         save-discard(action) => { root.save-discard(action); }

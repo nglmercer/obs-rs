@@ -45,7 +45,7 @@ export component MainModals inherits Rectangle {
     in-out property <bool> scene-stinger-preload: true;
     in-out property <bool> scene-stinger-hardware-decode: false;
     in-out property <bool> scene-stinger-hardware-decode-enabled: false;
-    in-out property <bool> scene-stinger-picker-enabled: false;
+    in-out property <bool> file-picker-enabled: false;
     in-out property <string> source-name-draft;
     in-out property <string> source-rename-target;
     in-out property <string> collection-name;
@@ -61,6 +61,7 @@ export component MainModals inherits Rectangle {
     callback resolve-confirm();
     callback save-project();
     callback save-project-as(string);
+    callback browse-project-save-as();
     callback export-collection(string);
     callback import-collection(string);
     callback save-discard(int);
@@ -113,6 +114,8 @@ export component MainModals inherits Rectangle {
         project-path <=> root.project-path;
         collection-path <=> root.collection-transfer-path;
         diagnostics-path <=> root.diagnostics-path;
+        file-picker-enabled: root.file-picker-enabled;
+        browse-project-save-as() => { root.browse-project-save-as(); }
         save-project() => {
             if root.project-dialog-mode == 3 {
                 root.save-project-as(root.project-path);
@@ -167,7 +170,7 @@ export component MainModals inherits Rectangle {
         stinger-preload <=> root.scene-stinger-preload;
         stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
         stinger-hardware-decode-enabled: root.scene-stinger-hardware-decode-enabled;
-        stinger-picker-enabled: root.scene-stinger-picker-enabled;
+        file-picker-enabled: root.file-picker-enabled;
         rename-scene() => { root.rename-scene(); }
         browse-scene-stinger() => { root.browse-scene-stinger(); }
         close => { root.active-modal = 0; }

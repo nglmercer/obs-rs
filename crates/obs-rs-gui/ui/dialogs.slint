@@ -10,7 +10,9 @@ export component ProjectDialog inherits ModalShell {
     in-out property <string> project-path;
     in-out property <string> collection-path;
     in-out property <string> diagnostics-path;
+    in property <bool> file-picker-enabled: false;
     callback save-project();
+    callback browse-project-save-as();
 
     title: mode == 3
         ? I18n.text.project_save_as_title
@@ -47,7 +49,20 @@ export component ProjectDialog inherits ModalShell {
                 : "/path/to/collection.obsrproj";
         }
         if mode != 1 && mode != 2 : FieldHeading { text: I18n.text.project_file; }
-        if mode != 1 && mode != 2 : LineEdit {
+        if mode == 3 : HorizontalBox {
+            spacing: 6px;
+            LineEdit {
+                text <=> project-path;
+                placeholder-text: "obs-rs-project.obsrproj";
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: I18n.text.settings_ui.browse;
+                enabled: root.file-picker-enabled;
+                clicked => browse-project-save-as();
+            }
+        }
+        if mode == 0 : LineEdit {
             text <=> project-path;
             placeholder-text: "obs-rs-project.json";
         }
@@ -58,6 +73,9 @@ export component ProjectDialog inherits ModalShell {
         }
         MutedText {
             text: I18n.text.atomic_save_hint;
+        }
+        if mode == 3 && !root.file-picker-enabled : MutedText {
+            text: I18n.text.project_picker_unavailable;
         }
     }
 }
@@ -120,7 +138,7 @@ export component RenameSceneDialog inherits ModalShell {
     in-out property <bool> stinger-preload: true;
     in-out property <bool> stinger-hardware-decode: false;
     in property <bool> stinger-hardware-decode-enabled: false;
-    in property <bool> stinger-picker-enabled: false;
+    in property <bool> file-picker-enabled: false;
     callback rename-scene();
     callback browse-scene-stinger();
 
@@ -186,7 +204,7 @@ export component RenameSceneDialog inherits ModalShell {
             }
             Button {
                 text: I18n.text.settings_ui.browse;
-                enabled: root.stinger-picker-enabled;
+                enabled: root.file-picker-enabled;
                 clicked => browse-scene-stinger();
             }
         }
@@ -208,7 +226,7 @@ export component RenameSceneDialog inherits ModalShell {
             text: I18n.text.stinger_hardware_decode_unavailable;
         }
         MutedText { text: I18n.text.stinger_hint; }
-        if !root.stinger-picker-enabled : MutedText {
+        if !root.file-picker-enabled : MutedText {
             text: I18n.text.stinger_picker_unavailable;
         }
     }

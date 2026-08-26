@@ -571,6 +571,9 @@ pub(super) fn catalog() -> UiText {
         project_save_as_description: s(
             "Write the current project to a new file and make that file the active document.",
         ),
+        project_picker_unavailable: s(
+            "No system file picker was found; type the Save As path manually.",
+        ),
         cancel: s("Cancel"),
         project_file: s("Project file"),
         diagnostics_file: s("Diagnostics file"),

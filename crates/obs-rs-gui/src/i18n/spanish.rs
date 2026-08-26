@@ -579,6 +579,9 @@ pub(super) fn catalog() -> UiText {
         project_save_as_description: s(
             "Escribe el proyecto actual en un archivo nuevo y lo convierte en el documento activo.",
         ),
+        project_picker_unavailable: s(
+            "No se encontró un selector de archivos del sistema; escribe manualmente la ruta de Guardar como.",
+        ),
         cancel: s("Cancelar"),
         project_file: s("Archivo del proyecto"),
         diagnostics_file: s("Archivo de diagnóstico"),

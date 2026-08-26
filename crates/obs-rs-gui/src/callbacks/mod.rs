@@ -72,7 +72,7 @@ pub(crate) use source_batch::remove_selected_sources_and_refresh;
 pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
 pub(crate) use source_transform::install_source_transform_window;
-pub(crate) use stinger_picker::install_stinger_file_picker;
+pub(crate) use stinger_picker::install_file_pickers;
 pub(crate) use stinger_take::{dispatch_pending_stinger_take, install_stinger_take_callback};
 
 /// Keep source-row paths bounded at the UI boundary. The path contains both
