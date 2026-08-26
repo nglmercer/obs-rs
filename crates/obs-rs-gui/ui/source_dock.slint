@@ -116,6 +116,7 @@ export component SourceDock inherits Rectangle {
                             return accept;
                         }
                         if !event.modifiers.control
+                            && !event.modifiers.shift
                             && !event.modifiers.alt
                             && (event.text == Key.Delete || event.text == Key.Backspace)
                             && root.selected-source != ""

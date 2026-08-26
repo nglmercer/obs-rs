@@ -219,6 +219,7 @@ export component MainKeyboard inherits Rectangle {
             return true;
         }
         if !control
+            && !shift
             && !alt
             && (text == Key.Delete || text == Key.Backspace)
             && root.selected-source != ""

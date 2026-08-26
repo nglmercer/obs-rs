@@ -39,12 +39,13 @@ actions. The fixture proves modified clipboard keys neither replace the
 Rust-owned clipboard nor create a scene item, and then verifies the original
 clipboard still pastes a reference. No project or UI state is duplicated.
 
-The source-deletion keyboard boundary now accepts both `Delete` and
-`Backspace` from the editable canvas and the focused Sources dock. Both keys
-still use the existing Rust multi-selection removal callback, so locking,
-nested targets, history, and failure notices retain one owner. The GUI fixture
-covers both keys on both focus surfaces; configurable/global hotkey
-registration remains separate.
+The source-deletion keyboard boundary now accepts unmodified `Delete` and
+`Backspace` from the editable canvas and the focused Sources dock. Shift,
+Control, and Alt variants remain available to other local actions; the two
+plain keys still use the existing Rust multi-selection removal callback, so
+locking, nested targets, history, and failure notices retain one owner. The
+GUI fixture covers both keys on both focus surfaces and verifies Shift does not
+delete; configurable/global hotkey registration remains separate.
 
 The Sources-dock rename packet now accepts unmodified `F2` on Linux and Windows,
 or unmodified `Return` on macOS, and opens the existing typed rename callback

@@ -57,6 +57,8 @@ mod ui_scene_rename_keyboard;
 mod ui_slideshow;
 #[path = "tests/ui_source_clipboard_modifiers.rs"]
 mod ui_source_clipboard_modifiers;
+#[path = "tests/ui_source_delete_modifiers.rs"]
+mod ui_source_delete_modifiers;
 #[path = "tests/ui_source_dock_keyboard.rs"]
 mod ui_source_dock_keyboard;
 #[path = "tests/ui_source_keyboard.rs"]

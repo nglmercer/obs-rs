@@ -90,11 +90,12 @@ reference-paste workflow remains unchanged.
 ## Latest verified package: Delete/Backspace source removal boundary
 
 On 2026-08-26, source removal from the editable canvas and focused Sources
-dock accepts both `Delete` and `Backspace`. Each key reaches the same bounded
-Rust removal command, preserving multi-selection, nested/locked validation,
-history, and status errors. The GUI fixture covers unlocked and locked cases
-on both focus surfaces; global registration and the broader source action
-catalog remain incomplete.
+dock accepts unmodified `Delete` and `Backspace`. Shift, Control, and Alt
+variants do not enter this removal boundary; each plain key reaches the same
+bounded Rust removal command, preserving multi-selection, nested/locked
+validation, history, and status errors. The GUI fixture covers both focus
+surfaces and verifies the Shift rejection alongside unlocked/locked cases;
+global registration and the broader source action catalog remain incomplete.
 
 ## Latest verified package: Sources-dock F2 rename shortcut
 
