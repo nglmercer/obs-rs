@@ -24,6 +24,14 @@ and the bounded parent-local order. The GUI fixture verifies the four moves
 and leaves the temporary sources removed. Configurable/global source-order
 hotkeys are still outside this packet.
 
+The Sources-dock clipboard follow-up now routes `Ctrl+C`, `Ctrl+V`, and
+`Ctrl+A` through its focused `FocusScope` to the existing Rust callbacks.
+It reuses the same selected target, reference-paste command, bounded
+select-all projection, and single project state owner as the canvas path. The
+GUI fixture proves copy/reference-paste/select-all while the dock owns focus;
+Paste Duplicate remains context-menu-only and global registration remains a
+separate capability.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

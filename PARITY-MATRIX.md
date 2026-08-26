@@ -59,6 +59,15 @@ history, and persistence; the GUI fixture verifies all four actions and
 cleans up its temporary sources. Configurable/global source-order hotkeys
 remain incomplete.
 
+## Latest verified package: Sources-dock clipboard and select-all shortcuts
+
+On 2026-08-26, the focused Sources dock now maps `Ctrl+C`, `Ctrl+V`, and
+`Ctrl+A` through the existing typed callbacks. Copy uses the selected stable
+source path, paste keeps the established reference mode and selects the new
+scene item, and select-all uses the bounded visible-source projection. The
+GUI fixture verifies the workflow with dock focus and cleans up its temporary
+items; Paste Duplicate and global OS hotkey registration remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

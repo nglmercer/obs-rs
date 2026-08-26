@@ -4,6 +4,7 @@ import { MoveTarget, SourceRow } from "models.slint";
 import { SourceContextMenuArea } from "context_menus.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
+import { HotkeyLabel } from "hotkey_label.slint";
 
 export component SourceDock inherits Rectangle {
     in property <string> locale;
@@ -66,6 +67,11 @@ export component SourceDock inherits Rectangle {
     background: Palette.tokens.panel-bg;
     border-width: 1px;
     border-color: Palette.tokens.border;
+    source-hotkey-label := HotkeyLabel {
+        visible: false;
+        width: 0px;
+        height: 0px;
+    }
     VerticalBox {
         padding: 0px;
         spacing: 0px;
@@ -102,6 +108,32 @@ export component SourceDock inherits Rectangle {
                             // validation, nested paths, and undo ownership do
                             // not get duplicated in the dock.
                             root.remove-selected-sources();
+                            return accept;
+                        }
+                        if event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && source-hotkey-label.key-name(event.text) == "C"
+                            && root.selected-source != ""
+                            && root.selected-source != "none" {
+                            root.copy-source(root.selected-source);
+                            return accept;
+                        }
+                        if event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && source-hotkey-label.key-name(event.text) == "V"
+                            && root.can-paste {
+                            root.paste-reference(
+                                root.selected-source == "none" ? "" : root.selected-source
+                            );
+                            return accept;
+                        }
+                        if event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && source-hotkey-label.key-name(event.text) == "A" {
+                            root.select-all-sources();
                             return accept;
                         }
                         if event.modifiers.control
