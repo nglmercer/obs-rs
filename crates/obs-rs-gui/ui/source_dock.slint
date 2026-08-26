@@ -61,6 +61,7 @@ export component SourceDock inherits Rectangle {
     callback remove-source(string);
     callback remove-selected-sources();
     callback drop-source(data-transfer, string, int);
+    callback release-push-hotkey();
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -88,6 +89,9 @@ export component SourceDock inherits Rectangle {
                     vertical-stretch: 1;
                     focus-on-click: true;
                     focus-on-tab-navigation: true;
+                    focus-lost(reason) => {
+                        root.release-push-hotkey();
+                    }
                     key-pressed(event) => {
                         if !event.modifiers.control
                             && !event.modifiers.alt

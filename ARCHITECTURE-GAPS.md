@@ -157,9 +157,11 @@ OBS action catalog remain open.
 Focused-window microphone push-to-talk and push-to-mute now have persisted,
 conflict-checked bindings and stable action codes 23/24. Slint sends press and
 release through the exact `SetMixerMute` command, so the mixer remains the one
-mute-state owner and repeated key events are idempotent. This is deliberately a
-local event-boundary capability: global OS registration, focus-loss recovery,
-and push actions for other channels remain open.
+mute-state owner and repeated key events are idempotent. The main canvas,
+Scenes, and Sources focus boundaries also release a held microphone push action
+when the window deactivates and ignore a delayed key release. This remains a
+local event-boundary capability: global OS registration, arbitrary native-focus
+control recovery, and push actions for other channels remain open.
 
 The selected-source visibility hotkey now reuses the existing typed source
 callback. Bounded action code 19 is persisted, conflict-checked, and rejected

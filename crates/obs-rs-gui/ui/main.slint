@@ -758,6 +758,7 @@ export component MainWindow inherits Window {
                     root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
                 }
                 canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+                release-push-hotkey() => { hotkey-labeler.release-held-push(); }
                 multiview-select-preview(id) => { root.select-preview(id); }
                 multiview-select-program(id) => { root.select-program(id); }
             }
@@ -916,6 +917,7 @@ export component MainWindow inherits Window {
                 save-replay-buffer() => { root.save-replay-buffer(); }
                 recover-recording() => { root.recover-recording(); }
                 open-settings-window() => { root.open-settings-window(); }
+                release-push-hotkey() => { hotkey-labeler.release-held-push(); }
                 set-view-mode(mode) => { root.apply-view-mode(mode); }
                 float-panel(kind) => { root.float-panel(kind); }
             }

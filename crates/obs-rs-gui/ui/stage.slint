@@ -53,6 +53,7 @@ component StageCanvas inherits Rectangle {
     callback canvas-pan-dragged(int, int);
     callback canvas-zoom-step(int);
     callback canvas-zoom-at(int, int, int, int, int, int, int, int);
+    callback release-push-hotkey();
 
     // `image-fit: contain` centres the frame and scales it by the smaller of the
     // two ratios. Reproducing that here is what lets pointer positions be
@@ -87,6 +88,9 @@ component StageCanvas inherits Rectangle {
         // the project mutation remains owned by the Rust callback boundary.
         focus-on-click: true;
         focus-on-tab-navigation: true;
+        focus-lost(reason) => {
+            root.release-push-hotkey();
+        }
         CanvasEditor {
         width: 100%;
         height: 100%;
@@ -333,6 +337,7 @@ export component StagePanel inherits Rectangle {
     callback canvas-zoom-step(int);
     callback canvas-zoom-at(int, int, int, int, int, int, int, int);
     callback canvas-pan-dragged(int, int);
+    callback release-push-hotkey();
     callback multiview-select-preview(string);
     callback multiview-select-program(string);
 
@@ -407,6 +412,7 @@ export component StagePanel inherits Rectangle {
                     canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale) => {
                         root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
                     }
+                    release-push-hotkey() => { root.release-push-hotkey(); }
                 }
                 if view-mode == 0 : StageCanvas {
                     frame: program-image;
@@ -472,6 +478,7 @@ export component StagePanel inherits Rectangle {
                     canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale) => {
                         root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
                     }
+                    release-push-hotkey() => { root.release-push-hotkey(); }
                 }
             }
         }

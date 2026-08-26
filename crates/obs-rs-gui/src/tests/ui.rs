@@ -191,6 +191,37 @@ fn ui_layout_can_render_a_reference_snapshot() {
         push_events.borrow().as_slice(),
         [("mic".to_owned(), false), ("mic".to_owned(), true)]
     );
+    push_events.borrow_mut().clear();
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: "T".into() });
+    ui.window()
+        .dispatch_event(WindowEvent::WindowActiveChanged(false));
+    assert_eq!(
+        push_events.borrow().as_slice(),
+        [("mic".to_owned(), false), ("mic".to_owned(), true)],
+        "window deactivation must release a held push-to-talk action"
+    );
+    ui.window()
+        .dispatch_event(WindowEvent::WindowActiveChanged(true));
+    ui.window()
+        .dispatch_event(WindowEvent::KeyReleased { text: "T".into() });
+    assert_eq!(
+        push_events.borrow().as_slice(),
+        [("mic".to_owned(), false), ("mic".to_owned(), true)],
+        "a delayed key release must not restore a second time"
+    );
+    push_events.borrow_mut().clear();
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: "U".into() });
+    ui.window()
+        .dispatch_event(WindowEvent::WindowActiveChanged(false));
+    assert_eq!(
+        push_events.borrow().as_slice(),
+        [("mic".to_owned(), true), ("mic".to_owned(), false)],
+        "window deactivation must release a held push-to-mute action"
+    );
+    ui.window()
+        .dispatch_event(WindowEvent::WindowActiveChanged(true));
     ui.invoke_toggle_studio_mode();
     assert_eq!(
         ui.get_view_mode(),

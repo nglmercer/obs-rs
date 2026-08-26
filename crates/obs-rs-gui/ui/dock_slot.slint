@@ -121,6 +121,7 @@ export component DockSlot inherits Rectangle {
     callback save-replay-buffer();
     callback recover-recording();
     callback open-settings-window();
+    callback release-push-hotkey();
 
     // The row hands each dock a share of the width, which the splitters between
     // docks adjust. A floating dock ignores it and fills its window.
@@ -149,6 +150,7 @@ export component DockSlot inherits Rectangle {
         drop-scene(data, target, mode) => { root.drop-scene(data, target, mode); }
         remove-scene(id) => { root.remove-scene(id); }
         open-scene-projector(id) => { root.open-scene-projector(id); }
+        release-push-hotkey() => { root.release-push-hotkey(); }
     }
     if panel-kind == 1 : SourceDock {
         floating: root.floating;
@@ -211,6 +213,7 @@ export component DockSlot inherits Rectangle {
         remove-source(id) => { root.remove-source(id); }
         remove-selected-sources() => { root.remove-selected-sources(); }
         drop-source(data, target, mode) => { root.drop-source(data, target, mode); }
+        release-push-hotkey() => { root.release-push-hotkey(); }
     }
     if panel-kind == 2 : MixerDock {
         floating: root.floating;

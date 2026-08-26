@@ -34,12 +34,31 @@ export component HotkeyLabel inherits Rectangle {
     }
 
     public function release(action: int) -> bool {
-        if (action == 23) {
+        if (action == 23 && root.held-push-action == action) {
             root.set-mixer-muted("mic", true);
             root.held-push-action = 0;
             root.held-push-key = "";
             true
-        } else if (action == 24) {
+        } else if (action == 24 && root.held-push-action == action) {
+            root.set-mixer-muted("mic", false);
+            root.held-push-action = 0;
+            root.held-push-key = "";
+            true
+        } else {
+            false
+        }
+    }
+
+    // Window deactivation can happen before the native backend delivers the
+    // matching key-release event. Release the active push action at that
+    // boundary so a microphone cannot remain open or muted indefinitely.
+    public function release-held-push() -> bool {
+        if root.held-push-action == 23 {
+            root.set-mixer-muted("mic", true);
+            root.held-push-action = 0;
+            root.held-push-key = "";
+            true
+        } else if root.held-push-action == 24 {
             root.set-mixer-muted("mic", false);
             root.held-push-action = 0;
             root.held-push-key = "";
