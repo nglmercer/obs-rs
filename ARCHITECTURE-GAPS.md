@@ -15,6 +15,15 @@ preserve their current page. The integrated GUI fixture verifies category 4
 through the real controller, while advanced audio/device-graph parity remains
 open.
 
+The projector/multiview evidence was reconciled against the current runtime:
+`ProjectorFeed::Multiview` is included in the same geometry and monitor arrays
+as Program, Preview, Source, and Scene. Its fullscreen default, F11 toggle,
+persisted geometry, display menu, monitor move, restart restore, and bounded
+multiview render-demand path are covered by headless tests. The remaining gap
+is live compositor-backed multi-monitor/DPI evidence plus per-scene audio and
+source-specific tile behavior; the old claim that multiview monitor selection
+was absent was stale.
+
 The slideshow Browse packet extends the properties picker to the
 `image_slideshow` `paths` row without creating a second source state owner. A
 bounded asynchronous native directory chooser returns one selected directory
