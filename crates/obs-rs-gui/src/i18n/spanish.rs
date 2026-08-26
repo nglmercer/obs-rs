@@ -582,6 +582,10 @@ pub(super) fn catalog() -> UiText {
         project_open_description: s(
             "Elige un archivo de proyecto OBS-RS para cargarlo como documento activo.",
         ),
+        project_recovery_title: s("Revisar proyecto recuperado"),
+        project_recovery_description: s(
+            "Un proyecto temporal completo quedó tras un guardado interrumpido. Abajo aparecen la ruta activa y la ruta temporal de recuperación. Confirma la recuperación para reemplazar el documento en memoria; el resultado quedará sucio hasta que lo guardes.",
+        ),
         project_open_picker_unavailable: s(
             "No se encontró un selector de archivos del sistema; escribe manualmente la ruta del proyecto.",
         ),

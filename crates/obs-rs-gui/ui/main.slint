@@ -180,7 +180,7 @@ export component MainWindow inherits Window {
         // 1 project/save/export/import · 2 add scene · 3 add source · 4 output
         // · 5 rename scene · 6 source properties · 7 source filters
         // · 9 new collection · 10 about · 11 output failure · 12 rename source
-        // · 13 interrupted-remux candidate chooser
+        // · 13 interrupted-remux candidate chooser · 14 project recovery review
         in-out property <int> active-modal: 0;
         // 0 none · 1 start stream · 2 stop stream · 3 stop recording
         property <int> pending-confirm: 0;
@@ -966,6 +966,7 @@ export component MainWindow inherits Window {
         save-project() => { root.save-project(); }
         save-project-as(path) => { root.save-project-as(path); }
         load-project() => { root.load-project(); }
+        recover-project() => { root.recover-project(); }
         browse-project-save-as() => { root.browse-project-save-as(); }
         export-collection(path) => { root.export-collection(path); }
         import-collection(path) => { root.import-collection(path); }

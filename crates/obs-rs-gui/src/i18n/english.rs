@@ -574,6 +574,10 @@ pub(super) fn catalog() -> UiText {
         project_open_description: s(
             "Choose an OBS-RS project file to load as the active document.",
         ),
+        project_recovery_title: s("Review recovered project"),
+        project_recovery_description: s(
+            "A complete temporary project was left by an interrupted save. The active project path and its temporary recovery path are shown below. Confirm recovery to replace the current in-memory document; the result stays dirty until you save it.",
+        ),
         project_open_picker_unavailable: s(
             "No system file picker was found; type the project path manually.",
         ),

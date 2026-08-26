@@ -24,6 +24,7 @@ const DISCARD_SWITCH_COLLECTION: i32 = 6;
 const DISCARD_IMPORT_COLLECTION: i32 = 7;
 const DISCARD_LOAD_PROJECT: i32 = 8;
 const DISCARD_RECOVER_PROJECT: i32 = 9;
+const PROJECT_RECOVERY_MODAL: i32 = 14;
 pub(crate) const PROJECT_EXTENSION: &str = "obsrproj";
 const LEGACY_PROJECT_EXTENSION: &str = "json";
 
@@ -73,7 +74,13 @@ pub(crate) fn install_project_callbacks(
     let recover_state = Rc::clone(state);
     let recover_surface = Rc::clone(surface);
     ui.on_recover_project(move || {
-        recover_and_refresh(&weak, &recover_state, &recover_surface);
+        if let Some(ui) = weak.upgrade() {
+            if ui.get_active_modal() == PROJECT_RECOVERY_MODAL {
+                recover_and_refresh(&weak, &recover_state, &recover_surface);
+            } else {
+                open_recovery_dialog(&ui, &recover_state, &recover_surface);
+            }
+        }
     });
 
     let weak = ui.as_weak();
@@ -344,6 +351,33 @@ fn load_and_refresh(
     }
 }
 
+fn open_recovery_dialog(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let path = ui.get_project_path().to_string();
+    let result = project_store(&path).map(|store| {
+        store
+            .recovery_available()
+            .then(|| format!("{path}\n{}", store.temp_path().display()))
+    });
+    match result {
+        Ok(Some(detail)) => {
+            ui.set_status_message(detail.into());
+            ui.set_active_modal(PROJECT_RECOVERY_MODAL);
+        }
+        Ok(None) => {
+            refresh_ui(ui, state, surface);
+            ui.set_status_message("No recoverable project was found".into());
+        }
+        Err(error) => {
+            refresh_ui(ui, state, surface);
+            ui.set_status_message(format!("Recovery check failed: {error}").into());
+        }
+    }
+}
+
 fn recover_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -361,11 +395,17 @@ fn recover_and_refresh(
         Ok(true) => {
             crate::refresh::invalidate_recovery_cache();
             refresh_ui(&ui, state, surface);
+            ui.set_active_modal(0);
             ui.set_status_message(
                 format!("Recovered interrupted project for {path}; save to publish it").into(),
             );
         }
-        Ok(false) => ui.set_status_message("No recoverable project was found".into()),
+        Ok(false) => {
+            crate::refresh::invalidate_recovery_cache();
+            refresh_ui(&ui, state, surface);
+            ui.set_active_modal(0);
+            ui.set_status_message("No recoverable project was found".into());
+        }
         Err(error) => ui.set_status_message(format!("Recovery failed: {error}").into()),
     }
 }

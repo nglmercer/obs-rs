@@ -231,5 +231,6 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_navigation::exercise_menu_actions(&ui, &state, &surface, &docks);
     ui_navigation::exercise_group_source_callbacks(&ui, &state, &surface);
     ui_project_open::exercise_project_open_dialog(&ui);
+    ui_project_open::exercise_project_recovery_dialog(&ui, &state);
     ui_navigation::exercise_context_menus(&ui, &state, &surface);
 }

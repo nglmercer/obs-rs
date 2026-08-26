@@ -398,6 +398,20 @@ export component RecoveryDialog inherits ModalShell {
     Rectangle { }
 }
 
+export component ProjectRecoveryDialog inherits ModalShell {
+    in property <string> detail;
+    callback recover();
+
+    title: I18n.text.project_recovery_title;
+    subtitle: I18n.text.project_recovery_description + "\n\n" + root.detail;
+    accept-label: I18n.text.recover;
+    cancel-label: I18n.text.cancel;
+    panel-height: 300px;
+    accepted => recover();
+
+    Rectangle { }
+}
+
 // Lets the operator choose one of the bounded interrupted-remux candidates
 // discovered beside the configured recording path. The Rust output boundary
 // still validates the selected path before starting native recovery.

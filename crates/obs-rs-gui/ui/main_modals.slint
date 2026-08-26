@@ -6,6 +6,7 @@ import {
     DiscardChangesDialog,
     OutputDialog,
     ProjectDialog,
+    ProjectRecoveryDialog,
     RecoveryDialog,
     RemuxRecoveryDialog,
     RenameSceneDialog,
@@ -62,6 +63,7 @@ export component MainModals inherits Rectangle {
     callback save-project();
     callback save-project-as(string);
     callback load-project();
+    callback recover-project();
     callback browse-project-save-as();
     callback export-collection(string);
     callback import-collection(string);
@@ -243,6 +245,12 @@ export component MainModals inherits Rectangle {
             root.active-modal = 0;
             root.open-settings-window();
         }
+    }
+    ProjectRecoveryDialog {
+        open: root.active-modal == 14;
+        detail: root.status-message;
+        recover => { root.recover-project(); }
+        close => { root.active-modal = 0; }
     }
     RemuxRecoveryDialog {
         open: root.active-modal == 13;
