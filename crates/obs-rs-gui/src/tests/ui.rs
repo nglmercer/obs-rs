@@ -1,5 +1,5 @@
 use super::*;
-use super::{ui_layout, ui_navigation, ui_output, ui_project_open, ui_sources};
+use super::{ui_layout, ui_navigation, ui_output, ui_project_open, ui_slideshow, ui_sources};
 
 #[test]
 #[allow(
@@ -294,4 +294,5 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_project_open::exercise_project_recovery_dialog(&ui, &state);
     ui_navigation::exercise_context_menus(&ui, &state, &surface);
     ui_sources::exercise_image_source_file_picker(&ui, &state, &surface);
+    ui_slideshow::exercise_slideshow_directory_picker(&ui, &state, &surface);
 }

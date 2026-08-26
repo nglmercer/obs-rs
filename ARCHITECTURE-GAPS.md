@@ -7,13 +7,22 @@ independent reviewer.
 
 ## Latest verified packet
 
+The slideshow Browse packet extends the properties picker to the
+`image_slideshow` `paths` row without creating a second source state owner. A
+bounded asynchronous native directory chooser returns one selected directory
+through the existing local draft, so the normal OK command remains the only
+project mutation. Linux (`zenity`/`kdialog`), macOS (`osascript`), and Windows
+(PowerShell) command shapes are covered, as is the integrated GUI commit path;
+typed multiple paths and file selection remain the fallback for workflows the
+directory chooser does not cover.
+
 The image-source Browse packet now keeps the chooser at the properties
 boundary: only `image_source`'s `path` row exposes the capability-backed
 asynchronous native picker, and its result returns through the existing local
 draft before the normal OK command commits it. Linux (`zenity`/`kdialog`),
 macOS (`osascript`), and Windows (PowerShell) use bounded image filters when
-available; typed paths remain the explicit fallback. Slideshow directory/path
-selection is not included, and picker-command plus GUI draft/commit tests pass.
+available; typed paths remain the explicit fallback, and picker-command plus
+GUI draft/commit tests pass.
 
 The nested source context-action packet now routes `Rename` and `Remove` from
 the exact stable row path. Root rows retain OBS multi-selection removal, while

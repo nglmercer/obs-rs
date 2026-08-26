@@ -24,6 +24,7 @@ const MAX_PICKER_OUTPUT_BYTES: usize = MAX_PROJECT_PATH_BYTES + 1;
 enum PickerPurpose {
     StingerResource,
     SourceImage,
+    SourceSlideshowDirectory,
     ProjectSaveAs,
     ProjectOpen,
     CollectionExport,
@@ -35,6 +36,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => MAX_STINGER_RESOURCE_PATH_BYTES,
             Self::SourceImage
+            | Self::SourceSlideshowDirectory
             | Self::ProjectSaveAs
             | Self::ProjectOpen
             | Self::CollectionExport
@@ -46,6 +48,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger",
             Self::SourceImage => "Image",
+            Self::SourceSlideshowDirectory => "Slideshow",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project",
             Self::CollectionExport | Self::CollectionImport => "Collection",
         }
@@ -57,6 +60,9 @@ impl PickerPurpose {
                 "Stinger file picker is unavailable; type the resource path manually"
             }
             Self::SourceImage => "Image file picker is unavailable; type the image path manually",
+            Self::SourceSlideshowDirectory => {
+                "Slideshow directory picker is unavailable; type the image path manually"
+            }
             Self::ProjectSaveAs => {
                 "Project file picker is unavailable; type the Save As path manually"
             }
@@ -76,6 +82,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger file picker is already open",
             Self::SourceImage => "Image file picker is already open",
+            Self::SourceSlideshowDirectory => "Slideshow directory picker is already open",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project file picker is already open",
             Self::CollectionExport | Self::CollectionImport => {
                 "Collection file picker is already open"
@@ -87,6 +94,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "obs-rs-stinger-file-picker",
             Self::SourceImage => "obs-rs-image-file-picker",
+            Self::SourceSlideshowDirectory => "obs-rs-slideshow-directory-picker",
             Self::ProjectSaveAs => "obs-rs-project-file-picker",
             Self::ProjectOpen => "obs-rs-project-open-file-picker",
             Self::CollectionExport => "obs-rs-collection-export-file-picker",
@@ -98,6 +106,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Opening Stinger file picker…",
             Self::SourceImage => "Opening image file picker…",
+            Self::SourceSlideshowDirectory => "Opening slideshow directory picker…",
             Self::ProjectSaveAs | Self::ProjectOpen => "Opening project file picker…",
             Self::CollectionExport | Self::CollectionImport => "Opening collection file picker…",
         }
@@ -107,6 +116,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger file selection cancelled",
             Self::SourceImage => "Image file selection cancelled",
+            Self::SourceSlideshowDirectory => "Slideshow directory selection cancelled",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project file selection cancelled",
             Self::CollectionExport | Self::CollectionImport => {
                 "Collection file selection cancelled"
@@ -118,6 +128,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger resource selected",
             Self::SourceImage => "Image source path selected",
+            Self::SourceSlideshowDirectory => "Slideshow directory selected",
             Self::ProjectSaveAs => "Project Save As path selected",
             Self::ProjectOpen => "Project path selected",
             Self::CollectionExport => "Collection export path selected",
@@ -156,7 +167,7 @@ pub(crate) fn install_file_pickers(ui: &MainWindow) {
     });
 }
 
-/// Connects the image source Browse button to a desktop file chooser.
+/// Connects image and slideshow source Browse buttons to desktop choosers.
 ///
 /// The source properties window keeps its settings draft local. A successful
 /// picker result therefore returns through the existing `edit-property`
@@ -171,41 +182,92 @@ pub(crate) fn install_source_image_picker(window: &SourcePropertiesWindow) {
         let Some(window) = weak.upgrade() else {
             return;
         };
-        if window.get_source_kind().as_str() != "image_source" {
+        let kind = window.get_source_kind();
+        let document = window.get_source_settings();
+        let Some((purpose, property, start)) =
+            source_picker_request(kind.as_str(), document.as_str())
+        else {
             return;
-        }
-        let start = Config::parse(window.get_source_settings().as_str())
-            .ok()
-            .and_then(|settings| settings.get("path").map(str::to_owned))
-            .unwrap_or_default();
-        begin_source_image_picker(&weak, &active_for_worker, tool, start.as_str());
+        };
+        begin_source_picker(
+            &weak,
+            &active_for_worker,
+            tool,
+            start.as_str(),
+            purpose,
+            property,
+        );
     });
 }
 
-fn begin_source_image_picker(
+fn source_picker_request(
+    kind: &str,
+    document: &str,
+) -> Option<(PickerPurpose, &'static str, String)> {
+    let settings = Config::parse(document).ok()?;
+    match kind {
+        "image_source" => Some((
+            PickerPurpose::SourceImage,
+            "path",
+            settings.get("path").unwrap_or_default().to_owned(),
+        )),
+        "image_slideshow" => {
+            let first_path = settings
+                .get("paths")
+                .unwrap_or_default()
+                .lines()
+                .find(|path| !path.trim().is_empty())
+                .unwrap_or_default();
+            Some((
+                PickerPurpose::SourceSlideshowDirectory,
+                "paths",
+                slideshow_directory_start(first_path),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Starts a directory chooser near the first configured slideshow path.
+///
+/// The chooser only needs a directory, so use the path's parent without
+/// probing the filesystem. This keeps the callback free of potentially slow
+/// network/filesystem metadata calls and still handles both an existing
+/// directory and an individual image path.
+fn slideshow_directory_start(path: &str) -> String {
+    Path::new(path)
+        .parent()
+        .and_then(Path::to_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn begin_source_picker(
     weak: &Weak<SourcePropertiesWindow>,
     active: &Arc<AtomicBool>,
     tool: Option<&'static str>,
     start: &str,
+    purpose: PickerPurpose,
+    property: &'static str,
 ) {
     let Some(window) = weak.upgrade() else {
         return;
     };
     let Some(tool) = tool else {
-        window.invoke_picker_status(PickerPurpose::SourceImage.unavailable_message().into());
+        window.invoke_picker_status(purpose.unavailable_message().into());
         return;
     };
     if active.swap(true, Ordering::AcqRel) {
-        window.invoke_picker_status(PickerPurpose::SourceImage.already_open_message().into());
+        window.invoke_picker_status(purpose.already_open_message().into());
         return;
     }
     let start = start.to_owned();
     let callback_window = weak.clone();
     let active_for_worker = Arc::clone(active);
     let worker = thread::Builder::new()
-        .name(PickerPurpose::SourceImage.thread_name().to_owned())
+        .name(purpose.thread_name().to_owned())
         .spawn(move || {
-            let result = choose_path(tool, &start, PickerPurpose::SourceImage);
+            let result = choose_path(tool, &start, purpose);
             active_for_worker.store(false, Ordering::Release);
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(window) = callback_window.upgrade() else {
@@ -213,35 +275,21 @@ fn begin_source_image_picker(
                 };
                 match result {
                     Ok(Some(path)) => {
-                        window.invoke_edit_property("path".into(), path.into());
-                        window.invoke_picker_status(
-                            PickerPurpose::SourceImage.selected_message().into(),
-                        );
+                        window.invoke_edit_property(property.into(), path.into());
+                        window.invoke_picker_status(purpose.selected_message().into());
                     }
-                    Ok(None) => window.invoke_picker_status(
-                        PickerPurpose::SourceImage.cancelled_message().into(),
-                    ),
+                    Ok(None) => window.invoke_picker_status(purpose.cancelled_message().into()),
                     Err(error) => window.invoke_picker_status(
-                        format!(
-                            "{} file picker failed: {error}",
-                            PickerPurpose::SourceImage.label()
-                        )
-                        .into(),
+                        format!("{} picker failed: {error}", purpose.label()).into(),
                     ),
                 }
             });
         });
     if let Err(error) = worker {
         active.store(false, Ordering::Release);
-        window.invoke_picker_status(
-            format!(
-                "{} file picker failed: {error}",
-                PickerPurpose::SourceImage.label()
-            )
-            .into(),
-        );
+        window.invoke_picker_status(format!("{} picker failed: {error}", purpose.label()).into());
     } else {
-        window.invoke_picker_status(PickerPurpose::SourceImage.opening_message().into());
+        window.invoke_picker_status(purpose.opening_message().into());
     }
 }
 
@@ -273,7 +321,7 @@ fn begin_picker(
     }
     let start = match purpose {
         PickerPurpose::StingerResource => ui.get_scene_stinger_path().to_string(),
-        PickerPurpose::SourceImage => String::new(),
+        PickerPurpose::SourceImage | PickerPurpose::SourceSlideshowDirectory => String::new(),
         PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
             ui.get_project_path().to_string()
         }
@@ -298,7 +346,10 @@ fn begin_picker(
                             PickerPurpose::StingerResource => {
                                 ui.set_scene_stinger_path(path.into());
                             }
-                            PickerPurpose::SourceImage => return,
+                            PickerPurpose::SourceImage
+                            | PickerPurpose::SourceSlideshowDirectory => {
+                                return;
+                            }
                             PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
                                 ui.set_project_path(path.into());
                             }
@@ -427,6 +478,14 @@ fn configure_command(
 }
 
 fn configure_zenity(command: &mut Command, start: &str, purpose: PickerPurpose) {
+    if purpose == PickerPurpose::SourceSlideshowDirectory {
+        command.args(["--file-selection", "--directory"]);
+        command.arg("--title=Select slideshow directory");
+        if !start.is_empty() {
+            command.arg(format!("--filename={start}"));
+        }
+        return;
+    }
     let (title, save, filter) = match purpose {
         PickerPurpose::StingerResource => ("Select Stinger resource", false, None),
         PickerPurpose::SourceImage => (
@@ -434,6 +493,9 @@ fn configure_zenity(command: &mut Command, start: &str, purpose: PickerPurpose) 
             false,
             Some("Image files | *.png *.jpg *.jpeg *.gif *.webp *.pnm"),
         ),
+        PickerPurpose::SourceSlideshowDirectory => {
+            unreachable!("slideshow directory picker is configured before the file-picker match")
+        }
         PickerPurpose::ProjectSaveAs => (
             "Save OBS-RS project",
             true,
@@ -469,6 +531,11 @@ fn configure_zenity(command: &mut Command, start: &str, purpose: PickerPurpose) 
 }
 
 fn configure_kdialog(command: &mut Command, start: &str, purpose: PickerPurpose) {
+    if purpose == PickerPurpose::SourceSlideshowDirectory {
+        command.arg("--getexistingdirectory");
+        command.arg(if start.is_empty() { "." } else { start });
+        return;
+    }
     let (save, default_name, filter) = match purpose {
         PickerPurpose::StingerResource => {
             (false, ".", "Video files (*.webm *.mp4 *.mkv *.mov *.avi)")
@@ -478,6 +545,9 @@ fn configure_kdialog(command: &mut Command, start: &str, purpose: PickerPurpose)
             ".",
             "Image files (*.png *.jpg *.jpeg *.gif *.webp *.pnm)",
         ),
+        PickerPurpose::SourceSlideshowDirectory => {
+            unreachable!("slideshow directory picker is configured before the file-picker match")
+        }
         PickerPurpose::ProjectSaveAs => (
             true,
             "obs-rs-project.obsrproj",
@@ -514,6 +584,9 @@ fn configure_osascript(command: &mut Command, purpose: PickerPurpose) {
         PickerPurpose::SourceImage => {
             "set selectedFile to choose file with prompt \"Select image source\"\nPOSIX path of selectedFile"
         }
+        PickerPurpose::SourceSlideshowDirectory => {
+            "set selectedFolder to choose folder with prompt \"Select slideshow directory\"\nPOSIX path of selectedFolder"
+        }
         PickerPurpose::ProjectSaveAs => {
             "set selectedFile to choose file name with prompt \"Save OBS-RS project as\"\ndefault name \"obs-rs-project.obsrproj\"\nPOSIX path of selectedFile"
         }
@@ -531,6 +604,11 @@ fn configure_osascript(command: &mut Command, purpose: PickerPurpose) {
 }
 
 fn configure_powershell(command: &mut Command, purpose: PickerPurpose) {
+    if purpose == PickerPurpose::SourceSlideshowDirectory {
+        let script = "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }";
+        command.args(["-NoProfile", "-NonInteractive", "-STA", "-Command", script]);
+        return;
+    }
     let (dialog, filter, save) = match purpose {
         PickerPurpose::StingerResource => (
             "OpenFileDialog",
@@ -542,6 +620,9 @@ fn configure_powershell(command: &mut Command, purpose: PickerPurpose) {
             "Image files|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.pnm|All files|*.*",
             false,
         ),
+        PickerPurpose::SourceSlideshowDirectory => {
+            unreachable!("slideshow directory picker is configured before the file-picker match")
+        }
         PickerPurpose::ProjectSaveAs => (
             "SaveFileDialog",
             "OBS-RS projects|*.obsrproj;*.json|All files|*.*",
@@ -571,7 +652,7 @@ fn configure_powershell(command: &mut Command, purpose: PickerPurpose) {
     let script = format!(
         "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.{dialog}; $dialog.Filter = '{filter}'{extension}; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ [Console]::Write($dialog.FileName) }}"
     );
-    command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+    command.args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script]);
 }
 
 fn validate_picker_path(path: &str, max_bytes: usize) -> Result<String, String> {
@@ -792,6 +873,98 @@ mod tests {
             PickerPurpose::SourceImage.path_limit(),
             MAX_PROJECT_PATH_BYTES
         );
+    }
+
+    #[test]
+    fn slideshow_picker_uses_directory_dialogs() {
+        let mut zenity = Command::new("zenity");
+        configure_command(
+            &mut zenity,
+            "zenity",
+            "/tmp/slides",
+            PickerPurpose::SourceSlideshowDirectory,
+        )
+        .expect("zenity slideshow directory dialog");
+        let zenity_args = zenity
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(zenity_args.iter().any(|arg| arg == "--directory"));
+        assert!(zenity_args
+            .iter()
+            .any(|arg| arg == "--title=Select slideshow directory"));
+        assert!(!zenity_args
+            .iter()
+            .any(|arg| arg.starts_with("--file-filter=")));
+
+        let mut kdialog = Command::new("kdialog");
+        configure_command(
+            &mut kdialog,
+            "kdialog",
+            "/tmp/slides",
+            PickerPurpose::SourceSlideshowDirectory,
+        )
+        .expect("kdialog slideshow directory dialog");
+        let kdialog_args = kdialog
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(kdialog_args
+            .iter()
+            .any(|arg| arg == "--getexistingdirectory"));
+        assert!(kdialog_args.iter().any(|arg| arg == "/tmp/slides"));
+
+        let mut osascript = Command::new("osascript");
+        configure_command(
+            &mut osascript,
+            "osascript",
+            "",
+            PickerPurpose::SourceSlideshowDirectory,
+        )
+        .expect("AppleScript slideshow directory dialog");
+        assert!(osascript
+            .get_args()
+            .any(|arg| arg.to_string_lossy().contains("choose folder")));
+
+        let mut powershell = Command::new("powershell");
+        configure_command(
+            &mut powershell,
+            "powershell",
+            "",
+            PickerPurpose::SourceSlideshowDirectory,
+        )
+        .expect("PowerShell slideshow directory dialog");
+        let powershell_args = powershell
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(powershell_args.iter().any(|arg| arg == "-STA"));
+        assert!(powershell_args
+            .iter()
+            .any(|arg| arg.contains("FolderBrowserDialog")));
+        assert_eq!(
+            PickerPurpose::SourceSlideshowDirectory.path_limit(),
+            MAX_PROJECT_PATH_BYTES
+        );
+    }
+
+    #[test]
+    fn source_picker_request_targets_the_correct_property_and_start_directory() {
+        let (purpose, property, start) = source_picker_request(
+            "image_slideshow",
+            "paths = \"/tmp/slides/first.png\\n/tmp/slides/second.png\"\n",
+        )
+        .expect("slideshow picker request");
+        assert_eq!(purpose, PickerPurpose::SourceSlideshowDirectory);
+        assert_eq!(property, "paths");
+        assert_eq!(start, "/tmp/slides");
+
+        let (purpose, property, start) =
+            source_picker_request("image_source", "path = \"/tmp/example.png\"\n")
+                .expect("image picker");
+        assert_eq!(purpose, PickerPurpose::SourceImage);
+        assert_eq!(property, "path");
+        assert_eq!(start, "/tmp/example.png");
     }
 
     #[test]

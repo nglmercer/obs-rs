@@ -45,6 +45,8 @@ mod ui_project_open;
 mod ui_scene_drag_drop;
 #[path = "tests/ui_scene_reference.rs"]
 mod ui_scene_reference;
+#[path = "tests/ui_slideshow.rs"]
+mod ui_slideshow;
 #[path = "tests/ui_sources.rs"]
 mod ui_sources;
 

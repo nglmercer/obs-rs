@@ -120,13 +120,16 @@ export component SourcePropertiesWindow inherits Window {
                     title: I18n.text.property_ui.settings_group;
                     for entry in root.property-rows : PropertyField {
                         field: entry;
-                        browse-enabled: root.source-kind == "image_source"
-                            && entry.key == "path"
+                        browse-enabled: ((root.source-kind == "image_source"
+                            && entry.key == "path")
+                            || (root.source-kind == "image_slideshow"
+                                && entry.key == "paths"))
                             && root.source-file-picker-enabled;
                         edited(key, value) => { root.edit-property(key, value); }
                         browse() => { root.browse-source-file(); }
                     }
-                    if root.source-kind == "image_source"
+                    if (root.source-kind == "image_source"
+                        || root.source-kind == "image_slideshow")
                         && !root.source-file-picker-enabled : SettingHint {
                         text: I18n.text.property_ui.browse_unavailable_hint;
                     }
