@@ -1,8 +1,8 @@
 use super::*;
 use super::{
     ui_layout, ui_modal_keyboard, ui_navigation, ui_output, ui_project_open,
-    ui_scene_rename_keyboard, ui_slideshow, ui_source_clipboard_modifiers, ui_source_dock_keyboard,
-    ui_source_order_keyboard, ui_source_rename_keyboard, ui_sources,
+    ui_scene_dock_keyboard, ui_scene_rename_keyboard, ui_slideshow, ui_source_clipboard_modifiers,
+    ui_source_dock_keyboard, ui_source_order_keyboard, ui_source_rename_keyboard, ui_sources,
 };
 
 #[test]
@@ -292,6 +292,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_source_dock_keyboard::exercise_source_dock_clipboard_keyboard(&ui, &state, &surface);
     ui_source_order_keyboard::exercise_source_order_keyboard(&ui, &state, &surface);
     ui_source_rename_keyboard::exercise_source_dock_rename_keyboard(&ui, &state, &surface);
+    ui_scene_dock_keyboard::exercise_scene_dock_delete_keyboard(&ui, &state, &surface);
     ui_scene_rename_keyboard::exercise_scene_dock_rename_keyboard(&ui, &state, &surface);
     ui_modal_keyboard::exercise_modal_keyboard_boundary(&ui, &state, &surface);
     ui_sources::exercise_source_mouse_selection(&ui, &state, &surface);

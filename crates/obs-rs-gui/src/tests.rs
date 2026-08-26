@@ -45,6 +45,8 @@ mod ui_output;
 mod ui_project_open;
 #[path = "tests/ui_projector_keyboard.rs"]
 mod ui_projector_keyboard;
+#[path = "tests/ui_scene_dock_keyboard.rs"]
+mod ui_scene_dock_keyboard;
 #[path = "tests/ui_scene_drag_drop.rs"]
 mod ui_scene_drag_drop;
 #[path = "tests/ui_scene_reference.rs"]

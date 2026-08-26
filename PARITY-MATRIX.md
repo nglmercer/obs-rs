@@ -117,6 +117,16 @@ rename state. The GUI fixture opens the real modal, verifies its draft, commits
 a new name, and restores the shared scene fixture. The broader global hotkey
 catalog remains incomplete.
 
+## Latest verified package: Scenes-dock Delete/Backspace removal
+
+On 2026-08-26, the focused Scenes dock now maps unmodified `Delete` and
+`Backspace` to the existing scene-removal callback, matching the OBS 32.2.2
+scene action. The one-scene guard is consumed by the dock, while Rust owns the
+validated project mutation, undo boundary, fallback preview selection, and
+failure status. The integrated GUI fixture drives both keys against temporary
+scenes and verifies that the preview selection remains valid. Reference:
+[OBS 32.2.2 scene removal bindings](https://raw.githubusercontent.com/obsproject/obs-studio/32.2.2/frontend/widgets/OBSBasic.cpp).
+
 ## Latest verified package: modal keyboard boundary
 
 On 2026-08-26, active main-window modals now take keyboard focus while open.

@@ -60,6 +60,14 @@ leaving the modal's name and transition fields as transient UI drafts. The GUI
 fixture verifies both key policies, the real modal commit, and restoration of
 the shared scene fixture. The broader global hotkey catalog remains open.
 
+The Scenes-dock removal packet now accepts both unmodified `Delete` and
+`Backspace`, matching the OBS scene action, and routes the selected preview
+scene through the existing Rust `RemoveScene` callback. The one-scene guard is
+consumed at the UI boundary, while Rust owns mutation, fallback selection,
+history, and error reporting. The GUI fixture covers both keys and verifies
+that removing the preview scene restores a valid selection. Global hotkey
+registration and confirmation-dialog parity remain open.
+
 The modal keyboard packet now gives the active `ModalShell` its own focused
 boundary. Unmodified `Escape` closes without committing the transient draft,
 unmodified `Enter` invokes the existing acceptance callback, and otherwise

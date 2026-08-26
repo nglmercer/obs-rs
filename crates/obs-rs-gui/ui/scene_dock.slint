@@ -76,6 +76,21 @@ export component SceneDock inherits Rectangle {
                             return accept;
                         }
                         if !event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && (event.text == Key.Delete || event.text == Key.Backspace)
+                            && root.preview-scene != ""
+                            && root.preview-scene != "none" {
+                            // OBS binds both removal keys to the selected
+                            // scene. Keep the one-scene guard local to this
+                            // boundary, while Rust remains the owner of the
+                            // mutation and fallback selection.
+                            if root.scene-rows.length > 1 {
+                                root.remove-scene(root.preview-scene);
+                            }
+                            return accept;
+                        }
+                        if !event.modifiers.control
                             && !event.modifiers.alt
                             && (event.text == Key.UpArrow
                                 || event.text == Key.DownArrow
