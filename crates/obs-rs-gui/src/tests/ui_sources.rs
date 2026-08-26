@@ -14,7 +14,11 @@ pub(super) fn exercise_source_keyboard_delete(
 ) {
     let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
     crate::callbacks::install_callbacks(ui, state, surface, &output);
-    for (id, locked) in [("keyboard-delete", false), ("keyboard-delete-locked", true)] {
+    for (id, locked, key) in [
+        ("keyboard-delete", false, Key::Delete),
+        ("keyboard-backspace", false, Key::Backspace),
+        ("keyboard-delete-locked", true, Key::Backspace),
+    ] {
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::AddSource {
@@ -51,12 +55,11 @@ pub(super) fn exercise_source_keyboard_delete(
         // gesture so the keyboard assertion covers the selected item rather
         // than depending on row ordering in the larger fixture.
         ui.invoke_select_source(id.into());
-        ui.window().dispatch_event(WindowEvent::KeyPressed {
-            text: Key::Delete.into(),
-        });
-        ui.window().dispatch_event(WindowEvent::KeyReleased {
-            text: Key::Delete.into(),
-        });
+        let key: slint::SharedString = key.into();
+        ui.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: key.clone() });
+        ui.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: key });
 
         let exists = state
             .borrow()

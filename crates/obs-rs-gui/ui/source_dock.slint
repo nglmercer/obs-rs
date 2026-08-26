@@ -101,7 +101,7 @@ export component SourceDock inherits Rectangle {
                     key-pressed(event) => {
                         if !event.modifiers.control
                             && !event.modifiers.alt
-                            && event.text == Key.Delete
+                            && (event.text == Key.Delete || event.text == Key.Backspace)
                             && root.selected-source != ""
                             && root.selected-source != "none" {
                             // Deletion remains a Rust callback so locked-item

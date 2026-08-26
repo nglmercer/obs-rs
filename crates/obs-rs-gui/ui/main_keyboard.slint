@@ -220,7 +220,7 @@ export component MainKeyboard inherits Rectangle {
         }
         if !control
             && !alt
-            && text == Key.Delete
+            && (text == Key.Delete || text == Key.Backspace)
             && root.selected-source != ""
             && root.selected-source != "none" {
             // The canvas and Sources dock share the selected target; the

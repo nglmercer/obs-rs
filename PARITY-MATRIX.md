@@ -77,6 +77,15 @@ configured action owns the combination. The GUI fixture proves modified keys
 preserve the Rust-owned clipboard and do not create scene items; the regular
 reference-paste workflow remains unchanged.
 
+## Latest verified package: Delete/Backspace source removal boundary
+
+On 2026-08-26, source removal from the editable canvas and focused Sources
+dock accepts both `Delete` and `Backspace`. Each key reaches the same bounded
+Rust removal command, preserving multi-selection, nested/locked validation,
+history, and status errors. The GUI fixture covers unlocked and locked cases
+on both focus surfaces; global registration and the broader source action
+catalog remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

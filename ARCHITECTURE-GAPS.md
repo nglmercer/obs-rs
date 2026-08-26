@@ -39,6 +39,13 @@ actions. The fixture proves modified clipboard keys neither replace the
 Rust-owned clipboard nor create a scene item, and then verifies the original
 clipboard still pastes a reference. No project or UI state is duplicated.
 
+The source-deletion keyboard boundary now accepts both `Delete` and
+`Backspace` from the editable canvas and the focused Sources dock. Both keys
+still use the existing Rust multi-selection removal callback, so locking,
+nested targets, history, and failure notices retain one owner. The GUI fixture
+covers both keys on both focus surfaces; configurable/global hotkey
+registration remains separate.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the
