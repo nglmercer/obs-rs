@@ -99,7 +99,51 @@ export component SourcePropertiesWindow inherits Window {
     callback picker-status(string);
     callback open-monitor-window();
 
-    VerticalLayout {
+    properties-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Source settings may contain a multiline advanced document. Keep
+        // plain Enter available to TextEdit, and use Ctrl+Enter for apply.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-properties();
+                return accept;
+            }
+            if event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-properties();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-properties();
+                return accept;
+            }
+            if event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-properties();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
         padding: 12px;
         spacing: 10px;
 
@@ -181,5 +225,13 @@ export component SourcePropertiesWindow inherits Window {
                 clicked => { root.cancel-properties(); }
             }
         }
+    }
+
+    }
+
+    // A standalone Window can reopen after a child editor from another
+    // window owns focus, so focus this boundary explicitly on every show.
+    public function focus-keyboard-boundary() {
+        properties-focus.focus();
     }
 }

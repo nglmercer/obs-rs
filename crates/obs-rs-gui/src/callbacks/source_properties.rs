@@ -151,8 +151,9 @@ fn open_for_target(
             && (controller.monitor.is_some() || ui.get_selected_source().as_str() == target.item),
     );
     controller.refresh_rows(locale);
-    if let Err(error) = window.show() {
-        ui.set_status_message(format!("Properties window: {error}").into());
+    match window.show() {
+        Ok(()) => window.invoke_focus_keyboard_boundary(),
+        Err(error) => ui.set_status_message(format!("Properties window: {error}").into()),
     }
 }
 

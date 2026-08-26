@@ -440,11 +440,48 @@ pub(super) fn exercise_image_source_file_picker(
     // This is the same callback used by the asynchronous picker result. The
     // file chooser itself is intentionally not opened by a deterministic GUI
     // test, since its availability and lifetime belong to the desktop.
+    window.invoke_edit_property("path".into(), "/tmp/discarded.png".into());
+    assert!(window
+        .get_source_settings()
+        .contains("path = \"/tmp/discarded.png\""));
+    window
+        .window()
+        .take_snapshot()
+        .expect("properties window should render before Escape dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+
+    ui.invoke_open_source_properties_window();
+    assert_eq!(
+        window
+            .get_property_rows()
+            .row_data(0)
+            .expect("reopened image path row")
+            .text,
+        "/tmp/example.png",
+        "Escape discards the local source-properties draft"
+    );
     window.invoke_edit_property("path".into(), "/tmp/selected.png".into());
     assert!(window
         .get_source_settings()
         .contains("path = \"/tmp/selected.png\""));
-    window.invoke_accept_properties();
+    window
+        .window()
+        .take_snapshot()
+        .expect("properties window should render before Ctrl+Enter dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Return.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
 
     let state = state.borrow();
     let source = state

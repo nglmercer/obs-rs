@@ -136,6 +136,15 @@ the editor controls. The GUI fixture sends both real window events and verifies
 project state, while OS close-request handling and Source Properties keyboard
 parity remain incomplete.
 
+## Latest verified package: Source Properties keyboard boundary
+
+On 2026-08-26, the standalone Source Properties window now focuses an explicit
+keyboard boundary after it is shown. `Escape` discards the local settings
+draft, and `Ctrl+Enter` applies through the existing Rust callback; plain
+`Enter` is left to the multiline advanced editor. The GUI fixture verifies
+both paths against the persisted source settings; OS close-request handling
+and complete focus traversal remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to
