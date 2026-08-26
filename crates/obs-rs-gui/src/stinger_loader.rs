@@ -35,7 +35,7 @@ impl fmt::Display for StingerTakeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotReady => formatter.write_str(
-                "Stinger is not ready; enable preload and wait for the resource to finish loading",
+                "Stinger is not ready; request the resource and wait for it to finish loading",
             ),
             Self::Failed(error) => write!(formatter, "Stinger resource failed: {error}"),
             Self::Stopped => formatter.write_str("Stinger loader stopped"),
@@ -46,6 +46,12 @@ impl fmt::Display for StingerTakeError {
 /// Owns the GUI-facing Stinger preload session without copying project state.
 pub(crate) struct StingerLoadController {
     session: StingerLoadSession,
+    pending_take: Option<PendingStingerTake>,
+}
+
+struct PendingStingerTake {
+    spec: StingerSpec,
+    duration_ms: u32,
 }
 
 impl StingerLoadController {
@@ -65,6 +71,7 @@ impl StingerLoadController {
     ) -> Result<Self, std::io::Error> {
         Ok(Self {
             session: StingerLoadSession::spawn(loader, target_format)?,
+            pending_take: None,
         })
     }
 
@@ -80,6 +87,7 @@ impl StingerLoadController {
     ) -> Result<Option<StingerLoadEvent>, String> {
         let Some(profile) = project.active_profile_spec() else {
             self.session.clear();
+            self.pending_take = None;
             return Ok(None);
         };
         let spec = preview_scene
@@ -98,10 +106,19 @@ impl StingerLoadController {
         self.session.set_target_format(target_format);
         let Some(spec) = spec else {
             self.session.clear();
+            self.pending_take = None;
             return Ok(None);
         };
+        if self
+            .pending_take
+            .as_ref()
+            .is_some_and(|pending| pending.spec != *spec)
+        {
+            self.pending_take = None;
+        }
         if !self.matches_current_spec(spec) {
             self.session.clear();
+            self.pending_take = None;
             if spec.preload() {
                 match self.session.try_request(spec.clone()) {
                     Ok(_) => return Ok(Some(StingerLoadEvent::Requested)),
@@ -117,24 +134,33 @@ impl StingerLoadController {
         }
         let event = match self.session.state() {
             StingerLoadState::Ready { .. } => StingerLoadEvent::Ready,
-            StingerLoadState::Failed { error, .. } => StingerLoadEvent::Failed(*error),
+            StingerLoadState::Failed { error, .. } => {
+                self.pending_take = None;
+                StingerLoadEvent::Failed(*error)
+            }
             StingerLoadState::Idle
             | StingerLoadState::Loading { .. }
-            | StingerLoadState::Stopped => return Ok(None),
+            | StingerLoadState::Stopped => {
+                self.pending_take = None;
+                return Ok(None);
+            }
         };
         Ok(Some(event))
     }
 
-    /// Starts a bounded load for an explicit Take, including resources whose
-    /// persisted `preload` flag is false. The caller remains on the UI thread;
-    /// the worker and the next refresh tick own all file/decoder work.
-    pub(crate) fn request_on_demand(
+    /// Starts a bounded load for an explicit Take and remembers its validated
+    /// duration for automatic dispatch when the worker publishes the clip.
+    /// Resources whose persisted `preload` flag is false use the same worker;
+    /// the caller remains on the UI thread.
+    pub(crate) fn request_on_demand_take(
         &mut self,
         project: &Project,
         preview_scene: Option<&str>,
+        duration_ms: u32,
     ) -> Result<StingerLoadEvent, String> {
         let Some(profile) = project.active_profile_spec() else {
             self.session.clear();
+            self.pending_take = None;
             return Err("Stinger is not ready; no active profile is configured".to_owned());
         };
         let Some(spec) = preview_scene
@@ -143,17 +169,20 @@ impl StingerLoadController {
             .cloned()
         else {
             self.session.clear();
+            self.pending_take = None;
             return Err("Stinger is not ready; no resource is configured".to_owned());
         };
-        self.request_spec(spec, profile.video_format())
+        let event = self.request_spec(spec.clone(), profile.video_format())?;
+        self.pending_take = Some(PendingStingerTake { spec, duration_ms });
+        Ok(event)
     }
 
     /// Returns the immutable clip already published by the preload worker.
     ///
     /// This is deliberately a state lookup only. Explicit Take never opens a
-    /// file, polls a decoder, or waits for the worker; callers must surface
-    /// [`StingerTakeError::NotReady`] and let the normal refresh cadence retry
-    /// the preload.
+    /// file, polls a decoder, or waits for the worker; callers surface
+    /// [`StingerTakeError::NotReady`] and submit a bounded request through the
+    /// same worker when a persisted resource is available.
     pub(crate) fn ready_clip(&self) -> Result<Arc<StingerClip>, StingerTakeError> {
         match self.session.state() {
             StingerLoadState::Ready { clip, .. } => Ok(Arc::clone(clip)),
@@ -163,6 +192,25 @@ impl StingerLoadController {
                 Err(StingerTakeError::NotReady)
             }
         }
+    }
+
+    /// Takes the one-shot intent once its matching worker result is ready.
+    ///
+    /// The intent is transient and is consumed before dispatch, so a failed
+    /// state command cannot cause an automatic retry loop on every refresh.
+    pub(crate) fn take_ready_pending(&mut self) -> Option<(Arc<StingerClip>, u32)> {
+        let (clip, duration_ms) = {
+            let pending = self.pending_take.as_ref()?;
+            let clip = match self.session.state() {
+                StingerLoadState::Ready { spec, clip, .. } if spec == &pending.spec => {
+                    Arc::clone(clip)
+                }
+                _ => return None,
+            };
+            (clip, pending.duration_ms)
+        };
+        self.pending_take.take();
+        Some((clip, duration_ms))
     }
 
     /// Returns the current transient session state for diagnostics/tests.
@@ -190,6 +238,7 @@ impl StingerLoadController {
             return Ok(StingerLoadEvent::Requested);
         }
         self.session.clear();
+        self.pending_take = None;
         match self.session.try_request(spec) {
             Ok(_) => Ok(StingerLoadEvent::Requested),
             Err(StingerLoadQueueError::Full) => {
@@ -318,7 +367,7 @@ mod tests {
         project.add_profile(profile).expect("profile attach");
         assert_eq!(
             controller
-                .request_on_demand(&project, Some("main"))
+                .request_on_demand_take(&project, Some("main"), 450)
                 .expect("on-demand request"),
             StingerLoadEvent::Requested
         );
@@ -326,10 +375,12 @@ mod tests {
             wait_for_event(&mut controller, &resource, format),
             StingerLoadEvent::Ready
         );
-        assert_eq!(
-            controller.ready_clip().expect("ready clip"),
-            Arc::new(expected)
-        );
+        let (pending_clip, duration_ms) = controller
+            .take_ready_pending()
+            .expect("pending Take should complete");
+        assert_eq!(pending_clip, Arc::new(expected));
+        assert_eq!(duration_ms, 450);
+        assert!(controller.take_ready_pending().is_none());
     }
 
     #[test]

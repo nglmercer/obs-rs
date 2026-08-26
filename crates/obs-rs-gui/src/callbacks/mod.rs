@@ -15,6 +15,7 @@ pub(crate) mod source_filters;
 pub(crate) mod source_properties;
 pub(crate) mod source_transform;
 mod stinger_picker;
+mod stinger_take;
 
 use std::{
     cell::RefCell,
@@ -44,10 +45,7 @@ pub(crate) use docks::install_dock_callbacks_with_layout;
 pub(crate) use hotkeys::install_shortcut_callbacks;
 pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
-pub(crate) use output::{
-    install_mixer_callbacks, install_output_callbacks, install_stinger_take_callback,
-    push_program_frame,
-};
+pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
 pub(crate) use project::{
     apply_scene_properties_and_refresh, duplicate_scene_and_refresh, install_project_callbacks,
     project_store,
@@ -75,6 +73,7 @@ pub(crate) use source_filters::install_source_filters_window;
 pub(crate) use source_properties::install_source_properties_window;
 pub(crate) use source_transform::install_source_transform_window;
 pub(crate) use stinger_picker::install_stinger_file_picker;
+pub(crate) use stinger_take::{dispatch_pending_stinger_take, install_stinger_take_callback};
 
 /// Keep source-row paths bounded at the UI boundary. The path contains both
 /// group IDs and the addressed child ID, so it is one segment deeper than the
@@ -298,6 +297,10 @@ pub(crate) fn start_preview_timer(
                 .borrow_mut()
                 .sync(state.project_session().project(), preview_scene.as_deref())
         };
+        let stinger_ready = matches!(
+            &stinger_event,
+            Ok(Some(crate::stinger_loader::StingerLoadEvent::Ready))
+        );
         match stinger_event {
             Ok(Some(crate::stinger_loader::StingerLoadEvent::Requested)) => {
                 ui.set_status_message("Preloading scene Stinger…".into());
@@ -510,6 +513,9 @@ pub(crate) fn start_preview_timer(
             last_output_ui_refresh = Instant::now();
         }
         preview_worker.record_ui_callback(callback_started.elapsed());
+        if stinger_ready {
+            dispatch_pending_stinger_take(&ui, &state, &surface, &stinger_loader);
+        }
     });
     timer
 }

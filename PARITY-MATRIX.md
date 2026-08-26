@@ -81,10 +81,10 @@ Not-ready, typed decode failure, stopped-loader, invalid-duration, and state
 dispatch errors are visible in the status surface. The picker reports
 unavailable, already-open, cancelled, spawn, and selection errors without
 blocking the UI. When a persisted resource is not ready, the first Take can
-now submit a bounded on-demand request through the same worker; the UI reports
-that the user should take again after the clip becomes ready. Automatic
-completion of the first click is intentionally still open. Codec-specific
-hardware selection and non-GStreamer adapters remain incomplete.
+now submit a bounded on-demand request through the same worker; the refresh
+cadence keeps the duration as a transient intent and dispatches automatically
+when the matching clip becomes ready. Codec-specific hardware selection and
+non-GStreamer adapters remain incomplete.
 
 The asynchronous picker boundary is implemented in
 `crates/obs-rs-gui/src/callbacks/stinger_picker.rs`; the capability is

@@ -65,9 +65,10 @@ project state store; the GUI resource session is now connected to the native
 adapter, and the scene-properties fields are synchronized from the project.
 The file picker is now asynchronous and capability-backed. Explicit Take can
 now submit a persisted `preload=false` resource through the same bounded worker
-when no ready clip exists; the first click only starts loading and the user must
-take again after the next refresh publishes the clip. Automatic completion of
-the first click and the exact OBS workflow remain open.
+when no ready clip exists; the refresh cadence keeps the validated duration as a
+transient intent and dispatches automatically after the matching clip is ready.
+Codec-specific hardware selection, non-GStreamer adapters, and the exact OBS
+workflow remain open.
 
 The portable Luma Wipe packet now adds a typed luminance-mask transition to the
 media, project, UI, and GUI boundaries. Linear horizontal and vertical masks
