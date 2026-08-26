@@ -68,6 +68,14 @@ fire through an open dialog. The GUI fixture covers cancel-without-commit and
 Enter-based scene-property commit; text-entry-specific and native
 accessibility focus behavior remain open.
 
+The modal acceptance-routing follow-up preserves that same callback boundary
+for scene creation, scene properties, source rename, project-file modes, and
+collection create/duplicate/rename forms. The overlay now invokes each dialog's
+typed callback instead of closing the modal or accidentally selecting the
+default project/collection action; the integrated GUI fixture covers scene
+creation and source rename through real Rust mutations. Error-aware close
+semantics for file and collection operations remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

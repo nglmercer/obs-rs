@@ -116,6 +116,16 @@ GUI fixture verifies both cancel-without-commit and Enter-based scene-property
 commit through the real overlay. Text-entry-specific and native accessibility
 focus behavior remain part of the broader UI audit.
 
+## Latest verified package: modal acceptance routing
+
+On 2026-08-26, the modal overlay now forwards accepted actions through each
+dialog's typed callback. Scene creation and source rename therefore commit
+through the existing Rust project boundary, while project-file modes retain
+their Load/Save As/Import/Export dispatch and collection forms retain their
+Create/Duplicate/Rename dispatch. The integrated GUI fixture verifies scene
+creation and source rename with `Enter`; operation-specific failure feedback
+and success-only close behavior remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to
