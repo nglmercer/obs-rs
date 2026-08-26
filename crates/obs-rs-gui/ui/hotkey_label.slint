@@ -1,8 +1,12 @@
 // Converts Slint key event pieces into the bounded canonical label consumed
-// by the Rust-owned Shortcut table. Keeping this pure helper outside the main
-// window prevents keyboard normalization from becoming another MainWindow
-// responsibility as the action catalog grows.
+// by the Rust-owned Shortcut table. Keeping keyboard normalization and the
+// transient push-release rule outside the main window prevents this boundary
+// from growing with every action added to the catalog.
 export component HotkeyLabel inherits Rectangle {
+    in-out property <int> held-push-action: 0;
+    in-out property <string> held-push-key: "";
+    callback set-mixer-muted(string, bool);
+
     public pure function key-name(text: string) -> string {
         text == " " ? "Space"
             : text == Key.Return ? "Enter"
@@ -27,5 +31,21 @@ export component HotkeyLabel inherits Rectangle {
             + (shift ? "Shift+" : "")
             + (alt ? "Alt+" : "")
             + root.key-name(text);
+    }
+
+    public function release(action: int) -> bool {
+        if (action == 23) {
+            root.set-mixer-muted("mic", true);
+            root.held-push-action = 0;
+            root.held-push-key = "";
+            true
+        } else if (action == 24) {
+            root.set-mixer-muted("mic", false);
+            root.held-push-action = 0;
+            root.held-push-key = "";
+            true
+        } else {
+            false
+        }
     }
 }

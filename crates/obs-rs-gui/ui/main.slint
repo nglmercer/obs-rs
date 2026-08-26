@@ -373,6 +373,7 @@ export component MainWindow inherits Window {
             visible: false;
             width: 0px;
             height: 0px;
+            set-mixer-muted(id, muted) => { root.set-mixer-muted(id, muted); }
         }
 
         // A mode of -1 means "toggle studio mode", which is how both the View
@@ -454,9 +455,11 @@ export component MainWindow inherits Window {
                 root.toggle-mixer-mute("desktop");
                 true
             } else if (action == 23) {
+                hotkey-labeler.held-push-action = action;
                 root.set-mixer-muted("mic", false);
                 true
             } else if (action == 24) {
+                hotkey-labeler.held-push-action = action;
                 root.set-mixer-muted("mic", true);
                 true
             } else if (action == 18) {
@@ -483,17 +486,6 @@ export component MainWindow inherits Window {
                 && root.preview-scene != ""
                 && root.preview-scene != "none") {
                 root.open-scene-projector(root.preview-scene);
-                true
-            } else {
-                false
-            }
-        }
-        function execute-shortcut-release(action: int) -> bool {
-            if (action == 23) {
-                root.set-mixer-muted("mic", true);
-                true
-            } else if (action == 24) {
-                root.set-mixer-muted("mic", false);
                 true
             } else {
                 false
@@ -554,12 +546,15 @@ export component MainWindow inherits Window {
 
     FocusScope {
         key-pressed(event) => {
-            if (root.execute-shortcut(
-                root.trigger-shortcut(hotkey-labeler.label(
+            let action = root.trigger-shortcut(hotkey-labeler.label(
                     event.text,
                     event.modifiers.control,
                     event.modifiers.shift,
-                    event.modifiers.alt)))) {
+                    event.modifiers.alt));
+            if (root.execute-shortcut(action)) {
+                if (action == 23 || action == 24) {
+                    hotkey-labeler.held-push-key = hotkey-labeler.key-name(event.text);
+                }
                 return accept;
             }
             if event.modifiers.control && hotkey-labeler.key-name(event.text) == "A" {
@@ -606,12 +601,17 @@ export component MainWindow inherits Window {
         }
 
         key-released(event) => {
-            if (root.execute-shortcut-release(
-                root.trigger-shortcut(hotkey-labeler.label(
+            let action = root.trigger-shortcut(hotkey-labeler.label(
                     event.text,
                     event.modifiers.control,
                     event.modifiers.shift,
-                    event.modifiers.alt)))) {
+                    event.modifiers.alt));
+            if (hotkey-labeler.release(action)) {
+                return accept;
+            }
+            if (hotkey-labeler.held-push-action != 0
+                && hotkey-labeler.key-name(event.text) == hotkey-labeler.held-push-key
+                && hotkey-labeler.release(hotkey-labeler.held-push-action)) {
                 return accept;
             }
             if (event.text == " ") {
