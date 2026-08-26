@@ -44,6 +44,7 @@ pub(super) fn catalog() -> UiText {
             camera_mode_hint: s("Native camera mode reported by the selected device."),
             path: s("Image path"),
             path_hint: s("PNG, JPEG, GIF, WebP, or PNM file. Animated GIF frames follow their timestamps."),
+            browse_unavailable_hint: s("No system file chooser was found; type the image path manually."),
             paths: s("Image paths"),
             paths_hint: s("One image file or directory per line. Directory entries are expanded in name order."),
             slide_time_ms: s("Slide time (ms)"),

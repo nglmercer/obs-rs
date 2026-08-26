@@ -381,6 +381,82 @@ pub(super) fn render_source_properties_window() {
     window.hide().expect("properties window should hide");
 }
 
+/// Verifies that an image source gets the native Browse capability while its
+/// selected path still travels through the properties draft and the existing
+/// project commit path.
+pub(super) fn exercise_image_source_file_picker(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let scene = state
+        .borrow()
+        .preview_scene()
+        .expect("preview scene")
+        .to_owned();
+    let mut settings = source_settings("image_source").expect("image source defaults");
+    settings
+        .set("path", "/tmp/example.png")
+        .expect("image path setting");
+    let source =
+        SourceSpec::new("gui-image", "image_source", "GUI image", settings).expect("image source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSource {
+            profile: "live".to_owned(),
+            scene,
+            source,
+        }))
+        .expect("add image source");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: "gui-image".to_owned(),
+        })
+        .expect("select image source");
+    refresh_ui(ui, state, surface);
+
+    let controller = crate::install_source_properties_window(ui, state, surface)
+        .expect("image properties controller");
+    ui.invoke_open_source_properties_window();
+    let window =
+        crate::callbacks::source_properties::SourcePropertiesController::window(&controller);
+    assert_eq!(window.get_source_kind(), "image_source");
+    assert_eq!(
+        window.get_source_file_picker_enabled(),
+        crate::callbacks::detect_file_picker().is_some(),
+        "Browse availability must reflect the detected desktop chooser"
+    );
+    let path_row = window
+        .get_property_rows()
+        .row_data(0)
+        .expect("image properties expose a path row");
+    assert_eq!(path_row.key, "path");
+    assert_eq!(path_row.text, "/tmp/example.png");
+
+    // This is the same callback used by the asynchronous picker result. The
+    // file chooser itself is intentionally not opened by a deterministic GUI
+    // test, since its availability and lifetime belong to the desktop.
+    window.invoke_edit_property("path".into(), "/tmp/selected.png".into());
+    assert!(window
+        .get_source_settings()
+        .contains("path = \"/tmp/selected.png\""));
+    window.invoke_accept_properties();
+
+    let state = state.borrow();
+    let source = state
+        .project_session()
+        .project()
+        .active_profile_spec()
+        .and_then(|profile| profile.source("gui-image"))
+        .expect("image source persisted");
+    assert_eq!(
+        source.settings().get("path"),
+        Some("/tmp/selected.png"),
+        "the selected image path must commit through source properties"
+    );
+}
+
 /// Exercises the standalone filter list through its project-command callbacks.
 #[allow(
     clippy::too_many_lines,

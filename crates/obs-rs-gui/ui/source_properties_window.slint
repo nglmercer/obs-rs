@@ -9,16 +9,25 @@ import { Palette } from "palette.slint";
 // here rather than in Rust means a new property is data, not new UI.
 component PropertyField inherits VerticalLayout {
     in property <PropertyRow> field;
+    in property <bool> browse-enabled: false;
     callback edited(string, string);
+    callback browse();
     spacing: 2px;
 
     // 0 text · 1 number · 2 toggle · 3 choice · 4 colour
     if field.kind == 0 : SettingRow {
         label: root.field.label;
-        LineEdit {
-            text: root.field.text;
-            edited => { root.edited(root.field.key, self.text); }
-            horizontal-stretch: 1;
+        HorizontalLayout {
+            spacing: 8px;
+            LineEdit {
+                text: root.field.text;
+                edited => { root.edited(root.field.key, self.text); }
+                horizontal-stretch: 1;
+            }
+            if root.browse-enabled : Button {
+                text: I18n.text.settings_ui.browse;
+                clicked => { root.browse(); }
+            }
         }
     }
     if field.kind == 1 : SettingRow {
@@ -77,6 +86,7 @@ export component SourcePropertiesWindow inherits Window {
     in property <string> capture-capabilities;
     in property <[PropertyRow]> property-rows;
     in property <bool> monitor-visible;
+    in property <bool> source-file-picker-enabled;
     in property <string> monitor-summary;
     in-out property <string> source-settings;
     in-out property <bool> show-advanced: false;
@@ -85,6 +95,8 @@ export component SourcePropertiesWindow inherits Window {
     callback cancel-properties();
     callback restore-defaults();
     callback edit-property(string, string);
+    callback browse-source-file();
+    callback picker-status(string);
     callback open-monitor-window();
 
     VerticalLayout {
@@ -108,7 +120,15 @@ export component SourcePropertiesWindow inherits Window {
                     title: I18n.text.property_ui.settings_group;
                     for entry in root.property-rows : PropertyField {
                         field: entry;
+                        browse-enabled: root.source-kind == "image_source"
+                            && entry.key == "path"
+                            && root.source-file-picker-enabled;
                         edited(key, value) => { root.edit-property(key, value); }
+                        browse() => { root.browse-source-file(); }
+                    }
+                    if root.source-kind == "image_source"
+                        && !root.source-file-picker-enabled : SettingHint {
+                        text: I18n.text.property_ui.browse_unavailable_hint;
                     }
                     // A display-backed source is pointed at a screen through
                     // the picker rather than by typing a monitor name.

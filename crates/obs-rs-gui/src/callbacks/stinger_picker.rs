@@ -11,10 +11,11 @@ use std::{
     thread,
 };
 
+use obs_rs_config::Config;
 use obs_rs_media::MAX_STINGER_RESOURCE_PATH_BYTES;
 use slint::{ComponentHandle, Weak};
 
-use crate::MainWindow;
+use crate::{MainWindow, SourcePropertiesWindow};
 
 const MAX_PROJECT_PATH_BYTES: usize = 4_096;
 const MAX_PICKER_OUTPUT_BYTES: usize = MAX_PROJECT_PATH_BYTES + 1;
@@ -22,6 +23,7 @@ const MAX_PICKER_OUTPUT_BYTES: usize = MAX_PROJECT_PATH_BYTES + 1;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PickerPurpose {
     StingerResource,
+    SourceImage,
     ProjectSaveAs,
     ProjectOpen,
     CollectionExport,
@@ -32,7 +34,8 @@ impl PickerPurpose {
     fn path_limit(self) -> usize {
         match self {
             Self::StingerResource => MAX_STINGER_RESOURCE_PATH_BYTES,
-            Self::ProjectSaveAs
+            Self::SourceImage
+            | Self::ProjectSaveAs
             | Self::ProjectOpen
             | Self::CollectionExport
             | Self::CollectionImport => MAX_PROJECT_PATH_BYTES,
@@ -42,6 +45,7 @@ impl PickerPurpose {
     fn label(self) -> &'static str {
         match self {
             Self::StingerResource => "Stinger",
+            Self::SourceImage => "Image",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project",
             Self::CollectionExport | Self::CollectionImport => "Collection",
         }
@@ -52,6 +56,7 @@ impl PickerPurpose {
             Self::StingerResource => {
                 "Stinger file picker is unavailable; type the resource path manually"
             }
+            Self::SourceImage => "Image file picker is unavailable; type the image path manually",
             Self::ProjectSaveAs => {
                 "Project file picker is unavailable; type the Save As path manually"
             }
@@ -70,6 +75,7 @@ impl PickerPurpose {
     fn already_open_message(self) -> &'static str {
         match self {
             Self::StingerResource => "Stinger file picker is already open",
+            Self::SourceImage => "Image file picker is already open",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project file picker is already open",
             Self::CollectionExport | Self::CollectionImport => {
                 "Collection file picker is already open"
@@ -80,6 +86,7 @@ impl PickerPurpose {
     fn thread_name(self) -> &'static str {
         match self {
             Self::StingerResource => "obs-rs-stinger-file-picker",
+            Self::SourceImage => "obs-rs-image-file-picker",
             Self::ProjectSaveAs => "obs-rs-project-file-picker",
             Self::ProjectOpen => "obs-rs-project-open-file-picker",
             Self::CollectionExport => "obs-rs-collection-export-file-picker",
@@ -90,6 +97,7 @@ impl PickerPurpose {
     fn opening_message(self) -> &'static str {
         match self {
             Self::StingerResource => "Opening Stinger file picker…",
+            Self::SourceImage => "Opening image file picker…",
             Self::ProjectSaveAs | Self::ProjectOpen => "Opening project file picker…",
             Self::CollectionExport | Self::CollectionImport => "Opening collection file picker…",
         }
@@ -98,6 +106,7 @@ impl PickerPurpose {
     fn cancelled_message(self) -> &'static str {
         match self {
             Self::StingerResource => "Stinger file selection cancelled",
+            Self::SourceImage => "Image file selection cancelled",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project file selection cancelled",
             Self::CollectionExport | Self::CollectionImport => {
                 "Collection file selection cancelled"
@@ -108,6 +117,7 @@ impl PickerPurpose {
     fn selected_message(self) -> &'static str {
         match self {
             Self::StingerResource => "Stinger resource selected",
+            Self::SourceImage => "Image source path selected",
             Self::ProjectSaveAs => "Project Save As path selected",
             Self::ProjectOpen => "Project path selected",
             Self::CollectionExport => "Collection export path selected",
@@ -146,6 +156,95 @@ pub(crate) fn install_file_pickers(ui: &MainWindow) {
     });
 }
 
+/// Connects the image source Browse button to a desktop file chooser.
+///
+/// The source properties window keeps its settings draft local. A successful
+/// picker result therefore returns through the existing `edit-property`
+/// callback and is committed only when the user presses OK.
+pub(crate) fn install_source_image_picker(window: &SourcePropertiesWindow) {
+    let tool = detect_file_picker();
+    window.set_source_file_picker_enabled(tool.is_some());
+    let active = Arc::new(AtomicBool::new(false));
+    let weak = window.as_weak();
+    let active_for_worker = Arc::clone(&active);
+    window.on_browse_source_file(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        if window.get_source_kind().as_str() != "image_source" {
+            return;
+        }
+        let start = Config::parse(window.get_source_settings().as_str())
+            .ok()
+            .and_then(|settings| settings.get("path").map(str::to_owned))
+            .unwrap_or_default();
+        begin_source_image_picker(&weak, &active_for_worker, tool, start.as_str());
+    });
+}
+
+fn begin_source_image_picker(
+    weak: &Weak<SourcePropertiesWindow>,
+    active: &Arc<AtomicBool>,
+    tool: Option<&'static str>,
+    start: &str,
+) {
+    let Some(window) = weak.upgrade() else {
+        return;
+    };
+    let Some(tool) = tool else {
+        window.invoke_picker_status(PickerPurpose::SourceImage.unavailable_message().into());
+        return;
+    };
+    if active.swap(true, Ordering::AcqRel) {
+        window.invoke_picker_status(PickerPurpose::SourceImage.already_open_message().into());
+        return;
+    }
+    let start = start.to_owned();
+    let callback_window = weak.clone();
+    let active_for_worker = Arc::clone(active);
+    let worker = thread::Builder::new()
+        .name(PickerPurpose::SourceImage.thread_name().to_owned())
+        .spawn(move || {
+            let result = choose_path(tool, &start, PickerPurpose::SourceImage);
+            active_for_worker.store(false, Ordering::Release);
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(window) = callback_window.upgrade() else {
+                    return;
+                };
+                match result {
+                    Ok(Some(path)) => {
+                        window.invoke_edit_property("path".into(), path.into());
+                        window.invoke_picker_status(
+                            PickerPurpose::SourceImage.selected_message().into(),
+                        );
+                    }
+                    Ok(None) => window.invoke_picker_status(
+                        PickerPurpose::SourceImage.cancelled_message().into(),
+                    ),
+                    Err(error) => window.invoke_picker_status(
+                        format!(
+                            "{} file picker failed: {error}",
+                            PickerPurpose::SourceImage.label()
+                        )
+                        .into(),
+                    ),
+                }
+            });
+        });
+    if let Err(error) = worker {
+        active.store(false, Ordering::Release);
+        window.invoke_picker_status(
+            format!(
+                "{} file picker failed: {error}",
+                PickerPurpose::SourceImage.label()
+            )
+            .into(),
+        );
+    } else {
+        window.invoke_picker_status(PickerPurpose::SourceImage.opening_message().into());
+    }
+}
+
 fn project_picker_purpose(mode: i32) -> PickerPurpose {
     match mode {
         1 => PickerPurpose::CollectionExport,
@@ -174,6 +273,7 @@ fn begin_picker(
     }
     let start = match purpose {
         PickerPurpose::StingerResource => ui.get_scene_stinger_path().to_string(),
+        PickerPurpose::SourceImage => String::new(),
         PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
             ui.get_project_path().to_string()
         }
@@ -198,6 +298,7 @@ fn begin_picker(
                             PickerPurpose::StingerResource => {
                                 ui.set_scene_stinger_path(path.into());
                             }
+                            PickerPurpose::SourceImage => return,
                             PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
                                 ui.set_project_path(path.into());
                             }
@@ -328,6 +429,11 @@ fn configure_command(
 fn configure_zenity(command: &mut Command, start: &str, purpose: PickerPurpose) {
     let (title, save, filter) = match purpose {
         PickerPurpose::StingerResource => ("Select Stinger resource", false, None),
+        PickerPurpose::SourceImage => (
+            "Select image source",
+            false,
+            Some("Image files | *.png *.jpg *.jpeg *.gif *.webp *.pnm"),
+        ),
         PickerPurpose::ProjectSaveAs => (
             "Save OBS-RS project",
             true,
@@ -367,6 +473,11 @@ fn configure_kdialog(command: &mut Command, start: &str, purpose: PickerPurpose)
         PickerPurpose::StingerResource => {
             (false, ".", "Video files (*.webm *.mp4 *.mkv *.mov *.avi)")
         }
+        PickerPurpose::SourceImage => (
+            false,
+            ".",
+            "Image files (*.png *.jpg *.jpeg *.gif *.webp *.pnm)",
+        ),
         PickerPurpose::ProjectSaveAs => (
             true,
             "obs-rs-project.obsrproj",
@@ -400,6 +511,9 @@ fn configure_osascript(command: &mut Command, purpose: PickerPurpose) {
         PickerPurpose::StingerResource => {
             "set selectedFile to choose file with prompt \"Select Stinger resource\"\nPOSIX path of selectedFile"
         }
+        PickerPurpose::SourceImage => {
+            "set selectedFile to choose file with prompt \"Select image source\"\nPOSIX path of selectedFile"
+        }
         PickerPurpose::ProjectSaveAs => {
             "set selectedFile to choose file name with prompt \"Save OBS-RS project as\"\ndefault name \"obs-rs-project.obsrproj\"\nPOSIX path of selectedFile"
         }
@@ -421,6 +535,11 @@ fn configure_powershell(command: &mut Command, purpose: PickerPurpose) {
         PickerPurpose::StingerResource => (
             "OpenFileDialog",
             "Video files|*.webm;*.mp4;*.mkv;*.mov;*.avi|All files|*.*",
+            false,
+        ),
+        PickerPurpose::SourceImage => (
+            "OpenFileDialog",
+            "Image files|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.pnm|All files|*.*",
             false,
         ),
         PickerPurpose::ProjectSaveAs => (
@@ -609,6 +728,70 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(kdialog_args.iter().any(|arg| arg == "--getopenfilename"));
+    }
+
+    #[test]
+    fn image_picker_uses_open_dialogs_and_image_filters() {
+        let mut zenity = Command::new("zenity");
+        configure_command(
+            &mut zenity,
+            "zenity",
+            "/tmp/example.png",
+            PickerPurpose::SourceImage,
+        )
+        .expect("zenity image dialog");
+        let zenity_args = zenity
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(zenity_args
+            .iter()
+            .any(|arg| arg == "--title=Select image source"));
+        assert!(zenity_args.iter().any(|arg| {
+            arg == "--file-filter=Image files | *.png *.jpg *.jpeg *.gif *.webp *.pnm"
+        }));
+        assert!(!zenity_args.iter().any(|arg| arg == "--save"));
+
+        let mut kdialog = Command::new("kdialog");
+        configure_command(
+            &mut kdialog,
+            "kdialog",
+            "/tmp/example.png",
+            PickerPurpose::SourceImage,
+        )
+        .expect("kdialog image dialog");
+        let kdialog_args = kdialog
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(kdialog_args.iter().any(|arg| arg == "--getopenfilename"));
+        assert!(kdialog_args
+            .iter()
+            .any(|arg| arg == "Image files (*.png *.jpg *.jpeg *.gif *.webp *.pnm)"));
+
+        let mut osascript = Command::new("osascript");
+        configure_command(&mut osascript, "osascript", "", PickerPurpose::SourceImage)
+            .expect("AppleScript image dialog");
+        assert!(osascript
+            .get_args()
+            .any(|arg| arg.to_string_lossy().contains("Select image source")));
+
+        let mut powershell = Command::new("powershell");
+        configure_command(
+            &mut powershell,
+            "powershell",
+            "",
+            PickerPurpose::SourceImage,
+        )
+        .expect("PowerShell image dialog");
+        assert!(powershell.get_args().any(|arg| {
+            arg.to_string_lossy()
+                .contains("Image files|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.pnm|All files|*.*")
+        }));
+        assert_eq!(
+            PickerPurpose::SourceImage.path_limit(),
+            MAX_PROJECT_PATH_BYTES
+        );
     }
 
     #[test]

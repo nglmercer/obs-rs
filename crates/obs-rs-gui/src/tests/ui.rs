@@ -293,4 +293,5 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_project_open::exercise_project_open_dialog(&ui);
     ui_project_open::exercise_project_recovery_dialog(&ui, &state);
     ui_navigation::exercise_context_menus(&ui, &state, &surface);
+    ui_sources::exercise_image_source_file_picker(&ui, &state, &surface);
 }

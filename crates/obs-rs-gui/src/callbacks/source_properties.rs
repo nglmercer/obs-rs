@@ -84,6 +84,7 @@ pub(crate) fn install_source_properties_window_with_monitor(
         monitor: monitor.cloned(),
     });
 
+    super::stinger_picker::install_source_image_picker(&controller.window);
     install_open(ui, state, &controller);
     install_editing(ui, state, &controller);
     install_commit(ui, state, surface, &controller);
@@ -160,6 +161,13 @@ fn install_editing(
     state: &Rc<RefCell<DesktopState>>,
     controller: &Rc<SourcePropertiesController>,
 ) {
+    let weak = ui.as_weak();
+    controller.window.on_picker_status(move |message| {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_status_message(message);
+        }
+    });
+
     let edit_state = Rc::clone(state);
     let edit_controller = Rc::clone(controller);
     controller.window.on_edit_property(move |key, value| {
