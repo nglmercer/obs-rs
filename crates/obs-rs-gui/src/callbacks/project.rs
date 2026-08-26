@@ -9,6 +9,10 @@ use slint::{ComponentHandle, Weak};
 use super::output::{scene_transition_spec, SceneTransitionInput};
 use crate::{refresh_ui, source_settings_for_canvas, MainWindow, OutputRuntime, PreviewSurface};
 
+#[cfg(test)]
+#[path = "project_tests.rs"]
+mod tests;
+
 const DISCARD_NEW_PROJECT: i32 = 4;
 const DISCARD_EXIT: i32 = 5;
 const DISCARD_SWITCH_COLLECTION: i32 = 6;
@@ -27,6 +31,21 @@ pub(crate) fn install_project_callbacks(
     let save_surface = Rc::clone(surface);
     ui.on_save_project(move || {
         save_and_refresh(&weak, &save_state, &save_surface);
+    });
+
+    let weak = ui.as_weak();
+    ui.on_open_save_project_as(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_project_dialog_mode(3);
+            ui.set_active_modal(1);
+        }
+    });
+
+    let weak = ui.as_weak();
+    let save_as_state = Rc::clone(state);
+    let save_as_surface = Rc::clone(surface);
+    ui.on_save_project_as(move |path| {
+        save_as_and_refresh(&weak, &save_as_state, &save_as_surface, path.as_str());
     });
 
     let weak = ui.as_weak();
@@ -152,6 +171,63 @@ fn save_and_refresh(
         }
         Err(error) => ui.set_status_message(format!("Save failed: {error}").into()),
     }
+}
+
+/// Saves the current document to a new path and makes that path the active
+/// document only after the atomic write succeeds.
+fn save_as_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    target_path: &str,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let current_path = ui.get_project_path().to_string();
+    let target_path = target_path.trim().to_owned();
+    let result: Result<usize, Box<dyn Error>> = (|| {
+        let bytes = save_project_as_document(state, &current_path, &target_path)?;
+        ui.set_project_path(target_path.as_str().into());
+        Ok(bytes)
+    })();
+    match result {
+        Ok(bytes) => {
+            crate::refresh::invalidate_recovery_cache();
+            refresh_ui(&ui, state, surface);
+            ui.set_status_message(format!("Saved project as {target_path} ({bytes} bytes)").into());
+        }
+        Err(error) => ui.set_status_message(format!("Save As failed: {error}").into()),
+    }
+}
+
+/// Performs the Save As state transition behind the GUI callback boundary.
+///
+/// A different existing file is rejected before the project session or its
+/// selection key changes. The currently active path remains a valid explicit
+/// Save target, which makes repeated Save As calls deterministic.
+fn save_project_as_document(
+    state: &Rc<RefCell<DesktopState>>,
+    current_path: &str,
+    target_path: &str,
+) -> Result<usize, Box<dyn Error>> {
+    let current_path = current_path.trim();
+    let target_path = target_path.trim();
+    if target_path.is_empty() {
+        return Err(std::io::Error::other("project Save As path is empty").into());
+    }
+    let target = std::path::Path::new(target_path);
+    if target_path != current_path && target.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("Save As target already exists: {target_path}"),
+        )
+        .into());
+    }
+    let store = project_store(target_path)?;
+    let bytes = state.borrow_mut().save_project(&store)?;
+    state.borrow_mut().set_project_selection_key(target_path);
+    Ok(bytes)
 }
 
 fn save_and_resolve_discard(

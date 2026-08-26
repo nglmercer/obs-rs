@@ -13,6 +13,15 @@ pub(super) fn exercise_group_source_callbacks(
 ) {
     let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
     crate::callbacks::install_callbacks(ui, state, surface, &output);
+    ui.invoke_open_save_project_as();
+    assert_eq!(
+        ui.get_project_dialog_mode(),
+        3,
+        "Save As uses its own dialog mode"
+    );
+    assert_eq!(ui.get_active_modal(), 1, "Save As opens the project dialog");
+    ui.set_project_dialog_mode(0);
+    ui.set_active_modal(0);
     exercise_scene_keyboard_navigation(ui, state);
 
     // A failed Save must leave the pending action armed so the user can fix
@@ -557,7 +566,7 @@ pub(super) fn exercise_navbar_popup(ui: &MainWindow) {
     file_button.mock_single_click(PointerEventButton::Left);
 
     let entries = ElementHandle::find_by_element_type_name(ui, "MenuEntry").collect::<Vec<_>>();
-    assert_eq!(entries.len(), 7, "the complete File popup is visible");
+    assert_eq!(entries.len(), 8, "the complete File popup is visible");
     entries[0].mock_single_click(PointerEventButton::Left);
     assert_eq!(
         ElementHandle::find_by_element_type_name(ui, "MenuEntry").count(),

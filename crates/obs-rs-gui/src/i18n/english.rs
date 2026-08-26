@@ -340,6 +340,7 @@ pub(super) fn catalog() -> UiText {
         menu_new_project: s("New project"),
         menu_open_project: s("Open project..."),
         menu_save: s("Save"),
+        menu_save_as: s("Save As..."),
         load: s("Load"),
         menu_recover_project: s("Recover project"),
         menu_export_diagnostics: s("Export diagnostics"),
@@ -565,6 +566,10 @@ pub(super) fn catalog() -> UiText {
         project_dialog_title: s("Project configuration"),
         project_dialog_description: s(
             "Choose the files OBS-RS uses to save and diagnose this session.",
+        ),
+        project_save_as_title: s("Save project as"),
+        project_save_as_description: s(
+            "Write the current project to a new file and make that file the active document.",
         ),
         cancel: s("Cancel"),
         project_file: s("Project file"),

@@ -90,6 +90,18 @@ The asynchronous picker boundary is implemented in
 `crates/obs-rs-gui/src/callbacks/stinger_picker.rs`; the capability is
 disabled when no supported desktop chooser is discoverable on `PATH`.
 
+## Latest verified package: project Save As workflow
+
+On 2026-08-25, `PROFILE-001` gained a bounded project `Save As...` workflow.
+The File menu and bilingual project dialog expose a separate mode that writes
+the current document through the existing atomic `ProjectFileStore`, changes
+the active project path and selection key only after the rename succeeds, and
+keeps the existing document state when the target is empty or is a different
+already-existing file. The new path is then used by later Save, Load, Recover,
+and session-persistence operations. Callback, persistence, conflict, and GUI
+dialog-mode tests pass. Native file-picker integration and the broader
+collection/recovery UX remain open.
+
 ## Latest verified package: portable Luma Wipe transition
 
 On 2026-08-25, `STUDIO-002` gained a bounded portable Luma Wipe slice. The
@@ -641,6 +653,11 @@ transformed-boundary crop/rotation and live DPI remain open.
 > across axis-aligned parents (including mirroring) and leaf rotation across
 > uniform, unmirrored parents. A parent crop/rotation or a rotated leaf under
 > non-uniform/mirrored ancestry remains an explicit unsupported capability.
+
+> Profile reconciliation: `PROFILE-001` now includes a separate `Save As...`
+> workflow. The atomic project write completes before the active path and
+> selection key change; an empty path or a different existing destination is
+> rejected without overwriting the target or mutating the loaded document.
 
 | ID | Feature | OBS behavior | OBS-RS observed behavior | Status | Platform | Tests / performance evidence | Files involved | Dependencies |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

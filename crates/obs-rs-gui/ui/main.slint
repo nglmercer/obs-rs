@@ -274,6 +274,8 @@ export component MainWindow inherits Window {
         callback toggle-mixer-mute(string);
         callback toggle-meters-paused();
         callback save-project();
+        callback open-save-project-as();
+        callback save-project-as(string);
         callback save-discard(int);
         callback load-project();
         callback recover-project();
@@ -668,6 +670,7 @@ export component MainWindow inherits Window {
                 open-documentation() => { root.open-documentation(); }
                 about() => { root.active-modal = 10; }
                 save-project() => { root.save-project(); }
+                open-save-project-as() => { root.open-save-project-as(); }
                 load-project() => { root.request-load-project(); }
                 recover-project() => { root.request-recover-project(); }
                 export-diagnostics() => { root.export-diagnostics(); }
@@ -959,6 +962,7 @@ export component MainWindow inherits Window {
         remux-recovery-path <=> root.remux-recovery-path;
         resolve-confirm() => { root.resolve-confirm(); }
         save-project() => { root.save-project(); }
+        save-project-as(path) => { root.save-project-as(path); }
         export-collection(path) => { root.export-collection(path); }
         import-collection(path) => { root.import-collection(path); }
         save-discard(action) => { root.save-discard(action); }

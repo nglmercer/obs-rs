@@ -60,6 +60,7 @@ export component MainModals inherits Rectangle {
 
     callback resolve-confirm();
     callback save-project();
+    callback save-project-as(string);
     callback export-collection(string);
     callback import-collection(string);
     callback save-discard(int);
@@ -113,7 +114,9 @@ export component MainModals inherits Rectangle {
         collection-path <=> root.collection-transfer-path;
         diagnostics-path <=> root.diagnostics-path;
         save-project() => {
-            if root.project-dialog-mode == 1 {
+            if root.project-dialog-mode == 3 {
+                root.save-project-as(root.project-path);
+            } else if root.project-dialog-mode == 1 {
                 root.export-collection(root.collection-transfer-path);
             } else if root.project-dialog-mode == 2 {
                 root.import-collection(root.collection-transfer-path);

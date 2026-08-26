@@ -113,13 +113,14 @@ export component AppNavbar inherits Rectangle {
         x: file-button.x;
         y: root.height;
         width: 224px;
-        height: 200px;
+        height: 228px;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
             MenuEntry { label: I18n.text.menu_new_project; clicked => { root.menu-action("new-project"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_open_project; clicked => { root.menu-action("load-project"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_save; shortcut: root.hotkey-save-project; clicked => { root.menu-action("save-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_save_as; clicked => { root.menu-action("save-project-as"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_recover_project; clicked => { root.menu-action("recover-project"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_export_diagnostics; clicked => { root.menu-action("export-diagnostics"); file-popup.close(); } }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }

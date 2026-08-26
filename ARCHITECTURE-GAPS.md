@@ -7,6 +7,15 @@ independent reviewer.
 
 ## Latest verified packet
 
+The project-lifecycle packet now includes a bounded `Save As...` callback.
+The GUI dialog writes the current serialized document through the existing
+atomic `ProjectFileStore`, rejects a different existing destination before
+touching the session, and changes the active path plus selection key only after
+the write succeeds. Save, Load, Recover, and exit persistence therefore follow
+the new document path without introducing a second project state store. Native
+file-picker integration and the remaining collection/recovery UX are still
+open.
+
 The bounded Stinger runtime packet now accepts already-decoded RGBA frames as
 one validated, preloaded clip. Frame count, per-frame duration, total duration,
 transition point, format consistency, and resident RGBA storage are all

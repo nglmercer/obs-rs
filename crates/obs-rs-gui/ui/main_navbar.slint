@@ -46,6 +46,7 @@ export component MainNavbar inherits Rectangle {
     callback open-documentation();
     callback about();
     callback save-project();
+    callback open-save-project-as();
     callback load-project();
     callback recover-project();
     callback export-diagnostics();
@@ -94,6 +95,8 @@ export component MainNavbar inherits Rectangle {
             root.about();
         } else if action == "save-project" {
             root.save-project();
+        } else if action == "save-project-as" {
+            root.open-save-project-as();
         } else if action == "load-project" {
             root.load-project();
         } else if action == "recover-project" {
