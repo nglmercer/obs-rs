@@ -8,7 +8,7 @@ import { HorizontalSplitter } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { Palette } from "palette.slint";
 import { MainModals } from "main_modals.slint";
-import { HotkeyLabel } from "hotkey_label.slint";
+import { MainKeyboard } from "main_keyboard.slint";
 
 export { AddSourceText, I18n, MonitorText, PropertyText, SettingsText, UiText } from "i18n.slint";
 export { Metrics, Palette, ThemeTokens, UiMetrics } from "palette.slint";
@@ -369,13 +369,6 @@ export component MainWindow inherits Window {
         in property <bool> selected-source-is-scene: false;
         in property <bool> selected-source-is-nested: false;
 
-        hotkey-labeler := HotkeyLabel {
-            visible: false;
-            width: 0px;
-            height: 0px;
-            set-mixer-muted(id, muted) => { root.set-mixer-muted(id, muted); }
-        }
-
         // A mode of -1 means "toggle studio mode", which is how both the View
         // menu and the controls dock drive the canvas.
         function apply-view-mode(mode: int) {
@@ -398,97 +391,6 @@ export component MainWindow inherits Window {
                 root.pending-confirm = 3;
             } else {
                 root.toggle-recording();
-            }
-        }
-        // Keep confirmation dialogs and output callbacks on their established
-        // paths after Rust resolves the shortcut through DesktopState.
-        function execute-shortcut(action: int) -> bool {
-            if (action == 1) {
-                root.swap-scenes();
-                true
-            } else if (action == 16) {
-                root.navigate-preview-scene(-1);
-                true
-            } else if (action == 17) {
-                root.navigate-preview-scene(1);
-                true
-            } else if (action == 2 && !root.recording) {
-                root.request-recording();
-                true
-            } else if (action == 3 && root.recording) {
-                root.request-recording();
-                true
-            } else if (action == 4 && !root.streaming) {
-                root.request-streaming();
-                true
-            } else if (action == 5 && root.streaming) {
-                root.request-streaming();
-                true
-            } else if (action == 6) {
-                root.undo-edit();
-                true
-            } else if (action == 7) {
-                root.redo-edit();
-                true
-            } else if (action == 8) {
-                root.save-project();
-                true
-            } else if (action == 15) {
-                root.cut-transition();
-                true
-            } else if (action == 9) {
-                root.fade-transition();
-                true
-            } else if (action == 10) {
-                root.save-replay-buffer();
-                true
-            } else if (action == 11 && !root.replay-buffering) {
-                root.toggle-replay-buffer();
-                true
-            } else if (action == 12 && root.replay-buffering) {
-                root.toggle-replay-buffer();
-                true
-            } else if (action == 13) {
-                root.toggle-mixer-mute("mic");
-                true
-            } else if (action == 14) {
-                root.toggle-mixer-mute("desktop");
-                true
-            } else if (action == 23) {
-                hotkey-labeler.held-push-action = action;
-                root.set-mixer-muted("mic", false);
-                true
-            } else if (action == 24) {
-                hotkey-labeler.held-push-action = action;
-                root.set-mixer-muted("mic", true);
-                true
-            } else if (action == 18) {
-                root.toggle-studio-mode();
-                true
-            } else if (action == 19
-                && root.selected-source != ""
-                && root.selected-source != "none") {
-                root.toggle-source-visibility(root.selected-source);
-                true
-            } else if (action == 20
-                && root.selected-source != ""
-                && root.selected-source != "none") {
-                root.toggle-source-locked(root.selected-source);
-                true
-            } else if (action == 21
-                && root.selected-source != ""
-                && root.selected-source != "none"
-                && !root.selected-source-is-group
-                && !root.selected-source-is-scene) {
-                root.open-source-projector();
-                true
-            } else if (action == 22
-                && root.preview-scene != ""
-                && root.preview-scene != "none") {
-                root.open-scene-projector(root.preview-scene);
-                true
-            } else {
-                false
             }
         }
         // Discarding actions all share one prompt, and all skip it when there
@@ -544,78 +446,57 @@ export component MainWindow inherits Window {
             root.pending-confirm = 0;
         }
 
+    keyboard := MainKeyboard {
+        recording: root.recording;
+        streaming: root.streaming;
+        replay-buffering: root.replay-buffering;
+        selected-source: root.selected-source;
+        selected-source-is-group: root.selected-source-is-group;
+        selected-source-is-scene: root.selected-source-is-scene;
+        preview-scene: root.preview-scene;
+        space-held <=> root.space-held;
+        swap-scenes() => { root.swap-scenes(); }
+        navigate-preview-scene(direction) => { root.navigate-preview-scene(direction); }
+        trigger-shortcut(label) => { root.trigger-shortcut(label); }
+        request-recording() => { root.request-recording(); }
+        request-streaming() => { root.request-streaming(); }
+        undo-edit() => { root.undo-edit(); }
+        redo-edit() => { root.redo-edit(); }
+        save-project() => { root.save-project(); }
+        cut-transition() => { root.cut-transition(); }
+        fade-transition() => { root.fade-transition(); }
+        save-replay-buffer() => { root.save-replay-buffer(); }
+        toggle-replay-buffer() => { root.toggle-replay-buffer(); }
+        toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+        set-mixer-muted(id, muted) => { root.set-mixer-muted(id, muted); }
+        toggle-studio-mode() => { root.toggle-studio-mode(); }
+        toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
+        toggle-source-locked(id) => { root.toggle-source-locked(id); }
+        open-source-projector() => { root.open-source-projector(); }
+        open-scene-projector(id) => { root.open-scene-projector(id); }
+        select-all-sources() => { root.select-all-sources(); }
+        remove-selected-sources() => { root.remove-selected-sources(); }
+        canvas-nudged(dx, dy) => { root.canvas-nudged(dx, dy); }
+    }
+
     FocusScope {
         key-pressed(event) => {
-            let action = root.trigger-shortcut(hotkey-labeler.label(
-                    event.text,
-                    event.modifiers.control,
-                    event.modifiers.shift,
-                    event.modifiers.alt));
-            if (root.execute-shortcut(action)) {
-                if (action == 23 || action == 24) {
-                    hotkey-labeler.held-push-key = hotkey-labeler.key-name(event.text);
-                }
-                return accept;
-            }
-            if event.modifiers.control && hotkey-labeler.key-name(event.text) == "A" {
-                root.select-all-sources();
-                return accept;
-            }
-            if !event.modifiers.control
-                && !event.modifiers.alt
-                && event.text == Key.Delete
-                && root.selected-source != ""
-                && root.selected-source != "none" {
-                // The canvas and Sources dock share the selected target; the
-                // existing Rust callback therefore applies the same locked
-                // and nested-item rules from either focused surface.
-                root.remove-selected-sources();
-                return accept;
-            }
-            if (event.text == " ") {
-                root.space-held = true;
-                return accept;
-            }
-            // Arrow keys move every unlocked selected item by one canvas pixel;
-            // Shift makes the same command coarse (ten pixels). The Rust
-            // callback owns selection validation and commits the whole nudge
-            // as one bounded project command.
-            if (!event.modifiers.alt
-                && (event.text == Key.LeftArrow
-                    || event.text == Key.RightArrow
-                    || event.text == Key.UpArrow
-                    || event.text == Key.DownArrow)) {
-                let step = event.modifiers.shift ? 10 : 1;
-                if (event.text == Key.LeftArrow) {
-                    root.canvas-nudged(-step, 0);
-                } else if (event.text == Key.RightArrow) {
-                    root.canvas-nudged(step, 0);
-                } else if (event.text == Key.UpArrow) {
-                    root.canvas-nudged(0, -step);
-                } else {
-                    root.canvas-nudged(0, step);
-                }
+            if (keyboard.handle-key-pressed(
+                event.text,
+                event.modifiers.control,
+                event.modifiers.shift,
+                event.modifiers.alt)) {
                 return accept;
             }
             reject
         }
 
         key-released(event) => {
-            let action = root.trigger-shortcut(hotkey-labeler.label(
-                    event.text,
-                    event.modifiers.control,
-                    event.modifiers.shift,
-                    event.modifiers.alt));
-            if (hotkey-labeler.release(action)) {
-                return accept;
-            }
-            if (hotkey-labeler.held-push-action != 0
-                && hotkey-labeler.key-name(event.text) == hotkey-labeler.held-push-key
-                && hotkey-labeler.release(hotkey-labeler.held-push-action)) {
-                return accept;
-            }
-            if (event.text == " ") {
-                root.space-held = false;
+            if (keyboard.handle-key-released(
+                event.text,
+                event.modifiers.control,
+                event.modifiers.shift,
+                event.modifiers.alt)) {
                 return accept;
             }
             reject
@@ -758,7 +639,7 @@ export component MainWindow inherits Window {
                     root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
                 }
                 canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
-                release-push-hotkey() => { hotkey-labeler.release-held-push(); }
+                release-push-hotkey() => { keyboard.release-held-push(); }
                 multiview-select-preview(id) => { root.select-preview(id); }
                 multiview-select-program(id) => { root.select-program(id); }
             }
@@ -917,7 +798,7 @@ export component MainWindow inherits Window {
                 save-replay-buffer() => { root.save-replay-buffer(); }
                 recover-recording() => { root.recover-recording(); }
                 open-settings-window() => { root.open-settings-window(); }
-                release-push-hotkey() => { hotkey-labeler.release-held-push(); }
+                release-push-hotkey() => { keyboard.release-held-push(); }
                 set-view-mode(mode) => { root.apply-view-mode(mode); }
                 float-panel(kind) => { root.float-panel(kind); }
             }
