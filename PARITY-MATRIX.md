@@ -154,6 +154,15 @@ Rust callback. The GUI fixture verifies both paths against a persisted
 non-default monitor; OS close-request handling and complete focus traversal
 remain incomplete.
 
+## Latest verified package: Source Filters keyboard boundary
+
+On 2026-08-26, the standalone Source Filters window now focuses an explicit
+keyboard boundary after it is shown. Filter mutations remain immediate;
+`Escape` closes the editor without accepting an uncommitted name, while
+`Enter` remains available to the name editor. The GUI fixture verifies the
+real window event and the persisted filter state; OS close-request handling
+and complete focus traversal remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

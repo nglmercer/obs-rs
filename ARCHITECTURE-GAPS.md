@@ -96,6 +96,13 @@ it through the existing monitor callback. The GUI fixture verifies both paths
 against a persisted non-default monitor selection; OS close-request policy
 and full focus traversal remain open.
 
+The standalone Source Filters window now focuses an explicit keyboard boundary
+after each show. Since filter changes are immediate rather than staged,
+`Escape` only closes the editor; `Enter` remains available to the filter-name
+`LineEdit`. The GUI fixture verifies that a real Escape event closes the window
+without committing an unaccepted name. OS close-request policy and complete
+focus traversal remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

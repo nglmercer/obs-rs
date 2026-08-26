@@ -62,7 +62,35 @@ export component SourceFiltersWindow inherits Window {
     callback edit-property(string, string);
     callback close-window();
 
-    HorizontalLayout {
+    filters-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Filter edits apply immediately through typed callbacks. Escape only
+        // closes this editor; Return remains available to the name LineEdit.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-window();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-window();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
         padding: 12px;
         spacing: 12px;
 
@@ -233,5 +261,12 @@ export component SourceFiltersWindow inherits Window {
                 }
             }
         }
+    }
+    }
+
+    // Focus is explicit because the standalone window can be reopened after a
+    // child editor in another window owned keyboard focus.
+    public function focus-keyboard-boundary() {
+        filters-focus.focus();
     }
 }
