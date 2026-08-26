@@ -721,7 +721,13 @@ pub(super) fn exercise_source_transform_window(
     window.set_item_opacity(200);
     window.set_flip_horizontal(true);
     window.set_rotation_degrees(90);
-    window.invoke_accept_transform();
+    window
+        .window()
+        .take_snapshot()
+        .expect("transform window should render before Enter dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
 
     let state_ref = state.borrow();
     let scene_id = state_ref.preview_scene().expect("preview scene");
@@ -749,7 +755,13 @@ pub(super) fn exercise_source_transform_window(
     window.invoke_reset_transform();
     assert_eq!(window.get_position_x(), 0);
     assert_eq!(window.get_position_y(), 0);
-    window.invoke_close_window();
+    window
+        .window()
+        .take_snapshot()
+        .expect("transform window should render before Escape dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
 
     let state_ref = state.borrow();
     let scene_id = state_ref.preview_scene().expect("preview scene");

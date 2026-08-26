@@ -95,8 +95,9 @@ fn open_for_target(
     controller.set_tokens(ui.global::<Palette>().get_tokens());
     controller.target.replace(Some(target.clone()));
     populate_from_project(&controller.window, state, &target);
-    if let Err(error) = controller.window.show() {
-        ui.set_status_message(format!("Transform window: {error}").into());
+    match controller.window.show() {
+        Ok(()) => controller.window.invoke_focus_keyboard_boundary(),
+        Err(error) => ui.set_status_message(format!("Transform window: {error}").into()),
     }
 }
 

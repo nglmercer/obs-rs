@@ -126,6 +126,16 @@ Create/Duplicate/Rename dispatch. The integrated GUI fixture verifies scene
 creation and source rename with `Enter`; operation-specific failure feedback
 and success-only close behavior remain incomplete.
 
+## Latest verified package: standalone Transform keyboard boundary
+
+On 2026-08-26, the standalone scene-item Transform window now focuses an
+explicit keyboard boundary after it is shown. Unmodified `Enter` applies the
+existing typed transform callback, while unmodified `Escape` closes the window
+without committing the local draft; modifier combinations remain available to
+the editor controls. The GUI fixture sends both real window events and verifies
+project state, while OS close-request handling and Source Properties keyboard
+parity remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

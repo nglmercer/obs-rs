@@ -76,6 +76,13 @@ default project/collection action; the integrated GUI fixture covers scene
 creation and source rename through real Rust mutations. Error-aware close
 semantics for file and collection operations remain open.
 
+The standalone scene-item Transform window now has an explicit focused
+`FocusScope` after every show. Unmodified `Enter` applies its local transform
+draft and unmodified `Escape` closes without committing it; the existing
+SpinBox arrow/edit behavior remains available because other keys are rejected
+by the boundary. The GUI fixture drives both real window events; OS close
+request policy and the analogous Source Properties window remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

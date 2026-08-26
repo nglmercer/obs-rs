@@ -30,80 +30,132 @@ export component SourceTransformWindow inherits Window {
     callback reset-transform();
     callback close-window();
 
-    VerticalLayout {
-        padding: 12px;
-        spacing: 10px;
-        Text {
-            text: root.source-name == ""
-                ? "Scene Item Transform"
-                : "Scene Item Transform  ·  " + root.source-name;
-            color: Palette.tokens.text-strong;
-            font-size: 14px;
-            font-weight: 700;
+    transform-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // This standalone editor has the same keyboard contract as the main
+        // modal shell: Escape discards the local draft and Enter applies it.
+        // Other keys remain available to SpinBox and CheckBox controls.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-window();
+                return accept;
+            }
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-transform();
+                return accept;
+            }
+            reject
         }
-        SettingsGroup {
-            title: "Position";
-            SettingRow {
-                label: "X / Y";
-                SpinBox { value <=> root.position-x; minimum: -32768; maximum: 32768; horizontal-stretch: 1; }
-                SpinBox { value <=> root.position-y; minimum: -32768; maximum: 32768; horizontal-stretch: 1; }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-window();
+                return accept;
+            }
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-transform();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 10px;
+            Text {
+                text: root.source-name == ""
+                    ? "Scene Item Transform"
+                    : "Scene Item Transform  ·  " + root.source-name;
+                color: Palette.tokens.text-strong;
+                font-size: 14px;
+                font-weight: 700;
+            }
+            SettingsGroup {
+                title: "Position";
+                SettingRow {
+                    label: "X / Y";
+                    SpinBox { value <=> root.position-x; minimum: -32768; maximum: 32768; horizontal-stretch: 1; }
+                    SpinBox { value <=> root.position-y; minimum: -32768; maximum: 32768; horizontal-stretch: 1; }
+                }
+            }
+            SettingsGroup {
+                title: "Scale (‰)";
+                SettingRow {
+                    label: "X / Y";
+                    SpinBox { value <=> root.scale-x; minimum: 1; maximum: 100000; horizontal-stretch: 1; }
+                    SpinBox { value <=> root.scale-y; minimum: 1; maximum: 100000; horizontal-stretch: 1; }
+                }
+            }
+            SettingsGroup {
+                title: "Crop";
+                SettingRow {
+                    label: "Left / Top";
+                    SpinBox { value <=> root.crop-left; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
+                    SpinBox { value <=> root.crop-top; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
+                }
+                SettingRow {
+                    label: "Right / Bottom";
+                    SpinBox { value <=> root.crop-right; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
+                    SpinBox { value <=> root.crop-bottom; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
+                }
+            }
+            SettingsGroup {
+                title: "Rotation";
+                SettingRow {
+                    label: "Degrees";
+                    SpinBox { value <=> root.rotation-degrees; minimum: -360; maximum: 360; horizontal-stretch: 1; }
+                }
+            }
+            SettingsGroup {
+                title: "Appearance";
+                SettingRow {
+                    label: "Opacity";
+                    SpinBox { value <=> root.item-opacity; minimum: 0; maximum: 255; horizontal-stretch: 1; }
+                }
+                CheckBox { text: "Flip horizontal"; checked <=> root.flip-horizontal; }
+                CheckBox { text: "Flip vertical"; checked <=> root.flip-vertical; }
+            }
+            HorizontalLayout {
+                height: 32px;
+                Button {
+                    text: "Reset";
+                    width: 110px;
+                    clicked => root.reset-transform();
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Button {
+                    text: I18n.text.cancel;
+                    width: 110px;
+                    clicked => root.close-window();
+                }
+                Button {
+                    text: I18n.text.add_source_ui.ok;
+                    width: 110px;
+                    clicked => root.accept-transform();
+                }
             }
         }
-        SettingsGroup {
-            title: "Scale (‰)";
-            SettingRow {
-                label: "X / Y";
-                SpinBox { value <=> root.scale-x; minimum: 1; maximum: 100000; horizontal-stretch: 1; }
-                SpinBox { value <=> root.scale-y; minimum: 1; maximum: 100000; horizontal-stretch: 1; }
-            }
-        }
-        SettingsGroup {
-            title: "Crop";
-            SettingRow {
-                label: "Left / Top";
-                SpinBox { value <=> root.crop-left; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
-                SpinBox { value <=> root.crop-top; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
-            }
-            SettingRow {
-                label: "Right / Bottom";
-                SpinBox { value <=> root.crop-right; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
-                SpinBox { value <=> root.crop-bottom; minimum: 0; maximum: 32768; horizontal-stretch: 1; }
-            }
-        }
-        SettingsGroup {
-            title: "Rotation";
-            SettingRow {
-                label: "Degrees";
-                SpinBox { value <=> root.rotation-degrees; minimum: -360; maximum: 360; horizontal-stretch: 1; }
-            }
-        }
-        SettingsGroup {
-            title: "Appearance";
-            SettingRow {
-                label: "Opacity";
-                SpinBox { value <=> root.item-opacity; minimum: 0; maximum: 255; horizontal-stretch: 1; }
-            }
-            CheckBox { text: "Flip horizontal"; checked <=> root.flip-horizontal; }
-            CheckBox { text: "Flip vertical"; checked <=> root.flip-vertical; }
-        }
-        HorizontalLayout {
-            height: 32px;
-            Button {
-                text: "Reset";
-                width: 110px;
-                clicked => root.reset-transform();
-            }
-            Rectangle { horizontal-stretch: 1; }
-            Button {
-                text: I18n.text.cancel;
-                width: 110px;
-                clicked => root.close-window();
-            }
-            Button {
-                text: I18n.text.add_source_ui.ok;
-                width: 110px;
-                clicked => root.accept-transform();
-            }
-        }
+    }
+
+    // A standalone Window does not automatically focus its editor scope when
+    // it is shown again after another child window had focus.
+    public function focus-keyboard-boundary() {
+        transform-focus.focus();
     }
 }
