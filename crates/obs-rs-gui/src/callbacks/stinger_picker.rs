@@ -24,13 +24,18 @@ enum PickerPurpose {
     StingerResource,
     ProjectSaveAs,
     ProjectOpen,
+    CollectionExport,
+    CollectionImport,
 }
 
 impl PickerPurpose {
     fn path_limit(self) -> usize {
         match self {
             Self::StingerResource => MAX_STINGER_RESOURCE_PATH_BYTES,
-            Self::ProjectSaveAs | Self::ProjectOpen => MAX_PROJECT_PATH_BYTES,
+            Self::ProjectSaveAs
+            | Self::ProjectOpen
+            | Self::CollectionExport
+            | Self::CollectionImport => MAX_PROJECT_PATH_BYTES,
         }
     }
 
@@ -38,6 +43,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project",
+            Self::CollectionExport | Self::CollectionImport => "Collection",
         }
     }
 
@@ -52,6 +58,12 @@ impl PickerPurpose {
             Self::ProjectOpen => {
                 "Project file picker is unavailable; type the project path manually"
             }
+            Self::CollectionExport => {
+                "Collection file picker is unavailable; type the export path manually"
+            }
+            Self::CollectionImport => {
+                "Collection file picker is unavailable; type the import path manually"
+            }
         }
     }
 
@@ -59,6 +71,9 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger file picker is already open",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project file picker is already open",
+            Self::CollectionExport | Self::CollectionImport => {
+                "Collection file picker is already open"
+            }
         }
     }
 
@@ -67,6 +82,8 @@ impl PickerPurpose {
             Self::StingerResource => "obs-rs-stinger-file-picker",
             Self::ProjectSaveAs => "obs-rs-project-file-picker",
             Self::ProjectOpen => "obs-rs-project-open-file-picker",
+            Self::CollectionExport => "obs-rs-collection-export-file-picker",
+            Self::CollectionImport => "obs-rs-collection-import-file-picker",
         }
     }
 
@@ -74,6 +91,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Opening Stinger file picker…",
             Self::ProjectSaveAs | Self::ProjectOpen => "Opening project file picker…",
+            Self::CollectionExport | Self::CollectionImport => "Opening collection file picker…",
         }
     }
 
@@ -81,6 +99,9 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger file selection cancelled",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project file selection cancelled",
+            Self::CollectionExport | Self::CollectionImport => {
+                "Collection file selection cancelled"
+            }
         }
     }
 
@@ -89,6 +110,8 @@ impl PickerPurpose {
             Self::StingerResource => "Stinger resource selected",
             Self::ProjectSaveAs => "Project Save As path selected",
             Self::ProjectOpen => "Project path selected",
+            Self::CollectionExport => "Collection export path selected",
+            Self::CollectionImport => "Collection import path selected",
         }
     }
 }
@@ -117,14 +140,19 @@ pub(crate) fn install_file_pickers(ui: &MainWindow) {
     let active_for_project = Arc::clone(&active);
     ui.on_browse_project_save_as(move || {
         let purpose = weak.upgrade().map_or(PickerPurpose::ProjectSaveAs, |ui| {
-            if ui.get_project_dialog_mode() == 4 {
-                PickerPurpose::ProjectOpen
-            } else {
-                PickerPurpose::ProjectSaveAs
-            }
+            project_picker_purpose(ui.get_project_dialog_mode())
         });
         begin_picker(&weak, &active_for_project, tool, purpose);
     });
+}
+
+fn project_picker_purpose(mode: i32) -> PickerPurpose {
+    match mode {
+        1 => PickerPurpose::CollectionExport,
+        2 => PickerPurpose::CollectionImport,
+        4 => PickerPurpose::ProjectOpen,
+        _ => PickerPurpose::ProjectSaveAs,
+    }
 }
 
 fn begin_picker(
@@ -149,6 +177,9 @@ fn begin_picker(
         PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
             ui.get_project_path().to_string()
         }
+        PickerPurpose::CollectionExport | PickerPurpose::CollectionImport => {
+            ui.get_collection_transfer_path().to_string()
+        }
     };
     let active_for_worker = Arc::clone(active);
     let callback_ui = weak.clone();
@@ -169,6 +200,9 @@ fn begin_picker(
                             }
                             PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
                                 ui.set_project_path(path.into());
+                            }
+                            PickerPurpose::CollectionExport | PickerPurpose::CollectionImport => {
+                                ui.set_collection_transfer_path(path.into());
                             }
                         }
                         ui.set_status_message(purpose.selected_message().into());
@@ -270,100 +304,136 @@ fn configure_command(
     start: &str,
     purpose: PickerPurpose,
 ) -> Result<(), String> {
-    match (tool, purpose) {
-        ("zenity", PickerPurpose::StingerResource) => {
-            command.args(["--file-selection", "--title=Select Stinger resource"]);
-            if !start.is_empty() {
-                command.arg(format!("--filename={start}"));
-            }
+    match tool {
+        "zenity" => {
+            configure_zenity(command, start, purpose);
+            Ok(())
         }
-        ("zenity", PickerPurpose::ProjectSaveAs) => {
-            command.args([
-                "--file-selection",
-                "--save",
-                "--confirm-overwrite",
-                "--title=Save OBS-RS project",
-            ]);
-            if !start.is_empty() {
-                command.arg(format!("--filename={start}"));
-            }
+        "kdialog" => {
+            configure_kdialog(command, start, purpose);
+            Ok(())
         }
-        ("zenity", PickerPurpose::ProjectOpen) => {
-            command.args(["--file-selection", "--title=Open OBS-RS project"]);
-            if !start.is_empty() {
-                command.arg(format!("--filename={start}"));
-            }
+        "osascript" => {
+            configure_osascript(command, purpose);
+            Ok(())
         }
-        ("kdialog", PickerPurpose::StingerResource) => {
-            command.args([
-                "--getopenfilename",
-                if start.is_empty() { "." } else { start },
-                "Video files (*.webm *.mp4 *.mkv *.mov *.avi)",
-            ]);
+        "powershell" | "pwsh" => {
+            configure_powershell(command, purpose);
+            Ok(())
         }
-        ("kdialog", PickerPurpose::ProjectSaveAs) => {
-            command.args([
-                "--getsavefilename",
-                if start.is_empty() {
-                    "obs-rs-project.obsrproj"
-                } else {
-                    start
-                },
-                "OBS-RS projects (*.obsrproj)",
-            ]);
-        }
-        ("kdialog", PickerPurpose::ProjectOpen) => {
-            command.args([
-                "--getopenfilename",
-                if start.is_empty() { "." } else { start },
-                "OBS-RS projects (*.obsrproj)",
-            ]);
-        }
-        ("osascript", PickerPurpose::StingerResource) => {
-            command.args([
-                "-e",
-                "set selectedFile to choose file with prompt \"Select Stinger resource\"\nPOSIX path of selectedFile",
-            ]);
-        }
-        ("osascript", PickerPurpose::ProjectSaveAs) => {
-            command.args([
-                "-e",
-                "set selectedFile to choose file name with prompt \"Save OBS-RS project as\"\ndefault name \"obs-rs-project.obsrproj\"\nPOSIX path of selectedFile",
-            ]);
-        }
-        ("osascript", PickerPurpose::ProjectOpen) => {
-            command.args([
-                "-e",
-                "set selectedFile to choose file with prompt \"Open OBS-RS project\"\nPOSIX path of selectedFile",
-            ]);
-        }
-        ("powershell" | "pwsh", PickerPurpose::StingerResource) => {
-            command.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Filter = 'Video files|*.webm;*.mp4;*.mkv;*.mov;*.avi|All files|*.*'; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.FileName) }",
-            ]);
-        }
-        ("powershell" | "pwsh", PickerPurpose::ProjectSaveAs) => {
-            command.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.SaveFileDialog; $dialog.Filter = 'OBS-RS projects|*.obsrproj|All files|*.*'; $dialog.DefaultExt = 'obsrproj'; $dialog.AddExtension = $true; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.FileName) }",
-            ]);
-        }
-        ("powershell" | "pwsh", PickerPurpose::ProjectOpen) => {
-            command.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Filter = 'OBS-RS projects|*.obsrproj|All files|*.*'; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.FileName) }",
-            ]);
-        }
-        _ => return Err(format!("unsupported file picker: {tool}")),
+        _ => Err(format!("unsupported file picker: {tool}")),
     }
-    Ok(())
+}
+
+fn configure_zenity(command: &mut Command, start: &str, purpose: PickerPurpose) {
+    let (title, save) = match purpose {
+        PickerPurpose::StingerResource => ("Select Stinger resource", false),
+        PickerPurpose::ProjectSaveAs => ("Save OBS-RS project", true),
+        PickerPurpose::ProjectOpen => ("Open OBS-RS project", false),
+        PickerPurpose::CollectionExport => ("Export OBS-RS collection", true),
+        PickerPurpose::CollectionImport => ("Import OBS-RS collection", false),
+    };
+    command.arg("--file-selection");
+    if save {
+        command.args(["--save", "--confirm-overwrite"]);
+    }
+    command.arg(format!("--title={title}"));
+    if !start.is_empty() {
+        command.arg(format!("--filename={start}"));
+    }
+}
+
+fn configure_kdialog(command: &mut Command, start: &str, purpose: PickerPurpose) {
+    let (save, default_name, filter) = match purpose {
+        PickerPurpose::StingerResource => {
+            (false, ".", "Video files (*.webm *.mp4 *.mkv *.mov *.avi)")
+        }
+        PickerPurpose::ProjectSaveAs => (
+            true,
+            "obs-rs-project.obsrproj",
+            "OBS-RS projects (*.obsrproj)",
+        ),
+        PickerPurpose::ProjectOpen => (false, ".", "OBS-RS projects (*.obsrproj)"),
+        PickerPurpose::CollectionExport => (
+            true,
+            "obs-rs-collection-export.obsrproj",
+            "OBS-RS collections (*.obsrproj)",
+        ),
+        PickerPurpose::CollectionImport => (false, ".", "OBS-RS collections (*.obsrproj)"),
+    };
+    command.arg(if save {
+        "--getsavefilename"
+    } else {
+        "--getopenfilename"
+    });
+    command.args([
+        if start.is_empty() {
+            default_name
+        } else {
+            start
+        },
+        filter,
+    ]);
+}
+
+fn configure_osascript(command: &mut Command, purpose: PickerPurpose) {
+    let script = match purpose {
+        PickerPurpose::StingerResource => {
+            "set selectedFile to choose file with prompt \"Select Stinger resource\"\nPOSIX path of selectedFile"
+        }
+        PickerPurpose::ProjectSaveAs => {
+            "set selectedFile to choose file name with prompt \"Save OBS-RS project as\"\ndefault name \"obs-rs-project.obsrproj\"\nPOSIX path of selectedFile"
+        }
+        PickerPurpose::ProjectOpen => {
+            "set selectedFile to choose file with prompt \"Open OBS-RS project\"\nPOSIX path of selectedFile"
+        }
+        PickerPurpose::CollectionExport => {
+            "set selectedFile to choose file name with prompt \"Export OBS-RS collection as\"\ndefault name \"obs-rs-collection-export.obsrproj\"\nPOSIX path of selectedFile"
+        }
+        PickerPurpose::CollectionImport => {
+            "set selectedFile to choose file with prompt \"Import OBS-RS collection\"\nPOSIX path of selectedFile"
+        }
+    };
+    command.args(["-e", script]);
+}
+
+fn configure_powershell(command: &mut Command, purpose: PickerPurpose) {
+    let (dialog, filter, save) = match purpose {
+        PickerPurpose::StingerResource => (
+            "OpenFileDialog",
+            "Video files|*.webm;*.mp4;*.mkv;*.mov;*.avi|All files|*.*",
+            false,
+        ),
+        PickerPurpose::ProjectSaveAs => (
+            "SaveFileDialog",
+            "OBS-RS projects|*.obsrproj|All files|*.*",
+            true,
+        ),
+        PickerPurpose::ProjectOpen => (
+            "OpenFileDialog",
+            "OBS-RS projects|*.obsrproj|All files|*.*",
+            false,
+        ),
+        PickerPurpose::CollectionExport => (
+            "SaveFileDialog",
+            "OBS-RS collections|*.obsrproj|All files|*.*",
+            true,
+        ),
+        PickerPurpose::CollectionImport => (
+            "OpenFileDialog",
+            "OBS-RS collections|*.obsrproj|All files|*.*",
+            false,
+        ),
+    };
+    let extension = if save {
+        "; $dialog.DefaultExt = 'obsrproj'; $dialog.AddExtension = $true"
+    } else {
+        ""
+    };
+    let script = format!(
+        "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.{dialog}; $dialog.Filter = '{filter}'{extension}; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {{ [Console]::Write($dialog.FileName) }}"
+    );
+    command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
 }
 
 fn validate_picker_path(path: &str, max_bytes: usize) -> Result<String, String> {
@@ -483,11 +553,54 @@ mod tests {
     }
 
     #[test]
+    fn collection_picker_uses_save_and_open_dialogs() {
+        let mut zenity = Command::new("zenity");
+        configure_command(
+            &mut zenity,
+            "zenity",
+            "obs-rs-collection.obsrproj",
+            PickerPurpose::CollectionExport,
+        )
+        .expect("zenity collection export dialog");
+        let zenity_args = zenity
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(zenity_args.iter().any(|arg| arg == "--save"));
+        assert!(zenity_args
+            .iter()
+            .any(|arg| arg == "--title=Export OBS-RS collection"));
+
+        let mut kdialog = Command::new("kdialog");
+        configure_command(
+            &mut kdialog,
+            "kdialog",
+            "obs-rs-collection.obsrproj",
+            PickerPurpose::CollectionImport,
+        )
+        .expect("kdialog collection import dialog");
+        let kdialog_args = kdialog
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(kdialog_args.iter().any(|arg| arg == "--getopenfilename"));
+    }
+
+    #[test]
     fn picker_activity_flag_is_shareable_between_ui_and_worker() {
         let active = Arc::new(AtomicBool::new(false));
         assert!(!active.swap(true, Ordering::AcqRel));
         assert!(active.swap(true, Ordering::AcqRel));
         active.store(false, Ordering::Release);
         assert!(!active.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn project_dialog_modes_select_the_matching_picker_purpose() {
+        assert_eq!(project_picker_purpose(0), PickerPurpose::ProjectSaveAs);
+        assert_eq!(project_picker_purpose(1), PickerPurpose::CollectionExport);
+        assert_eq!(project_picker_purpose(2), PickerPurpose::CollectionImport);
+        assert_eq!(project_picker_purpose(3), PickerPurpose::ProjectSaveAs);
+        assert_eq!(project_picker_purpose(4), PickerPurpose::ProjectOpen);
     }
 }

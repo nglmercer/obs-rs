@@ -400,6 +400,9 @@ pub(super) fn catalog() -> UiText {
             "Copia un archivo de colección de escenas de OBS-RS a la carpeta administrada y ábrelo.",
         ),
         collection_import_path: s("Archivo de colección"),
+        collection_picker_unavailable: s(
+            "No se encontró un selector de archivos del sistema; escribe manualmente la ruta de la colección.",
+        ),
         duplicate_collection_dialog_title: s("Duplicar colección de escenas"),
         duplicate_collection_dialog_description: s(
             "El proyecto actual se copia en una nueva colección, que pasa a ser el documento activo.",

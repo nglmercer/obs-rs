@@ -35,6 +35,12 @@ Unsupported desktops keep the manual path field and an explicit unavailable
 message. File type validation, collection import/export pickers, and recovery
 UX are still open.
 
+The same picker boundary now covers collection transfer: mode 1 uses a bounded
+native Save dialog for Export and mode 2 uses a bounded native Open dialog for
+Import, writing only the collection-transfer field before the existing
+filesystem callbacks validate and commit the operation. Collection extension
+filtering, recovery UX, and other project lifecycle polish remain open.
+
 The bounded Stinger runtime packet now accepts already-decoded RGBA frames as
 one validated, preloaded clip. Frame count, per-frame duration, total duration,
 transition point, format consistency, and resident RGBA storage are all

@@ -48,11 +48,20 @@ export component ProjectDialog inherits ModalShell {
         spacing: 8px;
         if mode == 1 : FieldHeading { text: I18n.text.collection_export_path; }
         if mode == 2 : FieldHeading { text: I18n.text.collection_import_path; }
-        if mode == 1 || mode == 2 : LineEdit {
-            text <=> collection-path;
-            placeholder-text: mode == 1
-                ? "obs-rs-collection.obsrproj"
-                : "/path/to/collection.obsrproj";
+        if mode == 1 || mode == 2 : HorizontalBox {
+            spacing: 6px;
+            LineEdit {
+                text <=> collection-path;
+                placeholder-text: mode == 1
+                    ? "obs-rs-collection.obsrproj"
+                    : "/path/to/collection.obsrproj";
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: I18n.text.settings_ui.browse;
+                enabled: root.file-picker-enabled;
+                clicked => browse-project-save-as();
+            }
         }
         if mode != 1 && mode != 2 : FieldHeading { text: I18n.text.project_file; }
         if mode == 3 || mode == 4 : HorizontalBox {
@@ -80,10 +89,12 @@ export component ProjectDialog inherits ModalShell {
         if mode != 4 : MutedText {
             text: I18n.text.atomic_save_hint;
         }
-        if (mode == 3 || mode == 4) && !root.file-picker-enabled : MutedText {
-            text: mode == 4
-                ? I18n.text.project_open_picker_unavailable
-                : I18n.text.project_picker_unavailable;
+        if (mode >= 1 && mode <= 4) && !root.file-picker-enabled : MutedText {
+            text: mode == 1 || mode == 2
+                ? I18n.text.collection_picker_unavailable
+                : mode == 4
+                    ? I18n.text.project_open_picker_unavailable
+                    : I18n.text.project_picker_unavailable;
         }
     }
 }

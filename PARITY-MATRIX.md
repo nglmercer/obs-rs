@@ -137,6 +137,18 @@ no chooser is available. Picker-command and GUI compilation tests pass; file
 type validation, collection import/export dialogs, and recovery UX remain
 incomplete. The focused GUI snapshot fixture and the picker-command tests pass.
 
+## Latest verified package: native collection import/export pickers
+
+On 2026-08-26, `PROFILE-001` extended the bounded asynchronous chooser to the
+existing collection Export and Import dialog modes. Export uses a native save
+dialog and Import uses a native open dialog on Linux (`zenity`/`kdialog`),
+macOS (`osascript`), and Windows (PowerShell), with an OBS-RS collection
+extension filter and separate path state. Selection returns through the Slint
+event loop; the existing collection callbacks still own validation, atomic
+writes, and document switching. The bilingual dialogs retain manual-path
+fallbacks when no chooser is available, and picker-command plus GUI snapshot
+tests pass.
+
 ## Latest verified package: portable Luma Wipe transition
 
 On 2026-08-25, `STUDIO-002` gained a bounded portable Luma Wipe slice. The

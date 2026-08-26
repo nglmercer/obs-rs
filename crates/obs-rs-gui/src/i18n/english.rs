@@ -396,6 +396,9 @@ pub(super) fn catalog() -> UiText {
             "Copy an OBS-RS scene-collection file into the managed collections folder and open it.",
         ),
         collection_import_path: s("Collection file"),
+        collection_picker_unavailable: s(
+            "No system file picker was found; type the collection path manually.",
+        ),
         duplicate_collection_dialog_title: s("Duplicate scene collection"),
         duplicate_collection_dialog_description: s(
             "The current project is copied into a new collection and becomes the active document.",

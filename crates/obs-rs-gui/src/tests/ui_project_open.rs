@@ -18,6 +18,22 @@ pub(super) fn exercise_project_open_dialog(ui: &MainWindow) {
     assert!(snapshot.width() > 0 && snapshot.height() > 0);
     ui.hide()
         .expect("testing window should hide after Open dialog");
+
+    ui.set_collection_transfer_path("obs-rs-collection.obsrproj".into());
+    for mode in [1, 2] {
+        ui.set_project_dialog_mode(mode);
+        ui.set_active_modal(1);
+        ui.show()
+            .expect("testing window should show the collection dialog");
+        let snapshot = ui
+            .window()
+            .take_snapshot()
+            .expect("collection dialog should render");
+        assert!(snapshot.width() > 0 && snapshot.height() > 0);
+        ui.hide()
+            .expect("testing window should hide after collection dialog");
+    }
+
     ui.set_project_dialog_mode(0);
     ui.set_active_modal(0);
 }
