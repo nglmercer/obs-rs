@@ -32,6 +32,8 @@ fn settings_round_trip_through_the_config_document() {
         hotkey_stop_replay: "Ctrl+Alt+R".to_owned(),
         hotkey_toggle_microphone_mute: "Ctrl+M".to_owned(),
         hotkey_toggle_desktop_mute: "Ctrl+Shift+M".to_owned(),
+        hotkey_push_to_talk_microphone: "Ctrl+Space".to_owned(),
+        hotkey_push_to_mute_microphone: "Ctrl+Alt+Space".to_owned(),
         hotkey_toggle_studio_mode: "Ctrl+Shift+S".to_owned(),
         hotkey_toggle_selected_source_visibility: "Ctrl+Shift+V".to_owned(),
         hotkey_toggle_selected_source_lock: "Ctrl+Shift+L".to_owned(),
@@ -126,6 +128,12 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
         .set("hotkey_toggle_studio_mode", "Ctrl+Shift+S")
         .expect("hotkey key");
     config
+        .set("hotkey_push_to_talk_microphone", "Ctrl+Space")
+        .expect("hotkey key");
+    config
+        .set("hotkey_push_to_mute_microphone", "Ctrl+Alt+Space")
+        .expect("hotkey key");
+    config
         .set("hotkey_toggle_selected_source_visibility", "Ctrl+Shift+V")
         .expect("hotkey key");
     config
@@ -148,11 +156,25 @@ fn hotkeys_load_in_canonical_form_and_invalid_values_use_defaults() {
     assert!(decoded.hotkey_stop_recording.is_empty());
     assert_eq!(decoded.hotkey_cut_transition, "Alt+C");
     assert_eq!(decoded.hotkey_previous_scene, "Shift+F6");
+    assert_eq!(decoded.hotkey_push_to_talk_microphone, "Ctrl+Space");
+    assert_eq!(decoded.hotkey_push_to_mute_microphone, "Ctrl+Alt+Space");
     assert!(shortcut_bindings(&decoded)
         .expect("shortcut bindings")
         .iter()
         .any(|(shortcut, action)| shortcut.to_string() == "Ctrl+Shift+S"
             && *action == UiAction::ToggleStudioMode));
+    assert!(shortcut_bindings(&decoded)
+        .expect("shortcut bindings")
+        .iter()
+        .any(|(shortcut, action)| shortcut.to_string() == "Ctrl+Space"
+            && *action == UiAction::PushToTalkMicrophone));
+    assert!(shortcut_bindings(&decoded)
+        .expect("shortcut bindings")
+        .iter()
+        .any(
+            |(shortcut, action)| shortcut.to_string() == "Ctrl+Alt+Space"
+                && *action == UiAction::PushToMuteMicrophone
+        ));
     assert!(shortcut_bindings(&decoded)
         .expect("shortcut bindings")
         .iter()

@@ -36,6 +36,8 @@ const TOGGLE_SELECTED_SOURCE_VISIBILITY: i32 = 19;
 const TOGGLE_SELECTED_SOURCE_LOCK: i32 = 20;
 const TOGGLE_SELECTED_SOURCE_PROJECTOR: i32 = 21;
 const TOGGLE_PREVIEW_SCENE_PROJECTOR: i32 = 22;
+const PUSH_TO_TALK_MICROPHONE: i32 = 23;
+const PUSH_TO_MUTE_MICROPHONE: i32 = 24;
 
 pub(crate) fn install_shortcut_callbacks(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>) {
     let shortcut_state = Rc::clone(state);
@@ -69,6 +71,8 @@ fn action_code(action: UiAction) -> i32 {
         UiAction::StopReplayBuffer => STOP_REPLAY_BUFFER,
         UiAction::ToggleMicrophoneMute => TOGGLE_MICROPHONE_MUTE,
         UiAction::ToggleDesktopMute => TOGGLE_DESKTOP_MUTE,
+        UiAction::PushToTalkMicrophone => PUSH_TO_TALK_MICROPHONE,
+        UiAction::PushToMuteMicrophone => PUSH_TO_MUTE_MICROPHONE,
         UiAction::ToggleStudioMode => TOGGLE_STUDIO_MODE,
         UiAction::ToggleSelectedSourceVisibility => TOGGLE_SELECTED_SOURCE_VISIBILITY,
         UiAction::ToggleSelectedSourceLock => TOGGLE_SELECTED_SOURCE_LOCK,
@@ -101,6 +105,8 @@ mod tests {
             UiAction::StopReplayBuffer,
             UiAction::ToggleMicrophoneMute,
             UiAction::ToggleDesktopMute,
+            UiAction::PushToTalkMicrophone,
+            UiAction::PushToMuteMicrophone,
             UiAction::ToggleStudioMode,
             UiAction::ToggleSelectedSourceVisibility,
             UiAction::ToggleSelectedSourceLock,
@@ -112,7 +118,7 @@ mod tests {
         codes.dedup();
         assert_eq!(
             codes,
-            (SWAP_PREVIEW_PROGRAM..=TOGGLE_PREVIEW_SCENE_PROJECTOR).collect::<Vec<_>>()
+            (SWAP_PREVIEW_PROGRAM..=PUSH_TO_MUTE_MICROPHONE).collect::<Vec<_>>()
         );
         assert!(!codes.contains(&NO_ACTION));
     }

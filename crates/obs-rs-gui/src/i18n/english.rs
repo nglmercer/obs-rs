@@ -283,6 +283,8 @@ pub(super) fn catalog() -> UiText {
         hotkey_stop_replay: s("Stop replay buffer"),
         hotkey_toggle_microphone_mute: s("Mute microphone"),
         hotkey_toggle_desktop_mute: s("Mute desktop audio"),
+        hotkey_push_to_talk_microphone: s("Push-to-talk microphone"),
+        hotkey_push_to_mute_microphone: s("Push-to-mute microphone"),
         hotkey_toggle_studio_mode: s("Toggle Studio Mode"),
         hotkey_toggle_selected_source_visibility: s("Toggle selected source visibility"),
         hotkey_toggle_selected_source_lock: s("Toggle selected source lock"),

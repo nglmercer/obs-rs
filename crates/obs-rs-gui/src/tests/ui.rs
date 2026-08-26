@@ -52,6 +52,12 @@ fn ui_layout_can_render_a_reference_snapshot() {
     let scene_projector_shortcut = Shortcut::parse("Ctrl+Shift+R")
         .expect("preview-scene projector shortcut syntax")
         .expect("preview-scene projector shortcut binding");
+    let push_to_talk_shortcut = Shortcut::parse("T")
+        .expect("push-to-talk shortcut syntax")
+        .expect("push-to-talk shortcut binding");
+    let push_to_mute_shortcut = Shortcut::parse("U")
+        .expect("push-to-mute shortcut syntax")
+        .expect("push-to-mute shortcut binding");
     state
         .borrow_mut()
         .replace_shortcuts(&[
@@ -70,6 +76,8 @@ fn ui_layout_can_render_a_reference_snapshot() {
                 scene_projector_shortcut,
                 UiAction::TogglePreviewSceneProjector,
             ),
+            (push_to_talk_shortcut, UiAction::PushToTalkMicrophone),
+            (push_to_mute_shortcut, UiAction::PushToMuteMicrophone),
         ])
         .expect("shortcut table");
     crate::callbacks::install_shortcut_callbacks(&ui, &state);
@@ -82,6 +90,8 @@ fn ui_layout_can_render_a_reference_snapshot() {
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+l".into()), 20);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+p".into()), 21);
     assert_eq!(ui.invoke_trigger_shortcut("ctrl+shift+r".into()), 22);
+    assert_eq!(ui.invoke_trigger_shortcut("t".into()), 23);
+    assert_eq!(ui.invoke_trigger_shortcut("u".into()), 24);
     assert_eq!(ui.invoke_trigger_shortcut("Ctrl+X".into()), 0);
     let persisted_tree = DockNode::Split {
         axis: crate::dock_tree::DockAxis::Vertical,
@@ -161,7 +171,26 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui.set_multiview_audio_db(-12.0);
     ui.set_show_safe_areas(true);
     ui.show().expect("testing window should show");
+    let push_events = Rc::new(RefCell::new(Vec::<(String, bool)>::new()));
+    let push_events_callback = Rc::clone(&push_events);
+    ui.on_set_mixer_muted(move |id, muted| {
+        push_events_callback
+            .borrow_mut()
+            .push((id.to_string(), muted));
+    });
     ui.set_view_mode(1);
+    ElementHandle::find_by_element_id(&ui, "CanvasEditor::surface")
+        .find(|canvas| canvas.size().width > 100.0 && canvas.size().height > 100.0)
+        .expect("editable canvas focus target")
+        .mock_single_click(PointerEventButton::Left);
+    ui.window()
+        .dispatch_event(WindowEvent::KeyPressed { text: "T".into() });
+    ui.window()
+        .dispatch_event(WindowEvent::KeyReleased { text: "T".into() });
+    assert_eq!(
+        push_events.borrow().as_slice(),
+        [("mic".to_owned(), false), ("mic".to_owned(), true)]
+    );
     ui.invoke_toggle_studio_mode();
     assert_eq!(
         ui.get_view_mode(),

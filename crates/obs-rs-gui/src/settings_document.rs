@@ -103,6 +103,14 @@ pub(crate) fn shortcut_bindings(
             UiAction::ToggleDesktopMute,
         ),
         (
+            settings.hotkey_push_to_talk_microphone.as_str(),
+            UiAction::PushToTalkMicrophone,
+        ),
+        (
+            settings.hotkey_push_to_mute_microphone.as_str(),
+            UiAction::PushToMuteMicrophone,
+        ),
+        (
             settings.hotkey_toggle_studio_mode.as_str(),
             UiAction::ToggleStudioMode,
         ),
@@ -157,6 +165,8 @@ pub(crate) fn hotkey_conflicts(settings: &AppSettings) -> Vec<String> {
         settings.hotkey_stop_replay.as_str(),
         settings.hotkey_toggle_microphone_mute.as_str(),
         settings.hotkey_toggle_desktop_mute.as_str(),
+        settings.hotkey_push_to_talk_microphone.as_str(),
+        settings.hotkey_push_to_mute_microphone.as_str(),
         settings.hotkey_toggle_studio_mode.as_str(),
         settings.hotkey_toggle_selected_source_visibility.as_str(),
         settings.hotkey_toggle_selected_source_lock.as_str(),

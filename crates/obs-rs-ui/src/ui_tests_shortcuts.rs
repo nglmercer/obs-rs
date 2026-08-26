@@ -321,6 +321,45 @@ fn microphone_and_desktop_mute_shortcuts_toggle_their_mixer_channels() {
 }
 
 #[test]
+fn push_microphone_actions_set_mute_state_without_toggling() {
+    let mut state = DesktopState::new(project());
+    assert!(!state
+        .mixer_channels()
+        .find(|channel| channel.id() == "mic")
+        .expect("microphone mixer channel")
+        .muted());
+
+    state
+        .dispatch(UiCommand::SetMixerMute {
+            id: "mic".to_owned(),
+            muted: true,
+        })
+        .expect("push-to-mute press");
+    state
+        .dispatch(UiCommand::SetMixerMute {
+            id: "mic".to_owned(),
+            muted: false,
+        })
+        .expect("push-to-talk release");
+    assert!(!state
+        .mixer_channels()
+        .find(|channel| channel.id() == "mic")
+        .expect("microphone mixer channel")
+        .muted());
+
+    let shortcut = Shortcut::new(0, "T").expect("push-to-talk shortcut");
+    state
+        .replace_shortcuts(&[(shortcut, UiAction::PushToTalkMicrophone)])
+        .expect("push-to-talk shortcut table");
+    assert_eq!(
+        state.dispatch_action(UiAction::PushToTalkMicrophone),
+        Err(UiError::FrontendActionRequired(
+            UiAction::PushToTalkMicrophone
+        ))
+    );
+}
+
+#[test]
 fn shortcut_text_is_bounded_and_canonical() {
     let shortcut = Shortcut::parse(" option + shift + f9 ")
         .expect("shortcut syntax")

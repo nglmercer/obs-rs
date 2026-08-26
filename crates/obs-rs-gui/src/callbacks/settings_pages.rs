@@ -109,6 +109,12 @@ pub(super) fn load_draft(
     window
         .set_hotkey_toggle_microphone_mute(settings.hotkey_toggle_microphone_mute.as_str().into());
     window.set_hotkey_toggle_desktop_mute(settings.hotkey_toggle_desktop_mute.as_str().into());
+    window.set_hotkey_push_to_talk_microphone(
+        settings.hotkey_push_to_talk_microphone.as_str().into(),
+    );
+    window.set_hotkey_push_to_mute_microphone(
+        settings.hotkey_push_to_mute_microphone.as_str().into(),
+    );
     window.set_hotkey_toggle_studio_mode(settings.hotkey_toggle_studio_mode.as_str().into());
     window.set_hotkey_toggle_selected_source_visibility(
         settings

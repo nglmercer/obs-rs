@@ -309,6 +309,10 @@ pub enum UiAction {
     ToggleMicrophoneMute,
     /// Toggle the desktop-audio mixer channel mute state.
     ToggleDesktopMute,
+    /// Unmute the microphone while a bound key is held.
+    PushToTalkMicrophone,
+    /// Mute the microphone while a bound key is held.
+    PushToMuteMicrophone,
     /// Toggle the desktop between the Studio and single-canvas views.
     ToggleStudioMode,
     /// Toggle visibility for the currently selected source item.
@@ -532,6 +536,8 @@ pub enum UiCommand {
     SetAudioFormat { sample_rate: u32, channels: u16 },
     /// Toggle one mixer channel's mute state.
     ToggleMixerMute { id: String },
+    /// Set one mixer channel's mute state without toggling it.
+    SetMixerMute { id: String, muted: bool },
     /// Begin recording.
     StartRecording,
     /// Stop recording.

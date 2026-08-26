@@ -142,10 +142,10 @@ impl DesktopState {
             | UiAction::ToggleStudioMode
             | UiAction::ToggleSelectedSourceVisibility
             | UiAction::ToggleSelectedSourceLock
-            | UiAction::ToggleSelectedSourceProjector => {
-                Err(UiError::FrontendActionRequired(action))
-            }
-            UiAction::TogglePreviewSceneProjector => Err(UiError::FrontendActionRequired(action)),
+            | UiAction::ToggleSelectedSourceProjector
+            | UiAction::PushToTalkMicrophone
+            | UiAction::PushToMuteMicrophone
+            | UiAction::TogglePreviewSceneProjector => Err(UiError::FrontendActionRequired(action)),
         }
     }
 
@@ -465,6 +465,27 @@ impl DesktopState {
             .get(id)
             .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
             .muted;
+        self.audio_mixer.set_muted(source, muted)?;
+        self.mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
+            .muted = muted;
+        Ok(if muted {
+            "mixer channel muted"
+        } else {
+            "mixer channel unmuted"
+        })
+    }
+
+    pub(crate) fn set_mixer_mute(
+        &mut self,
+        id: &str,
+        muted: bool,
+    ) -> Result<&'static str, UiError> {
+        let source = *self
+            .mixer_sources
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
         self.audio_mixer.set_muted(source, muted)?;
         self.mixer_channels
             .get_mut(id)

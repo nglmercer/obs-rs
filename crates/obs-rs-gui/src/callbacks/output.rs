@@ -924,4 +924,28 @@ pub(crate) fn install_mixer_callbacks(
             }
         }
     });
+
+    let weak = ui.as_weak();
+    let set_state = Rc::clone(state);
+    let set_surface = Rc::clone(surface);
+    let set_output = Rc::clone(output);
+    ui.on_set_mixer_muted(move |id, muted| {
+        dispatch_and_refresh(
+            &weak,
+            &set_state,
+            &set_surface,
+            UiCommand::SetMixerMute {
+                id: id.to_string(),
+                muted,
+            },
+        );
+        if let Err(error) = set_output
+            .borrow_mut()
+            .set_channel_muted(id.as_str(), muted)
+        {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_message(format!("Audio channel failed: {error}").into());
+            }
+        }
+    });
 }

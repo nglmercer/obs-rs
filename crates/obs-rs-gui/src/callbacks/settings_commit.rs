@@ -445,6 +445,14 @@ pub(super) fn read_hotkey_draft(window: &SettingsWindow, settings: &mut AppSetti
         window.get_hotkey_toggle_desktop_mute().as_str(),
         &settings.hotkey_toggle_desktop_mute,
     );
+    settings.hotkey_push_to_talk_microphone = crate::settings::validated_hotkey(
+        window.get_hotkey_push_to_talk_microphone().as_str(),
+        &settings.hotkey_push_to_talk_microphone,
+    );
+    settings.hotkey_push_to_mute_microphone = crate::settings::validated_hotkey(
+        window.get_hotkey_push_to_mute_microphone().as_str(),
+        &settings.hotkey_push_to_mute_microphone,
+    );
     settings.hotkey_toggle_studio_mode = crate::settings::validated_hotkey(
         window.get_hotkey_toggle_studio_mode().as_str(),
         &settings.hotkey_toggle_studio_mode,

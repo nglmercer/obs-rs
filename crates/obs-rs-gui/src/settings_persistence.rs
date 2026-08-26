@@ -235,6 +235,16 @@ impl AppSettings {
                 "hotkey_toggle_desktop_mute",
                 &defaults.hotkey_toggle_desktop_mute,
             ),
+            hotkey_push_to_talk_microphone: hotkey(
+                config,
+                "hotkey_push_to_talk_microphone",
+                &defaults.hotkey_push_to_talk_microphone,
+            ),
+            hotkey_push_to_mute_microphone: hotkey(
+                config,
+                "hotkey_push_to_mute_microphone",
+                &defaults.hotkey_push_to_mute_microphone,
+            ),
             hotkey_toggle_studio_mode: hotkey(
                 config,
                 "hotkey_toggle_studio_mode",
@@ -464,6 +474,14 @@ impl AppSettings {
             (
                 "hotkey_toggle_desktop_mute",
                 self.hotkey_toggle_desktop_mute.clone(),
+            ),
+            (
+                "hotkey_push_to_talk_microphone",
+                self.hotkey_push_to_talk_microphone.clone(),
+            ),
+            (
+                "hotkey_push_to_mute_microphone",
+                self.hotkey_push_to_mute_microphone.clone(),
             ),
             (
                 "hotkey_toggle_studio_mode",

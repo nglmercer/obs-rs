@@ -40,6 +40,8 @@ export component HotkeysPage inherits VerticalLayout {
     in-out property <string> hotkey-stop-replay;
     in-out property <string> hotkey-toggle-microphone-mute;
     in-out property <string> hotkey-toggle-desktop-mute;
+    in-out property <string> hotkey-push-to-talk-microphone;
+    in-out property <string> hotkey-push-to-mute-microphone;
     in-out property <string> hotkey-toggle-studio-mode;
     in-out property <string> hotkey-toggle-selected-source-visibility;
     in-out property <string> hotkey-toggle-selected-source-lock;
@@ -184,6 +186,22 @@ export component HotkeysPage inherits VerticalLayout {
             SettingsField {
                 text <=> root.hotkey-toggle-desktop-mute;
                 placeholder-text: "Ctrl+Shift+M";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_push_to_talk_microphone;
+            SettingsField {
+                text <=> root.hotkey-push-to-talk-microphone;
+                placeholder-text: "Ctrl+Space";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_push_to_mute_microphone;
+            SettingsField {
+                text <=> root.hotkey-push-to-mute-microphone;
+                placeholder-text: "Ctrl+Alt+Space";
                 edited => { root.changed(); }
             }
         }

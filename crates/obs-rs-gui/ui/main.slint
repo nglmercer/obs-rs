@@ -8,6 +8,7 @@ import { HorizontalSplitter } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { Palette } from "palette.slint";
 import { MainModals } from "main_modals.slint";
+import { HotkeyLabel } from "hotkey_label.slint";
 
 export { AddSourceText, I18n, MonitorText, PropertyText, SettingsText, UiText } from "i18n.slint";
 export { Metrics, Palette, ThemeTokens, UiMetrics } from "palette.slint";
@@ -274,6 +275,7 @@ export component MainWindow inherits Window {
         callback set-mixer-gain(string, int);
         callback set-mixer-pan(string, int);
         callback toggle-mixer-mute(string);
+        callback set-mixer-muted(string, bool);
         callback toggle-meters-paused();
         callback save-project();
         callback open-save-project-as();
@@ -367,6 +369,12 @@ export component MainWindow inherits Window {
         in property <bool> selected-source-is-scene: false;
         in property <bool> selected-source-is-nested: false;
 
+        hotkey-labeler := HotkeyLabel {
+            visible: false;
+            width: 0px;
+            height: 0px;
+        }
+
         // A mode of -1 means "toggle studio mode", which is how both the View
         // menu and the controls dock drive the canvas.
         function apply-view-mode(mode: int) {
@@ -445,6 +453,12 @@ export component MainWindow inherits Window {
             } else if (action == 14) {
                 root.toggle-mixer-mute("desktop");
                 true
+            } else if (action == 23) {
+                root.set-mixer-muted("mic", false);
+                true
+            } else if (action == 24) {
+                root.set-mixer-muted("mic", true);
+                true
             } else if (action == 18) {
                 root.toggle-studio-mode();
                 true
@@ -469,6 +483,17 @@ export component MainWindow inherits Window {
                 && root.preview-scene != ""
                 && root.preview-scene != "none") {
                 root.open-scene-projector(root.preview-scene);
+                true
+            } else {
+                false
+            }
+        }
+        function execute-shortcut-release(action: int) -> bool {
+            if (action == 23) {
+                root.set-mixer-muted("mic", true);
+                true
+            } else if (action == 24) {
+                root.set-mixer-muted("mic", false);
                 true
             } else {
                 false
@@ -527,41 +552,17 @@ export component MainWindow inherits Window {
             root.pending-confirm = 0;
         }
 
-        // Converts Slint's key event into the compact label parsed by the
-        // toolkit-neutral shortcut type. This is only an event bridge; the
-        // running binding table lives in DesktopState.
-        pure function key-name(text: string) -> string {
-            text == " " ? "Space"
-                : text == Key.Return ? "Enter"
-                : text == Key.Tab ? "Tab"
-                : text == Key.F1 ? "F1"
-                : text == Key.F2 ? "F2"
-                : text == Key.F3 ? "F3"
-                : text == Key.F4 ? "F4"
-                : text == Key.F5 ? "F5"
-                : text == Key.F6 ? "F6"
-                : text == Key.F7 ? "F7"
-                : text == Key.F8 ? "F8"
-                : text == Key.F9 ? "F9"
-                : text == Key.F10 ? "F10"
-                : text == Key.F11 ? "F11"
-                : text == Key.F12 ? "F12"
-                : text.to-uppercase();
-        }
-        pure function hotkey-label(event: KeyEvent) -> string {
-            (event.modifiers.control ? "Ctrl+" : "")
-                + (event.modifiers.shift ? "Shift+" : "")
-                + (event.modifiers.alt ? "Alt+" : "")
-                + root.key-name(event.text);
-        }
-
     FocusScope {
         key-pressed(event) => {
             if (root.execute-shortcut(
-                root.trigger-shortcut(root.hotkey-label(event)))) {
+                root.trigger-shortcut(hotkey-labeler.label(
+                    event.text,
+                    event.modifiers.control,
+                    event.modifiers.shift,
+                    event.modifiers.alt)))) {
                 return accept;
             }
-            if event.modifiers.control && root.key-name(event.text) == "A" {
+            if event.modifiers.control && hotkey-labeler.key-name(event.text) == "A" {
                 root.select-all-sources();
                 return accept;
             }
@@ -605,6 +606,14 @@ export component MainWindow inherits Window {
         }
 
         key-released(event) => {
+            if (root.execute-shortcut-release(
+                root.trigger-shortcut(hotkey-labeler.label(
+                    event.text,
+                    event.modifiers.control,
+                    event.modifiers.shift,
+                    event.modifiers.alt)))) {
+                return accept;
+            }
             if (event.text == " ") {
                 root.space-held = false;
                 return accept;
