@@ -28,6 +28,15 @@ Stereo, 2.1, Quad, 5.1, and 7.1 by speaker role, while unknown `Discrete`
 layouts retain the index-based fallback. This does not claim per-source audio
 routing, adaptive clock correction, or multiple recording tracks.
 
+## Latest verified package: compact-control accessibility labels
+
+On 2026-08-26, the shared icon-only `CompactButton` now exposes an explicit
+button role and its existing localized `hint` as the accessible label. This
+covers the zoom strip and the same component used by the Scenes, Sources,
+Mixer, Transitions, and Controls docks without adding duplicate UI state. The
+GUI fixture discovers the visible Zoom in and Zoom out actions by label; native
+screen-reader traversal and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

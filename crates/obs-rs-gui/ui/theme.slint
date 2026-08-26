@@ -226,6 +226,11 @@ export component CompactButton inherits Rectangle {
     in property <string> hint;
     in property <bool> enabled: true;
     callback clicked();
+    // Compact controls have no visible text; expose the existing localized
+    // hint as the button's accessible name for keyboard and screen-reader
+    // traversal.
+    accessible-role: button;
+    accessible-label: root.hint;
     width: 28px;
     height: 24px;
     opacity: enabled ? 1 : 0.45;

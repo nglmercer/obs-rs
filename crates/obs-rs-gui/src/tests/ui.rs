@@ -1,6 +1,6 @@
 use super::*;
 use super::{
-    ui_layout, ui_modal_keyboard, ui_navigation, ui_output, ui_project_open,
+    ui_icon_accessibility, ui_layout, ui_modal_keyboard, ui_navigation, ui_output, ui_project_open,
     ui_scene_dock_keyboard, ui_scene_rename_keyboard, ui_slideshow, ui_source_clipboard_modifiers,
     ui_source_delete_modifiers, ui_source_dock_keyboard, ui_source_order_keyboard,
     ui_source_rename_keyboard, ui_sources,
@@ -216,6 +216,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
         "a delayed key release must not restore a second time"
     );
     push_events.borrow_mut().clear();
+    ui_icon_accessibility::exercise_compact_button_accessibility(&ui);
     ui.window()
         .dispatch_event(WindowEvent::KeyPressed { text: "U".into() });
     ui.window()

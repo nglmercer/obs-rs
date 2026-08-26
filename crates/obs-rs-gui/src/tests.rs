@@ -33,6 +33,8 @@ mod scene;
 mod ui;
 #[path = "tests/ui_canvas.rs"]
 mod ui_canvas;
+#[path = "tests/ui_icon_accessibility.rs"]
+mod ui_icon_accessibility;
 #[path = "tests/ui_layout.rs"]
 mod ui_layout;
 #[path = "tests/ui_modal_keyboard.rs"]
