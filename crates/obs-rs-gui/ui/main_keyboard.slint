@@ -13,6 +13,7 @@ export component MainKeyboard inherits Rectangle {
     in property <string> selected-source;
     in property <bool> selected-source-is-group;
     in property <bool> selected-source-is-scene;
+    in property <bool> can-paste;
     in property <string> preview-scene;
     in-out property <bool> space-held: false;
 
@@ -35,6 +36,8 @@ export component MainKeyboard inherits Rectangle {
     callback toggle-source-locked(string);
     callback open-source-projector();
     callback open-scene-projector(string);
+    callback copy-source(string);
+    callback paste-reference(string);
     callback select-all-sources();
     callback remove-selected-sources();
     callback canvas-nudged(int, int);
@@ -155,6 +158,21 @@ export component MainKeyboard inherits Rectangle {
             if (action == 23 || action == 24) {
                 hotkey-labeler.held-push-key = hotkey-labeler.key-name(text);
             }
+            return true;
+        }
+        if control
+            && hotkey-labeler.key-name(text) == "C"
+            && root.selected-source != ""
+            && root.selected-source != "none" {
+            root.copy-source(root.selected-source);
+            return true;
+        }
+        if control && hotkey-labeler.key-name(text) == "V" && root.can-paste {
+            // A selected leaf resolves to its parent in the shared paste
+            // command; an empty/"none" selection pastes at the scene root.
+            root.paste-reference(
+                root.selected-source == "none" ? "" : root.selected-source
+            );
             return true;
         }
         if control && hotkey-labeler.key-name(text) == "A" {

@@ -37,6 +37,17 @@ navbar and Controls dock, and both paths reload the same bounded draft before
 showing the window. The GUI fixture verifies the page target through the real
 `SettingsController`; this does not claim complete OBS advanced-audio parity.
 
+## Latest verified package: source clipboard keyboard workflow
+
+On 2026-08-26, the main-window keyboard boundary now maps OBS's local `Ctrl+C`
+and `Ctrl+V` source workflow to the existing Rust clipboard. `Ctrl+C` copies
+the selected stable source path, while `Ctrl+V` uses the existing reference
+paste command and selects the newly created scene item. Root, leaf, and nested
+group target resolution remain owned by the same project/UI command path; the
+GUI testing-backend fixture drives both keys and verifies the pasted item
+references the original source. Paste Duplicate remains an explicit context
+menu action, and global OS hotkey registration remains incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

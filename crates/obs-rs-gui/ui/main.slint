@@ -454,6 +454,7 @@ export component MainWindow inherits Window {
         selected-source: root.selected-source;
         selected-source-is-group: root.selected-source-is-group;
         selected-source-is-scene: root.selected-source-is-scene;
+        can-paste: root.can-paste;
         preview-scene: root.preview-scene;
         space-held <=> root.space-held;
         swap-scenes() => { root.swap-scenes(); }
@@ -475,6 +476,8 @@ export component MainWindow inherits Window {
         toggle-source-locked(id) => { root.toggle-source-locked(id); }
         open-source-projector() => { root.open-source-projector(); }
         open-scene-projector(id) => { root.open-scene-projector(id); }
+        copy-source(id) => { root.copy-source(id); }
+        paste-reference(target) => { root.paste-reference(target); }
         select-all-sources() => { root.select-all-sources(); }
         remove-selected-sources() => { root.remove-selected-sources(); }
         canvas-nudged(dx, dy) => { root.canvas-nudged(dx, dy); }

@@ -7,6 +7,15 @@ independent reviewer.
 
 ## Latest verified packet
 
+The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
+`Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
+window forwards only the selected stable source path; Rust keeps the copied
+scene item and the existing reference-paste command owns target resolution,
+selection, history, and nested-group behavior. The GUI fixture drives both
+keys through the testing backend and proves the new reference item is selected
+after paste. Paste Duplicate remains an explicit context-menu action, and
+global OS hotkeys remain a separate capability.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the
