@@ -96,6 +96,16 @@ fixture opens the real modal, verifies its draft, commits a new name, and
 removes its temporary source. macOS Return-key parity and the broader global
 hotkey catalog remain incomplete.
 
+## Latest verified package: Scenes-dock F2 rename shortcut
+
+On 2026-08-26, the focused Scenes dock now maps unmodified `F2` to the
+existing scene-properties modal for the selected preview scene. The dock
+reuses the Rust-owned preview selection and scene-properties command rather
+than creating a second rename state. The GUI fixture opens the real modal,
+verifies its draft, commits a new name, and restores the shared scene fixture.
+macOS Return-key parity and the broader global hotkey catalog remain
+incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

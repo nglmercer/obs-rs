@@ -60,6 +60,19 @@ export component SceneDock inherits Rectangle {
                     }
                     key-pressed(event) => {
                         if !event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && event.text == Key.F2
+                            && root.preview-scene != ""
+                            && root.preview-scene != "none" {
+                            // OBS registers rename on the Scenes dock. The
+                            // selected preview scene is already the stable
+                            // Rust-owned target for the existing properties
+                            // modal, so no second selection is introduced.
+                            root.open-modal(5);
+                            return accept;
+                        }
+                        if !event.modifiers.control
                             && !event.modifiers.alt
                             && (event.text == Key.UpArrow
                                 || event.text == Key.DownArrow

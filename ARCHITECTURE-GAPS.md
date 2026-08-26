@@ -53,6 +53,13 @@ group and commits the project edit. The GUI fixture verifies the draft and
 commit through the real modal before removing its temporary item. macOS
 Return-key behavior and the broader global hotkey catalog remain open.
 
+The Scenes-dock rename packet now accepts unmodified `F2` for the selected
+preview scene and opens the existing scene-properties modal. The dock reuses
+the Rust-owned preview selection and scene-properties command, leaving the
+modal's name and transition fields as transient UI drafts. The GUI fixture
+verifies the real modal, commit, and restoration of the shared scene fixture.
+macOS Return-key behavior and the broader global hotkey catalog remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the
