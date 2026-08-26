@@ -21,7 +21,7 @@ export component MixerDock inherits Rectangle {
     callback set-mixer-pan(string, int);
     callback toggle-mixer-mute(string);
     callback toggle-meters-paused();
-    callback open-mixer-settings();
+    callback open-audio-settings-window();
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -165,7 +165,7 @@ export component MixerDock inherits Rectangle {
                     CompactButton {
                         icon-name: "settings";
                         hint: I18n.text.mixer_options;
-                        clicked => { root.open-mixer-settings(); }
+                        clicked => { root.open-audio-settings-window(); }
                     }
                     Rectangle { horizontal-stretch: 1; }
                 }

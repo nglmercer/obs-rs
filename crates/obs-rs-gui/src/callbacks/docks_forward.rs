@@ -166,6 +166,10 @@ pub(super) fn forward_to_studio(
     forward!(on_toggle_streaming, invoke_toggle_streaming);
     forward!(on_recover_recording, invoke_recover_recording);
     forward!(on_open_settings_window, invoke_open_settings_window);
+    forward!(
+        on_open_audio_settings_window,
+        invoke_open_audio_settings_window
+    );
 
     let weak = ui.as_weak();
     window.on_set_view_mode(move |mode| {

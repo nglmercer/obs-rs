@@ -121,6 +121,7 @@ export component DockSlot inherits Rectangle {
     callback save-replay-buffer();
     callback recover-recording();
     callback open-settings-window();
+    callback open-audio-settings-window();
     callback release-push-hotkey();
 
     // The row hands each dock a share of the width, which the splitters between
@@ -231,7 +232,7 @@ export component DockSlot inherits Rectangle {
         set-mixer-pan(id, pan) => { root.set-mixer-pan(id, pan); }
         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
         toggle-meters-paused() => { root.toggle-meters-paused(); }
-        open-mixer-settings() => { root.open-settings-window(); }
+        open-audio-settings-window() => { root.open-audio-settings-window(); }
     }
     if panel-kind == 3 : TransitionDock {
         floating: root.floating;

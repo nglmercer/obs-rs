@@ -79,6 +79,9 @@ pub(crate) struct SettingsController {
 /// nothing.
 const BROWSE_TOOLS: [&str; 2] = ["zenity", "kdialog"];
 
+/// The Audio category's index in the settings window's sidebar.
+const SETTINGS_CATEGORY_AUDIO: i32 = 4;
+
 /// Returns the first directory chooser on `PATH`.
 pub(super) fn detect_browse_tool() -> Option<&'static str> {
     let path = std::env::var_os("PATH")?;
@@ -755,20 +758,60 @@ pub(super) fn install_open(
     output: &Rc<RefCell<OutputRuntime>>,
     controller: &Rc<SettingsController>,
 ) {
-    let weak = ui.as_weak();
-    let state = Rc::clone(state);
-    let surface = Rc::clone(surface);
-    let output = Rc::clone(output);
-    let controller = Rc::clone(controller);
-    ui.on_open_settings_window(move || {
-        let Some(ui) = weak.upgrade() else {
-            return;
-        };
-        load_draft(&state, &surface, &output, &controller);
+    fn show_settings_window(
+        ui: &MainWindow,
+        state: &Rc<RefCell<DesktopState>>,
+        surface: &Rc<RefCell<PreviewSurface>>,
+        output: &Rc<RefCell<OutputRuntime>>,
+        controller: &Rc<SettingsController>,
+        category: Option<i32>,
+    ) {
+        load_draft(state, surface, output, controller);
+        if let Some(category) = category {
+            controller.window.set_category(category);
+        }
         controller.sync_theme(state.borrow().locale());
         if let Err(error) = controller.window.show() {
             ui.set_status_message(format!("Settings window: {error}").into());
         }
+    }
+
+    let weak = ui.as_weak();
+    let settings_state = Rc::clone(state);
+    let settings_surface = Rc::clone(surface);
+    let settings_output = Rc::clone(output);
+    let settings_controller = Rc::clone(controller);
+    let audio_state = Rc::clone(state);
+    let audio_surface = Rc::clone(surface);
+    let audio_output = Rc::clone(output);
+    let audio_controller = Rc::clone(controller);
+    ui.on_open_settings_window(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        show_settings_window(
+            &ui,
+            &settings_state,
+            &settings_surface,
+            &settings_output,
+            &settings_controller,
+            None,
+        );
+    });
+
+    let weak = ui.as_weak();
+    ui.on_open_audio_settings_window(move || {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        show_settings_window(
+            &ui,
+            &audio_state,
+            &audio_surface,
+            &audio_output,
+            &audio_controller,
+            Some(SETTINGS_CATEGORY_AUDIO),
+        );
     });
 }
 

@@ -300,6 +300,7 @@ export component MainWindow inherits Window {
         callback float-panel(int);
         callback resize-panel(int, int);
         callback open-settings-window();
+        callback open-audio-settings-window();
         callback open-setup-window();
         callback open-add-source-window();
         callback open-source-properties-window();
@@ -798,6 +799,7 @@ export component MainWindow inherits Window {
                 save-replay-buffer() => { root.save-replay-buffer(); }
                 recover-recording() => { root.recover-recording(); }
                 open-settings-window() => { root.open-settings-window(); }
+                open-audio-settings-window() => { root.open-audio-settings-window(); }
                 release-push-hotkey() => { keyboard.release-held-push(); }
                 set-view-mode(mode) => { root.apply-view-mode(mode); }
                 float-panel(kind) => { root.float-panel(kind); }

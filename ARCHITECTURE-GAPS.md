@@ -7,6 +7,14 @@ independent reviewer.
 
 ## Latest verified packet
 
+The Mixer options packet now keeps settings navigation contextual without
+creating another settings state owner. The Mixer dock's gear button traverses
+the docked or floating `DockSlot` boundary as a typed callback and opens the
+existing Settings window on the Audio page; the generic Settings actions still
+preserve their current page. The integrated GUI fixture verifies category 4
+through the real controller, while advanced audio/device-graph parity remains
+open.
+
 The slideshow Browse packet extends the properties picker to the
 `image_slideshow` `paths` row without creating a second source state owner. A
 bounded asynchronous native directory chooser returns one selected directory

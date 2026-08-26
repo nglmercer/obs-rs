@@ -136,6 +136,7 @@ export component DockWorkspace inherits Rectangle {
     callback save-replay-buffer();
     callback recover-recording();
     callback open-settings-window();
+    callback open-audio-settings-window();
     callback release-push-hotkey();
 
     background: Palette.tokens.window-bg;
@@ -427,6 +428,7 @@ export component DockWorkspace inherits Rectangle {
             save-replay-buffer() => { root.save-replay-buffer(); }
             recover-recording() => { root.recover-recording(); }
             open-settings-window() => { root.open-settings-window(); }
+            open-audio-settings-window() => { root.open-audio-settings-window(); }
             release-push-hotkey() => { root.release-push-hotkey(); }
         }
     }

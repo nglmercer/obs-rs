@@ -481,6 +481,8 @@ pub(super) fn exercise_settings_commit(
     // freshly opened window has nothing to apply.
     ui.invoke_open_settings_window();
     assert!(!window.get_dirty(), "a freshly loaded draft is not dirty");
+
+    exercise_mixer_settings_navigation(ui, window);
     exercise_stream_server_selection(window);
 
     // Apply: every draft is persisted and the button goes quiet again.
@@ -554,6 +556,17 @@ pub(super) fn exercise_settings_commit(
         crate::settings_model::RecordingQuality::SameAsStream
     );
     std::fs::remove_file(&path).expect("remove settings fixture");
+}
+
+/// Verifies that the contextual Mixer action targets the Audio page.
+fn exercise_mixer_settings_navigation(ui: &MainWindow, window: &SettingsWindow) {
+    window.set_category(8);
+    ui.invoke_open_audio_settings_window();
+    assert_eq!(
+        window.get_category(),
+        4,
+        "mixer settings open the Audio page"
+    );
 }
 
 fn exercise_stream_server_selection(window: &SettingsWindow) {

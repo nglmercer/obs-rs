@@ -110,6 +110,7 @@ export component FloatingDockWindow inherits Window {
     callback toggle-streaming();
     callback recover-recording();
     callback open-settings-window();
+    callback open-audio-settings-window();
     callback release-push-hotkey();
     callback redock-panel(int);
 
@@ -237,6 +238,7 @@ export component FloatingDockWindow inherits Window {
         toggle-streaming() => { root.toggle-streaming(); }
         recover-recording() => { root.recover-recording(); }
         open-settings-window() => { root.open-settings-window(); }
+        open-audio-settings-window() => { root.open-audio-settings-window(); }
         release-push-hotkey() => { root.release-push-hotkey(); }
         set-view-mode(mode) => { root.set-view-mode(mode); }
     }
