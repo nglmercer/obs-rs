@@ -14,6 +14,7 @@ pub(crate) fn exercise_source_pointer_drag_and_drop(
     refresh_ui(ui, state, surface);
     exercise_source_drag_order(ui, state);
     exercise_locked_source_drag(ui, state, surface);
+    exercise_nested_context_targets(ui, state, surface);
     cleanup_source_drag_fixture(state);
     state
         .borrow_mut()
@@ -161,6 +162,63 @@ fn exercise_locked_source_drag(
         vec!["drag-source-c", "drag-group-child", "drag-source-b"],
         "a locked destination rejects pointer drops without mutation"
     );
+}
+
+fn exercise_nested_context_targets(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::SetSceneItemLocked {
+            profile: "live".to_owned(),
+            scene: "preview".to_owned(),
+            item: "drag-group".to_owned(),
+            locked: false,
+        }))
+        .expect("unlock context target group");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::SelectSource {
+            id: "background".to_owned(),
+        })
+        .expect("select unrelated source before nested context action");
+    refresh_ui(ui, state, surface);
+
+    ui.invoke_remove_source("drag-group/drag-group-child".into());
+    assert_eq!(
+        group_child_ids(state, "drag-group"),
+        vec!["drag-source-c", "drag-source-b"],
+        "nested remove uses the clicked stable path instead of stale selection"
+    );
+    assert_eq!(
+        state.borrow().selected_source(),
+        Some("background"),
+        "removing a nested target preserves an unrelated canvas selection"
+    );
+
+    ui.invoke_open_source_rename("drag-group/drag-source-c".into());
+    assert_eq!(
+        ui.get_source_name_draft(),
+        "drag-source-c",
+        "nested rename resolves the clicked stable path"
+    );
+    ui.invoke_select_source("background".into());
+    ui.set_source_name_draft("Nested drag source".into());
+    ui.invoke_apply_source_name();
+    assert!(
+        state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.source("drag-source-c"))
+            .is_some_and(|source| source.name() == "Nested drag source"),
+        "nested rename commits to the clicked source definition"
+    );
+    ui.set_active_modal(0);
+    refresh_ui(ui, state, surface);
 }
 
 fn cleanup_source_drag_fixture(state: &Rc<RefCell<DesktopState>>) {

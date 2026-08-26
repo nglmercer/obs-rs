@@ -88,7 +88,9 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             MenuItem {
                 title: I18n.text.rename;
-                enabled: root.source-id != "" && (root.group || !root.nested);
+                // Nested rows carry a stable path, so renaming a leaf does
+                // not depend on the current canvas selection.
+                enabled: root.source-id != "";
                 activated => {
                     root.select-source(root.source-id);
                     root.rename-source(root.source-id);
@@ -258,8 +260,17 @@ export component SourceContextMenuArea inherits Rectangle {
                 title: I18n.text.remove_source;
                 enabled: root.source-id != "" && !root.source-locked;
                 activated => {
-                    if !root.nested { root.select-source(root.source-id); }
-                    root.remove-selected-sources();
+                    if root.nested {
+                        // A nested row is not represented by the flat canvas
+                        // selection. Remove the exact path that opened this
+                        // menu instead of deleting a stale selection.
+                        root.remove-source(root.source-id);
+                    } else {
+                        // Preserve OBS multi-selection behavior for a root
+                        // row while making the clicked row the target.
+                        root.select-source(root.source-id);
+                        root.remove-selected-sources();
+                    }
                 }
             }
         }

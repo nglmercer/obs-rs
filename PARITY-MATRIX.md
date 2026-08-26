@@ -113,6 +113,17 @@ activity gate across both dialogs, and exposes a bilingual manual-path message
 when no chooser is available. Picker-command, GUI wiring, and the existing
 Save As persistence tests pass.
 
+## Latest verified package: target-aware nested source context actions
+
+On 2026-08-26, `SOURCE-001` and `SCENE-002` gained target-aware `Rename` and
+`Remove` behavior for nested Sources-dock rows. Root rows preserve OBS
+multi-selection removal, while a nested row removes only its clicked stable
+group/Scene-reference path; nested leaf rename is enabled and remains tied to
+that path even if the canvas selection changes before confirmation. The GUI
+drag/drop fixture covers nested removal, rename, selection preservation, and
+locked-container recovery. Interact and the remaining context-menu actions
+remain incomplete.
+
 ## Latest verified package: portable Luma Wipe transition
 
 On 2026-08-25, `STUDIO-002` gained a bounded portable Luma Wipe slice. The
@@ -791,6 +802,12 @@ actions; global OS registration remains incomplete.
 | PRODUCT-002 | Visual 1:1 parity | Main window, docks, dialogs, menus, settings, focus, hover, disabled states, spacing, and icons match the reference. | A dark OBS-like Slint control room and settings fixtures exist; live side-by-side screenshots and pixel-diff thresholds are not established. | Partial | Desktop | Settings fixtures only; live screenshot capture blocked in baseline environment. | `crates/obs-rs-gui/ui`, `artifacts/baseline/screenshots` | Reference screenshot capture |
 | PRODUCT-003 | Reliability and soak | Hours-long record/stream sessions survive device, GPU, network, and output failures with bounded memory. | A/V 300-tick soak and bounded worker tests pass; no multi-hour production output/device/GPU/network soak has been run. | Partial | Portable/Linux slice | `obs-rs-linux-check` A/V soak passes; release benchmark misses deadlines. | `crates/obs-rs-clock`, `crates/obs-rs-engine`, `crates/obs-rs-video` | Performance agent, fault-injection matrix |
 | PRODUCT-004 | Packaging and updates | Signed installers, platform packaging, plugin updates, rollback, and diagnostics ship for all targets. | Release artifact script and signed update-manifest primitives exist; production packaging/signing/update channels are not complete. | Partial | All | Script/unit coverage only. | `scripts/release-artifacts.sh`, `crates/obs-rs-update` | Platform agents, release pipeline |
+
+Reconciliation note: `SOURCE-001`/`SCENE-002` now include target-aware nested
+Sources-dock `Rename` and `Remove` actions. Root removal retains the selected
+set, while a nested row routes the clicked stable path and respects locked
+ancestors; the GUI drag/drop fixture verifies selection preservation. Interact,
+the remaining context-menu actions, and global OS registration remain partial.
 
 Reconciliation note: scene-dock rows now expose an explicit button role and
 stable scene-ID accessibility label, matching the existing source-row identity

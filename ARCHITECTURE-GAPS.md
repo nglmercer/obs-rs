@@ -7,6 +7,14 @@ independent reviewer.
 
 ## Latest verified packet
 
+The nested source context-action packet now routes `Rename` and `Remove` from
+the exact stable row path. Root rows retain OBS multi-selection removal, while
+nested rows remove only the clicked group/Scene-reference child; nested leaf
+rename is enabled and remains independent from a later canvas-selection change.
+The Sources-dock GUI fixture covers both paths and locked-container behavior.
+Interact, the remaining context-menu actions, and global OS hotkey registration
+remain open.
+
 The project-lifecycle packet now includes a bounded `Save As...` callback.
 The GUI dialog writes the current serialized document through the existing
 atomic `ProjectFileStore`, rejects a different existing destination before
