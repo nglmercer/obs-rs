@@ -66,7 +66,8 @@ The Scenes-dock removal packet now accepts both unmodified `Delete` and
 scene through the existing Rust `RemoveScene` callback. The one-scene guard is
 consumed at the UI boundary, while Rust owns mutation, fallback selection,
 history, and error reporting. The GUI fixture covers both keys and verifies
-that removing the preview scene restores a valid selection. Global hotkey
+that modified keys do not remove a scene, removing the preview scene restores
+a valid selection, and a one-scene project remains intact. Global hotkey
 registration and confirmation-dialog parity remain open.
 
 The modal keyboard packet now gives the active `ModalShell` its own focused

@@ -125,7 +125,8 @@ On 2026-08-26, the focused Scenes dock now maps unmodified `Delete` and
 scene action. The one-scene guard is consumed by the dock, while Rust owns the
 validated project mutation, undo boundary, fallback preview selection, and
 failure status. The integrated GUI fixture drives both keys against temporary
-scenes and verifies that the preview selection remains valid. Reference:
+scenes, rejects modified keys, and verifies that a one-scene project remains
+intact while normal deletion restores a valid preview selection. Reference:
 [OBS 32.2.2 scene removal bindings](https://raw.githubusercontent.com/obsproject/obs-studio/32.2.2/frontend/widgets/OBSBasic.cpp).
 
 ## Latest verified package: modal keyboard boundary
