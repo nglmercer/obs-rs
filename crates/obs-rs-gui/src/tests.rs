@@ -39,6 +39,8 @@ mod ui_layout;
 mod ui_navigation;
 #[path = "tests/ui_output.rs"]
 mod ui_output;
+#[path = "tests/ui_project_open.rs"]
+mod ui_project_open;
 #[path = "tests/ui_scene_drag_drop.rs"]
 mod ui_scene_drag_drop;
 #[path = "tests/ui_scene_reference.rs"]

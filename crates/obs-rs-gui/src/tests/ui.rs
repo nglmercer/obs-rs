@@ -1,5 +1,5 @@
 use super::*;
-use super::{ui_layout, ui_navigation, ui_output, ui_sources};
+use super::{ui_layout, ui_navigation, ui_output, ui_project_open, ui_sources};
 
 #[test]
 #[allow(
@@ -230,5 +230,6 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_output::exercise_recording_controls(&ui, &state, &surface);
     ui_navigation::exercise_menu_actions(&ui, &state, &surface, &docks);
     ui_navigation::exercise_group_source_callbacks(&ui, &state, &surface);
+    ui_project_open::exercise_project_open_dialog(&ui);
     ui_navigation::exercise_context_menus(&ui, &state, &surface);
 }

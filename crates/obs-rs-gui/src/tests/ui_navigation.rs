@@ -46,6 +46,7 @@ pub(super) fn exercise_group_source_callbacks(
     ui.set_pending_discard(8);
     ui.invoke_save_discard(8);
     assert_eq!(ui.get_pending_discard(), 0);
+    super::ui_project_open::close_project_open_dialog(ui);
     assert!(!state.borrow().is_dirty());
     assert!(saved_path.is_file());
     std::fs::remove_file(&saved_path).expect("remove save/discard fixture");

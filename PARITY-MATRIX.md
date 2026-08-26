@@ -124,6 +124,19 @@ drag/drop fixture covers nested removal, rename, selection preservation, and
 locked-container recovery. Interact and the remaining context-menu actions
 remain incomplete.
 
+## Latest verified package: native project Open picker
+
+On 2026-08-26, `PROFILE-001` completed the native chooser slice for opening a
+project. The existing dirty-session confirmation now leads to an explicit
+Open-project dialog instead of loading the current path immediately. Linux
+(`zenity`/`kdialog`), macOS (`osascript`), and Windows (PowerShell) use native
+open-dialog commands when discoverable; the selected path returns through the
+Slint event loop with the same bounded UTF-8/path-size validation as Save As.
+The dialog has separate bilingual copy and keeps a manual-path fallback when
+no chooser is available. Picker-command and GUI compilation tests pass; file
+type validation, collection import/export dialogs, and recovery UX remain
+incomplete. The focused GUI snapshot fixture and the picker-command tests pass.
+
 ## Latest verified package: portable Luma Wipe transition
 
 On 2026-08-25, `STUDIO-002` gained a bounded portable Luma Wipe slice. The

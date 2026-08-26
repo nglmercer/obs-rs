@@ -575,6 +575,13 @@ pub(super) fn catalog() -> UiText {
         project_dialog_description: s(
             "Define los archivos que usa OBS-RS para guardar y diagnosticar la sesión.",
         ),
+        project_open_title: s("Abrir proyecto"),
+        project_open_description: s(
+            "Elige un archivo de proyecto OBS-RS para cargarlo como documento activo.",
+        ),
+        project_open_picker_unavailable: s(
+            "No se encontró un selector de archivos del sistema; escribe manualmente la ruta del proyecto.",
+        ),
         project_save_as_title: s("Guardar proyecto como"),
         project_save_as_description: s(
             "Escribe el proyecto actual en un archivo nuevo y lo convierte en el documento activo.",

@@ -270,7 +270,10 @@ fn continue_after_discard_save(ui: &MainWindow, action: i32) {
             ui.set_project_dialog_mode(2);
             ui.set_active_modal(1);
         }
-        DISCARD_LOAD_PROJECT => ui.invoke_load_project(),
+        DISCARD_LOAD_PROJECT => {
+            ui.set_project_dialog_mode(4);
+            ui.set_active_modal(1);
+        }
         DISCARD_RECOVER_PROJECT => ui.invoke_recover_project(),
         _ => {}
     }

@@ -14,22 +14,28 @@ export component ProjectDialog inherits ModalShell {
     callback save-project();
     callback browse-project-save-as();
 
-    title: mode == 3
-        ? I18n.text.project_save_as_title
+    title: mode == 4
+        ? I18n.text.project_open_title
+        : mode == 3
+            ? I18n.text.project_save_as_title
         : mode == 1
             ? I18n.text.collection_export_dialog_title
             : mode == 2
                 ? I18n.text.collection_import_dialog_title
                 : I18n.text.project_dialog_title;
-    subtitle: mode == 3
-        ? I18n.text.project_save_as_description
+    subtitle: mode == 4
+        ? I18n.text.project_open_description
+        : mode == 3
+            ? I18n.text.project_save_as_description
         : mode == 1
             ? I18n.text.collection_export_dialog_description
             : mode == 2
                 ? I18n.text.collection_import_dialog_description
                 : I18n.text.project_dialog_description;
-    accept-label: mode == 3
-        ? I18n.text.menu_save_as
+    accept-label: mode == 4
+        ? I18n.text.load
+        : mode == 3
+            ? I18n.text.menu_save_as
         : mode == 1
             ? I18n.text.menu_export_collection
             : mode == 2
@@ -49,7 +55,7 @@ export component ProjectDialog inherits ModalShell {
                 : "/path/to/collection.obsrproj";
         }
         if mode != 1 && mode != 2 : FieldHeading { text: I18n.text.project_file; }
-        if mode == 3 : HorizontalBox {
+        if mode == 3 || mode == 4 : HorizontalBox {
             spacing: 6px;
             LineEdit {
                 text <=> project-path;
@@ -71,11 +77,13 @@ export component ProjectDialog inherits ModalShell {
             text <=> diagnostics-path;
             placeholder-text: "obs-rs-diagnostics.obsrdg";
         }
-        MutedText {
+        if mode != 4 : MutedText {
             text: I18n.text.atomic_save_hint;
         }
-        if mode == 3 && !root.file-picker-enabled : MutedText {
-            text: I18n.text.project_picker_unavailable;
+        if (mode == 3 || mode == 4) && !root.file-picker-enabled : MutedText {
+            text: mode == 4
+                ? I18n.text.project_open_picker_unavailable
+                : I18n.text.project_picker_unavailable;
         }
     }
 }

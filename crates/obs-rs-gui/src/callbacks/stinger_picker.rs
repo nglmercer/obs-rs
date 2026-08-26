@@ -23,20 +23,21 @@ const MAX_PICKER_OUTPUT_BYTES: usize = MAX_PROJECT_PATH_BYTES + 1;
 enum PickerPurpose {
     StingerResource,
     ProjectSaveAs,
+    ProjectOpen,
 }
 
 impl PickerPurpose {
     fn path_limit(self) -> usize {
         match self {
             Self::StingerResource => MAX_STINGER_RESOURCE_PATH_BYTES,
-            Self::ProjectSaveAs => MAX_PROJECT_PATH_BYTES,
+            Self::ProjectSaveAs | Self::ProjectOpen => MAX_PROJECT_PATH_BYTES,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
             Self::StingerResource => "Stinger",
-            Self::ProjectSaveAs => "Project",
+            Self::ProjectSaveAs | Self::ProjectOpen => "Project",
         }
     }
 
@@ -48,13 +49,16 @@ impl PickerPurpose {
             Self::ProjectSaveAs => {
                 "Project file picker is unavailable; type the Save As path manually"
             }
+            Self::ProjectOpen => {
+                "Project file picker is unavailable; type the project path manually"
+            }
         }
     }
 
     fn already_open_message(self) -> &'static str {
         match self {
             Self::StingerResource => "Stinger file picker is already open",
-            Self::ProjectSaveAs => "Project file picker is already open",
+            Self::ProjectSaveAs | Self::ProjectOpen => "Project file picker is already open",
         }
     }
 
@@ -62,20 +66,21 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "obs-rs-stinger-file-picker",
             Self::ProjectSaveAs => "obs-rs-project-file-picker",
+            Self::ProjectOpen => "obs-rs-project-open-file-picker",
         }
     }
 
     fn opening_message(self) -> &'static str {
         match self {
             Self::StingerResource => "Opening Stinger file picker…",
-            Self::ProjectSaveAs => "Opening project file picker…",
+            Self::ProjectSaveAs | Self::ProjectOpen => "Opening project file picker…",
         }
     }
 
     fn cancelled_message(self) -> &'static str {
         match self {
             Self::StingerResource => "Stinger file selection cancelled",
-            Self::ProjectSaveAs => "Project file selection cancelled",
+            Self::ProjectSaveAs | Self::ProjectOpen => "Project file selection cancelled",
         }
     }
 
@@ -83,6 +88,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger resource selected",
             Self::ProjectSaveAs => "Project Save As path selected",
+            Self::ProjectOpen => "Project path selected",
         }
     }
 }
@@ -110,12 +116,14 @@ pub(crate) fn install_file_pickers(ui: &MainWindow) {
     let weak = ui.as_weak();
     let active_for_project = Arc::clone(&active);
     ui.on_browse_project_save_as(move || {
-        begin_picker(
-            &weak,
-            &active_for_project,
-            tool,
-            PickerPurpose::ProjectSaveAs,
-        );
+        let purpose = weak.upgrade().map_or(PickerPurpose::ProjectSaveAs, |ui| {
+            if ui.get_project_dialog_mode() == 4 {
+                PickerPurpose::ProjectOpen
+            } else {
+                PickerPurpose::ProjectSaveAs
+            }
+        });
+        begin_picker(&weak, &active_for_project, tool, purpose);
     });
 }
 
@@ -138,7 +146,9 @@ fn begin_picker(
     }
     let start = match purpose {
         PickerPurpose::StingerResource => ui.get_scene_stinger_path().to_string(),
-        PickerPurpose::ProjectSaveAs => ui.get_project_path().to_string(),
+        PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
+            ui.get_project_path().to_string()
+        }
     };
     let active_for_worker = Arc::clone(active);
     let callback_ui = weak.clone();
@@ -157,7 +167,7 @@ fn begin_picker(
                             PickerPurpose::StingerResource => {
                                 ui.set_scene_stinger_path(path.into());
                             }
-                            PickerPurpose::ProjectSaveAs => {
+                            PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
                                 ui.set_project_path(path.into());
                             }
                         }
@@ -278,6 +288,12 @@ fn configure_command(
                 command.arg(format!("--filename={start}"));
             }
         }
+        ("zenity", PickerPurpose::ProjectOpen) => {
+            command.args(["--file-selection", "--title=Open OBS-RS project"]);
+            if !start.is_empty() {
+                command.arg(format!("--filename={start}"));
+            }
+        }
         ("kdialog", PickerPurpose::StingerResource) => {
             command.args([
                 "--getopenfilename",
@@ -296,6 +312,13 @@ fn configure_command(
                 "OBS-RS projects (*.obsrproj)",
             ]);
         }
+        ("kdialog", PickerPurpose::ProjectOpen) => {
+            command.args([
+                "--getopenfilename",
+                if start.is_empty() { "." } else { start },
+                "OBS-RS projects (*.obsrproj)",
+            ]);
+        }
         ("osascript", PickerPurpose::StingerResource) => {
             command.args([
                 "-e",
@@ -306,6 +329,12 @@ fn configure_command(
             command.args([
                 "-e",
                 "set selectedFile to choose file name with prompt \"Save OBS-RS project as\"\ndefault name \"obs-rs-project.obsrproj\"\nPOSIX path of selectedFile",
+            ]);
+        }
+        ("osascript", PickerPurpose::ProjectOpen) => {
+            command.args([
+                "-e",
+                "set selectedFile to choose file with prompt \"Open OBS-RS project\"\nPOSIX path of selectedFile",
             ]);
         }
         ("powershell" | "pwsh", PickerPurpose::StingerResource) => {
@@ -322,6 +351,14 @@ fn configure_command(
                 "-NonInteractive",
                 "-Command",
                 "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.SaveFileDialog; $dialog.Filter = 'OBS-RS projects|*.obsrproj|All files|*.*'; $dialog.DefaultExt = 'obsrproj'; $dialog.AddExtension = $true; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.FileName) }",
+            ]);
+        }
+        ("powershell" | "pwsh", PickerPurpose::ProjectOpen) => {
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.OpenFileDialog; $dialog.Filter = 'OBS-RS projects|*.obsrproj|All files|*.*'; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.FileName) }",
             ]);
         }
         _ => return Err(format!("unsupported file picker: {tool}")),
@@ -408,6 +445,41 @@ mod tests {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(kdialog_args.iter().any(|arg| arg == "--getsavefilename"));
+    }
+
+    #[test]
+    fn project_picker_uses_open_dialogs_for_project_selection() {
+        let mut zenity = Command::new("zenity");
+        configure_command(
+            &mut zenity,
+            "zenity",
+            "obs-rs-project.obsrproj",
+            PickerPurpose::ProjectOpen,
+        )
+        .expect("zenity open dialog");
+        let zenity_args = zenity
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(zenity_args.iter().any(|arg| arg == "--file-selection"));
+        assert!(zenity_args
+            .iter()
+            .any(|arg| arg == "--title=Open OBS-RS project"));
+        assert!(!zenity_args.iter().any(|arg| arg == "--save"));
+
+        let mut kdialog = Command::new("kdialog");
+        configure_command(
+            &mut kdialog,
+            "kdialog",
+            "obs-rs-project.obsrproj",
+            PickerPurpose::ProjectOpen,
+        )
+        .expect("kdialog open dialog");
+        let kdialog_args = kdialog
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(kdialog_args.iter().any(|arg| arg == "--getopenfilename"));
     }
 
     #[test]

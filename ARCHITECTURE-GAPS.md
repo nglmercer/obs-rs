@@ -27,6 +27,14 @@ Windows (PowerShell), returning the selected path through the Slint event loop;
 unsupported desktops keep the manual path field and an explicit unavailable
 message. The remaining collection/recovery UX is still open.
 
+Opening a project now follows the same dirty-session guard into a separate
+mode-4 dialog: the native chooser is asynchronous, uses open-dialog semantics
+on Linux (`zenity`/`kdialog`), macOS (`osascript`), and Windows (PowerShell),
+and only the selected bounded path reaches the existing load callback.
+Unsupported desktops keep the manual path field and an explicit unavailable
+message. File type validation, collection import/export pickers, and recovery
+UX are still open.
+
 The bounded Stinger runtime packet now accepts already-decoded RGBA frames as
 one validated, preloaded clip. Frame count, per-frame duration, total duration,
 transition point, format consistency, and resident RGBA storage are all
