@@ -335,6 +335,37 @@ pub(super) fn render_monitor_window() {
 
 /// Drives the display picker end to end: opening it for an X11 screen source,
 /// accepting the whole-desktop choice, and confirming the project records it.
+fn exercise_monitor_keyboard_boundary(ui: &MainWindow, window: &crate::MonitorWindow) {
+    assert!(
+        !window.get_capture_whole_desktop(),
+        "the picker starts from the persisted display selection"
+    );
+    // Escape must discard the in-window selection. The whole-desktop choice is
+    // available on every host, including a CI machine with no display server.
+    window.set_capture_whole_desktop(true);
+    window
+        .window()
+        .take_snapshot()
+        .expect("monitor window should render before Escape dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+
+    ui.invoke_open_monitor_window();
+    assert!(
+        !window.get_capture_whole_desktop(),
+        "Escape discards the monitor picker draft"
+    );
+    window.set_capture_whole_desktop(true);
+    window
+        .window()
+        .take_snapshot()
+        .expect("monitor window should render before Enter dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
+}
+
 pub(super) fn exercise_monitor_selection(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -345,7 +376,10 @@ pub(super) fn exercise_monitor_selection(
         .preview_scene()
         .expect("preview scene")
         .to_owned();
-    let settings = source_settings("x11_screen_capture").expect("x11 defaults");
+    let mut settings = source_settings("x11_screen_capture").expect("x11 defaults");
+    settings
+        .set("monitor", "DP-1")
+        .expect("monitor draft fixture");
     let source = SourceSpec::new("gui-screen", "x11_screen_capture", "GUI screen", settings)
         .expect("screen source");
     state
@@ -371,10 +405,7 @@ pub(super) fn exercise_monitor_selection(
     let controller = crate::install_monitor_window(ui, state, surface).expect("monitor controller");
     ui.invoke_open_monitor_window();
     let window = crate::callbacks::monitor::MonitorController::window(&controller);
-    // The whole-desktop choice is the one available on every host, including a
-    // CI machine with no display server.
-    window.set_capture_whole_desktop(true);
-    window.invoke_accept_monitor();
+    exercise_monitor_keyboard_boundary(ui, window);
 
     let state_ref = state.borrow();
     let source = state_ref
@@ -386,7 +417,7 @@ pub(super) fn exercise_monitor_selection(
     assert_eq!(
         source.settings().get("monitor"),
         Some(""),
-        "the display choice must reach the project command"
+        "Enter must apply the display choice through the project command"
     );
     drop(state_ref);
 

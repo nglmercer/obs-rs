@@ -90,6 +90,12 @@ remains available to the multiline advanced `TextEdit`. The GUI fixture covers
 both real window events and verifies that cancellation does not leak a path
 edit. OS close-request policy and full focus traversal remain open.
 
+The standalone Monitor picker now has the same explicit focus boundary.
+`Escape` discards a temporary whole-desktop/display choice and `Enter` applies
+it through the existing monitor callback. The GUI fixture verifies both paths
+against a persisted non-default monitor selection; OS close-request policy
+and full focus traversal remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

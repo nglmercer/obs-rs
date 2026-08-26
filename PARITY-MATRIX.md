@@ -145,6 +145,15 @@ draft, and `Ctrl+Enter` applies through the existing Rust callback; plain
 both paths against the persisted source settings; OS close-request handling
 and complete focus traversal remain incomplete.
 
+## Latest verified package: Monitor picker keyboard boundary
+
+On 2026-08-26, the standalone Monitor picker now focuses an explicit keyboard
+boundary after it is shown. `Escape` discards a temporary display choice and
+`Enter` applies the selected monitor/whole-desktop mode through the existing
+Rust callback. The GUI fixture verifies both paths against a persisted
+non-default monitor; OS close-request handling and complete focus traversal
+remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

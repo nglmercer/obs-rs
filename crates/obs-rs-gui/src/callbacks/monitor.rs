@@ -247,8 +247,9 @@ fn open_for_target(
         current_monitor_for_target(state, target).as_deref(),
     );
     window.set_status(status_line(&controller.monitors.borrow()).into());
-    if let Err(error) = window.show() {
-        ui.set_status_message(format!("Display picker: {error}").into());
+    match window.show() {
+        Ok(()) => window.invoke_focus_keyboard_boundary(),
+        Err(error) => ui.set_status_message(format!("Display picker: {error}").into()),
     }
 }
 

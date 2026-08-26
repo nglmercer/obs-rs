@@ -76,7 +76,52 @@ export component MonitorWindow inherits Window {
     callback cancel-monitor();
     callback refresh-monitors();
 
-    VerticalLayout {
+    monitor-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Keep the picker self-contained: Escape cancels the draft selection,
+        // while Return accepts the selected monitor or whole-desktop mode.
+        // Other keys remain available to the checkbox and list controls.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-monitor();
+                return accept;
+            }
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-monitor();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-monitor();
+                return accept;
+            }
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-monitor();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
         padding: 12px;
         spacing: 10px;
 
@@ -183,5 +228,12 @@ export component MonitorWindow inherits Window {
                 clicked => { root.cancel-monitor(); }
             }
         }
+    }
+    }
+
+    // A standalone picker may be reopened after a child control in another
+    // window owns focus, so focus this boundary explicitly after every show.
+    public function focus-keyboard-boundary() {
+        monitor-focus.focus();
     }
 }
