@@ -124,6 +124,16 @@ impl DockController {
         usize::try_from(kind)
             .is_ok_and(|kind| self.windows.borrow().get(kind).is_some_and(Option::is_some))
     }
+
+    #[cfg(test)]
+    pub(crate) fn floating_window(&self, kind: i32) -> Option<slint::Weak<FloatingDockWindow>> {
+        let index = usize::try_from(kind).ok()?;
+        self.windows
+            .borrow()
+            .get(index)
+            .and_then(Option::as_ref)
+            .map(ComponentHandle::as_weak)
+    }
 }
 
 /// Moves `panel` one place along the row, returning the new order.
@@ -670,6 +680,15 @@ fn float(
             return;
         };
         redock(&ui, &redock_controller, redock_index);
+    });
+
+    let close_ui = ui.as_weak();
+    let close_controller = Rc::clone(controller);
+    window.window().on_close_requested(move || {
+        if let Some(ui) = close_ui.upgrade() {
+            redock(&ui, &close_controller, redock_index);
+        }
+        slint::CloseRequestResponse::HideWindow
     });
 
     if let Some(geometry) = controller.stored_geometry(redock_index) {

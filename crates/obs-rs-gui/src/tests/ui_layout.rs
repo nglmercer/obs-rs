@@ -94,7 +94,22 @@ pub(super) fn exercise_dock_layout(
     assert!(mixer_geometry.width >= 240);
     assert!(mixer_geometry.height >= 160);
 
+    let floating_window = controller
+        .floating_window(2)
+        .and_then(|window| window.upgrade())
+        .expect("the detached mixer window is reachable");
+    floating_window
+        .window()
+        .dispatch_event(WindowEvent::CloseRequested);
+    assert!(
+        !controller.is_floating(2),
+        "native close re-docks the mixer"
+    );
+    assert!(!read_floating(ui)[2]);
+
     // Detaching again returns it to the row.
+    ui.invoke_float_panel(2);
+    assert!(controller.is_floating(2), "the mixer detaches again");
     ui.invoke_float_panel(2);
     assert!(!controller.is_floating(2), "the mixer re-docked");
     assert!(!read_floating(ui)[2]);

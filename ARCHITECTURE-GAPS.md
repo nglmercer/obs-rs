@@ -147,6 +147,13 @@ another dock or dialog; the GUI menu fixture drives both F11 transitions and
 closes the real program projector with Escape. Native multi-monitor/DPI and
 projector focus traversal remain open.
 
+The floating-dock close follow-up now routes the native window-manager close
+request through the same Rust `redock()` path as the dock header. Closing a
+detached mixer therefore clears its floating projection, remembers its bounded
+geometry, and leaves the panel available for a later detach; the GUI fixture
+dispatches a real `CloseRequested` event and verifies both re-dock and
+re-detach. Multi-monitor close behavior remains a platform evidence gap.
+
 The slideshow Browse packet extends the properties picker to the
 `image_slideshow` `paths` row without creating a second source state owner. A
 bounded asynchronous native directory chooser returns one selected directory

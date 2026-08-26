@@ -1075,6 +1075,12 @@ projector explicitly focuses its keyboard boundary after `show()`. The GUI
 menu fixture sends F11 twice and closes the real program projector with
 Escape; native multi-monitor/DPI focus evidence remains unavailable.
 
+Reconciliation note: `DOCK-003` now routes native floating-window close through
+the existing Rust redock lifecycle. The GUI dock fixture dispatches
+`CloseRequested`, verifies the panel is no longer floating, and detaches it
+again without losing its bounded geometry; native multi-monitor evidence is
+still unavailable.
+
 Reconciliation note: `STUDIO-003`/`HOTKEY-001` now also include the optional
 persisted selected-source projector binding and GUI action code 21. It reuses
 the existing projector lifecycle and rejects groups/Scene references rather
