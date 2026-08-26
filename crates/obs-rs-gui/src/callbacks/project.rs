@@ -1,4 +1,9 @@
-use std::{cell::RefCell, error::Error, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    error::Error,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use obs_rs_diagnostics::{AtomicDiagnosticFileWriter, DiagnosticBundle};
 use obs_rs_media::StingerSpec;
@@ -19,6 +24,8 @@ const DISCARD_SWITCH_COLLECTION: i32 = 6;
 const DISCARD_IMPORT_COLLECTION: i32 = 7;
 const DISCARD_LOAD_PROJECT: i32 = 8;
 const DISCARD_RECOVER_PROJECT: i32 = 9;
+pub(crate) const PROJECT_EXTENSION: &str = "obsrproj";
+const LEGACY_PROJECT_EXTENSION: &str = "json";
 
 pub(crate) fn install_project_callbacks(
     ui: &MainWindow,
@@ -135,8 +142,42 @@ pub(crate) fn atomic_write_paths(
     Ok((final_path, temp_path))
 }
 
+/// Validates a path before it becomes a project store key or reaches the
+/// filesystem.
+///
+/// `.obsrproj` is the current project extension. The shipped default still
+/// uses `.json`, so that legacy extension remains readable and writable while
+/// existing installations move to the native project name.
+pub(crate) fn validate_project_path(path: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(std::io::Error::other("project path is empty").into());
+    }
+    let path = Path::new(path);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| std::io::Error::other("project path must name a file"))?;
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    let supported = extension.is_some_and(|extension| {
+        extension.eq_ignore_ascii_case(PROJECT_EXTENSION)
+            || extension.eq_ignore_ascii_case(LEGACY_PROJECT_EXTENSION)
+    });
+    if !supported {
+        return Err(std::io::Error::other(format!(
+            "project path must name a .{PROJECT_EXTENSION} file (legacy .{LEGACY_PROJECT_EXTENSION} is also supported)"
+        ))
+        .into());
+    }
+    if file_name == "." || file_name == ".." {
+        return Err(std::io::Error::other("project path must name a file").into());
+    }
+    Ok(path.to_path_buf())
+}
+
 pub(crate) fn project_store(path: &str) -> Result<Rc<ProjectFileStore>, Box<dyn Error>> {
     let key = path.trim().to_owned();
+    validate_project_path(&key)?;
     PROJECT_STORE_CACHE.with(|cache| {
         if let Some((cached_path, store)) = cache.borrow().as_ref() {
             if *cached_path == key {
@@ -216,7 +257,7 @@ fn save_project_as_document(
     if target_path.is_empty() {
         return Err(std::io::Error::other("project Save As path is empty").into());
     }
-    let target = std::path::Path::new(target_path);
+    let target = validate_project_path(target_path)?;
     if target_path != current_path && target.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,

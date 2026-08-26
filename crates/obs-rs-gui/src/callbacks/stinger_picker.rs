@@ -326,12 +326,28 @@ fn configure_command(
 }
 
 fn configure_zenity(command: &mut Command, start: &str, purpose: PickerPurpose) {
-    let (title, save) = match purpose {
-        PickerPurpose::StingerResource => ("Select Stinger resource", false),
-        PickerPurpose::ProjectSaveAs => ("Save OBS-RS project", true),
-        PickerPurpose::ProjectOpen => ("Open OBS-RS project", false),
-        PickerPurpose::CollectionExport => ("Export OBS-RS collection", true),
-        PickerPurpose::CollectionImport => ("Import OBS-RS collection", false),
+    let (title, save, filter) = match purpose {
+        PickerPurpose::StingerResource => ("Select Stinger resource", false, None),
+        PickerPurpose::ProjectSaveAs => (
+            "Save OBS-RS project",
+            true,
+            Some("OBS-RS projects | *.obsrproj *.json"),
+        ),
+        PickerPurpose::ProjectOpen => (
+            "Open OBS-RS project",
+            false,
+            Some("OBS-RS projects | *.obsrproj *.json"),
+        ),
+        PickerPurpose::CollectionExport => (
+            "Export OBS-RS collection",
+            true,
+            Some("OBS-RS collections | *.obsrproj"),
+        ),
+        PickerPurpose::CollectionImport => (
+            "Import OBS-RS collection",
+            false,
+            Some("OBS-RS collections | *.obsrproj"),
+        ),
     };
     command.arg("--file-selection");
     if save {
@@ -340,6 +356,9 @@ fn configure_zenity(command: &mut Command, start: &str, purpose: PickerPurpose) 
     command.arg(format!("--title={title}"));
     if !start.is_empty() {
         command.arg(format!("--filename={start}"));
+    }
+    if let Some(filter) = filter {
+        command.arg(format!("--file-filter={filter}"));
     }
 }
 
@@ -351,9 +370,9 @@ fn configure_kdialog(command: &mut Command, start: &str, purpose: PickerPurpose)
         PickerPurpose::ProjectSaveAs => (
             true,
             "obs-rs-project.obsrproj",
-            "OBS-RS projects (*.obsrproj)",
+            "OBS-RS projects (*.obsrproj *.json)",
         ),
-        PickerPurpose::ProjectOpen => (false, ".", "OBS-RS projects (*.obsrproj)"),
+        PickerPurpose::ProjectOpen => (false, ".", "OBS-RS projects (*.obsrproj *.json)"),
         PickerPurpose::CollectionExport => (
             true,
             "obs-rs-collection-export.obsrproj",
@@ -406,12 +425,12 @@ fn configure_powershell(command: &mut Command, purpose: PickerPurpose) {
         ),
         PickerPurpose::ProjectSaveAs => (
             "SaveFileDialog",
-            "OBS-RS projects|*.obsrproj|All files|*.*",
+            "OBS-RS projects|*.obsrproj;*.json|All files|*.*",
             true,
         ),
         PickerPurpose::ProjectOpen => (
             "OpenFileDialog",
-            "OBS-RS projects|*.obsrproj|All files|*.*",
+            "OBS-RS projects|*.obsrproj;*.json|All files|*.*",
             false,
         ),
         PickerPurpose::CollectionExport => (
@@ -501,6 +520,9 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(zenity_args.iter().any(|arg| arg == "--save"));
         assert!(zenity_args.iter().any(|arg| arg == "--confirm-overwrite"));
+        assert!(zenity_args
+            .iter()
+            .any(|arg| arg == "--file-filter=OBS-RS projects | *.obsrproj *.json"));
 
         let mut kdialog = Command::new("kdialog");
         configure_command(
@@ -535,6 +557,9 @@ mod tests {
         assert!(zenity_args
             .iter()
             .any(|arg| arg == "--title=Open OBS-RS project"));
+        assert!(zenity_args
+            .iter()
+            .any(|arg| arg == "--file-filter=OBS-RS projects | *.obsrproj *.json"));
         assert!(!zenity_args.iter().any(|arg| arg == "--save"));
 
         let mut kdialog = Command::new("kdialog");

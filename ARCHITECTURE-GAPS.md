@@ -25,21 +25,24 @@ same bounded asynchronous desktop picker boundary now offers a Save dialog for
 the active project on Linux (`zenity`/`kdialog`), macOS (`osascript`), and
 Windows (PowerShell), returning the selected path through the Slint event loop;
 unsupported desktops keep the manual path field and an explicit unavailable
-message. The remaining collection/recovery UX is still open.
+message. Project path validation now accepts the canonical `.obsrproj` extension
+and the shipped legacy `.json` extension, while rejecting other file types
+before store construction. Recovery UX is still open.
 
 Opening a project now follows the same dirty-session guard into a separate
 mode-4 dialog: the native chooser is asynchronous, uses open-dialog semantics
 on Linux (`zenity`/`kdialog`), macOS (`osascript`), and Windows (PowerShell),
 and only the selected bounded path reaches the existing load callback.
 Unsupported desktops keep the manual path field and an explicit unavailable
-message. File type validation, collection import/export pickers, and recovery
-UX are still open.
+message. Project file-type validation now rejects unsupported extensions while
+retaining the shipped `.json` compatibility path; recovery UX is still open.
 
 The same picker boundary now covers collection transfer: mode 1 uses a bounded
 native Save dialog for Export and mode 2 uses a bounded native Open dialog for
 Import, writing only the collection-transfer field before the existing
 filesystem callbacks validate and commit the operation. Collection extension
-filtering, recovery UX, and other project lifecycle polish remain open.
+filtering is complete; recovery UX and other project lifecycle polish remain
+open.
 
 The bounded Stinger runtime packet now accepts already-decoded RGBA frames as
 one validated, preloaded clip. Frame count, per-frame duration, total duration,

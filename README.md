@@ -188,6 +188,11 @@ ordinary tooling.
 | `obs-rs-settings.toml` | flat [TOML](https://toml.io) table of `key = value` pairs | `obs-rs-config` |
 | `obs-rs-project.json` | JSON, tagged with `"format"` and `"version"` | `obs-rs-project` |
 
+The GUI keeps `obs-rs-project.json` as the shipped default for compatibility.
+Save As and collection workflows use `.obsrproj`; the GUI accepts both that
+current extension and legacy `.json` project paths, and rejects other file
+types before opening or writing them.
+
 Both are serialized deterministically — keys sorted, no incidental whitespace —
 so saving unchanged state twice produces byte-identical files and a project diff
 shows only what actually changed.
