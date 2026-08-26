@@ -23,6 +23,8 @@ pub(super) fn exercise_source_dock_rename_keyboard(
         }))
         .expect("add dock keyboard rename source");
     refresh_ui(ui, state, surface);
+    let original_platform_macos = ui.get_platform_macos();
+    ui.set_platform_macos(false);
     focus_source_dock(ui);
     ui.invoke_select_source(source_id.into());
     refresh_ui(ui, state, surface);
@@ -36,13 +38,39 @@ pub(super) fn exercise_source_dock_rename_keyboard(
         "Dock keyboard rename source",
         "F2 loads the selected source name"
     );
+    ui.set_active_modal(0);
+
+    // OBS switches the dock rename key to Return on macOS. The same focus
+    // boundary must reject F2 there, then accept Return without changing the
+    // target-resolution path.
+    ui.set_platform_macos(true);
+    focus_source_dock(ui);
+    ui.invoke_select_source(source_id.into());
+    refresh_ui(ui, state, surface);
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::F2.into(),
+    });
+    assert_eq!(ui.get_active_modal(), 0, "macOS does not bind F2 to rename");
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
+    assert_eq!(
+        ui.get_active_modal(),
+        12,
+        "Return opens source rename on macOS"
+    );
+    assert_eq!(
+        ui.get_source_name_draft(),
+        "Dock keyboard rename source",
+        "Return loads the selected source name"
+    );
 
     ui.set_source_name_draft("Renamed from Sources dock".into());
     ui.invoke_apply_source_name();
     assert_eq!(
         source_name(state, source_id).as_deref(),
         Some("Renamed from Sources dock"),
-        "F2 commits through the existing rename command"
+        "the platform rename key commits through the existing command"
     );
     ui.set_active_modal(0);
 
@@ -55,6 +83,7 @@ pub(super) fn exercise_source_dock_rename_keyboard(
         }))
         .expect("remove dock keyboard rename fixture source");
     refresh_ui(ui, state, surface);
+    ui.set_platform_macos(original_platform_macos);
 }
 
 fn focus_source_dock(ui: &MainWindow) {

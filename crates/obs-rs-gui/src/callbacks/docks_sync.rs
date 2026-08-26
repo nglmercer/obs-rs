@@ -7,6 +7,7 @@
 use crate::{FloatingDockWindow, MainWindow};
 
 pub(super) fn sync_floating_window(window: &FloatingDockWindow, ui: &MainWindow) {
+    window.set_platform_macos(ui.get_platform_macos());
     window.set_locale(ui.get_locale());
     window.set_scene_rows(ui.get_scene_rows());
     window.set_source_rows(ui.get_source_rows());

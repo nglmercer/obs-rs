@@ -8,17 +8,27 @@ pub(super) fn exercise_scene_dock_rename_keyboard(
     surface: &Rc<RefCell<PreviewSurface>>,
 ) {
     let original_name = ui.get_scene_name().to_string();
+    let original_platform_macos = ui.get_platform_macos();
     refresh_ui(ui, state, surface);
+    ui.set_platform_macos(true);
     focus_scene_dock(ui);
 
     ui.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::F2.into(),
     });
-    assert_eq!(ui.get_active_modal(), 5, "F2 opens scene properties");
+    assert_eq!(ui.get_active_modal(), 0, "macOS does not bind F2 to rename");
+    ui.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
+    assert_eq!(
+        ui.get_active_modal(),
+        5,
+        "Return opens scene properties on macOS"
+    );
     assert_eq!(
         ui.get_scene_name(),
         original_name,
-        "F2 loads the selected preview scene name"
+        "Return loads the selected preview scene name"
     );
 
     ui.set_scene_name("Renamed from Scenes dock".into());
@@ -39,6 +49,7 @@ pub(super) fn exercise_scene_dock_rename_keyboard(
     ui.invoke_rename_scene();
     ui.set_active_modal(0);
     refresh_ui(ui, state, surface);
+    ui.set_platform_macos(original_platform_macos);
 }
 
 fn focus_scene_dock(ui: &MainWindow) {

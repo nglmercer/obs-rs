@@ -93,6 +93,10 @@ export component MainWindow inherits Window {
         in property <string> active-collection;
         in property <string> app-version;
         in property <string> app-platform;
+        // OBS uses Return for dock renaming on macOS and F2 elsewhere.
+        // Keep the platform choice in Rust-owned application state so every
+        // dock surface, including detached windows, shares one policy.
+        in property <bool> platform-macos: false;
         in-out property <string> collection-name;
         in-out property <bool> duplicate-collection-dialog: false;
         in-out property <bool> rename-collection-dialog: false;
@@ -671,6 +675,7 @@ export component MainWindow inherits Window {
                 dock-drag-panel: root.dock-drag-panel;
                 dock-drop-target: root.dock-drop-target;
                 dock-drop-zone: root.dock-drop-zone;
+                platform-macos: root.platform-macos;
                 locale: root.locale;
                 scene-rows: root.scene-rows;
                 source-rows: root.source-rows;

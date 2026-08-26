@@ -7,6 +7,7 @@ import { Palette } from "palette.slint";
 
 export component SceneDock inherits Rectangle {
     in property <string> locale;
+    in property <bool> platform-macos;
     in property <[SceneRow]> scene-rows;
     in property <string> preview-scene;
     in property <int> panel-kind;
@@ -62,7 +63,9 @@ export component SceneDock inherits Rectangle {
                         if !event.modifiers.control
                             && !event.modifiers.shift
                             && !event.modifiers.alt
-                            && event.text == Key.F2
+                            && (root.platform-macos
+                                ? event.text == Key.Return
+                                : event.text == Key.F2)
                             && root.preview-scene != ""
                             && root.preview-scene != "none" {
                             // OBS registers rename on the Scenes dock. The

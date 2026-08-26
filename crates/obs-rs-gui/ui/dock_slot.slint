@@ -48,6 +48,7 @@ export component DockSlot inherits Rectangle {
     in property <string> capture-capabilities;
     in property <string> preview-metrics;
     in property <string> output-metrics;
+    in property <bool> platform-macos;
     // A floating dock fills its own window instead of a share of the row.
     in property <bool> floating;
     // Share of the dock row this panel takes, adjusted by the splitters.
@@ -132,6 +133,7 @@ export component DockSlot inherits Rectangle {
 
     if panel-kind == 0 : SceneDock {
         floating: root.floating;
+        platform-macos: root.platform-macos;
         float-panel(kind) => { root.float-panel(kind); }
         close-panel(kind) => { root.close-panel(kind); }
         locale: root.locale;
@@ -155,6 +157,7 @@ export component DockSlot inherits Rectangle {
     }
     if panel-kind == 1 : SourceDock {
         floating: root.floating;
+        platform-macos: root.platform-macos;
         float-panel(kind) => { root.float-panel(kind); }
         close-panel(kind) => { root.close-panel(kind); }
         locale: root.locale;

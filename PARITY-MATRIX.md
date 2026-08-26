@@ -28,6 +28,16 @@ Stereo, 2.1, Quad, 5.1, and 7.1 by speaker role, while unknown `Discrete`
 layouts retain the index-based fallback. This does not claim per-source audio
 routing, adaptive clock correction, or multiple recording tracks.
 
+## Latest verified package: platform-specific dock rename key
+
+On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the
+OBS 32.2.2 platform rule: unmodified `F2` renames on Linux and Windows, while
+unmodified `Return` renames on macOS. The platform decision is set once by the
+Rust application boundary and is propagated to docked and floating views, so a
+detached dock cannot silently use a different shortcut. GUI testing covers the
+macOS key selection and the non-macOS F2 path; the remaining global hotkey
+catalog is still incomplete. Reference: [OBS 32.2.2 dock rename bindings](https://raw.githubusercontent.com/obsproject/obs-studio/32.2.2/frontend/widgets/OBSBasic.cpp).
+
 ## Latest verified package: Mixer options opens Audio settings
 
 On 2026-08-26, the Mixer dock's settings button now follows a typed callback
@@ -88,23 +98,24 @@ catalog remain incomplete.
 
 ## Latest verified package: Sources-dock F2 rename shortcut
 
-On 2026-08-26, the focused Sources dock now maps unmodified `F2` to the
-existing source-rename modal. The selected stable row path is passed through
-the typed callback, so root and nested source targets keep the same Rust
-validation, project history, and persistence as context-menu rename. The GUI
-fixture opens the real modal, verifies its draft, commits a new name, and
-removes its temporary source. macOS Return-key parity and the broader global
-hotkey catalog remain incomplete.
+On 2026-08-26, the focused Sources dock now maps the platform-specific OBS
+rename key to the existing source-rename modal: unmodified `F2` on Linux and
+Windows, or unmodified `Return` on macOS. The selected stable row path is
+passed through the typed callback, so root and nested source targets keep the
+same Rust validation, project history, and persistence as context-menu rename.
+The GUI fixture opens the real modal through both key policies, verifies its
+draft, commits a new name, and removes its temporary source. The broader
+global hotkey catalog remains incomplete.
 
 ## Latest verified package: Scenes-dock F2 rename shortcut
 
-On 2026-08-26, the focused Scenes dock now maps unmodified `F2` to the
-existing scene-properties modal for the selected preview scene. The dock
-reuses the Rust-owned preview selection and scene-properties command rather
-than creating a second rename state. The GUI fixture opens the real modal,
-verifies its draft, commits a new name, and restores the shared scene fixture.
-macOS Return-key parity and the broader global hotkey catalog remain
-incomplete.
+On 2026-08-26, the focused Scenes dock now maps the platform-specific OBS
+rename key to the existing scene-properties modal: unmodified `F2` on Linux
+and Windows, or unmodified `Return` on macOS. The dock reuses the Rust-owned
+preview selection and scene-properties command rather than creating a second
+rename state. The GUI fixture opens the real modal, verifies its draft, commits
+a new name, and restores the shared scene fixture. The broader global hotkey
+catalog remains incomplete.
 
 ## Latest verified package: modal keyboard boundary
 

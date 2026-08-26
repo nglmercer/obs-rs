@@ -50,6 +50,7 @@ export component FloatingDockWindow inherits Window {
     in property <string> capture-capabilities;
     in property <string> preview-metrics;
     in property <string> output-metrics;
+    in property <bool> platform-macos;
 
     callback open-modal(int);
     callback select-preview(string);
@@ -119,6 +120,7 @@ export component FloatingDockWindow inherits Window {
         height: 100%;
         panel-kind: root.panel-kind;
         floating: true;
+        platform-macos: root.platform-macos;
         locale: root.locale;
         scene-rows: root.scene-rows;
         source-rows: root.source-rows;

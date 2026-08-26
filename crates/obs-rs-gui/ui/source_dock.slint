@@ -8,6 +8,7 @@ import { HotkeyLabel } from "hotkey_label.slint";
 
 export component SourceDock inherits Rectangle {
     in property <string> locale;
+    in property <bool> platform-macos;
     in property <string> source-scene;
     in property <[SourceRow]> source-rows;
     in property <string> selected-source;
@@ -102,7 +103,9 @@ export component SourceDock inherits Rectangle {
                         if !event.modifiers.control
                             && !event.modifiers.shift
                             && !event.modifiers.alt
-                            && event.text == Key.F2
+                            && (root.platform-macos
+                                ? event.text == Key.Return
+                                : event.text == Key.F2)
                             && root.selected-source != ""
                             && root.selected-source != "none" {
                             // OBS registers rename on the Sources dock, so

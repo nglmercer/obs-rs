@@ -669,6 +669,7 @@ fn float(
         .set_tokens(ui.global::<crate::Palette>().get_tokens());
     window.set_panel_kind(kind);
     window.set_dock_title(dock_title(state, kind));
+    window.set_platform_macos(ui.get_platform_macos());
 
     docks_forward::forward_to_studio(&window, ui, controller);
 

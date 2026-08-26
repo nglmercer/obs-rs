@@ -46,19 +46,19 @@ nested targets, history, and failure notices retain one owner. The GUI fixture
 covers both keys on both focus surfaces; configurable/global hotkey
 registration remains separate.
 
-The Sources-dock rename packet now accepts unmodified `F2` for the selected
-row and opens the existing typed rename callback with that stable target. The
-modal still owns only its transient draft; Rust resolves the source or nested
-group and commits the project edit. The GUI fixture verifies the draft and
-commit through the real modal before removing its temporary item. macOS
-Return-key behavior and the broader global hotkey catalog remain open.
+The Sources-dock rename packet now accepts unmodified `F2` on Linux and Windows,
+or unmodified `Return` on macOS, and opens the existing typed rename callback
+with that stable target. The modal still owns only its transient draft; Rust
+resolves the source or nested group and commits the project edit. The GUI
+fixture verifies both key policies and the draft/commit path before removing
+its temporary item. The broader global hotkey catalog remains open.
 
-The Scenes-dock rename packet now accepts unmodified `F2` for the selected
-preview scene and opens the existing scene-properties modal. The dock reuses
-the Rust-owned preview selection and scene-properties command, leaving the
-modal's name and transition fields as transient UI drafts. The GUI fixture
-verifies the real modal, commit, and restoration of the shared scene fixture.
-macOS Return-key behavior and the broader global hotkey catalog remain open.
+The Scenes-dock rename packet now accepts unmodified `F2` on Linux and Windows,
+or unmodified `Return` on macOS, and opens the existing scene-properties modal.
+The dock reuses the Rust-owned preview selection and scene-properties command,
+leaving the modal's name and transition fields as transient UI drafts. The GUI
+fixture verifies both key policies, the real modal commit, and restoration of
+the shared scene fixture. The broader global hotkey catalog remains open.
 
 The modal keyboard packet now gives the active `ModalShell` its own focused
 boundary. Unmodified `Escape` closes without committing the transient draft,

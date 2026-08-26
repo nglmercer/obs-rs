@@ -16,6 +16,7 @@ export component DockWorkspace inherits Rectangle {
     in property <int> dock-drag-panel;
     in property <int> dock-drop-target;
     in property <int> dock-drop-zone;
+    in property <bool> platform-macos;
     in property <string> locale;
     in property <[SceneRow]> scene-rows;
     in property <[SourceRow]> source-rows;
@@ -276,6 +277,7 @@ export component DockWorkspace inherits Rectangle {
             panel-kind: pane.panel-kind;
             floating: false;
             weight: 1.0;
+            platform-macos: root.platform-macos;
             locale: root.locale;
             scene-rows: root.scene-rows;
             source-rows: root.source-rows;
