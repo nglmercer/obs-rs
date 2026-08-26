@@ -376,8 +376,8 @@ pub(super) fn exercise_monitor_selection(
     window.set_capture_whole_desktop(true);
     window.invoke_accept_monitor();
 
-    let state = state.borrow();
-    let source = state
+    let state_ref = state.borrow();
+    let source = state_ref
         .project_session()
         .project()
         .active_profile_spec()
@@ -388,6 +388,46 @@ pub(super) fn exercise_monitor_selection(
         Some(""),
         "the display choice must reach the project command"
     );
+    drop(state_ref);
+
+    // A nested screen item must keep its stable path all the way through the
+    // properties dialog and into the monitor picker, even when another root
+    // source becomes selected while the dialog is being opened.
+    let mut group = SceneItemSpec::for_group("screen-group", "Screen group").expect("screen group");
+    group
+        .group_mut()
+        .expect("screen group target")
+        .add_item(SceneItemSpec::for_source("gui-screen").expect("nested screen item"))
+        .expect("nested screen attach");
+    state
+        .borrow_mut()
+        .dispatch(UiCommand::Project(ProjectCommand::AddSceneItem {
+            profile: "live".to_owned(),
+            scene,
+            item: group,
+        }))
+        .expect("add nested screen item");
+    refresh_ui(ui, state, surface);
+    ui.invoke_select_source("background".into());
+    let properties =
+        crate::install_source_properties_window_with_monitor(ui, state, surface, Some(&controller))
+            .expect("target-aware properties controller");
+    ui.invoke_open_source_properties_for("screen-group/gui-screen".into());
+    let properties_window =
+        crate::callbacks::source_properties::SourcePropertiesController::window(&properties);
+    assert!(
+        properties_window.get_monitor_visible(),
+        "nested screen properties keep the target-aware monitor picker"
+    );
+    properties_window.invoke_open_monitor_window();
+    let monitor_window = crate::callbacks::monitor::MonitorController::window(&controller);
+    assert_eq!(
+        monitor_window.get_source_name(),
+        "GUI screen",
+        "the monitor picker follows the nested source rather than the selected root"
+    );
+    monitor_window.set_capture_whole_desktop(true);
+    monitor_window.invoke_accept_monitor();
 }
 
 /// Drives the real settings controller through Apply, Cancel, and OK.

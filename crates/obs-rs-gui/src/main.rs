@@ -37,6 +37,8 @@ mod tests;
 #[cfg(test)]
 pub(crate) use callbacks::install_dock_callbacks;
 #[cfg(test)]
+pub(crate) use callbacks::install_source_properties_window;
+#[cfg(test)]
 pub(crate) use callbacks::selected_target;
 pub(crate) use callbacks::{
     apply_scene_properties_and_refresh, apply_source_name_and_refresh,
@@ -54,7 +56,7 @@ pub(crate) use callbacks::{
     install_add_source_window, install_callbacks, install_canvas_callbacks,
     install_dock_callbacks_with_layout, install_menu_callbacks, install_monitor_window,
     install_settings_window, install_setup_window, install_source_filters_window,
-    install_source_properties_window, install_source_transform_window,
+    install_source_properties_window_with_monitor, install_source_transform_window,
     install_stinger_take_callback, selection_overlay, set_selection_overlay, start_preview_timer,
     PeerWindows, ProjectorController,
 };
@@ -266,7 +268,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // controller would close it.
     let add_source_window = install_add_source_window(&ui, &state, &surface)?;
     let monitor_window = install_monitor_window(&ui, &state, &surface)?;
-    let properties_window = install_source_properties_window(&ui, &state, &surface)?;
+    let properties_window = install_source_properties_window_with_monitor(
+        &ui,
+        &state,
+        &surface,
+        Some(&monitor_window),
+    )?;
     let filters_window = install_source_filters_window(&ui, &state, &surface)?;
     let transform_window = install_source_transform_window(&ui, &state, &surface)?;
     let startup_recording_path = settings.recording_path.clone();

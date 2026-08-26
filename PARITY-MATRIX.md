@@ -124,6 +124,18 @@ drag/drop fixture covers nested removal, rename, selection preservation, and
 locked-container recovery. Interact and the remaining context-menu actions
 remain incomplete.
 
+## Latest verified package: target-aware nested monitor selection
+
+On 2026-08-26, `SOURCE-001`/`SOURCE-003` extended the shared monitor picker to
+accept the stable `SourceTarget` resolved by Source Properties. A nested screen
+leaf therefore opens the picker for its owning source even if an unrelated root
+row becomes selected while the properties dialog is open; monitor refresh and
+accept use the same target rather than re-reading the current canvas selection.
+The production properties installer shares the existing picker controller, so
+this does not create a second monitor or project state owner. The GUI fixture
+covers the nested path and source identity. Live display enumeration,
+multi-monitor/DPI evidence, and Windows/macOS capture adapters remain partial.
+
 ## Latest verified package: native project Open picker
 
 On 2026-08-26, `PROFILE-001` completed the native chooser slice for opening a

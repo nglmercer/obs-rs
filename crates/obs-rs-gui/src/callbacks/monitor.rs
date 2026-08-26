@@ -76,6 +76,34 @@ impl MonitorController {
         &self.window
     }
 
+    /// Opens the picker for the currently selected scene-item.
+    pub(crate) fn open_for_item(
+        &self,
+        ui: &MainWindow,
+        state: &Rc<RefCell<DesktopState>>,
+        item: &str,
+    ) {
+        let Some(target) = source_target(&state.borrow(), item) else {
+            ui.set_status_message("Display selection failed: the source is gone".into());
+            return;
+        };
+        self.open_for_target(ui, state, &target);
+    }
+
+    /// Opens the picker for an explicit scene-item target.
+    ///
+    /// Source Properties can remain open while the canvas selection changes,
+    /// so resolving the selected row here could send a nested screen choice to
+    /// an unrelated source. The target is resolved once at this boundary.
+    pub(crate) fn open_for_target(
+        &self,
+        ui: &MainWindow,
+        state: &Rc<RefCell<DesktopState>>,
+        target: &SourceTarget,
+    ) {
+        open_for_target(ui, state, self, target);
+    }
+
     /// Fills the window from the live display list for `source`.
     fn reload(&self, source_name: &str, current: Option<&str>) {
         let monitors = screen_monitors();
@@ -177,36 +205,51 @@ fn install_open(
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        let locale = state.borrow().locale();
         let selected = ui.get_selected_source().to_string();
-        let kind = selected_source_kind(&state, &selected);
-        controller
-            .target
-            .replace(source_target(&state.borrow(), &selected));
-        if !kind_selects_monitor(&kind) {
-            ui.set_status_message(crate::i18n::with_catalog(locale, |text| {
-                text.monitor_ui.not_a_screen_source.clone()
-            }));
-            return;
-        }
-        // On Wayland the compositor owns the picker: OBS-RS asks the portal and
-        // stores the token it hands back, rather than showing a list of screens
-        // it is not allowed to enumerate.
-        if crate::kind_uses_portal(&kind) {
-            share_through_portal(&ui, &state, &controller, &selected);
-            return;
-        }
-        let window = &controller.window;
-        window
-            .global::<I18n>()
-            .set_text(crate::i18n::catalog(locale));
-        controller.set_tokens(ui.global::<Palette>().get_tokens());
-        controller.reload(&selected, current_monitor(&state, &selected).as_deref());
-        window.set_status(status_line(&controller.monitors.borrow()).into());
-        if let Err(error) = window.show() {
-            ui.set_status_message(format!("Display picker: {error}").into());
-        }
+        controller.open_for_item(&ui, &state, &selected);
     });
+}
+
+fn open_for_target(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &MonitorController,
+    target: &SourceTarget,
+) {
+    let kind = source_kind_for_target(state, target);
+    if kind.is_empty() {
+        ui.set_status_message("Display selection failed: the source is gone".into());
+        return;
+    }
+    let locale = state.borrow().locale();
+    controller.target.replace(Some(target.clone()));
+    if !kind_selects_monitor(&kind) {
+        ui.set_status_message(crate::i18n::with_catalog(locale, |text| {
+            text.monitor_ui.not_a_screen_source.clone()
+        }));
+        return;
+    }
+    // On Wayland the compositor owns the picker: OBS-RS asks the portal and
+    // stores the token it hands back, rather than showing a list of screens
+    // it is not allowed to enumerate.
+    if crate::kind_uses_portal(&kind) {
+        share_through_portal(ui, state, controller, target.clone());
+        return;
+    }
+    let window = &controller.window;
+    window
+        .global::<I18n>()
+        .set_text(crate::i18n::catalog(locale));
+    controller.set_tokens(ui.global::<Palette>().get_tokens());
+    let source_name = source_name_for_target(state, target);
+    controller.reload(
+        &source_name,
+        current_monitor_for_target(state, target).as_deref(),
+    );
+    window.set_status(status_line(&controller.monitors.borrow()).into());
+    if let Err(error) = window.show() {
+        ui.set_status_message(format!("Display picker: {error}").into());
+    }
 }
 
 fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<MonitorController>) {
@@ -223,8 +266,11 @@ fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<MonitorC
     let refresh_controller = Rc::clone(controller);
     controller.window.on_refresh_monitors(move || {
         let window = &refresh_controller.window;
+        let Some(target) = refresh_controller.target.borrow().clone() else {
+            return;
+        };
         let source = window.get_source_name().to_string();
-        let current = current_monitor(&refresh_state, &source);
+        let current = current_monitor_for_target(&refresh_state, &target);
         refresh_controller.reload(&source, current.as_deref());
         window.set_status(status_line(&refresh_controller.monitors.borrow()).into());
     });
@@ -292,17 +338,13 @@ fn install_commit(
 fn share_through_portal(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
-    controller: &Rc<MonitorController>,
-    source: &str,
+    controller: &MonitorController,
+    target: SourceTarget,
 ) {
     use obs_rs_capture::{
         open_screencast, publish_wayland_portal_handoff, CursorMode, WaylandCaptureDevice,
     };
 
-    let Some(target) = source_target(&state.borrow(), source) else {
-        ui.set_status_message("Screen sharing failed: the source could not be resolved".into());
-        return;
-    };
     if PORTAL_REQUEST_IN_FLIGHT.swap(true, Ordering::AcqRel) {
         let waiting = crate::i18n::with_catalog(state.borrow().locale(), |text| {
             text.monitor_ui.portal_waiting.clone()
@@ -311,7 +353,7 @@ fn share_through_portal(
         return;
     }
 
-    let source = source.to_owned();
+    let source = target.item.clone();
     let handoff_id = format!(
         "{}-{}",
         std::process::id(),
@@ -454,47 +496,35 @@ fn monitor_document(
     Some(settings.serialize())
 }
 
-/// Returns the selected source's settings document from the live project.
-fn source_settings_document(state: &Rc<RefCell<DesktopState>>, source: &str) -> Option<String> {
+/// Returns the source kind for a resolved scene-item target.
+fn source_kind_for_target(state: &Rc<RefCell<DesktopState>>, target: &SourceTarget) -> String {
     let state = state.borrow();
-    let scene = state.preview_scene()?.to_owned();
-    let session = state.project_session();
-    let project = session.project();
-    let profile = project.active_profile_spec()?;
-    let item = profile.scene(scene.as_str())?.item(source)?;
-    Some(profile.source(item.source_id())?.settings().serialize())
+    state
+        .project_session()
+        .project()
+        .profile(target.profile.as_str())
+        .and_then(|profile| profile.source(target.source.as_str()))
+        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
 }
 
-/// Reads the display a source is currently pointed at.
-///
-/// `Some("")` means the source explicitly captures the whole desktop, while
-/// `None` means it has never been configured.
-pub(crate) fn current_monitor(state: &Rc<RefCell<DesktopState>>, source: &str) -> Option<String> {
-    let document = source_settings_document(state, source)?;
+/// Returns the display name for a resolved scene-item target.
+fn source_name_for_target(state: &Rc<RefCell<DesktopState>>, target: &SourceTarget) -> String {
+    let state = state.borrow();
+    state
+        .project_session()
+        .project()
+        .profile(target.profile.as_str())
+        .and_then(|profile| profile.source(target.source.as_str()))
+        .map_or_else(|| target.item.clone(), |source| source.name().to_owned())
+}
+
+fn current_monitor_for_target(
+    state: &Rc<RefCell<DesktopState>>,
+    target: &SourceTarget,
+) -> Option<String> {
+    let document = target_settings_document(state, target)?;
     let settings = Config::parse(&document).ok()?;
     settings.get("monitor").map(str::to_owned)
-}
-
-/// Returns the kind of the selected source in the preview scene.
-pub(crate) fn selected_source_kind(state: &Rc<RefCell<DesktopState>>, source: &str) -> String {
-    let state = state.borrow();
-    let Some(scene) = state.preview_scene().map(str::to_owned) else {
-        return String::new();
-    };
-    let session = state.project_session();
-    let project = session.project();
-    let Some(profile) = project.active_profile_spec() else {
-        return String::new();
-    };
-    let Some(item) = profile
-        .scene(scene.as_str())
-        .and_then(|scene| scene.item(source))
-    else {
-        return String::new();
-    };
-    profile
-        .source(item.source_id())
-        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
 }
 
 /// Summarizes the detected displays under the list.

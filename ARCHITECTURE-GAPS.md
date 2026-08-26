@@ -15,6 +15,15 @@ The Sources-dock GUI fixture covers both paths and locked-container behavior.
 Interact, the remaining context-menu actions, and global OS hotkey registration
 remain open.
 
+The target-aware monitor-selection packet now carries that same stable
+`SourceTarget` from nested Source Properties into the shared monitor picker.
+Changing the canvas selection while the dialog is open cannot redirect a
+nested screen source to an unrelated root item; the picker resolves the owning
+source name and settings document once, and refresh/accept continue using that
+target. The GUI fixture covers a nested screen leaf, an unrelated selected root,
+and the resulting monitor-window source identity. Live Wayland/X11 display
+enumeration, multi-monitor behavior, and non-Linux adapters remain open.
+
 The project-lifecycle packet now includes a bounded `Save As...` callback.
 The GUI dialog writes the current serialized document through the existing
 atomic `ProjectFileStore`, rejects a different existing destination before

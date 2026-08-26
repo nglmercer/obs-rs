@@ -9,6 +9,7 @@ use obs_rs_config::Config;
 use obs_rs_ui::{DesktopState, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
+use crate::callbacks::monitor::MonitorController;
 use crate::{
     apply_source_settings_to, kind_selects_monitor, properties, source_settings_for_canvas,
     source_target, target_settings_document, I18n, MainWindow, Palette, PreviewSurface,
@@ -25,6 +26,9 @@ pub(crate) struct SourcePropertiesController {
     /// write a camera's device ID onto a screen capture the user clicked in the
     /// meantime.
     target: RefCell<Option<SourceTarget>>,
+    /// The shared monitor picker, when this window is installed by the real
+    /// desktop. Tests may install the properties window in isolation.
+    monitor: Option<Rc<MonitorController>>,
 }
 
 impl SourcePropertiesController {
@@ -54,14 +58,30 @@ impl SourcePropertiesController {
 ///
 /// The returned controller must outlive the event loop; dropping it closes the
 /// window.
+#[cfg(test)]
 pub(crate) fn install_source_properties_window(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
 ) -> Result<Rc<SourcePropertiesController>, slint::PlatformError> {
+    install_source_properties_window_with_monitor(ui, state, surface, None)
+}
+
+/// Creates the properties window with an explicit monitor-picker controller.
+///
+/// The extra boundary lets a nested screen source open the picker for its
+/// stable path even after the main canvas selection changes. The legacy helper
+/// above remains useful for isolated property-window fixtures.
+pub(crate) fn install_source_properties_window_with_monitor(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    monitor: Option<&Rc<MonitorController>>,
+) -> Result<Rc<SourcePropertiesController>, slint::PlatformError> {
     let controller = Rc::new(SourcePropertiesController {
         window: SourcePropertiesWindow::new()?,
         target: RefCell::new(None),
+        monitor: monitor.cloned(),
     });
 
     install_open(ui, state, &controller);
@@ -126,7 +146,8 @@ fn open_for_target(
     // use the main window's selected-item callback. Keep that picker available
     // only when this dialog targets the selected top-level item.
     window.set_monitor_visible(
-        kind_selects_monitor(&kind) && ui.get_selected_source().as_str() == target.item,
+        kind_selects_monitor(&kind)
+            && (controller.monitor.is_some() || ui.get_selected_source().as_str() == target.item),
     );
     controller.refresh_rows(locale);
     if let Err(error) = window.show() {
@@ -157,12 +178,22 @@ fn install_editing(
     // request to the studio and closes its own draft to avoid two writers.
     let weak = ui.as_weak();
     let monitor_controller = Rc::clone(controller);
+    let monitor_state = Rc::clone(state);
     controller.window.on_open_monitor_window(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         let _ = monitor_controller.window.hide();
-        ui.invoke_open_monitor_window();
+        if let Some(monitor) = monitor_controller.monitor.as_ref() {
+            let target = monitor_controller.target.borrow().clone();
+            if let Some(target) = target {
+                monitor.open_for_target(&ui, &monitor_state, &target);
+            } else {
+                ui.set_status_message("Display selection failed: the source is gone".into());
+            }
+        } else {
+            ui.invoke_open_monitor_window();
+        }
     });
 
     let defaults_state = Rc::clone(state);
