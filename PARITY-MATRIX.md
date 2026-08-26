@@ -86,6 +86,16 @@ history, and status errors. The GUI fixture covers unlocked and locked cases
 on both focus surfaces; global registration and the broader source action
 catalog remain incomplete.
 
+## Latest verified package: Sources-dock F2 rename shortcut
+
+On 2026-08-26, the focused Sources dock now maps unmodified `F2` to the
+existing source-rename modal. The selected stable row path is passed through
+the typed callback, so root and nested source targets keep the same Rust
+validation, project history, and persistence as context-menu rename. The GUI
+fixture opens the real modal, verifies its draft, commits a new name, and
+removes its temporary source. macOS Return-key parity and the broader global
+hotkey catalog remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

@@ -46,6 +46,13 @@ nested targets, history, and failure notices retain one owner. The GUI fixture
 covers both keys on both focus surfaces; configurable/global hotkey
 registration remains separate.
 
+The Sources-dock rename packet now accepts unmodified `F2` for the selected
+row and opens the existing typed rename callback with that stable target. The
+modal still owns only its transient draft; Rust resolves the source or nested
+group and commits the project edit. The GUI fixture verifies the draft and
+commit through the real modal before removing its temporary item. macOS
+Return-key behavior and the broader global hotkey catalog remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the
