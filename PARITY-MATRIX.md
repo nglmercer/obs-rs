@@ -1063,6 +1063,13 @@ persisted selected-source lock binding and GUI action code 20. It routes through
 the existing source-lock callback and leaves the default unbound; global
 registration and the remaining source action catalog remain partial.
 
+Reconciliation note: `PRODUCT-001` now includes the standalone first-run Setup
+window's explicit keyboard boundary. Plain `Escape` follows the existing
+native-close/skip path without applying a benchmark, while modified `Escape`
+is left to child controls; the testing backend verifies both paths and
+rendering. Complete focus traversal and native accessibility behavior remain
+partial.
+
 Reconciliation note: `STUDIO-003`/`HOTKEY-001` now also include the optional
 persisted selected-source projector binding and GUI action code 21. It reuses
 the existing projector lifecycle and rejects groups/Scene references rather

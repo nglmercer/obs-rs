@@ -26,9 +26,38 @@ export component SetupWindow inherits Window {
     callback skip-setup();
     callback close-requested();
 
-    VerticalBox {
-        padding: 24px;
-        spacing: 16px;
+    setup-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Closing the setup wizard without applying a benchmark has the same
+        // meaning as the native close button: leave setup pending and keep
+        // the current settings unchanged.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-requested();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-requested();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalBox {
+            padding: 24px;
+            spacing: 16px;
 
         Text {
             text: I18n.text.settings_ui.setup_title;
@@ -163,5 +192,12 @@ export component SetupWindow inherits Window {
                 }
             }
         }
+    }
+    }
+
+    // The first-run window may reopen after a control in another standalone
+    // window owns focus, so make its keyboard boundary explicit on every show.
+    public function focus-keyboard-boundary() {
+        setup-focus.focus();
     }
 }

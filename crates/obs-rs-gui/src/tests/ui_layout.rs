@@ -333,6 +333,41 @@ pub(super) fn render_monitor_window() {
     window.hide().expect("monitor window should hide");
 }
 
+/// Verifies that the first-run setup window owns its Escape boundary without
+/// stealing modified Escape from controls that may use it themselves.
+pub(super) fn render_setup_window() {
+    let window = crate::SetupWindow::new().expect("setup window should instantiate");
+    let closed = Rc::new(RefCell::new(false));
+    let close_state = Rc::clone(&closed);
+    window.on_close_requested(move || *close_state.borrow_mut() = true);
+    window.show().expect("setup window should show");
+    window.invoke_focus_keyboard_boundary();
+    window
+        .window()
+        .take_snapshot()
+        .expect("setup window should render before Escape dispatch");
+
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+    assert!(
+        !*closed.borrow(),
+        "modified Escape stays inside the setup UI"
+    );
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
+
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+    assert!(*closed.borrow(), "plain Escape closes the setup wizard");
+    window.hide().expect("setup window should hide");
+}
+
 /// Drives the display picker end to end: opening it for an X11 screen source,
 /// accepting the whole-desktop choice, and confirming the project records it.
 fn exercise_monitor_keyboard_boundary(ui: &MainWindow, window: &crate::MonitorWindow) {

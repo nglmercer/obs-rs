@@ -83,7 +83,14 @@ impl SetupController {
         if let Some(main) = self.main.upgrade() {
             main.set_setup_active(true);
         }
-        let _ = self.window.show();
+        match self.window.show() {
+            Ok(()) => self.window.invoke_focus_keyboard_boundary(),
+            Err(error) => {
+                if let Some(main) = self.main.upgrade() {
+                    main.set_status_message(format!("Setup window: {error}").into());
+                }
+            }
+        }
     }
 
     fn apply_theme(&self) {

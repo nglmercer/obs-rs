@@ -116,6 +116,13 @@ after each show. `Escape` closes it through the existing close callback, while
 controls. The GUI fixture verifies that a real Escape event hides the window.
 OS close-request policy and complete focus traversal remain open.
 
+The standalone first-run Setup window now focuses an explicit keyboard
+boundary whenever it opens. Plain `Escape` follows the existing native-close
+meaning and exits setup without applying a benchmark; modified `Escape` is
+left available to child controls. The GUI fixture verifies rendering and both
+modifier paths. The benchmark/apply workflow and complete focus traversal
+remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

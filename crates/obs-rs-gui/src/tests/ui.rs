@@ -308,4 +308,5 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_navigation::exercise_context_menus(&ui, &state, &surface);
     ui_sources::exercise_image_source_file_picker(&ui, &state, &surface);
     ui_slideshow::exercise_slideshow_directory_picker(&ui, &state, &surface);
+    ui_layout::render_setup_window();
 }
