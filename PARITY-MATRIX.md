@@ -163,6 +163,15 @@ keyboard boundary after it is shown. Filter mutations remain immediate;
 real window event and the persisted filter state; OS close-request handling
 and complete focus traversal remain incomplete.
 
+## Latest verified package: Settings keyboard boundary
+
+On 2026-08-26, the standalone Settings window now focuses an explicit keyboard
+boundary after it is shown. `Escape` restores the committed draft state and
+`Ctrl+Enter` accepts through the existing Rust callback; plain `Enter` remains
+available to page editors. The GUI fixture verifies both paths, including the
+persisted OK result; OS close-request handling and complete focus traversal
+remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

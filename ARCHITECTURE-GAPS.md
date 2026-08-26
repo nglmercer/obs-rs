@@ -103,6 +103,13 @@ after each show. Since filter changes are immediate rather than staged,
 without committing an unaccepted name. OS close-request policy and complete
 focus traversal remain open.
 
+The standalone Settings window now focuses an explicit keyboard boundary after
+each show. `Escape` restores the committed settings after live previews, while
+`Ctrl+Enter` runs the existing OK/accept path; plain `Enter` remains available
+to page text editors. The GUI fixture covers both real events, including the
+persisted OK result. OS close-request policy and complete focus traversal
+remain open.
+
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses
 the docked or floating `DockSlot` boundary as a typed callback and opens the

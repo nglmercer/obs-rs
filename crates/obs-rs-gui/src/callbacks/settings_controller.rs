@@ -771,8 +771,9 @@ pub(super) fn install_open(
             controller.window.set_category(category);
         }
         controller.sync_theme(state.borrow().locale());
-        if let Err(error) = controller.window.show() {
-            ui.set_status_message(format!("Settings window: {error}").into());
+        match controller.window.show() {
+            Ok(()) => controller.window.invoke_focus_keyboard_boundary(),
+            Err(error) => ui.set_status_message(format!("Settings window: {error}").into()),
         }
     }
 

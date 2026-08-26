@@ -516,6 +516,16 @@ pub(super) fn exercise_settings_commit(
     exercise_mixer_settings_navigation(ui, window);
     exercise_stream_server_selection(window);
 
+    exercise_settings_apply_and_validation(window, &controller, &path);
+    exercise_settings_keyboard_boundary(ui, window, &controller, &path);
+    std::fs::remove_file(&path).expect("remove settings fixture");
+}
+
+fn exercise_settings_apply_and_validation(
+    window: &SettingsWindow,
+    controller: &crate::callbacks::settings::SettingsController,
+    path: &std::path::Path,
+) {
     // Apply: every draft is persisted and the button goes quiet again.
     window.set_density_index(3);
     window.set_font_size(16.0);
@@ -545,7 +555,7 @@ pub(super) fn exercise_settings_commit(
     assert!(committed.recording_filename_without_spaces);
     assert_eq!(committed.canvas_snap_distance, 24);
     assert!(committed.show_safe_areas);
-    assert_eq!(AppSettings::load(&path), committed, "Apply writes the file");
+    assert_eq!(AppSettings::load(path), committed, "Apply writes the file");
 
     // A field that cannot be parsed stops the commit entirely: nothing else on
     // the page may reach the document behind an invalid value.
@@ -565,10 +575,23 @@ pub(super) fn exercise_settings_commit(
         16,
         "an unrelated field must not be committed behind an invalid one"
     );
+}
 
+fn exercise_settings_keyboard_boundary(
+    ui: &MainWindow,
+    window: &SettingsWindow,
+    controller: &crate::callbacks::settings::SettingsController,
+    path: &std::path::Path,
+) {
     // Cancel discards every draft, including the appearance that was already
     // previewed onto the live windows.
-    window.invoke_cancel_settings();
+    window
+        .window()
+        .take_snapshot()
+        .expect("settings window should render before Escape dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
     assert!(!window.get_dirty());
     assert_eq!(controller.committed().font_size, 16);
 
@@ -576,17 +599,31 @@ pub(super) fn exercise_settings_commit(
     ui.invoke_open_settings_window();
     window.set_recording_quality_index(0);
     window.set_dirty(true);
-    window.invoke_accept_settings();
+    window
+        .window()
+        .take_snapshot()
+        .expect("settings window should render before Ctrl+Enter dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Control.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Return.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Return.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Control.into(),
+    });
     assert!(!window.get_dirty(), "OK applies before it closes");
     assert_eq!(
         controller.committed().recording_quality,
         crate::settings_model::RecordingQuality::SameAsStream
     );
     assert_eq!(
-        AppSettings::load(&path).recording_quality,
+        AppSettings::load(path).recording_quality,
         crate::settings_model::RecordingQuality::SameAsStream
     );
-    std::fs::remove_file(&path).expect("remove settings fixture");
 }
 
 /// Verifies that the contextual Mixer action targets the Audio page.

@@ -239,7 +239,52 @@ export component SettingsWindow inherits Window {
     callback select-desktop-monitor-mode(int);
     callback browse-recording-directory();
 
-    HorizontalLayout {
+    settings-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Settings keep a draft until Apply or OK. Escape restores the
+        // committed document; Ctrl+Enter accepts it without stealing plain
+        // Enter from text editors on the pages.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-settings();
+                return accept;
+            }
+            if event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-settings();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-settings();
+                return accept;
+            }
+            if event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-settings();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
         padding: Metrics.ui.content-margin;
         spacing: Metrics.ui.content-margin;
 
@@ -658,5 +703,12 @@ export component SettingsWindow inherits Window {
                 cancel() => { root.cancel-settings(); }
             }
         }
+    }
+    }
+
+    // A standalone settings window can be reopened after a page control in
+    // another window owns focus, so focus this boundary after each show.
+    public function focus-keyboard-boundary() {
+        settings-focus.focus();
     }
 }
