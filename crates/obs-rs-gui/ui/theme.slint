@@ -1,4 +1,5 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
 
 export component StudioPanel inherits Rectangle {
@@ -281,6 +282,9 @@ export component CompactButton inherits Rectangle {
 component HeaderButton inherits Rectangle {
     in property <string> icon-name;
     callback clicked();
+    accessible-role: button;
+    accessible-enabled: true;
+    accessible-action-default => root.clicked();
     width: 19px;
     height: 20px;
     y: 2px;
@@ -362,11 +366,14 @@ export component DockHeader inherits Rectangle {
     HeaderButton {
         x: parent.width - 42px;
         icon-name: root.floating ? "down" : "up";
+        accessible-label: (root.floating ? I18n.text.dock_redock : I18n.text.dock_float)
+            + ": " + root.title;
         clicked => { root.float-panel(root.panel-kind); }
     }
     HeaderButton {
         x: parent.width - 21px;
         icon-name: "remove";
+        accessible-label: I18n.text.dock_close + ": " + root.title;
         clicked => { root.close-panel(root.panel-kind); }
     }
 }

@@ -48,6 +48,14 @@ accessibility action, and selects a dock tab through the same contract, while
 disabled menu state remains observable. Dock-header icon buttons, native screen-reader
 traversal, and complete focus-order verification remain partial.
 
+## Latest verified package: dock-header accessibility labels
+
+On 2026-08-26, dock-header float/redock and close controls now expose localized
+button labels containing the target dock title, enabled state, and default
+accessibility actions. The GUI fixture verifies the visible Scenes header
+actions while leaving the persisted layout unchanged. Native screen-reader
+traversal and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

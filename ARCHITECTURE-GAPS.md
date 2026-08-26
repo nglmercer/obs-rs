@@ -23,6 +23,13 @@ actions reuse the existing callbacks. The fixture drives the File menu and a
 dock tab through those actions. Dock-header icon buttons and native
 screen-reader traversal remain open.
 
+The dock-chrome accessibility follow-up labels the header's float/redock and
+close actions with the localized dock title, exposes their button role and
+enabled state, and wires their default actions to the existing dock callbacks.
+The fixture verifies the visible Scenes header controls without changing the
+persisted layout. Native screen-reader traversal and complete focus-order
+verification remain open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied

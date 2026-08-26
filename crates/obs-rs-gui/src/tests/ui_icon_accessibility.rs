@@ -29,6 +29,21 @@ pub(super) fn exercise_compact_button_accessibility(ui: &MainWindow) {
     ui.invoke_canvas_zoom_changed(0);
 }
 
+/// Verifies that dock-header actions expose the dock they operate on rather
+/// than leaving the icon-only controls anonymous.
+pub(super) fn exercise_dock_header_accessibility(ui: &MainWindow) {
+    for label in ["Float panel: Scenes", "Close panel: Scenes"] {
+        ElementHandle::find_by_accessible_label(ui, label)
+            .find(|button| {
+                button.accessible_role() == Some(AccessibleRole::Button)
+                    && button.accessible_enabled() == Some(true)
+                    && button.size().width > 0.0
+                    && button.size().height > 0.0
+            })
+            .unwrap_or_else(|| panic!("visible dock action with accessible label {label:?}"));
+    }
+}
+
 fn find_visible_button(ui: &MainWindow, label: &str) -> ElementHandle {
     ElementHandle::find_by_accessible_label(ui, label)
         .find(|button| {

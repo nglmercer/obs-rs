@@ -217,6 +217,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     );
     push_events.borrow_mut().clear();
     ui_icon_accessibility::exercise_compact_button_accessibility(&ui);
+    ui_icon_accessibility::exercise_dock_header_accessibility(&ui);
     ui.window()
         .dispatch_event(WindowEvent::KeyPressed { text: "U".into() });
     ui.window()
