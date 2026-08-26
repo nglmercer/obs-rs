@@ -231,6 +231,12 @@ export component CompactButton inherits Rectangle {
     // traversal.
     accessible-role: button;
     accessible-label: root.hint;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if root.enabled {
+            root.clicked();
+        }
+    }
     width: 28px;
     height: 24px;
     opacity: enabled ? 1 : 0.45;

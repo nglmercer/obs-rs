@@ -31,10 +31,11 @@ routing, adaptive clock correction, or multiple recording tracks.
 ## Latest verified package: compact-control accessibility labels
 
 On 2026-08-26, the shared icon-only `CompactButton` now exposes an explicit
-button role and its existing localized `hint` as the accessible label. This
-covers the zoom strip and the same component used by the Scenes, Sources,
-Mixer, Transitions, and Controls docks without adding duplicate UI state. The
-GUI fixture discovers the visible Zoom in and Zoom out actions by label; native
+button role, its existing localized `hint` as the accessible label, its
+enabled state, and its default action. This covers the zoom strip and the same
+component used by the Scenes, Sources, Mixer, Transitions, and Controls docks
+without adding duplicate UI state. The GUI fixture discovers both zoom actions
+by role and label and invokes Zoom in through the accessibility action; native
 screen-reader traversal and complete focus-order verification remain partial.
 
 ## Latest verified package: platform-specific dock rename key

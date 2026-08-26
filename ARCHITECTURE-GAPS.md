@@ -9,11 +9,12 @@ independent reviewer.
 
 The compact-control accessibility packet now gives every icon-only
 `CompactButton` an explicit button role and uses its existing localized `hint`
-as the accessible name. This keeps the visual control unchanged while making
-zoom and dock actions discoverable through the shared component contract. The
-GUI fixture finds both zoom controls by their labels and verifies that they
-are visible; native screen-reader traversal and the remaining text-entry focus
-audit remain open.
+as the accessible name, enabled state, and default action. This keeps the
+visual control unchanged while making zoom and dock actions discoverable and
+invokable through the shared component contract. The GUI fixture finds both
+zoom controls by role and label, checks their enabled state, and activates Zoom
+in through the accessibility action; native screen-reader traversal and the
+remaining text-entry focus audit remain open.
 
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
