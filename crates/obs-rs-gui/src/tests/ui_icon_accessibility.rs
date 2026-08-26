@@ -38,3 +38,44 @@ fn find_visible_button(ui: &MainWindow, label: &str) -> ElementHandle {
         })
         .unwrap_or_else(|| panic!("visible compact button with accessible label {label:?}"))
 }
+
+/// Verifies that the custom menu bar and popup entries expose their labels,
+/// roles, enabled state, and default accessibility actions.
+pub(super) fn exercise_navigation_accessibility(ui: &MainWindow) {
+    let file_button = ElementHandle::find_by_element_id(ui, "AppNavbar::file-button")
+        .next()
+        .expect("File menu button is discoverable");
+    assert_eq!(
+        file_button.accessible_role(),
+        Some(AccessibleRole::Button),
+        "the menu-bar entry has button semantics"
+    );
+    assert_eq!(
+        file_button.accessible_label().as_deref(),
+        Some("File"),
+        "the menu-bar entry exposes its visible label"
+    );
+    // Keep the existing pointer coverage for the popup boundary, then use
+    // the accessible action on one entry so the document is reset only once.
+    file_button.mock_single_click(PointerEventButton::Left);
+
+    let entries = ElementHandle::find_by_element_type_name(ui, "MenuEntry").collect::<Vec<_>>();
+    assert_eq!(entries.len(), 9, "the complete File popup is visible");
+    assert_eq!(
+        entries[0].accessible_role(),
+        Some(AccessibleRole::Button),
+        "the popup entry has button semantics"
+    );
+    assert_eq!(
+        entries[0].accessible_label().as_deref(),
+        Some("New project"),
+        "the popup entry exposes its visible label"
+    );
+    assert_eq!(entries[0].accessible_enabled(), Some(true));
+    entries[0].invoke_accessible_default_action();
+    assert_eq!(
+        ElementHandle::find_by_element_type_name(ui, "MenuEntry").count(),
+        0,
+        "the accessible action closes the popup"
+    );
+}

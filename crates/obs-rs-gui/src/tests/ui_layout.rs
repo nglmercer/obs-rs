@@ -1,4 +1,5 @@
 use super::*;
+use i_slint_backend_testing::AccessibleRole;
 
 pub(super) fn exercise_layout_restore(ui: &MainWindow) {
     let mut stored = AppSettings::default();
@@ -120,6 +121,15 @@ pub(super) fn exercise_dock_layout(
     ui.invoke_tab_dock_with(4, 3);
     let panes = read_dock_panes(ui);
     assert!(panes.iter().any(|pane| pane.tab_count == 2));
+    let controls_tab = ElementHandle::find_by_accessible_label(ui, "Controls")
+        .find(|tab| {
+            tab.accessible_role() == Some(AccessibleRole::Tab)
+                && tab.size().width > 0.0
+                && tab.size().height > 0.0
+        })
+        .expect("the dock tab exposes its accessible label and role");
+    assert_eq!(controls_tab.accessible_enabled(), Some(true));
+    controls_tab.invoke_accessible_default_action();
     ui.invoke_select_dock_tab(4);
     assert!(read_dock_panes(ui)
         .iter()

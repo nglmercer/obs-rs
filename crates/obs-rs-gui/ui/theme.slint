@@ -84,6 +84,12 @@ export component TabButton inherits Rectangle {
     in property <string> label;
     in property <bool> active;
     callback clicked();
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-enabled: true;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.active;
+    accessible-action-default => root.clicked();
     min-width: 64px;
     height: 34px;
     background: active ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
@@ -113,6 +119,10 @@ export component NavMenuButton inherits Rectangle {
     in property <string> icon-name;
     in property <bool> active;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: true;
+    accessible-action-default => root.clicked();
     height: 32px;
     min-width: 58px;
     background: active ? Palette.tokens.header-active-bg : transparent;
@@ -153,6 +163,16 @@ export component MenuEntry inherits Rectangle {
     // Right-aligned accelerator text, e.g. "Ctrl+Z". Empty hides the column.
     in property <string> shortcut;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        if root.enabled {
+            root.clicked();
+        }
+    }
     width: 208px;
     height: 28px;
     background: root.enabled && touch.has-hover
@@ -410,6 +430,10 @@ export component MenuBarButton inherits Rectangle {
     in property <string> label;
     in property <bool> active;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: true;
+    accessible-action-default => root.clicked();
     height: 24px;
     width: text-label.preferred-width + 18px;
     background: active ? Palette.tokens.header-active-bg : transparent;

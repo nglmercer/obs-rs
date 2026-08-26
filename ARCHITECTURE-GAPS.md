@@ -16,6 +16,13 @@ zoom controls by role and label, checks their enabled state, and activates Zoom
 in through the accessibility action; native screen-reader traversal and the
 remaining text-entry focus audit remain open.
 
+The custom navigation accessibility follow-up applies the same contract to
+tab buttons and menu entries: visible labels become accessible names, tab
+selection is exposed, disabled menu entries report their state, and default
+actions reuse the existing callbacks. The fixture drives the File menu and a
+dock tab through those actions. Dock-header icon buttons and native
+screen-reader traversal remain open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied

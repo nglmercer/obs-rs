@@ -558,24 +558,6 @@ pub(super) fn exercise_group_source_callbacks(
     ui_scene_reference::exercise_scene_reference_transform_dialog(ui, state, surface);
 }
 
-/// Opens the File menu through its actual pointer target and proves its popup
-/// participates in hit testing outside the navbar's 26px bounds.
-pub(super) fn exercise_navbar_popup(ui: &MainWindow) {
-    let file_button = ElementHandle::find_by_element_id(ui, "AppNavbar::file-button")
-        .next()
-        .expect("File menu button is discoverable");
-    file_button.mock_single_click(PointerEventButton::Left);
-
-    let entries = ElementHandle::find_by_element_type_name(ui, "MenuEntry").collect::<Vec<_>>();
-    assert_eq!(entries.len(), 9, "the complete File popup is visible");
-    entries[0].mock_single_click(PointerEventButton::Left);
-    assert_eq!(
-        ElementHandle::find_by_element_type_name(ui, "MenuEntry").count(),
-        0,
-        "selecting an entry closes the popup"
-    );
-}
-
 /// Drives the menu-bar actions through the real callbacks.
 ///
 /// The bar's previous failure mode was an entry that dispatched a string

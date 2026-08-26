@@ -246,7 +246,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
         .expect("multiview overlay should render");
     assert!(multiview_snapshot.width() > 0 && multiview_snapshot.height() > 0);
     ui.set_view_mode(1);
-    ui_navigation::exercise_navbar_popup(&ui);
+    ui_icon_accessibility::exercise_navigation_accessibility(&ui);
     ui.set_pending_discard(5);
     let discard_snapshot = ui
         .window()

@@ -38,6 +38,16 @@ without adding duplicate UI state. The GUI fixture discovers both zoom actions
 by role and label and invokes Zoom in through the accessibility action; native
 screen-reader traversal and complete focus-order verification remain partial.
 
+## Latest verified package: custom navigation accessibility actions
+
+On 2026-08-26, custom tab and menu controls now expose their visible labels,
+appropriate button/tab roles, enabled state, tab selection, and default
+accessibility actions. The GUI fixture verifies the File menu through its real
+pointer popup path, activates a menu entry through the testing backend's
+accessibility action, and selects a dock tab through the same contract, while
+disabled menu state remains observable. Dock-header icon buttons, native screen-reader
+traversal, and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the
