@@ -172,6 +172,14 @@ available to page editors. The GUI fixture verifies both paths, including the
 persisted OK result; OS close-request handling and complete focus traversal
 remain incomplete.
 
+## Latest verified package: Add Source keyboard boundary
+
+On 2026-08-26, the standalone Add Source browser now focuses an explicit
+keyboard boundary after it is shown. `Escape` closes through the existing Rust
+callback, while `Enter` remains available to the focused Create/Add control.
+The GUI fixture verifies that the real Escape event hides the window;
+OS close-request handling and complete focus traversal remain incomplete.
+
 ## Latest verified package: native slideshow directory Browse picker
 
 On 2026-08-26, `SOURCE-007` extended the source-properties Browse boundary to

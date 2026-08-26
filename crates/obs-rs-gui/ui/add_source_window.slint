@@ -128,7 +128,35 @@ export component AddSourceWindow inherits Window {
     property <length> grid-width: root.width - 300px - 62px;
     property <length> card-width: (grid-width - (columns - 1) * 10px) / columns;
 
-    HorizontalLayout {
+    add-source-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Creation and existing-source actions are distinct buttons, so keep
+        // Enter with the focused control. Escape closes the browser window.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-window();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-window();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
         padding: 10px;
         spacing: 10px;
 
@@ -288,5 +316,12 @@ export component AddSourceWindow inherits Window {
                 }
             }
         }
+        }
+    }
+
+    // Focus is explicit because the standalone browser can be reopened after
+    // another child window has owned keyboard focus.
+    public function focus-keyboard-boundary() {
+        add-source-focus.focus();
     }
 }

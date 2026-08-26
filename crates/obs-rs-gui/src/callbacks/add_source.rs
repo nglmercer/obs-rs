@@ -80,8 +80,9 @@ fn install_open(
         // Mirror whatever theme and language the studio is showing right now.
         controller.sync_theme(state.borrow().locale(), ui.global::<Palette>().get_tokens());
         refresh_window(&state, &controller);
-        if let Err(error) = controller.window.show() {
-            ui.set_status_message(format!("Add source window: {error}").into());
+        match controller.window.show() {
+            Ok(()) => controller.window.invoke_focus_keyboard_boundary(),
+            Err(error) => ui.set_status_message(format!("Add source window: {error}").into()),
         }
     });
 }

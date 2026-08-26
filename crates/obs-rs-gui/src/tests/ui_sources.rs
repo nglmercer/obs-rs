@@ -796,7 +796,11 @@ pub(super) fn exercise_add_source_window(
     let controller = crate::install_add_source_window(ui, state, surface)
         .expect("add source window should instantiate");
     let window = crate::callbacks::add_source_window(&controller);
-    window.show().expect("add source window should show");
+    ui.invoke_open_add_source_window();
+    assert!(
+        window.window().is_visible(),
+        "add source window should show"
+    );
 
     // Every registered kind must produce a renderable page.
     for kind in crate::preview::builtin_source_kinds() {
@@ -898,7 +902,21 @@ pub(super) fn exercise_add_source_window(
     crate::callbacks::populate_add_source_window(&controller, state, "@recent");
     assert!(!window.get_can_create());
 
-    window.hide().expect("add source window should hide");
+    exercise_add_source_keyboard_boundary(window);
+}
+
+fn exercise_add_source_keyboard_boundary(window: &crate::AddSourceWindow) {
+    window
+        .window()
+        .take_snapshot()
+        .expect("add source window should render before Escape dispatch");
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+    assert!(
+        !window.window().is_visible(),
+        "Escape closes the add source window"
+    );
 }
 
 /// Verifies the complete screen/camera source-properties path: selecting a
