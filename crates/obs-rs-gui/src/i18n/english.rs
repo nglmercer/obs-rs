@@ -578,6 +578,11 @@ pub(super) fn catalog() -> UiText {
         project_recovery_description: s(
             "A complete temporary project was left by an interrupted save. The active project path and its temporary recovery path are shown below. Confirm recovery to replace the current in-memory document; the result stays dirty until you save it.",
         ),
+        project_recovery_discard_title: s("Discard recovered project"),
+        project_recovery_discard_description: s(
+            "This permanently removes the temporary recovery file without changing the active project. Confirm only if you no longer need this interrupted-save copy.",
+        ),
+        discard_recovery: s("Discard recovery"),
         project_open_picker_unavailable: s(
             "No system file picker was found; type the project path manually.",
         ),

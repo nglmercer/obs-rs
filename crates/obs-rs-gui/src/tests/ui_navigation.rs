@@ -567,7 +567,7 @@ pub(super) fn exercise_navbar_popup(ui: &MainWindow) {
     file_button.mock_single_click(PointerEventButton::Left);
 
     let entries = ElementHandle::find_by_element_type_name(ui, "MenuEntry").collect::<Vec<_>>();
-    assert_eq!(entries.len(), 8, "the complete File popup is visible");
+    assert_eq!(entries.len(), 9, "the complete File popup is visible");
     entries[0].mock_single_click(PointerEventButton::Left);
     assert_eq!(
         ElementHandle::find_by_element_type_name(ui, "MenuEntry").count(),

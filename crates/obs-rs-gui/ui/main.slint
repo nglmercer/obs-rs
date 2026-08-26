@@ -181,6 +181,7 @@ export component MainWindow inherits Window {
         // · 5 rename scene · 6 source properties · 7 source filters
         // · 9 new collection · 10 about · 11 output failure · 12 rename source
         // · 13 interrupted-remux candidate chooser · 14 project recovery review
+        // · 15 project recovery discard confirmation
         in-out property <int> active-modal: 0;
         // 0 none · 1 start stream · 2 stop stream · 3 stop recording
         property <int> pending-confirm: 0;
@@ -280,6 +281,7 @@ export component MainWindow inherits Window {
         callback save-discard(int);
         callback load-project();
         callback recover-project();
+        callback discard-project-recovery();
         callback export-diagnostics();
         callback add-scene(string, string);
         callback add-source(string, string, string);
@@ -675,6 +677,7 @@ export component MainWindow inherits Window {
                 open-save-project-as() => { root.open-save-project-as(); }
                 load-project() => { root.request-load-project(); }
                 recover-project() => { root.request-recover-project(); }
+                discard-project-recovery() => { root.discard-project-recovery(); }
                 export-diagnostics() => { root.export-diagnostics(); }
                 open-settings-window() => { root.open-settings-window(); }
                 open-setup-window() => { root.open-setup-window(); }
@@ -967,6 +970,7 @@ export component MainWindow inherits Window {
         save-project-as(path) => { root.save-project-as(path); }
         load-project() => { root.load-project(); }
         recover-project() => { root.recover-project(); }
+        discard-project-recovery() => { root.discard-project-recovery(); }
         browse-project-save-as() => { root.browse-project-save-as(); }
         export-collection(path) => { root.export-collection(path); }
         import-collection(path) => { root.import-collection(path); }

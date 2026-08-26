@@ -586,6 +586,11 @@ pub(super) fn catalog() -> UiText {
         project_recovery_description: s(
             "Un proyecto temporal completo quedó tras un guardado interrumpido. Abajo aparecen la ruta activa y la ruta temporal de recuperación. Confirma la recuperación para reemplazar el documento en memoria; el resultado quedará sucio hasta que lo guardes.",
         ),
+        project_recovery_discard_title: s("Descartar proyecto recuperado"),
+        project_recovery_discard_description: s(
+            "Esto elimina permanentemente el archivo temporal de recuperación sin cambiar el proyecto activo. Confirma solo si ya no necesitas esta copia del guardado interrumpido.",
+        ),
+        discard_recovery: s("Descartar recuperación"),
         project_open_picker_unavailable: s(
             "No se encontró un selector de archivos del sistema; escribe manualmente la ruta del proyecto.",
         ),

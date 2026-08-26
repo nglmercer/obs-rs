@@ -135,6 +135,28 @@ impl ProjectFileStore {
         self.temp_path.is_file()
     }
 
+    /// Discards an interrupted-save temporary file after an explicit user
+    /// decision.
+    ///
+    /// The final project is never touched. A missing recovery file is a
+    /// successful no-op so a stale status cannot turn into a user-visible
+    /// failure when another process already removed the artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Io`] when the recovery file exists but cannot
+    /// be removed.
+    pub fn discard_recovery(&self) -> Result<bool, ProjectError> {
+        if !self.temp_path.is_file() {
+            return Ok(false);
+        }
+        fs::remove_file(&self.temp_path).map_err(|error| ProjectError::Io {
+            operation: "remove project recovery file",
+            message: error.to_string(),
+        })?;
+        Ok(true)
+    }
+
     /// Returns the final project path.
     #[must_use]
     pub fn final_path(&self) -> &std::path::Path {

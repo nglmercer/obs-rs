@@ -94,5 +94,31 @@ pub(super) fn exercise_project_recovery_dialog(ui: &MainWindow, state: &Rc<RefCe
     assert_eq!(ui.get_active_modal(), 0);
     assert!(state.borrow().is_dirty());
 
+    ui.invoke_discard_project_recovery();
+    assert_eq!(ui.get_active_modal(), 15);
+    ui.show()
+        .expect("testing window should show the discard recovery dialog");
+    let snapshot = ui
+        .window()
+        .take_snapshot()
+        .expect("discard recovery dialog should render");
+    assert!(snapshot.width() > 0 && snapshot.height() > 0);
+    ui.hide()
+        .expect("testing window should hide after discard recovery dialog");
+
+    ui.set_active_modal(0);
+    assert!(
+        store.temp_path().is_file(),
+        "cancel keeps the recovery file"
+    );
+    ui.invoke_discard_project_recovery();
+    assert_eq!(ui.get_active_modal(), 15);
+    ui.invoke_discard_project_recovery();
+    assert_eq!(ui.get_active_modal(), 0);
+    assert!(!store.temp_path().exists());
+    assert!(ui
+        .get_status_message()
+        .contains("Discarded project recovery"));
+
     std::fs::remove_dir_all(root).expect("remove recovery fixture");
 }

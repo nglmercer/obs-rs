@@ -412,6 +412,20 @@ export component ProjectRecoveryDialog inherits ModalShell {
     Rectangle { }
 }
 
+export component ProjectRecoveryDiscardDialog inherits ModalShell {
+    in property <string> detail;
+    callback discard();
+
+    title: I18n.text.project_recovery_discard_title;
+    subtitle: I18n.text.project_recovery_discard_description + "\n\n" + root.detail;
+    accept-label: I18n.text.discard_recovery;
+    cancel-label: I18n.text.cancel;
+    panel-height: 300px;
+    accepted => discard();
+
+    Rectangle { }
+}
+
 // Lets the operator choose one of the bounded interrupted-remux candidates
 // discovered beside the configured recording path. The Rust output boundary
 // still validates the selected path before starting native recovery.

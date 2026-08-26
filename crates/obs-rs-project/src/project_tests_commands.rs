@@ -844,6 +844,26 @@ fn project_file_store_recovers_a_valid_unswitched_temporary_file() {
 }
 
 #[test]
+fn project_file_store_discards_only_the_recovery_file() {
+    let (final_path, temp_path) = unique_paths("discard-recovery");
+    let store = ProjectFileStore::new(&final_path, &temp_path).expect("store");
+    std::fs::write(&final_path, project().serialize()).expect("write final project");
+    std::fs::write(&temp_path, "interrupted project").expect("write recovery fixture");
+
+    assert!(store.discard_recovery().expect("discard recovery file"));
+    assert!(!temp_path.exists());
+    assert!(
+        final_path.is_file(),
+        "discard must not touch the final project"
+    );
+    assert!(!store
+        .discard_recovery()
+        .expect("missing recovery is a no-op"));
+
+    std::fs::remove_file(final_path).expect("remove final project fixture");
+}
+
+#[test]
 fn set_profile_video_format_command_applies_and_round_trips() {
     let mut project = project();
     let updated =
