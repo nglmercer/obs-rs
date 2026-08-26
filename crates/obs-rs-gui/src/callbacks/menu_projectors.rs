@@ -428,6 +428,18 @@ impl ProjectorController {
     }
 
     #[cfg(test)]
+    pub(crate) fn projector_window(&self, program: bool) -> Option<slint::Weak<ProjectorWindow>> {
+        self.slot(if program {
+            ProjectorFeed::Program
+        } else {
+            ProjectorFeed::Preview
+        })
+        .borrow()
+        .as_ref()
+        .map(ComponentHandle::as_weak)
+    }
+
+    #[cfg(test)]
     pub(crate) fn is_multiview_open(&self) -> bool {
         self.slot(ProjectorFeed::Multiview).borrow().is_some()
     }
@@ -875,6 +887,7 @@ fn open_projector(
     });
 
     window.show()?;
+    window.invoke_focus_keyboard_boundary();
     Ok(window)
 }
 

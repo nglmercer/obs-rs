@@ -24,7 +24,7 @@ export component ProjectorWindow inherits Window {
     width: 960px;
     height: 540px;
 
-    FocusScope {
+    projector-focus := FocusScope {
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 root.close-requested();
@@ -81,6 +81,12 @@ export component ProjectorWindow inherits Window {
                 }
             }
         }
+    }
+
+    // A projector can be reopened after a dock or dialog owns keyboard focus;
+    // make F11 and Escape deterministic for every newly shown window.
+    public function focus-keyboard-boundary() {
+        projector-focus.focus();
     }
 
     projector-menu := ContextMenuArea {

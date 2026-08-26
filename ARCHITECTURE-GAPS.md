@@ -140,6 +140,13 @@ is live compositor-backed multi-monitor/DPI evidence plus per-scene audio and
 source-specific tile behavior; the old claim that multiview monitor selection
 was absent was stale.
 
+The projector keyboard follow-up now focuses the projector `FocusScope` after
+every controller-managed show. The existing F11 fullscreen toggle and Escape
+close callback therefore remain reachable after focus was previously held by
+another dock or dialog; the GUI menu fixture drives both F11 transitions and
+closes the real program projector with Escape. Native multi-monitor/DPI and
+projector focus traversal remain open.
+
 The slideshow Browse packet extends the properties picker to the
 `image_slideshow` `paths` row without creating a second source state owner. A
 bounded asynchronous native directory chooser returns one selected directory

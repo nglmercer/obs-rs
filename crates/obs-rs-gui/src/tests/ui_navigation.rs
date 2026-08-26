@@ -680,8 +680,7 @@ pub(super) fn exercise_menu_actions(
         "the program projector uses fullscreen geometry"
     );
     assert!(!projectors.is_open(false), "only one feed was requested");
-    ui.invoke_open_projector(true);
-    assert!(!projectors.is_open(true), "selecting it again closed it");
+    ui_projector_keyboard::exercise_program_projector_keyboard(&projectors);
 
     assert!(!projectors.is_multiview_open());
     ui.invoke_open_multiview_projector();
