@@ -42,6 +42,7 @@ export component GeneralPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.language-names;
                 current-index: root.language-index;
+                accessible-label: I18n.text.settings_ui.language;
                 selected(value) => { root.select-language(self.current-index); }
             }
         }
@@ -77,6 +78,8 @@ export component GeneralPage inherits VerticalLayout {
                 value <=> root.snap-distance;
                 minimum: 1;
                 maximum: 100;
+                accessible-label: I18n.text.settings_ui.snap_distance;
+                accessible-description: I18n.text.settings_ui.snap_distance_hint;
                 edited(value) => { root.changed(); }
             }
         }
@@ -90,4 +93,3 @@ export component GeneralPage inherits VerticalLayout {
     }
     Rectangle { vertical-stretch: 1; }
 }
-

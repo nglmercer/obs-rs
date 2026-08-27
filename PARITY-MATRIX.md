@@ -245,6 +245,14 @@ field headings as accessible labels. The GUI fixture verifies scene creation,
 scene properties, and source rename controls by role and label; transition
 subforms and native screen-reader traversal remain partial.
 
+## Latest verified package: General Settings accessibility semantics
+
+On 2026-08-27, the General Settings page now exposes the existing Language and
+Snap distance labels on its native `ComboBox` and `SpinBox` controls, including
+the snap-behavior hint. The GUI fixture verifies both controls without adding
+page-side state; the remaining Settings pages and native screen-reader
+traversal remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

@@ -661,6 +661,7 @@ pub(super) fn exercise_settings_commit(
     assert!(!window.get_dirty(), "a freshly loaded draft is not dirty");
 
     exercise_settings_category_accessibility(window);
+    exercise_general_settings_control_accessibility(window);
     exercise_settings_density_accessibility(window);
     exercise_mixer_settings_navigation(ui, window);
     exercise_stream_server_selection(window);
@@ -707,6 +708,34 @@ fn exercise_settings_category_accessibility(window: &SettingsWindow) {
     assert_eq!(window.get_category(), 0);
     assert_eq!(general.accessible_item_selected(), Some(true));
     assert_eq!(appearance.accessible_item_selected(), Some(false));
+}
+
+/// Verifies that the General page connects its visual labels to the native
+/// language and snap-distance controls without adding page-side state.
+fn exercise_general_settings_control_accessibility(window: &SettingsWindow) {
+    window.set_category(0);
+    let language = ElementHandle::find_by_accessible_label(window, "Language")
+        .find(|control| {
+            control.accessible_role() == Some(AccessibleRole::Combobox)
+                && control.accessible_enabled() == Some(true)
+                && control.size().width > 100.0
+                && control.size().height > 20.0
+        })
+        .expect("the General language control is accessible");
+    assert_eq!(language.accessible_label().as_deref(), Some("Language"));
+
+    let snap = ElementHandle::find_by_accessible_label(window, "Snap distance (canvas px)")
+        .find(|control| {
+            control.accessible_role() == Some(AccessibleRole::Spinbox)
+                && control.accessible_enabled() == Some(true)
+                && control.size().width > 100.0
+                && control.size().height > 20.0
+        })
+        .expect("the General snap-distance control is accessible");
+    assert_eq!(
+        snap.accessible_description().as_deref(),
+        Some("Sources snap to canvas and other visible sources within this distance. Ctrl temporarily disables snapping during a gesture.")
+    );
 }
 
 /// Verifies the shared Appearance density selector as a bounded radio group
