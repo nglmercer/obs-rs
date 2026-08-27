@@ -192,6 +192,16 @@ callbacks. The GUI fixture activates Appearance and General through the
 accessibility actions and verifies the live selected state; native
 screen-reader traversal and complete focus-order verification remain partial.
 
+## Latest verified package: Add Source candidate accessibility semantics
+
+On 2026-08-27, visible Add Source candidate cards now expose `ListItem`
+semantics, stable source IDs, human-readable source/scene descriptions,
+multi-selection state, bounded index/count metadata, and default toggle
+actions. The action reuses the existing `AddSourceController` selection set;
+the GUI fixture activates a visible existing-source card through the
+accessibility contract and verifies the subsequent add workflow. Native
+screen-reader traversal and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

@@ -77,6 +77,14 @@ GUI fixture switches between General and Appearance through the accessibility
 contract. Native screen-reader traversal and complete focus-order verification
 remain open.
 
+The Add Source candidate accessibility follow-up exposes each visible existing
+source card as a `ListItem` with a stable source ID, source/owner-scene
+description, multi-selection state, bounded index/count metadata, and a default
+toggle action. The action reuses the `AddSourceController` selection set rather
+than creating UI-side selection state; the fixture drives a materialized card
+through that contract before adding it to the target scene. Cards outside the
+current scroll viewport still require native traversal/scroll coverage.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

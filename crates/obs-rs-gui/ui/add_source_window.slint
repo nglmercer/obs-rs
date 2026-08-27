@@ -43,9 +43,12 @@ component KindRow inherits Rectangle {
 // A source card: a large icon plate above a name strip, selected state drawn as
 // an accent border and fill the way OBS marks a chosen source.
 component SourceCard inherits Rectangle {
+    in property <string> candidate-id;
     in property <string> name;
     in property <string> scene;
     in property <string> icon-name;
+    in property <int> item-index;
+    in property <int> item-count;
     in property <bool> selected;
     callback clicked();
 
@@ -54,6 +57,16 @@ component SourceCard inherits Rectangle {
     border-width: selected ? 2px : 1px;
     border-color: selected ? Palette.tokens.accent : Palette.tokens.border;
     border-radius: 4px;
+
+    accessible-role: list-item;
+    accessible-label: root.candidate-id;
+    accessible-description: root.name + (root.scene == "" ? "" : " · " + root.scene);
+    accessible-enabled: root.candidate-id != "";
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => root.clicked();
 
     VerticalLayout {
         padding: 4px;
@@ -266,9 +279,12 @@ export component AddSourceWindow inherits Window {
                                 for column in [0, 1, 2, 3] : VerticalLayout {
                                     if root.candidates.length > row * 4 + column : SourceCard {
                                         width: root.card-width;
+                                        candidate-id: root.candidates[row * 4 + column].id;
                                         name: root.candidates[row * 4 + column].name;
                                         scene: root.candidates[row * 4 + column].scene;
                                         icon-name: root.candidates[row * 4 + column].icon;
+                                        item-index: root.candidates[row * 4 + column].index;
+                                        item-count: root.candidates[row * 4 + column].count;
                                         selected: root.candidates[row * 4 + column].selected;
                                         clicked => {
                                             root.toggle-candidate(root.candidates[row * 4 + column].id);

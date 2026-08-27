@@ -305,7 +305,14 @@ fn collect_candidates(
             kind_label: kind_label(text, source.kind().as_str()),
             scene: owner_scene.into(),
             icon: kind_icon(source.kind().as_str()).into(),
+            index: 0,
+            count: 0,
         });
+    }
+    let count = i32::try_from(candidates.len()).unwrap_or(i32::MAX);
+    for (index, candidate) in candidates.iter_mut().enumerate() {
+        candidate.index = i32::try_from(index).unwrap_or(i32::MAX);
+        candidate.count = count;
     }
     candidates
 }

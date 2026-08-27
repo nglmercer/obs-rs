@@ -728,19 +728,7 @@ pub(super) fn exercise_add_source_window(
         "add source window should show"
     );
 
-    // Every registered kind must produce a renderable page.
-    for kind in crate::preview::builtin_source_kinds() {
-        crate::callbacks::populate_add_source_window(&controller, state, &kind);
-        assert!(
-            window
-                .window()
-                .take_snapshot()
-                .expect("kind page should render")
-                .width()
-                > 0
-        );
-        assert!(window.get_can_create(), "a real kind offers creation");
-    }
+    exercise_add_source_kind_pages(&controller, state, window);
 
     let scene = state
         .borrow()
@@ -789,18 +777,31 @@ pub(super) fn exercise_add_source_window(
         .expect("plant a source in another scene");
 
     crate::callbacks::populate_add_source_window(&controller, state, "color_source");
-    let candidate = window
+    let planted = window
         .get_candidates()
         .iter()
         .find(|row| row.name == "Overlay")
         .expect("the planted source is offered");
     assert_ne!(
-        candidate.scene.as_str(),
+        planted.scene.as_str(),
         scene.as_str(),
         "candidates never come from the target scene"
     );
-    window.invoke_toggle_candidate(candidate.id.clone());
-    assert_eq!(window.get_selected_count(), 1);
+    // The testing backend exposes only the cards currently materialized by the
+    // scroll viewport. Use a visible candidate for the accessibility action;
+    // the planted source above still proves the filtering path independently.
+    let candidate = window
+        .get_candidates()
+        .iter()
+        .find(|row| row.index < 12)
+        .expect("a visible existing source candidate is offered");
+    let candidate_id = candidate.id.clone();
+    exercise_existing_candidate_accessibility(
+        window,
+        candidate_id.as_str(),
+        candidate.name.as_str(),
+        candidate.scene.as_str(),
+    );
     let before = scene_source_count(state, &scene);
     window.invoke_add_selected();
     assert_eq!(
@@ -820,7 +821,7 @@ pub(super) fn exercise_add_source_window(
         !window
             .get_candidates()
             .iter()
-            .any(|row| row.id == candidate.id),
+            .any(|row| row.id == candidate_id),
         "a source that is already in the scene must not be offered again"
     );
 
@@ -829,6 +830,62 @@ pub(super) fn exercise_add_source_window(
     assert!(!window.get_can_create());
 
     exercise_add_source_keyboard_boundary(window);
+}
+
+/// Every registered source kind must produce a renderable creation page.
+fn exercise_add_source_kind_pages(
+    controller: &Rc<crate::callbacks::add_source::AddSourceController>,
+    state: &Rc<RefCell<DesktopState>>,
+    window: &crate::AddSourceWindow,
+) {
+    for kind in crate::preview::builtin_source_kinds() {
+        crate::callbacks::populate_add_source_window(controller, state, &kind);
+        assert!(
+            window
+                .window()
+                .take_snapshot()
+                .expect("kind page should render")
+                .width()
+                > 0
+        );
+        assert!(window.get_can_create(), "a real kind offers creation");
+    }
+}
+
+/// Verifies one visible candidate card and exercises its existing toggle path
+/// through the testing backend's accessibility action.
+fn exercise_existing_candidate_accessibility(
+    window: &crate::AddSourceWindow,
+    candidate_id: &str,
+    candidate_name: &str,
+    candidate_scene: &str,
+) {
+    let candidate_card = ElementHandle::find_by_accessible_label(window, candidate_id)
+        .find(|card| {
+            card.accessible_role() == Some(AccessibleRole::ListItem)
+                && card.size().width > 100.0
+                && card.size().height > 100.0
+        })
+        .expect("visible existing source candidate card is accessible");
+    let description = candidate_card
+        .accessible_description()
+        .expect("candidate card has a human-readable description");
+    assert!(description.contains(candidate_name));
+    assert!(description.contains(candidate_scene));
+    assert_eq!(candidate_card.accessible_enabled(), Some(true));
+    assert_eq!(candidate_card.accessible_item_selectable(), Some(true));
+    assert_eq!(candidate_card.accessible_item_selected(), Some(false));
+    let candidate_count = window.get_candidates().row_count();
+    assert_eq!(
+        candidate_card.accessible_item_count(),
+        Some(candidate_count)
+    );
+    assert!(candidate_card
+        .accessible_item_index()
+        .is_some_and(|index| index < candidate_count));
+    candidate_card.invoke_accessible_default_action();
+    assert_eq!(window.get_selected_count(), 1);
+    assert_eq!(candidate_card.accessible_item_selected(), Some(true));
 }
 
 fn exercise_add_source_keyboard_boundary(window: &crate::AddSourceWindow) {
