@@ -42,6 +42,13 @@ committing a reset or partial draft, and reopening reconstructs the last
 committed transform. Native close behavior for the remaining standalone
 editors and complete focus traversal remain open.
 
+The Source Filters close-policy follow-up connects the native window-manager
+close to the editor's existing hide callback. Because filter mutations are
+immediate, the close path does not invent a second transaction; it only makes
+native dismissal explicit and keeps the editor lifecycle bounded. Native close
+behavior for the remaining standalone editors and complete focus traversal
+remain open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied

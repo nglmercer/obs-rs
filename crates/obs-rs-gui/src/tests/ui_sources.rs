@@ -569,6 +569,18 @@ pub(super) fn render_source_filters_window(
         .window()
         .take_snapshot()
         .expect("filters window should render before Escape dispatch");
+    window.window().dispatch_event(WindowEvent::CloseRequested);
+    ui.invoke_open_source_filters_window();
+    assert_ne!(
+        window.get_selected_filter_name(),
+        "Uncommitted name",
+        "native window close refreshes the immediate filter editor"
+    );
+    window.set_selected_filter_name("Uncommitted name".into());
+    window
+        .window()
+        .take_snapshot()
+        .expect("filters window should render before Escape dispatch");
     window.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Escape.into(),
     });

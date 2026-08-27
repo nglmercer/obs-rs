@@ -74,6 +74,15 @@ and verifies that the committed position remains intact before exercising the
 existing Escape cancel path. Native close policies for the remaining standalone
 editors and complete focus traversal remain partial.
 
+## Latest verified package: Source Filters native close policy
+
+On 2026-08-26, native window-manager dismissal of Source Filters now follows
+the existing close callback and returns `HideWindow`. Since filter mutations are
+immediate, the fixture verifies that a temporary filter-name draft is refreshed
+when the window is reopened, then retains the existing Escape path. Native
+close policies for the remaining standalone editors and complete focus
+traversal remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

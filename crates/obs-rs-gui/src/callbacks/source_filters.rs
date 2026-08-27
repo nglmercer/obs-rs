@@ -329,6 +329,15 @@ fn install_actions(
     controller.window.on_close_window(move || {
         let _ = close_controller.window.hide();
     });
+
+    // Keep native window-manager dismissal on the same close path as the
+    // editor's Cancel/Escape boundary. Filter mutations are already
+    // immediate; this only guarantees that the editor is hidden explicitly.
+    let native_close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        let _ = native_close_controller.window.hide();
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 fn report(
