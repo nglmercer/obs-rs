@@ -130,6 +130,43 @@ pub(super) fn exercise_row_accessibility(ui: &MainWindow) {
     ui.invoke_select_preview("preview".into());
 }
 
+/// Verifies that Multiview tiles expose the scene projection and use the
+/// existing preview-selection callback for their default action.
+pub(super) fn exercise_multiview_accessibility(ui: &MainWindow) {
+    let previous_mode = ui.get_view_mode();
+    ui.set_view_mode(2);
+
+    let tile = find_accessible_multiview_tile(ui, "intermission");
+    let multiview_count = ui.get_multiview_scenes().row_count();
+    assert_eq!(
+        tile.accessible_description().as_deref(),
+        Some("Intermission")
+    );
+    assert_eq!(tile.accessible_enabled(), Some(true));
+    assert_eq!(tile.accessible_item_selectable(), Some(true));
+    assert_eq!(tile.accessible_item_selected(), Some(false));
+    assert_eq!(tile.accessible_item_count(), Some(multiview_count));
+    assert!(tile
+        .accessible_item_index()
+        .is_some_and(|index| index < multiview_count));
+
+    tile.invoke_accessible_default_action();
+    assert_eq!(ui.get_preview_scene().as_str(), "intermission");
+
+    ui.invoke_select_preview("preview".into());
+    ui.set_view_mode(previous_mode);
+}
+
+fn find_accessible_multiview_tile(ui: &MainWindow, target: &str) -> ElementHandle {
+    ElementHandle::find_by_accessible_label(ui, target)
+        .find(|tile| {
+            tile.accessible_role() == Some(AccessibleRole::ListItem)
+                && tile.size().width > 100.0
+                && tile.size().height > 100.0
+        })
+        .unwrap_or_else(|| panic!("visible accessible multiview tile for {target:?}"))
+}
+
 fn find_accessible_row(ui: &MainWindow, target: &str) -> ElementHandle {
     ElementHandle::find_by_accessible_label(ui, target)
         .find(|row| {

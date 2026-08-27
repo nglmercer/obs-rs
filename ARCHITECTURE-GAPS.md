@@ -38,6 +38,14 @@ project state remain owned by one path. The GUI fixture verifies the live scene
 and source row models and selects both through the accessibility contract;
 native screen-reader traversal and full focus-order verification remain open.
 
+The Multiview accessibility follow-up now exposes each bounded visible tile as
+a `ListItem` with its stable scene target, human-readable scene/role
+description, selected state, local index/count, and default Preview-selection
+action. The action reuses the existing Rust scene callback; the GUI fixture
+enters Multiview, activates an unselected tile, and restores the prior view.
+Pointer double-click Program behavior remains unchanged, while native
+screen-reader traversal and complete focus-order verification remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

@@ -561,6 +561,7 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .scenes()
             .take(MAX_MULTIVIEW_SCENES)
             .collect::<Vec<_>>();
+        let count = i32::try_from(scenes.len()).unwrap_or(i32::MAX);
         let (columns, rows) = multiview_grid_dimensions(scenes.len().max(1));
         let columns_f = f32::from(u16::try_from(columns).unwrap_or(u16::MAX));
         let rows_f = f32::from(u16::try_from(rows).unwrap_or(u16::MAX));
@@ -576,6 +577,8 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
                     id: scene.id().as_str().into(),
                     name: scene.name().into(),
                     role: roles.role(state, scene.id().as_str()),
+                    index: i32::try_from(index).unwrap_or(i32::MAX),
+                    count,
                     preview,
                     program,
                     x: f32::from(u16::try_from(index % columns).unwrap_or(u16::MAX)) * tile_width,

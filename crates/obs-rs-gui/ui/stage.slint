@@ -191,6 +191,22 @@ component MultiviewCanvas inherits Rectangle {
             ? Palette.tokens.program-border
             : (scene.preview ? Palette.tokens.preview-border : Palette.tokens.border-strong);
         background: transparent;
+        // The stable scene ID is the automation and screen-reader identity;
+        // the visible name and role remain human-readable context. The
+        // default action follows the single-click preview selection path.
+        accessible-role: list-item;
+        accessible-label: scene.id;
+        accessible-description: scene.name + (scene.role == "" ? "" : " · " + scene.role);
+        accessible-enabled: scene.id != "";
+        accessible-item-selectable: true;
+        accessible-item-selected: scene.selected;
+        accessible-item-index: scene.index;
+        accessible-item-count: scene.count;
+        accessible-action-default => {
+            if scene.id != "" {
+                root.select-preview(scene.id);
+            }
+        }
 
         Rectangle {
             x: 4px;

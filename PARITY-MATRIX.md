@@ -142,6 +142,17 @@ multi-selection state. The GUI fixture verifies live scene/source models and
 selects a scene and source through the accessibility action; native
 screen-reader traversal and complete focus-order verification remain partial.
 
+## Latest verified package: Multiview tile accessibility semantics
+
+On 2026-08-27, visible Multiview tiles now expose `ListItem` semantics, stable
+scene target labels, human-readable scene/role descriptions, selected state,
+bounded index/count metadata, and a default action that selects the scene for
+Preview through the existing Rust callback. The GUI fixture enters Multiview,
+invokes the action on an unselected tile, verifies the Preview scene, and
+restores the prior view; double-click Program behavior remains the pointer
+gesture path. Native screen-reader traversal and complete focus-order
+verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the
