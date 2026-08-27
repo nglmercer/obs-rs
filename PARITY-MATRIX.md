@@ -153,6 +153,16 @@ restores the prior view; double-click Program behavior remains the pointer
 gesture path. Native screen-reader traversal and complete focus-order
 verification remain partial.
 
+## Latest verified package: mixer row accessibility semantics
+
+On 2026-08-27, visible Mixer channel rows now expose `ListItem` semantics,
+stable channel labels, human-readable names, non-selectable state, and bounded
+local index/count metadata. Gain/pan sliders and the mute button remain the
+actual controls, so the row does not invent a second channel-selection model.
+The GUI fixture discovers the live `Mic/Aux` row and verifies its accessible
+identity and metadata; native screen-reader traversal and complete focus-order
+verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

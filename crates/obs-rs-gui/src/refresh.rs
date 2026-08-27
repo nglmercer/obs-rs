@@ -772,11 +772,16 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
 /// The live input meter refreshes far more often than the scene graph, so it
 /// updates these rows on their own rather than running a whole dock refresh.
 pub(crate) fn refresh_mixer_rows(ui: &MainWindow, state: &DesktopState) {
-    let mixer_rows = state
-        .mixer_channels()
-        .map(|channel| MixerRow {
+    let channels = state.mixer_channels().collect::<Vec<_>>();
+    let count = i32::try_from(channels.len()).unwrap_or(i32::MAX);
+    let mixer_rows = channels
+        .into_iter()
+        .enumerate()
+        .map(|(index, channel)| MixerRow {
             id: channel.id().into(),
             name: channel.name().into(),
+            index: i32::try_from(index).unwrap_or(i32::MAX),
+            count,
             gain: f32::from(channel.gain_milli()) / 1_000.0,
             pan: f32::from(i16::try_from(channel.pan_milli()).unwrap_or(0)) / 1_000.0,
             peak_db: peak_db(channel.peak_milli()),

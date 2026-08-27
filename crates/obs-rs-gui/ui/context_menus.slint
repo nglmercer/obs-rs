@@ -398,11 +398,24 @@ export component SceneContextMenuArea inherits Rectangle {
 
 export component MixerContextMenuArea inherits Rectangle {
     in property <string> channel-id;
+    in property <string> channel-name;
+    in property <int> item-index;
+    in property <int> item-count;
     in property <bool> channel-muted;
     in property <int> channel-gain;
 
     callback toggle-mixer-mute(string);
     callback set-mixer-gain(string, int);
+
+    // Keep each channel discoverable as one bounded list item while its
+    // sliders and mute button retain their own native control semantics.
+    accessible-role: list-item;
+    accessible-label: root.channel-id;
+    accessible-description: root.channel-name;
+    accessible-enabled: root.channel-id != "";
+    accessible-item-selectable: false;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
 
     @children
 

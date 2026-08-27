@@ -55,6 +55,9 @@ export component MixerDock inherits Rectangle {
                     for channel in mixer-rows : MixerContextMenuArea {
                         height: 98px;
                         channel-id: channel.id;
+                        channel-name: channel.name;
+                        item-index: channel.index;
+                        item-count: channel.count;
                         channel-muted: channel.muted;
                         channel-gain: round(channel.gain * 1000);
                         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }

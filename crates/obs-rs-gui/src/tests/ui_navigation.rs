@@ -763,6 +763,7 @@ pub(super) fn exercise_context_menus(
     let output = Rc::new(RefCell::new(OutputRuntime::new(surface.borrow().format)));
     crate::callbacks::install_callbacks(ui, state, surface, &output);
     ui.invoke_select_preview("preview".into());
+    super::ui_icon_accessibility::exercise_mixer_row_accessibility(ui);
     super::ui_icon_accessibility::exercise_multiview_accessibility(ui);
     super::ui_icon_accessibility::exercise_row_accessibility(ui);
     ui.invoke_navigate_preview_scene(1);

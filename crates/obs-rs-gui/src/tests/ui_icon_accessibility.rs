@@ -157,6 +157,26 @@ pub(super) fn exercise_multiview_accessibility(ui: &MainWindow) {
     ui.set_view_mode(previous_mode);
 }
 
+/// Verifies that mixer channels expose their stable identity and human-readable
+/// name without pretending that the row itself owns channel selection.
+pub(super) fn exercise_mixer_row_accessibility(ui: &MainWindow) {
+    let row = ElementHandle::find_by_accessible_label(ui, "mic")
+        .find(|row| {
+            row.accessible_role() == Some(AccessibleRole::ListItem)
+                && row.size().width > 100.0
+                && row.size().height > 80.0
+        })
+        .expect("visible accessible mixer row");
+    let mixer_count = ui.get_mixer_rows().row_count();
+    assert_eq!(row.accessible_description().as_deref(), Some("Mic/Aux"));
+    assert_eq!(row.accessible_enabled(), Some(true));
+    assert_eq!(row.accessible_item_selectable(), Some(false));
+    assert_eq!(row.accessible_item_count(), Some(mixer_count));
+    assert!(row
+        .accessible_item_index()
+        .is_some_and(|index| index < mixer_count));
+}
+
 fn find_accessible_multiview_tile(ui: &MainWindow, target: &str) -> ElementHandle {
     ElementHandle::find_by_accessible_label(ui, target)
         .find(|tile| {

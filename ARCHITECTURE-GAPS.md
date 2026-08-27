@@ -46,6 +46,13 @@ enters Multiview, activates an unselected tile, and restores the prior view.
 Pointer double-click Program behavior remains unchanged, while native
 screen-reader traversal and complete focus-order verification remain open.
 
+The Mixer accessibility follow-up now exposes each live channel row as a
+non-selectable `ListItem` with its stable channel ID, human-readable name, and
+bounded local index/count. Gain/pan sliders and mute retain their own control
+semantics, while the row remains a projection of `DesktopState` rather than a
+new selection owner. The GUI fixture verifies the live `Mic/Aux` row; native
+screen-reader traversal and complete focus-order verification remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and
