@@ -56,6 +56,14 @@ screen-source setting; the Wayland portal handshake remains a separate async
 capability boundary. Native close behavior for the remaining standalone
 editors and complete focus traversal remain open.
 
+The Settings close-policy follow-up routes native window-manager dismissal
+through the existing `cancel-settings` callback. This restores the committed
+settings and live-previewed appearance before hiding the window, so a partially
+edited Settings page cannot survive into the next session. The GUI fixture
+changes a draft value, dispatches a native close request, and verifies the
+committed value after reopening. Native close behavior for the remaining
+standalone editors and complete focus traversal remain open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied
@@ -166,8 +174,9 @@ The standalone Settings window now focuses an explicit keyboard boundary after
 each show. `Escape` restores the committed settings after live previews, while
 `Ctrl+Enter` runs the existing OK/accept path; plain `Enter` remains available
 to page text editors. The GUI fixture covers both real events, including the
-persisted OK result. OS close-request policy and complete focus traversal
-remain open.
+persisted OK result. Native window-manager close now invokes the same cancel
+boundary and is covered by the integrated fixture; complete focus traversal
+remains open.
 
 The standalone Add Source browser now focuses an explicit keyboard boundary
 after each show. `Escape` closes it through the existing close callback, while

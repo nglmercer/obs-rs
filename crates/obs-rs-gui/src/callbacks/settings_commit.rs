@@ -107,6 +107,15 @@ pub(super) fn install_commit(
         cancel_controller.window.set_dirty(false);
         let _ = cancel_controller.window.hide();
     });
+
+    // The native window-manager close must use the same cancel path as Escape
+    // and the footer button. Settings preview appearance live, so merely
+    // hiding the window would leave an unapplied draft in the next session.
+    let native_close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        native_close_controller.window.invoke_cancel_settings();
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 /// Applies a canvas change to the active profile and rebuilds the engine.

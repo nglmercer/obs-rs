@@ -667,8 +667,23 @@ fn exercise_settings_keyboard_boundary(
     assert!(!window.get_dirty());
     assert_eq!(controller.committed().font_size, 16);
 
-    // OK persists and closes.
+    // Native window-manager close has the same discard semantics as Escape.
     ui.invoke_open_settings_window();
+    window.set_font_size(18.0);
+    window.set_dirty(true);
+    window
+        .window()
+        .take_snapshot()
+        .expect("settings window should render before native close dispatch");
+    window.window().dispatch_event(WindowEvent::CloseRequested);
+    assert!(!window.get_dirty(), "native close restores the draft");
+    ui.invoke_open_settings_window();
+    assert!(
+        (window.get_font_size() - 16.0).abs() < f32::EPSILON,
+        "native close discards edits"
+    );
+
+    // OK persists and closes.
     window.set_recording_quality_index(0);
     window.set_dirty(true);
     window

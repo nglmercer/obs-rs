@@ -92,6 +92,17 @@ that the persisted display selection remains unchanged before exercising the
 existing Enter acceptance path. Native close policies for the remaining
 standalone editors and complete focus traversal remain partial.
 
+## Latest verified package: Settings native close policy
+
+On 2026-08-26, native window-manager dismissal of Settings now invokes the
+existing cancel boundary before returning `HideWindow`. Live-previewed theme,
+locale, density, and font changes therefore return to the committed settings
+instead of surviving an unapplied draft. The GUI fixture edits a font-size
+draft, dispatches `CloseRequested`, reopens the window, and verifies the
+committed value before exercising the existing OK path. Native close policies
+for the remaining standalone editors and complete focus-order verification
+remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the
@@ -256,8 +267,9 @@ On 2026-08-26, the standalone Settings window now focuses an explicit keyboard
 boundary after it is shown. `Escape` restores the committed draft state and
 `Ctrl+Enter` accepts through the existing Rust callback; plain `Enter` remains
 available to page editors. The GUI fixture verifies both paths, including the
-persisted OK result; OS close-request handling and complete focus traversal
-remain incomplete.
+persisted OK result. Native window-manager close now follows the same cancel
+boundary and is covered by the integrated fixture; complete focus traversal
+remains incomplete.
 
 ## Latest verified package: Add Source keyboard boundary
 
