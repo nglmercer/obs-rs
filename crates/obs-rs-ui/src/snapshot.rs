@@ -107,12 +107,15 @@ impl DesktopState {
         for channel in self.mixer_channels() {
             writeln!(
                 snapshot,
-                "- {}: {} gain={} muted={} peak={}",
+                "- {}: {} gain={} pan={} muted={} peak={} peak_hold={} clipped={}",
                 channel.id(),
                 channel.name(),
                 channel.gain_milli(),
+                channel.pan_milli(),
                 channel.muted(),
-                channel.peak_milli()
+                channel.peak_milli(),
+                channel.peak_hold_milli(),
+                channel.clipped()
             )
             .expect("String formatting cannot fail");
         }

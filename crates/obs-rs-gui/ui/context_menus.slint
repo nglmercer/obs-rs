@@ -1,4 +1,5 @@
 import { I18n } from "i18n.slint";
+import { MoveTarget } from "models.slint";
 
 // Each row owns one of these areas. Keeping the target on the row means a
 // command cannot accidentally act on whatever was selected before the menu
@@ -6,6 +7,14 @@ import { I18n } from "i18n.slint";
 // button, so both entry points expose the identical menu.
 export component SourceContextMenuArea inherits Rectangle {
     in property <string> source-id;
+    in property <string> source-name;
+    in property <bool> row-semantics: false;
+    in property <bool> selected: false;
+    in property <int> item-index: 0;
+    in property <int> item-count: 0;
+    in property <string> source-kind;
+    in property <bool> nested: false;
+    in property <bool> group: false;
     in property <bool> source-visible;
     in property <bool> source-locked;
     in property <bool> can-move-up;
@@ -14,23 +23,49 @@ export component SourceContextMenuArea inherits Rectangle {
     in property <bool> can-move-bottom;
     in property <int> source-count;
     in property <bool> can-paste;
+    in property <bool> can-group;
+    in property <[MoveTarget]> move-targets;
+
+    // The stable path remains the accessibility/test identity for a source
+    // row; the human-readable name is carried as its description so pointer
+    // automation does not depend on scroll position or translated labels.
+    accessible-role: list-item;
+    accessible-label: root.source-id;
+    accessible-description: root.source-name;
+    accessible-enabled: root.source-id != "";
+    accessible-item-selectable: root.row-semantics;
+    accessible-item-selected: root.row-semantics && root.selected;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => {
+        if root.row-semantics && root.source-id != "" {
+            root.select-source(root.source-id);
+        }
+    }
 
     callback select-source(string);
+    callback select-source-with-mode(string, int);
     callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);
+    callback open-source-projector(string);
     callback rename-source(string);
     callback duplicate-source(string);
+    callback group-sources();
+    callback ungroup-source(string);
+    callback move-source-to-group(string, string);
     callback copy-source(string);
-    callback paste-reference();
-    callback paste-duplicate();
+    callback paste-reference(string);
+    callback paste-duplicate(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
     callback move-source(string, int);
     callback move-source-to(string, int);
     callback reset-source-transform(string);
     callback flip-source(string, bool);
+    callback transform-source(string, string);
     callback remove-source(string);
+    callback remove-selected-sources();
 
     public function show-at(position: Point) {
         context-menu.show(position);
@@ -43,22 +78,35 @@ export component SourceContextMenuArea inherits Rectangle {
         Menu {
             MenuItem {
                 title: I18n.text.source_properties;
-                enabled: root.source-id != "";
+                enabled: root.source-id != ""
+                    && root.source-kind != "scene"
+                    && !root.group;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.open-properties(root.source-id);
                 }
             }
             MenuItem {
                 title: I18n.text.filters;
-                enabled: root.source-id != "";
+                enabled: root.source-id != ""
+                    && root.source-kind != "scene"
+                    && !root.group;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.open-filters(root.source-id);
                 }
             }
             MenuItem {
+                title: I18n.text.menu_source_projector;
+                enabled: root.source-id != ""
+                    && root.source-kind != "scene"
+                    && !root.group;
+                activated => root.open-source-projector(root.source-id);
+            }
+            MenuItem {
                 title: I18n.text.rename;
+                // Nested rows carry a stable path, so renaming a leaf does
+                // not depend on the current canvas selection.
                 enabled: root.source-id != "";
                 activated => {
                     root.select-source(root.source-id);
@@ -69,8 +117,35 @@ export component SourceContextMenuArea inherits Rectangle {
                 title: I18n.text.duplicate;
                 enabled: root.source-id != "";
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.duplicate-source(root.source-id);
+                }
+            }
+            MenuItem {
+                title: I18n.text.group_selected_sources;
+                enabled: root.can-group;
+                activated => root.group-sources();
+            }
+            MenuItem {
+                title: I18n.text.ungroup_source;
+                enabled: root.source-id != ""
+                    && root.group
+                    && !root.source-locked;
+                activated => root.ungroup-source(root.source-id);
+            }
+            Menu {
+                title: I18n.text.move_source_to_group;
+                enabled: root.source-id != ""
+                    && !root.source-locked
+                    && root.move-targets.length > 0;
+                if root.move-targets.length == 0 : MenuItem {
+                    title: I18n.text.move_source_to_group;
+                    enabled: false;
+                }
+                for target in root.move-targets : MenuItem {
+                    title: target.name;
+                    enabled: target.enabled && !root.source-locked;
+                    activated => root.move-source-to-group(root.source-id, target.id);
                 }
             }
             MenuSeparator {}
@@ -82,12 +157,12 @@ export component SourceContextMenuArea inherits Rectangle {
             MenuItem {
                 title: I18n.text.paste_reference;
                 enabled: root.can-paste;
-                activated => root.paste-reference();
+                activated => root.paste-reference(root.source-id);
             }
             MenuItem {
                 title: I18n.text.paste_duplicate;
                 enabled: root.can-paste;
-                activated => root.paste-duplicate();
+                activated => root.paste-duplicate(root.source-id);
             }
             MenuSeparator {}
             MenuItem {
@@ -96,7 +171,7 @@ export component SourceContextMenuArea inherits Rectangle {
                 checkable: true;
                 checked: root.source-visible;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.toggle-source-visibility(root.source-id);
                 }
             }
@@ -106,7 +181,7 @@ export component SourceContextMenuArea inherits Rectangle {
                 checkable: true;
                 checked: root.source-locked;
                 activated => {
-                    root.select-source(root.source-id);
+                    if !root.nested { root.select-source(root.source-id); }
                     root.toggle-source-locked(root.source-id);
                 }
             }
@@ -137,10 +212,47 @@ export component SourceContextMenuArea inherits Rectangle {
             }
             Menu {
                 title: I18n.text.transform_menu;
-                enabled: root.source-id != "" && !root.source-locked;
+                enabled: root.source-id != "" && !root.source-locked && !root.group;
                 MenuItem {
                     title: I18n.text.reset_transform;
                     activated => root.reset-source-transform(root.source-id);
+                }
+                MenuSeparator {}
+                MenuItem {
+                    title: I18n.text.fit_to_screen;
+                    activated => root.transform-source(root.source-id, "fit-screen");
+                }
+                MenuItem {
+                    title: I18n.text.stretch_to_screen;
+                    activated => root.transform-source(root.source-id, "stretch-screen");
+                }
+                MenuItem {
+                    title: I18n.text.center_to_screen;
+                    activated => root.transform-source(root.source-id, "center-screen");
+                }
+                MenuItem {
+                    title: I18n.text.center_horizontally;
+                    activated => root.transform-source(root.source-id, "center-horizontally");
+                }
+                MenuItem {
+                    title: I18n.text.center_vertically;
+                    activated => root.transform-source(root.source-id, "center-vertically");
+                }
+                MenuItem {
+                    title: I18n.text.align_left;
+                    activated => root.transform-source(root.source-id, "align-left");
+                }
+                MenuItem {
+                    title: I18n.text.align_right;
+                    activated => root.transform-source(root.source-id, "align-right");
+                }
+                MenuItem {
+                    title: I18n.text.align_top;
+                    activated => root.transform-source(root.source-id, "align-top");
+                }
+                MenuItem {
+                    title: I18n.text.align_bottom;
+                    activated => root.transform-source(root.source-id, "align-bottom");
                 }
                 MenuSeparator {}
                 MenuItem {
@@ -154,8 +266,8 @@ export component SourceContextMenuArea inherits Rectangle {
                 MenuSeparator {}
                 MenuItem {
                     title: I18n.text.edit_transform;
+                    enabled: root.source-id != "" && !root.source-locked && !root.group;
                     activated => {
-                        root.select-source(root.source-id);
                         root.open-transform(root.source-id);
                     }
                 }
@@ -165,8 +277,17 @@ export component SourceContextMenuArea inherits Rectangle {
                 title: I18n.text.remove_source;
                 enabled: root.source-id != "" && !root.source-locked;
                 activated => {
-                    root.select-source(root.source-id);
-                    root.remove-source(root.source-id);
+                    if root.nested {
+                        // A nested row is not represented by the flat canvas
+                        // selection. Remove the exact path that opened this
+                        // menu instead of deleting a stale selection.
+                        root.remove-source(root.source-id);
+                    } else {
+                        // Preserve OBS multi-selection behavior for a root
+                        // row while making the clicked row the target.
+                        root.select-source(root.source-id);
+                        root.remove-selected-sources();
+                    }
                 }
             }
         }
@@ -178,13 +299,36 @@ export component SourceContextMenuArea inherits Rectangle {
 
 export component SceneContextMenuArea inherits Rectangle {
     in property <string> scene-id;
+    in property <string> scene-name;
+    in property <bool> selected;
+    in property <int> item-index;
+    in property <int> item-count;
     in property <bool> can-remove;
+
+    // Stable scene identity stays the label for screen-reader and pointer-test
+    // consumers; the visible scene name is the human-readable description.
+    accessible-role: list-item;
+    accessible-label: root.scene-id;
+    accessible-description: root.scene-name;
+    accessible-enabled: root.scene-id != "";
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => {
+        if root.scene-id != "" {
+            root.select-scene(root.scene-id);
+        }
+    }
 
     callback select-scene(string);
     callback add-scene();
     callback duplicate-scene(string);
     callback rename-scene(string);
+    callback move-scene(string, int);
+    callback drop-scene(data-transfer, string, int);
     callback remove-scene(string);
+    callback open-scene-projector(string);
 
     public function show-at(position: Point) {
         context-menu.show(position);
@@ -208,11 +352,32 @@ export component SceneContextMenuArea inherits Rectangle {
                 }
             }
             MenuItem {
+                title: I18n.text.scene_projector;
+                enabled: root.scene-id != "";
+                activated => root.open-scene-projector(root.scene-id);
+            }
+            MenuItem {
                 title: I18n.text.rename;
                 enabled: root.scene-id != "";
                 activated => {
                     root.select-scene(root.scene-id);
                     root.rename-scene(root.scene-id);
+                }
+            }
+            MenuItem {
+                title: I18n.text.scene_move_up;
+                enabled: root.scene-id != "";
+                activated => {
+                    root.select-scene(root.scene-id);
+                    root.move-scene(root.scene-id, -1);
+                }
+            }
+            MenuItem {
+                title: I18n.text.scene_move_down;
+                enabled: root.scene-id != "";
+                activated => {
+                    root.select-scene(root.scene-id);
+                    root.move-scene(root.scene-id, 1);
                 }
             }
             MenuSeparator {}
@@ -233,11 +398,24 @@ export component SceneContextMenuArea inherits Rectangle {
 
 export component MixerContextMenuArea inherits Rectangle {
     in property <string> channel-id;
+    in property <string> channel-name;
+    in property <int> item-index;
+    in property <int> item-count;
     in property <bool> channel-muted;
     in property <int> channel-gain;
 
     callback toggle-mixer-mute(string);
     callback set-mixer-gain(string, int);
+
+    // Keep each channel discoverable as one bounded list item while its
+    // sliders and mute button retain their own native control semantics.
+    accessible-role: list-item;
+    accessible-label: root.channel-id;
+    accessible-description: root.channel-name;
+    accessible-enabled: root.channel-id != "";
+    accessible-item-selectable: false;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
 
     @children
 

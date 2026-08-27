@@ -83,7 +83,14 @@ impl SetupController {
         if let Some(main) = self.main.upgrade() {
             main.set_setup_active(true);
         }
-        let _ = self.window.show();
+        match self.window.show() {
+            Ok(()) => self.window.invoke_focus_keyboard_boundary(),
+            Err(error) => {
+                if let Some(main) = self.main.upgrade() {
+                    main.set_status_message(format!("Setup window: {error}").into());
+                }
+            }
+        }
     }
 
     fn apply_theme(&self) {
@@ -134,7 +141,7 @@ impl SetupController {
         let (sender, receiver) = mpsc::channel();
         *self.receiver.borrow_mut() = Some(receiver);
         thread::spawn(move || {
-            let _ = sender.send(obs_rs_benchmark::run_setup_benchmark());
+            let _ = sender.send(crate::run_gui_setup_benchmark());
         });
     }
 
@@ -343,6 +350,20 @@ fn install_window_callbacks(controller: &Rc<SetupController>) {
     controller
         .window
         .on_close_requested(move || close_controller.skip());
+    install_native_close(&controller.window);
+}
+
+/// Bridges the desktop window-manager close event to the wizard's existing
+/// close callback. Keeping the bridge separate means the native event cannot
+/// bypass the `skip()` policy owned by the controller.
+pub(crate) fn install_native_close(window: &SetupWindow) {
+    let weak = window.as_weak();
+    window.window().on_close_requested(move || {
+        if let Some(window) = weak.upgrade() {
+            window.invoke_close_requested();
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 fn install_polling(controller: &Rc<SetupController>) {
@@ -423,11 +444,12 @@ fn report_rows(report: &SetupBenchmarkReport) -> ModelRc<SharedString> {
                     ""
                 };
                 format!(
-                    "{}{} — tier {} · p95 {} ms · missed {} · dropped {}",
+                    "{}{} — tier {} · p95 {} ms · p99 {} ms · missed {} · dropped {}",
                     format_candidate(candidate),
                     marker,
                     candidate.tier,
                     metrics.render_p95_nanos / 1_000_000,
+                    metrics.render_p99_nanos / 1_000_000,
                     metrics.missed_deadlines,
                     metrics.dropped_frames
                 )

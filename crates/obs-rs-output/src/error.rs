@@ -57,6 +57,10 @@ pub enum OutputError {
     },
     /// A packet queue or recording capacity is zero.
     ZeroCapacity,
+    /// A replay buffer duration is zero or exceeds the bounded limit.
+    InvalidReplayDuration { nanos: u128 },
+    /// A replay snapshot has no retained video keyframe from which decoding can start.
+    NoKeyframe,
     /// An encoded reference-codec payload is structurally invalid.
     InvalidCodecPayload(String),
     /// A packet cannot fit in the configured queue capacity.
@@ -75,6 +79,17 @@ pub enum OutputError {
     },
     /// The final and temporary recording paths are not usable together.
     InvalidPaths { reason: String },
+    /// A split-recording policy is outside the bounded safety contract.
+    InvalidSegmentPolicy { reason: String },
+    /// A split recording reached its configured segment count.
+    TooManySegments { segments: usize },
+    /// One packet cannot fit in the configured segment target.
+    SegmentPacketDoesNotFit {
+        /// Serialized packet size including its container overhead.
+        packet_bytes: usize,
+        /// Maximum configured segment size.
+        max_bytes: usize,
+    },
     /// A transport operation failed.
     Transport(String),
     /// The stream exhausted its reconnect budget.
@@ -137,6 +152,13 @@ impl fmt::Display for OutputError {
                 "packet timestamp {actual:?} is before the previous {previous:?}"
             ),
             Self::ZeroCapacity => formatter.write_str("output queue capacity must be non-zero"),
+            Self::InvalidReplayDuration { nanos } => write!(
+                formatter,
+                "replay buffer duration must be between 1 nanosecond and the bounded limit: {nanos} ns"
+            ),
+            Self::NoKeyframe => {
+                formatter.write_str("replay buffer has no retained video keyframe")
+            }
             Self::InvalidCodecPayload(reason) => {
                 write!(formatter, "invalid reference codec payload: {reason}")
             }
@@ -151,6 +173,19 @@ impl fmt::Display for OutputError {
                 write!(formatter, "cannot {operation} output in {state:?} state")
             }
             Self::InvalidPaths { reason } => write!(formatter, "invalid output paths: {reason}"),
+            Self::InvalidSegmentPolicy { reason } => {
+                write!(formatter, "invalid split-recording policy: {reason}")
+            }
+            Self::TooManySegments { segments } => {
+                write!(formatter, "split recording reached its {segments}-segment limit")
+            }
+            Self::SegmentPacketDoesNotFit {
+                packet_bytes,
+                max_bytes,
+            } => write!(
+                formatter,
+                "packet of {packet_bytes} bytes cannot fit in {max_bytes}-byte segment"
+            ),
             Self::Transport(reason) => write!(formatter, "output transport failed: {reason}"),
             Self::ReconnectExhausted { attempts } => {
                 write!(

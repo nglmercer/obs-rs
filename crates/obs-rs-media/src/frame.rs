@@ -1,13 +1,12 @@
-use super::{
-    error::MediaError, filters::FrameFilter, format::VideoFormat, time::Timestamp,
-    transform::FrameTransform, transition::FrameTransition,
-};
+use super::{error::MediaError, format::VideoFormat, time::Timestamp, transform::FrameTransform};
 use crate::metrics::{record_copy_on_write, record_owned_buffer, record_shared_clone};
 use rayon::prelude::*;
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex, OnceLock},
 };
+
+mod filters;
 
 /// Bytes of pixel data one parallel task processes at a time.
 ///
@@ -210,7 +209,7 @@ impl VideoFrame {
         }
     }
 
-    fn pixels_mut(&mut self) -> &mut [u8] {
+    pub(crate) fn pixels_mut(&mut self) -> &mut [u8] {
         if Arc::strong_count(&self.pixels) > 1 {
             record_copy_on_write(self.pixels.len());
         }
@@ -446,54 +445,6 @@ impl VideoFrame {
         Ok(())
     }
 
-    /// Produces a deterministic transition between two same-format frames.
-    ///
-    /// `destination` is taken by value and becomes the result buffer: a cut
-    /// returns it untouched and a cross-fade blends `source` into it in place,
-    /// so neither path copies a frame. The destination timestamp is used for the
-    /// result. Cross-fades interpolate every RGBA byte with integer arithmetic,
-    /// which makes offline previews and live output use the same correctness
-    /// oracle.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MediaError::FormatMismatch`] for different formats or
-    /// [`MediaError::InvalidTransition`] for an invalid cross-fade progress value.
-    pub fn transitioned(
-        source: &Self,
-        mut destination: Self,
-        transition: FrameTransition,
-    ) -> Result<Self, MediaError> {
-        if source.format != destination.format {
-            return Err(MediaError::FormatMismatch {
-                expected: source.format,
-                actual: destination.format,
-            });
-        }
-
-        match transition {
-            FrameTransition::Cut => Ok(destination),
-            FrameTransition::CrossFade { progress_milli } => {
-                if progress_milli > 1_000 {
-                    return Err(MediaError::InvalidTransition { progress_milli });
-                }
-                let destination_weight = u32::from(progress_milli);
-                let source_weight = 1_000 - destination_weight;
-                // Both buffers have the same format and therefore the same
-                // length, so this is a straight paired walk with no branching
-                // and no intermediate allocation.
-                for (target, source_byte) in
-                    destination.pixels_mut().iter_mut().zip(source.pixels())
-                {
-                    let value = u32::from(*source_byte) * source_weight
-                        + u32::from(*target) * destination_weight;
-                    *target = to_byte((value + 500) / 1_000);
-                }
-                Ok(destination)
-            }
-        }
-    }
-
     /// Applies a nearest-neighbor transform into a new transparent frame.
     ///
     /// Pixels outside the transformed source remain transparent. Alpha is
@@ -527,6 +478,13 @@ impl VideoFrame {
         // so it must not cost a full nearest-neighbour resample.
         if transform == FrameTransform::IDENTITY {
             return Ok(self.clone());
+        }
+        // Keep the established integer resampler byte-identical for the
+        // overwhelmingly common unrotated path. Rotation has a different
+        // inverse-mapping geometry and is isolated so it cannot perturb the
+        // existing crop/scale/flip fast paths.
+        if transform.rotation_milli_degrees() != 0 {
+            return self.transformed_rotated(transform);
         }
 
         let mut output = Self::solid(self.format, self.timestamp, [0, 0, 0, 0]);
@@ -646,6 +604,94 @@ impl VideoFrame {
         Ok(output)
     }
 
+    /// Applies a nearest-neighbor rotation around the visible source centre.
+    ///
+    /// The integer resampler above intentionally remains the reference for
+    /// zero-degree transforms. This path computes one sine/cosine pair per
+    /// frame, then maps each output pixel back into the cropped source. It is
+    /// deterministic for a given transform and keeps the same transparent
+    /// outside-the-layer semantics as the unrotated path.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "validated coordinates are converted after bounds checks; fixed-point media values are intentionally converted to f64 for the rotation matrix"
+    )]
+    fn transformed_rotated(&self, transform: FrameTransform) -> Result<Self, MediaError> {
+        let mut output = Self::solid(self.format, self.timestamp, [0, 0, 0, 0]);
+        let width = i64::from(self.format.width);
+        let height = i64::from(self.format.height);
+        let crop_left = i64::from(transform.crop_left());
+        let crop_top = i64::from(transform.crop_top());
+        let crop_right = i64::from(transform.crop_right());
+        let crop_bottom = i64::from(transform.crop_bottom());
+        let visible_right = width - crop_right;
+        let visible_bottom = height - crop_bottom;
+        if crop_left >= visible_right || crop_top >= visible_bottom {
+            return Err(MediaError::InvalidTransform);
+        }
+
+        let visible_width = visible_right - crop_left;
+        let visible_height = visible_bottom - crop_top;
+        let scale_x = f64::from(transform.scale_x_milli());
+        let scale_y = f64::from(transform.scale_y_milli());
+        let scaled_width = visible_width as f64 * scale_x / 1_000.0;
+        let scaled_height = visible_height as f64 * scale_y / 1_000.0;
+        let center_x = f64::from(transform.translate_x()) + scaled_width / 2.0;
+        let center_y = f64::from(transform.translate_y()) + scaled_height / 2.0;
+        let angle =
+            f64::from(transform.rotation_milli_degrees()) / 180_000.0 * std::f64::consts::PI;
+        let (sin, cos) = angle.sin_cos();
+        let output_width = self.format.width_index();
+        let opacity = u32::from(transform.opacity());
+
+        let output_pixels = output.pixels_mut();
+        for y in 0..self.format.height {
+            for x in 0..self.format.width {
+                // Pixel centres make quarter-turns preserve a symmetric
+                // 2x2 source rather than introducing a half-pixel drift.
+                let dx = f64::from(x) + 0.5 - center_x;
+                let dy = f64::from(y) + 0.5 - center_y;
+                let local_x = cos * dx + sin * dy + scaled_width / 2.0;
+                let local_y = -sin * dx + cos * dy + scaled_height / 2.0;
+                if local_x < 0.0
+                    || local_y < 0.0
+                    || local_x >= scaled_width
+                    || local_y >= scaled_height
+                {
+                    continue;
+                }
+
+                let mut source_x = crop_left + (local_x * 1_000.0 / scale_x).floor() as i64;
+                let mut source_y = crop_top + (local_y * 1_000.0 / scale_y).floor() as i64;
+                if transform.flip_x() {
+                    source_x = crop_left + visible_width - 1 - (source_x - crop_left);
+                }
+                if transform.flip_y() {
+                    source_y = crop_top + visible_height - 1 - (source_y - crop_top);
+                }
+                if source_x < crop_left
+                    || source_x >= visible_right
+                    || source_y < crop_top
+                    || source_y >= visible_bottom
+                {
+                    continue;
+                }
+
+                let source_offset = (source_y as usize * output_width + source_x as usize) * 4;
+                let output_offset = (y as usize * output_width + x as usize) * 4;
+                let source_pixel = &self.pixels[source_offset..source_offset + 4];
+                let target_pixel = &mut output_pixels[output_offset..output_offset + 4];
+                target_pixel.copy_from_slice(source_pixel);
+                if opacity != u32::from(u8::MAX) {
+                    target_pixel[3] =
+                        to_byte(u32::from(target_pixel[3]) * opacity / u32::from(u8::MAX));
+                }
+            }
+        }
+        Ok(output)
+    }
+
     /// Applies a transform while reusing uniquely owned storage for the common
     /// unscaled full-frame flip/opacity path.
     ///
@@ -663,6 +709,7 @@ impl VideoFrame {
             && transform.scale_y_milli == 1_000
             && transform.translate_x == 0
             && transform.translate_y == 0
+            && transform.rotation_milli_degrees == 0
             && !transform.is_cropped();
         if !full_frame {
             return self.transformed(transform);
@@ -697,73 +744,6 @@ impl VideoFrame {
             });
         }
         Ok(self)
-    }
-
-    /// Applies one CPU filter and returns a new owned frame.
-    ///
-    /// This allocates and copies a full frame buffer (roughly 33 MB at 4K), so
-    /// it suits offline and test call sites. On a media callback or any other
-    /// per-frame path, use [`VideoFrame::apply_filter`] to filter in place.
-    #[must_use]
-    pub fn filtered(&self, filter: FrameFilter) -> Self {
-        let mut output = self.clone();
-        output.apply_filter(filter);
-        output
-    }
-
-    /// Applies one CPU filter in place without allocating another frame.
-    pub fn apply_filter(&mut self, filter: FrameFilter) {
-        self.apply_filters(std::slice::from_ref(&filter));
-    }
-
-    /// Applies an ordered filter chain in one pass over the frame.
-    ///
-    /// Fusing the chain avoids reading and writing the complete pixel buffer for
-    /// every individual filter while preserving the caller's filter order.
-    pub fn apply_filters(&mut self, filters: &[FrameFilter]) {
-        if filters.is_empty() {
-            return;
-        }
-        // A single filter is the common case, and matching on it once per block
-        // rather than once per pixel is what lets the inner loop stay a tight
-        // arithmetic pass the compiler can vectorize.
-        if let [filter] = filters {
-            let filter = *filter;
-            for_each_block(self.pixels_mut(), move |block| match filter {
-                FrameFilter::Grayscale => {
-                    for pixel in block.chunks_exact_mut(4) {
-                        apply_grayscale(pixel);
-                    }
-                }
-                FrameFilter::Brightness { milli } => {
-                    let multiplier = i32::from(milli) + 1_000;
-                    for pixel in block.chunks_exact_mut(4) {
-                        apply_brightness(pixel, multiplier);
-                    }
-                }
-                FrameFilter::Opacity(opacity) => {
-                    for pixel in block.chunks_exact_mut(4) {
-                        apply_opacity(pixel, u32::from(opacity));
-                    }
-                }
-            });
-            return;
-        }
-        for_each_block(self.pixels_mut(), |block| {
-            for pixel in block.chunks_exact_mut(4) {
-                for filter in filters {
-                    match *filter {
-                        FrameFilter::Grayscale => apply_grayscale(pixel),
-                        FrameFilter::Brightness { milli } => {
-                            apply_brightness(pixel, i32::from(milli) + 1_000);
-                        }
-                        FrameFilter::Opacity(opacity) => {
-                            apply_opacity(pixel, u32::from(opacity));
-                        }
-                    }
-                }
-            }
-        });
     }
 
     /// Clears RGB values on fully transparent pixels for canonical composition.
@@ -846,31 +826,8 @@ fn fnv_step(hash: u64, byte: u8) -> u64 {
     clippy::cast_possible_truncation,
     reason = "min constrains the value to 0..=255, so the cast is exact"
 )]
-fn to_byte(value: u32) -> u8 {
+pub(crate) fn to_byte(value: u32) -> u8 {
     value.min(u32::from(u8::MAX)) as u8
-}
-
-/// Rec. 601 luma, written back to all three colour channels.
-fn apply_grayscale(pixel: &mut [u8]) {
-    let luma =
-        (u32::from(pixel[0]) * 77 + u32::from(pixel[1]) * 150 + u32::from(pixel[2]) * 29) / 256;
-    let luma = to_byte(luma);
-    pixel[0] = luma;
-    pixel[1] = luma;
-    pixel[2] = luma;
-}
-
-/// Scales the colour channels by a thousandths multiplier.
-fn apply_brightness(pixel: &mut [u8], multiplier: i32) {
-    for channel in &mut pixel[..3] {
-        let value = i32::from(*channel) * multiplier / 1_000;
-        *channel = to_byte(u32::try_from(value.max(0)).unwrap_or(u32::MAX));
-    }
-}
-
-/// Scales the alpha channel by a 0-255 opacity.
-fn apply_opacity(pixel: &mut [u8], opacity: u32) {
-    pixel[3] = to_byte(divide_by_255(u32::from(pixel[3]) * opacity));
 }
 
 /// Divides by 255 exactly, without a division instruction.

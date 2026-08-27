@@ -13,6 +13,10 @@ use obs_rs_util::Identifier;
 pub const PLUGIN_API_MAJOR: u16 = 1;
 /// Current minor version of the in-process Rust plugin contract.
 pub const PLUGIN_API_MINOR: u16 = 0;
+/// Maximum number of dock descriptors one plugin may contribute.
+pub const MAX_PLUGIN_DOCKS: usize = 16;
+/// Maximum UTF-8 byte length accepted for a plugin dock title.
+pub const MAX_DOCK_TITLE_BYTES: usize = 256;
 
 /// Version of the Rust plugin contract implemented by a plugin.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -118,6 +122,51 @@ impl PluginManifest {
     }
 }
 
+/// A validated declaration for one plugin-provided studio dock.
+///
+/// The descriptor is deliberately metadata-only. It gives the runtime and
+/// later UI host a stable, plugin-scoped identity without allowing a plugin to
+/// inject toolkit objects or an unbounded title into the desktop process.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DockDescriptor {
+    id: Identifier,
+    title: String,
+}
+
+impl DockDescriptor {
+    /// Creates a dock descriptor after validating its identity and title.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PluginError::InvalidIdentifier`] for an invalid dock ID or
+    /// [`PluginError::InvalidDockDescriptor`] for an empty, oversized, or
+    /// control-character-containing title.
+    pub fn new(id: &str, title: &str) -> Result<Self, PluginError> {
+        if title.trim().is_empty()
+            || title.len() > MAX_DOCK_TITLE_BYTES
+            || title.chars().any(char::is_control)
+        {
+            return Err(PluginError::InvalidDockDescriptor { field: "title" });
+        }
+        Ok(Self {
+            id: Identifier::new(id).map_err(PluginError::InvalidIdentifier)?,
+            title: title.to_owned(),
+        })
+    }
+
+    /// Returns the plugin-local stable dock identifier.
+    #[must_use]
+    pub fn id(&self) -> &Identifier {
+        &self.id
+    }
+
+    /// Returns the user-facing title.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+}
+
 /// A request for one source video frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VideoRequest {
@@ -213,6 +262,16 @@ pub trait Source: Send {
     /// Returns [`SourceError`] when the source cannot accept the settings.
     fn update(&mut self, settings: &Config) -> Result<(), SourceError>;
 
+    /// Returns a backend-generated settings update, if one is ready.
+    ///
+    /// This is used for state that a live source learns from its backend after
+    /// creation, such as a Wayland portal's replacement restore token. The
+    /// default keeps existing sources source-compatible with the optional
+    /// lifecycle event.
+    fn take_settings_update(&mut self) -> Option<Config> {
+        None
+    }
+
     /// Produces one frame or reports that no frame is ready yet.
     ///
     /// # Errors
@@ -241,6 +300,15 @@ pub trait Plugin: Send + Sync {
 
     /// Returns the factories contributed by this plugin.
     fn source_factories(&self) -> &[Arc<dyn SourceFactory>];
+
+    /// Returns bounded metadata for plugin-provided studio docks.
+    ///
+    /// The default keeps existing source-only plugins source-compatible. A
+    /// runtime owns registration and later decides whether a UI host is
+    /// available; the plugin never receives a Slint or native window handle.
+    fn dock_descriptors(&self) -> &[DockDescriptor] {
+        &[]
+    }
 }
 
 /// Errors raised before a plugin can be registered.
@@ -251,6 +319,11 @@ pub enum PluginError {
     /// A required manifest field is empty.
     InvalidManifest {
         /// Name of the invalid logical field.
+        field: &'static str,
+    },
+    /// A plugin dock descriptor contains an invalid field.
+    InvalidDockDescriptor {
+        /// Human-readable logical field name.
         field: &'static str,
     },
     /// The plugin's API version is not compatible with this runtime.
@@ -270,6 +343,9 @@ impl fmt::Display for PluginError {
             }
             Self::InvalidManifest { field } => {
                 write!(formatter, "invalid plugin manifest field: {field}")
+            }
+            Self::InvalidDockDescriptor { field } => {
+                write!(formatter, "invalid plugin dock descriptor field: {field}")
             }
             Self::UnsupportedApi { expected, actual } => write!(
                 formatter,
@@ -305,6 +381,21 @@ mod tests {
         assert!(matches!(
             PluginManifest::new("test_plugin", "", "0.1.0"),
             Err(PluginError::InvalidManifest { .. })
+        ));
+    }
+
+    #[test]
+    fn validates_bounded_plugin_dock_descriptors() {
+        let dock = DockDescriptor::new("stats", "Plugin stats").expect("valid dock");
+        assert_eq!(dock.id().as_str(), "stats");
+        assert_eq!(dock.title(), "Plugin stats");
+        assert!(matches!(
+            DockDescriptor::new("stats", "\n"),
+            Err(PluginError::InvalidDockDescriptor { field: "title" })
+        ));
+        assert!(matches!(
+            DockDescriptor::new("stats", &"x".repeat(MAX_DOCK_TITLE_BYTES + 1)),
+            Err(PluginError::InvalidDockDescriptor { field: "title" })
         ));
     }
 }

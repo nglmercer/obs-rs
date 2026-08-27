@@ -1,19 +1,45 @@
-import { Button, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
+import { Button, CheckBox, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
+import { TransitionDirectionField } from "transition_direction.slint";
+import { TransitionLumaField } from "transition_luma.slint";
 
 export component TransitionDock inherits Rectangle {
     in property <string> locale;
     in property <string> transition;
+    in property <string> transition-kind;
+    in-out property <int> transition-direction-index: 0;
+    in-out property <bool> swipe-in: false;
+    in-out property <int> luma-pattern-index: 0;
+    in-out property <bool> luma-invert: false;
+    in-out property <string> luma-softness: "30";
     in property <int> panel-kind;
     in property <bool> floating;
     callback move-panel(int, int);
+    callback dock-drag-start(int, float, float);
+    callback dock-drag-moved(int, float, float);
+    callback dock-drag-end(int, float, float);
     callback float-panel(int);
     callback close-panel(int);
     callback cut-transition();
+    callback take-stinger(string);
     callback fade-transition();
+    callback fade-transition-duration(string);
+    callback slide-transition(string);
+    callback swipe-transition(string);
+    callback slide-transition-direction(string, int);
+    callback swipe-transition-direction(string, int);
+    callback swipe-transition-direction-mode(string, int, bool);
+    callback fade-to-color(string, string);
+    callback luma-transition(string, int, bool, string);
+    callback set-scene-transition(string, string, string);
+    callback set-scene-transition-direction(string, string, string, int);
+    callback set-scene-transition-direction-mode(string, string, string, int, bool);
+    callback set-scene-transition-luma(string, string, int, bool, string);
+    callback clear-scene-transition();
     property <string> duration: "300";
+    property <string> fade-color: "#000000FF";
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -27,6 +53,9 @@ export component TransitionDock inherits Rectangle {
             panel-kind: root.panel-kind;
             floating: root.floating;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
+            dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+            dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+            dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
             float-panel(kind) => { root.float-panel(kind); }
             close-panel(kind) => { root.close-panel(kind); }
         }
@@ -38,7 +67,31 @@ export component TransitionDock inherits Rectangle {
                 Button {
                     text: I18n.text.fade;
                     height: 30px;
-                    clicked => fade-transition();
+                    clicked => fade-transition-duration(root.duration);
+                }
+                Button {
+                    text: I18n.text.slide;
+                    height: 30px;
+                    clicked => slide-transition-direction(
+                        root.duration,
+                        root.transition-direction-index
+                    );
+                }
+                Button {
+                    text: I18n.text.swipe;
+                    height: 30px;
+                    clicked => swipe-transition-direction-mode(
+                        root.duration,
+                        root.transition-direction-index,
+                        root.swipe-in
+                    );
+                }
+                TransitionDirectionField {
+                    direction-index <=> root.transition-direction-index;
+                }
+                CheckBox {
+                    text: I18n.text.swipe_in;
+                    checked <=> root.swipe-in;
                 }
                 HorizontalBox {
                     spacing: 5px;
@@ -60,16 +113,71 @@ export component TransitionDock inherits Rectangle {
                         vertical-alignment: center;
                     }
                 }
+                HorizontalBox {
+                    spacing: 5px;
+                    Text {
+                        text: I18n.text.property_ui.color;
+                        color: Palette.tokens.text-muted;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                    LineEdit {
+                        text <=> fade-color;
+                        width: 104px;
+                        height: 28px;
+                    }
+                }
+                Button {
+                    text: I18n.text.fade_to_color;
+                    height: 30px;
+                    clicked => fade-to-color(root.fade-color, root.duration);
+                }
+                TransitionLumaField {
+                    visible: root.transition-kind == "luma_wipe";
+                    pattern-index <=> root.luma-pattern-index;
+                    invert <=> root.luma-invert;
+                    softness <=> root.luma-softness;
+                }
+                Button {
+                    text: I18n.text.luma_wipe;
+                    height: 30px;
+                    clicked => luma-transition(
+                        root.duration,
+                        root.luma-pattern-index,
+                        root.luma-invert,
+                        root.luma-softness
+                    );
+                }
                 Rectangle { vertical-stretch: 1; }
                 HorizontalBox {
                     spacing: 4px;
                     CompactButton {
                         icon-name: "add";
                         hint: I18n.text.add_transition;
+                        clicked => {
+                            if root.transition-kind == "luma_wipe" {
+                                set-scene-transition-luma(
+                                    root.transition-kind,
+                                    root.duration,
+                                    root.luma-pattern-index,
+                                    root.luma-invert,
+                                    root.luma-softness
+                                );
+                            } else {
+                                set-scene-transition-direction-mode(
+                                    root.transition-kind,
+                                    root.duration,
+                                    root.fade-color,
+                                    root.transition-direction-index,
+                                    root.swipe-in
+                                );
+                            }
+                        }
                     }
                     CompactButton {
                         icon-name: "remove";
                         hint: I18n.text.remove_transition;
+                        clicked => clear-scene-transition();
                     }
                     CompactButton {
                         icon-name: "more";
@@ -79,6 +187,10 @@ export component TransitionDock inherits Rectangle {
                     Button {
                         text: I18n.text.cut;
                         clicked => cut-transition();
+                    }
+                    Button {
+                        text: I18n.text.take_stinger;
+                        clicked => take-stinger(root.duration);
                     }
                 }
             }

@@ -4545,6 +4545,7 @@ dependencies = [
 name = "obs-rs-builtins"
 version = "0.1.0"
 dependencies = [
+ "image",
  "obs-rs-capture",
  "obs-rs-capture-macos",
  "obs-rs-capture-windows",
@@ -4683,6 +4684,7 @@ dependencies = [
  "obs-rs-audio",
  "obs-rs-media",
  "obs-rs-output",
+ "obs-rs-util",
  "url",
 ]
 

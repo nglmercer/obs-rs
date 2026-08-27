@@ -1,8 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use obs_rs_config::Config;
-use obs_rs_media::{FrameFilter, FrameTransform};
-use obs_rs_plugin_api::{Plugin, PluginApiVersion, PluginManifest};
+use obs_rs_media::{FrameFilter, FrameTransform, RenderDelayBuffer};
+use obs_rs_plugin_api::{Plugin, PluginApiVersion, PluginManifest, MAX_PLUGIN_DOCKS};
 use obs_rs_util::Identifier;
 
 use super::{
@@ -10,8 +13,10 @@ use super::{
     ids::SourceId,
     limits::{RuntimeLimits, RuntimeUsage},
     metrics::CompositorMetrics,
-    registry::{Registry, Scene, SourceInstance},
+    registry::{RegisteredDock, Registry, Scene, SourceInstance},
 };
+
+const MAX_RUNTIME_SCENE_ITEM_ID_BYTES: usize = 4_096;
 
 pub struct Runtime {
     pub(crate) registry: Registry,
@@ -21,7 +26,7 @@ pub struct Runtime {
     /// Keyed lookup only. Deterministic rendering comes from each scene's
     /// ordered source vector, not from scene-map iteration order.
     pub(crate) scenes: HashMap<Identifier, Scene>,
-    /// How many scenes currently reference each source.
+    /// How many scene items currently reference each source.
     ///
     /// Lets `destroy_source` answer "is this source still in use?" in constant
     /// time instead of scanning every scene's item list.
@@ -79,6 +84,7 @@ impl Runtime {
         RuntimeUsage {
             plugins: self.registry.plugins.len(),
             source_kinds: self.registry.sources.len(),
+            docks: self.registry.docks.len(),
             scenes: self.scenes.len(),
             sources: self.sources.len(),
             filters,
@@ -137,6 +143,39 @@ impl Runtime {
             }
         }
 
+        let dock_descriptors = plugin.dock_descriptors();
+        if dock_descriptors.len() > MAX_PLUGIN_DOCKS {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "plugin docks",
+                limit: MAX_PLUGIN_DOCKS,
+            });
+        }
+        let dock_count = self
+            .registry
+            .docks
+            .len()
+            .checked_add(dock_descriptors.len())
+            .ok_or(RuntimeError::ResourceLimitExceeded {
+                resource: "docks",
+                limit: self.limits.max_docks(),
+            })?;
+        if dock_count > self.limits.max_docks() {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "docks",
+                limit: self.limits.max_docks(),
+            });
+        }
+        let mut plugin_dock_keys = BTreeSet::new();
+        for descriptor in dock_descriptors {
+            let key = (manifest.id().clone(), descriptor.id().clone());
+            if !plugin_dock_keys.insert(key.clone()) || self.registry.docks.contains_key(&key) {
+                return Err(RuntimeError::DuplicatePluginDock {
+                    plugin: key.0,
+                    dock: key.1,
+                });
+            }
+        }
+
         self.registry
             .plugins
             .insert(manifest.id().clone(), manifest.clone());
@@ -144,6 +183,16 @@ impl Runtime {
             self.registry
                 .sources
                 .insert(factory.kind().clone(), Arc::clone(factory));
+        }
+        for descriptor in dock_descriptors {
+            let key = (manifest.id().clone(), descriptor.id().clone());
+            self.registry.docks.insert(
+                key,
+                RegisteredDock {
+                    plugin: manifest.id().clone(),
+                    descriptor: descriptor.clone(),
+                },
+            );
         }
         Ok(())
     }
@@ -164,6 +213,18 @@ impl Runtime {
     #[must_use]
     pub fn source_kinds(&self) -> impl ExactSizeIterator<Item = &Identifier> {
         self.registry.sources.keys()
+    }
+
+    /// Returns registered plugin dock metadata in deterministic namespace
+    /// order. The UI host can use this list without receiving plugin handles.
+    #[must_use]
+    pub fn plugin_docks(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&Identifier, &obs_rs_plugin_api::DockDescriptor)> {
+        self.registry
+            .docks
+            .values()
+            .map(|dock| (&dock.plugin, &dock.descriptor))
     }
 
     /// Creates a named scene.
@@ -232,6 +293,7 @@ impl Runtime {
                 name: name.to_owned(),
                 source,
                 filters: Vec::new(),
+                render_delay: RenderDelayBuffer::new(),
                 last_frame: None,
                 failure: None,
             },
@@ -267,6 +329,72 @@ impl Runtime {
         Ok(())
     }
 
+    /// Appends a scene-item reference to a source, including when the source is
+    /// already present in that scene. The underlying capture device remains a
+    /// single shared source instance; the returned index identifies the new
+    /// scene-local transform slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError`] when the scene or source is unknown, or when
+    /// the scene-item limit has been reached.
+    pub fn attach_source_instance(
+        &mut self,
+        scene: &str,
+        source: SourceId,
+    ) -> Result<usize, RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        let item_id = self.scenes.get(&name).map_or_else(
+            || "item-0".to_owned(),
+            |scene| format!("item-{}", scene.sources.len()),
+        );
+        self.attach_source_instance_with_id(scene, source, &item_id)
+    }
+
+    /// Appends a scene-item reference with a stable project-derived identity.
+    /// The identity is independent of the scene's current draw order, so a
+    /// reorder does not redirect a transient transform draft to another item.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::DuplicateSceneItem`] when the identity already
+    /// exists in the scene, or [`RuntimeError::InvalidName`] when it is empty
+    /// or exceeds the bounded path length.
+    pub fn attach_source_instance_with_id(
+        &mut self,
+        scene: &str,
+        source: SourceId,
+        item_id: &str,
+    ) -> Result<usize, RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        validate_scene_item_id(item_id)?;
+        if !self.sources.contains_key(&source) {
+            return Err(RuntimeError::UnknownSource(source));
+        }
+        let limit = self.limits.max_sources_per_scene();
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        if scene.sources.len() >= limit {
+            return Err(RuntimeError::ResourceLimitExceeded {
+                resource: "sources per scene",
+                limit,
+            });
+        }
+        if scene
+            .item_ids
+            .iter()
+            .any(|existing| existing.as_ref() == item_id)
+        {
+            return Err(RuntimeError::DuplicateSceneItem(item_id.to_owned()));
+        }
+        let Some(index) = scene.attach_instance_with_id(source, item_id) else {
+            return Err(RuntimeError::DuplicateSceneItem(item_id.to_owned()));
+        };
+        *self.scene_references.entry(source).or_insert(0) += 1;
+        Ok(index)
+    }
+
     /// Removes a source from a scene while keeping the source instance alive.
     ///
     /// # Errors
@@ -282,6 +410,30 @@ impl Runtime {
             return Err(RuntimeError::SourceNotAttached(source));
         };
         release_scene_reference(&mut self.scene_references, source);
+        Ok(())
+    }
+
+    /// Removes every scene-item reference while keeping the scene and all
+    /// shared source instances alive.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist.
+    pub fn clear_scene_sources(&mut self, scene: &str) -> Result<(), RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        let sources = {
+            let Some(scene) = self.scenes.get_mut(&name) else {
+                return Err(RuntimeError::UnknownScene(name));
+            };
+            let sources = std::mem::take(&mut scene.sources);
+            scene.items.clear();
+            scene.attached.clear();
+            scene.item_ids.clear();
+            sources
+        };
+        for source in sources {
+            release_scene_reference(&mut self.scene_references, source);
+        }
         Ok(())
     }
 
@@ -301,7 +453,7 @@ impl Runtime {
         let Some(scene) = self.scenes.get_mut(&name) else {
             return Err(RuntimeError::UnknownScene(name));
         };
-        let Some(item) = scene.items.get_mut(&source) else {
+        let Some(item) = scene.items.iter_mut().find(|item| item.source == source) else {
             return Err(RuntimeError::SourceNotAttached(source));
         };
         item.transform = transform;
@@ -311,7 +463,96 @@ impl Runtime {
     /// Returns a scene item's current transform.
     #[must_use]
     pub fn source_transform(&self, scene: &str, source: SourceId) -> Option<FrameTransform> {
-        Some(self.scenes.get(scene)?.items.get(&source)?.transform)
+        self.scenes
+            .get(scene)?
+            .items
+            .iter()
+            .find(|item| item.source == source)
+            .map(|item| item.transform)
+    }
+
+    /// Sets the transform for one ordered scene-item reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::UnknownScene`] when the scene does not exist or
+    /// [`RuntimeError::SceneItemOutOfBounds`] for an invalid item index.
+    pub fn set_scene_item_transform(
+        &mut self,
+        scene: &str,
+        item_index: usize,
+        transform: FrameTransform,
+    ) -> Result<(), RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        let Some(item) = scene.items.get_mut(item_index) else {
+            return Err(RuntimeError::SceneItemOutOfBounds { index: item_index });
+        };
+        item.transform = transform;
+        Ok(())
+    }
+
+    /// Returns the transform for one ordered scene-item reference.
+    #[must_use]
+    pub fn scene_item_transform(&self, scene: &str, item_index: usize) -> Option<FrameTransform> {
+        self.scenes
+            .get(scene)?
+            .items
+            .get(item_index)
+            .map(|item| item.transform)
+    }
+
+    /// Returns stable scene-item identities in current draw order.
+    #[must_use]
+    pub fn scene_item_ids(&self, scene: &str) -> Option<Vec<String>> {
+        Some(
+            self.scenes
+                .get(scene)?
+                .items
+                .iter()
+                .map(|item| item.item_id.as_ref().to_owned())
+                .collect(),
+        )
+    }
+
+    /// Sets a transform by stable scene-item identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::SceneItemNotAttached`] when the identity is not
+    /// present in the requested scene.
+    pub fn set_scene_item_transform_by_id(
+        &mut self,
+        scene: &str,
+        item_id: &str,
+        transform: FrameTransform,
+    ) -> Result<(), RuntimeError> {
+        let name = identifier(scene, "scene")?;
+        let Some(scene) = self.scenes.get_mut(&name) else {
+            return Err(RuntimeError::UnknownScene(name));
+        };
+        let Some(item) = scene
+            .items
+            .iter_mut()
+            .find(|item| item.item_id.as_ref() == item_id)
+        else {
+            return Err(RuntimeError::SceneItemNotAttached(item_id.to_owned()));
+        };
+        item.transform = transform;
+        Ok(())
+    }
+
+    /// Returns a stable scene-item transform by identity.
+    #[must_use]
+    pub fn scene_item_transform_by_id(&self, scene: &str, item_id: &str) -> Option<FrameTransform> {
+        self.scenes
+            .get(scene)?
+            .items
+            .iter()
+            .find(|item| item.item_id.as_ref() == item_id)
+            .map(|item| item.transform)
     }
 
     /// Adds a CPU filter to the shared source filter chain.
@@ -353,6 +594,7 @@ impl Runtime {
             .ok_or(RuntimeError::UnknownSource(source))?;
         self.filter_count = self.filter_count.saturating_sub(instance.filters.len());
         instance.filters.clear();
+        instance.render_delay.clear();
         Ok(())
     }
 
@@ -395,7 +637,7 @@ impl Runtime {
         let Some(removed) = self.scenes.remove(&name) else {
             return Err(RuntimeError::UnknownScene(name));
         };
-        for source in removed.attached {
+        for source in removed.sources {
             release_scene_reference(&mut self.scene_references, source);
         }
         Ok(())
@@ -420,10 +662,22 @@ impl Runtime {
         // dropped rather than composited at the old size.
         instance.last_frame = None;
         instance.failure = None;
+        instance.render_delay.clear();
         instance
             .source
             .update(settings)
             .map_err(RuntimeError::Source)
+    }
+
+    /// Takes a settings update emitted by a live source after backend setup.
+    ///
+    /// Source backends may learn persistent state only after an asynchronous
+    /// open completes. Keeping this pull boundary on the runtime lets the GUI
+    /// write that state back to the project without exposing source objects.
+    pub fn take_source_settings_update(&mut self, source: SourceId) -> Option<Config> {
+        self.sources
+            .get_mut(&source)
+            .and_then(|instance| instance.source.take_settings_update())
     }
 
     /// Renames a source instance without recreating it.
@@ -472,7 +726,31 @@ impl Runtime {
                 kind: "scene order",
             });
         }
+        let mut expected = HashMap::new();
+        for source in &state.sources {
+            *expected.entry(*source).or_insert(0usize) += 1;
+        }
+        let mut requested = HashMap::new();
+        for source in order {
+            *requested.entry(*source).or_insert(0usize) += 1;
+        }
+        if expected != requested {
+            return Err(RuntimeError::InvalidName {
+                kind: "scene order",
+            });
+        }
+        let mut remaining = state.items.clone();
+        let mut next_items = Vec::with_capacity(order.len());
+        for source in order {
+            let Some(index) = remaining.iter().position(|item| item.source == *source) else {
+                return Err(RuntimeError::InvalidName {
+                    kind: "scene order",
+                });
+            };
+            next_items.push(remaining.remove(index));
+        }
         state.sources = order.to_vec();
+        state.items = next_items;
         Ok(())
     }
 
@@ -491,6 +769,15 @@ fn release_scene_reference(references: &mut HashMap<SourceId, usize>, source: So
             references.remove(&source);
         }
     }
+}
+
+fn validate_scene_item_id(item_id: &str) -> Result<(), RuntimeError> {
+    if item_id.is_empty() || item_id.len() > MAX_RUNTIME_SCENE_ITEM_ID_BYTES {
+        return Err(RuntimeError::InvalidName {
+            kind: "scene item id",
+        });
+    }
+    Ok(())
 }
 
 impl Default for Runtime {

@@ -1,0 +1,70 @@
+// Converts Slint key event pieces into the bounded canonical label consumed
+// by the Rust-owned Shortcut table. Keeping keyboard normalization and the
+// transient push-release rule outside the main window prevents this boundary
+// from growing with every action added to the catalog.
+export component HotkeyLabel inherits Rectangle {
+    in-out property <int> held-push-action: 0;
+    in-out property <string> held-push-key: "";
+    callback set-mixer-muted(string, bool);
+
+    public pure function key-name(text: string) -> string {
+        text == " " ? "Space"
+            : text == Key.Return ? "Enter"
+            : text == Key.Tab ? "Tab"
+            : text == Key.F1 ? "F1"
+            : text == Key.F2 ? "F2"
+            : text == Key.F3 ? "F3"
+            : text == Key.F4 ? "F4"
+            : text == Key.F5 ? "F5"
+            : text == Key.F6 ? "F6"
+            : text == Key.F7 ? "F7"
+            : text == Key.F8 ? "F8"
+            : text == Key.F9 ? "F9"
+            : text == Key.F10 ? "F10"
+            : text == Key.F11 ? "F11"
+            : text == Key.F12 ? "F12"
+            : text.to-uppercase();
+    }
+
+    public pure function label(text: string, control: bool, shift: bool, alt: bool) -> string {
+        (control ? "Ctrl+" : "")
+            + (shift ? "Shift+" : "")
+            + (alt ? "Alt+" : "")
+            + root.key-name(text);
+    }
+
+    public function release(action: int) -> bool {
+        if (action == 23 && root.held-push-action == action) {
+            root.set-mixer-muted("mic", true);
+            root.held-push-action = 0;
+            root.held-push-key = "";
+            true
+        } else if (action == 24 && root.held-push-action == action) {
+            root.set-mixer-muted("mic", false);
+            root.held-push-action = 0;
+            root.held-push-key = "";
+            true
+        } else {
+            false
+        }
+    }
+
+    // Window deactivation can happen before the native backend delivers the
+    // matching key-release event. Release the active push action at that
+    // boundary so a microphone cannot remain open or muted indefinitely.
+    public function release-held-push() -> bool {
+        if root.held-push-action == 23 {
+            root.set-mixer-muted("mic", true);
+            root.held-push-action = 0;
+            root.held-push-key = "";
+            true
+        } else if root.held-push-action == 24 {
+            root.set-mixer-muted("mic", false);
+            root.held-push-action = 0;
+            root.held-push-key = "";
+            true
+        } else {
+            false
+        }
+    }
+}

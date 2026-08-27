@@ -1,14 +1,20 @@
-use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+use std::{collections::BTreeMap, sync::Arc};
 
 use obs_rs_audio::{AudioFormat, AudioMixer};
-use obs_rs_media::FrameTransition;
+use obs_rs_audio::{MAX_GAIN_MILLI, MAX_PAN_MILLI, MIN_PAN_MILLI};
+use obs_rs_media::{FrameTransition, StingerClip, TransitionSpec};
+use obs_rs_project::ProjectCommand;
 
 use super::{
     error::UiError,
-    helpers::{first_scene_id, first_source_id, project_has_scene, project_has_source},
-    state::DesktopState,
-    types::{UiAction, UiCommand, UiNotice},
-    MAX_UI_NOTICES,
+    helpers::{
+        first_scene_id, first_source_id, profile_scene_item_at_target, project_has_scene,
+        project_has_source,
+    },
+    state::{ActiveTransition, DesktopState},
+    types::{TransitionSnapshot, UiAction, UiCommand, UiNotice},
+    MAX_TRANSITION_DURATION_MILLIS, MAX_UI_NOTICES, MIN_TRANSITION_DURATION_MILLIS,
 };
 
 impl DesktopState {
@@ -32,7 +38,7 @@ impl DesktopState {
     }
 
     pub(crate) fn sync_selections_after_project_update(&mut self) {
-        let (preview_valid, program_valid, selected_valid) = {
+        let (preview_valid, program_valid, selected_sources) = {
             let project = self.project.project();
             let preview_valid = self
                 .preview_scene
@@ -42,11 +48,18 @@ impl DesktopState {
                 .program_scene
                 .as_ref()
                 .is_some_and(|scene| project_has_scene(project, scene));
-            let selected_valid = match (&self.preview_scene, &self.selected_source) {
-                (Some(scene), Some(source)) => project_has_source(project, scene, source),
-                _ => false,
-            };
-            (preview_valid, program_valid, selected_valid)
+            let selected_sources = self
+                .preview_scene
+                .as_ref()
+                .map(|scene| {
+                    self.selected_sources
+                        .iter()
+                        .filter(|source| project_has_source(project, scene, source))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            (preview_valid, program_valid, selected_sources)
         };
         // `first_scene_id` is the same answer for preview and program, so it is
         // resolved at most once instead of per invalid selection.
@@ -59,11 +72,15 @@ impl DesktopState {
                 self.program_scene = fallback;
             }
         }
-        if !selected_valid {
-            self.selected_source = self
+        self.selected_sources = selected_sources;
+        if self.selected_sources.is_empty() {
+            self.selected_sources = self
                 .preview_scene
                 .as_ref()
-                .and_then(|scene| first_source_id(self.project.project(), scene));
+                .and_then(|scene| first_source_id(self.project.project(), scene))
+                .map(|id| id.to_string())
+                .into_iter()
+                .collect();
         }
     }
 
@@ -81,13 +98,7 @@ impl DesktopState {
                 kind: "profile",
                 id: project.active_profile().to_string(),
             })?;
-        let scene = profile
-            .scene(preview_scene)
-            .ok_or_else(|| UiError::UnknownSelection {
-                kind: "scene",
-                id: preview_scene.to_owned(),
-            })?;
-        if scene.has_item(id) {
+        if profile_scene_item_at_target(profile, preview_scene, id).is_some() {
             Ok(())
         } else {
             Err(UiError::UnknownSelection {
@@ -101,7 +112,14 @@ impl DesktopState {
         match action {
             UiAction::SwapPreviewProgram => {
                 std::mem::swap(&mut self.preview_scene, &mut self.program_scene);
+                self.active_transition = None;
                 Ok(())
+            }
+            UiAction::PreviousPreviewScene => {
+                self.dispatch(UiCommand::SelectAdjacentPreviewScene { direction: -1 })
+            }
+            UiAction::NextPreviewScene => {
+                self.dispatch(UiCommand::SelectAdjacentPreviewScene { direction: 1 })
             }
             UiAction::StartRecording => self.dispatch(UiCommand::StartRecording),
             UiAction::StopRecording => self.dispatch(UiCommand::StopRecording),
@@ -109,11 +127,30 @@ impl DesktopState {
             UiAction::StopStreaming => self.dispatch(UiCommand::StopStreaming),
             UiAction::Undo => self.dispatch(UiCommand::Undo),
             UiAction::Redo => self.dispatch(UiCommand::Redo),
+            UiAction::ToggleMicrophoneMute => self.dispatch(UiCommand::ToggleMixerMute {
+                id: "mic".to_owned(),
+            }),
+            UiAction::ToggleDesktopMute => self.dispatch(UiCommand::ToggleMixerMute {
+                id: "desktop".to_owned(),
+            }),
+            UiAction::SaveProject
+            | UiAction::CutTransition
+            | UiAction::FadeTransition
+            | UiAction::SaveReplayBuffer
+            | UiAction::StartReplayBuffer
+            | UiAction::StopReplayBuffer
+            | UiAction::ToggleStudioMode
+            | UiAction::ToggleSelectedSourceVisibility
+            | UiAction::ToggleSelectedSourceLock
+            | UiAction::ToggleSelectedSourceProjector
+            | UiAction::PushToTalkMicrophone
+            | UiAction::PushToMuteMicrophone
+            | UiAction::TogglePreviewSceneProjector => Err(UiError::FrontendActionRequired(action)),
         }
     }
 
     pub(crate) fn set_mixer_gain(&mut self, id: &str, gain_milli: u16) -> Result<(), UiError> {
-        if gain_milli > 2_000 {
+        if gain_milli > MAX_GAIN_MILLI {
             return Err(UiError::InvalidMixerGain(gain_milli));
         }
         let source = *self
@@ -127,6 +164,23 @@ impl DesktopState {
             .get_mut(id)
             .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
         channel.gain_milli = gain_milli;
+        Ok(())
+    }
+
+    pub(crate) fn set_mixer_pan(&mut self, id: &str, pan_milli: i32) -> Result<(), UiError> {
+        if !(MIN_PAN_MILLI..=MAX_PAN_MILLI).contains(&pan_milli) {
+            return Err(UiError::InvalidMixerPan(pan_milli));
+        }
+        let source = *self
+            .mixer_sources
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        self.audio_mixer.set_pan_milli(source, pan_milli)?;
+        let channel = self
+            .mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
+        channel.pan_milli = pan_milli;
         Ok(())
     }
 
@@ -149,10 +203,18 @@ impl DesktopState {
             mixer
                 .set_muted(source, channel.muted)
                 .map_err(UiError::Audio)?;
+            mixer
+                .set_pan_milli(source, channel.pan_milli)
+                .map_err(UiError::Audio)?;
             sources.insert(id.clone(), source);
         }
         self.audio_mixer = mixer;
         self.mixer_sources = sources;
+        for channel in self.mixer_channels.values_mut() {
+            channel.peak_milli = 0;
+            channel.peak_hold_milli = 0;
+            channel.clipped = false;
+        }
         Ok(())
     }
 
@@ -187,8 +249,40 @@ impl DesktopState {
     }
 
     pub(crate) fn set_transition(&mut self, transition: FrameTransition) -> Result<(), UiError> {
-        if let FrameTransition::CrossFade { progress_milli } = transition {
-            FrameTransition::cross_fade(progress_milli).map_err(UiError::Media)?;
+        match transition {
+            FrameTransition::CrossFade { progress_milli } => {
+                FrameTransition::cross_fade(progress_milli).map_err(UiError::Media)?;
+            }
+            FrameTransition::FadeToColor {
+                progress_milli,
+                color,
+            } => {
+                FrameTransition::fade_to_color(progress_milli, color).map_err(UiError::Media)?;
+            }
+            FrameTransition::Slide {
+                progress_milli,
+                direction,
+            } => {
+                FrameTransition::slide(progress_milli, direction).map_err(UiError::Media)?;
+            }
+            FrameTransition::Swipe {
+                progress_milli,
+                direction,
+                swipe_in,
+            } => {
+                FrameTransition::swipe_with_mode(progress_milli, direction, swipe_in)
+                    .map_err(UiError::Media)?;
+            }
+            FrameTransition::LumaWipe {
+                progress_milli,
+                pattern,
+                invert,
+                softness_milli,
+            } => {
+                FrameTransition::luma_wipe(progress_milli, pattern, invert, softness_milli)
+                    .map_err(UiError::Media)?;
+            }
+            FrameTransition::Cut => {}
         }
         self.transition = transition;
         Ok(())
@@ -197,7 +291,29 @@ impl DesktopState {
     pub(crate) fn take_preview(
         &mut self,
         transition: FrameTransition,
+        duration_ms: u32,
     ) -> Result<&'static str, UiError> {
+        self.take_preview_with_stinger(transition, duration_ms, None)
+    }
+
+    pub(crate) fn take_stinger(
+        &mut self,
+        clip: Arc<StingerClip>,
+        duration_ms: u32,
+    ) -> Result<&'static str, UiError> {
+        self.take_preview_with_stinger(FrameTransition::Cut, duration_ms, Some(clip))
+    }
+
+    fn take_preview_with_stinger(
+        &mut self,
+        transition: FrameTransition,
+        duration_ms: u32,
+        stinger: Option<Arc<StingerClip>>,
+    ) -> Result<&'static str, UiError> {
+        if !(MIN_TRANSITION_DURATION_MILLIS..=MAX_TRANSITION_DURATION_MILLIS).contains(&duration_ms)
+        {
+            return Err(UiError::InvalidTransitionDuration(duration_ms));
+        }
         let preview = self
             .preview_scene
             .clone()
@@ -205,9 +321,138 @@ impl DesktopState {
                 kind: "preview scene",
                 id: "none".to_owned(),
             })?;
+        let (transition, duration_ms) = if stinger.is_some() {
+            (transition, duration_ms)
+        } else {
+            self.project
+                .project()
+                .active_profile_spec()
+                .and_then(|profile| profile.scene(&preview))
+                .and_then(obs_rs_project::SceneSpec::transition_override)
+                .map(|override_spec| {
+                    (
+                        override_spec.at_progress(500).map_err(UiError::Media),
+                        override_spec.duration_millis(),
+                    )
+                })
+                .map_or(
+                    Ok((transition, duration_ms)),
+                    |(transition, duration_ms)| {
+                        transition.map(|transition| (transition, duration_ms))
+                    },
+                )?
+        };
+        let source = self.program_scene.clone();
         self.set_transition(transition)?;
         self.program_scene = Some(preview);
+        self.active_transition = match (source, self.program_scene.clone(), transition) {
+            (Some(source_scene), Some(destination_scene), FrameTransition::Cut)
+                if source_scene != destination_scene && stinger.is_none() =>
+            {
+                None
+            }
+            (Some(source_scene), Some(destination_scene), transition)
+                if source_scene != destination_scene =>
+            {
+                Some(ActiveTransition {
+                    source_scene,
+                    destination_scene,
+                    transition,
+                    stinger,
+                    started_at: Instant::now(),
+                    duration: Duration::from_millis(u64::from(duration_ms)),
+                })
+            }
+            _ => None,
+        };
         Ok("preview sent to program")
+    }
+
+    pub(crate) fn set_preview_scene_transition(
+        &mut self,
+        transition: Option<TransitionSpec>,
+    ) -> Result<&'static str, UiError> {
+        let profile = self.project.project().active_profile().to_string();
+        let scene = self
+            .preview_scene
+            .as_ref()
+            .ok_or_else(|| UiError::UnknownSelection {
+                kind: "preview scene",
+                id: "none".to_owned(),
+            })?
+            .to_string();
+        self.project
+            .dispatch(ProjectCommand::SetSceneTransitionOverride {
+                profile,
+                scene,
+                transition,
+            })?;
+        Ok("scene transition override updated")
+    }
+
+    /// Returns the current renderer-facing transition sample, retiring it at
+    /// the exact duration boundary.
+    pub fn transition_snapshot(&mut self, now: Instant) -> Option<TransitionSnapshot> {
+        let active = self.active_transition.as_ref()?;
+        let elapsed = now.saturating_duration_since(active.started_at);
+        if elapsed >= active.duration {
+            self.active_transition = None;
+            return None;
+        }
+        let elapsed_nanos = elapsed.as_nanos();
+        let duration_nanos = active.duration.as_nanos().max(1);
+        let progress = elapsed_nanos
+            .saturating_mul(1_000)
+            .checked_div(duration_nanos)
+            .unwrap_or(1_000)
+            .min(999);
+        let progress_milli = u16::try_from(progress).unwrap_or(999);
+        if let Some(clip) = active.stinger.as_ref() {
+            return TransitionSnapshot::new_stinger(
+                active.source_scene.as_str(),
+                active.destination_scene.as_str(),
+                Arc::clone(clip),
+                progress_milli,
+            )
+            .ok();
+        }
+        let transition = match active.transition {
+            FrameTransition::Cut => return None,
+            FrameTransition::CrossFade { .. } => FrameTransition::CrossFade { progress_milli },
+            FrameTransition::FadeToColor { color, .. } => FrameTransition::FadeToColor {
+                progress_milli,
+                color,
+            },
+            FrameTransition::Slide { direction, .. } => FrameTransition::Slide {
+                progress_milli,
+                direction,
+            },
+            FrameTransition::Swipe {
+                direction,
+                swipe_in,
+                ..
+            } => FrameTransition::Swipe {
+                progress_milli,
+                direction,
+                swipe_in,
+            },
+            FrameTransition::LumaWipe {
+                pattern,
+                invert,
+                softness_milli,
+                ..
+            } => FrameTransition::LumaWipe {
+                progress_milli,
+                pattern,
+                invert,
+                softness_milli,
+            },
+        };
+        Some(TransitionSnapshot::new(
+            active.source_scene.as_str(),
+            active.destination_scene.as_str(),
+            transition,
+        ))
     }
 
     pub(crate) fn toggle_mixer_mute(&mut self, id: &str) -> Result<&'static str, UiError> {
@@ -220,6 +465,27 @@ impl DesktopState {
             .get(id)
             .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
             .muted;
+        self.audio_mixer.set_muted(source, muted)?;
+        self.mixer_channels
+            .get_mut(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?
+            .muted = muted;
+        Ok(if muted {
+            "mixer channel muted"
+        } else {
+            "mixer channel unmuted"
+        })
+    }
+
+    pub(crate) fn set_mixer_mute(
+        &mut self,
+        id: &str,
+        muted: bool,
+    ) -> Result<&'static str, UiError> {
+        let source = *self
+            .mixer_sources
+            .get(id)
+            .ok_or_else(|| UiError::UnknownMixerChannel(id.to_owned()))?;
         self.audio_mixer.set_muted(source, muted)?;
         self.mixer_channels
             .get_mut(id)

@@ -45,10 +45,24 @@ pub enum ProjectError {
     UnknownProfile(Identifier),
     /// A scene ID is not present.
     UnknownScene(Identifier),
+    /// A scene is still referenced by another scene item.
+    SceneInUse(Identifier),
+    /// A scene graph would recurse forever through nested scene references.
+    CircularSceneReference(Identifier),
+    /// A nested scene transform cannot be represented by the current flattening boundary.
+    UnsupportedNestedSceneTransform(Identifier),
+    /// A group graph exceeds the bounded flattening depth.
+    GroupNestingTooDeep(usize),
     /// A source ID is not present.
     UnknownSource(Identifier),
     /// A scene-item ID is not present.
     UnknownSceneItem(Identifier),
+    /// A locked scene item cannot be grouped with other items.
+    LockedSceneItem(Identifier),
+    /// A group path was empty or named a scene item that is not a group.
+    InvalidGroupPath,
+    /// A grouping request did not contain at least two unique root items.
+    InvalidGroupSelection,
     /// A filter ID is not present on a source.
     UnknownFilter(Identifier),
     /// A legacy source move destination is outside the scene order.
@@ -57,6 +71,8 @@ pub enum ProjectError {
     InvalidFilterOrder { index: usize },
     /// A scene-item move destination is outside the scene order.
     InvalidSceneItemOrder { index: usize },
+    /// A profile scene move or serialized scene order entry is invalid.
+    InvalidSceneOrder { index: usize },
     /// A source cannot be removed while a scene item references it.
     SourceInUse(Identifier),
 }
@@ -83,8 +99,26 @@ impl fmt::Display for ProjectError {
             Self::DuplicateFilter(id) => write!(formatter, "filter {id} already exists"),
             Self::UnknownProfile(id) => write!(formatter, "profile {id} does not exist"),
             Self::UnknownScene(id) => write!(formatter, "scene {id} does not exist"),
+            Self::SceneInUse(id) => write!(formatter, "scene {id} is still used by a scene"),
+            Self::CircularSceneReference(id) => {
+                write!(formatter, "scene graph contains a cycle at {id}")
+            }
+            Self::UnsupportedNestedSceneTransform(id) => {
+                write!(
+                    formatter,
+                    "nested scene item {id} has an unsupported transform"
+                )
+            }
+            Self::GroupNestingTooDeep(limit) => {
+                write!(formatter, "group nesting exceeds the limit of {limit}")
+            }
             Self::UnknownSource(id) => write!(formatter, "source {id} does not exist"),
             Self::UnknownSceneItem(id) => write!(formatter, "scene item {id} does not exist"),
+            Self::LockedSceneItem(id) => write!(formatter, "scene item {id} is locked"),
+            Self::InvalidGroupPath => formatter.write_str("group path is invalid"),
+            Self::InvalidGroupSelection => {
+                formatter.write_str("at least two unique root scene items are required to group")
+            }
             Self::UnknownFilter(id) => write!(formatter, "filter {id} does not exist"),
             Self::InvalidSourceOrder { index } => {
                 write!(formatter, "source order index {index} is out of range")
@@ -94,6 +128,9 @@ impl fmt::Display for ProjectError {
             }
             Self::InvalidSceneItemOrder { index } => {
                 write!(formatter, "scene item order index {index} is out of range")
+            }
+            Self::InvalidSceneOrder { index } => {
+                write!(formatter, "scene order index {index} is invalid")
             }
             Self::SourceInUse(id) => write!(formatter, "source {id} is still used by a scene"),
         }

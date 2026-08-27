@@ -1,46 +1,78 @@
 import { ScrollView, HorizontalBox, VerticalBox } from "std-widgets.slint";
 import { CompactButton, DockHeader } from "theme.slint";
-import { SourceRow } from "models.slint";
+import { MoveTarget, SourceRow } from "models.slint";
 import { SourceContextMenuArea } from "context_menus.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
+import { HotkeyLabel } from "hotkey_label.slint";
 
 export component SourceDock inherits Rectangle {
     in property <string> locale;
+    in property <bool> platform-macos;
     in property <string> source-scene;
     in property <[SourceRow]> source-rows;
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
+    in property <bool> selected-source-is-group;
+    in property <bool> selected-source-is-scene;
+    in property <bool> selected-source-is-nested;
     in property <bool> selected-source-visible;
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
     in property <bool> selected-source-last;
+    in property <[MoveTarget]> selected-source-move-targets;
+    in property <int> source-count;
     in property <bool> can-paste;
+    in property <bool> can-group-sources;
     in property <int> panel-kind;
     in property <bool> floating;
     callback move-panel(int, int);
+    callback dock-drag-start(int, float, float);
+    callback dock-drag-moved(int, float, float);
+    callback dock-drag-end(int, float, float);
     callback float-panel(int);
     callback close-panel(int);
     callback open-modal(int);
     callback select-source(string);
+    callback select-source-with-mode(string, int);
+    callback select-all-sources();
+    // Navigation stays a typed callback so Rust can resolve the visible
+    // source order from the active scene instead of duplicating it in Slint.
+    // direction: -2 = first, -1 = previous, 1 = next, 2 = last.
+    // mode: 0 = replace, 1 = range, 2 = toggle.
+    callback navigate-source-selection(int, int);
+    callback open-properties(string);
     callback open-filters(string);
     callback open-transform(string);
+    callback open-source-projector(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
     callback move-source(string, int);
     callback move-source-to(string, int);
+    callback move-source-to-group(string, string);
     callback reset-source-transform(string);
     callback flip-source(string, bool);
+    callback transform-source(string, string);
     callback open-source-rename(string);
     callback duplicate-source(string);
+    callback group-sources();
+    callback ungroup-source(string);
     callback copy-source(string);
-    callback paste-reference();
-    callback paste-duplicate();
+    callback paste-reference(string);
+    callback paste-duplicate(string);
     callback remove-source(string);
+    callback remove-selected-sources();
+    callback drop-source(data-transfer, string, int);
+    callback release-push-hotkey();
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
     border-color: Palette.tokens.border;
+    source-hotkey-label := HotkeyLabel {
+        visible: false;
+        width: 0px;
+        height: 0px;
+    }
     VerticalBox {
         padding: 0px;
         spacing: 0px;
@@ -49,6 +81,9 @@ export component SourceDock inherits Rectangle {
             panel-kind: root.panel-kind;
             floating: root.floating;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
+            dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+            dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+            dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
             float-panel(kind) => { root.float-panel(kind); }
             close-panel(kind) => { root.close-panel(kind); }
         }
@@ -57,8 +92,119 @@ export component SourceDock inherits Rectangle {
             VerticalBox {
                 padding: 8px;
                 spacing: 6px;
-                ScrollView {
+                source-focus := FocusScope {
                     vertical-stretch: 1;
+                    focus-on-click: true;
+                    focus-on-tab-navigation: true;
+                    focus-lost(reason) => {
+                        root.release-push-hotkey();
+                    }
+                    key-pressed(event) => {
+                        if !event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && (root.platform-macos
+                                ? event.text == Key.Return
+                                : event.text == Key.F2)
+                            && root.selected-source != ""
+                            && root.selected-source != "none" {
+                            // OBS registers rename on the Sources dock, so
+                            // the focused row selection is the only target
+                            // that crosses this UI boundary. The modal and
+                            // Rust callback keep the stable path from here.
+                            root.open-source-rename(root.selected-source);
+                            return accept;
+                        }
+                        if !event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && (event.text == Key.Delete || event.text == Key.Backspace)
+                            && root.selected-source != ""
+                            && root.selected-source != "none" {
+                            // Deletion remains a Rust callback so locked-item
+                            // validation, nested paths, and undo ownership do
+                            // not get duplicated in the dock.
+                            root.remove-selected-sources();
+                            return accept;
+                        }
+                        if event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && source-hotkey-label.key-name(event.text) == "C"
+                            && root.selected-source != ""
+                            && root.selected-source != "none" {
+                            root.copy-source(root.selected-source);
+                            return accept;
+                        }
+                        if event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && source-hotkey-label.key-name(event.text) == "V"
+                            && root.can-paste {
+                            root.paste-reference(
+                                root.selected-source == "none" ? "" : root.selected-source
+                            );
+                            return accept;
+                        }
+                        if event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && source-hotkey-label.key-name(event.text) == "A" {
+                            root.select-all-sources();
+                            return accept;
+                        }
+                        if event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && root.selected-source != ""
+                            && root.selected-source != "none"
+                            && (event.text == Key.UpArrow
+                                || event.text == Key.DownArrow
+                                || event.text == Key.Home
+                                || event.text == Key.End) {
+                            // Keep the focused Sources dock on the same
+                            // source-order command as the main canvas.
+                            if event.text == Key.UpArrow && !root.selected-source-first {
+                                root.move-source(root.selected-source, -1);
+                            } else if event.text == Key.DownArrow
+                                && !root.selected-source-last {
+                                root.move-source(root.selected-source, 1);
+                            } else if event.text == Key.Home && !root.selected-source-first {
+                                root.move-source-to(root.selected-source, 0);
+                            } else if event.text == Key.End
+                                && !root.selected-source-last
+                                && root.source-count > 0 {
+                                root.move-source-to(
+                                    root.selected-source,
+                                    root.source-count - 1,
+                                );
+                            }
+                            return accept;
+                        }
+                        if !event.modifiers.alt
+                            && (event.text == Key.UpArrow
+                                || event.text == Key.DownArrow
+                                || event.text == Key.Home
+                                || event.text == Key.End) {
+                            let direction = event.text == Key.UpArrow
+                                ? -1
+                                : (event.text == Key.DownArrow
+                                    ? 1
+                                    : (event.text == Key.Home ? -2 : 2));
+                            let mode = event.modifiers.control
+                                ? 2
+                                : (event.modifiers.shift ? 1 : 0);
+                            root.navigate-source-selection(direction, mode);
+                            return accept;
+                        }
+                        reject
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+                        // Source-row drag/drop owns vertical pointer gestures. Wheel
+                        // scrolling remains available through ScrollView's scroll events.
+                        mouse-drag-pan-enabled: false;
                     // Rows stack from the top of the dock the way a
                     // list widget does, instead of centring in the view.
                     VerticalLayout {
@@ -66,105 +212,187 @@ export component SourceDock inherits Rectangle {
                         spacing: 1px;
                     for source in source-rows : source-menu := SourceContextMenuArea {
                         height: 36px;
-                        source-id: source.id;
+                        source-id: source.target;
+                        source-name: source.name;
+                        row-semantics: true;
+                        selected: source.selected;
+                        item-index: source.index;
+                        item-count: source.count;
+                        source-kind: source.kind;
+                        nested: source.nested;
+                        group: source.group;
                         source-visible: source.visible;
                         source-locked: source.locked;
                         can-move-up: !source.first;
                         can-move-down: !source.last;
                         can-move-top: !source.first;
                         can-move-bottom: !source.last;
-                        source-count: source-rows.length;
+                        source-count: source.count;
+                        move-targets: source.move-targets;
                         can-paste: root.can-paste;
+                        can-group: root.can-group-sources;
                         select-source(id) => { root.select-source(id); }
-                        open-properties(id) => { root.select-source(id); root.open-modal(6); }
-                        open-filters(id) => { root.select-source(id); root.open-modal(13); }
-                        open-transform(id) => { root.select-source(id); root.open-modal(14); }
+                        select-source-with-mode(id, mode) => {
+                            root.select-source-with-mode(id, mode);
+                        }
+                        open-properties(id) => { root.open-properties(id); }
+                        open-filters(id) => { root.open-filters(id); }
+                        open-transform(id) => { root.open-transform(id); }
+                        open-source-projector(id) => { root.open-source-projector(id); }
                         rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
-                        duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
+                        duplicate-source(id) => {
+                            root.select-source(id);
+                            root.duplicate-source(id);
+                        }
+                        group-sources() => { root.group-sources(); }
+                        ungroup-source(id) => { root.ungroup-source(id); }
                         copy-source(id) => { root.copy-source(id); }
-                        paste-reference() => { root.paste-reference(); }
-                        paste-duplicate() => { root.paste-duplicate(); }
+                        paste-reference(target) => { root.paste-reference(target); }
+                        paste-duplicate(target) => { root.paste-duplicate(target); }
                         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
                         toggle-source-locked(id) => { root.toggle-source-locked(id); }
                         move-source(id, delta) => { root.move-source(id, delta); }
                         move-source-to(id, index) => { root.move-source-to(id, index); }
+                        move-source-to-group(id, destination) => {
+                            root.move-source-to-group(id, destination);
+                        }
                         reset-source-transform(id) => { root.reset-source-transform(id); }
                         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+                        transform-source(id, action) => { root.transform-source(id, action); }
                         remove-source(id) => { root.remove-source(id); }
+                        remove-selected-sources() => { root.remove-selected-sources(); }
                         background: source.selected ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;
-                        TouchArea {
+                        DragArea {
                             width: 100%;
                             height: 100%;
-                            clicked => select-source(source.id);
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.down
-                                    && event.button == PointerEventButton.right {
-                                    select-source(source.id);
-                                    source-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
+                            data: source.drag-data;
+                            allow-move: true;
+                            drag-finished(action) => { }
+                            TouchArea {
+                                width: 100%;
+                                height: 100%;
+                                property <int> pending-select-mode: 0;
+                                clicked => {
+                                    source-focus.focus();
+                                    select-source-with-mode(source.id, self.pending-select-mode);
+                                }
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.down
+                                        && event.button == PointerEventButton.left {
+                                        source-focus.focus();
+                                        self.pending-select-mode = event.modifiers.control
+                                            ? 2
+                                            : (event.modifiers.shift ? 3 : 0);
+                                    }
+                                    if event.kind == PointerEventKind.down
+                                        && event.button == PointerEventButton.right {
+                                        source-focus.focus();
+                                        if !source.selected { select-source(source.id); }
+                                        source-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
+                                    }
+                                }
+                            }
+                            HorizontalBox {
+                                padding-left: 7px;
+                                padding-right: 4px;
+                                spacing: 5px;
+                                VerticalBox {
+                                    spacing: 1px;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: source.name;
+                                        color: Palette.tokens.text;
+                                        font-size: 11px;
+                                        overflow: elide;
+                                    }
+                                }
+                                CompactButton {
+                                    icon-name: source.visible ? "eye" : "eye-off";
+                                    hint: source.visible
+                                        ? I18n.text.source_hide
+                                        : I18n.text.source_show;
+                                    clicked => toggle-source-visibility(source.id);
+                                }
+                                CompactButton {
+                                    icon-name: source.locked ? "lock" : "unlock";
+                                    hint: source.locked
+                                        ? I18n.text.source_unlock
+                                        : I18n.text.source_lock;
+                                    clicked => toggle-source-locked(source.id);
                                 }
                             }
                         }
-                        HorizontalBox {
-                            padding-left: 7px;
-                            padding-right: 4px;
-                            spacing: 5px;
-                            VerticalBox {
-                                spacing: 1px;
-                                horizontal-stretch: 1;
-                                Text {
-                                    text: source.name;
-                                    color: Palette.tokens.text;
-                                    font-size: 11px;
-                                    overflow: elide;
-                                }
+                        DropArea {
+                            width: 100%;
+                            height: 100%;
+                            enabled: !source.locked;
+                            can-drop(_) => { DragAction.move }
+                            dropped(event) => {
+                                let mode = source.container
+                                    ? 0
+                                    : (event.position.y < self.height / 2 ? 1 : 2);
+                                root.drop-source(event.data, source.target, mode);
+                                event.proposed-action
                             }
-                            CompactButton {
-                                icon-name: source.visible ? "eye" : "eye-off";
-                                hint: source.visible
-                                    ? I18n.text.source_hide
-                                    : I18n.text.source_show;
-                                clicked => toggle-source-visibility(source.id);
-                            }
-                            CompactButton {
-                                icon-name: source.locked ? "lock" : "unlock";
-                                hint: source.locked
-                                    ? I18n.text.source_unlock
-                                    : I18n.text.source_lock;
-                                clicked => toggle-source-locked(source.id);
+                            Rectangle {
+                                width: parent.width;
+                                height: parent.height;
+                                background: transparent;
+                                border-width: parent.has-drag ? 2px : 0px;
+                                border-color: Palette.tokens.accent;
                             }
                         }
+                    }
                     }
                     }
                 }
                 selected-source-menu := SourceContextMenuArea {
                     height: 22px;
-                    source-id: root.selected-source;
+                    source-id: root.selected-source == "none" ? "" : root.selected-source;
+                    source-kind: root.selected-source-is-scene
+                        ? "scene"
+                        : (root.selected-source-is-group ? "group" : "source");
+                    nested: root.selected-source-is-nested;
+                    group: root.selected-source-is-group;
                     source-visible: root.selected-source-visible;
                     source-locked: root.selected-source-locked;
                     can-move-up: !root.selected-source-first;
                     can-move-down: !root.selected-source-last;
                     can-move-top: !root.selected-source-first;
                     can-move-bottom: !root.selected-source-last;
-                    source-count: root.source-rows.length;
+                    source-count: root.source-count;
+                    move-targets: root.selected-source-move-targets;
                     can-paste: root.can-paste;
+                    can-group: root.can-group-sources;
                     select-source(id) => { root.select-source(id); }
-                    open-properties(id) => { root.select-source(id); root.open-modal(6); }
-                    open-filters(id) => { root.select-source(id); root.open-modal(13); }
-                    open-transform(id) => { root.select-source(id); root.open-modal(14); }
+                    select-source-with-mode(id, mode) => {
+                        root.select-source-with-mode(id, mode);
+                    }
+                    open-properties(id) => { root.open-properties(id); }
+                    open-filters(id) => { root.open-filters(id); }
+                    open-transform(id) => { root.open-transform(id); }
+                    open-source-projector(id) => { root.open-source-projector(id); }
                     rename-source(id) => { root.select-source(id); root.open-source-rename(id); }
                     duplicate-source(id) => { root.select-source(id); root.duplicate-source(id); }
+                    group-sources() => { root.group-sources(); }
+                    ungroup-source(id) => { root.ungroup-source(id); }
                     copy-source(id) => { root.copy-source(id); }
-                    paste-reference() => { root.paste-reference(); }
-                    paste-duplicate() => { root.paste-duplicate(); }
+                    paste-reference(target) => { root.paste-reference(target); }
+                    paste-duplicate(target) => { root.paste-duplicate(target); }
                     toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
                     toggle-source-locked(id) => { root.toggle-source-locked(id); }
                     move-source(id, delta) => { root.move-source(id, delta); }
                     move-source-to(id, index) => { root.move-source-to(id, index); }
+                    move-source-to-group(id, destination) => {
+                        root.move-source-to-group(id, destination);
+                    }
                     reset-source-transform(id) => { root.reset-source-transform(id); }
                     flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+                    transform-source(id, action) => { root.transform-source(id, action); }
                     remove-source(id) => { root.remove-source(id); }
+                    remove-selected-sources() => { root.remove-selected-sources(); }
                     HorizontalBox {
                     spacing: 4px;
                     CompactButton {
@@ -178,7 +406,7 @@ export component SourceDock inherits Rectangle {
                         icon-name: "remove";
                         hint: I18n.text.remove_source;
                         enabled: root.selected-source != "";
-                        clicked => { root.remove-source(root.selected-source); }
+                        clicked => { root.remove-selected-sources(); }
                     }
                     CompactButton {
                         width: 22px;

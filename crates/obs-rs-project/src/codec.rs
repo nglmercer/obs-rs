@@ -4,9 +4,9 @@
 //! diffed, and merged with the same tools as any other configuration file.
 //! Two properties are load-bearing:
 //!
-//! * **Determinism.** Profiles, sources, and scenes live in `BTreeMap`s, while
-//!   scene items retain insertion order and settings serialize sorted, so saving
-//!   unchanged state twice produces byte-identical files.
+//! * **Determinism.** Profiles and sources live in `BTreeMap`s, while profile
+//!   scene order and scene items retain insertion order and settings serialize
+//!   sorted, so saving unchanged state twice produces byte-identical files.
 //! * **Explicit versioning.** Every document carries `format` and `version`
 //!   members, so a future schema change is a checked migration rather than a
 //!   silent misparse.
@@ -14,16 +14,20 @@
 use super::{
     error::ProjectError,
     model::{
-        Profile, Project, SceneItemSpec, SceneSpec, SourceFilterCategory, SourceFilterSpec,
-        SourceSpec,
+        GroupSpec, Profile, Project, SceneItemSpec, SceneSpec, SourceFilterCategory,
+        SourceFilterSpec, SourceSpec, MAX_GROUP_NESTING_DEPTH,
     },
     validation::identifier,
     MAX_PROJECT_BYTES,
 };
 use obs_rs_config::Config;
-use obs_rs_media::{FrameRate, FrameTransform, VideoFormat};
+use obs_rs_media::{
+    FrameRate, FrameTransform, LumaWipePattern, SlideDirection, StingerSpec, TransitionKind,
+    TransitionSpec, VideoFormat,
+};
 use obs_rs_output::OutputProfileKind;
-use obs_rs_util::Json;
+use obs_rs_util::{Identifier, Json};
+use std::collections::HashSet;
 
 use crate::RenderBackendPreference;
 
@@ -31,7 +35,19 @@ use crate::RenderBackendPreference;
 const FORMAT_TAG: &str = "obs-rs-project";
 
 /// Schema version this build writes.
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 8;
+/// The format before persistent Stinger resource references were added.
+const TRANSITION_FORMAT_VERSION: u32 = 7;
+/// The format before per-scene transition policies were persisted.
+const SCENE_ORDER_FORMAT_VERSION: u32 = 6;
+/// The previous format, which had no explicit scene-order member.
+const PREVIOUS_FORMAT_VERSION: u32 = 5;
+/// The format before group targets were persisted.
+const GROUP_FORMAT_VERSION: u32 = 4;
+/// The format before nested scene-item targets were persisted.
+const NESTED_SCENE_FORMAT_VERSION: u32 = 3;
+/// The format before scene-item rotation was persisted.
+const ROTATION_FORMAT_VERSION: u32 = 2;
 /// The format before sources were moved out of scenes.
 const LEGACY_FORMAT_VERSION: u32 = 1;
 
@@ -76,10 +92,16 @@ impl Project {
         }
         let version = match root.get("version").and_then(Json::as_number::<u32>) {
             Some(LEGACY_FORMAT_VERSION) => LEGACY_FORMAT_VERSION,
+            Some(ROTATION_FORMAT_VERSION) => ROTATION_FORMAT_VERSION,
+            Some(NESTED_SCENE_FORMAT_VERSION) => NESTED_SCENE_FORMAT_VERSION,
+            Some(GROUP_FORMAT_VERSION) => GROUP_FORMAT_VERSION,
+            Some(PREVIOUS_FORMAT_VERSION) => PREVIOUS_FORMAT_VERSION,
+            Some(SCENE_ORDER_FORMAT_VERSION) => SCENE_ORDER_FORMAT_VERSION,
+            Some(TRANSITION_FORMAT_VERSION) => TRANSITION_FORMAT_VERSION,
             Some(FORMAT_VERSION) => FORMAT_VERSION,
             Some(version) => {
                 return Err(invalid(format!(
-                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION} and {FORMAT_VERSION}"
+                    "unsupported project schema version {version}; this build reads versions {LEGACY_FORMAT_VERSION}, {ROTATION_FORMAT_VERSION}, {NESTED_SCENE_FORMAT_VERSION}, {GROUP_FORMAT_VERSION}, {PREVIOUS_FORMAT_VERSION}, {SCENE_ORDER_FORMAT_VERSION}, {TRANSITION_FORMAT_VERSION}, and {FORMAT_VERSION}"
                 )))
             }
             None => return Err(invalid("missing or invalid `version`")),
@@ -92,7 +114,7 @@ impl Project {
             if version == LEGACY_FORMAT_VERSION {
                 decode_legacy_profile(&mut project, profile)?;
             } else {
-                decode_profile(&mut project, profile)?;
+                decode_profile(&mut project, profile, version)?;
             }
         }
 
@@ -133,7 +155,16 @@ fn encode_profile(profile: &Profile) -> Json {
         ),
         (
             "scenes",
-            Json::Array(profile.scenes.values().map(encode_scene).collect()),
+            Json::Array(profile.scenes().map(encode_scene).collect()),
+        ),
+        (
+            "scene_order",
+            Json::Array(
+                profile
+                    .scene_order()
+                    .map(|scene_id| Json::string(scene_id.as_str()))
+                    .collect(),
+            ),
         ),
     ])
 }
@@ -142,6 +173,19 @@ fn encode_scene(scene: &SceneSpec) -> Json {
     Json::object([
         ("id", Json::string(scene.id.as_str())),
         ("name", Json::string(&scene.name)),
+        (
+            "transition",
+            scene
+                .transition_override
+                .map_or(Json::Null, encode_transition),
+        ),
+        (
+            "stinger",
+            scene
+                .stinger_override
+                .as_ref()
+                .map_or(Json::Null, encode_stinger),
+        ),
         (
             "items",
             Json::Array(scene.items.iter().map(encode_item).collect()),
@@ -171,12 +215,30 @@ fn encode_source(source: &SourceSpec) -> Json {
 }
 
 fn encode_item(item: &SceneItemSpec) -> Json {
+    let target = if let Some(group) = item.group() {
+        ("group", encode_group(group))
+    } else if let Some(scene) = item.scene_id() {
+        ("scene", Json::string(scene.as_str()))
+    } else {
+        ("source", Json::string(item.source_id().as_str()))
+    };
     Json::object([
         ("id", Json::string(item.id.as_str())),
-        ("source", Json::string(item.source_id.as_str())),
+        target,
         ("transform", encode_transform(item.transform)),
         ("visible", Json::Bool(item.visible)),
         ("locked", Json::Bool(item.locked)),
+    ])
+}
+
+fn encode_group(group: &GroupSpec) -> Json {
+    Json::object([
+        ("id", Json::string(group.id().as_str())),
+        ("name", Json::string(group.name())),
+        (
+            "items",
+            Json::Array(group.items().iter().map(encode_item).collect()),
+        ),
     ])
 }
 
@@ -189,6 +251,10 @@ fn encode_transform(transform: FrameTransform) -> Json {
         ("flip_x", Json::Bool(transform.flip_x())),
         ("flip_y", Json::Bool(transform.flip_y())),
         ("opacity", Json::number(transform.opacity())),
+        (
+            "rotation_milli_degrees",
+            Json::number(transform.rotation_milli_degrees()),
+        ),
         ("crop_left", Json::number(transform.crop_left())),
         ("crop_top", Json::number(transform.crop_top())),
         ("crop_right", Json::number(transform.crop_right())),
@@ -260,27 +326,269 @@ fn decode_profile_header(value: &Json) -> Result<Profile, ProjectError> {
     Ok(profile)
 }
 
-fn decode_profile(project: &mut Project, value: &Json) -> Result<(), ProjectError> {
+fn decode_profile(project: &mut Project, value: &Json, version: u32) -> Result<(), ProjectError> {
     let mut profile = decode_profile_header(value)?;
     for source in array_member(value, "sources")? {
         profile.add_source(decode_source(source)?)?;
     }
     for scene in array_member(value, "scenes")? {
-        profile.add_scene(decode_scene(scene, &profile)?)?;
+        profile.add_scene(decode_scene(scene, &profile, version)?)?;
     }
+    if let Some(scene_order) = value.get("scene_order") {
+        let scene_order = scene_order
+            .as_array()
+            .ok_or_else(|| invalid("`scene_order` must be an array"))?;
+        let scene_order = scene_order
+            .iter()
+            .enumerate()
+            .map(|(index, scene_id)| {
+                let scene_id = scene_id
+                    .as_str()
+                    .ok_or_else(|| invalid(format!("scene order entry {index} is not a string")))?;
+                identifier(scene_id, "scene id")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        profile.restore_scene_order(scene_order)?;
+    }
+    validate_scene_references(&profile)?;
     project.add_profile(profile)
 }
 
-fn decode_scene(value: &Json, profile: &Profile) -> Result<SceneSpec, ProjectError> {
+fn decode_scene(value: &Json, profile: &Profile, version: u32) -> Result<SceneSpec, ProjectError> {
     let mut scene = SceneSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
-    for item in array_member(value, "items")? {
-        let item = decode_item(item)?;
-        if !profile.has_source(item.source_id()) {
-            return Err(ProjectError::UnknownSource(item.source_id().clone()));
+    if version >= TRANSITION_FORMAT_VERSION {
+        if let Some(transition) = value.get("transition") {
+            if !matches!(transition, Json::Null) {
+                scene.set_transition_override(Some(decode_transition(transition)?));
+            }
         }
+    }
+    if version >= FORMAT_VERSION {
+        if let Some(stinger) = value.get("stinger") {
+            if !matches!(stinger, Json::Null) {
+                scene.set_stinger_override(Some(decode_stinger(stinger)?));
+            }
+        }
+    }
+    for item in array_member(value, "items")? {
+        let item = decode_item(item, 0)?;
+        validate_item_sources(profile, &item)?;
         scene.add_item(item)?;
     }
     Ok(scene)
+}
+
+fn encode_transition(transition: TransitionSpec) -> Json {
+    let (kind, color, direction, swipe_in, luma) = match transition.kind() {
+        TransitionKind::Cut => ("cut", None, None, None, None),
+        TransitionKind::CrossFade => ("cross_fade", None, None, None, None),
+        TransitionKind::FadeToColor { color } => ("fade_to_color", Some(color), None, None, None),
+        TransitionKind::Slide { direction } => ("slide", None, Some(direction), None, None),
+        TransitionKind::Swipe {
+            direction,
+            swipe_in,
+        } => ("swipe", None, Some(direction), Some(swipe_in), None),
+        TransitionKind::LumaWipe {
+            pattern,
+            invert,
+            softness_milli,
+        } => (
+            "luma_wipe",
+            None,
+            None,
+            None,
+            Some((pattern, invert, softness_milli)),
+        ),
+    };
+    let mut members = vec![
+        ("kind", Json::string(kind)),
+        ("duration_ms", Json::number(transition.duration_millis())),
+    ];
+    if let Some(color) = color {
+        members.push((
+            "color",
+            Json::Array(color.into_iter().map(Json::number).collect()),
+        ));
+    }
+    if let Some(direction) = direction {
+        members.push(("direction", Json::string(direction.as_str())));
+    }
+    if let Some(swipe_in) = swipe_in {
+        members.push(("swipe_in", Json::Bool(swipe_in)));
+    }
+    if let Some((pattern, invert, softness_milli)) = luma {
+        members.push(("pattern", Json::string(pattern.as_str())));
+        members.push(("invert", Json::Bool(invert)));
+        members.push(("softness_milli", Json::number(softness_milli)));
+    }
+    Json::object(members)
+}
+
+fn encode_stinger(stinger: &StingerSpec) -> Json {
+    Json::object([
+        ("path", Json::string(stinger.resource_path())),
+        (
+            "transition_point_milli",
+            Json::number(stinger.transition_point_milli()),
+        ),
+        ("preload", Json::Bool(stinger.preload())),
+        ("hardware_decode", Json::Bool(stinger.hardware_decode())),
+    ])
+}
+
+fn decode_transition(value: &Json) -> Result<TransitionSpec, ProjectError> {
+    let kind = string_member(value, "kind")?;
+    let duration_millis = number_member(value, "duration_ms")?;
+    let transition = match kind {
+        "cut" => TransitionSpec::new(TransitionKind::Cut, duration_millis),
+        "cross_fade" => TransitionSpec::new(TransitionKind::CrossFade, duration_millis),
+        "fade_to_color" => {
+            let color = array_member(value, "color")?;
+            if color.len() != 4 {
+                return Err(invalid("transition color must contain four channels"));
+            }
+            let color = color
+                .iter()
+                .map(|channel| {
+                    channel
+                        .as_number::<u8>()
+                        .ok_or_else(|| invalid("transition color channel is out of range"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            TransitionSpec::new(
+                TransitionKind::FadeToColor {
+                    color: [color[0], color[1], color[2], color[3]],
+                },
+                duration_millis,
+            )
+        }
+        "slide" => {
+            let direction_value = string_member(value, "direction")?;
+            let direction = SlideDirection::parse(direction_value)
+                .ok_or_else(|| invalid(format!("unknown slide direction: {direction_value}")))?;
+            TransitionSpec::new(TransitionKind::Slide { direction }, duration_millis)
+        }
+        "swipe" => {
+            let direction_value = string_member(value, "direction")?;
+            let direction = SlideDirection::parse(direction_value)
+                .ok_or_else(|| invalid(format!("unknown swipe direction: {direction_value}")))?;
+            let swipe_in = value
+                .get("swipe_in")
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .ok_or_else(|| invalid("swipe_in must be a boolean"))
+                })
+                .transpose()?
+                .unwrap_or(false);
+            TransitionSpec::new(
+                TransitionKind::Swipe {
+                    direction,
+                    swipe_in,
+                },
+                duration_millis,
+            )
+        }
+        "luma_wipe" => {
+            let pattern_value = string_member(value, "pattern")?;
+            let pattern = LumaWipePattern::parse(pattern_value)
+                .ok_or_else(|| invalid(format!("unknown luma wipe pattern: {pattern_value}")))?;
+            let invert = value
+                .get("invert")
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .ok_or_else(|| invalid("luma wipe invert must be a boolean"))
+                })
+                .transpose()?
+                .unwrap_or(false);
+            let softness_milli = number_member(value, "softness_milli")?;
+            TransitionSpec::new(
+                TransitionKind::LumaWipe {
+                    pattern,
+                    invert,
+                    softness_milli,
+                },
+                duration_millis,
+            )
+        }
+        other => return Err(invalid(format!("unknown scene transition kind: {other}"))),
+    };
+    transition.map_err(ProjectError::Media)
+}
+
+fn decode_stinger(value: &Json) -> Result<StingerSpec, ProjectError> {
+    StingerSpec::new(
+        string_member(value, "path")?,
+        number_member(value, "transition_point_milli")?,
+        bool_member(value, "preload")?,
+        bool_member(value, "hardware_decode")?,
+    )
+    .map_err(ProjectError::Media)
+}
+
+fn validate_item_sources(profile: &Profile, item: &SceneItemSpec) -> Result<(), ProjectError> {
+    if item.is_source() && !profile.has_source(item.source_id()) {
+        return Err(ProjectError::UnknownSource(item.source_id().clone()));
+    }
+    if let Some(group) = item.group() {
+        for child in group.items() {
+            validate_item_sources(profile, child)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_scene_references(profile: &Profile) -> Result<(), ProjectError> {
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    for scene in profile.scenes() {
+        validate_scene_graph(profile, scene.id(), &mut visiting, &mut visited)?;
+    }
+    Ok(())
+}
+
+fn validate_scene_graph(
+    profile: &Profile,
+    scene_id: &Identifier,
+    visiting: &mut HashSet<Identifier>,
+    visited: &mut HashSet<Identifier>,
+) -> Result<(), ProjectError> {
+    if visited.contains(scene_id) {
+        return Ok(());
+    }
+    if !visiting.insert(scene_id.clone()) {
+        return Err(ProjectError::CircularSceneReference(scene_id.clone()));
+    }
+    let scene = profile
+        .scene(scene_id)
+        .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+    for item in scene.items() {
+        validate_scene_item_graph(profile, item, visiting, visited)?;
+    }
+    visiting.remove(scene_id);
+    visited.insert(scene_id.clone());
+    Ok(())
+}
+
+fn validate_scene_item_graph(
+    profile: &Profile,
+    item: &SceneItemSpec,
+    visiting: &mut HashSet<Identifier>,
+    visited: &mut HashSet<Identifier>,
+) -> Result<(), ProjectError> {
+    if let Some(target) = item.scene_id() {
+        if profile.scene(target).is_none() {
+            return Err(ProjectError::UnknownScene(target.clone()));
+        }
+        validate_scene_graph(profile, target, visiting, visited)?;
+    }
+    if let Some(group) = item.group() {
+        for child in group.items() {
+            validate_scene_item_graph(profile, child, visiting, visited)?;
+        }
+    }
+    Ok(())
 }
 
 fn decode_source(value: &Json) -> Result<SourceSpec, ProjectError> {
@@ -308,9 +616,29 @@ fn decode_source(value: &Json) -> Result<SourceSpec, ProjectError> {
     Ok(source)
 }
 
-fn decode_item(value: &Json) -> Result<SceneItemSpec, ProjectError> {
-    let mut item =
-        SceneItemSpec::new(string_member(value, "id")?, string_member(value, "source")?)?;
+fn decode_item(value: &Json, group_depth: usize) -> Result<SceneItemSpec, ProjectError> {
+    let id = string_member(value, "id")?;
+    let mut item = if let Some(group) = value.get("group") {
+        if group_depth >= MAX_GROUP_NESTING_DEPTH {
+            return Err(ProjectError::GroupNestingTooDeep(MAX_GROUP_NESTING_DEPTH));
+        }
+        if value.get("source").is_some() || value.get("scene").is_some() {
+            return Err(invalid("scene item cannot contain multiple targets"));
+        }
+        SceneItemSpec::with_group(id, decode_group(group, group_depth.saturating_add(1))?)?
+    } else if let Some(scene) = value.get("scene") {
+        let scene = scene
+            .as_str()
+            .ok_or_else(|| invalid("scene item `scene` is not a string"))?;
+        if value.get("source").is_some() {
+            return Err(invalid(
+                "scene item cannot contain both `source` and `scene`",
+            ));
+        }
+        SceneItemSpec::for_scene(id, scene)?
+    } else {
+        SceneItemSpec::new(id, string_member(value, "source")?)?
+    };
     item.set_transform(decode_transform(
         value
             .get("transform")
@@ -319,6 +647,14 @@ fn decode_item(value: &Json) -> Result<SceneItemSpec, ProjectError> {
     item.set_visible(bool_member(value, "visible")?);
     item.set_locked(bool_member(value, "locked")?);
     Ok(item)
+}
+
+fn decode_group(value: &Json, group_depth: usize) -> Result<GroupSpec, ProjectError> {
+    let mut group = GroupSpec::new(string_member(value, "id")?, string_member(value, "name")?)?;
+    for item in array_member(value, "items")? {
+        group.add_item(decode_item(item, group_depth)?)?;
+    }
+    Ok(group)
 }
 
 /// Reads the version-one scene-local source representation and normalizes it
@@ -352,7 +688,7 @@ fn decode_legacy_scene(value: &Json, profile: &mut Profile) -> Result<SceneSpec,
             profile.add_source(source)?;
             original_id
         };
-        item.source_id = source_id;
+        item.set_source_id(source_id);
         scene.add_item(item)?;
     }
     Ok(scene)
@@ -410,6 +746,8 @@ fn decode_transform(value: &Json) -> Result<FrameTransform, ProjectError> {
         bool_member(value, "flip_y")?,
         number_member(value, "opacity")?,
     )
+    .map_err(ProjectError::Media)?
+    .with_rotation_milli_degrees(optional_number_member(value, "rotation_milli_degrees", 0)?)
     .map_err(ProjectError::Media)?
     .with_crop(
         number_member(value, "crop_left")?,
@@ -504,6 +842,17 @@ fn number_member<T: std::str::FromStr>(value: &Json, key: &str) -> Result<T, Pro
         .get(key)
         .and_then(Json::as_number::<T>)
         .ok_or_else(|| invalid(format!("missing or out-of-range `{key}`")))
+}
+
+fn optional_number_member<T: std::str::FromStr>(
+    value: &Json,
+    key: &str,
+    default: T,
+) -> Result<T, ProjectError> {
+    match value.get(key) {
+        Some(_) => number_member(value, key),
+        None => Ok(default),
+    }
 }
 
 fn array_member<'a>(value: &'a Json, key: &str) -> Result<&'a [Json], ProjectError> {

@@ -7,8 +7,9 @@ use obs_rs_ui::DesktopState;
 use slint::ComponentHandle;
 
 use crate::{
-    apply_source_transform_to, selected_target, source_transform_document, I18n, MainWindow,
-    Palette, PreviewSurface, SourceTarget, SourceTransformWindow,
+    apply_source_transform_to, callbacks::canvas::canvas_item_for_target, scene_item_target,
+    source_transform_document, I18n, MainWindow, Palette, PreviewSurface, SceneItemTarget,
+    SourceTransformWindow,
 };
 
 /// Owns the scene-item transform dialog.
@@ -19,7 +20,7 @@ pub(crate) struct SourceTransformController {
     /// A dialog is open for as long as the user wants it to be, and the studio
     /// window behind it stays clickable, so the item it edits is fixed when it
     /// opens rather than looked up again at OK.
-    target: RefCell<Option<SourceTarget>>,
+    target: RefCell<Option<SceneItemTarget>>,
 }
 
 impl SourceTransformController {
@@ -55,24 +56,49 @@ fn install_open(
     controller: &Rc<SourceTransformController>,
 ) {
     let weak = ui.as_weak();
-    let state = Rc::clone(state);
-    let controller = Rc::clone(controller);
+    let window_state = Rc::clone(state);
+    let window_controller = Rc::clone(controller);
     ui.on_open_source_transform_window(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        let locale = state.borrow().locale();
-        controller
-            .window
-            .global::<I18n>()
-            .set_text(crate::i18n::catalog(locale));
-        controller.set_tokens(ui.global::<Palette>().get_tokens());
-        controller.target.replace(selected_target(&state.borrow()));
-        populate_from_project(&controller.window, &state);
-        if let Err(error) = controller.window.show() {
-            ui.set_status_message(format!("Transform window: {error}").into());
-        }
+        let target = ui.get_selected_source().to_string();
+        open_for_target(&ui, &window_state, &window_controller, &target);
     });
+
+    let weak = ui.as_weak();
+    let target_state = Rc::clone(state);
+    let target_controller = Rc::clone(controller);
+    ui.on_open_source_transform_for(move |target| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        open_for_target(&ui, &target_state, &target_controller, target.as_str());
+    });
+}
+
+fn open_for_target(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceTransformController,
+    item: &str,
+) {
+    let Some(target) = scene_item_target(&state.borrow(), item) else {
+        ui.set_status_message("Transform failed: the target is not a scene item".into());
+        return;
+    };
+    let locale = state.borrow().locale();
+    controller
+        .window
+        .global::<I18n>()
+        .set_text(crate::i18n::catalog(locale));
+    controller.set_tokens(ui.global::<Palette>().get_tokens());
+    controller.target.replace(Some(target.clone()));
+    populate_from_project(&controller.window, state, &target);
+    match controller.window.show() {
+        Ok(()) => controller.window.invoke_focus_keyboard_boundary(),
+        Err(error) => ui.set_status_message(format!("Transform window: {error}").into()),
+    }
 }
 
 fn install_actions(
@@ -118,21 +144,43 @@ fn install_actions(
     controller.window.on_close_window(move || {
         let _ = close_controller.window.hide();
     });
+
+    // Native window-manager close has the same cancel semantics as the
+    // explicit Cancel button, so a transient transform cannot be committed
+    // merely by dismissing the window chrome.
+    let native_close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        let _ = native_close_controller.window.hide();
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
-fn populate_from_project(window: &SourceTransformWindow, state: &Rc<RefCell<DesktopState>>) {
+fn populate_from_project(
+    window: &SourceTransformWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    target: &SceneItemTarget,
+) {
     let state = state.borrow();
-    let profile = state.project_session().project().active_profile_spec();
-    let item = state
-        .preview_scene()
-        .and_then(|scene_id| profile.and_then(|profile| profile.scene(scene_id)))
-        .and_then(|scene| state.selected_source().and_then(|id| scene.item(id)));
-    let source = item.and_then(|item| profile.and_then(|profile| profile.source(item.source_id())));
-    window.set_source_name(
-        source
-            .map_or_else(String::new, |source| source.name().to_owned())
-            .into(),
-    );
+    let profile = state
+        .project_session()
+        .project()
+        .profile(target.profile.as_str());
+    let item = profile
+        .and_then(|profile| canvas_item_for_target(profile, target.scene.as_str(), &target.item));
+    let source_name = item.and_then(|item| {
+        profile.and_then(|profile| {
+            if item.is_scene_reference() {
+                profile
+                    .scene(item.source_id())
+                    .map(|scene| scene.name().to_owned())
+            } else {
+                profile
+                    .source(item.source_id())
+                    .map(|source| source.name().to_owned())
+            }
+        })
+    });
+    window.set_source_name(source_name.unwrap_or_else(|| target.item.clone()).into());
     set_transform(
         window,
         item.map_or(
@@ -151,13 +199,14 @@ fn set_transform(window: &SourceTransformWindow, transform: FrameTransform) {
     window.set_crop_top(i32::try_from(transform.crop_top()).unwrap_or(i32::MAX));
     window.set_crop_right(i32::try_from(transform.crop_right()).unwrap_or(i32::MAX));
     window.set_crop_bottom(i32::try_from(transform.crop_bottom()).unwrap_or(i32::MAX));
+    window.set_rotation_degrees(transform.rotation_degrees());
     window.set_item_opacity(i32::from(transform.opacity()));
     window.set_flip_horizontal(transform.flip_x());
     window.set_flip_vertical(transform.flip_y());
 }
 
 fn read_transform(window: &SourceTransformWindow) -> Result<FrameTransform, Box<dyn Error>> {
-    FrameTransform::new(
+    let transform = FrameTransform::new(
         nonnegative(window.get_scale_x(), "scale-x")?,
         nonnegative(window.get_scale_y(), "scale-y")?,
         window.get_position_x(),
@@ -166,13 +215,15 @@ fn read_transform(window: &SourceTransformWindow) -> Result<FrameTransform, Box<
         window.get_flip_vertical(),
         u8::try_from(window.get_item_opacity())?,
     )?
-    .with_crop(
-        nonnegative(window.get_crop_left(), "crop-left")?,
-        nonnegative(window.get_crop_top(), "crop-top")?,
-        nonnegative(window.get_crop_right(), "crop-right")?,
-        nonnegative(window.get_crop_bottom(), "crop-bottom")?,
-    )
-    .map_err(Into::into)
+    .with_rotation_degrees(window.get_rotation_degrees())?;
+    transform
+        .with_crop(
+            nonnegative(window.get_crop_left(), "crop-left")?,
+            nonnegative(window.get_crop_top(), "crop-top")?,
+            nonnegative(window.get_crop_right(), "crop-right")?,
+            nonnegative(window.get_crop_bottom(), "crop-bottom")?,
+        )
+        .map_err(Into::into)
 }
 
 fn nonnegative(value: i32, field: &str) -> Result<u32, Box<dyn Error>> {

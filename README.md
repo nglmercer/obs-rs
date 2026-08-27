@@ -43,8 +43,8 @@ control surfaces:
   direct no-shell process launch, fixed environment negotiation, bounded
   `OBSFRM01` frame packets, a two-frame handoff queue, and frame-delivery
   timeouts.
-- `obs-rs-builtins` provides the built-in color, test-pattern, screen, window, and
-  camera CPU-fallback factories plus the Linux `x11_screen_capture` and
+- `obs-rs-builtins` provides the built-in color, test-pattern, screen, window,
+  and Nokhwa-backed camera factories plus the Linux `x11_screen_capture` and
   portal-backed `wayland_screen_capture` sources. A camera that is unplugged,
   busy, or missing leaves its source in the scene, reports why, and reconnects
   on its own instead of failing the project load.
@@ -58,8 +58,9 @@ control surfaces:
   drift diagnostics, provides one monotonic clock implementation for both worker
   traits, models independent device-clock drift deterministically, and runs bounded
   synchronized `MediaSession` ticks.
-- `obs-rs-render` defines portable texture/composition contracts and a deterministic
-  CPU backend with bounded texture bytes, lifecycle/readback metrics, and context-loss
+- `obs-rs-render` defines portable texture/composition contracts, explicit
+  program/preview/projector/encoder render-target roles, and a deterministic CPU
+  backend with bounded texture bytes, lifecycle/readback metrics, and context-loss
   recovery.
 - `obs-rs-output` provides validated video/audio packet encoders, muxer contracts,
   bounded packet back-pressure, a lossless Rust RLE video reference codec, a
@@ -82,8 +83,9 @@ control surfaces:
   real preview-to-program takes, mixer peak telemetry, deterministic bilingual
   labeled accessibility snapshots, strict terminal/HTTP command parsers, and an
   accessible browser page.
-- `obs-rs-gui` provides the first Slint desktop control room: preview/program
-  status cards with CPU-rendered RGBA scene frames, scene selection, transitions,
+- `obs-rs-gui` provides the first Slint desktop control room: viewport-sized
+  preview/program status cards with a replaceable presentation boundary, scene
+  selection, transitions,
   recording/streaming controls, scene/source ordering and visibility/lock controls,
   a mixer with gain/mute/peak state, a typed OBS-style source properties form with
   a display picker, a live microphone channel whose fader, mute, and meter drive
@@ -160,9 +162,15 @@ The camera list in the source properties offers the real V4L2 nodes discovered
 on the host, and selecting one starts a bounded `ffmpeg` reader for it. The
 microphone is chosen on the settings window's Audio page; the engine captures
 that device, and the mixer's input channel is named after it, so its fader,
-mute, and meter act on the audio that reaches the recording and the stream.
-`obs-rs-linux-check` reports whether the live `PipeWire` capture is running or
-the deterministic fallback took over.
+mute, and meter act on the audio that reaches the recording and the stream. If
+the configured microphone disappears, the engine keeps bounded deterministic
+fallback audio and retries that same device at a one-second media-time
+interval; an automatic microphone route rediscovers the first available input.
+A configured desktop playback monitor similarly returns to silence
+and retries only its selected route after a loss; an automatic route is
+rediscovered from the first available output. `obs-rs-linux-check` reports whether
+the live `PipeWire` capture is running or the deterministic fallback took over;
+this managed host cannot provide live unplug/replug evidence.
 
 Settings, the reopened project, and the dock layout are stored under
 `$XDG_CONFIG_HOME/obs-rs` (a file already present in the working directory keeps
@@ -179,6 +187,11 @@ ordinary tooling.
 |------|--------|------------|
 | `obs-rs-settings.toml` | flat [TOML](https://toml.io) table of `key = value` pairs | `obs-rs-config` |
 | `obs-rs-project.json` | JSON, tagged with `"format"` and `"version"` | `obs-rs-project` |
+
+The GUI keeps `obs-rs-project.json` as the shipped default for compatibility.
+Save As and collection workflows use `.obsrproj`; the GUI accepts both that
+current extension and legacy `.json` project paths, and rejects other file
+types before opening or writing them.
 
 Both are serialized deterministically — keys sorted, no incidental whitespace —
 so saving unchanged state twice produces byte-identical files and a project diff

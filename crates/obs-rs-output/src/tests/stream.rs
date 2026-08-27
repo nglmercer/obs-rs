@@ -29,7 +29,7 @@ fn stream_requeues_failed_packets_and_reconnects_without_loss() {
         transport,
         32,
         PacketDropPolicy::DropNewest,
-        ReconnectPolicy::new(2),
+        ReconnectPolicy::immediate(2),
     )
     .expect("stream");
     stream.connect().expect("connect stream");
@@ -49,6 +49,61 @@ fn stream_requeues_failed_packets_and_reconnects_without_loss() {
     assert_eq!(stream.metrics().sent_packets(), 1);
     assert_eq!(stream.metrics().reconnects(), 1);
     assert_eq!(stream.queued_bytes(), 0);
+}
+
+#[test]
+fn reference_stream_implements_the_shared_transport_lifecycle() {
+    let mut stream = StreamSession::new(
+        MemoryPacketTransport::new(),
+        32,
+        PacketDropPolicy::DropNewest,
+        ReconnectPolicy::new(1),
+    )
+    .expect("stream");
+    stream.connect().expect("connect stream");
+
+    assert_eq!(
+        StreamingTransport::poll(&mut stream).expect("poll stream"),
+        0
+    );
+    StreamingTransport::close(&mut stream).expect("close stream");
+    assert_eq!(stream.state(), StreamState::Closed);
+}
+
+#[test]
+fn reconnect_policy_is_capped_and_stream_reconnect_is_deferred_without_sleeping() {
+    let policy =
+        ReconnectPolicy::with_backoff(4, Duration::from_millis(100), Duration::from_millis(250));
+    assert_eq!(policy.delay_for_attempt(0), Duration::from_millis(100));
+    assert_eq!(policy.delay_for_attempt(1), Duration::from_millis(200));
+    assert_eq!(policy.delay_for_attempt(2), Duration::from_millis(250));
+    assert_eq!(policy.delay_for_attempt(3), Duration::from_millis(250));
+    assert_eq!(
+        ReconnectPolicy::immediate(4).delay_for_attempt(u32::MAX),
+        Duration::ZERO
+    );
+
+    let mut stream = StreamSession::new(
+        MemoryPacketTransport::new(),
+        32,
+        PacketDropPolicy::DropNewest,
+        policy,
+    )
+    .expect("stream");
+    stream.connect().expect("connect stream");
+    let now = std::time::Instant::now();
+    stream.disconnect_at(now);
+
+    assert_eq!(
+        stream.reconnect_at(now),
+        Ok(ReconnectOutcome::Deferred {
+            retry_after: Duration::from_millis(100),
+        })
+    );
+    assert_eq!(
+        stream.reconnect_at(now + Duration::from_millis(100)),
+        Ok(ReconnectOutcome::Reconnected)
+    );
 }
 
 #[test]
@@ -93,7 +148,7 @@ fn a_partially_sent_batch_is_requeued_in_timestamp_order() {
         transport,
         32,
         PacketDropPolicy::DropNewest,
-        ReconnectPolicy::new(2),
+        ReconnectPolicy::immediate(2),
     )
     .expect("stream");
     stream.connect().expect("connect stream");
@@ -141,6 +196,7 @@ fn tcp_transport_rejects_send_when_disconnected() {
 }
 
 #[test]
+#[ignore = "requires permission to bind a local TCP fixture socket"]
 fn websocket_transport_performs_upgrade_and_sends_masked_packet() {
     use std::{
         io::{Read, Write},

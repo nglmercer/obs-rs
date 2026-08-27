@@ -35,6 +35,7 @@ mod muxer;
 mod profile;
 mod queue;
 mod recording;
+mod replay;
 mod stream;
 mod types;
 mod video;
@@ -45,9 +46,10 @@ mod tests;
 
 pub use audio::{AudioEncoder, RawAudioEncoder, WavRecording, Y4mRecording};
 pub use config::{
-    AudioCodec, AudioEncoderConfig, EncoderImplementation, EncoderPreset, HlsConfig, RateControl,
-    RistConfig, RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode, StreamProtocol,
-    StreamTarget, VideoCodec, VideoEncoderConfig, WhipConfig,
+    streaming_service_preset, AudioCodec, AudioEncoderConfig, EncoderImplementation, EncoderPreset,
+    HlsConfig, RateControl, RistConfig, RtmpConfig, SecretString, SrtConfig, SrtKeyLength, SrtMode,
+    StreamProtocol, StreamTarget, StreamingServerPreset, StreamingServicePreset, VideoCodec,
+    VideoEncoderConfig, WhipConfig, RTMP_SERVICE_PRESETS,
 };
 pub use error::OutputError;
 pub use muxer::MemoryMuxer;
@@ -57,18 +59,24 @@ pub use profile::{
 };
 pub use queue::PacketQueue;
 pub use recording::{RawRecording, RawRecordingSession};
+pub use replay::{ReplayBuffer, ReplayPushOutcome, MAX_REPLAY_DURATION};
 pub use stream::{
     validate_websocket_handshake, MemoryPacketTransport, PacketMuxer, PacketTransport,
-    StreamSession, TcpPacketTransport, WebSocketPacketTransport,
+    StreamSession, StreamingTransport, TcpPacketTransport, WebSocketPacketTransport,
 };
 pub use types::{
     AudioInputRequirement, EncodedPacket, OutputState, PacketDropPolicy, PacketKind,
-    PacketPushOutcome, ReconnectPolicy, StreamMetrics, StreamState, VideoInputRequirement,
+    PacketPushOutcome, ReconnectOutcome, ReconnectPolicy, StreamMetrics, StreamState,
+    VideoInputRequirement, DEFAULT_RECONNECT_INITIAL_DELAY, DEFAULT_RECONNECT_MAX_DELAY,
 };
 pub use video::{
     encode_png, PngVideoEncoder, RawVideoEncoder, RleVideoDecoder, RleVideoEncoder, VideoEncoder,
 };
-pub use writers::{AtomicPacketFileWriter, AtomicRawFileWriter, AtomicY4mFileWriter};
+pub use writers::{
+    recover_stale_packet_files, AtomicPacketFileWriter, AtomicRawFileWriter, AtomicY4mFileWriter,
+    RecordingRecoveryReport, RecordingSegment, SegmentedPacketFileWriter, SegmentedRecordingPolicy,
+    MAX_RECORDING_SEGMENTS, MAX_SEGMENT_DURATION,
+};
 
 #[cfg(test)]
 pub(crate) use stream::{

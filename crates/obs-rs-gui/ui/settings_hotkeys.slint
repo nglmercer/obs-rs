@@ -1,0 +1,254 @@
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import {
+    AspectRatioLabel,
+    BrowsePathRow,
+    CheckRow,
+    ColorSwatch,
+    EditableResolutionCombo,
+    SegmentedControl,
+    SettingHint,
+    SettingRow,
+    SettingsCombo,
+    SettingsField,
+    SettingsGroup,
+    SettingsSection,
+    SettingsSlider,
+    SettingsSpinBox,
+    SettingsWarning,
+} from "settings_widgets.slint";
+import { I18n } from "i18n.slint";
+import { Metrics, Palette } from "palette.slint";
+
+// One component per settings category. Each takes only the properties it edits
+// and reports changes upward; the window owns the draft state.
+
+export component HotkeysPage inherits VerticalLayout {
+    in-out property <string> hotkey-swap;
+    in-out property <string> hotkey-previous-scene;
+    in-out property <string> hotkey-next-scene;
+    in-out property <string> hotkey-start-recording;
+    in-out property <string> hotkey-stop-recording;
+    in-out property <string> hotkey-start-streaming;
+    in-out property <string> hotkey-stop-streaming;
+    in-out property <string> hotkey-undo;
+    in-out property <string> hotkey-redo;
+    in-out property <string> hotkey-save-project;
+    in-out property <string> hotkey-cut-transition;
+    in-out property <string> hotkey-fade-transition;
+    in-out property <string> hotkey-save-replay;
+    in-out property <string> hotkey-start-replay;
+    in-out property <string> hotkey-stop-replay;
+    in-out property <string> hotkey-toggle-microphone-mute;
+    in-out property <string> hotkey-toggle-desktop-mute;
+    in-out property <string> hotkey-push-to-talk-microphone;
+    in-out property <string> hotkey-push-to-mute-microphone;
+    in-out property <string> hotkey-toggle-studio-mode;
+    in-out property <string> hotkey-toggle-selected-source-visibility;
+    in-out property <string> hotkey-toggle-selected-source-lock;
+    in-out property <string> hotkey-toggle-selected-source-projector;
+    in-out property <string> hotkey-toggle-preview-scene-projector;
+    in property <string> conflict-warning;
+    callback changed();
+    spacing: Metrics.ui.page-spacing;
+
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_hotkeys;
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_swap;
+            SettingsField {
+                text <=> root.hotkey-swap;
+                placeholder-text: "Space";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_previous_scene;
+            SettingsField {
+                text <=> root.hotkey-previous-scene;
+                placeholder-text: "F6";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_next_scene;
+            SettingsField {
+                text <=> root.hotkey-next-scene;
+                placeholder-text: "F7";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_start_recording;
+            SettingsField {
+                text <=> root.hotkey-start-recording;
+                placeholder-text: "Ctrl+R";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_stop_recording;
+            SettingsField {
+                text <=> root.hotkey-stop-recording;
+                placeholder-text: "Ctrl+Shift+R";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_start_streaming;
+            SettingsField {
+                text <=> root.hotkey-start-streaming;
+                placeholder-text: "Ctrl+B";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_stop_streaming;
+            SettingsField {
+                text <=> root.hotkey-stop-streaming;
+                placeholder-text: "Ctrl+Shift+B";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_undo;
+            SettingsField {
+                text <=> root.hotkey-undo;
+                placeholder-text: "Ctrl+Z";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_redo;
+            SettingsField {
+                text <=> root.hotkey-redo;
+                placeholder-text: "Ctrl+Y";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_save_project;
+            SettingsField {
+                text <=> root.hotkey-save-project;
+                placeholder-text: "Ctrl+S";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_cut_transition;
+            SettingsField {
+                text <=> root.hotkey-cut-transition;
+                placeholder-text: "Ctrl+T";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_fade_transition;
+            SettingsField {
+                text <=> root.hotkey-fade-transition;
+                placeholder-text: "Ctrl+Shift+F";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_save_replay;
+            SettingsField {
+                text <=> root.hotkey-save-replay;
+                placeholder-text: "F8";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_start_replay;
+            SettingsField {
+                text <=> root.hotkey-start-replay;
+                placeholder-text: "Ctrl+Shift+F8";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_stop_replay;
+            SettingsField {
+                text <=> root.hotkey-stop-replay;
+                placeholder-text: "Ctrl+Alt+F8";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_microphone_mute;
+            SettingsField {
+                text <=> root.hotkey-toggle-microphone-mute;
+                placeholder-text: "Ctrl+M";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_desktop_mute;
+            SettingsField {
+                text <=> root.hotkey-toggle-desktop-mute;
+                placeholder-text: "Ctrl+Shift+M";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_push_to_talk_microphone;
+            SettingsField {
+                text <=> root.hotkey-push-to-talk-microphone;
+                placeholder-text: "Ctrl+Space";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_push_to_mute_microphone;
+            SettingsField {
+                text <=> root.hotkey-push-to-mute-microphone;
+                placeholder-text: "Ctrl+Alt+Space";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_studio_mode;
+            SettingsField {
+                text <=> root.hotkey-toggle-studio-mode;
+                placeholder-text: "Ctrl+Shift+S";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_selected_source_visibility;
+            SettingsField {
+                text <=> root.hotkey-toggle-selected-source-visibility;
+                placeholder-text: "Ctrl+Shift+V";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_selected_source_lock;
+            SettingsField {
+                text <=> root.hotkey-toggle-selected-source-lock;
+                placeholder-text: "Ctrl+Shift+L";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_selected_source_projector;
+            SettingsField {
+                text <=> root.hotkey-toggle-selected-source-projector;
+                placeholder-text: "Ctrl+Shift+P";
+                edited => { root.changed(); }
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.hotkey_toggle_preview_scene_projector;
+            SettingsField {
+                text <=> root.hotkey-toggle-preview-scene-projector;
+                placeholder-text: "Ctrl+Shift+R";
+                edited => { root.changed(); }
+            }
+        }
+        if root.conflict-warning != "" : SettingsWarning {
+            text: I18n.text.settings_ui.hotkeys_conflict + ": " + root.conflict-warning;
+        }
+        SettingHint { text: I18n.text.settings_ui.hotkeys_hint; }
+    }
+    Rectangle { vertical-stretch: 1; }
+}

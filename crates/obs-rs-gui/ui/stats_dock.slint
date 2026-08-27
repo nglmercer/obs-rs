@@ -1,0 +1,59 @@
+import { VerticalBox } from "std-widgets.slint";
+import { DockHeader, FieldHeading, MutedText } from "theme.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// The built-in Stats dock is a presentation of diagnostics that have already
+// been produced by the preview and output refresh paths. It intentionally does
+// not request a render, poll a device, or touch an encoder from the UI.
+export component StatsDock inherits Rectangle {
+    in property <int> panel-kind;
+    in property <bool> floating;
+    in property <string> status-message;
+    in property <string> capture-capabilities;
+    in property <string> preview-metrics;
+    in property <string> output-metrics;
+
+    callback move-panel(int, int);
+    callback dock-drag-start(int, float, float);
+    callback dock-drag-moved(int, float, float);
+    callback dock-drag-end(int, float, float);
+    callback float-panel(int);
+    callback close-panel(int);
+
+    background: Palette.tokens.panel-bg;
+    border-width: 1px;
+    border-color: Palette.tokens.border;
+
+    VerticalBox {
+        padding: 0px;
+        spacing: 0px;
+        DockHeader {
+            title: I18n.text.stats_title;
+            panel-kind: root.panel-kind;
+            floating: root.floating;
+            move-panel(kind, delta) => { root.move-panel(kind, delta); }
+            dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+            dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+            dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
+            float-panel(kind) => { root.float-panel(kind); }
+            close-panel(kind) => { root.close-panel(kind); }
+        }
+        VerticalBox {
+            padding: 8px;
+            spacing: 6px;
+            MutedText {
+                text: I18n.text.diagnostics_description;
+            }
+            FieldHeading { text: I18n.text.runtime; }
+            MutedText { text: root.status-message; }
+            FieldHeading { text: I18n.text.preview; }
+            MutedText { text: root.preview-metrics; }
+            FieldHeading { text: I18n.text.output_title; }
+            MutedText { text: root.output-metrics; }
+            FieldHeading { text: I18n.text.capture_title; }
+            MutedText { text: root.capture-capabilities; }
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+}

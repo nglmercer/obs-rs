@@ -1,5 +1,5 @@
 use obs_rs_media::Timestamp;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use super::{error::OutputError, MAX_PACKET_BYTES};
 
@@ -159,23 +159,92 @@ pub enum StreamState {
     Closed,
 }
 
-/// Limits how many reconnect attempts a stream may make.
+/// Initial delay used by [`ReconnectPolicy::new`].
+pub const DEFAULT_RECONNECT_INITIAL_DELAY: Duration = Duration::from_millis(250);
+
+/// Maximum delay used by [`ReconnectPolicy::new`].
+pub const DEFAULT_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(8);
+
+/// Result of asking a transport to reconnect without blocking for its backoff.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReconnectOutcome {
+    /// The transport completed a reconnect attempt successfully.
+    Reconnected,
+    /// The transport remains disconnected until the reported delay expires.
+    Deferred { retry_after: Duration },
+}
+
+/// Limits and schedules reconnect attempts for a stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReconnectPolicy {
-    pub(crate) max_attempts: u32,
+    max_attempts: u32,
+    initial_delay: Duration,
+    maximum_delay: Duration,
 }
 
 impl ReconnectPolicy {
-    /// Creates a policy with a fixed maximum number of reconnect attempts.
+    /// Creates a policy with a capped exponential backoff.
     #[must_use]
-    pub const fn new(max_attempts: u32) -> Self {
-        Self { max_attempts }
+    pub fn new(max_attempts: u32) -> Self {
+        Self::with_backoff(
+            max_attempts,
+            DEFAULT_RECONNECT_INITIAL_DELAY,
+            DEFAULT_RECONNECT_MAX_DELAY,
+        )
+    }
+
+    /// Creates a policy with explicit delay bounds.
+    #[must_use]
+    pub fn with_backoff(
+        max_attempts: u32,
+        initial_delay: Duration,
+        maximum_delay: Duration,
+    ) -> Self {
+        Self {
+            max_attempts,
+            initial_delay,
+            maximum_delay: if maximum_delay < initial_delay {
+                initial_delay
+            } else {
+                maximum_delay
+            },
+        }
+    }
+
+    /// Creates a policy that permits immediate deterministic retries.
+    #[must_use]
+    pub fn immediate(max_attempts: u32) -> Self {
+        Self::with_backoff(max_attempts, Duration::ZERO, Duration::ZERO)
     }
 
     /// Returns the maximum number of reconnect attempts.
     #[must_use]
     pub const fn max_attempts(self) -> u32 {
         self.max_attempts
+    }
+
+    /// Returns the delay before the first reconnect attempt.
+    #[must_use]
+    pub const fn initial_delay(self) -> Duration {
+        self.initial_delay
+    }
+
+    /// Returns the largest delay between reconnect attempts.
+    #[must_use]
+    pub const fn maximum_delay(self) -> Duration {
+        self.maximum_delay
+    }
+
+    /// Returns the bounded delay for a zero-based reconnect attempt number.
+    #[must_use]
+    pub fn delay_for_attempt(self, attempt: u32) -> Duration {
+        let mut delay = self.initial_delay;
+        let mut step = 0;
+        while step < attempt && !delay.is_zero() && delay < self.maximum_delay {
+            delay = delay.saturating_mul(2).min(self.maximum_delay);
+            step = step.saturating_add(1);
+        }
+        delay
     }
 }
 

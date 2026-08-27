@@ -4,6 +4,12 @@ use std::{fmt, path::PathBuf};
 use url::Url;
 use zeroize::Zeroize;
 
+mod services;
+
+pub use services::{
+    streaming_service_preset, StreamingServerPreset, StreamingServicePreset, RTMP_SERVICE_PRESETS,
+};
+
 /// Text whose formatting traits never reveal its contents.
 #[derive(Clone, Default, Eq, PartialEq)]
 pub struct SecretString(String);
@@ -636,5 +642,91 @@ mod tests {
         let endpoint = srt.endpoint().expect("valid SRT endpoint");
         assert!(endpoint.contains("passphrase=secret+phrase"));
         assert!(endpoint.contains("streamid=%23%21%3A%3Ar%3Dfeed%2Cm%3Dpublish"));
+    }
+
+    #[test]
+    fn built_in_service_catalog_is_bounded_and_resolves_legacy_names() {
+        assert_eq!(RTMP_SERVICE_PRESETS.len(), 82);
+        assert_eq!(
+            streaming_service_preset("Custom").map(StreamingServicePreset::id),
+            Some("custom")
+        );
+        assert_eq!(
+            streaming_service_preset("youtube-rtmps").map(StreamingServicePreset::protocol),
+            Some(StreamProtocol::Rtmps)
+        );
+        assert_eq!(
+            streaming_service_preset("Facebook Live")
+                .and_then(StreamingServicePreset::stream_key_link),
+            Some("https://www.facebook.com/live/producer?ref=OBS")
+        );
+        assert_eq!(
+            streaming_service_preset("Twitch").map(StreamingServicePreset::default_server),
+            Some("live-hkg.twitch.tv/app")
+        );
+        assert_eq!(
+            streaming_service_preset("Amazon IVS").map(StreamingServicePreset::protocol),
+            Some(StreamProtocol::Rtmps)
+        );
+        let twitch = streaming_service_preset("Twitch").expect("Twitch preset");
+        assert_eq!(twitch.additional_servers().len(), 45);
+        assert_eq!(
+            twitch
+                .additional_servers()
+                .first()
+                .map(|server| server.display_name()),
+            Some("Asia: Seoul, South Korea")
+        );
+        assert_eq!(
+            streaming_service_preset("YouTube - RTMPS")
+                .expect("YouTube preset")
+                .additional_servers()
+                .len(),
+            1
+        );
+        assert!(streaming_service_preset("Custom")
+            .expect("custom preset")
+            .additional_servers()
+            .is_empty());
+        assert!(streaming_service_preset("not-a-service").is_none());
+    }
+
+    #[test]
+    fn service_catalog_ids_and_endpoints_are_unique_and_typed() {
+        for (index, preset) in RTMP_SERVICE_PRESETS.iter().enumerate() {
+            assert!(
+                RTMP_SERVICE_PRESETS[..index]
+                    .iter()
+                    .all(|other| other.id() != preset.id()),
+                "duplicate service id: {}",
+                preset.id()
+            );
+            assert!(!preset.default_server().is_empty());
+            assert!(matches!(
+                preset.protocol(),
+                StreamProtocol::Rtmp | StreamProtocol::Rtmps
+            ));
+            let config = RtmpConfig {
+                server: preset.default_server().to_owned(),
+                ..RtmpConfig::default()
+            };
+            assert!(
+                config.endpoint(preset.protocol()).is_some(),
+                "invalid endpoint for service: {}",
+                preset.id()
+            );
+            for server in preset.additional_servers() {
+                let config = RtmpConfig {
+                    server: server.server().to_owned(),
+                    ..RtmpConfig::default()
+                };
+                assert!(
+                    config.endpoint(preset.protocol()).is_some(),
+                    "invalid additional endpoint for service: {} ({})",
+                    preset.id(),
+                    server.display_name()
+                );
+            }
+        }
     }
 }

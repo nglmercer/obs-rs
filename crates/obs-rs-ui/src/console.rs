@@ -1,10 +1,13 @@
 use std::fmt;
 
-use obs_rs_media::{FrameTransition, MediaError};
+use obs_rs_media::{
+    parse_rgba8_hex, FrameTransition, LumaWipePattern, MediaError, SlideDirection,
+    DEFAULT_LUMA_WIPE_SOFTNESS_MILLI,
+};
 
 use super::{
     types::{UiCommand, UiLocale},
-    MAX_CONSOLE_COMMAND_BYTES,
+    DEFAULT_TRANSITION_DURATION_MILLIS, MAX_CONSOLE_COMMAND_BYTES,
 };
 
 /// A command understood by the safe terminal frontend.
@@ -196,6 +199,7 @@ fn parse_take_command<'a>(
 ) -> Result<ConsoleCommand, ConsoleCommandError> {
     Ok(ConsoleCommand::Apply(UiCommand::TakePreview {
         transition: parse_transition_value(command, words)?,
+        duration_ms: DEFAULT_TRANSITION_DURATION_MILLIS,
     }))
 }
 
@@ -203,7 +207,10 @@ fn parse_transition_value<'a>(
     command: &'static str,
     mut words: impl Iterator<Item = &'a str>,
 ) -> Result<FrameTransition, ConsoleCommandError> {
-    let kind = required_word(&mut words, "cut or fade")?;
+    let kind = required_word(
+        &mut words,
+        "cut, fade, color, slide, swipe, swipe_in, or luma",
+    )?;
     Ok(match kind {
         "cut" => {
             ensure_no_extra(command, words)?;
@@ -221,12 +228,139 @@ fn parse_transition_value<'a>(
                     })?;
             FrameTransition::cross_fade(progress).map_err(ConsoleCommandError::InvalidTransition)?
         }
+        "color" => {
+            let progress = required_word(&mut words, "color progress in 0..1000")?;
+            let color = required_word(&mut words, "color #RRGGBB or #RRGGBBAA")?;
+            ensure_no_extra(command, words)?;
+            let progress =
+                progress
+                    .parse::<u16>()
+                    .map_err(|_| ConsoleCommandError::InvalidArgument {
+                        command,
+                        value: progress.to_owned(),
+                    })?;
+            let color = parse_transition_color(command, color)?;
+            FrameTransition::fade_to_color(progress, color)
+                .map_err(ConsoleCommandError::InvalidTransition)?
+        }
+        "slide" => {
+            let (direction, progress) = parse_directional_progress(command, &mut words)?;
+            FrameTransition::slide(progress, direction)
+                .map_err(ConsoleCommandError::InvalidTransition)?
+        }
+        "swipe" => parse_swipe_value(command, &mut words, false)?,
+        "swipe_in" => parse_swipe_value(command, &mut words, true)?,
+        "luma" | "luma_wipe" => parse_luma_wipe_value(command, &mut words)?,
         value => {
             return Err(ConsoleCommandError::InvalidArgument {
                 command,
                 value: value.to_owned(),
             });
         }
+    })
+}
+
+fn parse_luma_wipe_value<'a>(
+    command: &'static str,
+    words: &mut impl Iterator<Item = &'a str>,
+) -> Result<FrameTransition, ConsoleCommandError> {
+    let pattern_value = required_word(words, "luma pattern linear-h or linear-v")?;
+    let pattern = LumaWipePattern::parse(pattern_value).ok_or_else(|| {
+        ConsoleCommandError::InvalidArgument {
+            command,
+            value: pattern_value.to_owned(),
+        }
+    })?;
+    let progress_value = required_word(words, "luma progress in 0..1000")?;
+    let progress_milli =
+        progress_value
+            .parse::<u16>()
+            .map_err(|_| ConsoleCommandError::InvalidArgument {
+                command,
+                value: progress_value.to_owned(),
+            })?;
+    let softness_milli = match words.next() {
+        Some(value) => value
+            .parse::<u16>()
+            .map_err(|_| ConsoleCommandError::InvalidArgument {
+                command,
+                value: value.to_owned(),
+            })?,
+        None => DEFAULT_LUMA_WIPE_SOFTNESS_MILLI,
+    };
+    let invert = match words.next() {
+        None | Some("normal" | "false") => false,
+        Some("invert" | "true") => true,
+        Some(value) => {
+            return Err(ConsoleCommandError::InvalidArgument {
+                command,
+                value: value.to_owned(),
+            });
+        }
+    };
+    ensure_no_extra(command, words)?;
+    FrameTransition::luma_wipe(progress_milli, pattern, invert, softness_milli)
+        .map_err(ConsoleCommandError::InvalidTransition)
+}
+
+fn parse_swipe_value<'a>(
+    command: &'static str,
+    words: &mut impl Iterator<Item = &'a str>,
+    default_swipe_in: bool,
+) -> Result<FrameTransition, ConsoleCommandError> {
+    let first = required_word(words, "swipe direction, mode, or progress")?;
+    let (swipe_in, first) = match first {
+        "in" => (true, required_word(words, "swipe direction or progress")?),
+        "out" => (false, required_word(words, "swipe direction or progress")?),
+        _ => (default_swipe_in, first),
+    };
+    let (direction, progress) = parse_directional_progress_from_first(command, words, first)?;
+    FrameTransition::swipe_with_mode(progress, direction, swipe_in)
+        .map_err(ConsoleCommandError::InvalidTransition)
+}
+
+fn parse_directional_progress<'a>(
+    command: &'static str,
+    words: &mut impl Iterator<Item = &'a str>,
+) -> Result<(SlideDirection, u16), ConsoleCommandError> {
+    let first = required_word(words, "transition direction or progress")?;
+    parse_directional_progress_from_first(command, words, first)
+}
+
+fn parse_directional_progress_from_first<'a>(
+    command: &'static str,
+    words: &mut impl Iterator<Item = &'a str>,
+    first: &'a str,
+) -> Result<(SlideDirection, u16), ConsoleCommandError> {
+    let (direction, progress) = if let Ok(progress) = first.parse::<u16>() {
+        (SlideDirection::Left, progress)
+    } else {
+        let direction =
+            SlideDirection::parse(first).ok_or_else(|| ConsoleCommandError::InvalidArgument {
+                command,
+                value: first.to_owned(),
+            })?;
+        let progress = required_word(words, "transition progress")?;
+        let progress =
+            progress
+                .parse::<u16>()
+                .map_err(|_| ConsoleCommandError::InvalidArgument {
+                    command,
+                    value: progress.to_owned(),
+                })?;
+        (direction, progress)
+    };
+    ensure_no_extra(command, words)?;
+    Ok((direction, progress))
+}
+
+fn parse_transition_color(
+    command: &'static str,
+    value: &str,
+) -> Result<[u8; 4], ConsoleCommandError> {
+    parse_rgba8_hex(value).ok_or_else(|| ConsoleCommandError::InvalidArgument {
+        command,
+        value: value.to_owned(),
     })
 }
 

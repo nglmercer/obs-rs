@@ -36,7 +36,15 @@ export component AppNavbar inherits Rectangle {
     in property <bool> show-mixer;
     in property <bool> show-transitions;
     in property <bool> show-controls;
+    in property <bool> show-stats;
+    in property <string> hotkey-undo;
+    in property <string> hotkey-redo;
+    in property <string> hotkey-save-project;
+    in property <string> hotkey-cut-transition;
+    in property <string> hotkey-fade-transition;
+    in property <string> hotkey-toggle-studio-mode;
     in property <bool> studio-mode;
+    in property <int> view-mode;
     callback menu-action(string);
     callback select-view-mode(int);
     callback select-profile(string);
@@ -105,14 +113,16 @@ export component AppNavbar inherits Rectangle {
         x: file-button.x;
         y: root.height;
         width: 224px;
-        height: 200px;
+        height: 252px;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
             MenuEntry { label: I18n.text.menu_new_project; clicked => { root.menu-action("new-project"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_open_project; clicked => { root.menu-action("load-project"); file-popup.close(); } }
-            MenuEntry { label: I18n.text.menu_save; shortcut: "Ctrl+S"; clicked => { root.menu-action("save-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_save; shortcut: root.hotkey-save-project; clicked => { root.menu-action("save-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_save_as; clicked => { root.menu-action("save-project-as"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_recover_project; clicked => { root.menu-action("recover-project"); file-popup.close(); } }
+            MenuEntry { label: I18n.text.discard_recovery; clicked => { root.menu-action("discard-project-recovery"); file-popup.close(); } }
             MenuEntry { label: I18n.text.menu_export_diagnostics; clicked => { root.menu-action("export-diagnostics"); file-popup.close(); } }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
             MenuEntry { label: I18n.text.menu_settings; clicked => { root.menu-action("settings"); file-popup.close(); } }
@@ -129,13 +139,13 @@ export component AppNavbar inherits Rectangle {
             spacing: 1px;
             MenuEntry {
                 label: I18n.text.menu_undo;
-                shortcut: "Ctrl+Z";
+                shortcut: root.hotkey-undo;
                 enabled: root.can-undo;
                 clicked => { root.menu-action("undo"); edit-popup.close(); }
             }
             MenuEntry {
                 label: I18n.text.menu_redo;
-                shortcut: "Ctrl+Y";
+                shortcut: root.hotkey-redo;
                 enabled: root.can-redo;
                 clicked => { root.menu-action("redo"); edit-popup.close(); }
             }
@@ -146,17 +156,26 @@ export component AppNavbar inherits Rectangle {
         x: view-button.x;
         y: root.height;
         width: 260px;
-        height: 108px;
+        height: 194px;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
             MenuEntry {
                 label: I18n.text.menu_studio_mode;
+                shortcut: root.hotkey-toggle-studio-mode;
                 checkable: true;
                 checked: root.studio-mode;
                 clicked => { root.select-view-mode(-1); view-popup.close(); }
             }
+            MenuEntry {
+                label: I18n.text.menu_multiview;
+                checkable: true;
+                checked: root.view-mode == 2;
+                clicked => { root.select-view-mode(2); view-popup.close(); }
+            }
+            MenuEntry { label: I18n.text.menu_multiview_projector; clicked => { root.menu-action("projector-multiview"); view-popup.close(); } }
             MenuEntry { label: I18n.text.menu_preview_projector; clicked => { root.menu-action("projector-preview"); view-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_source_projector; clicked => { root.menu-action("projector-source"); view-popup.close(); } }
             MenuEntry { label: I18n.text.menu_program_projector; clicked => { root.menu-action("projector-program"); view-popup.close(); } }
         }
     }
@@ -164,7 +183,7 @@ export component AppNavbar inherits Rectangle {
         x: docks-button.x;
         y: root.height;
         width: 224px;
-        height: 196px;
+        height: 220px;
         VerticalBox {
             padding: 6px;
             spacing: 1px;
@@ -198,6 +217,12 @@ export component AppNavbar inherits Rectangle {
                 checked: root.show-controls;
                 clicked => { root.menu-action("toggle-controls"); docks-popup.close(); }
             }
+            MenuEntry {
+                label: I18n.text.menu_stats;
+                checkable: true;
+                checked: root.show-stats;
+                clicked => { root.menu-action("toggle-stats"); docks-popup.close(); }
+            }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
             MenuEntry { label: I18n.text.menu_reset_layout; clicked => { root.menu-action("reset-layout"); docks-popup.close(); } }
         }
@@ -225,7 +250,7 @@ export component AppNavbar inherits Rectangle {
         y: root.height;
         // The discovered collections are listed inline the way the profile
         // menu lists profiles, so switching is one click rather than a dialog.
-        height: 108px + (root.collection-rows.length * 29px);
+        height: 224px + (root.collection-rows.length * 29px);
         width: 260px;
         VerticalBox {
             padding: 6px;
@@ -238,6 +263,10 @@ export component AppNavbar inherits Rectangle {
             }
             Rectangle { height: 1px; background: Palette.tokens.border-strong; }
             MenuEntry { label: I18n.text.menu_new_collection; clicked => { root.menu-action("new-collection"); collection-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_duplicate_collection; clicked => { root.menu-action("duplicate-collection"); collection-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_rename_collection; clicked => { root.menu-action("rename-collection"); collection-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_export_collection; clicked => { root.menu-action("export-collection"); collection-popup.close(); } }
+            MenuEntry { label: I18n.text.menu_import_collection; clicked => { root.menu-action("import-collection"); collection-popup.close(); } }
             MenuEntry { label: I18n.text.menu_save_collection; clicked => { root.menu-action("save-collection"); collection-popup.close(); } }
         }
     }

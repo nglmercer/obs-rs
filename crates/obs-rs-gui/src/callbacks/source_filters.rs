@@ -1,71 +1,155 @@
 //! Controller for the standalone source Filters window.
 //!
-//! The controller owns only selection and view drafts. Every project mutation
-//! is dispatched as a validated `ProjectCommand`, so list order, names,
-//! enabled state, and settings all participate in undo/redo together with the
-//! rest of the project.
+//! The controller owns the open source target, filter selection, and view
+//! drafts. Every project mutation is dispatched as a validated
+//! `ProjectCommand`, so list order, names, enabled state, and settings all
+//! participate in undo/redo together with the rest of the project.
 
 use std::{cell::RefCell, error::Error, rc::Rc};
 
 use obs_rs_config::Config;
 use obs_rs_project::{ProjectCommand, SourceFilterCategory, SourceFilterSpec};
-use obs_rs_ui::{DesktopState, UiCommand};
+use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    filter_properties, refresh_ui, I18n, MainWindow, Palette, PreviewSurface, SourceFilterRow,
-    SourceFiltersWindow,
+    filter_properties, refresh_ui, source_target, source_target_is_locked, I18n, MainWindow,
+    Palette, PreviewSurface, SourceFilterRow, SourceFiltersWindow, SourceTarget,
 };
 
 #[derive(Clone, Copy)]
 struct FilterDefinition {
     kind: &'static str,
     name: &'static str,
+    spanish: &'static str,
     category: SourceFilterCategory,
 }
 
-const FILTER_DEFINITIONS: [FilterDefinition; 7] = [
+const FILTER_DEFINITIONS: [FilterDefinition; 18] = [
     FilterDefinition {
-        kind: "noise_suppression",
-        name: "Noise Suppression",
+        kind: "gain",
+        name: "Gain",
+        spanish: "Ganancia",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "invert_polarity",
+        name: "Invert Polarity",
+        spanish: "Invertir polaridad",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "limiter",
+        name: "Limiter",
+        spanish: "Limitador",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "expander",
+        name: "Expander",
+        spanish: "Expansor",
+        category: SourceFilterCategory::AudioVideo,
+    },
+    FilterDefinition {
+        kind: "noise_gate",
+        name: "Noise Gate",
+        spanish: "Puerta de ruido",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {
         kind: "compressor",
         name: "Compressor",
+        spanish: "Compresor",
         category: SourceFilterCategory::AudioVideo,
     },
     FilterDefinition {
         kind: "grayscale",
         name: "Grayscale",
+        spanish: "Escala de grises",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "brightness",
         name: "Brightness",
+        spanish: "Brillo",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "opacity",
         name: "Opacity",
+        spanish: "Opacidad",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "crop_pad",
         name: "Crop/Pad",
+        spanish: "Recorte/Relleno",
         category: SourceFilterCategory::Effect,
     },
     FilterDefinition {
         kind: "color_correction",
         name: "Color Correction",
+        spanish: "Corrección de color",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "color_multiply_add",
+        name: "Color Multiply/Add",
+        spanish: "Multiplicar/Añadir color",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "luma_key",
+        name: "Luma Key",
+        spanish: "Clave de luma",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "color_key",
+        name: "Color Key",
+        spanish: "Clave de color",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "chroma_key",
+        name: "Chroma Key",
+        spanish: "Clave de croma",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "sharpen",
+        name: "Sharpen",
+        spanish: "Nitidez",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "scroll",
+        name: "Scroll",
+        spanish: "Desplazamiento",
+        category: SourceFilterCategory::Effect,
+    },
+    FilterDefinition {
+        kind: "render_delay",
+        name: "Render Delay",
+        spanish: "Retardo de renderizado",
         category: SourceFilterCategory::Effect,
     },
 ];
+
+impl FilterDefinition {
+    fn display_name(self, locale: UiLocale) -> &'static str {
+        match locale {
+            UiLocale::English => self.name,
+            UiLocale::Spanish => self.spanish,
+        }
+    }
+}
 
 /// Owns the standalone Filters window and its selected instance ID.
 pub(crate) struct SourceFiltersController {
     window: SourceFiltersWindow,
     selected: RefCell<String>,
+    target: RefCell<Option<SourceTarget>>,
 }
 
 impl SourceFiltersController {
@@ -89,6 +173,7 @@ pub(crate) fn install_source_filters_window(
     let controller = Rc::new(SourceFiltersController {
         window: SourceFiltersWindow::new()?,
         selected: RefCell::new(String::new()),
+        target: RefCell::new(None),
     });
     install_open(ui, state, surface, &controller);
     install_actions(ui, state, surface, &controller);
@@ -102,18 +187,44 @@ fn install_open(
     controller: &Rc<SourceFiltersController>,
 ) {
     let weak = ui.as_weak();
-    let state = Rc::clone(state);
-    let controller = Rc::clone(controller);
+    let window_state = Rc::clone(state);
+    let window_controller = Rc::clone(controller);
     ui.on_open_source_filters_window(move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
-        controller.set_tokens(ui.global::<Palette>().get_tokens());
-        refresh_window(&state, &controller);
-        if let Err(error) = controller.window.show() {
-            ui.set_status_message(format!("Filters window: {error}").into());
-        }
+        let target = ui.get_selected_source().to_string();
+        open_for_target(&ui, &window_state, &window_controller, &target);
     });
+
+    let weak = ui.as_weak();
+    let state = Rc::clone(state);
+    let controller = Rc::clone(controller);
+    ui.on_open_source_filters_for(move |target| {
+        let Some(ui) = weak.upgrade() else {
+            return;
+        };
+        open_for_target(&ui, &state, &controller, target.as_str());
+    });
+}
+
+fn open_for_target(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
+    item: &str,
+) {
+    let Some(target) = source_target(&state.borrow(), item) else {
+        ui.set_status_message("Source filter failed: the target is not a source".into());
+        return;
+    };
+    controller.target.replace(Some(target));
+    controller.set_tokens(ui.global::<Palette>().get_tokens());
+    refresh_window(state, controller);
+    match controller.window.show() {
+        Ok(()) => controller.window.invoke_focus_keyboard_boundary(),
+        Err(error) => ui.set_status_message(format!("Filters window: {error}").into()),
+    }
 }
 
 fn install_actions(
@@ -218,6 +329,15 @@ fn install_actions(
     controller.window.on_close_window(move || {
         let _ = close_controller.window.hide();
     });
+
+    // Keep native window-manager dismissal on the same close path as the
+    // editor's Cancel/Escape boundary. Filter mutations are already
+    // immediate; this only guarantees that the editor is hidden explicitly.
+    let native_close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        let _ = native_close_controller.window.hide();
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 fn report(
@@ -239,10 +359,11 @@ fn add_filter(
 ) -> Result<(), Box<dyn Error>> {
     let definition =
         definition(kind).ok_or_else(|| std::io::Error::other("unknown filter kind"))?;
-    let (profile, source, locked) = source_context(state)?;
+    let locale = state.borrow().locale();
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let id = unique_filter_id(state, &source, kind);
-    let name = filter_instance_name(definition.name, definition.kind, &id);
+    let name = filter_instance_name(definition.display_name(locale), definition.kind, &id);
     let filter = SourceFilterSpec::with_category(
         &id,
         &name,
@@ -265,7 +386,7 @@ fn remove_filter(
     state: &Rc<RefCell<DesktopState>>,
     controller: &SourceFiltersController,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter = selected_id(controller)?;
     state
@@ -283,7 +404,7 @@ fn toggle_filter(
     state: &Rc<RefCell<DesktopState>>,
     controller: &SourceFiltersController,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
     let enabled = filter_snapshot(state, &source, &filter_id)
@@ -305,7 +426,7 @@ fn move_filter(
     controller: &SourceFiltersController,
     delta: i32,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
     let index = filter_index(state, &source, &filter_id)
@@ -332,7 +453,7 @@ fn rename_filter(
     controller: &SourceFiltersController,
     name: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter = selected_id(controller)?;
     state
@@ -352,7 +473,7 @@ fn edit_property(
     key: &str,
     value: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let (profile, source, locked) = source_context(state)?;
+    let (profile, source, locked) = source_context(state, controller)?;
     ensure_unlocked(locked)?;
     let filter_id = selected_id(controller)?;
     let filter = filter_snapshot(state, &source, &filter_id)
@@ -378,35 +499,26 @@ fn edit_property(
 
 fn source_context(
     state: &Rc<RefCell<DesktopState>>,
+    controller: &SourceFiltersController,
 ) -> Result<(String, String, bool), Box<dyn Error>> {
+    let target = controller
+        .target
+        .borrow()
+        .clone()
+        .ok_or_else(|| std::io::Error::other("no source target is open"))?;
     let state = state.borrow();
     let profile = state
         .project_session()
         .project()
-        .active_profile()
-        .to_owned();
-    let scene = state
-        .preview_scene()
-        .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?
-        .to_owned();
-    let item = state
-        .selected_source()
-        .ok_or_else(|| std::io::Error::other("no source is selected"))?
-        .to_owned();
-    let profile_spec = state
-        .project_session()
-        .project()
-        .active_profile_spec()
-        .ok_or_else(|| std::io::Error::other("active profile is missing"))?;
-    let item = profile_spec
-        .scene(scene.as_str())
-        .and_then(|scene| scene.item(item.as_str()))
-        .ok_or_else(|| std::io::Error::other("selected source is missing"))?;
-    Ok((
-        profile.to_string(),
-        item.source_id().to_string(),
-        item.locked(),
-    ))
+        .profile(target.profile.as_str());
+    if profile
+        .and_then(|profile| profile.source(target.source.as_str()))
+        .is_none()
+    {
+        return Err(std::io::Error::other("source definition is missing").into());
+    }
+    let locked = source_target_is_locked(&state, &target);
+    Ok((target.profile, target.source, locked))
 }
 
 fn filter_snapshot(
@@ -502,7 +614,10 @@ fn filter_instance_name(base: &str, kind: &str, id: &str) -> String {
         .map_or_else(|| base.to_owned(), |ordinal| format!("{base} {ordinal}"))
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the filter editor refresh keeps all dependent rows synchronized"
+)]
 fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersController) {
     let locale = state.borrow().locale();
     controller
@@ -510,15 +625,16 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
         .global::<I18n>()
         .set_text(crate::i18n::catalog(locale));
 
+    let target = controller.target.borrow().clone();
     let (source_name, filters) = {
         let state = state.borrow();
-        let scene_id = state.preview_scene().unwrap_or_default();
-        let item_id = state.selected_source().unwrap_or_default();
-        let profile = state.project_session().project().active_profile_spec();
-        let source = profile
-            .and_then(|profile| profile.scene(scene_id))
-            .and_then(|scene| scene.item(item_id))
-            .and_then(|item| profile.and_then(|profile| profile.source(item.source_id())));
+        let source = target.as_ref().and_then(|target| {
+            state
+                .project_session()
+                .project()
+                .profile(target.profile.as_str())
+                .and_then(|profile| profile.source(target.source.as_str()))
+        });
         (
             source.map_or_else(String::new, |source| source.name().to_owned()),
             source.map_or_else(Vec::new, |source| source.filters().to_vec()),
@@ -537,23 +653,35 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
         );
     }
     let selected = controller.selected.borrow().clone();
-    let make_row = |filter: &SourceFilterSpec| SourceFilterRow {
+    let make_row = |filter: &SourceFilterSpec, index: usize, count: i32| SourceFilterRow {
         id: filter.id().as_str().into(),
         name: filter.name().into(),
-        kind: filter_display_name(filter.kind().as_str()).into(),
+        kind: filter_display_name(filter.kind().as_str(), locale).into(),
         category: filter.category().id().into(),
+        index: i32::try_from(index).unwrap_or(i32::MAX),
+        count,
         enabled: filter.enabled(),
         selected: filter.id().as_str() == selected,
     };
-    let audio = filters
+    let audio_filters = filters
         .iter()
         .filter(|filter| filter.category() == SourceFilterCategory::AudioVideo)
-        .map(make_row)
         .collect::<Vec<_>>();
-    let effects = filters
+    let audio_count = i32::try_from(audio_filters.len()).unwrap_or(i32::MAX);
+    let audio = audio_filters
+        .into_iter()
+        .enumerate()
+        .map(|(index, filter)| make_row(filter, index, audio_count))
+        .collect::<Vec<_>>();
+    let effect_filters = filters
         .iter()
         .filter(|filter| filter.category() == SourceFilterCategory::Effect)
-        .map(make_row)
+        .collect::<Vec<_>>();
+    let effect_count = i32::try_from(effect_filters.len()).unwrap_or(i32::MAX);
+    let effects = effect_filters
+        .into_iter()
+        .enumerate()
+        .map(|(index, filter)| make_row(filter, index, effect_count))
         .collect::<Vec<_>>();
     controller
         .window
@@ -579,7 +707,7 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
     controller.window.set_selected_filter_kind(
         selected_filter
             .map_or_else(String::new, |filter| {
-                filter_display_name(filter.kind().as_str()).to_owned()
+                filter_display_name(filter.kind().as_str(), locale).to_owned()
             })
             .into(),
     );
@@ -610,7 +738,7 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
 
     let names = FILTER_DEFINITIONS
         .iter()
-        .map(|definition| SharedString::from(definition.name))
+        .map(|definition| SharedString::from(definition.display_name(locale)))
         .collect::<Vec<_>>();
     let kinds = FILTER_DEFINITIONS
         .iter()
@@ -624,8 +752,8 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
         .set_available_filter_kinds(ModelRc::new(VecModel::from(kinds)));
 }
 
-fn filter_display_name(kind: &str) -> &str {
-    definition(kind).map_or(kind, |definition| definition.name)
+fn filter_display_name(kind: &str, locale: UiLocale) -> &str {
+    definition(kind).map_or(kind, |definition| definition.display_name(locale))
 }
 
 // Keep the public test surface small while allowing headless GUI tests to
@@ -635,4 +763,24 @@ pub(crate) fn source_filters_window(
     controller: &Rc<SourceFiltersController>,
 ) -> &SourceFiltersWindow {
     controller.window()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_catalog_has_bounded_bilingual_names() {
+        assert_eq!(FILTER_DEFINITIONS.len(), 18);
+        assert!(FILTER_DEFINITIONS
+            .iter()
+            .all(|definition| !definition.name.is_empty() && !definition.spanish.is_empty()));
+        assert_eq!(filter_display_name("gain", UiLocale::English), "Gain");
+        assert_eq!(filter_display_name("gain", UiLocale::Spanish), "Ganancia");
+        assert_eq!(
+            filter_display_name("invert_polarity", UiLocale::Spanish),
+            "Invertir polaridad"
+        );
+        assert_eq!(filter_display_name("unknown", UiLocale::Spanish), "unknown");
+    }
 }

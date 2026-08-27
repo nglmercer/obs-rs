@@ -1,16 +1,14 @@
 import { Button, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { CategoryRow, SettingsFooter } from "settings_widgets.slint";
-import {
-    AccessibilityPage,
-    AdvancedPage,
-    AppearancePage,
-    AudioPage,
-    GeneralPage,
-    HotkeysPage,
-    OutputPage,
-    StreamPage,
-    VideoPage,
-} from "settings_pages.slint";
+import { GeneralPage } from "settings_general.slint";
+import { AppearancePage } from "settings_appearance.slint";
+import { StreamPage } from "settings_stream.slint";
+import { OutputPage } from "settings_output.slint";
+import { AudioPage } from "settings_audio.slint";
+import { VideoPage } from "settings_video.slint";
+import { HotkeysPage } from "settings_hotkeys.slint";
+import { AccessibilityPage } from "settings_accessibility.slint";
+import { AdvancedPage } from "settings_advanced.slint";
 import { I18n } from "i18n.slint";
 import { Metrics, Palette } from "palette.slint";
 
@@ -45,6 +43,8 @@ export component SettingsWindow inherits Window {
     in-out property <bool> confirm-stop-stream;
     in-out property <bool> confirm-stop-recording;
     in-out property <bool> auto-record-when-streaming;
+    in-out property <int> snap-distance;
+    in-out property <bool> show-safe-areas;
     // Appearance
     in property <[string]> theme-names;
     in-out property <int> theme-index;
@@ -64,7 +64,10 @@ export component SettingsWindow inherits Window {
     in property <bool> stream-show-hls;
     in property <bool> stream-show-rist;
     in property <bool> stream-show-reference;
-    in-out property <string> rtmp-service;
+    in property <[string]> rtmp-service-names;
+    in-out property <int> rtmp-service-index;
+    in property <[string]> rtmp-server-names;
+    in-out property <int> rtmp-server-index;
     in-out property <string> rtmp-server;
     in-out property <string> rtmp-stream-key;
     in-out property <bool> stream-reconnect;
@@ -117,12 +120,21 @@ export component SettingsWindow inherits Window {
     in property <[string]> recording-format-names;
     in-out property <int> recording-format-index;
     in property <bool> recording-format-locked;
+    in-out property <bool> recording-auto-remux;
+    in property <bool> recording-auto-remux-supported;
     in property <[string]> recording-codec-names;
     in-out property <int> recording-codec-index;
     in property <[string]> recording-audio-encoder-names;
     in-out property <int> recording-audio-encoder-index;
     in property <string> recording-file-preview;
     in property <bool> software-encoding-warning;
+    in-out property <int> replay-buffer-duration;
+    in-out property <int> replay-buffer-capacity;
+    in-out property <bool> recording-split-enabled;
+    in property <bool> recording-split-supported;
+    in-out property <int> recording-split-duration-minutes;
+    in-out property <int> recording-split-size-mib;
+    in-out property <int> recording-split-max-segments;
     // Audio
     in property <[string]> sample-rate-names;
     in-out property <int> sample-rate-index;
@@ -130,8 +142,17 @@ export component SettingsWindow inherits Window {
     in-out property <int> channel-index;
     in property <[string]> audio-device-names;
     in-out property <int> audio-device-index;
+    in property <[string]> audio-monitor-output-names;
+    in-out property <int> audio-monitor-output-index;
+    in property <[string]> microphone-monitor-mode-names;
+    in-out property <int> microphone-monitor-mode-index;
+    in property <[string]> desktop-monitor-mode-names;
+    in-out property <int> desktop-monitor-mode-index;
+    in-out property <int> audio-input-sync-offset;
+    in-out property <int> desktop-audio-sync-offset;
     in property <string> devices-summary;
     in property <bool> audio-input-missing;
+    in property <bool> audio-monitor-output-missing;
     callback refresh-audio-devices();
     // Video
     in property <[string]> resolution-names;
@@ -157,10 +178,30 @@ export component SettingsWindow inherits Window {
     in property <bool> downscale-active;
     // Hotkeys
     in-out property <string> hotkey-swap;
+    in-out property <string> hotkey-previous-scene;
+    in-out property <string> hotkey-next-scene;
     in-out property <string> hotkey-start-recording;
     in-out property <string> hotkey-stop-recording;
     in-out property <string> hotkey-start-streaming;
     in-out property <string> hotkey-stop-streaming;
+    in-out property <string> hotkey-undo;
+    in-out property <string> hotkey-redo;
+    in-out property <string> hotkey-save-project;
+    in-out property <string> hotkey-cut-transition;
+    in-out property <string> hotkey-fade-transition;
+    in-out property <string> hotkey-save-replay;
+    in-out property <string> hotkey-start-replay;
+    in-out property <string> hotkey-stop-replay;
+    in-out property <string> hotkey-toggle-microphone-mute;
+    in-out property <string> hotkey-toggle-desktop-mute;
+    in-out property <string> hotkey-push-to-talk-microphone;
+    in-out property <string> hotkey-push-to-mute-microphone;
+    in-out property <string> hotkey-toggle-studio-mode;
+    in-out property <string> hotkey-toggle-selected-source-visibility;
+    in-out property <string> hotkey-toggle-selected-source-lock;
+    in-out property <string> hotkey-toggle-selected-source-projector;
+    in-out property <string> hotkey-toggle-preview-scene-projector;
+    in-out property <string> hotkeys-conflict;
     // Accessibility
     in-out property <string> preview-border-color;
     in-out property <string> program-border-color;
@@ -183,15 +224,67 @@ export component SettingsWindow inherits Window {
     callback preview-density(int);
     callback preview-language(int);
     callback select-stream-protocol(int);
+    callback select-stream-service(int);
+    callback select-stream-server(int);
     callback select-output-mode(int);
     callback select-recording-quality(int);
+    callback select-recording-format(int);
+    callback refresh-recording-page();
     callback edit-base-resolution(string);
     callback edit-output-resolution(string);
     callback select-fps-mode(int);
     callback select-frame-rate(int);
+    callback select-audio-monitor-output(int);
+    callback select-microphone-monitor-mode(int);
+    callback select-desktop-monitor-mode(int);
     callback browse-recording-directory();
 
-    HorizontalLayout {
+    settings-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Settings keep a draft until Apply or OK. Escape restores the
+        // committed document; Ctrl+Enter accepts it without stealing plain
+        // Enter from text editors on the pages.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-settings();
+                return accept;
+            }
+            if event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-settings();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-settings();
+                return accept;
+            }
+            if event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-settings();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
         padding: Metrics.ui.content-margin;
         spacing: Metrics.ui.content-margin;
 
@@ -208,54 +301,72 @@ export component SettingsWindow inherits Window {
                     label: I18n.text.settings_ui.cat_general;
                     icon-name: "settings";
                     active: root.category == 0;
+                    item-index: 0;
+                    item-count: 9;
                     clicked => { root.category = 0; }
                 }
                 CategoryRow {
                     label: I18n.text.settings_ui.cat_appearance;
                     icon-name: "appearance";
                     active: root.category == 1;
+                    item-index: 1;
+                    item-count: 9;
                     clicked => { root.category = 1; }
                 }
                 CategoryRow {
                     label: I18n.text.settings_ui.cat_stream;
                     icon-name: "stream";
                     active: root.category == 2;
+                    item-index: 2;
+                    item-count: 9;
                     clicked => { root.category = 2; }
                 }
                 CategoryRow {
                     label: I18n.text.settings_ui.cat_output;
                     icon-name: "output";
                     active: root.category == 3;
+                    item-index: 3;
+                    item-count: 9;
                     clicked => { root.category = 3; }
                 }
                 CategoryRow {
                     label: I18n.text.settings_ui.cat_audio;
                     icon-name: "audio";
                     active: root.category == 4;
+                    item-index: 4;
+                    item-count: 9;
                     clicked => { root.category = 4; }
                 }
                 CategoryRow {
                     label: I18n.text.settings_ui.cat_video;
                     icon-name: "video";
                     active: root.category == 5;
+                    item-index: 5;
+                    item-count: 9;
                     clicked => { root.category = 5; }
                 }
                 CategoryRow {
                     label: I18n.text.settings_ui.cat_hotkeys;
                     icon-name: "hotkeys";
                     active: root.category == 6;
+                    item-index: 6;
+                    item-count: 9;
                     clicked => { root.category = 6; }
                 }
                 CategoryRow {
                     label: I18n.text.settings_ui.cat_accessibility;
                     icon-name: "accessibility";
                     active: root.category == 7;
+                    item-index: 7;
+                    item-count: 9;
                     clicked => { root.category = 7; }
                 }
                 CategoryRow {
                     label: I18n.text.settings_ui.cat_advanced;
                     icon-name: "advanced";
                     active: root.category == 8;
+                    item-index: 8;
+                    item-count: 9;
                     clicked => { root.category = 8; }
                 }
             }
@@ -277,6 +388,8 @@ export component SettingsWindow inherits Window {
                         confirm-stop-stream <=> root.confirm-stop-stream;
                         confirm-stop-recording <=> root.confirm-stop-recording;
                         auto-record-when-streaming <=> root.auto-record-when-streaming;
+                        snap-distance <=> root.snap-distance;
+                        show-safe-areas <=> root.show-safe-areas;
                         select-language(index) => {
                             root.language-index = index;
                             root.dirty = true;
@@ -324,7 +437,10 @@ export component SettingsWindow inherits Window {
                         show-hls: root.stream-show-hls;
                         show-rist: root.stream-show-rist;
                         show-reference: root.stream-show-reference;
-                        rtmp-service <=> root.rtmp-service;
+                        rtmp-service-names: root.rtmp-service-names;
+                        rtmp-service-index: root.rtmp-service-index;
+                        rtmp-server-names: root.rtmp-server-names;
+                        rtmp-server-index: root.rtmp-server-index;
                         rtmp-server <=> root.rtmp-server;
                         rtmp-stream-key <=> root.rtmp-stream-key;
                         reconnect <=> root.stream-reconnect;
@@ -355,6 +471,16 @@ export component SettingsWindow inherits Window {
                             root.protocol-index = index;
                             root.dirty = true;
                             root.select-stream-protocol(index);
+                        }
+                        select-service(index) => {
+                            root.rtmp-service-index = index;
+                            root.dirty = true;
+                            root.select-stream-service(index);
+                        }
+                        select-server(index) => {
+                            root.rtmp-server-index = index;
+                            root.dirty = true;
+                            root.select-stream-server(index);
                         }
                         select-srt-mode(index) => {
                             root.srt-mode-index = index;
@@ -392,12 +518,21 @@ export component SettingsWindow inherits Window {
                         recording-format-names: root.recording-format-names;
                         recording-format-index: root.recording-format-index;
                         recording-format-locked: root.recording-format-locked;
+                        recording-auto-remux <=> root.recording-auto-remux;
+                        recording-auto-remux-supported: root.recording-auto-remux-supported;
                         recording-codec-names: root.recording-codec-names;
                         recording-codec-index: root.recording-codec-index;
                         recording-audio-encoder-names: root.recording-audio-encoder-names;
                         recording-audio-encoder-index: root.recording-audio-encoder-index;
                         recording-file-preview: root.recording-file-preview;
                         software-encoding-warning: root.software-encoding-warning;
+                        replay-buffer-duration <=> root.replay-buffer-duration;
+                        replay-buffer-capacity <=> root.replay-buffer-capacity;
+                        recording-split-enabled <=> root.recording-split-enabled;
+                        recording-split-supported: root.recording-split-supported;
+                        recording-split-duration-minutes <=> root.recording-split-duration-minutes;
+                        recording-split-size-mib <=> root.recording-split-size-mib;
+                        recording-split-max-segments <=> root.recording-split-max-segments;
                         select-output-mode(index) => {
                             root.output-mode-index = index;
                             root.dirty = true;
@@ -423,14 +558,18 @@ export component SettingsWindow inherits Window {
                         select-recording-format(index) => {
                             root.recording-format-index = index;
                             root.dirty = true;
+                            root.select-recording-format(index);
                         }
+                        refresh-recording-page() => { root.refresh-recording-page(); }
                         select-recording-codec(index) => {
                             root.recording-codec-index = index;
                             root.dirty = true;
+                            root.refresh-recording-page();
                         }
                         select-recording-audio-encoder(index) => {
                             root.recording-audio-encoder-index = index;
                             root.dirty = true;
+                            root.refresh-recording-page();
                         }
                         browse-recording-directory() => { root.browse-recording-directory(); }
                         changed => { root.dirty = true; }
@@ -442,8 +581,17 @@ export component SettingsWindow inherits Window {
                         channel-index: root.channel-index;
                         audio-device-names: root.audio-device-names;
                         audio-device-index: root.audio-device-index;
+                        audio-monitor-output-names: root.audio-monitor-output-names;
+                        audio-monitor-output-index: root.audio-monitor-output-index;
+                        microphone-monitor-mode-names: root.microphone-monitor-mode-names;
+                        microphone-monitor-mode-index: root.microphone-monitor-mode-index;
+                        desktop-monitor-mode-names: root.desktop-monitor-mode-names;
+                        desktop-monitor-mode-index: root.desktop-monitor-mode-index;
+                        audio-input-sync-offset: root.audio-input-sync-offset;
+                        desktop-audio-sync-offset: root.desktop-audio-sync-offset;
                         devices-summary: root.devices-summary;
                         audio-input-missing: root.audio-input-missing;
+                        audio-monitor-output-missing: root.audio-monitor-output-missing;
                         refresh-audio-devices() => { root.refresh-audio-devices(); }
                         select-sample-rate(index) => {
                             root.sample-rate-index = index;
@@ -457,6 +605,19 @@ export component SettingsWindow inherits Window {
                             root.audio-device-index = index;
                             root.dirty = true;
                         }
+                        select-audio-monitor-output(index) => {
+                            root.audio-monitor-output-index = index;
+                            root.dirty = true;
+                        }
+                        select-microphone-monitor-mode(index) => {
+                            root.microphone-monitor-mode-index = index;
+                            root.dirty = true;
+                        }
+                        select-desktop-monitor-mode(index) => {
+                            root.desktop-monitor-mode-index = index;
+                            root.dirty = true;
+                        }
+                        changed() => { root.dirty = true; }
                     }
                     if root.category == 5 : VideoPage {
                         resolution-names: root.resolution-names;
@@ -506,10 +667,30 @@ export component SettingsWindow inherits Window {
                     }
                     if root.category == 6 : HotkeysPage {
                         hotkey-swap <=> root.hotkey-swap;
+                        hotkey-previous-scene <=> root.hotkey-previous-scene;
+                        hotkey-next-scene <=> root.hotkey-next-scene;
                         hotkey-start-recording <=> root.hotkey-start-recording;
                         hotkey-stop-recording <=> root.hotkey-stop-recording;
                         hotkey-start-streaming <=> root.hotkey-start-streaming;
                         hotkey-stop-streaming <=> root.hotkey-stop-streaming;
+                        hotkey-undo <=> root.hotkey-undo;
+                        hotkey-redo <=> root.hotkey-redo;
+                        hotkey-save-project <=> root.hotkey-save-project;
+                        hotkey-cut-transition <=> root.hotkey-cut-transition;
+                        hotkey-fade-transition <=> root.hotkey-fade-transition;
+                        hotkey-save-replay <=> root.hotkey-save-replay;
+                        hotkey-start-replay <=> root.hotkey-start-replay;
+                        hotkey-stop-replay <=> root.hotkey-stop-replay;
+                        hotkey-toggle-microphone-mute <=> root.hotkey-toggle-microphone-mute;
+                        hotkey-toggle-desktop-mute <=> root.hotkey-toggle-desktop-mute;
+                        hotkey-push-to-talk-microphone <=> root.hotkey-push-to-talk-microphone;
+                        hotkey-push-to-mute-microphone <=> root.hotkey-push-to-mute-microphone;
+                        hotkey-toggle-studio-mode <=> root.hotkey-toggle-studio-mode;
+                        hotkey-toggle-selected-source-visibility <=> root.hotkey-toggle-selected-source-visibility;
+                        hotkey-toggle-selected-source-lock <=> root.hotkey-toggle-selected-source-lock;
+                        hotkey-toggle-selected-source-projector <=> root.hotkey-toggle-selected-source-projector;
+                        hotkey-toggle-preview-scene-projector <=> root.hotkey-toggle-preview-scene-projector;
+                        conflict-warning: root.hotkeys-conflict;
                         changed => { root.dirty = true; }
                     }
                     if root.category == 7 : AccessibilityPage {
@@ -540,5 +721,12 @@ export component SettingsWindow inherits Window {
                 cancel() => { root.cancel-settings(); }
             }
         }
+    }
+    }
+
+    // A standalone settings window can be reopened after a page control in
+    // another window owns focus, so focus this boundary after each show.
+    public function focus-keyboard-boundary() {
+        settings-focus.focus();
     }
 }

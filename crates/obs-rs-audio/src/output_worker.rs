@@ -1,0 +1,312 @@
+use std::{
+    fmt,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering},
+        mpsc::{self, RecvTimeoutError, SyncSender, TrySendError},
+        Arc, Mutex,
+    },
+    thread::{self, JoinHandle},
+    time::Duration,
+};
+
+use super::{AudioBuffer, AudioFormat, AudioOutputProvider};
+
+const STATE_STARTING: u8 = 0;
+const STATE_RUNNING: u8 = 1;
+const STATE_FAILED: u8 = 2;
+const STATE_STOPPED: u8 = 3;
+const MAX_ERROR_MESSAGE_CHARS: usize = 512;
+
+/// Lifecycle state published by an asynchronous monitoring-output worker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AudioOutputWorkerState {
+    /// The worker thread is negotiating its output device.
+    Starting,
+    /// The output accepted at least one complete block.
+    Running,
+    /// Device opening or a block write failed; no more blocks are accepted.
+    Failed,
+    /// The worker has been cancelled and released its device.
+    Stopped,
+}
+
+impl AudioOutputWorkerState {
+    fn from_raw(value: u8) -> Self {
+        match value {
+            STATE_RUNNING => Self::Running,
+            STATE_FAILED => Self::Failed,
+            STATE_STOPPED => Self::Stopped,
+            _ => Self::Starting,
+        }
+    }
+}
+
+/// Bounded telemetry for one asynchronous monitoring-output worker.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioOutputWorkerSnapshot {
+    /// Current worker lifecycle state.
+    pub state: AudioOutputWorkerState,
+    /// Complete blocks waiting in the handoff queue.
+    pub queued_blocks: usize,
+    /// Blocks rejected because the handoff queue was full or closed.
+    pub dropped_blocks: u64,
+    /// The latest bounded device failure, if any.
+    pub last_error: Option<String>,
+}
+
+/// Errors raised before an asynchronous monitoring-output worker can start.
+#[derive(Debug)]
+pub enum AudioOutputWorkerError {
+    /// A zero-capacity handoff queue would provide no valid back-pressure.
+    ZeroCapacity,
+    /// The operating system rejected creation of the worker thread.
+    Spawn(std::io::Error),
+}
+
+impl fmt::Display for AudioOutputWorkerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroCapacity => {
+                formatter.write_str("audio output queue capacity must be non-zero")
+            }
+            Self::Spawn(error) => write!(formatter, "audio output worker failed to start: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for AudioOutputWorkerError {}
+
+/// Cloneable, non-blocking submission handle for an [`AudioOutputWorker`].
+#[derive(Clone)]
+pub struct AudioOutputWorkerHandle {
+    sender: SyncSender<AudioBuffer>,
+    state: Arc<AtomicU8>,
+    queued_blocks: Arc<AtomicUsize>,
+    dropped_blocks: Arc<AtomicU64>,
+    last_error: Arc<Mutex<Option<String>>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl AudioOutputWorkerHandle {
+    /// Attempts to submit one complete monitor block without waiting.
+    ///
+    /// Returns `false` when the bounded queue is full or the output worker has
+    /// failed/stopped. The rejected block is dropped and counted.
+    #[must_use]
+    pub fn try_write(&self, buffer: AudioBuffer) -> bool {
+        if self.cancelled.load(Ordering::Acquire) {
+            self.dropped_blocks.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        self.queued_blocks.fetch_add(1, Ordering::Relaxed);
+        match self.sender.try_send(buffer) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                self.queued_blocks.fetch_sub(1, Ordering::Relaxed);
+                self.dropped_blocks.fetch_add(1, Ordering::Relaxed);
+                false
+            }
+        }
+    }
+
+    /// Returns a bounded snapshot without waiting for the output thread.
+    #[must_use]
+    pub fn snapshot(&self) -> AudioOutputWorkerSnapshot {
+        AudioOutputWorkerSnapshot {
+            state: AudioOutputWorkerState::from_raw(self.state.load(Ordering::Acquire)),
+            queued_blocks: self.queued_blocks.load(Ordering::Acquire),
+            dropped_blocks: self.dropped_blocks.load(Ordering::Acquire),
+            last_error: self.last_error.lock().map_or_else(
+                |_| Some("audio output worker status unavailable".to_owned()),
+                |error| error.clone(),
+            ),
+        }
+    }
+}
+
+/// Owns one platform audio output on a dedicated thread.
+///
+/// Opening and writing a native sink can block, so neither operation is
+/// performed by the mixer, capture thread, engine command handler, or GUI.
+/// The handoff queue stores complete bounded [`AudioBuffer`] values and uses a
+/// drop-on-pressure `try_write` API; program output therefore continues when a
+/// monitor device is slow or unavailable.
+pub struct AudioOutputWorker {
+    handle: AudioOutputWorkerHandle,
+    cancelled: Arc<AtomicBool>,
+    _join: JoinHandle<()>,
+}
+
+impl AudioOutputWorker {
+    /// Starts a worker that opens `device_id` at `format` on its own thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioOutputWorkerError::ZeroCapacity`] for a zero queue or
+    /// [`AudioOutputWorkerError::Spawn`] when the thread cannot be created.
+    pub fn spawn(
+        provider: Arc<dyn AudioOutputProvider>,
+        device_id: impl Into<String>,
+        format: AudioFormat,
+        capacity_blocks: usize,
+    ) -> Result<Self, AudioOutputWorkerError> {
+        if capacity_blocks == 0 {
+            return Err(AudioOutputWorkerError::ZeroCapacity);
+        }
+        let (sender, receiver) = mpsc::sync_channel(capacity_blocks);
+        let state = Arc::new(AtomicU8::new(STATE_STARTING));
+        let queued_blocks = Arc::new(AtomicUsize::new(0));
+        let dropped_blocks = Arc::new(AtomicU64::new(0));
+        let last_error = Arc::new(Mutex::new(None));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let thread_state = Arc::clone(&state);
+        let thread_queued = Arc::clone(&queued_blocks);
+        let thread_last_error = Arc::clone(&last_error);
+        let thread_cancelled = Arc::clone(&cancelled);
+        let device_id = device_id.into();
+        let join = thread::Builder::new()
+            .name("obs-rs-audio-output".to_owned())
+            .spawn(move || {
+                run_output_worker(
+                    provider,
+                    device_id,
+                    format,
+                    receiver,
+                    thread_state,
+                    thread_queued,
+                    thread_last_error,
+                    thread_cancelled,
+                );
+            })
+            .map_err(AudioOutputWorkerError::Spawn)?;
+
+        Ok(Self {
+            handle: AudioOutputWorkerHandle {
+                sender,
+                state,
+                queued_blocks,
+                dropped_blocks,
+                last_error,
+                cancelled: Arc::clone(&cancelled),
+            },
+            cancelled,
+            _join: join,
+        })
+    }
+
+    /// Returns a cloneable non-blocking submission handle.
+    #[must_use]
+    pub fn handle(&self) -> AudioOutputWorkerHandle {
+        self.handle.clone()
+    }
+
+    /// Returns the current bounded worker telemetry.
+    #[must_use]
+    pub fn snapshot(&self) -> AudioOutputWorkerSnapshot {
+        self.handle.snapshot()
+    }
+}
+
+impl Drop for AudioOutputWorker {
+    fn drop(&mut self) {
+        // Cancellation is observed between complete device writes. Dropping
+        // the sender wakes a worker waiting for its next block; the JoinHandle
+        // is intentionally detached so a platform write cannot block the
+        // thread that owns the engine or GUI during teardown.
+        self.cancelled.store(true, Ordering::Release);
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    clippy::needless_pass_by_value,
+    reason = "the worker loop receives each shared bounded telemetry cell explicitly"
+)]
+fn run_output_worker(
+    provider: Arc<dyn AudioOutputProvider>,
+    device_id: String,
+    format: AudioFormat,
+    receiver: mpsc::Receiver<AudioBuffer>,
+    state: Arc<AtomicU8>,
+    queued_blocks: Arc<AtomicUsize>,
+    last_error: Arc<Mutex<Option<String>>>,
+    cancelled: Arc<AtomicBool>,
+) {
+    if cancelled.load(Ordering::Acquire) {
+        state.store(STATE_STOPPED, Ordering::Release);
+        return;
+    }
+    let mut output = match provider.open_output(&device_id, format) {
+        Ok(output) => output,
+        Err(error) => {
+            fail_worker(&state, &last_error, error);
+            drain_queue(&receiver, &queued_blocks);
+            return;
+        }
+    };
+    if output.format() != format {
+        fail_worker(
+            &state,
+            &last_error,
+            format!(
+                "monitor output format {:?} does not match {:?}",
+                output.format(),
+                format
+            ),
+        );
+        output.stop();
+        drain_queue(&receiver, &queued_blocks);
+        return;
+    }
+
+    loop {
+        let buffer = match receiver.recv_timeout(Duration::from_millis(20)) {
+            Ok(buffer) => buffer,
+            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => {
+                if cancelled.load(Ordering::Acquire) {
+                    break;
+                }
+                continue;
+            }
+        };
+        queued_blocks.fetch_sub(1, Ordering::Release);
+        if cancelled.load(Ordering::Acquire) {
+            break;
+        }
+        if let Err(error) = output.write_block(&buffer) {
+            fail_worker(&state, &last_error, error);
+            drain_queue(&receiver, &queued_blocks);
+            output.stop();
+            return;
+        }
+        state.store(STATE_RUNNING, Ordering::Release);
+    }
+
+    output.stop();
+    if state.load(Ordering::Acquire) != STATE_FAILED {
+        state.store(STATE_STOPPED, Ordering::Release);
+    }
+    drain_queue(&receiver, &queued_blocks);
+}
+
+fn drain_queue(receiver: &mpsc::Receiver<AudioBuffer>, queued_blocks: &AtomicUsize) {
+    while receiver.try_recv().is_ok() {
+        queued_blocks.fetch_sub(1, Ordering::Release);
+    }
+}
+
+fn fail_worker<E: fmt::Display>(state: &AtomicU8, last_error: &Mutex<Option<String>>, error: E) {
+    if let Ok(mut last_error) = last_error.lock() {
+        *last_error = Some(bounded_error(error));
+    }
+    state.store(STATE_FAILED, Ordering::Release);
+}
+
+fn bounded_error(error: impl fmt::Display) -> String {
+    error
+        .to_string()
+        .chars()
+        .take(MAX_ERROR_MESSAGE_CHARS)
+        .collect()
+}

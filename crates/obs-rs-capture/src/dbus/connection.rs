@@ -178,7 +178,7 @@ impl Connection {
         member: &str,
         arguments: &[Value],
     ) -> Result<Vec<Value>, CaptureError> {
-        let serial = self.send_call(destination, path, interface, member, arguments)?;
+        let serial = self.send_call(destination, path, interface, member, arguments, true)?;
         let reply = self.wait(Duration::from_secs(30), |message| {
             message.reply_serial == Some(serial) && matches!(message.kind, METHOD_RETURN | ERROR)
         })?;
@@ -196,6 +196,22 @@ impl Connection {
         Ok(reply.body)
     }
 
+    /// Sends a method call without waiting for a reply.
+    ///
+    /// This is used while tearing down a portal request/session. Drop paths
+    /// must not wait behind a compositor that has already stopped answering.
+    pub(crate) fn call_no_reply(
+        &mut self,
+        destination: &str,
+        path: &str,
+        interface: &str,
+        member: &str,
+        arguments: &[Value],
+    ) -> Result<(), CaptureError> {
+        self.send_call(destination, path, interface, member, arguments, false)
+            .map(|_| ())
+    }
+
     fn send_call(
         &mut self,
         destination: &str,
@@ -203,6 +219,7 @@ impl Connection {
         interface: &str,
         member: &str,
         arguments: &[Value],
+        expect_reply: bool,
     ) -> Result<u32, CaptureError> {
         self.serial = self.serial.wrapping_add(1).max(1);
         let serial = self.serial;
@@ -228,8 +245,8 @@ impl Connection {
         let mut message = Vec::with_capacity(128 + body.len());
         message.push(b'l');
         message.push(METHOD_CALL);
-        // No flags: a reply is expected.
-        message.push(0);
+        // Bit 0 means no reply is expected.
+        message.push(u8::from(!expect_reply));
         message.push(1);
         let body_length =
             u32::try_from(body.len()).map_err(|_| protocol("D-Bus body is too large"))?;

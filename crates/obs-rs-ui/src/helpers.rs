@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use obs_rs_audio::AudioFormat;
 use obs_rs_audio::{AudioMixer, AudioSourceId};
-use obs_rs_project::Project;
+use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec};
 use obs_rs_util::Identifier;
 
 use super::{
@@ -106,12 +106,65 @@ pub(crate) fn project_has_scene(project: &Project, scene_id: &Identifier) -> boo
 pub(crate) fn project_has_source(
     project: &Project,
     scene_id: &Identifier,
-    source_id: &Identifier,
+    source_target: &str,
 ) -> bool {
-    project
-        .active_profile_spec()
-        .and_then(|profile| profile.scene(scene_id))
-        .is_some_and(|scene| scene.has_item(source_id))
+    project.active_profile_spec().is_some_and(|profile| {
+        profile_scene_item_at_target(profile, scene_id.as_str(), source_target).is_some()
+    })
+}
+
+const MAX_SCENE_ITEM_PATH_DEPTH: usize = 64;
+
+/// Splits one bounded outer-to-inner scene-item path.
+pub(crate) fn scene_item_target_parts(target: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::with_capacity(4);
+    for part in target.split('/') {
+        if part.is_empty() || parts.len() >= MAX_SCENE_ITEM_PATH_DEPTH {
+            return None;
+        }
+        parts.push(part);
+    }
+    (!parts.is_empty()).then_some(parts)
+}
+
+/// Resolves one flattened scene-item path through groups and Scene references.
+/// The project model remains the only source of truth; this is just a bounded
+/// read-only lookup for UI validation and selection reconciliation.
+pub(crate) fn profile_scene_item_at_target<'a>(
+    profile: &'a Profile,
+    scene_id: &str,
+    target: &str,
+) -> Option<&'a SceneItemSpec> {
+    let parts = scene_item_target_parts(target)?;
+    let mut items = profile.scene(scene_id)?.items();
+    for (index, part) in parts.iter().enumerate() {
+        let item = items.iter().find(|item| item.id().as_str() == *part)?;
+        if index + 1 == parts.len() {
+            return Some(item);
+        }
+        if let Some(group) = item.group() {
+            items = group.items();
+        } else {
+            items = profile.scene(item.scene_id()?)?.items();
+        }
+    }
+    None
+}
+
+/// Resolves one outer-to-inner scene-item path.
+pub(crate) fn scene_item_at_parts<'a>(
+    scene: &'a SceneSpec,
+    parts: &[&str],
+) -> Option<&'a SceneItemSpec> {
+    let mut items = scene.items();
+    for (index, part) in parts.iter().enumerate() {
+        let item = items.iter().find(|item| item.id().as_str() == *part)?;
+        if index + 1 == parts.len() {
+            return Some(item);
+        }
+        items = item.group()?.items();
+    }
+    None
 }
 
 pub(crate) fn first_source_id(project: &Project, scene_id: &Identifier) -> Option<Identifier> {
@@ -142,8 +195,11 @@ pub(crate) fn default_mixer() -> (
                 id: id.to_owned(),
                 name: name.to_owned(),
                 gain_milli: 1_000,
+                pan_milli: 0,
                 muted: false,
                 peak_milli: 0,
+                peak_hold_milli: 0,
+                clipped: false,
             },
         );
     }

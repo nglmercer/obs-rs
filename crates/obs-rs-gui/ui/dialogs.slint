@@ -1,33 +1,106 @@
-import { Button, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, HorizontalBox, LineEdit, TextEdit, VerticalBox } from "std-widgets.slint";
 import { FieldHeading, ModalShell, MutedText } from "theme.slint";
 import { I18n } from "i18n.slint";
+import { TransitionDirectionField } from "transition_direction.slint";
+import { TransitionLumaField } from "transition_luma.slint";
 
 export component ProjectDialog inherits ModalShell {
     in property <string> locale;
+    in property <int> mode: 0;
     in-out property <string> project-path;
+    in-out property <string> collection-path;
     in-out property <string> diagnostics-path;
+    in property <bool> file-picker-enabled: false;
     callback save-project();
+    callback browse-project-save-as();
 
-    title: I18n.text.project_dialog_title;
-    subtitle: I18n.text.project_dialog_description;
-    accept-label: I18n.text.menu_save;
+    title: mode == 4
+        ? I18n.text.project_open_title
+        : mode == 3
+            ? I18n.text.project_save_as_title
+        : mode == 1
+            ? I18n.text.collection_export_dialog_title
+            : mode == 2
+                ? I18n.text.collection_import_dialog_title
+                : I18n.text.project_dialog_title;
+    subtitle: mode == 4
+        ? I18n.text.project_open_description
+        : mode == 3
+            ? I18n.text.project_save_as_description
+        : mode == 1
+            ? I18n.text.collection_export_dialog_description
+            : mode == 2
+                ? I18n.text.collection_import_dialog_description
+                : I18n.text.project_dialog_description;
+    accept-label: mode == 4
+        ? I18n.text.load
+        : mode == 3
+            ? I18n.text.menu_save_as
+        : mode == 1
+            ? I18n.text.menu_export_collection
+            : mode == 2
+                ? I18n.text.menu_import_collection
+                : I18n.text.menu_save;
     cancel-label: I18n.text.cancel;
     accepted => save-project();
 
     VerticalBox {
         spacing: 8px;
-        FieldHeading { text: I18n.text.project_file; }
-        LineEdit {
+        if mode == 1 : FieldHeading { text: I18n.text.collection_export_path; }
+        if mode == 2 : FieldHeading { text: I18n.text.collection_import_path; }
+        if mode == 1 || mode == 2 : HorizontalBox {
+            spacing: 6px;
+            LineEdit {
+                text <=> collection-path;
+                placeholder-text: mode == 1
+                    ? "obs-rs-collection.obsrproj"
+                    : "/path/to/collection.obsrproj";
+                accessible-label: mode == 1
+                    ? I18n.text.collection_export_path
+                    : I18n.text.collection_import_path;
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: I18n.text.settings_ui.browse;
+                enabled: root.file-picker-enabled;
+                clicked => browse-project-save-as();
+            }
+        }
+        if mode != 1 && mode != 2 : FieldHeading { text: I18n.text.project_file; }
+        if mode == 3 || mode == 4 : HorizontalBox {
+            spacing: 6px;
+            LineEdit {
+                text <=> project-path;
+                placeholder-text: "obs-rs-project.obsrproj";
+                accessible-label: I18n.text.project_file;
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: I18n.text.settings_ui.browse;
+                enabled: root.file-picker-enabled;
+                clicked => browse-project-save-as();
+            }
+        }
+        if mode == 0 : LineEdit {
             text <=> project-path;
             placeholder-text: "obs-rs-project.json";
+            accessible-label: I18n.text.project_file;
         }
-        FieldHeading { text: I18n.text.diagnostics_file; }
-        LineEdit {
+        if mode == 0 : FieldHeading { text: I18n.text.diagnostics_file; }
+        if mode == 0 : LineEdit {
             text <=> diagnostics-path;
             placeholder-text: "obs-rs-diagnostics.obsrdg";
+            accessible-label: I18n.text.diagnostics_file;
         }
-        MutedText {
+        if mode != 4 : MutedText {
             text: I18n.text.atomic_save_hint;
+        }
+        if (mode >= 1 && mode <= 4) && !root.file-picker-enabled : MutedText {
+            text: mode == 1 || mode == 2
+                ? I18n.text.collection_picker_unavailable
+                : mode == 4
+                    ? I18n.text.project_open_picker_unavailable
+                    : I18n.text.project_picker_unavailable;
         }
     }
 }
@@ -50,11 +123,13 @@ export component SceneDialog inherits ModalShell {
         LineEdit {
             text <=> new-scene-id;
             placeholder-text: "scene-id";
+            accessible-label: I18n.text.identifier;
         }
         FieldHeading { text: I18n.text.display_name; }
         LineEdit {
             text <=> new-scene-name;
             placeholder-text: I18n.text.scene_name_placeholder;
+            accessible-label: I18n.text.display_name;
         }
     }
 }
@@ -77,13 +152,28 @@ export component ConfirmDialog inherits ModalShell {
 export component RenameSceneDialog inherits ModalShell {
     in property <string> locale;
     in-out property <string> scene-name;
+    in-out property <int> transition-index: 0;
+    in-out property <int> transition-direction-index: 0;
+    in-out property <bool> transition-swipe-in: false;
+    in-out property <int> transition-luma-pattern-index: 0;
+    in-out property <bool> transition-luma-invert: false;
+    in-out property <string> transition-luma-softness: "30";
+    in-out property <string> transition-duration;
+    in-out property <string> transition-color;
+    in-out property <string> stinger-path;
+    in-out property <string> stinger-transition-point: "500";
+    in-out property <bool> stinger-preload: true;
+    in-out property <bool> stinger-hardware-decode: false;
+    in property <bool> stinger-hardware-decode-enabled: false;
+    in property <bool> file-picker-enabled: false;
     callback rename-scene();
+    callback browse-scene-stinger();
 
     title: I18n.text.scene_properties;
     subtitle: I18n.text.scene_dialog_description;
-    accept-label: I18n.text.rename;
+    accept-label: I18n.text.settings_ui.apply;
     cancel-label: I18n.text.cancel;
-    panel-height: 240px;
+    panel-height: 610px;
     accepted => rename-scene();
 
     VerticalBox {
@@ -92,6 +182,85 @@ export component RenameSceneDialog inherits ModalShell {
         LineEdit {
             text <=> scene-name;
             placeholder-text: I18n.text.scene_name_placeholder;
+            accessible-label: I18n.text.scene_name;
+        }
+        FieldHeading { text: I18n.text.transition_title; }
+        ComboBox {
+            model: [
+                I18n.text.inherit_transition,
+                I18n.text.cut,
+                I18n.text.fade,
+                I18n.text.fade_to_color,
+                I18n.text.slide,
+                I18n.text.swipe,
+                I18n.text.luma_wipe
+            ];
+            current-index: root.transition-index;
+            accessible-label: I18n.text.transition_title;
+            selected(value) => { root.transition-index = self.current-index; }
+        }
+        if root.transition-index == 4 || root.transition-index == 5 : TransitionDirectionField {
+            direction-index <=> root.transition-direction-index;
+        }
+        if root.transition-index == 5 : CheckBox {
+            text: I18n.text.swipe_in;
+            checked <=> root.transition-swipe-in;
+        }
+        if root.transition-index == 6 : TransitionLumaField {
+            pattern-index <=> root.transition-luma-pattern-index;
+            invert <=> root.transition-luma-invert;
+            softness <=> root.transition-luma-softness;
+        }
+        if root.transition-index != 0 : FieldHeading { text: I18n.text.duration; }
+        if root.transition-index != 0 : LineEdit {
+            text <=> root.transition-duration;
+            placeholder-text: "300";
+            accessible-label: I18n.text.duration;
+        }
+        if root.transition-index == 3 : FieldHeading { text: I18n.text.property_ui.color; }
+        if root.transition-index == 3 : LineEdit {
+            text <=> root.transition-color;
+            placeholder-text: "#000000FF";
+            accessible-label: I18n.text.property_ui.color;
+        }
+        MutedText { text: I18n.text.transition_override_hint; }
+        FieldHeading { text: I18n.text.stinger_title; }
+        FieldHeading { text: I18n.text.stinger_resource_path; }
+        HorizontalBox {
+            spacing: 6px;
+            LineEdit {
+                text <=> root.stinger-path;
+                placeholder-text: "assets/transition.webm";
+                accessible-label: I18n.text.stinger_resource_path;
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: I18n.text.settings_ui.browse;
+                enabled: root.file-picker-enabled;
+                clicked => browse-scene-stinger();
+            }
+        }
+        FieldHeading { text: I18n.text.stinger_transition_point; }
+        LineEdit {
+            text <=> root.stinger-transition-point;
+            placeholder-text: "500";
+            accessible-label: I18n.text.stinger_transition_point;
+        }
+        CheckBox {
+            text: I18n.text.stinger_preload;
+            checked <=> root.stinger-preload;
+        }
+        CheckBox {
+            text: I18n.text.stinger_hardware_decode;
+            enabled: root.stinger-hardware-decode-enabled;
+            checked <=> root.stinger-hardware-decode;
+        }
+        if !root.stinger-hardware-decode-enabled : MutedText {
+            text: I18n.text.stinger_hardware_decode_unavailable;
+        }
+        MutedText { text: I18n.text.stinger_hint; }
+        if !root.file-picker-enabled : MutedText {
+            text: I18n.text.stinger_picker_unavailable;
         }
     }
 }
@@ -114,6 +283,7 @@ export component RenameSourceDialog inherits ModalShell {
         LineEdit {
             text <=> source-name;
             placeholder-text: I18n.text.source_name_placeholder;
+            accessible-label: I18n.text.source_name;
         }
     }
 }
@@ -136,6 +306,7 @@ export component OutputDialog inherits ModalShell {
         LineEdit {
             text <=> recording-path;
             placeholder-text: "obs-rs-recording.obsr";
+            accessible-label: I18n.text.recording_file;
         }
         FieldHeading {
             text: I18n.text.streaming_address;
@@ -143,6 +314,7 @@ export component OutputDialog inherits ModalShell {
         LineEdit {
             text <=> streaming-address;
             placeholder-text: "127.0.0.1:9000";
+            accessible-label: I18n.text.streaming_address;
         }
         MutedText {
             text: I18n.text.output_hint;
@@ -150,17 +322,31 @@ export component OutputDialog inherits ModalShell {
     }
 }
 
-// Names a new scene collection. The current scenes are written to the named
-// document before a clean set is started, so a rename is never a data loss.
+// Names, duplicates, or renames a scene collection. The Rust callback owns the
+// file operation so the dialog never invents a second collection state.
 export component CollectionDialog inherits ModalShell {
     in property <string> locale;
     in property <string> active-collection;
+    in property <bool> duplicate-mode: false;
+    in property <bool> rename-mode: false;
     in-out property <string> collection-name;
     callback create-collection(string);
 
-    title: I18n.text.collection_dialog_title;
-    subtitle: I18n.text.collection_dialog_description;
-    accept-label: I18n.text.menu_new_collection;
+    title: rename-mode
+        ? I18n.text.rename_collection_dialog_title
+        : duplicate-mode
+            ? I18n.text.duplicate_collection_dialog_title
+            : I18n.text.collection_dialog_title;
+    subtitle: rename-mode
+        ? I18n.text.rename_collection_dialog_description
+        : duplicate-mode
+            ? I18n.text.duplicate_collection_dialog_description
+            : I18n.text.collection_dialog_description;
+    accept-label: rename-mode
+        ? I18n.text.menu_rename_collection
+        : duplicate-mode
+            ? I18n.text.menu_duplicate_collection
+            : I18n.text.menu_new_collection;
     cancel-label: I18n.text.cancel;
     panel-height: 280px;
     accepted => create-collection(collection-name);
@@ -173,20 +359,27 @@ export component CollectionDialog inherits ModalShell {
         LineEdit {
             text <=> collection-name;
             placeholder-text: "untitled";
+            accessible-label: I18n.text.collection_name;
         }
     }
 }
 
-// Guards an action that would discard unsaved project edits. The window owns
-// which action is pending, so this only has to state the consequence.
+// Guards an action that would discard unsaved project edits. Save continues
+// only after the Rust project store succeeds; Don't save uses the pending
+// action without touching the project document.
 export component DiscardChangesDialog inherits ModalShell {
     in property <string> locale;
+    callback save();
+    callback discard();
 
     title: I18n.text.discard_changes_title;
     subtitle: I18n.text.discard_changes_message;
-    accept-label: I18n.text.settings_ui.ok;
+    accept-label: I18n.text.menu_save;
+    alternate-label: I18n.text.dont_save;
     cancel-label: I18n.text.cancel;
     panel-height: 190px;
+    accepted => save();
+    alternate => discard();
 
     Rectangle { }
 }
@@ -221,4 +414,62 @@ export component RecoveryDialog inherits ModalShell {
     panel-height: 240px;
 
     Rectangle { }
+}
+
+export component ProjectRecoveryDialog inherits ModalShell {
+    in property <string> detail;
+    callback recover();
+
+    title: I18n.text.project_recovery_title;
+    subtitle: I18n.text.project_recovery_description + "\n\n" + root.detail;
+    accept-label: I18n.text.recover;
+    cancel-label: I18n.text.cancel;
+    panel-height: 300px;
+    accepted => recover();
+
+    Rectangle { }
+}
+
+export component ProjectRecoveryDiscardDialog inherits ModalShell {
+    in property <string> detail;
+    callback discard();
+
+    title: I18n.text.project_recovery_discard_title;
+    subtitle: I18n.text.project_recovery_discard_description + "\n\n" + root.detail;
+    accept-label: I18n.text.discard_recovery;
+    cancel-label: I18n.text.cancel;
+    panel-height: 300px;
+    accepted => discard();
+
+    Rectangle { }
+}
+
+// Lets the operator choose one of the bounded interrupted-remux candidates
+// discovered beside the configured recording path. The Rust output boundary
+// still validates the selected path before starting native recovery.
+export component RemuxRecoveryDialog inherits ModalShell {
+    in property <[string]> candidates;
+    in-out property <string> candidate-path;
+    callback recover(string);
+
+    title: I18n.text.output_recovery_title;
+    subtitle: I18n.text.recovery_candidates_hint;
+    accept-label: I18n.text.recover_recording;
+    cancel-label: I18n.text.dismiss;
+    panel-height: 280px;
+    accepted => {
+        if candidates.length > 0 && candidate-path != "" {
+            recover(candidate-path);
+        }
+    }
+
+    VerticalBox {
+        spacing: 8px;
+        FieldHeading { text: I18n.text.recording_file; }
+        ComboBox {
+            model: root.candidates;
+            accessible-label: I18n.text.recording_file;
+            selected(value) => { root.candidate-path = value; }
+        }
+    }
 }

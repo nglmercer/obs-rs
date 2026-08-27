@@ -7,18 +7,28 @@ import { Palette } from "palette.slint";
 
 export component SceneDock inherits Rectangle {
     in property <string> locale;
+    in property <bool> platform-macos;
     in property <[SceneRow]> scene-rows;
     in property <string> preview-scene;
     in property <int> panel-kind;
     in property <bool> floating;
     callback move-panel(int, int);
+    callback dock-drag-start(int, float, float);
+    callback dock-drag-moved(int, float, float);
+    callback dock-drag-end(int, float, float);
     callback float-panel(int);
     callback close-panel(int);
     callback open-modal(int);
     callback select-preview(string);
+    // direction: -2 = first, -1 = previous, 1 = next, 2 = last.
+    callback navigate-preview-scene(int);
     callback select-program(string);
     callback duplicate-scene(string);
+    callback move-scene(string, int);
+    callback drop-scene(data-transfer, string, int);
     callback remove-scene(string);
+    callback open-scene-projector(string);
+    callback release-push-hotkey();
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -31,6 +41,9 @@ export component SceneDock inherits Rectangle {
             panel-kind: root.panel-kind;
             floating: root.floating;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
+            dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+            dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+            dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
             float-panel(kind) => { root.float-panel(kind); }
             close-panel(kind) => { root.close-panel(kind); }
         }
@@ -39,52 +52,149 @@ export component SceneDock inherits Rectangle {
             VerticalBox {
                 padding: 8px;
                 spacing: 6px;
-                ScrollView {
+                scene-focus := FocusScope {
                     vertical-stretch: 1;
-                    // Rows stack from the top of the dock the way a
-                    // list widget does, instead of centring in the view.
-                    VerticalLayout {
-                        alignment: start;
-                        spacing: 1px;
-                    for scene in scene-rows : scene-menu := SceneContextMenuArea {
-                        height: 38px;
-                        scene-id: scene.id;
-                        can-remove: scene-rows.length > 1;
-                        select-scene(id) => { root.select-preview(id); }
-                        add-scene() => { root.open-modal(2); }
-                        duplicate-scene(id) => { root.select-preview(id); root.duplicate-scene(id); }
-                        rename-scene(id) => { root.select-preview(id); root.open-modal(5); }
-                        remove-scene(id) => { root.select-preview(id); root.remove-scene(id); }
-                        background: scene.role != "" ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
-                        border-width: 1px;
-                        border-color: Palette.tokens.border;
-                        HorizontalBox {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            spacing: 5px;
-                            VerticalBox {
-                                spacing: 1px;
-                                horizontal-stretch: 1;
-                                Text {
-                                    text: scene.name;
-                                    color: Palette.tokens.text;
-                                    font-size: 12px;
-                                    overflow: elide;
-                                }
-                            }
-                        }
-                        TouchArea {
-                            clicked => select-preview(scene.id);
-                            double-clicked => select-program(scene.id);
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.down
-                                    && event.button == PointerEventButton.right {
-                                    select-preview(scene.id);
-                                    scene-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
-                                }
-                            }
-                        }
+                    focus-on-click: true;
+                    focus-on-tab-navigation: true;
+                    focus-lost(reason) => {
+                        root.release-push-hotkey();
                     }
+                    key-pressed(event) => {
+                        if !event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && (root.platform-macos
+                                ? event.text == Key.Return
+                                : event.text == Key.F2)
+                            && root.preview-scene != ""
+                            && root.preview-scene != "none" {
+                            // OBS registers rename on the Scenes dock. The
+                            // selected preview scene is already the stable
+                            // Rust-owned target for the existing properties
+                            // modal, so no second selection is introduced.
+                            root.open-modal(5);
+                            return accept;
+                        }
+                        if !event.modifiers.control
+                            && !event.modifiers.shift
+                            && !event.modifiers.alt
+                            && (event.text == Key.Delete || event.text == Key.Backspace)
+                            && root.preview-scene != ""
+                            && root.preview-scene != "none" {
+                            // OBS binds both removal keys to the selected
+                            // scene. Keep the one-scene guard local to this
+                            // boundary, while Rust remains the owner of the
+                            // mutation and fallback selection.
+                            if root.scene-rows.length > 1 {
+                                root.remove-scene(root.preview-scene);
+                            }
+                            return accept;
+                        }
+                        if !event.modifiers.control
+                            && !event.modifiers.alt
+                            && (event.text == Key.UpArrow
+                                || event.text == Key.DownArrow
+                                || event.text == Key.Home
+                                || event.text == Key.End) {
+                            let direction = event.text == Key.UpArrow
+                                ? -1
+                                : (event.text == Key.DownArrow
+                                    ? 1
+                                    : (event.text == Key.Home ? -2 : 2));
+                            root.navigate-preview-scene(direction);
+                            return accept;
+                        }
+                        reject
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+                        // Rows stack from the top of the dock the way a
+                        // list widget does, instead of centring in the view.
+                        VerticalLayout {
+                            alignment: start;
+                            spacing: 1px;
+                        for scene in scene-rows : scene-menu := SceneContextMenuArea {
+                            height: 38px;
+                            scene-id: scene.id;
+                            scene-name: scene.name;
+                            selected: scene.role != "";
+                            item-index: scene.index;
+                            item-count: scene.count;
+                            can-remove: scene-rows.length > 1;
+                            select-scene(id) => {
+                                scene-focus.focus();
+                                root.select-preview(id);
+                            }
+                            add-scene() => { root.open-modal(2); }
+                            duplicate-scene(id) => { root.select-preview(id); root.duplicate-scene(id); }
+                            open-scene-projector(id) => { root.open-scene-projector(id); }
+                            rename-scene(id) => { root.select-preview(id); root.open-modal(5); }
+                            move-scene(id, delta) => { root.select-preview(id); root.move-scene(id, delta); }
+                            drop-scene(data, target, mode) => { root.drop-scene(data, target, mode); }
+                            remove-scene(id) => { root.select-preview(id); root.remove-scene(id); }
+                            background: scene.role != "" ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
+                            border-width: 1px;
+                            border-color: Palette.tokens.border;
+                            DragArea {
+                                width: 100%;
+                                height: 100%;
+                                data: scene.drag-data;
+                                allow-move: true;
+                                drag-finished(action) => { }
+                                TouchArea {
+                                    clicked => {
+                                        scene-focus.focus();
+                                        select-preview(scene.id);
+                                    }
+                                    double-clicked => {
+                                        scene-focus.focus();
+                                        select-program(scene.id);
+                                    }
+                                    pointer-event(event) => {
+                                        if event.kind == PointerEventKind.down
+                                            && event.button == PointerEventButton.right {
+                                            scene-focus.focus();
+                                            select-preview(scene.id);
+                                            scene-menu.show-at({ x: self.mouse-x, y: self.mouse-y });
+                                        }
+                                    }
+                                }
+                                HorizontalBox {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    spacing: 5px;
+                                    VerticalBox {
+                                        spacing: 1px;
+                                        horizontal-stretch: 1;
+                                        Text {
+                                            text: scene.name;
+                                            color: Palette.tokens.text;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+                            }
+                            DropArea {
+                                width: 100%;
+                                height: 100%;
+                                can-drop(_) => { DragAction.move }
+                                dropped(event) => {
+                                    let mode = event.position.y < self.height / 2 ? 1 : 2;
+                                    root.drop-scene(event.data, scene.id, mode);
+                                    event.proposed-action
+                                }
+                                Rectangle {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    background: transparent;
+                                    border-width: parent.has-drag ? 2px : 0px;
+                                    border-color: Palette.tokens.accent;
+                                }
+                            }
+                        }
+                        }
                     }
                 }
                 HorizontalBox {

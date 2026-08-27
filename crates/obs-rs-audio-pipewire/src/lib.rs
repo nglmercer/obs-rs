@@ -419,30 +419,28 @@ fn discover_devices(document: &str) -> Vec<AudioDeviceInfo> {
         .iter()
         .any(|device| device.kind() == AudioDeviceKind::Output);
     if has_input {
-        devices.insert(
-            0,
-            AudioDeviceInfo::new(
-                DEFAULT_INPUT_ID,
-                "PipeWire default input",
-                AudioDeviceKind::Input,
-            )
-            .unwrap_or_else(|error| unreachable!("default PipeWire input is valid: {error}")),
-        );
+        let mut default_input = AudioDeviceInfo::new(
+            DEFAULT_INPUT_ID,
+            "PipeWire default input",
+            AudioDeviceKind::Input,
+        )
+        .unwrap_or_else(|error| unreachable!("default PipeWire input is valid: {error}"));
+        default_input.set_default(true);
+        devices.insert(0, default_input);
     }
     if has_output {
         let index = devices
             .iter()
             .position(|device| device.kind() == AudioDeviceKind::Output)
             .unwrap_or(devices.len());
-        devices.insert(
-            index,
-            AudioDeviceInfo::new(
-                DEFAULT_OUTPUT_ID,
-                "PipeWire default output",
-                AudioDeviceKind::Output,
-            )
-            .unwrap_or_else(|error| unreachable!("default PipeWire output is valid: {error}")),
-        );
+        let mut default_output = AudioDeviceInfo::new(
+            DEFAULT_OUTPUT_ID,
+            "PipeWire default output",
+            AudioDeviceKind::Output,
+        )
+        .unwrap_or_else(|error| unreachable!("default PipeWire output is valid: {error}"));
+        default_output.set_default(true);
+        devices.insert(index, default_output);
     }
     devices
 }
@@ -605,11 +603,13 @@ mod tests {
         assert_eq!(devices.len(), 4);
         assert_eq!(devices[0].id(), DEFAULT_INPUT_ID);
         assert_eq!(devices[0].kind(), AudioDeviceKind::Input);
+        assert!(devices[0].is_default());
         let default_output = devices
             .iter()
             .find(|device| device.id() == DEFAULT_OUTPUT_ID)
             .expect("default output");
         assert_eq!(default_output.kind(), AudioDeviceKind::Output);
+        assert!(default_output.is_default());
         assert!(devices
             .iter()
             .any(|device| { device.id() == "pipewire-node-42" && device.name() == "USB Mic" }));

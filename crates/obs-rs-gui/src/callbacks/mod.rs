@@ -1,6 +1,7 @@
 pub(crate) mod add_source;
 pub(crate) mod canvas;
 pub(crate) mod docks;
+mod hotkeys;
 pub(crate) mod menu;
 pub(crate) mod monitor;
 mod output;
@@ -9,9 +10,12 @@ mod scene;
 pub(crate) mod settings;
 pub(crate) mod setup;
 mod source;
+mod source_batch;
 pub(crate) mod source_filters;
 pub(crate) mod source_properties;
 pub(crate) mod source_transform;
+mod stinger_picker;
+mod stinger_take;
 
 use std::{
     cell::RefCell,
@@ -22,77 +26,345 @@ use std::{
 use obs_rs_ui::DesktopState;
 use slint::{ComponentHandle, Timer, TimerMode};
 
+use crate::preview::TransformDraft;
 use crate::{
-    preview_worker::RenderTargets, refresh_output_ui, refresh_preview_frames_for_view, MainWindow,
-    OutputRuntime, PreviewSurface, PreviewWorker,
+    preview_worker::{RenderTargets, MAX_MULTIVIEW_SCENES},
+    refresh_output_ui, refresh_preview_frames_for_view, MainWindow, OutputRuntime, PreviewRenderer,
+    PreviewSurface, PreviewWorker, StingerLoadController,
 };
 
 pub(crate) use add_source::install_add_source_window;
 #[cfg(test)]
 pub(crate) use add_source::{add_source_window, populate_add_source_window};
-pub(crate) use canvas::{install_canvas_callbacks, item_rect, CanvasController};
+pub(crate) use canvas::{
+    install_canvas_callbacks, selection_overlay, set_selection_overlay, CanvasController,
+};
+#[cfg(test)]
 pub(crate) use docks::install_dock_callbacks;
+pub(crate) use docks::install_dock_callbacks_with_layout;
+pub(crate) use hotkeys::install_shortcut_callbacks;
 pub(crate) use menu::{install_menu_callbacks, ProjectorController};
 pub(crate) use monitor::install_monitor_window;
 pub(crate) use output::{install_mixer_callbacks, install_output_callbacks, push_program_frame};
 pub(crate) use project::{
-    duplicate_scene_and_refresh, install_project_callbacks, project_store, rename_scene_and_refresh,
+    apply_scene_properties_and_refresh, duplicate_scene_and_refresh, install_project_callbacks,
+    project_store,
 };
 pub(crate) use scene::install_scene_callbacks;
 #[cfg(test)]
 pub(crate) use settings::populate_settings_models;
 pub(crate) use settings::{install_settings_window, PeerWindows};
 pub(crate) use setup::install_setup_window;
+#[cfg(test)]
+pub(crate) use source::selected_target;
 pub(crate) use source::{
     apply_source_name_and_refresh, apply_source_settings_and_refresh, apply_source_settings_to,
-    apply_source_transform_to, duplicate_source_and_refresh, flip_source_and_refresh,
-    move_source_and_refresh, move_source_to_and_refresh, remove_scene_and_refresh,
-    remove_source_and_refresh, reset_source_transform_and_refresh, selected_target, source_target,
-    source_transform_document, target_settings_document, toggle_source_locked_and_refresh,
-    toggle_source_visibility_and_refresh, SourceTarget,
+    apply_source_transform_to, apply_source_transforms_to, duplicate_source_and_refresh,
+    flip_source_and_refresh, item_for_target, move_source_and_refresh,
+    move_source_by_drop_and_refresh, move_source_to_and_refresh, move_source_to_group_and_refresh,
+    remove_scene_and_refresh, remove_source_and_refresh, reset_source_transform_and_refresh,
+    scene_item_target, source_target, source_target_is_locked, source_transform_document,
+    target_settings_document, toggle_source_locked_and_refresh,
+    toggle_source_visibility_and_refresh, transform_source_and_refresh, SceneItemTarget,
+    SourceTarget,
 };
+pub(crate) use source_batch::remove_selected_sources_and_refresh;
 pub(crate) use source_filters::install_source_filters_window;
+#[cfg(test)]
 pub(crate) use source_properties::install_source_properties_window;
+pub(crate) use source_properties::install_source_properties_window_with_monitor;
 pub(crate) use source_transform::install_source_transform_window;
+#[cfg(test)]
+pub(crate) use stinger_picker::detect_file_picker;
+pub(crate) use stinger_picker::install_file_pickers;
+pub(crate) use stinger_take::{dispatch_pending_stinger_take, install_stinger_take_callback};
 
+/// Keep source-row paths bounded at the UI boundary. The path contains both
+/// group IDs and the addressed child ID, so it is one segment deeper than the
+/// project's group nesting limit in the worst case.
+pub(crate) const MAX_SOURCE_TARGET_DEPTH: usize = 65;
+
+/// Returns the enclosing group path for one source-dock target.
+pub(crate) fn source_parent_path(target: &str) -> Option<Vec<String>> {
+    let mut parts = Vec::with_capacity(4);
+    for part in target.split('/') {
+        if part.is_empty() || parts.len() >= MAX_SOURCE_TARGET_DEPTH {
+            return None;
+        }
+        parts.push(part.to_owned());
+    }
+    parts.pop()?;
+    Some(parts)
+}
+
+/// Returns the common enclosing group path for a bounded source selection.
+/// `None` means the targets are malformed or belong to different parents.
+pub(crate) fn common_source_parent<'a, I>(targets: I) -> Option<Vec<String>>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut common = None;
+    for target in targets {
+        let parent = source_parent_path(target)?;
+        if common.as_ref().is_some_and(|current| current != &parent) {
+            return None;
+        }
+        common = Some(parent);
+    }
+    common
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bounded render consumer is an independent demand bit"
+)]
+struct RenderDemand {
+    request_preview: bool,
+    request_program_view: bool,
+    request_multiview: bool,
+    request_source_projector: bool,
+    request_scene_projector: bool,
+    interval: Option<Duration>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WindowRenderState {
+    Hidden,
+    Minimized,
+    Visible,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutputRenderState {
+    Idle,
+    Active,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProjectorRenderDemand {
+    None,
+    Preview,
+    Program,
+    Both,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StudioView {
+    Single,
+    Studio,
+    Multiview,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each bounded render consumer is an independent demand bit"
+)]
+struct RenderDemandInput {
+    window: WindowRenderState,
+    output: OutputRenderState,
+    projectors: ProjectorRenderDemand,
+    multiview_projector: bool,
+    source_projector: bool,
+    scene_projector: bool,
+    view: StudioView,
+    frame_period: Duration,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RenderInvalidationKey {
+    revision: u64,
+    preview_scene: Option<String>,
+    program_scene: Option<String>,
+    program_transition: Option<obs_rs_ui::TransitionSnapshot>,
+    source_projector: Option<crate::preview_worker::SourceProjectorTarget>,
+    scene_projector: Option<crate::preview_worker::SceneProjectorTarget>,
+    draft: Option<TransformDraft>,
+    demand: RenderDemand,
+}
+
+/// Chooses which consumers need a new GUI render and how often to service
+/// them. Output cadence is independent: an active output keeps the worker
+/// ticking even when the studio window is hidden, but does not create unused
+/// preview/program-view frames.
+fn render_demand(input: RenderDemandInput) -> RenderDemand {
+    let main_interactive = input.window == WindowRenderState::Visible;
+    let projector_open = input.projectors != ProjectorRenderDemand::None
+        || input.multiview_projector
+        || input.source_projector
+        || input.scene_projector;
+    let request_preview = (main_interactive && input.view != StudioView::Multiview)
+        || input.window == WindowRenderState::Minimized
+        || matches!(
+            input.projectors,
+            ProjectorRenderDemand::Preview | ProjectorRenderDemand::Both
+        );
+    let request_program_view = matches!(
+        input.projectors,
+        ProjectorRenderDemand::Program | ProjectorRenderDemand::Both
+    ) || (main_interactive && input.view == StudioView::Studio);
+    let request_multiview =
+        input.multiview_projector || (main_interactive && input.view == StudioView::Multiview);
+    let request_source_projector = input.source_projector;
+    let request_scene_projector = input.scene_projector;
+    let interval =
+        if input.output == OutputRenderState::Active || projector_open || main_interactive {
+            Some(input.frame_period)
+        } else if input.window == WindowRenderState::Minimized {
+            Some(Duration::from_millis(200))
+        } else {
+            None
+        };
+    RenderDemand {
+        request_preview,
+        request_program_view,
+        request_multiview,
+        request_source_projector,
+        request_scene_projector,
+        interval,
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    reason = "the timer coordinates bounded rendering and the output lifecycle"
+)]
 pub(crate) fn start_preview_timer(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     preview_worker: &Rc<PreviewWorker>,
+    surface: &Rc<RefCell<PreviewSurface>>,
     output: &Rc<RefCell<OutputRuntime>>,
     projectors: &Rc<ProjectorController>,
     docks: &Rc<docks::DockController>,
     canvas: &Rc<CanvasController>,
+    stinger_loader: &Rc<RefCell<StingerLoadController>>,
 ) -> Timer {
     let timer = Timer::default();
     let weak = ui.as_weak();
     let state = Rc::clone(state);
     let preview_worker = Rc::clone(preview_worker);
+    let surface = Rc::clone(surface);
     let output = Rc::clone(output);
     let projectors = Rc::clone(projectors);
     let docks = Rc::clone(docks);
     let canvas = Rc::clone(canvas);
+    let stinger_loader = Rc::clone(stinger_loader);
     let mut last_output_ui_refresh = Instant::now()
         .checked_sub(Duration::from_secs(1))
         .unwrap_or_else(Instant::now);
-    timer.start(TimerMode::Repeated, Duration::from_millis(33), move || {
+    let mut last_preview_request = Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(Instant::now);
+    let mut last_render_key: Option<RenderInvalidationKey> = None;
+    timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
         let Some(ui) = weak.upgrade() else {
             return;
         };
         let callback_started = Instant::now();
-        let (revision, preview_scene, program_scene, output_active) = {
-            let state = state.borrow();
+        let (
+            revision,
+            preview_scene,
+            program_scene,
+            program_transition,
+            output_active,
+            frame_period,
+        ) = {
+            let mut state = state.borrow_mut();
+            let frame_period = state
+                .project_session()
+                .project()
+                .active_profile_spec()
+                .and_then(|profile| profile.video_format().frame_rate().period_nanos())
+                .map_or(Duration::from_millis(33), Duration::from_nanos);
             (
                 state.project_session().revision(),
                 state.preview_scene().map(str::to_owned),
                 state.program_scene().map(str::to_owned),
+                state.transition_snapshot(Instant::now()),
                 state.recording() || state.streaming(),
+                frame_period,
             )
         };
+        let window = if ui.window().is_minimized() {
+            WindowRenderState::Minimized
+        } else if ui.window().is_visible() {
+            WindowRenderState::Visible
+        } else {
+            WindowRenderState::Hidden
+        };
+        let stinger_event = {
+            let state = state.borrow();
+            stinger_loader
+                .borrow_mut()
+                .sync(state.project_session().project(), preview_scene.as_deref())
+        };
+        let stinger_ready = matches!(
+            &stinger_event,
+            Ok(Some(crate::stinger_loader::StingerLoadEvent::Ready))
+        );
+        match stinger_event {
+            Ok(Some(crate::stinger_loader::StingerLoadEvent::Requested)) => {
+                ui.set_status_message("Preloading scene Stinger…".into());
+            }
+            Ok(Some(crate::stinger_loader::StingerLoadEvent::Ready)) => {
+                ui.set_status_message("Scene Stinger ready".into());
+            }
+            Ok(Some(crate::stinger_loader::StingerLoadEvent::Failed(error))) => {
+                ui.set_status_message(format!("Scene Stinger failed: {error}").into());
+            }
+            Ok(None) => {}
+            Err(error) => ui.set_status_message(error.into()),
+        }
+        let projector_demand = match (projectors.wants_preview(), projectors.wants_program()) {
+            (false, false) => ProjectorRenderDemand::None,
+            (true, false) => ProjectorRenderDemand::Preview,
+            (false, true) => ProjectorRenderDemand::Program,
+            (true, true) => ProjectorRenderDemand::Both,
+        };
+        let multiview_projector = projectors.wants_multiview();
+        let source_projector = projectors.source_target();
+        let scene_projector = projectors.scene_target();
+        let demand = render_demand(RenderDemandInput {
+            window,
+            output: if output_active {
+                OutputRenderState::Active
+            } else {
+                OutputRenderState::Idle
+            },
+            projectors: projector_demand,
+            multiview_projector,
+            source_projector: source_projector.is_some(),
+            scene_projector: scene_projector.is_some(),
+            frame_period,
+            view: match ui.get_view_mode() {
+                0 => StudioView::Studio,
+                2 => StudioView::Multiview,
+                _ => StudioView::Single,
+            },
+        });
         // A canvas change held back while recording is applied here, at the
         // first tick after the output stopped, and before the ordinary project
         // sync so both reach the engine in one rebuild.
         if !output_active {
+            match settings::apply_staged_audio_format(&output) {
+                Some(Ok(format)) => ui.set_status_message(
+                    format!(
+                        "Audio format changed to {} Hz / {} channels now that the output stopped",
+                        format.sample_rate(),
+                        format.channels()
+                    )
+                    .into(),
+                ),
+                Some(Err(error)) => {
+                    ui.set_status_message(
+                        format!("Staged audio format change failed: {error}").into(),
+                    );
+                }
+                None => {}
+            }
             match settings::apply_staged_video_format(&state, &output) {
                 Some(Ok(format)) => ui.set_status_message(
                     format!(
@@ -129,38 +401,109 @@ pub(crate) fn start_preview_timer(
                 ui.set_status_message(format!("Output project sync failed: {error}").into());
             }
         }
-        {
+        let invalidation_key = RenderInvalidationKey {
+            revision,
+            preview_scene: preview_scene.clone(),
+            program_scene: program_scene.clone(),
+            program_transition: program_transition.clone(),
+            source_projector: source_projector.clone(),
+            scene_projector: scene_projector.clone(),
+            draft: canvas.draft(),
+            demand,
+        };
+        let static_only = !output_active
+            && project_is_static_for_demand(
+                &state,
+                &demand,
+                preview_scene.as_deref(),
+                program_scene.as_deref(),
+            )
+            && program_transition.is_none()
+            && invalidation_key.draft.is_none();
+        let invalidated = last_render_key.as_ref() != Some(&invalidation_key);
+        let preview_due = demand.interval.is_some_and(|interval| {
+            last_preview_request.elapsed() >= interval && (!static_only || invalidated)
+        });
+        let poll_due = static_only
+            && !invalidated
+            && demand
+                .interval
+                .is_some_and(|interval| last_preview_request.elapsed() >= interval);
+        if preview_due || poll_due {
             let state = state.borrow();
-            let draft = canvas.draft();
-            preview_worker.request_render(
-                state.project_session().project(),
-                revision,
-                RenderTargets {
-                    preview_scene: preview_scene.as_deref(),
-                    program_scene: program_scene.as_deref(),
-                    // A program projector is a third consumer of the program
-                    // canvas, so single-canvas editing has to render it again
-                    // while one is up.
-                    render_program: output_active
-                        || ui.get_view_mode() == 0
-                        || projectors.wants_program(),
-                    prepare_output: output_active,
-                    // A canvas drag reaches the compositor here rather than
-                    // through a project revision, so the picture follows the
-                    // pointer while the undo history stays at one entry per
-                    // gesture.
-                    draft: draft.as_ref(),
-                },
-            );
+            let draft = invalidation_key.draft.clone();
+            if let Some(profile) = state.project_session().project().active_profile_spec() {
+                preview_worker.request_render(
+                    state.project_session().project(),
+                    revision,
+                    RenderTargets {
+                        preview_scene: demand
+                            .request_preview
+                            .then_some(preview_scene.as_deref())
+                            .flatten(),
+                        preview_format: PreviewRenderer::preview_format_for_canvas(
+                            profile.video_format(),
+                        ),
+                        program_scene: (output_active || demand.request_program_view)
+                            .then_some(program_scene.as_deref())
+                            .flatten(),
+                        program_transition,
+                        program_preview_format: PreviewRenderer::preview_format_for_canvas(
+                            profile.video_format(),
+                        ),
+                        multiview_scenes: if demand.request_multiview {
+                            profile
+                                .scenes()
+                                .take(MAX_MULTIVIEW_SCENES)
+                                .map(|scene| scene.id().as_str().to_owned())
+                                .collect()
+                        } else {
+                            Vec::new()
+                        },
+                        multiview_format: PreviewRenderer::multiview_format_for_canvas(
+                            profile.video_format(),
+                            profile.scenes().take(MAX_MULTIVIEW_SCENES).count().max(1),
+                        ),
+                        source_projector: demand
+                            .request_source_projector
+                            .then_some(source_projector.as_ref())
+                            .flatten(),
+                        scene_projector: demand
+                            .request_scene_projector
+                            .then_some(scene_projector.as_ref())
+                            .flatten(),
+                        // A program projector is a third consumer of the program
+                        // canvas, so single-canvas editing has to render it again
+                        // while one is up.
+                        render_program: demand.request_program_view,
+                        prepare_output: output_active,
+                        prepare_output_rgba: output_active && !output.borrow().accepts_raw_frames(),
+                        poll_only: poll_due,
+                        // A canvas drag reaches the compositor here rather than
+                        // through a project revision, so the picture follows the
+                        // pointer while the undo history stays at one entry per
+                        // gesture.
+                        draft: draft.as_ref(),
+                    },
+                );
+                last_preview_request = Instant::now();
+                last_render_key = Some(invalidation_key);
+            }
         }
-        let (preview_frame, program_frame, program_output, render_error) =
-            refresh_preview_frames_for_view(&ui, &preview_worker);
+        let (preview_frame, program_frame, program_output, program_output_frame, render_error) =
+            refresh_preview_frames_for_view(&ui, &preview_worker, &state, &surface);
         if let Some(error) = render_error {
             ui.set_status_message(error.into());
         }
         projectors.sync(&ui);
         if output_active {
-            push_program_frame(&ui, program_frame, program_output, &output);
+            push_program_frame(
+                &ui,
+                program_frame.as_ref(),
+                program_output,
+                program_output_frame,
+                &output,
+            );
         } else if let Some(frame) = preview_frame.as_ref().or(program_frame.as_ref()) {
             output.borrow().monitor_audio(frame);
         }
@@ -174,16 +517,44 @@ pub(crate) fn start_preview_timer(
             last_output_ui_refresh = Instant::now();
         }
         preview_worker.record_ui_callback(callback_started.elapsed());
+        if stinger_ready {
+            dispatch_pending_stinger_take(&ui, &state, &surface, &stinger_loader);
+        }
     });
     timer
 }
 
+fn project_is_static_for_demand(
+    state: &Rc<RefCell<DesktopState>>,
+    demand: &RenderDemand,
+    preview_scene: Option<&str>,
+    program_scene: Option<&str>,
+) -> bool {
+    if demand.request_multiview || demand.request_source_projector || demand.request_scene_projector
+    {
+        return false;
+    }
+    let state = state.borrow();
+    let project = state.project_session().project();
+    let scene_is_static = |scene: Option<&str>| {
+        scene.is_none_or(|scene| PreviewRenderer::is_static_scene(project, scene))
+    };
+    let preview_static = !demand.request_preview || scene_is_static(preview_scene);
+    let program_static = !demand.request_program_view || scene_is_static(program_scene);
+    let multiview_static = !demand.request_multiview
+        || project.active_profile_spec().is_some_and(|profile| {
+            profile
+                .scenes()
+                .all(|scene| PreviewRenderer::is_static_scene(project, scene.id().as_str()))
+        });
+    preview_static && program_static && multiview_static
+}
+
 /// Brings the desktop's output booleans back in line with the engine's phases.
 ///
-/// The stream callback only enqueues lifecycle work. This bridge consumes the
-/// worker's bounded event queue and changes the desktop's streaming boolean
-/// once the worker reports `Running`, `Failed`, or `Stopped`. Recording remains
-/// synchronously validated by its existing worker command for now.
+/// The stream and recording callbacks enqueue lifecycle work. This bridge
+/// consumes the worker's bounded state/events and clears a desktop claim only
+/// after the worker reports a stopped or failed output.
 pub(crate) fn reconcile_output_lifecycle(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -282,18 +653,31 @@ fn refresh_input_meter(
     }
     // A fallback generator is not the user's microphone, so its level must not
     // be shown as if the input were live.
-    let peak = if output.borrow().audio_is_fallback() {
-        0
-    } else {
-        output.borrow().input_peak_milli()
+    let (input_meter, desktop_meter) = {
+        let output = output.borrow();
+        let input_meter = if output.audio_is_fallback() {
+            (0, 0, false)
+        } else {
+            output.input_meter()
+        };
+        (input_meter, output.desktop_meter())
     };
-    let desktop_peak = output.borrow().desktop_peak_milli();
     let mut state_guard = state.borrow_mut();
     let changed = state_guard
-        .set_channel_peak_milli(crate::MIC_CHANNEL_ID, peak)
+        .set_channel_meter(
+            crate::MIC_CHANNEL_ID,
+            input_meter.0,
+            input_meter.1,
+            input_meter.2,
+        )
         .is_ok()
         | state_guard
-            .set_channel_peak_milli(crate::DESKTOP_CHANNEL_ID, desktop_peak)
+            .set_channel_meter(
+                crate::DESKTOP_CHANNEL_ID,
+                desktop_meter.0,
+                desktop_meter.1,
+                desktop_meter.2,
+            )
             .is_ok();
     drop(state_guard);
     if changed {
@@ -311,4 +695,202 @@ pub(crate) fn install_callbacks(
     install_output_callbacks(ui, state, surface, output);
     install_mixer_callbacks(ui, state, surface, output);
     install_project_callbacks(ui, state, surface, output);
+    install_shortcut_callbacks(ui, state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hidden_idle_window_has_no_render_demand() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
+                source_projector: false,
+                scene_projector: false,
+                view: StudioView::Single,
+                frame_period: Duration::from_nanos(33_333_333),
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: false,
+                request_source_projector: false,
+                request_scene_projector: false,
+                interval: None,
+            }
+        );
+    }
+
+    #[test]
+    fn minimized_window_keeps_a_bounded_five_fps_preview() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Minimized,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
+                source_projector: false,
+                scene_projector: false,
+                view: StudioView::Studio,
+                frame_period: Duration::from_nanos(33_333_333),
+            }),
+            RenderDemand {
+                request_preview: true,
+                request_program_view: false,
+                request_multiview: false,
+                request_source_projector: false,
+                request_scene_projector: false,
+                interval: Some(Duration::from_millis(200)),
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_output_renders_only_the_output_consumer() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Active,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
+                source_projector: false,
+                scene_projector: false,
+                view: StudioView::Studio,
+                frame_period: Duration::from_nanos(33_333_333),
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: false,
+                request_source_projector: false,
+                request_scene_projector: false,
+                interval: Some(Duration::from_nanos(33_333_333)),
+            }
+        );
+    }
+
+    #[test]
+    fn visible_studio_mode_requests_both_gui_feeds_at_sixty_fps() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Visible,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
+                source_projector: false,
+                scene_projector: false,
+                view: StudioView::Studio,
+                frame_period: Duration::from_millis(16),
+            }),
+            RenderDemand {
+                request_preview: true,
+                request_program_view: true,
+                request_multiview: false,
+                request_source_projector: false,
+                request_scene_projector: false,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
+
+    #[test]
+    fn visible_multiview_requests_only_the_bounded_scene_grid() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Visible,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
+                source_projector: false,
+                scene_projector: false,
+                view: StudioView::Multiview,
+                frame_period: Duration::from_millis(16),
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: true,
+                request_source_projector: false,
+                request_scene_projector: false,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_multiview_projector_requests_only_the_bounded_scene_grid() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: true,
+                source_projector: false,
+                scene_projector: false,
+                view: StudioView::Single,
+                frame_period: Duration::from_millis(16),
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: true,
+                request_source_projector: false,
+                request_scene_projector: false,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_source_projector_requests_only_the_selected_source() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
+                source_projector: true,
+                scene_projector: false,
+                view: StudioView::Single,
+                frame_period: Duration::from_millis(16),
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: false,
+                request_source_projector: true,
+                request_scene_projector: false,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_scene_projector_requests_only_the_stable_scene_target() {
+        assert_eq!(
+            render_demand(RenderDemandInput {
+                window: WindowRenderState::Hidden,
+                output: OutputRenderState::Idle,
+                projectors: ProjectorRenderDemand::None,
+                multiview_projector: false,
+                source_projector: false,
+                scene_projector: true,
+                view: StudioView::Single,
+                frame_period: Duration::from_millis(16),
+            }),
+            RenderDemand {
+                request_preview: false,
+                request_program_view: false,
+                request_multiview: false,
+                request_source_projector: false,
+                request_scene_projector: true,
+                interval: Some(Duration::from_millis(16)),
+            }
+        );
+    }
 }

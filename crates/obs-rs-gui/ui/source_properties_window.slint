@@ -9,16 +9,27 @@ import { Palette } from "palette.slint";
 // here rather than in Rust means a new property is data, not new UI.
 component PropertyField inherits VerticalLayout {
     in property <PropertyRow> field;
+    in property <bool> browse-enabled: false;
     callback edited(string, string);
+    callback browse();
     spacing: 2px;
 
     // 0 text · 1 number · 2 toggle · 3 choice · 4 colour
     if field.kind == 0 : SettingRow {
         label: root.field.label;
-        LineEdit {
-            text: root.field.text;
-            edited => { root.edited(root.field.key, self.text); }
-            horizontal-stretch: 1;
+        HorizontalLayout {
+            spacing: 8px;
+            LineEdit {
+                text: root.field.text;
+                accessible-label: root.field.label;
+                accessible-description: root.field.hint;
+                edited => { root.edited(root.field.key, self.text); }
+                horizontal-stretch: 1;
+            }
+            if root.browse-enabled : Button {
+                text: I18n.text.settings_ui.browse;
+                clicked => { root.browse(); }
+            }
         }
     }
     if field.kind == 1 : SettingRow {
@@ -27,6 +38,8 @@ component PropertyField inherits VerticalLayout {
             value: root.field.number;
             minimum: root.field.minimum;
             maximum: root.field.maximum;
+            accessible-label: root.field.label;
+            accessible-description: root.field.hint;
             edited(value) => { root.edited(root.field.key, value); }
             horizontal-stretch: 1;
         }
@@ -35,6 +48,8 @@ component PropertyField inherits VerticalLayout {
         label: root.field.label;
         CheckBox {
             checked: root.field.toggle;
+            accessible-label: root.field.label;
+            accessible-description: root.field.hint;
             toggled => { root.edited(root.field.key, self.checked ? "true" : "false"); }
             horizontal-stretch: 1;
         }
@@ -44,6 +59,8 @@ component PropertyField inherits VerticalLayout {
         ComboBox {
             model: root.field.choices;
             current-index: root.field.choice_index;
+            accessible-label: root.field.label;
+            accessible-description: root.field.hint;
             // A choice reports its index; Rust maps it back to the stored value.
             selected(value) => { root.edited(root.field.key, self.current-index); }
             horizontal-stretch: 1;
@@ -55,6 +72,8 @@ component PropertyField inherits VerticalLayout {
         LineEdit {
             text: root.field.text;
             placeholder-text: "#405070FF";
+            accessible-label: root.field.label;
+            accessible-description: root.field.hint;
             edited => { root.edited(root.field.key, self.text); }
             horizontal-stretch: 1;
         }
@@ -77,6 +96,7 @@ export component SourcePropertiesWindow inherits Window {
     in property <string> capture-capabilities;
     in property <[PropertyRow]> property-rows;
     in property <bool> monitor-visible;
+    in property <bool> source-file-picker-enabled;
     in property <string> monitor-summary;
     in-out property <string> source-settings;
     in-out property <bool> show-advanced: false;
@@ -85,9 +105,55 @@ export component SourcePropertiesWindow inherits Window {
     callback cancel-properties();
     callback restore-defaults();
     callback edit-property(string, string);
+    callback browse-source-file();
+    callback picker-status(string);
     callback open-monitor-window();
 
-    VerticalLayout {
+    properties-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Source settings may contain a multiline advanced document. Keep
+        // plain Enter available to TextEdit, and use Ctrl+Enter for apply.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-properties();
+                return accept;
+            }
+            if event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-properties();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.cancel-properties();
+                return accept;
+            }
+            if event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Return {
+                root.accept-properties();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
         padding: 12px;
         spacing: 10px;
 
@@ -108,7 +174,18 @@ export component SourcePropertiesWindow inherits Window {
                     title: I18n.text.property_ui.settings_group;
                     for entry in root.property-rows : PropertyField {
                         field: entry;
+                        browse-enabled: ((root.source-kind == "image_source"
+                            && entry.key == "path")
+                            || (root.source-kind == "image_slideshow"
+                                && entry.key == "paths"))
+                            && root.source-file-picker-enabled;
                         edited(key, value) => { root.edit-property(key, value); }
+                        browse() => { root.browse-source-file(); }
+                    }
+                    if (root.source-kind == "image_source"
+                        || root.source-kind == "image_slideshow")
+                        && !root.source-file-picker-enabled : SettingHint {
+                        text: I18n.text.property_ui.browse_unavailable_hint;
                     }
                     // A display-backed source is pointed at a screen through
                     // the picker rather than by typing a monitor name.
@@ -158,5 +235,13 @@ export component SourcePropertiesWindow inherits Window {
                 clicked => { root.cancel-properties(); }
             }
         }
+    }
+
+    }
+
+    // A standalone Window can reopen after a child editor from another
+    // window owns focus, so focus this boundary explicitly on every show.
+    public function focus-keyboard-boundary() {
+        properties-focus.focus();
     }
 }

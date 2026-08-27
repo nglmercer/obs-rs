@@ -1,4 +1,4 @@
-import { MixerRow, SceneRow, SourceRow } from "models.slint";
+import { MixerRow, MoveTarget, SceneRow, SourceRow } from "models.slint";
 import { DockSlot } from "dock_slot.slint";
 import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
@@ -23,43 +23,96 @@ export component FloatingDockWindow inherits Window {
     in property <string> preview-scene;
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
+    in property <bool> selected-source-is-group;
+    in property <bool> selected-source-is-scene;
+    in property <bool> selected-source-is-nested;
     in property <bool> selected-source-visible;
     in property <bool> selected-source-locked;
     in property <bool> selected-source-first;
     in property <bool> selected-source-last;
+    in property <[MoveTarget]> selected-source-move-targets;
+    in property <int> source-count;
     in property <bool> can-paste;
+    in property <bool> can-group-sources;
     in property <string> transition;
+    in property <string> transition-kind;
+    in-out property <int> transition-direction-index: 0;
+    in-out property <bool> swipe-in: false;
+    in-out property <int> luma-pattern-index: 0;
+    in-out property <bool> luma-invert: false;
+    in-out property <string> luma-softness: "30";
     in property <bool> recording;
     in property <bool> streaming;
+    in property <bool> remux-recovery-supported;
+    in property <bool> remux-recovery-running;
     in property <bool> meters-paused;
+    in property <string> status-message;
+    in property <string> capture-capabilities;
+    in property <string> preview-metrics;
+    in property <string> output-metrics;
+    in property <bool> platform-macos;
 
     callback open-modal(int);
     callback select-preview(string);
+    callback navigate-preview-scene(int);
     callback select-program(string);
     callback duplicate-scene(string);
+    callback move-scene(string, int);
+    callback drop-scene(data-transfer, string, int);
     callback remove-scene(string);
+    callback open-scene-projector(string);
+    callback open-source-projector();
     callback select-source(string);
+    callback select-source-with-mode(string, int);
+    callback select-all-sources();
+    callback navigate-source-selection(int, int);
+    callback open-properties(string);
+    callback open-filters(string);
     callback toggle-source-visibility(string);
     callback toggle-source-locked(string);
     callback move-source(string, int);
     callback move-source-to(string, int);
+    callback move-source-to-group(string, string);
     callback reset-source-transform(string);
     callback flip-source(string, bool);
+    callback transform-source(string, string);
     callback open-source-rename(string);
     callback duplicate-source(string);
+    callback group-sources();
+    callback ungroup-source(string);
     callback copy-source(string);
-    callback paste-reference();
-    callback paste-duplicate();
+    callback paste-reference(string);
+    callback paste-duplicate(string);
     callback remove-source(string);
+    callback remove-selected-sources();
+    callback drop-source(data-transfer, string, int);
     callback set-mixer-gain(string, int);
+    callback set-mixer-pan(string, int);
     callback toggle-mixer-mute(string);
     callback toggle-meters-paused();
     callback cut-transition();
+    callback take-stinger(string);
     callback fade-transition();
+    callback fade-transition-duration(string);
+    callback slide-transition(string);
+    callback swipe-transition(string);
+    callback slide-transition-direction(string, int);
+    callback swipe-transition-direction(string, int);
+    callback swipe-transition-direction-mode(string, int, bool);
+    callback fade-to-color(string, string);
+    callback luma-transition(string, int, bool, string);
+    callback set-scene-transition(string, string, string);
+    callback set-scene-transition-direction(string, string, string, int);
+    callback set-scene-transition-direction-mode(string, string, string, int, bool);
+    callback set-scene-transition-luma(string, string, int, bool, string);
+    callback clear-scene-transition();
     callback set-view-mode(int);
     callback toggle-recording();
     callback toggle-streaming();
+    callback recover-recording();
     callback open-settings-window();
+    callback open-audio-settings-window();
+    callback release-push-hotkey();
     callback redock-panel(int);
 
     DockSlot {
@@ -67,6 +120,7 @@ export component FloatingDockWindow inherits Window {
         height: 100%;
         panel-kind: root.panel-kind;
         floating: true;
+        platform-macos: root.platform-macos;
         locale: root.locale;
         scene-rows: root.scene-rows;
         source-rows: root.source-rows;
@@ -75,15 +129,33 @@ export component FloatingDockWindow inherits Window {
         preview-scene: root.preview-scene;
         selected-source: root.selected-source;
         selected-source-is-screen: root.selected-source-is-screen;
+        selected-source-is-group: root.selected-source-is-group;
+        selected-source-is-scene: root.selected-source-is-scene;
+        selected-source-is-nested: root.selected-source-is-nested;
         selected-source-visible: root.selected-source-visible;
         selected-source-locked: root.selected-source-locked;
         selected-source-first: root.selected-source-first;
         selected-source-last: root.selected-source-last;
+        selected-source-move-targets: root.selected-source-move-targets;
+        source-count: root.source-count;
         can-paste: root.can-paste;
+        can-group-sources: root.can-group-sources;
         transition: root.transition;
+        transition-kind: root.transition-kind;
+        transition-direction-index <=> root.transition-direction-index;
+        swipe-in <=> root.swipe-in;
+        luma-pattern-index <=> root.luma-pattern-index;
+        luma-invert <=> root.luma-invert;
+        luma-softness <=> root.luma-softness;
         recording: root.recording;
         streaming: root.streaming;
+        remux-recovery-supported: root.remux-recovery-supported;
+        remux-recovery-running: root.remux-recovery-running;
         meters-paused: root.meters-paused;
+        status-message: root.status-message;
+        capture-capabilities: root.capture-capabilities;
+        preview-metrics: root.preview-metrics;
+        output-metrics: root.output-metrics;
         // A floating dock cannot be reordered, and its header button returns it
         // to the row instead of detaching it again.
         move-panel(kind, delta) => { }
@@ -91,32 +163,85 @@ export component FloatingDockWindow inherits Window {
         close-panel(kind) => { root.redock-panel(kind); }
         open-modal(modal) => { root.open-modal(modal); }
         select-preview(id) => { root.select-preview(id); }
+        navigate-preview-scene(direction) => { root.navigate-preview-scene(direction); }
         select-program(id) => { root.select-program(id); }
         duplicate-scene(id) => { root.duplicate-scene(id); }
+        move-scene(id, delta) => { root.move-scene(id, delta); }
+        drop-scene(data, target, mode) => { root.drop-scene(data, target, mode); }
         remove-scene(id) => { root.remove-scene(id); }
+        open-scene-projector(id) => { root.open-scene-projector(id); }
+        open-source-projector() => { root.open-source-projector(); }
         select-source(id) => { root.select-source(id); }
-        open-filters(id) => { root.select-source(id); root.open-modal(13); }
+        select-source-with-mode(id, mode) => {
+            root.select-source-with-mode(id, mode);
+        }
+        select-all-sources() => { root.select-all-sources(); }
+        navigate-source-selection(direction, mode) => {
+            root.navigate-source-selection(direction, mode);
+        }
+        open-properties(id) => { root.open-properties(id); }
+        open-filters(id) => { root.open-filters(id); }
         open-transform(id) => { root.select-source(id); root.open-modal(14); }
         toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
         toggle-source-locked(id) => { root.toggle-source-locked(id); }
         move-source(id, delta) => { root.move-source(id, delta); }
         move-source-to(id, index) => { root.move-source-to(id, index); }
+        move-source-to-group(id, destination) => {
+            root.move-source-to-group(id, destination);
+        }
         reset-source-transform(id) => { root.reset-source-transform(id); }
         flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+        transform-source(id, action) => { root.transform-source(id, action); }
         open-source-rename(id) => { root.open-source-rename(id); }
         duplicate-source(id) => { root.duplicate-source(id); }
+        group-sources() => { root.group-sources(); }
+        ungroup-source(id) => { root.ungroup-source(id); }
         copy-source(id) => { root.copy-source(id); }
-        paste-reference() => { root.paste-reference(); }
-        paste-duplicate() => { root.paste-duplicate(); }
+        paste-reference(target) => { root.paste-reference(target); }
+        paste-duplicate(target) => { root.paste-duplicate(target); }
         remove-source(id) => { root.remove-source(id); }
+        remove-selected-sources() => { root.remove-selected-sources(); }
+        drop-source(data, target, mode) => { root.drop-source(data, target, mode); }
         set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
+        set-mixer-pan(id, pan) => { root.set-mixer-pan(id, pan); }
         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
         toggle-meters-paused() => { root.toggle-meters-paused(); }
         cut-transition() => { root.cut-transition(); }
+        take-stinger(duration) => { root.take-stinger(duration); }
         fade-transition() => { root.fade-transition(); }
+        fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
+        slide-transition(duration) => { root.slide-transition(duration); }
+        swipe-transition(duration) => { root.swipe-transition(duration); }
+        slide-transition-direction(duration, direction) => {
+            root.slide-transition-direction(duration, direction);
+        }
+        swipe-transition-direction(duration, direction) => {
+            root.swipe-transition-direction(duration, direction);
+        }
+        swipe-transition-direction-mode(duration, direction, swipe-in) => {
+            root.swipe-transition-direction-mode(duration, direction, swipe-in);
+        }
+        fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
+        luma-transition(duration, pattern, invert, softness) => {
+            root.luma-transition(duration, pattern, invert, softness);
+        }
+        set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
+        set-scene-transition-direction(kind, duration, color, direction) => {
+            root.set-scene-transition-direction(kind, duration, color, direction);
+        }
+        set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in) => {
+            root.set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in);
+        }
+        set-scene-transition-luma(kind, duration, pattern, invert, softness) => {
+            root.set-scene-transition-luma(kind, duration, pattern, invert, softness);
+        }
+        clear-scene-transition() => { root.clear-scene-transition(); }
         toggle-recording() => { root.toggle-recording(); }
         toggle-streaming() => { root.toggle-streaming(); }
+        recover-recording() => { root.recover-recording(); }
         open-settings-window() => { root.open-settings-window(); }
+        open-audio-settings-window() => { root.open-audio-settings-window(); }
+        release-push-hotkey() => { root.release-push-hotkey(); }
         set-view-mode(mode) => { root.set-view-mode(mode); }
     }
 }

@@ -14,17 +14,19 @@ use obs_rs_media::{FrameRate, VideoFormat};
 use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 
 /// Platform discovery opens native camera descriptors and performs X11
-/// round-trips. Keep one short-lived snapshot so a camera properties dialog
-/// does not enumerate cameras once for its device list and again for its mode
-/// list, while still allowing hot-plug changes to appear promptly.
+/// round-trips. Keep one short-lived snapshot for repeated device-picker
+/// refreshes while still allowing hot-plug changes to appear promptly.
 const PLATFORM_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(1);
 const CAMERA_MODE_CACHE_TTL: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_CANVAS_WIDTH: u32 = 1_280;
+pub(crate) const DEFAULT_CANVAS_HEIGHT: u32 = 720;
+pub(crate) const DEFAULT_CANVAS_FPS: u32 = 30;
 
-type PlatformDiscoveryCache = Mutex<BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>>;
-type CameraModeCache = Mutex<BTreeMap<String, (Instant, Vec<CameraMode>)>>;
+type PlatformDiscoveryCache = BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>;
+type CameraModeCache = BTreeMap<String, (Instant, Vec<CameraMode>)>;
 
-static PLATFORM_DISCOVERY_CACHE: OnceLock<PlatformDiscoveryCache> = OnceLock::new();
-static CAMERA_MODE_CACHE: OnceLock<CameraModeCache> = OnceLock::new();
+static PLATFORM_DISCOVERY_CACHE: OnceLock<Mutex<PlatformDiscoveryCache>> = OnceLock::new();
+static CAMERA_MODE_CACHE: OnceLock<Mutex<CameraModeCache>> = OnceLock::new();
 
 fn platform_devices_for_kind(kind: CaptureKind) -> Vec<CaptureDeviceInfo> {
     let cache = PLATFORM_DISCOVERY_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
@@ -48,31 +50,38 @@ fn platform_devices_for_kind(kind: CaptureKind) -> Vec<CaptureDeviceInfo> {
 }
 
 pub(crate) fn initial_project() -> Result<Project, Box<dyn Error>> {
-    let format = VideoFormat::new(640, 360, FrameRate::new(30, 1)?)?;
+    let format = default_video_format()?;
     let mut project = Project::new("OBS-RS Studio")?;
     let mut profile = Profile::new("live", "Live profile", format)?;
-    let (preview, preview_source) = scene("preview", "Preview", "background", "#102030FF")?;
-    let (program, program_source) = scene("program", "Program", "background_program", "#203040FF")?;
+    let (preview, preview_source) = scene("preview", "Preview", "background", "#102030FF", format)?;
+    let (program, program_source) = scene(
+        "program",
+        "Program",
+        "background_program",
+        "#203040FF",
+        format,
+    )?;
     let (mut intermission, intermission_source) = scene(
         "intermission",
         "Intermission",
         "background_intermission",
         "#302040FF",
+        format,
     )?;
     let pattern = SourceSpec::new(
         "pattern",
         "test_pattern",
         "Animated pattern",
-        video_settings(),
+        video_settings_for_format(format),
     )?;
     intermission.add_item(SceneItemSpec::for_source("pattern")?)?;
     profile.add_source(preview_source)?;
     profile.add_source(program_source)?;
     profile.add_source(intermission_source)?;
     profile.add_source(pattern)?;
+    profile.add_scene(intermission)?;
     profile.add_scene(preview)?;
     profile.add_scene(program)?;
-    profile.add_scene(intermission)?;
     project.add_profile(profile)?;
     Ok(project)
 }
@@ -96,21 +105,53 @@ pub(crate) fn platform_capture_summary() -> String {
     }
 }
 
-fn video_settings() -> Config {
+fn video_settings_for_format(format: VideoFormat) -> Config {
+    video_settings_for_dimensions(format.width(), format.height())
+}
+
+fn video_settings_for_dimensions(width: u32, height: u32) -> Config {
     let mut settings = Config::new();
     settings
-        .set("width", "640")
-        .expect("static width setting is valid");
+        .set("width", &width.to_string())
+        .expect("source width setting is valid");
     settings
-        .set("height", "360")
-        .expect("static height setting is valid");
+        .set("height", &height.to_string())
+        .expect("source height setting is valid");
     settings
 }
 
 pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
-    let mut settings = video_settings();
+    source_settings_for_canvas(kind, DEFAULT_CANVAS_WIDTH, DEFAULT_CANVAS_HEIGHT)
+}
+
+/// Returns defaults for a newly created source at the active canvas size.
+///
+/// Capture devices may later negotiate a native mode, but generic source
+/// defaults must not silently reintroduce the old 640x360 project assumption.
+pub(crate) fn source_settings_for_canvas(
+    kind: &str,
+    canvas_width: u32,
+    canvas_height: u32,
+) -> Result<Config, Box<dyn Error>> {
+    let mut settings = video_settings_for_dimensions(canvas_width, canvas_height);
     if kind.trim() == "color_source" {
         settings.set("color", "#405070FF")?;
+    }
+    if kind.trim() == "image_source" {
+        settings.set("path", "")?;
+    }
+    if kind.trim() == "image_slideshow" {
+        settings.set("paths", "")?;
+        settings.set("slide_time_ms", "8000")?;
+        settings.set("fade", "false")?;
+        settings.set("transition_ms", "500")?;
+        settings.set("loop", "true")?;
+        settings.set("randomize", "false")?;
+    }
+    if kind.trim() == "text_source" {
+        settings.set("text", "OBS-RS")?;
+        settings.set("color", "#FFFFFFFF")?;
+        settings.set("font_size", "24")?;
     }
     let kind = kind.trim();
     if matches!(kind, "screen_capture" | "window_capture" | "camera_capture") {
@@ -123,7 +164,10 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
             "window_capture" => "wgc-window-picker",
             #[cfg(not(target_os = "windows"))]
             "window_capture" => "window-0",
-            "camera_capture" => "camera-0",
+            // Keep an unplugged camera source addressable without inventing a
+            // second camera backend. The runtime reports this Nokhwa ID as
+            // unavailable until the device is connected.
+            "camera_capture" => "nokhwa-camera-0",
             _ => unreachable!("kind was checked above"),
         };
         let devices = capture_devices(kind);
@@ -131,24 +175,11 @@ pub(crate) fn source_settings(kind: &str) -> Result<Config, Box<dyn Error>> {
             devices
                 .iter()
                 .find(|(id, _)| id.starts_with("v4l2-") || id.starts_with("nokhwa-camera-"))
-                .or_else(|| devices.first())
                 .map_or(fallback, |(id, _)| id.as_str())
         } else {
             devices.first().map_or(fallback, |(id, _)| id.as_str())
         };
         settings.set("device_id", device_id)?;
-        #[cfg(target_os = "windows")]
-        if kind == "screen_capture" {
-            settings.set("monitor", "")?;
-        }
-        if kind == "camera_capture" {
-            if let Some(mode) = camera_modes_for_device(device_id).first().copied() {
-                settings.set("capture_width", &mode.width().to_string())?;
-                settings.set("capture_height", &mode.height().to_string())?;
-                settings.set("capture_fps", &camera_fps_setting(mode))?;
-                settings.set("capture_pixel_format", mode.pixel_format().as_str())?;
-            }
-        }
     }
     if kind == "x11_screen_capture" {
         if let Ok(display) = std::env::var("DISPLAY") {
@@ -255,6 +286,55 @@ impl MonitorChoice {
     }
 }
 
+/// The virtual desktop rectangle reported by a platform monitor enumerator.
+///
+/// This is deliberately a capability result rather than a made-up fallback:
+/// callers may preserve a saved window position when the platform cannot
+/// enumerate the current desktop.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DesktopBounds {
+    pub(crate) left: i32,
+    pub(crate) top: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) right: i32,
+    pub(crate) bottom: i32,
+}
+
+/// Returns the rectangle spanning all known monitors.
+pub(crate) fn desktop_bounds(monitors: &[MonitorChoice]) -> DesktopBounds {
+    let left = monitors.iter().map(|monitor| monitor.x).min().unwrap_or(0);
+    let top = monitors.iter().map(|monitor| monitor.y).min().unwrap_or(0);
+    let right = monitors
+        .iter()
+        .map(|monitor| {
+            monitor
+                .x
+                .saturating_add(i32::try_from(monitor.width).unwrap_or(i32::MAX))
+        })
+        .max()
+        .unwrap_or(1);
+    let bottom = monitors
+        .iter()
+        .map(|monitor| {
+            monitor
+                .y
+                .saturating_add(i32::try_from(monitor.height).unwrap_or(i32::MAX))
+        })
+        .max()
+        .unwrap_or(1);
+    DesktopBounds {
+        left,
+        top,
+        // A zero extent would divide by zero in the monitor map or make a
+        // restore clamp impossible; one pixel is the smallest safe extent.
+        width: (right - left).max(1),
+        height: (bottom - top).max(1),
+        right,
+        bottom,
+    }
+}
+
 /// Lists the displays a screen capture source can be pointed at.
 ///
 /// Returns an empty list when no display server is reachable, which the picker
@@ -309,10 +389,10 @@ pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
 /// Returns the devices that a source-properties editor can select.
 ///
 /// The returned list matches the backend behind the source kind. The generic
-/// portable sources expose deterministic fallback devices; the Linux X11
-/// source exposes only its native screen adapter. This prevents an X11 device
-/// from appearing selectable in the simulated `screen_capture` factory where
-/// it would silently have no effect.
+/// portable screen/window sources expose deterministic fallback devices; the
+/// camera source and Linux X11 sources expose only their native adapters. This
+/// prevents a device from appearing selectable in a factory where it would
+/// silently have no effect.
 pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let kind = kind.trim();
     let wanted = match kind {
@@ -334,30 +414,24 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
             false
         }
     };
-    let mut devices =
-        if native_generic || matches!(kind, "x11_screen_capture" | "x11_window_capture") {
-            platform_devices_for_kind(wanted)
-                .into_iter()
-                .filter(|device| device.kind() == wanted)
-                .map(|device| (device.id().to_string(), device.name().to_owned()))
-                .collect::<Vec<_>>()
-        } else {
-            plugin
-                .discover_capture_devices()
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|device| device.kind() == wanted)
-                .map(|device| (device.id().to_string(), device.name().to_owned()))
-                .collect::<Vec<_>>()
-        };
-    if kind == "camera_capture" {
-        devices.extend(
-            platform_devices_for_kind(wanted)
-                .into_iter()
-                .filter(|device| device.kind() == wanted)
-                .map(|device| (device.id().to_string(), device.name().to_owned())),
-        );
-    }
+    let mut devices = if native_generic
+        || kind == "camera_capture"
+        || matches!(kind, "x11_screen_capture" | "x11_window_capture")
+    {
+        platform_devices_for_kind(wanted)
+            .into_iter()
+            .filter(|device| device.kind() == wanted)
+            .map(|device| (device.id().to_string(), device.name().to_owned()))
+            .collect::<Vec<_>>()
+    } else {
+        plugin
+            .discover_capture_devices()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|device| device.kind() == wanted)
+            .map(|device| (device.id().to_string(), device.name().to_owned()))
+            .collect::<Vec<_>>()
+    };
     devices.sort_by(|left, right| left.0.cmp(&right.0));
     devices.dedup_by(|left, right| left.0 == right.0);
     devices
@@ -370,10 +444,8 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
 /// An unavailable device produces an empty list, so the properties form omits
 /// controls it cannot honour.
 pub(crate) fn camera_modes_for_device(device_id: &str) -> Vec<CameraMode> {
-    let devices = platform_devices_for_kind(CaptureKind::Camera);
-    if !devices
-        .iter()
-        .any(|device| device.kind() == CaptureKind::Camera && device.id().as_str() == device_id)
+    if device_id.trim().is_empty()
+        || (!device_id.starts_with("v4l2-") && !device_id.starts_with("nokhwa-camera-"))
     {
         return Vec::new();
     }
@@ -387,6 +459,8 @@ pub(crate) fn camera_modes_for_device(device_id: &str) -> Vec<CameraMode> {
             }
         }
     }
+    // The device list is cached separately. Mode lookup must open only the
+    // selected Nokhwa camera, not rediscover every camera first.
     let modes = BuiltinPlugin::new()
         .ok()
         .and_then(|plugin| plugin.discover_platform_camera_modes(device_id).ok())
@@ -397,27 +471,27 @@ pub(crate) fn camera_modes_for_device(device_id: &str) -> Vec<CameraMode> {
     modes
 }
 
-fn camera_fps_setting(mode: CameraMode) -> String {
-    let frame_rate = mode.frame_rate();
-    if frame_rate.denominator() == 1 {
-        frame_rate.numerator().to_string()
-    } else {
-        format!("{}/{}", frame_rate.numerator(), frame_rate.denominator())
-    }
-}
-
 fn scene(
     id: &str,
     name: &str,
     source_id: &str,
     color: &str,
+    format: VideoFormat,
 ) -> Result<(SceneSpec, SourceSpec), Box<dyn Error>> {
     let mut settings = Config::new();
-    settings.set("width", "640")?;
-    settings.set("height", "360")?;
+    settings.set("width", &format.width().to_string())?;
+    settings.set("height", &format.height().to_string())?;
     settings.set("color", color)?;
     let mut scene = SceneSpec::new(id, name)?;
     scene.add_item(SceneItemSpec::for_source(source_id)?)?;
     let source = SourceSpec::new(source_id, "color_source", "Background", settings)?;
     Ok((scene, source))
+}
+
+fn default_video_format() -> Result<VideoFormat, Box<dyn Error>> {
+    Ok(VideoFormat::new(
+        DEFAULT_CANVAS_WIDTH,
+        DEFAULT_CANVAS_HEIGHT,
+        FrameRate::new(DEFAULT_CANVAS_FPS, 1)?,
+    )?)
 }

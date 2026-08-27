@@ -91,6 +91,7 @@ export component SettingsSpinBox inherits SpinBox {
 // A slider paired with the numeric field that shows its value, which is how
 // the OBS Appearance page presents the font size.
 export component SettingsSlider inherits HorizontalLayout {
+    in property <string> control-label;
     in property <float> minimum;
     in property <float> maximum;
     in-out property <float> value;
@@ -104,6 +105,7 @@ export component SettingsSlider inherits HorizontalLayout {
         minimum: root.minimum;
         maximum: root.maximum;
         value: root.value;
+        accessible-label: root.control-label;
         edited(value) => {
             root.value = value;
             root.edited(value);
@@ -114,6 +116,7 @@ export component SettingsSlider inherits HorizontalLayout {
         minimum: root.minimum;
         maximum: root.maximum;
         value: root.value;
+        accessible-label: root.control-label;
         horizontal-stretch: 1;
         changed(value) => {
             root.value = Math.round(value);
@@ -198,6 +201,20 @@ export component SegmentedControl inherits HorizontalLayout {
             : (touch.has-hover ? Palette.tokens.row-bg : Palette.tokens.control-bg);
         border-width: 1px;
         border-color: Palette.tokens.border;
+
+        accessible-role: radio-button;
+        accessible-label: option;
+        accessible-description: option;
+        accessible-enabled: true;
+        accessible-checkable: true;
+        accessible-checked: index == root.current-index;
+        accessible-item-index: index;
+        accessible-item-count: root.options.length;
+        accessible-action-default => {
+            root.current-index = index;
+            root.selected(index);
+        }
+
         Text {
             text: option;
             color: index == root.current-index ? white : Palette.tokens.text;
@@ -236,6 +253,7 @@ export component AspectRatioLabel inherits Text {
 // is immediate — the field turns to the warning colour and the row reports the
 // failure upward — because the value is committed by Apply, not by the field.
 export component EditableResolutionCombo inherits HorizontalLayout {
+    in property <string> control-label;
     in property <[string]> suggestions;
     in-out property <string> value;
     in property <bool> valid: true;
@@ -252,6 +270,7 @@ export component EditableResolutionCombo inherits HorizontalLayout {
         height: Metrics.ui.control-height;
         horizontal-stretch: 1;
         placeholder-text: "1920x1080";
+        accessible-label: root.control-label;
         edited => { root.edited(self.text); }
     }
     // The picker is a separate control rather than an editable combo because
@@ -262,6 +281,7 @@ export component EditableResolutionCombo inherits HorizontalLayout {
         current-index: root.suggestion-index;
         width: 132px;
         height: Metrics.ui.control-height;
+        accessible-label: root.control-label;
         selected(value) => {
             root.value = value;
             root.selected(value);
@@ -304,6 +324,8 @@ export component CategoryRow inherits Rectangle {
     in property <string> label;
     in property <string> icon-name;
     in property <bool> active;
+    in property <int> item-index;
+    in property <int> item-count;
     callback clicked();
 
     height: Metrics.ui.sidebar-row-height;
@@ -311,6 +333,16 @@ export component CategoryRow inherits Rectangle {
         ? Palette.tokens.accent
         : (touch.has-hover ? Palette.tokens.row-bg : transparent);
     border-radius: 2px;
+
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-description: root.label;
+    accessible-enabled: true;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.active;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => root.clicked();
 
     HorizontalLayout {
         padding-left: 9px;

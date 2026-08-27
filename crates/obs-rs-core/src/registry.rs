@@ -1,10 +1,10 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     sync::Arc,
 };
 
-use obs_rs_media::{FrameFilter, FrameTransform, VideoFrame};
-use obs_rs_plugin_api::{PluginManifest, Source, SourceFactory};
+use obs_rs_media::{FrameFilter, FrameTransform, RenderDelayBuffer, VideoFrame};
+use obs_rs_plugin_api::{DockDescriptor, PluginManifest, Source, SourceFactory};
 use obs_rs_util::Identifier;
 
 pub(crate) struct Registry {
@@ -12,6 +12,9 @@ pub(crate) struct Registry {
     pub(crate) plugins: BTreeMap<Identifier, PluginManifest>,
     /// Ordered because [`Runtime::source_kinds`] documents identifier order.
     pub(crate) sources: BTreeMap<Identifier, Arc<dyn SourceFactory>>,
+    /// Ordered by plugin and plugin-local dock ID so diagnostics and future UI
+    /// hosts receive deterministic extension metadata.
+    pub(crate) docks: BTreeMap<(Identifier, Identifier), RegisteredDock>,
 }
 
 impl Registry {
@@ -19,8 +22,16 @@ impl Registry {
         Self {
             plugins: BTreeMap::new(),
             sources: BTreeMap::new(),
+            docks: BTreeMap::new(),
         }
     }
+}
+
+/// Metadata retained for one registered plugin dock. The runtime owns this
+/// copy; no toolkit or native window object crosses the plugin boundary.
+pub(crate) struct RegisteredDock {
+    pub(crate) plugin: Identifier,
+    pub(crate) descriptor: DockDescriptor,
 }
 
 pub(crate) struct SourceInstance {
@@ -30,6 +41,9 @@ pub(crate) struct SourceInstance {
     /// Filters belonging to the shared source definition rather than one
     /// scene item. Every scene reference sees the same compiled chain.
     pub(crate) filters: Vec<FrameFilter>,
+    /// Timestamp history for the source-level Render Delay filter. It is
+    /// shared by every scene item that references this source.
+    pub(crate) render_delay: RenderDelayBuffer,
     /// The newest frame this source produced.
     ///
     /// A live device drops frames — a camera that is reconnecting, a portal
@@ -44,12 +58,16 @@ pub(crate) struct SourceInstance {
 /// The per-scene compositing state of one attached source.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SceneItem {
+    pub(crate) source: super::SourceId,
+    pub(crate) item_id: Arc<str>,
     pub(crate) transform: FrameTransform,
 }
 
 impl SceneItem {
-    fn new() -> Self {
+    fn new(source: super::SourceId, item_id: Arc<str>) -> Self {
         Self {
+            source,
+            item_id,
             transform: FrameTransform::IDENTITY,
         }
     }
@@ -63,9 +81,13 @@ pub(crate) struct Scene {
     /// O(1) membership mirror of `sources`, kept in step by [`Scene::attach`]
     /// and [`Scene::detach`].
     pub(crate) attached: HashSet<super::SourceId>,
-    /// Scene-item transform per attached source. Filters live on the shared
-    /// source instance above and are intentionally absent here.
-    pub(crate) items: HashMap<super::SourceId, SceneItem>,
+    /// Stable scene-item paths, kept in step with [`Scene::items`].
+    pub(crate) item_ids: HashSet<Arc<str>>,
+    /// Scene-item transform in the same order as `sources`. Filters live on
+    /// the shared source instance above and are intentionally absent here.
+    /// Keeping this as an ordered vector allows two items to reference one
+    /// capture source while retaining independent transforms.
+    pub(crate) items: Vec<SceneItem>,
 }
 
 impl Scene {
@@ -73,7 +95,8 @@ impl Scene {
         Self {
             sources: Vec::new(),
             attached: HashSet::new(),
-            items: HashMap::new(),
+            item_ids: HashSet::new(),
+            items: Vec::new(),
         }
     }
 
@@ -84,9 +107,27 @@ impl Scene {
         if !self.attached.insert(source) {
             return false;
         }
+        let item_id = Arc::<str>::from(format!("source-{}", source.value()));
+        self.item_ids.insert(Arc::clone(&item_id));
         self.sources.push(source);
-        self.items.insert(source, SceneItem::new());
+        self.items.push(SceneItem::new(source, item_id));
         true
+    }
+
+    /// Appends a source reference with a project-derived stable identity.
+    pub(crate) fn attach_instance_with_id(
+        &mut self,
+        source: super::SourceId,
+        item_id: &str,
+    ) -> Option<usize> {
+        let item_id: Arc<str> = Arc::from(item_id);
+        if !self.item_ids.insert(Arc::clone(&item_id)) {
+            return None;
+        }
+        self.attached.insert(source);
+        self.sources.push(source);
+        self.items.push(SceneItem::new(source, item_id));
+        Some(self.sources.len() - 1)
     }
 
     /// Removes `source` while keeping the shared source definition alive.
@@ -95,16 +136,16 @@ impl Scene {
     /// vector is shifted rather than swap-removed because composition order is
     /// part of the rendering contract.
     pub(crate) fn detach(&mut self, source: super::SourceId) -> Option<()> {
-        if !self.attached.remove(&source) {
-            return None;
-        }
-        if let Some(index) = self
+        let index = self
             .sources
             .iter()
-            .position(|candidate| *candidate == source)
-        {
-            self.sources.remove(index);
+            .position(|candidate| *candidate == source)?;
+        self.sources.remove(index);
+        let item = self.items.remove(index);
+        self.item_ids.remove(&item.item_id);
+        if !self.sources.contains(&source) {
+            self.attached.remove(&source);
         }
-        self.items.remove(&source).map(|_| ())
+        Some(())
     }
 }

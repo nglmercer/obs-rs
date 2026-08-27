@@ -1,29 +1,37 @@
 import { I18n } from "i18n.slint";
+import { MonitorRow } from "models.slint";
 import { Palette } from "palette.slint";
 
 // A borderless full-bleed view of one canvas, which is what OBS calls a
 // projector. It renders nothing of its own: the studio window pushes the same
-// composited image it already produced for preview or program, so a projector
-// can never disagree with what the operator is watching.
+// worker-produced image it already uses for preview, program, multiview, or a
+// selected source, so a projector never opens a second capture runtime.
 export component ProjectorWindow inherits Window {
     in property <string> locale;
     in property <image> source-image;
-    // "preview" or "program"; shown in the title so two open projectors are
-    // still tellable apart in a window switcher.
+    // Feed label shown in the title so open projectors remain tellable in a
+    // window switcher.
     in property <string> feed-label;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
+    in property <[MonitorRow]> monitor-rows;
     callback close-requested();
+    callback move-to-monitor(string);
+    callback toggle-fullscreen();
 
     title: I18n.text.app_name + " — " + root.feed-label;
     background: black;
     width: 960px;
     height: 540px;
 
-    FocusScope {
+    projector-focus := FocusScope {
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 root.close-requested();
+                return accept;
+            }
+            if (event.text == Key.F11) {
+                root.toggle-fullscreen();
                 return accept;
             }
             reject
@@ -64,7 +72,40 @@ export component ProjectorWindow inherits Window {
                 }
             }
 
-            hover := TouchArea { }
+            hover := TouchArea {
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down
+                        && event.button == PointerEventButton.right {
+                        projector-menu.show({ x: self.mouse-x, y: self.mouse-y });
+                    }
+                }
+            }
+        }
+    }
+
+    // A projector can be reopened after a dock or dialog owns keyboard focus;
+    // make F11 and Escape deterministic for every newly shown window.
+    public function focus-keyboard-boundary() {
+        projector-focus.focus();
+    }
+
+    projector-menu := ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: I18n.text.monitor_ui.select_monitor;
+                enabled: false;
+            }
+            MenuSeparator { }
+            if root.monitor-rows.length == 0 : MenuItem {
+                title: I18n.text.monitor_ui.empty;
+                enabled: false;
+            }
+            for monitor in root.monitor-rows : MenuItem {
+                title: monitor.name + " · " + monitor.geometry;
+                checkable: true;
+                checked: monitor.selected;
+                activated => root.move-to-monitor(monitor.id);
+            }
         }
     }
 }

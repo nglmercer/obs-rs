@@ -1,0 +1,159 @@
+import { AppNavbar } from "navbar.slint";
+import { LocaleOption, ProfileRow } from "models.slint";
+
+// Adapts the reusable menu bar to MainWindow's discard, collection, and dock
+// actions. Keeping menu policy here prevents the window layout from also being
+// responsible for the navigation surface's action routing.
+export component MainNavbar inherits Rectangle {
+    in property <string> locale;
+    in property <[ProfileRow]> profile-rows;
+    in property <[ProfileRow]> collection-rows;
+    in property <[LocaleOption]> locale-options;
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in-out property <bool> show-sources;
+    in-out property <bool> show-scenes;
+    in-out property <bool> show-mixer;
+    in-out property <bool> show-transitions;
+    in-out property <bool> show-controls;
+    in-out property <bool> show-stats;
+    in property <string> hotkey-undo;
+    in property <string> hotkey-redo;
+    in property <string> hotkey-save-project;
+    in property <string> hotkey-cut-transition;
+    in property <string> hotkey-fade-transition;
+    in property <string> hotkey-toggle-studio-mode;
+    in property <bool> studio-mode;
+    in property <int> view-mode;
+
+    callback set-locale(string);
+    callback select-collection(string);
+    callback select-view-mode(int);
+    callback select-profile(string);
+    callback request-discarding-action(int);
+    callback undo-edit();
+    callback redo-edit();
+    callback open-projector(bool);
+    callback open-multiview-projector();
+    callback open-source-projector();
+    callback reset-dock-layout();
+    callback new-collection();
+    callback duplicate-collection();
+    callback rename-collection();
+    callback export-collection();
+    callback request-import-collection();
+    callback save-collection();
+    callback open-documentation();
+    callback about();
+    callback save-project();
+    callback open-save-project-as();
+    callback load-project();
+    callback recover-project();
+    callback discard-project-recovery();
+    callback export-diagnostics();
+    callback open-settings-window();
+    callback open-setup-window();
+    callback open-source-properties-window();
+    callback open-source-filters-window();
+
+    width: 100%;
+    height: 26px;
+
+    function menu-action(action: string) {
+        if action == "new-project" {
+            root.request-discarding-action(4);
+        } else if action == "exit" {
+            root.request-discarding-action(5);
+        } else if action == "undo" {
+            root.undo-edit();
+        } else if action == "redo" {
+            root.redo-edit();
+        } else if action == "projector-program" {
+            root.open-projector(true);
+        } else if action == "projector-preview" {
+            root.open-projector(false);
+        } else if action == "projector-multiview" {
+            root.open-multiview-projector();
+        } else if action == "projector-source" {
+            root.open-source-projector();
+        } else if action == "reset-layout" {
+            root.reset-dock-layout();
+        } else if action == "new-collection" {
+            root.new-collection();
+        } else if action == "duplicate-collection" {
+            root.duplicate-collection();
+        } else if action == "rename-collection" {
+            root.rename-collection();
+        } else if action == "export-collection" {
+            root.export-collection();
+        } else if action == "import-collection" {
+            root.request-import-collection();
+        } else if action == "save-collection" {
+            root.save-collection();
+        } else if action == "documentation" {
+            root.open-documentation();
+        } else if action == "about" {
+            root.about();
+        } else if action == "save-project" {
+            root.save-project();
+        } else if action == "save-project-as" {
+            root.open-save-project-as();
+        } else if action == "load-project" {
+            root.load-project();
+        } else if action == "recover-project" {
+            root.recover-project();
+        } else if action == "discard-project-recovery" {
+            root.discard-project-recovery();
+        } else if action == "export-diagnostics" {
+            root.export-diagnostics();
+        } else if action == "settings" {
+            root.open-settings-window();
+        } else if action == "auto-configuration" {
+            root.open-setup-window();
+        } else if action == "source-properties" {
+            root.open-source-properties-window();
+        } else if action == "source-filters" {
+            root.open-source-filters-window();
+        } else if action == "toggle-sources" {
+            root.show-sources = !root.show-sources;
+        } else if action == "toggle-scenes" {
+            root.show-scenes = !root.show-scenes;
+        } else if action == "toggle-mixer" {
+            root.show-mixer = !root.show-mixer;
+        } else if action == "toggle-transitions" {
+            root.show-transitions = !root.show-transitions;
+        } else if action == "toggle-controls" {
+            root.show-controls = !root.show-controls;
+        } else if action == "toggle-stats" {
+            root.show-stats = !root.show-stats;
+        }
+    }
+
+    AppNavbar {
+        locale: root.locale;
+        profile-rows: root.profile-rows;
+        collection-rows: root.collection-rows;
+        locale-options: root.locale-options;
+        can-undo: root.can-undo;
+        can-redo: root.can-redo;
+        studio-mode: root.studio-mode;
+        show-sources: root.show-sources;
+        show-scenes: root.show-scenes;
+        show-mixer: root.show-mixer;
+        show-transitions: root.show-transitions;
+        show-controls: root.show-controls;
+        show-stats: root.show-stats;
+        hotkey-undo: root.hotkey-undo;
+        hotkey-redo: root.hotkey-redo;
+        hotkey-save-project: root.hotkey-save-project;
+        hotkey-cut-transition: root.hotkey-cut-transition;
+        hotkey-fade-transition: root.hotkey-fade-transition;
+        hotkey-toggle-studio-mode: root.hotkey-toggle-studio-mode;
+        view-mode: root.view-mode;
+        set-locale(code) => { root.set-locale(code); }
+        select-collection(id) => { root.select-collection(id); }
+        select-view-mode(mode) => { root.select-view-mode(mode); }
+        select-profile(id) => { root.select-profile(id); }
+        menu-action(action) => { root.menu-action(action); }
+    }
+}

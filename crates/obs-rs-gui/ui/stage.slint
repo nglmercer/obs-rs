@@ -1,7 +1,8 @@
 import { Button, ComboBox, HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { Icon } from "theme.slint";
+import { CompactButton } from "theme.slint";
 import { CanvasEditor } from "canvas_editor.slint";
 import { I18n } from "i18n.slint";
+import { MultiviewScene } from "models.slint";
 import { Palette } from "palette.slint";
 
 // The canvas widget OBS draws into: a flat dark surface with the rendered
@@ -14,55 +15,130 @@ component StageCanvas inherits Rectangle {
     in property <bool> labelled;
     // Set only on the editable canvas; the program view is not interactive.
     in property <bool> editable;
+    // Zero means fit-to-window. Non-zero values are canvas pixels per device
+    // pixel, with fixed controls for the common 25/50/100/200% presets and
+    // continuous values available while cursor-anchored wheel zooming.
+    in property <int> canvas-zoom: 0;
+    in property <int> canvas-pan-x: 0;
+    in property <int> canvas-pan-y: 0;
+    in property <bool> space-held: false;
+    in property <int> pointer-mode: 0;
+    in property <bool> selection-box-active: false;
+    in property <int> selection-box-x;
+    in property <int> selection-box-y;
+    in property <int> selection-box-width;
+    in property <int> selection-box-height;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
+    in property <bool> show-safe-areas: false;
     in property <int> item-x;
     in property <int> item-y;
     in property <int> item-width;
     in property <int> item-height;
+    in property <[int]> item-handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <[int]> item-handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <int> rotation-handle-x;
+    in property <int> rotation-handle-y;
+    in property <bool> rotation-handle-active: false;
+    in property <string> item-selection-path: "";
     in property <bool> item-active;
     in property <bool> item-locked;
-    callback transform-dragged(int, int, int);
+    callback transform-dragged(int, int, int, int);
     callback transform-committed();
-    callback canvas-clicked(int, int);
+    callback rotation-started(int, int);
+    callback rotation-dragged(int, int, int);
+    callback canvas-pointer-pressed(int, int, bool);
+    callback canvas-selection-dragged(int, int);
+    callback canvas-selection-committed();
+    callback canvas-pan-dragged(int, int);
+    callback canvas-zoom-step(int);
+    callback canvas-zoom-at(int, int, int, int, int, int, int, int);
+    callback release-push-hotkey();
 
     // `image-fit: contain` centres the frame and scales it by the smaller of the
     // two ratios. Reproducing that here is what lets pointer positions be
     // converted into canvas pixels exactly.
-    property <float> view-scale: Math.min(
+    property <float> fit-scale: Math.min(
         self.width / (root.canvas-width * 1px),
         self.height / (root.canvas-height * 1px));
-    property <length> view-x: (self.width - root.canvas-width * view-scale * 1px) / 2;
-    property <length> view-y: (self.height - root.canvas-height * view-scale * 1px) / 2;
+    property <float> view-scale: root.canvas-zoom == 0
+        ? root.fit-scale
+        : root.canvas-zoom * 0.01;
+    property <length> view-x: (self.width - root.canvas-width * view-scale * 1px) / 2
+        + root.canvas-pan-x * view-scale * 1px;
+    property <length> view-y: (self.height - root.canvas-height * view-scale * 1px) / 2
+        + root.canvas-pan-y * view-scale * 1px;
 
     background: Palette.tokens.canvas-bg;
+    clip: true;
     horizontal-stretch: 1;
     vertical-stretch: 1;
 
     Image {
-        width: 100%;
-        height: 100%;
+        x: root.view-x;
+        y: root.view-y;
+        width: root.canvas-width * root.view-scale * 1px;
+        height: root.canvas-height * root.view-scale * 1px;
         source: root.frame;
         image-fit: contain;
         image-rendering: smooth;
     }
-    if root.editable : CanvasEditor {
+    if root.editable : canvas-focus := FocusScope {
+        // Keep keyboard canvas actions on the focused preview surface while
+        // the project mutation remains owned by the Rust callback boundary.
+        focus-on-click: true;
+        focus-on-tab-navigation: true;
+        focus-lost(reason) => {
+            root.release-push-hotkey();
+        }
+        CanvasEditor {
         width: 100%;
         height: 100%;
         item-x: root.item-x;
         item-y: root.item-y;
         item-width: root.item-width;
         item-height: root.item-height;
+        handle-x: root.item-handle-x;
+        handle-y: root.item-handle-y;
+        rotation-handle-x: root.rotation-handle-x;
+        rotation-handle-y: root.rotation-handle-y;
+        rotation-handle-active: root.rotation-handle-active;
+        selection-path: root.item-selection-path;
         active: root.item-active;
         locked: root.item-locked;
         view-x: root.view-x;
         view-y: root.view-y;
         view-scale: root.view-scale;
+        space-held: root.space-held;
+        pointer-mode: root.pointer-mode;
+        selection-box-active: root.selection-box-active;
+        selection-box-x: root.selection-box-x;
+        selection-box-y: root.selection-box-y;
+        selection-box-width: root.selection-box-width;
+        selection-box-height: root.selection-box-height;
         canvas-width: root.canvas-width;
         canvas-height: root.canvas-height;
-        transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+        show-safe-areas: root.show-safe-areas;
+        transform-dragged(handle, dx, dy, modifiers) => {
+            root.transform-dragged(handle, dx, dy, modifiers);
+        }
         transform-committed() => { root.transform-committed(); }
-        canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+        rotation-started(x, y) => { root.rotation-started(x, y); }
+        rotation-dragged(x, y, modifiers) => {
+            root.rotation-dragged(x, y, modifiers);
+        }
+        canvas-pointer-pressed(x, y, additive) => {
+            root.canvas-pointer-pressed(x, y, additive);
+        }
+        canvas-selection-dragged(x, y) => { root.canvas-selection-dragged(x, y); }
+            canvas-selection-committed() => { root.canvas-selection-committed(); }
+            canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+            canvas-focused() => { canvas-focus.focus(); }
+            canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
+        canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale) => {
+            root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
+        }
+        }
     }
     if labelled : Rectangle {
         x: 0;
@@ -82,6 +158,146 @@ component StageCanvas inherits Rectangle {
     }
 }
 
+// One bounded composite from the preview worker. Labels and role borders are
+// Rust-owned scene projections, so clicking a tile still routes through the
+// existing preview/program selection commands instead of inventing UI state.
+component MultiviewCanvas inherits Rectangle {
+    in property <image> frame;
+    in property <[MultiviewScene]> scenes;
+    in property <string> status;
+    in property <string> metrics;
+    in property <float> audio-db: -60.0;
+    callback select-preview(string);
+    callback select-program(string);
+
+    background: Palette.tokens.canvas-bg;
+    clip: true;
+
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.frame;
+        image-fit: contain;
+        image-rendering: smooth;
+    }
+
+    for scene in root.scenes : Rectangle {
+        x: scene.x * root.width;
+        y: scene.y * root.height;
+        width: scene.width * root.width;
+        height: scene.height * root.height;
+        border-width: scene.selected ? 3px : 2px;
+        border-color: scene.program
+            ? Palette.tokens.program-border
+            : (scene.preview ? Palette.tokens.preview-border : Palette.tokens.border-strong);
+        background: transparent;
+        // The stable scene ID is the automation and screen-reader identity;
+        // the visible name and role remain human-readable context. The
+        // default action follows the single-click preview selection path.
+        accessible-role: list-item;
+        accessible-label: scene.id;
+        accessible-description: scene.name + (scene.role == "" ? "" : " · " + scene.role);
+        accessible-enabled: scene.id != "";
+        accessible-item-selectable: true;
+        accessible-item-selected: scene.selected;
+        accessible-item-index: scene.index;
+        accessible-item-count: scene.count;
+        accessible-action-default => {
+            if scene.id != "" {
+                root.select-preview(scene.id);
+            }
+        }
+
+        Rectangle {
+            x: 4px;
+            y: 4px;
+            width: label.preferred-width + 14px;
+            height: 20px;
+            background: rgb(2, 6, 23, 190);
+            border-radius: 3px;
+            label := Text {
+                x: 7px;
+                width: parent.width - 14px;
+                height: parent.height;
+                text: scene.name + (scene.role == "" ? "" : " · " + scene.role);
+                color: scene.program
+                    ? Palette.tokens.program-border
+                    : (scene.preview ? Palette.tokens.preview-border : Palette.tokens.text);
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        TouchArea {
+            clicked => root.select-preview(scene.id);
+            double-clicked => root.select-program(scene.id);
+        }
+    }
+
+    // Output/audio telemetry is projected once for the whole multiview. It
+    // updates at the existing 100 ms status cadence and never opens a second
+    // engine or creates per-tile media work.
+    Rectangle {
+        x: 0px;
+        y: root.height - 44px;
+        width: root.width;
+        height: 44px;
+        background: rgb(2, 6, 23, 225);
+
+        Text {
+            x: 8px;
+            y: 3px;
+            width: parent.width - 16px;
+            height: 13px;
+            text: root.status;
+            color: Palette.tokens.text;
+            font-size: 9px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            x: 8px;
+            y: 16px;
+            width: parent.width - 16px;
+            height: 12px;
+            text: root.metrics;
+            color: Palette.tokens.text-muted;
+            font-size: 8px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Rectangle {
+            x: 8px;
+            y: 32px;
+            width: Math.max(80px, parent.width - 100px);
+            height: 6px;
+            background: Palette.tokens.meter-muted;
+            border-radius: 2px;
+            Rectangle {
+                width: Math.clamp((root.audio-db + 60) / 60, 0, 1) * parent.width;
+                height: parent.height;
+                background: root.audio-db > -6
+                    ? #ef4444
+                    : (root.audio-db > -18 ? #eab308 : Palette.tokens.meter);
+                border-radius: 2px;
+            }
+        }
+        Text {
+            x: parent.width - 86px;
+            y: 27px;
+            width: 78px;
+            height: 14px;
+            text: I18n.text.multiview_audio + " " + (round(root.audio-db * 10) / 10) + " dB";
+            color: root.audio-db > -6 ? #ef4444 : Palette.tokens.text-muted;
+            font-size: 8px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
+
 // Canvas area, zoom strip, and source toolbar, stacked the way OBS stacks them
 // between the menu bar and the dock row.
 export component StagePanel inherits Rectangle {
@@ -90,23 +306,56 @@ export component StagePanel inherits Rectangle {
     in property <string> program-scene;
     in property <image> preview-image;
     in property <image> program-image;
+    in property <image> multiview-image;
+    in property <[MultiviewScene]> multiview-scenes;
+    in property <string> multiview-status;
+    in property <string> multiview-metrics;
+    in property <float> multiview-audio-db: -60.0;
     in property <int> view-mode;
+    in property <int> canvas-zoom: 0;
+    in property <int> canvas-pan-x: 0;
+    in property <int> canvas-pan-y: 0;
+    in property <bool> space-held: false;
+    in property <int> pointer-mode: 0;
+    in property <bool> selection-box-active: false;
+    in property <int> selection-box-x;
+    in property <int> selection-box-y;
+    in property <int> selection-box-width;
+    in property <int> selection-box-height;
     in property <int> canvas-width: 1920;
     in property <int> canvas-height: 1080;
+    in property <bool> show-safe-areas: false;
     in property <string> selected-source;
     in property <bool> selected-source-is-screen;
     in property <int> item-x;
     in property <int> item-y;
     in property <int> item-width;
     in property <int> item-height;
+    in property <[int]> item-handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <[int]> item-handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+    in property <int> rotation-handle-x;
+    in property <int> rotation-handle-y;
+    in property <bool> rotation-handle-active: false;
+    in property <string> item-selection-path: "";
     in property <bool> item-active;
     in property <bool> item-locked;
     callback open-source-properties();
     callback open-source-filters();
     callback open-monitor-window();
-    callback transform-dragged(int, int, int);
+    callback transform-dragged(int, int, int, int);
     callback transform-committed();
-    callback canvas-clicked(int, int);
+    callback rotation-started(int, int);
+    callback rotation-dragged(int, int, int);
+    callback canvas-pointer-pressed(int, int, bool);
+    callback canvas-selection-dragged(int, int);
+    callback canvas-selection-committed();
+    callback canvas-zoom-changed(int);
+    callback canvas-zoom-step(int);
+    callback canvas-zoom-at(int, int, int, int, int, int, int, int);
+    callback canvas-pan-dragged(int, int);
+    callback release-push-hotkey();
+    callback multiview-select-preview(string);
+    callback multiview-select-program(string);
 
     property <length> canvas-area-width: canvas-area.width - 24px;
     property <length> canvas-area-height: canvas-area.height - 24px;
@@ -135,18 +384,51 @@ export component StagePanel inherits Rectangle {
                     label: I18n.text.preview;
                     program: false;
                     labelled: true;
+                    canvas-zoom: root.canvas-zoom;
+                    canvas-pan-x: root.canvas-pan-x;
+                    canvas-pan-y: root.canvas-pan-y;
+                    space-held: root.space-held;
+                    pointer-mode: root.pointer-mode;
+                    selection-box-active: root.selection-box-active;
+                    selection-box-x: root.selection-box-x;
+                    selection-box-y: root.selection-box-y;
+                    selection-box-width: root.selection-box-width;
+                    selection-box-height: root.selection-box-height;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
+                    show-safe-areas: root.show-safe-areas;
                     editable: true;
                     item-x: root.item-x;
                     item-y: root.item-y;
                     item-width: root.item-width;
                     item-height: root.item-height;
+                    item-handle-x: root.item-handle-x;
+                    item-handle-y: root.item-handle-y;
+                    rotation-handle-x: root.rotation-handle-x;
+                    rotation-handle-y: root.rotation-handle-y;
+                    rotation-handle-active: root.rotation-handle-active;
+                    item-selection-path: root.item-selection-path;
                     item-active: root.item-active;
                     item-locked: root.item-locked;
-                    transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+                    transform-dragged(handle, dx, dy, modifiers) => {
+                        root.transform-dragged(handle, dx, dy, modifiers);
+                    }
                     transform-committed() => { root.transform-committed(); }
-                    canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+                    rotation-started(x, y) => { root.rotation-started(x, y); }
+                    rotation-dragged(x, y, modifiers) => {
+                        root.rotation-dragged(x, y, modifiers);
+                    }
+                    canvas-pointer-pressed(x, y, additive) => {
+                        root.canvas-pointer-pressed(x, y, additive);
+                    }
+                    canvas-selection-dragged(x, y) => { root.canvas-selection-dragged(x, y); }
+                    canvas-selection-committed() => { root.canvas-selection-committed(); }
+                    canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+                    canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
+                    canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale) => {
+                        root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
+                    }
+                    release-push-hotkey() => { root.release-push-hotkey(); }
                 }
                 if view-mode == 0 : StageCanvas {
                     frame: program-image;
@@ -154,76 +436,132 @@ export component StagePanel inherits Rectangle {
                     program: true;
                     labelled: true;
                 }
-                if view-mode != 0 : StageCanvas {
+                if view-mode == 2 : MultiviewCanvas {
+                    frame: root.multiview-image;
+                    scenes: root.multiview-scenes;
+                    status: root.multiview-status;
+                    metrics: root.multiview-metrics;
+                    audio-db: root.multiview-audio-db;
+                    select-preview(id) => { root.multiview-select-preview(id); }
+                    select-program(id) => { root.multiview-select-program(id); }
+                }
+                if view-mode != 0 && view-mode != 2 : StageCanvas {
                     frame: preview-image;
                     label: I18n.text.preview;
                     program: false;
                     labelled: false;
+                    canvas-zoom: root.canvas-zoom;
+                    canvas-pan-x: root.canvas-pan-x;
+                    canvas-pan-y: root.canvas-pan-y;
+                    space-held: root.space-held;
+                    pointer-mode: root.pointer-mode;
+                    selection-box-active: root.selection-box-active;
+                    selection-box-x: root.selection-box-x;
+                    selection-box-y: root.selection-box-y;
+                    selection-box-width: root.selection-box-width;
+                    selection-box-height: root.selection-box-height;
                     canvas-width: root.canvas-width;
                     canvas-height: root.canvas-height;
+                    show-safe-areas: root.show-safe-areas;
                     editable: true;
                     item-x: root.item-x;
                     item-y: root.item-y;
                     item-width: root.item-width;
                     item-height: root.item-height;
+                    item-handle-x: root.item-handle-x;
+                    item-handle-y: root.item-handle-y;
+                    rotation-handle-x: root.rotation-handle-x;
+                    rotation-handle-y: root.rotation-handle-y;
+                    rotation-handle-active: root.rotation-handle-active;
+                    item-selection-path: root.item-selection-path;
                     item-active: root.item-active;
                     item-locked: root.item-locked;
-                    transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+                    transform-dragged(handle, dx, dy, modifiers) => {
+                        root.transform-dragged(handle, dx, dy, modifiers);
+                    }
                     transform-committed() => { root.transform-committed(); }
-                    canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+                    rotation-started(x, y) => { root.rotation-started(x, y); }
+                    rotation-dragged(x, y, modifiers) => {
+                        root.rotation-dragged(x, y, modifiers);
+                    }
+                    canvas-pointer-pressed(x, y, additive) => {
+                        root.canvas-pointer-pressed(x, y, additive);
+                    }
+                    canvas-selection-dragged(x, y) => { root.canvas-selection-dragged(x, y); }
+                    canvas-selection-committed() => { root.canvas-selection-committed(); }
+                    canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+                    canvas-zoom-step(step) => { root.canvas-zoom-step(step); }
+                    canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale) => {
+                        root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
+                    }
+                    release-push-hotkey() => { root.release-push-hotkey(); }
                 }
             }
         }
 
         Rectangle {
             height: 24px;
+            visible: root.view-mode != 2;
             background: Palette.tokens.panel-bg;
             border-width: 1px;
             border-color: Palette.tokens.border;
             // Laid out by hand: the zoom readout depends on the canvas height,
             // so letting its text feed a layout would close a binding loop.
-            Icon { x: 8px; y: 6px; name: "remove"; icon-size: 12px; }
+            CompactButton {
+                x: 0px;
+                y: 0px;
+                icon-name: "remove";
+                hint: "Zoom out";
+                clicked => root.canvas-zoom-step(-1);
+            }
             Text {
                 x: 26px;
                 y: 0;
                 width: 40px;
                 height: 100%;
-                text: Math.round(root.fit-scale * 100) + "%";
+                text: Math.round(root.canvas-zoom == 0
+                    ? root.fit-scale * 100
+                    : root.canvas-zoom) + "%";
                 color: Palette.tokens.text-muted;
                 font-size: 10px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
             }
-            Icon { x: 70px; y: 6px; name: "add"; icon-size: 12px; }
-            Rectangle {
+            CompactButton {
+                x: 64px;
+                y: 0px;
+                icon-name: "add";
+                hint: "Zoom in";
+                clicked => root.canvas-zoom-step(1);
+            }
+            ComboBox {
                 x: 92px;
                 y: 2px;
                 width: 148px;
                 height: parent.height - 4px;
-                background: Palette.tokens.row-bg;
-                border-width: 1px;
-                border-color: Palette.tokens.border;
-                Text {
-                    x: 6px;
-                    width: parent.width - 20px;
-                    height: 100%;
-                    text: I18n.text.fit_to_window;
-                    color: Palette.tokens.text-muted;
-                    font-size: 10px;
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
-                Icon {
-                    x: parent.width - 15px;
-                    y: (parent.height - 11px) / 2;
-                    name: "down";
-                    icon-size: 11px;
+                model: [I18n.text.fit_to_window, "25%", "50%", "100%", "200%"];
+                current-index: root.canvas-zoom == 0
+                    ? 0
+                    : (root.canvas-zoom == 25
+                        ? 1
+                        : (root.canvas-zoom == 50
+                            ? 2
+                            : (root.canvas-zoom == 100
+                                ? 3
+                                : (root.canvas-zoom == 200 ? 4 : -1))));
+                selected(index) => {
+                    root.canvas-zoom-changed(index == 0
+                        ? 0
+                        : (index == 1
+                            ? 25
+                            : (index == 2 ? 50 : (index == 3 ? 100 : 200))));
                 }
             }
         }
 
         Rectangle {
             height: 38px;
+            visible: root.view-mode != 2;
             background: Palette.tokens.panel-bg;
             border-width: 1px;
             border-color: Palette.tokens.border;

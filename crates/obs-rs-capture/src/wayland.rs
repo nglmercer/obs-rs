@@ -6,14 +6,21 @@
 //! it is the standard userspace tool for the job, it is driven with a fixed
 //! argument list and no shell, and it keeps this crate free of C bindings.
 
-use std::{env, process::Command};
+use std::{
+    collections::HashMap,
+    env,
+    process::Command,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
 use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 
 use crate::{
-    dbus::{open_screencast, CursorMode, ScreenCastSession},
+    dbus::{open_screencast, open_screencast_cancellable, CursorMode, ScreenCastSession},
     device::VideoCaptureDevice,
     error::CaptureError,
+    lifecycle::CaptureCancellation,
     raw_reader::RawFrameReader,
     types::{CaptureDeviceInfo, CaptureKind, CapturePermission},
 };
@@ -26,6 +33,40 @@ use crate::{
 /// `gstreamer1.0-tools` (or `gstreamer-tools`) package and needs
 /// `gst-plugin-pipewire` for the `pipewiresrc` element.
 pub const PIPEWIRE_READER_COMMAND: &str = "gst-launch-1.0";
+
+/// Temporary source-setting key used to hand a live portal session from the UI
+/// picker to the runtime source. The source consumes it and reports the normal
+/// persisted restore token afterward.
+pub const WAYLAND_PORTAL_HANDOFF_SETTING: &str = "portal_handoff_id";
+
+const HANDOFF_TTL: Duration = Duration::from_mins(1);
+
+static PORTAL_HANDOFFS: OnceLock<Mutex<HashMap<String, (Instant, WaylandCaptureDevice)>>> =
+    OnceLock::new();
+
+/// Publishes one already-selected portal session for the runtime source that
+/// owns `handoff_id`.
+pub fn publish_wayland_portal_handoff(handoff_id: String, device: WaylandCaptureDevice) {
+    let handoffs = PORTAL_HANDOFFS.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut handoffs) = handoffs.lock() else {
+        return;
+    };
+    purge_expired_handoffs(&mut handoffs);
+    handoffs.insert(handoff_id, (Instant::now(), device));
+}
+
+/// Takes a live portal session published by the display picker.
+pub fn take_wayland_portal_handoff(handoff_id: &str) -> Option<WaylandCaptureDevice> {
+    let handoffs = PORTAL_HANDOFFS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut handoffs = handoffs.lock().ok()?;
+    purge_expired_handoffs(&mut handoffs);
+    handoffs.remove(handoff_id).map(|(_, device)| device)
+}
+
+fn purge_expired_handoffs(handoffs: &mut HashMap<String, (Instant, WaylandCaptureDevice)>) {
+    let now = Instant::now();
+    handoffs.retain(|_, (created, _)| now.duration_since(*created) < HANDOFF_TTL);
+}
 
 /// Returns whether [`PIPEWIRE_READER_COMMAND`] can be found on `PATH`.
 ///
@@ -71,8 +112,44 @@ impl WaylandCaptureDevice {
     /// Returns [`CaptureError::PermissionDenied`] when the user cancels the
     /// portal dialog, and [`CaptureError::PlatformUnavailable`] when no portal
     /// is reachable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the portal error when the session cannot be opened or the
+    /// device metadata is invalid.
     pub fn open(id: &str, name: &str, restore_token: Option<&str>) -> Result<Self, CaptureError> {
         let session = open_screencast(restore_token, CursorMode::Embedded)?;
+        Self::from_session(id, name, session)
+    }
+
+    /// Opens a portal session with cancellation support for asynchronous source
+    /// replacement and shutdown.
+    ///
+    /// # Errors
+    ///
+    /// Returns the portal or cancellation error when the session cannot be
+    /// opened, and a metadata error for an invalid device identity.
+    pub fn open_cancellable(
+        id: &str,
+        name: &str,
+        restore_token: Option<&str>,
+        cancelled: &CaptureCancellation,
+    ) -> Result<Self, CaptureError> {
+        let session = open_screencast_cancellable(restore_token, CursorMode::Embedded, cancelled)?;
+        Self::from_session(id, name, session)
+    }
+
+    /// Builds a device from a session that was already selected by the portal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError::InvalidDevice`] when the device identity cannot
+    /// be represented by the capture registry.
+    pub fn from_session(
+        id: &str,
+        name: &str,
+        session: ScreenCastSession,
+    ) -> Result<Self, CaptureError> {
         let info = CaptureDeviceInfo::new(id, name, CaptureKind::Screen)?;
         Ok(Self {
             info,
@@ -126,6 +203,10 @@ impl VideoCaptureDevice for WaylandCaptureDevice {
         self.format = Some(format);
         self.frame_index = 0;
         Ok(())
+    }
+
+    fn restore_token(&self) -> Option<&str> {
+        self.session.restore_token()
     }
 
     fn stop(&mut self) {

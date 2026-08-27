@@ -28,7 +28,7 @@ pub const fn build_capabilities() -> WgpuBuildCapabilities {
 mod gpu;
 
 #[cfg(feature = "gpu")]
-pub use gpu::{WgpuAdapterCapabilities, WgpuBackendError, WgpuRenderBackend};
+pub use gpu::{Nv12Metrics, WgpuAdapterCapabilities, WgpuBackendError, WgpuRenderBackend};
 
 #[cfg(test)]
 mod tests {
@@ -40,10 +40,15 @@ mod tests {
     }
 
     #[cfg(feature = "gpu")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the GPU integration fixture keeps CPU-oracle, viewport, rotation, and recovery assertions together"
+    )]
     #[test]
     fn gpu_upload_layer_submission_readback_and_recovery_are_explicit() {
         use obs_rs_media::{
-            FrameFilter, FrameRate, FrameTransform, Timestamp, VideoFormat, VideoFrame,
+            ChromaKey, ColorCorrection, ColorKey, ColorMultiplyAdd, FrameFilter, FrameRate,
+            FrameTransform, LumaKey, Timestamp, VideoFormat, VideoFrame,
         };
         use obs_rs_render::{CpuRenderBackend, RenderBackend, RenderError, SceneLayer};
 
@@ -60,6 +65,12 @@ mod tests {
             FrameFilter::Grayscale,
             FrameFilter::Brightness { milli: -250 },
             FrameFilter::Opacity(200),
+            FrameFilter::CropPad {
+                left: 1,
+                top: 1,
+                right: 1,
+                bottom: 1,
+            },
         ];
         let transform = FrameTransform::new(1_500, 750, -1, 2, true, false, 210)
             .expect("transform")
@@ -77,6 +88,248 @@ mod tests {
             expected
         );
         assert_eq!(backend.metrics().readbacks(), 1);
+
+        let color_correction =
+            ColorCorrection::new(250, -500, 125, 750, 30, 900).expect("valid color correction");
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[FrameFilter::ColorCorrection(color_correction)],
+                )],
+            )
+            .expect("GPU color correction");
+        let gpu_corrected = backend.readback(target).expect("color correction readback");
+        let mut cpu_corrected = frame.clone();
+        cpu_corrected.apply_filter(FrameFilter::ColorCorrection(color_correction));
+        for (index, (actual, expected)) in gpu_corrected
+            .pixels()
+            .iter()
+            .zip(cpu_corrected.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "color correction channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 2);
+
+        let color_key = ColorKey::new(32, 52, 200, 100, 100).expect("valid color key");
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[FrameFilter::ColorKey(color_key)],
+                )],
+            )
+            .expect("GPU color key");
+        let gpu_keyed = backend.readback(target).expect("color key readback");
+        let mut cpu_keyed = frame.clone();
+        cpu_keyed.apply_filter(FrameFilter::ColorKey(color_key));
+        for (index, (actual, expected)) in gpu_keyed
+            .pixels()
+            .iter()
+            .zip(cpu_keyed.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "color key channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 3);
+
+        let luma_key = LumaKey::new(900, 100, 40, 60).expect("valid luma key");
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[FrameFilter::LumaKey(luma_key)],
+                )],
+            )
+            .expect("GPU luma key");
+        let gpu_luma_keyed = backend.readback(target).expect("luma key readback");
+        let mut cpu_luma_keyed = frame.clone();
+        cpu_luma_keyed.apply_filter(FrameFilter::LumaKey(luma_key));
+        for (index, (actual, expected)) in gpu_luma_keyed
+            .pixels()
+            .iter()
+            .zip(cpu_luma_keyed.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "luma key channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 4);
+
+        let chroma_key = ChromaKey::new(0, 255, 0, 400, 80, 100).expect("valid chroma key");
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[FrameFilter::ChromaKey(chroma_key)],
+                )],
+            )
+            .expect("GPU chroma key");
+        let gpu_chroma_keyed = backend.readback(target).expect("chroma key readback");
+        let mut cpu_chroma_keyed = frame.clone();
+        cpu_chroma_keyed.apply_filter(FrameFilter::ChromaKey(chroma_key));
+        for (index, (actual, expected)) in gpu_chroma_keyed
+            .pixels()
+            .iter()
+            .zip(cpu_chroma_keyed.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "chroma key channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 5);
+
+        let sharpen = FrameFilter::Sharpen { milli: 80 };
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[sharpen],
+                )],
+            )
+            .expect("GPU sharpen");
+        let gpu_sharpened = backend.readback(target).expect("sharpen readback");
+        let mut cpu_sharpened = frame.clone();
+        cpu_sharpened.apply_filter(sharpen);
+        for (index, (actual, expected)) in gpu_sharpened
+            .pixels()
+            .iter()
+            .zip(cpu_sharpened.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "sharpen channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 6);
+
+        let color_wash =
+            FrameFilter::ColorMultiplyAdd(ColorMultiplyAdd::new([220, 240, 255], [4, 8, 12]));
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &frame,
+                    FrameTransform::IDENTITY,
+                    &[color_wash],
+                )],
+            )
+            .expect("GPU color multiply/add");
+        let gpu_color_wash = backend.readback(target).expect("color wash readback");
+        let mut cpu_color_wash = frame.clone();
+        cpu_color_wash.apply_filter(color_wash);
+        for (index, (actual, expected)) in gpu_color_wash
+            .pixels()
+            .iter()
+            .zip(cpu_color_wash.pixels())
+            .enumerate()
+        {
+            assert!(
+                actual.abs_diff(*expected) <= 1,
+                "color wash channel {index}: GPU={actual}, CPU={expected}"
+            );
+        }
+        assert_eq!(backend.metrics().readbacks(), 7);
+
+        let scroll = FrameFilter::Scroll {
+            speed_x: 1,
+            speed_y: -1,
+            looped: true,
+        };
+        let scroll_frame = frame.at_timestamp(Timestamp::from_nanos(1_000_000_000));
+        backend
+            .submit_layers(
+                target,
+                &[SceneLayer::frame(
+                    &scroll_frame,
+                    FrameTransform::IDENTITY,
+                    &[scroll],
+                )],
+            )
+            .expect("GPU scroll");
+        let gpu_scrolled = backend.readback(target).expect("scroll readback");
+        let mut cpu_scrolled = scroll_frame.clone();
+        cpu_scrolled.apply_filter(scroll);
+        assert_eq!(gpu_scrolled, cpu_scrolled);
+        assert_eq!(backend.metrics().readbacks(), 8);
+
+        let rotated_transform = FrameTransform::IDENTITY
+            .with_rotation_degrees(90)
+            .expect("rotation");
+        backend
+            .submit_layers(target, &[SceneLayer::frame(&frame, rotated_transform, &[])])
+            .expect("GPU rotation");
+        let rotated_expected = frame
+            .transformed(rotated_transform)
+            .expect("CPU rotation oracle");
+        assert_eq!(
+            backend.readback(target).expect("rotated readback"),
+            rotated_expected
+        );
+
+        // A desktop preview is allowed to be smaller than the program
+        // canvas. The compositor must scale the canvas-space layer into the
+        // target without first producing a full-size CPU frame.
+        let preview_format = VideoFormat::new(4, 4, format.frame_rate()).expect("preview format");
+        let preview_target = backend
+            .create_texture(preview_format)
+            .expect("preview target");
+        let solid = VideoFrame::solid(format, Timestamp::ZERO, [32, 96, 160, 255]);
+        backend
+            .submit_layers(
+                preview_target,
+                &[SceneLayer::frame(&solid, FrameTransform::IDENTITY, &[])],
+            )
+            .expect("viewport-sized GPU composition");
+        assert!(backend
+            .submit_readback(preview_target)
+            .expect("schedule preview readback"));
+        let async_preview = (0..100).find_map(|_| {
+            let frame = backend
+                .poll_readbacks()
+                .expect("poll preview readback")
+                .into_iter()
+                .find(|(texture, _)| *texture == preview_target)
+                .map(|(_, frame)| frame);
+            if frame.is_none() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            frame
+        });
+        assert_eq!(
+            async_preview
+                .expect("asynchronous preview readback")
+                .format(),
+            preview_format
+        );
+        let preview = backend.readback(preview_target).expect("preview readback");
+        assert_eq!(preview.format(), preview_format);
+        assert!(preview
+            .pixels()
+            .chunks_exact(4)
+            .all(|pixel| pixel == [32, 96, 160, 255]));
 
         let background_pixels = (0_u8..64)
             .flat_map(|value| [10, 200, 30, value.saturating_mul(4)])
@@ -113,6 +366,31 @@ mod tests {
         assert!(nv12.bytes()[..64].iter().all(|value| *value == 16));
         assert!(nv12.bytes()[64..].iter().all(|value| *value == 128));
         assert_eq!(backend.metrics().color_conversions(), 1);
+        let pipeline_builds = backend.nv12_pipeline_builds();
+        backend
+            .readback_nv12(target)
+            .expect("reused GPU NV12 conversion");
+        assert_eq!(backend.nv12_pipeline_builds(), pipeline_builds);
+        assert!(backend
+            .submit_nv12_readback(target)
+            .expect("schedule asynchronous NV12 conversion"));
+        let async_nv12 = (0..100).find_map(|_| {
+            let frame = backend
+                .poll_nv12_readbacks()
+                .expect("poll asynchronous NV12 conversion")
+                .into_iter()
+                .find(|(texture, _)| *texture == target)
+                .map(|(_, frame)| frame);
+            if frame.is_none() {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            frame
+        });
+        let async_nv12 = async_nv12.expect("asynchronous NV12 conversion");
+        assert_eq!(async_nv12.pixel_format(), obs_rs_media::PixelFormat::Nv12);
+        assert!(async_nv12.bytes()[..64].iter().all(|value| *value == 16));
+        assert!(async_nv12.bytes()[64..].iter().all(|value| *value == 128));
+        assert_eq!(backend.nv12_pipeline_builds(), pipeline_builds);
 
         backend.lose_device();
         assert_eq!(backend.state(), obs_rs_render::RenderState::Lost);

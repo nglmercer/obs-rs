@@ -1,0 +1,161 @@
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import {
+    AspectRatioLabel,
+    BrowsePathRow,
+    CheckRow,
+    ColorSwatch,
+    EditableResolutionCombo,
+    SegmentedControl,
+    SettingHint,
+    SettingRow,
+    SettingsCombo,
+    SettingsField,
+    SettingsGroup,
+    SettingsSection,
+    SettingsSlider,
+    SettingsSpinBox,
+    SettingsWarning,
+} from "settings_widgets.slint";
+import { I18n } from "i18n.slint";
+import { Metrics, Palette } from "palette.slint";
+
+// One component per settings category. Each takes only the properties it edits
+// and reports changes upward; the window owns the draft state.
+
+export component VideoPage inherits VerticalLayout {
+    in property <[string]> resolution-names;
+    in-out property <string> base-resolution;
+    in-out property <string> output-resolution;
+    in property <bool> base-resolution-valid;
+    in property <bool> output-resolution-valid;
+    in property <int> base-suggestion-index;
+    in property <int> output-suggestion-index;
+    in property <string> base-aspect-ratio;
+    in property <string> output-aspect-ratio;
+    in property <[string]> scale-filter-names;
+    in property <int> scale-filter-index;
+    in property <[string]> fps-mode-names;
+    in property <int> fps-mode-index;
+    in property <bool> fps-common;
+    in property <bool> fps-integer;
+    in property <bool> fps-fractional;
+    in property <[string]> frame-rate-names;
+    in property <int> frame-rate-index;
+    in-out property <int> fps-numerator;
+    in-out property <int> fps-denominator;
+    in property <bool> downscale-active;
+    callback edit-base-resolution(string);
+    callback edit-output-resolution(string);
+    callback select-scale-filter(int);
+    callback select-fps-mode(int);
+    callback select-frame-rate(int);
+    callback changed();
+    spacing: Metrics.ui.page-spacing;
+
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_resolution;
+        SettingRow {
+            label: I18n.text.settings_ui.base_resolution;
+            EditableResolutionCombo {
+                control-label: I18n.text.settings_ui.base_resolution;
+                suggestions: root.resolution-names;
+                value <=> root.base-resolution;
+                valid: root.base-resolution-valid;
+                suggestion-index: root.base-suggestion-index;
+                edited(value) => { root.edit-base-resolution(value); }
+                selected(value) => { root.edit-base-resolution(value); }
+            }
+            AspectRatioLabel {
+                caption: I18n.text.settings_ui.aspect_ratio;
+                ratio: root.base-aspect-ratio;
+            }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.output_resolution;
+            EditableResolutionCombo {
+                control-label: I18n.text.settings_ui.output_resolution;
+                suggestions: root.resolution-names;
+                value <=> root.output-resolution;
+                valid: root.output-resolution-valid;
+                suggestion-index: root.output-suggestion-index;
+                edited(value) => { root.edit-output-resolution(value); }
+                selected(value) => { root.edit-output-resolution(value); }
+            }
+            AspectRatioLabel {
+                caption: I18n.text.settings_ui.aspect_ratio;
+                ratio: root.output-aspect-ratio;
+            }
+        }
+        if !root.base-resolution-valid || !root.output-resolution-valid : SettingsWarning {
+            text: I18n.text.settings_ui.resolution_invalid;
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.downscale_filter;
+            SettingsCombo {
+                model: root.scale-filter-names;
+                current-index: root.scale-filter-index;
+                accessible-label: I18n.text.settings_ui.downscale_filter;
+                // The filter only does anything when the two resolutions
+                // differ, so it says so rather than pretending otherwise.
+                enabled: root.downscale-active;
+                selected(value) => { root.select-scale-filter(self.current-index); }
+            }
+        }
+        if !root.downscale-active : SettingHint {
+            text: I18n.text.settings_ui.downscale_inactive_hint;
+        }
+    }
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_frame_rate;
+        SettingRow {
+            label: I18n.text.settings_ui.fps_type;
+            SettingsCombo {
+                model: root.fps-mode-names;
+                current-index: root.fps-mode-index;
+                accessible-label: I18n.text.settings_ui.fps_type;
+                selected(value) => { root.select-fps-mode(self.current-index); }
+            }
+        }
+        if root.fps-common : SettingRow {
+            label: I18n.text.settings_ui.frame_rate;
+            SettingsCombo {
+                model: root.frame-rate-names;
+                current-index: root.frame-rate-index;
+                accessible-label: I18n.text.settings_ui.frame_rate;
+                selected(value) => { root.select-frame-rate(self.current-index); }
+            }
+        }
+        if root.fps-integer : SettingRow {
+            label: I18n.text.settings_ui.integer_fps;
+            SettingsSpinBox {
+                value <=> root.fps-numerator;
+                minimum: 1;
+                maximum: 240;
+                accessible-label: I18n.text.settings_ui.integer_fps;
+                edited(value) => { root.changed(); }
+            }
+        }
+        if root.fps-fractional : SettingRow {
+            label: I18n.text.settings_ui.fps_numerator;
+            SettingsSpinBox {
+                value <=> root.fps-numerator;
+                minimum: 1;
+                maximum: 1000000;
+                accessible-label: I18n.text.settings_ui.fps_numerator;
+                edited(value) => { root.changed(); }
+            }
+        }
+        if root.fps-fractional : SettingRow {
+            label: I18n.text.settings_ui.fps_denominator;
+            SettingsSpinBox {
+                value <=> root.fps-denominator;
+                minimum: 1;
+                maximum: 100000;
+                accessible-label: I18n.text.settings_ui.fps_denominator;
+                edited(value) => { root.changed(); }
+            }
+        }
+        SettingHint { text: I18n.text.settings_ui.video_hint; }
+    }
+    Rectangle { vertical-stretch: 1; }
+}

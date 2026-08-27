@@ -12,12 +12,16 @@ export component MixerDock inherits Rectangle {
     in property <bool> floating;
     in property <bool> meters-paused;
     callback move-panel(int, int);
+    callback dock-drag-start(int, float, float);
+    callback dock-drag-moved(int, float, float);
+    callback dock-drag-end(int, float, float);
     callback float-panel(int);
     callback close-panel(int);
     callback set-mixer-gain(string, int);
+    callback set-mixer-pan(string, int);
     callback toggle-mixer-mute(string);
     callback toggle-meters-paused();
-    callback open-mixer-settings();
+    callback open-audio-settings-window();
 
     background: Palette.tokens.panel-bg;
     border-width: 1px;
@@ -30,6 +34,9 @@ export component MixerDock inherits Rectangle {
             panel-kind: root.panel-kind;
             floating: root.floating;
             move-panel(kind, delta) => { root.move-panel(kind, delta); }
+            dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+            dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+            dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
             float-panel(kind) => { root.float-panel(kind); }
             close-panel(kind) => { root.close-panel(kind); }
         }
@@ -46,8 +53,11 @@ export component MixerDock inherits Rectangle {
                         alignment: start;
                         spacing: 1px;
                     for channel in mixer-rows : MixerContextMenuArea {
-                        height: 78px;
+                        height: 98px;
                         channel-id: channel.id;
+                        channel-name: channel.name;
+                        item-index: channel.index;
+                        item-count: channel.count;
                         channel-muted: channel.muted;
                         channel-gain: round(channel.gain * 1000);
                         toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
@@ -68,12 +78,16 @@ export component MixerDock inherits Rectangle {
                                     overflow: elide;
                                 }
                                 Text {
-                                    text: channel.muted
-                                        ? "MUTE"
-                                        : round(channel.peak-db * 10) / 10 + " dB";
-                                    color: channel.peak-db > -6
-                                        ? #ef4444
-                                        : (channel.peak-db > -18 ? #eab308 : Palette.tokens.text-muted);
+                                    text: channel.clipped
+                                        ? "CLIP"
+                                        : (channel.muted
+                                            ? "MUTE"
+                                            : round(channel.peak-db * 10) / 10 + " dB");
+                                    color: channel.clipped
+                                        ? #ffffff
+                                        : (channel.peak-db > -6
+                                            ? #ef4444
+                                            : (channel.peak-db > -18 ? #eab308 : Palette.tokens.text-muted));
                                     font-size: 9px;
                                 }
                             }
@@ -83,6 +97,27 @@ export component MixerDock inherits Rectangle {
                                 step: 0.01;
                                 value: channel.gain;
                                 changed => set-mixer-gain(channel.id, round(self.value * 1000));
+                            }
+                            HorizontalBox {
+                                spacing: 3px;
+                                Text {
+                                    text: "L";
+                                    color: Palette.tokens.text-muted;
+                                    font-size: 9px;
+                                }
+                                Slider {
+                                    horizontal-stretch: 1;
+                                    minimum: -1;
+                                    maximum: 1;
+                                    step: 0.01;
+                                    value: channel.pan;
+                                    changed => set-mixer-pan(channel.id, round(self.value * 1000));
+                                }
+                                Text {
+                                    text: "R";
+                                    color: Palette.tokens.text-muted;
+                                    font-size: 9px;
+                                }
                             }
                             Rectangle {
                                 width: 100%;
@@ -99,6 +134,12 @@ export component MixerDock inherits Rectangle {
                                         : (channel.peak-db > -6
                                             ? #ef4444
                                             : (channel.peak-db > -18 ? #eab308 : Palette.tokens.meter));
+                                }
+                                Rectangle {
+                                    x: Math.clamp((channel.peak-hold-db + 60) / 60, 0, 1) * parent.width - 1px;
+                                    width: 2px;
+                                    height: 100%;
+                                    background: channel.clipped ? #ffffff : Palette.tokens.text;
                                 }
                                 Rectangle { x: parent.width * 0.7; width: 1px; height: 100%; background: Palette.tokens.border-strong; }
                                 Rectangle { x: parent.width * 0.9; width: 1px; height: 100%; background: Palette.tokens.border-strong; }
@@ -127,7 +168,7 @@ export component MixerDock inherits Rectangle {
                     CompactButton {
                         icon-name: "settings";
                         hint: I18n.text.mixer_options;
-                        clicked => { root.open-mixer-settings(); }
+                        clicked => { root.open-audio-settings-window(); }
                     }
                     Rectangle { horizontal-stretch: 1; }
                 }

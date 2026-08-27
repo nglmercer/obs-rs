@@ -7,15 +7,19 @@
 //! the X11 monitor list.
 
 use std::{
-    sync::atomic::{AtomicU32, Ordering},
-    time::Duration,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Mutex, MutexGuard, OnceLock, TryLockError,
+    },
+    thread,
+    time::{Duration, Instant},
 };
 
 use super::{
     connection::{Connection, Message},
     value::{options, Value},
 };
-use crate::CaptureError;
+use crate::{lifecycle::CaptureCancellation, CaptureError};
 
 const PORTAL_SERVICE: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -35,6 +39,11 @@ const PERSIST_UNTIL_REVOKED: u32 = 2;
 
 /// The portal dialog waits for a person, so it gets a human-scale timeout.
 const USER_RESPONSE_TIMEOUT: Duration = Duration::from_mins(3);
+
+/// Portal handshakes share one compositor-owned dialog. Serializing the
+/// handshake prevents a source update and an explicit picker from presenting
+/// two dialogs at once.
+static HANDSHAKE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Distinguishes this process's request paths from any other client's.
 static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -85,13 +94,7 @@ impl ScreenCastSession {
             return;
         }
         self.closed = true;
-        let _ = self.connection.call(
-            PORTAL_SERVICE,
-            &self.session_handle.clone(),
-            SESSION_INTERFACE,
-            "Close",
-            &[],
-        );
+        close_portal_session(&mut self.connection, &self.session_handle);
     }
 }
 
@@ -133,6 +136,29 @@ pub fn open_screencast(
     restore_token: Option<&str>,
     cursor: CursorMode,
 ) -> Result<ScreenCastSession, CaptureError> {
+    open_screencast_cancellable(restore_token, cursor, &CaptureCancellation::new())
+}
+
+/// Opens a screen-cast session and closes any pending portal request when the
+/// owning asynchronous source is cancelled.
+///
+/// # Errors
+///
+/// Returns a portal or cancellation error when the session cannot be created,
+/// the user cancels the request, or the portal response is invalid.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the portal handshake remains one cancellable transaction"
+)]
+pub fn open_screencast_cancellable(
+    restore_token: Option<&str>,
+    cursor: CursorMode,
+    cancelled: &CaptureCancellation,
+) -> Result<ScreenCastSession, CaptureError> {
+    let _handshake = acquire_handshake_lock(cancelled)?;
+    if cancelled.is_cancelled() {
+        return Err(CaptureError::NotRunning);
+    }
     let mut connection = Connection::session()?;
     let sender = escaped_sender(connection.unique_name());
 
@@ -142,6 +168,7 @@ pub fn open_screencast(
         &sender,
         SCREENCAST_INTERFACE,
         "CreateSession",
+        cancelled,
         |token| {
             vec![options([
                 ("handle_token", Value::Str(token.to_owned())),
@@ -164,11 +191,12 @@ pub fn open_screencast(
     if let Some(token) = restore_token.filter(|token| !token.trim().is_empty()) {
         select.push(("restore_token", Value::Str(token.to_owned())));
     }
-    request(
+    let _results = match request(
         &mut connection,
         &sender,
         SCREENCAST_INTERFACE,
         "SelectSources",
+        cancelled,
         |token| {
             let mut entries = select
                 .iter()
@@ -180,13 +208,24 @@ pub fn open_screencast(
                 dictionary(entries),
             ]
         },
-    )?;
+    ) {
+        Ok(results) => results,
+        Err(error) => {
+            close_portal_session(&mut connection, &session_handle);
+            return Err(error);
+        }
+    };
+    if cancelled.is_cancelled() {
+        close_portal_session(&mut connection, &session_handle);
+        return Err(CaptureError::NotRunning);
+    }
 
-    let results = request(
+    let results = match request(
         &mut connection,
         &sender,
         SCREENCAST_INTERFACE,
         "Start",
+        cancelled,
         |token| {
             vec![
                 Value::ObjectPath(session_handle.clone()),
@@ -195,9 +234,20 @@ pub fn open_screencast(
                 options([("handle_token", Value::Str(token.to_owned()))]),
             ]
         },
-    )?;
-
-    let (node_id, width, height) = first_stream(&results)?;
+    ) {
+        Ok(results) => results,
+        Err(error) => {
+            close_portal_session(&mut connection, &session_handle);
+            return Err(error);
+        }
+    };
+    let (node_id, width, height) = match first_stream(&results) {
+        Ok(stream) => stream,
+        Err(error) => {
+            close_portal_session(&mut connection, &session_handle);
+            return Err(error);
+        }
+    };
     Ok(ScreenCastSession {
         connection,
         session_handle,
@@ -215,6 +265,16 @@ pub fn open_screencast(
 /// Portal results are keyed strings; this is the decoded `results` map.
 type Results = std::collections::BTreeMap<String, Value>;
 
+fn close_portal_session(connection: &mut Connection, session_handle: &str) {
+    let _ = connection.call_no_reply(
+        PORTAL_SERVICE,
+        session_handle,
+        SESSION_INTERFACE,
+        "Close",
+        &[],
+    );
+}
+
 /// Runs one portal method and waits for the `Response` signal it answers with.
 ///
 /// The portal replies to the method immediately with the object path of a
@@ -226,8 +286,12 @@ fn request(
     sender: &str,
     interface: &str,
     member: &str,
+    cancelled: &CaptureCancellation,
     arguments: impl Fn(&str) -> Vec<Value>,
 ) -> Result<Results, CaptureError> {
+    if cancelled.is_cancelled() {
+        return Err(CaptureError::NotRunning);
+    }
     let token = next_token(member);
     let expected = format!("{PORTAL_PATH}/request/{sender}/{token}");
     connection.call(
@@ -237,9 +301,7 @@ fn request(
         member,
         &arguments(&token),
     )?;
-    let response = connection.wait(USER_RESPONSE_TIMEOUT, |message| {
-        is_response(message, &expected)
-    })?;
+    let response = wait_for_response(connection, &expected, cancelled)?;
     let code = response
         .body
         .first()
@@ -262,6 +324,52 @@ fn request(
         .and_then(Value::as_dict)
         .cloned()
         .unwrap_or_default())
+}
+
+/// Waits for a portal response in short slices so cancellation can close the
+/// request instead of leaving the compositor dialog behind for three minutes.
+fn wait_for_response(
+    connection: &mut Connection,
+    expected: &str,
+    cancelled: &CaptureCancellation,
+) -> Result<Message, CaptureError> {
+    let deadline = Instant::now() + USER_RESPONSE_TIMEOUT;
+    loop {
+        if cancelled.is_cancelled() {
+            let _ =
+                connection.call_no_reply(PORTAL_SERVICE, expected, REQUEST_INTERFACE, "Close", &[]);
+            return Err(CaptureError::NotRunning);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(CaptureError::Io {
+                message: "the desktop portal did not answer in time".to_owned(),
+            });
+        }
+        match connection.wait(remaining.min(Duration::from_millis(100)), |message| {
+            is_response(message, expected)
+        }) {
+            Ok(message) => return Ok(message),
+            Err(CaptureError::Io { .. }) => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn acquire_handshake_lock(
+    cancelled: &CaptureCancellation,
+) -> Result<MutexGuard<'static, ()>, CaptureError> {
+    let lock = HANDSHAKE_LOCK.get_or_init(|| Mutex::new(()));
+    loop {
+        if cancelled.is_cancelled() {
+            return Err(CaptureError::NotRunning);
+        }
+        match lock.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(error)) => return Ok(error.into_inner()),
+            Err(TryLockError::WouldBlock) => thread::sleep(Duration::from_millis(20)),
+        }
+    }
 }
 
 fn is_response(message: &Message, path: &str) -> bool {

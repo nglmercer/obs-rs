@@ -7,6 +7,11 @@
       "name": "Live profile",
       "output_kind": "reference",
       "render_backend": "cpu",
+      "scene_order": [
+        "intermission",
+        "preview",
+        "program"
+      ],
       "scenes": [
         {
           "id": "intermission",
@@ -23,6 +28,7 @@
                 "flip_x": false,
                 "flip_y": false,
                 "opacity": 255,
+                "rotation_milli_degrees": 0,
                 "scale_x_milli": 400,
                 "scale_y_milli": 350,
                 "translate_x": 372,
@@ -42,6 +48,7 @@
                 "flip_x": false,
                 "flip_y": false,
                 "opacity": 255,
+                "rotation_milli_degrees": 0,
                 "scale_x_milli": 1000,
                 "scale_y_milli": 1000,
                 "translate_x": 0,
@@ -50,7 +57,9 @@
               "visible": false
             }
           ],
-          "name": "Intermission"
+          "name": "Intermission",
+          "stinger": null,
+          "transition": null
         },
         {
           "id": "preview",
@@ -67,6 +76,7 @@
                 "flip_x": false,
                 "flip_y": false,
                 "opacity": 255,
+                "rotation_milli_degrees": 0,
                 "scale_x_milli": 1000,
                 "scale_y_milli": 1000,
                 "translate_x": 0,
@@ -75,7 +85,9 @@
               "visible": true
             }
           ],
-          "name": "Preview"
+          "name": "Preview",
+          "stinger": null,
+          "transition": null
         },
         {
           "id": "program",
@@ -92,6 +104,7 @@
                 "flip_x": false,
                 "flip_y": false,
                 "opacity": 255,
+                "rotation_milli_degrees": 0,
                 "scale_x_milli": 1000,
                 "scale_y_milli": 1000,
                 "translate_x": 0,
@@ -100,7 +113,9 @@
               "visible": true
             }
           ],
-          "name": "Program"
+          "name": "Program",
+          "stinger": null,
+          "transition": null
         }
       ],
       "sources": [
@@ -111,8 +126,8 @@
           "name": "Background",
           "settings": {
             "color": "#102030FF",
-            "height": "360",
-            "width": "640"
+            "height": "720",
+            "width": "1280"
           }
         },
         {
@@ -122,8 +137,8 @@
           "name": "Background",
           "settings": {
             "color": "#203040FF",
-            "height": "360",
-            "width": "640"
+            "height": "720",
+            "width": "1280"
           }
         },
         {
@@ -133,8 +148,8 @@
           "name": "Video capture device 1",
           "settings": {
             "device_id": "nokhwa-camera-1",
-            "height": "360",
-            "width": "640"
+            "height": "720",
+            "width": "1280"
           }
         },
         {
@@ -144,9 +159,9 @@
           "name": "Screen capture 1",
           "settings": {
             "capture_cursor": "true",
-            "height": "360",
+            "height": "720",
             "restore_token": "HA0XGvVqau7kEib47znYjQ",
-            "width": "640"
+            "width": "1280"
           }
         }
       ],
@@ -155,11 +170,11 @@
           "denominator": 1,
           "numerator": 30
         },
-        "height": 360,
-        "width": 640
+        "height": 720,
+        "width": 1280
       }
     }
   ],
   "title": "OBS-RS Studio",
-  "version": 2
+  "version": 8
 }

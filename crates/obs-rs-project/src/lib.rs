@@ -20,8 +20,8 @@ mod tests;
 pub use commands::{ProjectCommand, SceneItemDuplicateMode};
 pub use error::ProjectError;
 pub use model::{
-    Profile, Project, RenderBackendPreference, SceneItemSpec, SceneSpec, SourceFilterCategory,
-    SourceFilterSpec, SourceSpec,
+    FlattenedSceneItem, GroupSpec, Profile, Project, RenderBackendPreference, SceneItemSpec,
+    SceneSpec, SourceFilterCategory, SourceFilterSpec, SourceSpec,
 };
 pub use persistence::ProjectFileStore;
 pub use session::{ProjectSession, MAX_HISTORY_DEPTH};

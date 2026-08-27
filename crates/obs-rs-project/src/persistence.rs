@@ -47,6 +47,22 @@ impl ProjectFileStore {
     /// left untouched when writing or synchronization fails.
     pub fn save(&self, session: &mut ProjectSession) -> Result<usize, ProjectError> {
         let document = session.document();
+        let bytes = self.save_document(&document)?;
+        session.mark_saved();
+        Ok(bytes)
+    }
+
+    /// Writes an already serialized document without changing any session state.
+    ///
+    /// This is used for exports: the destination receives a crash-safe copy of
+    /// the current document, while the active session remains open and dirty or
+    /// clean exactly as it was before the export.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Io`] for filesystem failures. The final path is
+    /// left untouched when writing or synchronization fails.
+    pub fn save_document(&self, document: &str) -> Result<usize, ProjectError> {
         let write_result = (|| {
             let mut file = OpenOptions::new()
                 .create(true)
@@ -76,7 +92,6 @@ impl ProjectFileStore {
             let _ = fs::remove_file(&self.temp_path);
             return Err(error);
         }
-        session.mark_saved();
         Ok(document.len())
     }
 
@@ -118,6 +133,28 @@ impl ProjectFileStore {
     #[must_use]
     pub fn recovery_available(&self) -> bool {
         self.temp_path.is_file()
+    }
+
+    /// Discards an interrupted-save temporary file after an explicit user
+    /// decision.
+    ///
+    /// The final project is never touched. A missing recovery file is a
+    /// successful no-op so a stale status cannot turn into a user-visible
+    /// failure when another process already removed the artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::Io`] when the recovery file exists but cannot
+    /// be removed.
+    pub fn discard_recovery(&self) -> Result<bool, ProjectError> {
+        if !self.temp_path.is_file() {
+            return Ok(false);
+        }
+        fs::remove_file(&self.temp_path).map_err(|error| ProjectError::Io {
+            operation: "remove project recovery file",
+            message: error.to_string(),
+        })?;
+        Ok(true)
     }
 
     /// Returns the final project path.

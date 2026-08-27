@@ -1,24 +1,14 @@
-import { HorizontalBox, VerticalBox } from "std-widgets.slint";
-import { LocaleOption, ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
+import { VerticalBox } from "std-widgets.slint";
+import { DockPane, DockSplitter, LocaleOption, MoveTarget, MultiviewScene, ProfileRow, SceneRow, SourceRow, MixerRow } from "models.slint";
 import { I18n } from "i18n.slint";
-import { AppNavbar } from "navbar.slint";
+import { MainNavbar } from "main_navbar.slint";
 import { StagePanel } from "stage.slint";
-import { DockSlot } from "dock_slot.slint";
-import { HorizontalSplitter, VerticalSplitter } from "theme.slint";
+import { DockWorkspace } from "dock_workspace.slint";
+import { HorizontalSplitter } from "theme.slint";
 import { StatusBar } from "status_bar.slint";
 import { Palette } from "palette.slint";
-import {
-    AboutDialog,
-    CollectionDialog,
-    ConfirmDialog,
-    DiscardChangesDialog,
-    OutputDialog,
-    ProjectDialog,
-    RecoveryDialog,
-    RenameSceneDialog,
-    RenameSourceDialog,
-    SceneDialog,
-} from "dialogs.slint";
+import { MainModals } from "main_modals.slint";
+import { MainKeyboard } from "main_keyboard.slint";
 
 export { AddSourceText, I18n, MonitorText, PropertyText, SettingsText, UiText } from "i18n.slint";
 export { Metrics, Palette, ThemeTokens, UiMetrics } from "palette.slint";
@@ -31,7 +21,7 @@ export { SourceTransformWindow } from "source_transform_window.slint";
 export { MonitorWindow } from "monitor_window.slint";
 export { ProjectorWindow } from "projector_window.slint";
 export { FloatingDockWindow } from "floating_dock.slint";
-export { MonitorRow, PropertyRow, SourceCandidate, SourceFilterRow, SourceKindRow } from "models.slint";
+export { DockPane, DockSplitter, MonitorRow, MoveTarget, MultiviewScene, PropertyRow, SourceCandidate, SourceFilterRow, SourceKindRow } from "models.slint";
 
 export component MainWindow inherits Window {
         width: 1180px;
@@ -45,8 +35,20 @@ export component MainWindow inherits Window {
         in property <string> preview-scene;
         in property <string> program-scene;
         in property <string> transition;
+        in property <string> transition-kind;
+        in-out property <int> transition-direction-index: 0;
+        in-out property <bool> swipe-in: false;
+        in-out property <int> luma-pattern-index: 0;
+        in-out property <bool> luma-invert: false;
+        in-out property <string> luma-softness: "30";
         in property <bool> recording;
         in property <bool> streaming;
+        in property <bool> replay-buffering;
+        in property <bool> replay-saving;
+        in property <bool> remux-recovery-supported;
+        in property <bool> remux-recovery-running;
+        in property <[string]> remux-recovery-candidates;
+        in-out property <string> remux-recovery-path;
         in property <bool> dirty;
         in property <string> status-message;
         in property <string> recovery-status;
@@ -58,9 +60,28 @@ export component MainWindow inherits Window {
         in property <string> snapshot;
         in property <image> preview-image;
         in property <image> program-image;
+        in property <image> multiview-image;
+        in property <image> source-projector-image;
+        in property <image> scene-projector-image;
+        in property <string> multiview-status;
+        in property <string> multiview-metrics;
+        in property <float> multiview-audio-db: -60.0;
+        // Transient canvas viewport state is owned by the Rust canvas
+        // controller; this property only presents its current zoom choice.
+        in property <int> canvas-zoom: 0;
+        in property <int> canvas-pan-x: 0;
+        in property <int> canvas-pan-y: 0;
+        in property <int> canvas-pointer-mode: 0;
+        in property <bool> selection-box-active: false;
+        in property <int> selection-box-x;
+        in property <int> selection-box-y;
+        in property <int> selection-box-width;
+        in property <int> selection-box-height;
         in property <int> canvas-width: 1920;
         in property <int> canvas-height: 1080;
+        in property <bool> show-safe-areas: false;
         in property <[SceneRow]> scene-rows;
+        in property <[MultiviewScene]> multiview-scenes;
         in property <[SourceRow]> source-rows;
         in property <[ProfileRow]> profile-rows;
         in property <[ProfileRow]> collection-rows;
@@ -72,29 +93,63 @@ export component MainWindow inherits Window {
         in property <string> active-collection;
         in property <string> app-version;
         in property <string> app-platform;
+        // OBS uses Return for dock renaming on macOS and F2 elsewhere.
+        // Keep the platform choice in Rust-owned application state so every
+        // dock surface, including detached windows, shares one policy.
+        in property <bool> platform-macos: false;
         in-out property <string> collection-name;
+        in-out property <bool> duplicate-collection-dialog: false;
+        in-out property <bool> rename-collection-dialog: false;
         in property <string> source-scene;
         in property <string> capture-capabilities;
         in property <[MixerRow]> mixer-rows;
+        in property <[DockPane]> dock-panes;
+        in property <[DockSplitter]> dock-splitters;
         // OBS ships sources left of scenes; the ids stay stable so a reorder
         // never touches the data model.
-        in-out property <[int]> panel-order: [1, 0, 2, 3, 4];
+        in-out property <[int]> panel-order: [1, 0, 2, 3, 4, 5];
         // Width share per dock kind, adjusted by the splitters between docks.
-        in-out property <[float]> panel-weights: [1.0, 1.0, 1.85, 1.0, 1.4];
+        in-out property <[float]> panel-weights: [1.0, 1.0, 1.85, 1.0, 1.4, 1.1];
         // Dock kinds currently detached into their own windows.
-        in-out property <[bool]> panel-floating: [false, false, false, false, false];
+        in-out property <[bool]> panel-floating: [false, false, false, false, false, false];
+        // Transient drag state is UI interaction state, not project or layout
+        // state. Rust owns the target resolution; Slint only paints it.
+        in-out property <bool> dock-dragging: false;
+        in-out property <int> dock-drag-panel: -1;
+        in-out property <int> dock-drop-target: -1;
+        in-out property <int> dock-drop-zone: -1;
         in property <string> scene-name-version;
         in-out property <string> scene-name;
+        in-out property <int> scene-transition-index: 0;
+        in-out property <int> scene-transition-direction-index: 0;
+        in-out property <bool> scene-transition-swipe-in: false;
+        in-out property <int> scene-transition-luma-pattern-index: 0;
+        in-out property <bool> scene-transition-luma-invert: false;
+        in-out property <string> scene-transition-luma-softness: "30";
+        in-out property <string> scene-transition-duration;
+        in-out property <string> scene-transition-color;
+        in-out property <string> scene-stinger-path;
+        in-out property <string> scene-stinger-transition-point: "500";
+        in-out property <bool> scene-stinger-preload: true;
+        in-out property <bool> scene-stinger-hardware-decode: false;
+        in-out property <bool> scene-stinger-hardware-decode-enabled: false;
+        in-out property <bool> file-picker-enabled: false;
+        in property <string> scene-properties-version;
         in property <string> selected-source;
         in property <bool> selected-source-visible: false;
         in property <bool> selected-source-locked: false;
         in property <bool> selected-source-first: false;
         in property <bool> selected-source-last: false;
+        in property <[MoveTarget]> selected-source-move-targets;
+        in property <int> source-count: 0;
         in property <bool> can-paste: false;
+        in property <bool> can-group-sources: false;
         in property <string> source-settings-version;
         in-out property <string> source-settings;
         in-out property <string> project-path;
+        in-out property <string> collection-transfer-path;
         in-out property <string> diagnostics-path;
+        in-out property <int> project-dialog-mode: 0;
         in-out property <string> recording-path;
         in-out property <string> streaming-address;
         in-out property <string> new-scene-id;
@@ -103,20 +158,20 @@ export component MainWindow inherits Window {
         in-out property <string> new-source-kind;
         in-out property <string> new-source-name;
         in-out property <string> source-name-draft;
+        // The rename modal applies to the row that opened it, even if the
+        // transient canvas selection changes while the dialog is visible.
+        in-out property <string> source-rename-target;
 
-        // Driven by the settings window; empty means the action is unbound.
-        in property <string> hotkey-swap;
-        in property <string> hotkey-start-recording;
-        in property <string> hotkey-stop-recording;
-        in property <string> hotkey-start-streaming;
-        in property <string> hotkey-stop-streaming;
         in property <bool> confirm-start-stream;
         in property <bool> confirm-stop-stream;
         in property <bool> confirm-stop-recording;
         in property <bool> auto-record-when-streaming;
 
-        // 0 = studio mode (preview + program), 1 = the single-canvas default.
+        // 0 = studio mode, 1 = the single-canvas default, 2 = bounded multiview.
         in-out property <int> view-mode: 1;
+        // Held while the spacebar temporarily turns the preview into a pan
+        // surface, matching OBS's Space+drag navigation.
+        in-out property <bool> space-held: false;
         // Dock visibility is restored from the settings document, so these are
         // readable and writable from Rust rather than window-private.
         in-out property <bool> show-sources: true;
@@ -124,19 +179,23 @@ export component MainWindow inherits Window {
         in-out property <bool> show-mixer: true;
         in-out property <bool> show-transitions: true;
         in-out property <bool> show-controls: true;
+        in-out property <bool> show-stats: true;
         // Pausing freezes the last measured levels without stopping capture.
         in-out property <bool> meters-paused: false;
-        // 1 project · 2 add scene · 3 add source · 4 output · 5 rename scene
-        // · 6 source properties · 7 source filters · 9 new collection
-        // · 10 about · 12 rename source
+        // 1 project/save/export/import · 2 add scene · 3 add source · 4 output
+        // · 5 rename scene · 6 source properties · 7 source filters
+        // · 9 new collection · 10 about · 11 output failure · 12 rename source
+        // · 13 interrupted-remux candidate chooser · 14 project recovery review
+        // · 15 project recovery discard confirmation
         in-out property <int> active-modal: 0;
         // 0 none · 1 start stream · 2 stop stream · 3 stop recording
         property <int> pending-confirm: 0;
         // Actions that would throw away unsaved project edits, held until the
         // discard prompt is answered. 0 none · 4 new project · 5 exit
-        // · 6 switch collection.
-        property <int> pending-discard: 0;
-        property <string> pending-collection;
+        // · 6 switch collection · 7 import collection · 8 load project
+        // · 9 recover project.
+        in-out property <int> pending-discard: 0;
+        in-out property <string> pending-collection;
         in-out property <length> dock-height: 248px;
         // The first-run wizard is a separate movable window, while this scrim
         // keeps the studio non-interactive until the wizard is applied or
@@ -144,50 +203,116 @@ export component MainWindow inherits Window {
         in-out property <bool> setup-active: false;
 
         callback swap-scenes();
+        callback navigate-preview-scene(int);
+        // Returns a bounded action ID for the canonical key label supplied by
+        // the event bridge. Rust owns parsing and lookup; Slint only executes
+        // the already-resolved UI action.
+        callback trigger-shortcut(string) -> int;
         callback toggle-recording();
         callback toggle-streaming();
+        callback toggle-studio-mode();
+        callback toggle-replay-buffer();
+        callback save-replay-buffer();
+        callback recover-recording();
+        callback recover-remux-candidate(string);
         callback cut-transition();
+        callback take-stinger(string);
+        callback browse-scene-stinger();
+        callback browse-project-save-as();
         callback fade-transition();
+        callback fade-transition-duration(string);
+        callback slide-transition(string);
+        callback swipe-transition(string);
+        callback slide-transition-direction(string, int);
+        callback swipe-transition-direction(string, int);
+        callback swipe-transition-direction-mode(string, int, bool);
+        callback fade-to-color(string, string);
+        callback luma-transition(string, int, bool, string);
+        callback set-scene-transition(string, string, string);
+        callback set-scene-transition-direction(string, string, string, int);
+        callback set-scene-transition-direction-mode(string, string, string, int, bool);
+        callback set-scene-transition-luma(string, string, int, bool, string);
+        callback clear-scene-transition();
+        // Display-only menu labels. Runtime matching uses the typed table.
+        in property <string> hotkey-undo;
+        in property <string> hotkey-redo;
+        in property <string> hotkey-save-project;
+        in property <string> hotkey-cut-transition;
+        in property <string> hotkey-fade-transition;
+        in property <string> hotkey-previous-scene;
+        in property <string> hotkey-next-scene;
+        in property <string> hotkey-save-replay;
+        in property <string> hotkey-toggle-studio-mode;
         callback select-preview(string);
         callback select-program(string);
         callback duplicate-scene(string);
+        callback move-scene(string, int);
+        callback drop-scene(data-transfer, string, int);
         callback remove-scene(string);
         callback rename-scene();
         callback select-profile(string);
         callback set-locale(string);
         callback select-source(string);
+        callback select-source-with-mode(string, int);
+        callback select-all-sources();
+        callback navigate-source-selection(int, int);
         callback toggle-source-visibility(string);
         callback toggle-source-locked(string);
         callback move-source(string, int);
         callback move-source-to(string, int);
+        callback move-source-to-group(string, string);
         callback reset-source-transform(string);
         callback flip-source(string, bool);
+        callback transform-source(string, string);
         callback open-source-rename(string);
         callback apply-source-name();
         callback duplicate-source(string);
+        callback group-sources();
+        callback ungroup-source(string);
         callback copy-source(string);
-        callback paste-reference();
-        callback paste-duplicate();
+        callback paste-reference(string);
+        callback paste-duplicate(string);
         callback remove-source(string);
+        callback remove-selected-sources();
+        callback drop-source(data-transfer, string, int);
         callback apply-source-settings();
         callback set-mixer-gain(string, int);
+        callback set-mixer-pan(string, int);
         callback toggle-mixer-mute(string);
+        callback set-mixer-muted(string, bool);
         callback toggle-meters-paused();
         callback save-project();
+        callback open-save-project-as();
+        callback save-project-as(string);
+        callback save-discard(int);
         callback load-project();
         callback recover-project();
+        callback discard-project-recovery();
         callback export-diagnostics();
         callback add-scene(string, string);
         callback add-source(string, string, string);
         callback move-panel(int, int);
+        callback select-dock-tab(int);
+        // These are the toolkit-neutral insertion operations used by the
+        // drag/drop packet and kept as typed callbacks at the window boundary.
+        callback tab-dock-with(int, int);
+        callback split-dock-with(int, int, int, int);
+        callback dock-drag-start(int, float, float);
+        callback dock-drag-moved(int, float, float);
+        callback dock-drag-end(int, float, float);
+        callback resize-dock-splitter(int, float);
         callback float-panel(int);
         callback resize-panel(int, int);
         callback open-settings-window();
+        callback open-audio-settings-window();
         callback open-setup-window();
         callback open-add-source-window();
         callback open-source-properties-window();
+        callback open-source-properties-for(string);
         callback open-source-filters-window();
+        callback open-source-filters-for(string);
         callback open-source-transform-window();
+        callback open-source-transform-for(string);
         callback open-monitor-window();
         callback undo-edit();
         callback redo-edit();
@@ -197,8 +322,15 @@ export component MainWindow inherits Window {
         callback open-documentation();
         // `true` opens the program feed, `false` the preview feed.
         callback open-projector(bool);
+        callback open-multiview-projector();
+        callback open-source-projector();
+        callback open-scene-projector(string);
         callback select-collection(string);
         callback create-collection(string);
+        callback duplicate-collection(string);
+        callback rename-collection(string);
+        callback export-collection(string);
+        callback import-collection(string);
         callback save-collection();
         // Reports the desktop portal's answer back onto the UI thread.
         // Includes the source that initiated the request so a selection
@@ -207,22 +339,40 @@ export component MainWindow inherits Window {
         callback apply-portal-token(string, string);
         // Interactive canvas editing: `handle` is 0 for a move and 1-8 for the
         // resize handles, with the deltas already in canvas pixels.
-        callback transform-dragged(int, int, int);
+        callback transform-dragged(int, int, int, int);
         callback transform-committed();
-        callback canvas-clicked(int, int);
+        callback rotation-started(int, int);
+        callback rotation-dragged(int, int, int);
+        callback canvas-pointer-pressed(int, int, bool);
+        callback canvas-selection-dragged(int, int);
+        callback canvas-selection-committed();
+        callback canvas-nudged(int, int);
+        callback canvas-zoom-changed(int);
+        callback canvas-zoom-step(int);
+        callback canvas-zoom-at(int, int, int, int, int, int, int, int);
+        callback canvas-pan-dragged(int, int);
 
         // The selected scene item's rectangle in canvas pixels.
         in property <int> item-x;
         in property <int> item-y;
         in property <int> item-width;
         in property <int> item-height;
+        in property <[int]> item-handle-x: [0, 0, 0, 0, 0, 0, 0, 0];
+        in property <[int]> item-handle-y: [0, 0, 0, 0, 0, 0, 0, 0];
+        in property <int> rotation-handle-x;
+        in property <int> rotation-handle-y;
+        in property <bool> rotation-handle-active: false;
+        in property <string> item-selection-path: "";
         in property <bool> item-active;
         in property <bool> item-locked;
 
         // Only a screen capture source has a display to choose, so the
-        // affordance is derived from the selected row rather than duplicated in
-        // every dock that offers it.
+                // affordance is derived from the selected row rather than duplicated in
+                // every dock that offers it.
         in property <bool> selected-source-is-screen: false;
+        in property <bool> selected-source-is-group: false;
+        in property <bool> selected-source-is-scene: false;
+        in property <bool> selected-source-is-nested: false;
 
         // A mode of -1 means "toggle studio mode", which is how both the View
         // menu and the controls dock drive the canvas.
@@ -261,6 +411,20 @@ export component MainWindow inherits Window {
             root.pending-collection = id;
             root.request-discarding-action(6);
         }
+        function open-import-collection() {
+            root.project-dialog-mode = 2;
+            root.active-modal = 1;
+        }
+        function request-import-collection() {
+            root.collection-transfer-path = "";
+            root.request-discarding-action(7);
+        }
+        function request-load-project() {
+            root.request-discarding-action(8);
+        }
+        function request-recover-project() {
+            root.request-discarding-action(9);
+        }
         function resolve-discard(action: int) {
             if (action == 4) {
                 root.new-project();
@@ -268,6 +432,13 @@ export component MainWindow inherits Window {
                 root.quit-app();
             } else if (action == 6) {
                 root.select-collection(root.pending-collection);
+            } else if (action == 7) {
+                root.open-import-collection();
+            } else if (action == 8) {
+                root.project-dialog-mode = 4;
+                root.active-modal = 1;
+            } else if (action == 9) {
+                root.recover-project();
             }
             root.pending-discard = 0;
         }
@@ -280,89 +451,75 @@ export component MainWindow inherits Window {
             root.pending-confirm = 0;
         }
 
-        // Rebuilds the "Ctrl+Shift+R" form the settings window stores, so a
-        // binding is compared as text rather than as a compiled key list.
-        pure function key-name(text: string) -> string {
-            text == " " ? "Space"
-                : text == Key.Return ? "Enter"
-                : text == Key.Tab ? "Tab"
-                : text == Key.F1 ? "F1"
-                : text == Key.F2 ? "F2"
-                : text == Key.F3 ? "F3"
-                : text == Key.F4 ? "F4"
-                : text == Key.F5 ? "F5"
-                : text == Key.F6 ? "F6"
-                : text == Key.F7 ? "F7"
-                : text == Key.F8 ? "F8"
-                : text == Key.F9 ? "F9"
-                : text == Key.F10 ? "F10"
-                : text == Key.F11 ? "F11"
-                : text == Key.F12 ? "F12"
-                : text.to-uppercase();
-        }
-        pure function hotkey-label(event: KeyEvent) -> string {
-            (event.modifiers.control ? "Ctrl+" : "")
-                + (event.modifiers.shift ? "Shift+" : "")
-                + (event.modifiers.alt ? "Alt+" : "")
-                + root.key-name(event.text);
-        }
+    keyboard := MainKeyboard {
+        recording: root.recording;
+        streaming: root.streaming;
+        replay-buffering: root.replay-buffering;
+        selected-source: root.selected-source;
+        selected-source-is-group: root.selected-source-is-group;
+        selected-source-is-scene: root.selected-source-is-scene;
+        selected-source-first: root.selected-source-first;
+        selected-source-last: root.selected-source-last;
+        source-count: root.source-count;
+        can-paste: root.can-paste;
+        preview-scene: root.preview-scene;
+        space-held <=> root.space-held;
+        swap-scenes() => { root.swap-scenes(); }
+        navigate-preview-scene(direction) => { root.navigate-preview-scene(direction); }
+        trigger-shortcut(label) => { root.trigger-shortcut(label); }
+        request-recording() => { root.request-recording(); }
+        request-streaming() => { root.request-streaming(); }
+        undo-edit() => { root.undo-edit(); }
+        redo-edit() => { root.redo-edit(); }
+        save-project() => { root.save-project(); }
+        cut-transition() => { root.cut-transition(); }
+        fade-transition() => { root.fade-transition(); }
+        save-replay-buffer() => { root.save-replay-buffer(); }
+        toggle-replay-buffer() => { root.toggle-replay-buffer(); }
+        toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+        set-mixer-muted(id, muted) => { root.set-mixer-muted(id, muted); }
+        toggle-studio-mode() => { root.toggle-studio-mode(); }
+        toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
+        toggle-source-locked(id) => { root.toggle-source-locked(id); }
+        open-source-projector() => { root.open-source-projector(); }
+        open-scene-projector(id) => { root.open-scene-projector(id); }
+        move-source(id, delta) => { root.move-source(id, delta); }
+        move-source-to(id, index) => { root.move-source-to(id, index); }
+        copy-source(id) => { root.copy-source(id); }
+        paste-reference(target) => { root.paste-reference(target); }
+        select-all-sources() => { root.select-all-sources(); }
+        remove-selected-sources() => { root.remove-selected-sources(); }
+        canvas-nudged(dx, dy) => { root.canvas-nudged(dx, dy); }
+    }
 
     FocusScope {
         key-pressed(event) => {
-            // An unbound action stores an empty string, which must never match.
-            if (root.hotkey-swap != "" && root.hotkey-label(event) == root.hotkey-swap) {
-                root.swap-scenes();
-                return accept;
-            }
-            if (root.hotkey-start-recording != ""
-                && root.hotkey-label(event) == root.hotkey-start-recording
-                && !root.recording) {
-                root.request-recording();
-                return accept;
-            }
-            if (root.hotkey-stop-recording != ""
-                && root.hotkey-label(event) == root.hotkey-stop-recording
-                && root.recording) {
-                root.request-recording();
-                return accept;
-            }
-            if (root.hotkey-start-streaming != ""
-                && root.hotkey-label(event) == root.hotkey-start-streaming
-                && !root.streaming) {
-                root.request-streaming();
-                return accept;
-            }
-            if (root.hotkey-stop-streaming != ""
-                && root.hotkey-label(event) == root.hotkey-stop-streaming
-                && root.streaming) {
-                root.request-streaming();
+            if (keyboard.handle-key-pressed(
+                event.text,
+                event.modifiers.control,
+                event.modifiers.shift,
+                event.modifiers.alt)) {
                 return accept;
             }
             reject
         }
 
-        KeyBinding {
-            keys: @keys(Control + S);
-            activated => save-project();
-        }
-        KeyBinding {
-            keys: @keys(Control + Shift + F);
-            activated => fade-transition();
-        }
-        KeyBinding {
-            keys: @keys(Control + Z);
-            activated => undo-edit();
-        }
-        KeyBinding {
-            keys: @keys(Control + Y);
-            activated => redo-edit();
+        key-released(event) => {
+            if (keyboard.handle-key-released(
+                event.text,
+                event.modifiers.control,
+                event.modifiers.shift,
+                event.modifiers.alt)) {
+                return accept;
+            }
+            reject
         }
 
         VerticalBox {
             padding: 0px;
             spacing: 0px;
 
-            AppNavbar {
+            MainNavbar {
                 locale: root.locale;
                 profile-rows: root.profile-rows;
                 collection-rows: root.collection-rows;
@@ -370,64 +527,65 @@ export component MainWindow inherits Window {
                 can-undo: root.can-undo;
                 can-redo: root.can-redo;
                 studio-mode: root.view-mode == 0;
-                show-sources: root.show-sources;
-                show-scenes: root.show-scenes;
-                show-mixer: root.show-mixer;
-                show-transitions: root.show-transitions;
-                show-controls: root.show-controls;
+                show-sources <=> root.show-sources;
+                show-scenes <=> root.show-scenes;
+                show-mixer <=> root.show-mixer;
+                show-transitions <=> root.show-transitions;
+                show-controls <=> root.show-controls;
+                show-stats <=> root.show-stats;
+                hotkey-undo: root.hotkey-undo;
+                hotkey-redo: root.hotkey-redo;
+                hotkey-save-project: root.hotkey-save-project;
+                hotkey-cut-transition: root.hotkey-cut-transition;
+                hotkey-fade-transition: root.hotkey-fade-transition;
+                hotkey-toggle-studio-mode: root.hotkey-toggle-studio-mode;
+                view-mode: root.view-mode;
                 set-locale(code) => { root.set-locale(code); }
                 select-collection(id) => { root.request-collection(id); }
-                menu-action(action) => {
-                    if action == "new-project" {
-                        root.request-discarding-action(4);
-                    } else if action == "exit" {
-                        root.request-discarding-action(5);
-                    } else if action == "undo" {
-                        root.undo-edit();
-                    } else if action == "redo" {
-                        root.redo-edit();
-                    } else if action == "projector-program" {
-                        root.open-projector(true);
-                    } else if action == "projector-preview" {
-                        root.open-projector(false);
-                    } else if action == "reset-layout" {
-                        root.reset-dock-layout();
-                    } else if action == "new-collection" {
-                        root.active-modal = 9;
-                    } else if action == "save-collection" {
-                        root.save-collection();
-                    } else if action == "documentation" {
-                        root.open-documentation();
-                    } else if action == "about" {
-                        root.active-modal = 10;
-                    } else if action == "save-project" {
-                        root.save-project();
-                    } else if action == "load-project" {
-                        root.load-project();
-                    } else if action == "recover-project" {
-                        root.recover-project();
-                    } else if action == "export-diagnostics" {
-                        root.export-diagnostics();
-                    } else if action == "settings" {
-                        root.open-settings-window();
-                    } else if action == "auto-configuration" {
-                        root.open-setup-window();
-                    } else if action == "source-properties" {
-                        root.open-source-properties-window();
-                    } else if action == "source-filters" {
-                        root.open-source-filters-window();
-                    } else if action == "toggle-sources" {
-                        root.show-sources = !root.show-sources;
-                    } else if action == "toggle-scenes" {
-                        root.show-scenes = !root.show-scenes;
-                    } else if action == "toggle-mixer" {
-                        root.show-mixer = !root.show-mixer;
-                    } else if action == "toggle-transitions" {
-                        root.show-transitions = !root.show-transitions;
-                    } else if action == "toggle-controls" {
-                        root.show-controls = !root.show-controls;
-                    }
+                request-discarding-action(action) => { root.request-discarding-action(action); }
+                undo-edit() => { root.undo-edit(); }
+                redo-edit() => { root.redo-edit(); }
+                open-projector(program) => { root.open-projector(program); }
+                open-multiview-projector() => { root.open-multiview-projector(); }
+                open-source-projector() => { root.open-source-projector(); }
+                reset-dock-layout() => { root.reset-dock-layout(); }
+                new-collection() => {
+                    root.duplicate-collection-dialog = false;
+                    root.rename-collection-dialog = false;
+                    root.collection-name = "";
+                    root.active-modal = 9;
                 }
+                duplicate-collection() => {
+                    root.duplicate-collection-dialog = true;
+                    root.rename-collection-dialog = false;
+                    root.collection-name = "";
+                    root.active-modal = 9;
+                }
+                rename-collection() => {
+                    root.duplicate-collection-dialog = false;
+                    root.rename-collection-dialog = true;
+                    root.collection-name = root.active-collection;
+                    root.active-modal = 9;
+                }
+                export-collection() => {
+                    root.project-dialog-mode = 1;
+                    root.collection-transfer-path = "obs-rs-collection-export.obsrproj";
+                    root.active-modal = 1;
+                }
+                request-import-collection() => { root.request-import-collection(); }
+                save-collection() => { root.save-collection(); }
+                open-documentation() => { root.open-documentation(); }
+                about() => { root.active-modal = 10; }
+                save-project() => { root.save-project(); }
+                open-save-project-as() => { root.open-save-project-as(); }
+                load-project() => { root.request-load-project(); }
+                recover-project() => { root.request-recover-project(); }
+                discard-project-recovery() => { root.discard-project-recovery(); }
+                export-diagnostics() => { root.export-diagnostics(); }
+                open-settings-window() => { root.open-settings-window(); }
+                open-setup-window() => { root.open-setup-window(); }
+                open-source-properties-window() => { root.open-source-properties-window(); }
+                open-source-filters-window() => { root.open-source-filters-window(); }
                 select-view-mode(mode) => { root.apply-view-mode(mode); }
                 select-profile(id) => { root.select-profile(id); }
             }
@@ -439,23 +597,64 @@ export component MainWindow inherits Window {
                 program-scene: root.program-scene;
                 preview-image: root.preview-image;
                 program-image: root.program-image;
+                multiview-image: root.multiview-image;
+                multiview-scenes: root.multiview-scenes;
+                multiview-status: root.multiview-status;
+                multiview-metrics: root.multiview-metrics;
+                multiview-audio-db: root.multiview-audio-db;
+                canvas-zoom: root.canvas-zoom;
+                canvas-pan-x: root.canvas-pan-x;
+                canvas-pan-y: root.canvas-pan-y;
+                pointer-mode: root.canvas-pointer-mode;
+                selection-box-active: root.selection-box-active;
+                selection-box-x: root.selection-box-x;
+                selection-box-y: root.selection-box-y;
+                selection-box-width: root.selection-box-width;
+                selection-box-height: root.selection-box-height;
+                space-held: root.space-held;
                 canvas-width: root.canvas-width;
                 canvas-height: root.canvas-height;
+                show-safe-areas: root.show-safe-areas;
                 selected-source: root.selected-source;
                 selected-source-is-screen: root.selected-source-is-screen;
                 item-x: root.item-x;
                 item-y: root.item-y;
                 item-width: root.item-width;
                 item-height: root.item-height;
+                item-handle-x: root.item-handle-x;
+                item-handle-y: root.item-handle-y;
+                rotation-handle-x: root.rotation-handle-x;
+                rotation-handle-y: root.rotation-handle-y;
+                rotation-handle-active: root.rotation-handle-active;
+                item-selection-path: root.item-selection-path;
                 item-active: root.item-active;
                 item-locked: root.item-locked;
                 view-mode: root.view-mode;
                 open-source-properties() => { root.open-source-properties-window(); }
                 open-source-filters() => { root.open-source-filters-window(); }
                 open-monitor-window() => { root.open-monitor-window(); }
-                transform-dragged(handle, dx, dy) => { root.transform-dragged(handle, dx, dy); }
+                transform-dragged(handle, dx, dy, modifiers) => {
+                    root.transform-dragged(handle, dx, dy, modifiers);
+                }
                 transform-committed() => { root.transform-committed(); }
-                canvas-clicked(x, y) => { root.canvas-clicked(x, y); }
+                rotation-started(x, y) => { root.rotation-started(x, y); }
+                rotation-dragged(x, y, modifiers) => {
+                    root.rotation-dragged(x, y, modifiers);
+                }
+                canvas-pointer-pressed(x, y, additive) => {
+                    root.canvas-pointer-pressed(x, y, additive);
+                }
+                canvas-selection-dragged(x, y) => { root.canvas-selection-dragged(x, y); }
+                canvas-selection-committed() => { root.canvas-selection-committed(); }
+                canvas-zoom-changed(value) => { root.canvas-zoom-changed(value); }
+                canvas-zoom-step(direction) => { root.canvas-zoom-step(direction); }
+                canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale) => {
+                    root.canvas-zoom-at(direction, anchor-x, anchor-y, pointer-x, pointer-y, view-x, view-y, scale);
+                }
+                canvas-pan-dragged(dx, dy) => { root.canvas-pan-dragged(dx, dy); }
+                release-push-hotkey() => { keyboard.release-held-push(); }
+                multiview-select-preview(id) => { root.select-preview(id); }
+                multiview-select-program(id) => { root.select-program(id); }
             }
 
             HorizontalSplitter {
@@ -467,97 +666,156 @@ export component MainWindow inherits Window {
                 }
             }
 
-            Rectangle {
+            DockWorkspace {
                 height: root.dock-height;
-                background: Palette.tokens.window-bg;
-                HorizontalBox {
-                    padding: 0px;
-                    spacing: 1px;
-                    for panel[index] in root.panel-order : HorizontalLayout {
-                        spacing: 0px;
-                        // A detached dock leaves the row entirely, and a hidden
-                        // one keeps its place free rather than collapsing.
-                        visible: !root.panel-floating[panel]
-                            && ((panel == 0 && root.show-scenes)
-                            || (panel == 1 && root.show-sources)
-                            || (panel == 2 && root.show-mixer)
-                            || (panel == 3 && root.show-transitions)
-                            || (panel == 4 && root.show-controls));
-                        horizontal-stretch: root.panel-weights[panel];
-                        if index > 0 : VerticalSplitter {
-                            resized(delta) => { root.resize-panel(index, delta / 1px); }
-                        }
-                        DockSlot {
-                        panel-kind: panel;
-                        weight: 1.0;
-                        locale: root.locale;
-                        scene-rows: root.scene-rows;
-                        source-rows: root.source-rows;
-                        mixer-rows: root.mixer-rows;
-                        source-scene: root.source-scene;
-                        preview-scene: root.preview-scene;
-                        selected-source: root.selected-source;
-                        selected-source-is-screen: root.selected-source-is-screen;
-                        selected-source-visible: root.selected-source-visible;
-                        selected-source-locked: root.selected-source-locked;
-                        selected-source-first: root.selected-source-first;
-                        selected-source-last: root.selected-source-last;
-                        transition: root.transition;
-                        recording: root.recording;
-                        streaming: root.streaming;
-                        meters-paused: root.meters-paused;
-                        move-panel(kind, delta) => { root.move-panel(kind, delta); }
-                        open-modal(modal) => {
-                            // Adding a source has its own window now; the
-                            // remaining modals stay in-window.
-                            if modal == 3 {
-                                root.open-add-source-window();
-                            } else if modal == 6 {
-                                root.open-source-properties-window();
-                            } else if modal == 13 {
-                                root.open-source-filters-window();
-                            } else if modal == 14 {
-                                root.open-source-transform-window();
-                            } else if modal == 8 {
-                                root.open-monitor-window();
-                            } else {
-                                root.active-modal = modal;
-                            }
-                        }
-                        select-preview(id) => { root.select-preview(id); }
-                        select-program(id) => { root.select-program(id); }
-                        duplicate-scene(id) => { root.duplicate-scene(id); }
-                        remove-scene(id) => { root.remove-scene(id); }
-                        select-source(id) => { root.select-source(id); }
-                        toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
-                        toggle-source-locked(id) => { root.toggle-source-locked(id); }
-                        move-source(id, delta) => { root.move-source(id, delta); }
-                        move-source-to(id, index) => { root.move-source-to(id, index); }
-                        reset-source-transform(id) => { root.reset-source-transform(id); }
-                        flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
-                        open-source-rename(id) => { root.open-source-rename(id); }
-                        duplicate-source(id) => { root.duplicate-source(id); }
-                        remove-source(id) => { root.remove-source(id); }
-                        set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
-                        toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
-                        toggle-meters-paused() => { root.toggle-meters-paused(); }
-                        cut-transition() => { root.cut-transition(); }
-                        fade-transition() => { root.fade-transition(); }
-                        toggle-recording() => { root.request-recording(); }
-                        toggle-streaming() => { root.request-streaming(); }
-                        open-settings-window() => { root.open-settings-window(); }
-                        set-view-mode(mode) => { root.apply-view-mode(mode); }
-                        float-panel(kind) => { root.float-panel(kind); }
-                        close-panel(kind) => {
-                            if kind == 0 { root.show-scenes = false; }
-                            if kind == 1 { root.show-sources = false; }
-                            if kind == 2 { root.show-mixer = false; }
-                            if kind == 3 { root.show-transitions = false; }
-                            if kind == 4 { root.show-controls = false; }
-                        }
-                        }
-                    }
+                panes: root.dock-panes;
+                splitters: root.dock-splitters;
+                panel-floating: root.panel-floating;
+                dock-dragging: root.dock-dragging;
+                dock-drag-panel: root.dock-drag-panel;
+                dock-drop-target: root.dock-drop-target;
+                dock-drop-zone: root.dock-drop-zone;
+                platform-macos: root.platform-macos;
+                locale: root.locale;
+                scene-rows: root.scene-rows;
+                source-rows: root.source-rows;
+                mixer-rows: root.mixer-rows;
+                source-scene: root.source-scene;
+                preview-scene: root.preview-scene;
+                selected-source: root.selected-source;
+                selected-source-is-screen: root.selected-source-is-screen;
+                selected-source-is-group: root.selected-source-is-group;
+                selected-source-is-scene: root.selected-source-is-scene;
+                selected-source-is-nested: root.selected-source-is-nested;
+                selected-source-visible: root.selected-source-visible;
+                selected-source-locked: root.selected-source-locked;
+                selected-source-first: root.selected-source-first;
+                selected-source-last: root.selected-source-last;
+                selected-source-move-targets: root.selected-source-move-targets;
+                source-count: root.source-count;
+                can-paste: root.can-paste;
+                can-group-sources: root.can-group-sources;
+                transition: root.transition;
+                transition-kind: root.transition-kind;
+                transition-direction-index <=> root.transition-direction-index;
+                swipe-in <=> root.swipe-in;
+                luma-pattern-index <=> root.luma-pattern-index;
+                luma-invert <=> root.luma-invert;
+                luma-softness <=> root.luma-softness;
+                recording: root.recording;
+                streaming: root.streaming;
+                replay-buffering: root.replay-buffering;
+                replay-saving: root.replay-saving;
+                remux-recovery-supported: root.remux-recovery-supported;
+                remux-recovery-running: root.remux-recovery-running;
+                meters-paused: root.meters-paused;
+                show-scenes <=> root.show-scenes;
+                show-sources <=> root.show-sources;
+                show-mixer <=> root.show-mixer;
+                show-transitions <=> root.show-transitions;
+                show-controls <=> root.show-controls;
+                show-stats <=> root.show-stats;
+                status-message: root.status-message;
+                capture-capabilities: root.capture-capabilities;
+                preview-metrics: root.preview-metrics;
+                output-metrics: root.output-metrics;
+                move-panel(kind, delta) => { root.move-panel(kind, delta); }
+                resize-panel(index, delta) => { root.resize-panel(index, delta); }
+                select-dock-tab(kind) => { root.select-dock-tab(kind); }
+                dock-drag-start(kind, x, y) => { root.dock-drag-start(kind, x, y); }
+                dock-drag-moved(kind, x, y) => { root.dock-drag-moved(kind, x, y); }
+                dock-drag-end(kind, x, y) => { root.dock-drag-end(kind, x, y); }
+                resize-dock-splitter(id, delta) => { root.resize-dock-splitter(id, delta); }
+                open-main-modal(modal) => { root.active-modal = modal; }
+                open-add-source-window() => { root.open-add-source-window(); }
+                open-source-properties-window() => { root.open-source-properties-window(); }
+                open-source-filters-window() => { root.open-source-filters-window(); }
+                open-source-transform-window() => { root.open-source-transform-window(); }
+                open-monitor-window() => { root.open-monitor-window(); }
+                select-preview(id) => { root.select-preview(id); }
+                navigate-preview-scene(direction) => { root.navigate-preview-scene(direction); }
+                select-program(id) => { root.select-program(id); }
+                duplicate-scene(id) => { root.duplicate-scene(id); }
+                move-scene(id, delta) => { root.move-scene(id, delta); }
+                drop-scene(data, target, mode) => { root.drop-scene(data, target, mode); }
+                remove-scene(id) => { root.remove-scene(id); }
+                open-scene-projector(id) => { root.open-scene-projector(id); }
+                open-source-projector() => { root.open-source-projector(); }
+                select-source(id) => { root.select-source(id); }
+                select-source-with-mode(id, mode) => {
+                    root.select-source-with-mode(id, mode);
                 }
+                select-all-sources() => { root.select-all-sources(); }
+                navigate-source-selection(direction, mode) => {
+                    root.navigate-source-selection(direction, mode);
+                }
+                open-properties(id) => { root.open-source-properties-for(id); }
+                open-filters(id) => { root.open-source-filters-for(id); }
+                open-transform(id) => { root.open-source-transform-for(id); }
+                toggle-source-visibility(id) => { root.toggle-source-visibility(id); }
+                toggle-source-locked(id) => { root.toggle-source-locked(id); }
+                move-source(id, delta) => { root.move-source(id, delta); }
+                move-source-to(id, index) => { root.move-source-to(id, index); }
+                move-source-to-group(id, destination) => {
+                    root.move-source-to-group(id, destination);
+                }
+                reset-source-transform(id) => { root.reset-source-transform(id); }
+                flip-source(id, horizontal) => { root.flip-source(id, horizontal); }
+                transform-source(id, action) => { root.transform-source(id, action); }
+                open-source-rename(id) => { root.open-source-rename(id); }
+                duplicate-source(id) => { root.duplicate-source(id); }
+                group-sources() => { root.group-sources(); }
+                ungroup-source(id) => { root.ungroup-source(id); }
+                copy-source(id) => { root.copy-source(id); }
+                paste-reference(target) => { root.paste-reference(target); }
+                paste-duplicate(target) => { root.paste-duplicate(target); }
+                remove-source(id) => { root.remove-source(id); }
+                remove-selected-sources() => { root.remove-selected-sources(); }
+                drop-source(data, target, mode) => { root.drop-source(data, target, mode); }
+                set-mixer-gain(id, gain) => { root.set-mixer-gain(id, gain); }
+                set-mixer-pan(id, pan) => { root.set-mixer-pan(id, pan); }
+                toggle-mixer-mute(id) => { root.toggle-mixer-mute(id); }
+                toggle-meters-paused() => { root.toggle-meters-paused(); }
+                cut-transition() => { root.cut-transition(); }
+                take-stinger(duration) => { root.take-stinger(duration); }
+                fade-transition() => { root.fade-transition(); }
+                fade-transition-duration(duration) => { root.fade-transition-duration(duration); }
+                slide-transition(duration) => { root.slide-transition(duration); }
+                swipe-transition(duration) => { root.swipe-transition(duration); }
+                slide-transition-direction(duration, direction) => {
+                    root.slide-transition-direction(duration, direction);
+                }
+                swipe-transition-direction(duration, direction) => {
+                    root.swipe-transition-direction(duration, direction);
+                }
+                swipe-transition-direction-mode(duration, direction, swipe-in) => {
+                    root.swipe-transition-direction-mode(duration, direction, swipe-in);
+                }
+                fade-to-color(color, duration) => { root.fade-to-color(color, duration); }
+                luma-transition(duration, pattern, invert, softness) => {
+                    root.luma-transition(duration, pattern, invert, softness);
+                }
+                set-scene-transition(kind, duration, color) => { root.set-scene-transition(kind, duration, color); }
+                set-scene-transition-direction(kind, duration, color, direction) => {
+                    root.set-scene-transition-direction(kind, duration, color, direction);
+                }
+                set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in) => {
+                    root.set-scene-transition-direction-mode(kind, duration, color, direction, swipe-in);
+                }
+                set-scene-transition-luma(kind, duration, pattern, invert, softness) => {
+                    root.set-scene-transition-luma(kind, duration, pattern, invert, softness);
+                }
+                clear-scene-transition() => { root.clear-scene-transition(); }
+                toggle-recording() => { root.request-recording(); }
+                toggle-streaming() => { root.request-streaming(); }
+                toggle-replay-buffer() => { root.toggle-replay-buffer(); }
+                save-replay-buffer() => { root.save-replay-buffer(); }
+                recover-recording() => { root.recover-recording(); }
+                open-settings-window() => { root.open-settings-window(); }
+                open-audio-settings-window() => { root.open-audio-settings-window(); }
+                release-push-hotkey() => { keyboard.release-held-push(); }
+                set-view-mode(mode) => { root.apply-view-mode(mode); }
+                float-panel(kind) => { root.float-panel(kind); }
             }
 
             StatusBar {
@@ -572,110 +830,67 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Modals live at the window root so their scrim covers the whole window
-    // instead of being clipped to the dock that opened them.
-    if root.setup-active : Rectangle {
-        x: 0px;
-        y: 0px;
-        width: root.width;
-        height: root.height;
-        z: 1000;
-        background: rgb(0, 0, 0, 185);
-        TouchArea { }
-        Text {
-            text: I18n.text.settings_ui.setup_title;
-            color: Palette.tokens.text-strong;
-            font-size: 18px;
-            font-weight: 700;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            width: parent.width;
-            y: parent.height / 2 - 18px;
-        }
-    }
-    ConfirmDialog {
-        open: root.pending-confirm != 0;
+    // Window-level dialogs live in their own overlay component while all
+    // state and mutations remain owned by MainWindow/Rust.
+    MainModals {
         locale: root.locale;
-        message: root.pending-confirm == 1
-            ? I18n.text.settings_ui.prompt_start_stream
-            : root.pending-confirm == 2
-                ? I18n.text.settings_ui.prompt_stop_stream
-                : I18n.text.settings_ui.prompt_stop_recording;
-        close => { root.pending-confirm = 0; }
-        accepted => { root.resolve-confirm(); }
-    }
-    ProjectDialog {
-        open: root.active-modal == 1;
-        locale: root.locale;
+        setup-active: root.setup-active;
+        pending-confirm: root.pending-confirm;
+        active-modal <=> root.active-modal;
+        pending-discard: root.pending-discard;
         project-path <=> root.project-path;
+        collection-transfer-path <=> root.collection-transfer-path;
         diagnostics-path <=> root.diagnostics-path;
-        save-project() => { root.save-project(); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    SceneDialog {
-        open: root.active-modal == 2;
-        locale: root.locale;
-        new-scene-id <=> root.new-scene-id;
-        new-scene-name <=> root.new-scene-name;
-        add-scene(id, name) => { root.add-scene(id, name); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    OutputDialog {
-        open: root.active-modal == 4;
-        locale: root.locale;
+        project-dialog-mode <=> root.project-dialog-mode;
         recording-path <=> root.recording-path;
         streaming-address <=> root.streaming-address;
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    RenameSceneDialog {
-        open: root.active-modal == 5;
-        locale: root.locale;
+        new-scene-id <=> root.new-scene-id;
+        new-scene-name <=> root.new-scene-name;
         scene-name <=> root.scene-name;
-        rename-scene() => { root.rename-scene(); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    RenameSourceDialog {
-        open: root.active-modal == 12;
-        locale: root.locale;
-        source-name <=> root.source-name-draft;
-        rename-source() => { root.apply-source-name(); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    CollectionDialog {
-        open: root.active-modal == 9;
-        locale: root.locale;
-        active-collection: root.active-collection;
+        scene-transition-index <=> root.scene-transition-index;
+        scene-transition-direction-index <=> root.scene-transition-direction-index;
+        scene-transition-swipe-in <=> root.scene-transition-swipe-in;
+        scene-transition-luma-pattern-index <=> root.scene-transition-luma-pattern-index;
+        scene-transition-luma-invert <=> root.scene-transition-luma-invert;
+        scene-transition-luma-softness <=> root.scene-transition-luma-softness;
+        scene-transition-duration <=> root.scene-transition-duration;
+        scene-transition-color <=> root.scene-transition-color;
+        scene-stinger-path <=> root.scene-stinger-path;
+        scene-stinger-transition-point <=> root.scene-stinger-transition-point;
+        scene-stinger-preload <=> root.scene-stinger-preload;
+        scene-stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
+        scene-stinger-hardware-decode-enabled <=> root.scene-stinger-hardware-decode-enabled;
+        file-picker-enabled <=> root.file-picker-enabled;
+        source-name-draft <=> root.source-name-draft;
+        source-rename-target <=> root.source-rename-target;
         collection-name <=> root.collection-name;
+        duplicate-collection-dialog <=> root.duplicate-collection-dialog;
+        rename-collection-dialog <=> root.rename-collection-dialog;
+        active-collection: root.active-collection;
+        status-message: root.status-message;
+        app-version: root.app-version;
+        app-platform: root.app-platform;
+        remux-recovery-candidates: root.remux-recovery-candidates;
+        remux-recovery-path <=> root.remux-recovery-path;
+        resolve-confirm() => { root.resolve-confirm(); }
+        save-project() => { root.save-project(); }
+        save-project-as(path) => { root.save-project-as(path); }
+        load-project() => { root.load-project(); }
+        recover-project() => { root.recover-project(); }
+        discard-project-recovery() => { root.discard-project-recovery(); }
+        browse-project-save-as() => { root.browse-project-save-as(); }
+        export-collection(path) => { root.export-collection(path); }
+        import-collection(path) => { root.import-collection(path); }
+        save-discard(action) => { root.save-discard(action); }
+        resolve-discard(action) => { root.resolve-discard(action); }
+        add-scene(id, name) => { root.add-scene(id, name); }
+        rename-scene() => { root.rename-scene(); }
+        browse-scene-stinger() => { root.browse-scene-stinger(); }
+        apply-source-name() => { root.apply-source-name(); }
+        duplicate-collection(name) => { root.duplicate-collection(name); }
+        rename-collection(name) => { root.rename-collection(name); }
         create-collection(name) => { root.create-collection(name); }
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    AboutDialog {
-        open: root.active-modal == 10;
-        locale: root.locale;
-        version: root.app-version;
-        platform: root.app-platform;
-        close => { root.active-modal = 0; }
-        accepted => { root.active-modal = 0; }
-    }
-    DiscardChangesDialog {
-        open: root.pending-discard != 0;
-        locale: root.locale;
-        close => { root.pending-discard = 0; }
-        accepted => { root.resolve-discard(root.pending-discard); }
-    }
-    RecoveryDialog {
-        open: root.active-modal == 11;
-        detail: root.status-message;
-        close => { root.active-modal = 0; }
-        accepted => {
-            root.active-modal = 0;
-            root.open-settings-window();
-        }
+        open-settings-window() => { root.open-settings-window(); }
+        recover-remux-candidate(path) => { root.recover-remux-candidate(path); }
     }
 }

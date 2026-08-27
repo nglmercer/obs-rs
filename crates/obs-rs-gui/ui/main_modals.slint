@@ -1,0 +1,282 @@
+import { I18n } from "i18n.slint";
+import {
+    AboutDialog,
+    CollectionDialog,
+    ConfirmDialog,
+    DiscardChangesDialog,
+    OutputDialog,
+    ProjectDialog,
+    ProjectRecoveryDiscardDialog,
+    ProjectRecoveryDialog,
+    RecoveryDialog,
+    RemuxRecoveryDialog,
+    RenameSceneDialog,
+    RenameSourceDialog,
+    SceneDialog,
+} from "dialogs.slint";
+import { Palette } from "palette.slint";
+
+// Window-level dialogs are kept in one overlay component so MainWindow remains
+// the owner of the state and callbacks without also owning every modal's
+// presentation details.
+export component MainModals inherits Rectangle {
+    in property <string> locale;
+    in property <bool> setup-active;
+    in-out property <int> pending-confirm;
+    in-out property <int> active-modal;
+    in-out property <int> pending-discard;
+    in-out property <string> project-path;
+    in-out property <string> collection-transfer-path;
+    in-out property <string> diagnostics-path;
+    in-out property <int> project-dialog-mode: 0;
+    in-out property <string> recording-path;
+    in-out property <string> streaming-address;
+    in-out property <string> new-scene-id;
+    in-out property <string> new-scene-name;
+    in-out property <string> scene-name;
+    in-out property <int> scene-transition-index: 0;
+    in-out property <int> scene-transition-direction-index: 0;
+    in-out property <bool> scene-transition-swipe-in: false;
+    in-out property <int> scene-transition-luma-pattern-index: 0;
+    in-out property <bool> scene-transition-luma-invert: false;
+    in-out property <string> scene-transition-luma-softness: "30";
+    in-out property <string> scene-transition-duration;
+    in-out property <string> scene-transition-color;
+    in-out property <string> scene-stinger-path;
+    in-out property <string> scene-stinger-transition-point: "500";
+    in-out property <bool> scene-stinger-preload: true;
+    in-out property <bool> scene-stinger-hardware-decode: false;
+    in-out property <bool> scene-stinger-hardware-decode-enabled: false;
+    in-out property <bool> file-picker-enabled: false;
+    in-out property <string> source-name-draft;
+    in-out property <string> source-rename-target;
+    in-out property <string> collection-name;
+    in-out property <bool> duplicate-collection-dialog: false;
+    in-out property <bool> rename-collection-dialog: false;
+    in property <string> active-collection;
+    in property <string> status-message;
+    in property <string> app-version;
+    in property <string> app-platform;
+    in property <[string]> remux-recovery-candidates;
+    in-out property <string> remux-recovery-path;
+
+    callback resolve-confirm();
+    callback save-project();
+    callback save-project-as(string);
+    callback load-project();
+    callback recover-project();
+    callback discard-project-recovery();
+    callback browse-project-save-as();
+    callback export-collection(string);
+    callback import-collection(string);
+    callback save-discard(int);
+    callback resolve-discard(int);
+    callback add-scene(string, string);
+    callback rename-scene();
+    callback browse-scene-stinger();
+    callback apply-source-name();
+    callback duplicate-collection(string);
+    callback rename-collection(string);
+    callback create-collection(string);
+    callback open-settings-window();
+    callback recover-remux-candidate(string);
+
+    width: 100%;
+    height: 100%;
+    z: 1000;
+
+    if root.setup-active : Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: rgb(0, 0, 0, 185);
+        TouchArea { }
+        Text {
+            text: I18n.text.settings_ui.setup_title;
+            color: Palette.tokens.text-strong;
+            font-size: 18px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            y: parent.height / 2 - 18px;
+        }
+    }
+    ConfirmDialog {
+        open: root.pending-confirm != 0;
+        locale: root.locale;
+        message: root.pending-confirm == 1
+            ? I18n.text.settings_ui.prompt_start_stream
+            : root.pending-confirm == 2
+                ? I18n.text.settings_ui.prompt_stop_stream
+                : I18n.text.settings_ui.prompt_stop_recording;
+        close => { root.pending-confirm = 0; }
+        accepted => { root.resolve-confirm(); }
+    }
+    project-dialog := ProjectDialog {
+        open: root.active-modal == 1;
+        locale: root.locale;
+        mode: root.project-dialog-mode;
+        project-path <=> root.project-path;
+        collection-path <=> root.collection-transfer-path;
+        diagnostics-path <=> root.diagnostics-path;
+        file-picker-enabled: root.file-picker-enabled;
+        browse-project-save-as() => { root.browse-project-save-as(); }
+        save-project() => {
+            if root.project-dialog-mode == 4 {
+                root.load-project();
+            } else if root.project-dialog-mode == 3 {
+                root.save-project-as(root.project-path);
+            } else if root.project-dialog-mode == 1 {
+                root.export-collection(root.collection-transfer-path);
+            } else if root.project-dialog-mode == 2 {
+                root.import-collection(root.collection-transfer-path);
+            } else {
+                root.save-project();
+            }
+        }
+        close => {
+            root.project-dialog-mode = 0;
+            root.active-modal = 0;
+        }
+        accepted => {
+            project-dialog.save-project();
+            root.project-dialog-mode = 0;
+            root.active-modal = 0;
+        }
+    }
+    scene-dialog := SceneDialog {
+        open: root.active-modal == 2;
+        locale: root.locale;
+        new-scene-id <=> root.new-scene-id;
+        new-scene-name <=> root.new-scene-name;
+        add-scene(id, name) => { root.add-scene(id, name); }
+        close => { root.active-modal = 0; }
+        accepted => {
+            scene-dialog.add-scene(root.new-scene-id, root.new-scene-name);
+            root.active-modal = 0;
+        }
+    }
+    OutputDialog {
+        open: root.active-modal == 4;
+        locale: root.locale;
+        recording-path <=> root.recording-path;
+        streaming-address <=> root.streaming-address;
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    rename-scene-dialog := RenameSceneDialog {
+        open: root.active-modal == 5;
+        locale: root.locale;
+        scene-name <=> root.scene-name;
+        transition-index <=> root.scene-transition-index;
+        transition-direction-index <=> root.scene-transition-direction-index;
+        transition-swipe-in <=> root.scene-transition-swipe-in;
+        transition-luma-pattern-index <=> root.scene-transition-luma-pattern-index;
+        transition-luma-invert <=> root.scene-transition-luma-invert;
+        transition-luma-softness <=> root.scene-transition-luma-softness;
+        transition-duration <=> root.scene-transition-duration;
+        transition-color <=> root.scene-transition-color;
+        stinger-path <=> root.scene-stinger-path;
+        stinger-transition-point <=> root.scene-stinger-transition-point;
+        stinger-preload <=> root.scene-stinger-preload;
+        stinger-hardware-decode <=> root.scene-stinger-hardware-decode;
+        stinger-hardware-decode-enabled: root.scene-stinger-hardware-decode-enabled;
+        file-picker-enabled: root.file-picker-enabled;
+        rename-scene() => { root.rename-scene(); }
+        browse-scene-stinger() => { root.browse-scene-stinger(); }
+        close => { root.active-modal = 0; }
+        accepted => {
+            rename-scene-dialog.rename-scene();
+            root.active-modal = 0;
+        }
+    }
+    rename-source-dialog := RenameSourceDialog {
+        open: root.active-modal == 12;
+        locale: root.locale;
+        source-name <=> root.source-name-draft;
+        rename-source() => { root.apply-source-name(); }
+        close => {
+            root.active-modal = 0;
+            root.source-rename-target = "";
+        }
+        accepted => {
+            rename-source-dialog.rename-source();
+            root.active-modal = 0;
+            root.source-rename-target = "";
+        }
+    }
+    collection-dialog := CollectionDialog {
+        open: root.active-modal == 9;
+        locale: root.locale;
+        active-collection: root.active-collection;
+        duplicate-mode: root.duplicate-collection-dialog;
+        rename-mode: root.rename-collection-dialog;
+        collection-name <=> root.collection-name;
+        create-collection(name) => {
+            if root.duplicate-collection-dialog {
+                root.duplicate-collection(name);
+            } else if root.rename-collection-dialog {
+                root.rename-collection(name);
+            } else {
+                root.create-collection(name);
+            }
+        }
+        close => {
+            root.duplicate-collection-dialog = false;
+            root.rename-collection-dialog = false;
+            root.active-modal = 0;
+        }
+        accepted => {
+            collection-dialog.create-collection(root.collection-name);
+            root.duplicate-collection-dialog = false;
+            root.rename-collection-dialog = false;
+            root.active-modal = 0;
+        }
+    }
+    AboutDialog {
+        open: root.active-modal == 10;
+        locale: root.locale;
+        version: root.app-version;
+        platform: root.app-platform;
+        close => { root.active-modal = 0; }
+        accepted => { root.active-modal = 0; }
+    }
+    DiscardChangesDialog {
+        open: root.pending-discard != 0;
+        locale: root.locale;
+        close => { root.pending-discard = 0; }
+        save => { root.save-discard(root.pending-discard); }
+        discard => { root.resolve-discard(root.pending-discard); }
+    }
+    RecoveryDialog {
+        open: root.active-modal == 11;
+        detail: root.status-message;
+        close => { root.active-modal = 0; }
+        accepted => {
+            root.active-modal = 0;
+            root.open-settings-window();
+        }
+    }
+    ProjectRecoveryDialog {
+        open: root.active-modal == 14;
+        detail: root.status-message;
+        recover => { root.recover-project(); }
+        close => { root.active-modal = 0; }
+    }
+    ProjectRecoveryDiscardDialog {
+        open: root.active-modal == 15;
+        detail: root.status-message;
+        discard => { root.discard-project-recovery(); }
+        close => { root.active-modal = 0; }
+    }
+    RemuxRecoveryDialog {
+        open: root.active-modal == 13;
+        candidates: root.remux-recovery-candidates;
+        candidate-path <=> root.remux-recovery-path;
+        recover(path) => {
+            root.active-modal = 0;
+            root.recover-remux-candidate(path);
+        }
+        close => { root.active-modal = 0; }
+    }
+}

@@ -1,0 +1,29 @@
+import { ComboBox, HorizontalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+// Shared direction picker for the Transition dock and scene-properties dialog.
+// The integer is a bounded UI index; Rust converts it to SlideDirection at the
+// callback boundary.
+export component TransitionDirectionField inherits HorizontalBox {
+    in-out property <int> direction-index: 0;
+
+    spacing: 5px;
+    Text {
+        text: I18n.text.transition_direction;
+        color: Palette.tokens.text-muted;
+        font-size: 11px;
+        vertical-alignment: center;
+    }
+    ComboBox {
+        model: [
+            I18n.text.direction_left,
+            I18n.text.direction_right,
+            I18n.text.direction_up,
+            I18n.text.direction_down
+        ];
+        current-index: root.direction-index;
+        selected(value) => { root.direction-index = self.current-index; }
+        horizontal-stretch: 1;
+    }
+}

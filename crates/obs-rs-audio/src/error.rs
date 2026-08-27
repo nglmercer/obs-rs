@@ -60,8 +60,55 @@ pub enum AudioError {
     DuplicateInput(AudioSourceId),
     /// A source gain is not finite.
     InvalidGain,
+    /// An audio gain filter is outside the bounded OBS-compatible range.
+    InvalidFilterGain { milli_db: i32 },
+    /// An audio limiter threshold is outside OBS's bounded dB range.
+    InvalidLimiterThreshold { milli_db: i32 },
+    /// An audio limiter release time is outside OBS's bounded millisecond range.
+    InvalidLimiterRelease { milliseconds: u16 },
+    /// An audio compressor ratio is outside OBS's bounded ratio range.
+    InvalidCompressorRatio { milli_ratio: u16 },
+    /// An audio compressor threshold is outside OBS's bounded dB range.
+    InvalidCompressorThreshold { milli_db: i32 },
+    /// An audio compressor attack time is outside OBS's bounded range.
+    InvalidCompressorAttack { milliseconds: u16 },
+    /// An audio compressor release time is outside OBS's bounded range.
+    InvalidCompressorRelease { milliseconds: u16 },
+    /// An audio compressor output gain is outside OBS's bounded dB range.
+    InvalidCompressorOutputGain { milli_db: i32 },
+    /// An audio expander ratio is outside OBS's bounded ratio range.
+    InvalidExpanderRatio { milli_ratio: u16 },
+    /// An audio expander threshold is outside OBS's bounded dB range.
+    InvalidExpanderThreshold { milli_db: i32 },
+    /// An audio expander attack time is outside OBS's bounded range.
+    InvalidExpanderAttack { milliseconds: u16 },
+    /// An audio expander release time is outside OBS's bounded range.
+    InvalidExpanderRelease { milliseconds: u16 },
+    /// An audio expander output gain is outside OBS's bounded dB range.
+    InvalidExpanderOutputGain { milli_db: i32 },
+    /// An audio noise-gate open threshold is outside OBS's bounded dB range.
+    InvalidNoiseGateOpenThreshold { milli_db: i32 },
+    /// An audio noise-gate close threshold is outside OBS's bounded dB range.
+    InvalidNoiseGateCloseThreshold { milli_db: i32 },
+    /// A noise-gate close threshold is above its open threshold.
+    InvalidNoiseGateThresholdOrder {
+        open_milli_db: i32,
+        close_milli_db: i32,
+    },
+    /// An audio noise-gate attack time is outside the safe bounded range.
+    InvalidNoiseGateAttack { milliseconds: u16 },
+    /// An audio noise-gate hold time is outside OBS's bounded range.
+    InvalidNoiseGateHold { milliseconds: u16 },
+    /// An audio noise-gate release time is outside the safe bounded range.
+    InvalidNoiseGateRelease { milliseconds: u16 },
+    /// An ordered audio filter chain reached its fixed capacity.
+    FilterChainFull { max: usize },
+    /// An audio filter would have produced a non-finite sample.
+    FilterOverflow,
     /// A source pan is not finite or is outside `[-1.0, 1.0]`.
     InvalidPan,
+    /// A fixed source sync offset exceeds the bounded audio control range.
+    InvalidSyncOffset { milliseconds: u32 },
     /// A mix sum overflowed the finite `f32` range.
     MixOverflow,
     /// Source IDs are exhausted.
@@ -88,6 +135,10 @@ pub enum AudioError {
 }
 
 impl fmt::Display for AudioError {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the public audio error catalog keeps every bounded contract message together"
+    )]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidFormat => formatter.write_str("audio format values must be non-zero"),
@@ -130,9 +181,98 @@ impl fmt::Display for AudioError {
                 )
             }
             Self::InvalidGain => formatter.write_str("audio gain must be finite"),
+            Self::InvalidFilterGain { milli_db } => write!(
+                formatter,
+                "audio filter gain {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidLimiterThreshold { milli_db } => write!(
+                formatter,
+                "audio limiter threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidLimiterRelease { milliseconds } => write!(
+                formatter,
+                "audio limiter release {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidCompressorRatio { milli_ratio } => write!(
+                formatter,
+                "audio compressor ratio {milli_ratio} milli-ratio is outside the supported range"
+            ),
+            Self::InvalidCompressorThreshold { milli_db } => write!(
+                formatter,
+                "audio compressor threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidCompressorAttack { milliseconds } => write!(
+                formatter,
+                "audio compressor attack {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidCompressorRelease { milliseconds } => write!(
+                formatter,
+                "audio compressor release {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidCompressorOutputGain { milli_db } => write!(
+                formatter,
+                "audio compressor output gain {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidExpanderRatio { milli_ratio } => write!(
+                formatter,
+                "audio expander ratio {milli_ratio} milli-ratio is outside the supported range"
+            ),
+            Self::InvalidExpanderThreshold { milli_db } => write!(
+                formatter,
+                "audio expander threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidExpanderAttack { milliseconds } => write!(
+                formatter,
+                "audio expander attack {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidExpanderRelease { milliseconds } => write!(
+                formatter,
+                "audio expander release {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidExpanderOutputGain { milli_db } => write!(
+                formatter,
+                "audio expander output gain {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidNoiseGateOpenThreshold { milli_db } => write!(
+                formatter,
+                "audio noise-gate open threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidNoiseGateCloseThreshold { milli_db } => write!(
+                formatter,
+                "audio noise-gate close threshold {milli_db} milli-dB is outside the supported range"
+            ),
+            Self::InvalidNoiseGateThresholdOrder {
+                open_milli_db,
+                close_milli_db,
+            } => write!(
+                formatter,
+                "audio noise-gate close threshold {close_milli_db} must not exceed open threshold {open_milli_db}"
+            ),
+            Self::InvalidNoiseGateAttack { milliseconds } => write!(
+                formatter,
+                "audio noise-gate attack {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidNoiseGateHold { milliseconds } => write!(
+                formatter,
+                "audio noise-gate hold {milliseconds} ms is outside the supported range"
+            ),
+            Self::InvalidNoiseGateRelease { milliseconds } => write!(
+                formatter,
+                "audio noise-gate release {milliseconds} ms is outside the supported range"
+            ),
+            Self::FilterChainFull { max } => {
+                write!(formatter, "audio filter chain is limited to {max} filters")
+            }
+            Self::FilterOverflow => {
+                formatter.write_str("audio filter produced a non-finite sample")
+            }
             Self::InvalidPan => {
                 formatter.write_str("audio pan must be finite and between -1 and 1")
             }
+            Self::InvalidSyncOffset { milliseconds } => write!(
+                formatter,
+                "audio sync offset {milliseconds} ms is outside the supported range"
+            ),
             Self::MixOverflow => formatter.write_str("audio mix exceeded finite sample range"),
             Self::SourceIdExhausted => formatter.write_str("audio source ID space is exhausted"),
             Self::ZeroMonitorCapacity => {

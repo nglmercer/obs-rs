@@ -72,12 +72,79 @@ const SIZE_FIELDS: [Field; 2] = [
 ];
 
 /// Returns the fields for `kind`, in the order the dialog shows them.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the typed source-property catalog keeps each built-in schema together"
+)]
 fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
     static COLOR: Field = Field {
         key: "color",
         label: |text| text.property_ui.color.clone(),
         hint: |text| text.property_ui.color_hint.clone(),
         kind: FieldKind::Color,
+    };
+    static TEXT: Field = Field {
+        key: "text",
+        label: |text| text.property_ui.text.clone(),
+        hint: |text| text.property_ui.text_hint.clone(),
+        kind: FieldKind::Text,
+    };
+    static PATH: Field = Field {
+        key: "path",
+        label: |text| text.property_ui.path.clone(),
+        hint: |text| text.property_ui.path_hint.clone(),
+        kind: FieldKind::Text,
+    };
+    static PATHS: Field = Field {
+        key: "paths",
+        label: |text| text.property_ui.paths.clone(),
+        hint: |text| text.property_ui.paths_hint.clone(),
+        kind: FieldKind::Text,
+    };
+    static SLIDE_TIME: Field = Field {
+        key: "slide_time_ms",
+        label: |text| text.property_ui.slide_time_ms.clone(),
+        hint: |text| text.property_ui.slide_time_hint.clone(),
+        kind: FieldKind::Number {
+            minimum: 50,
+            maximum: 3_600_000,
+        },
+    };
+    static FADE: Field = Field {
+        key: "fade",
+        label: |text| text.property_ui.fade.clone(),
+        hint: |text| text.property_ui.fade_hint.clone(),
+        kind: FieldKind::Toggle,
+    };
+    static TRANSITION_TIME: Field = Field {
+        key: "transition_ms",
+        label: |text| text.property_ui.transition_ms.clone(),
+        hint: |text| text.property_ui.transition_hint.clone(),
+        kind: FieldKind::Number {
+            minimum: 0,
+            maximum: 60_000,
+        },
+    };
+    static LOOP: Field = Field {
+        key: "loop",
+        label: |text| text.property_ui.loop_label.clone(),
+        hint: |text| text.property_ui.loop_hint.clone(),
+        kind: FieldKind::Toggle,
+    };
+    static RANDOMIZE: Field = Field {
+        key: "randomize",
+        label: |text| text.property_ui.randomize.clone(),
+        hint: |text| text.property_ui.randomize_hint.clone(),
+        kind: FieldKind::Toggle,
+    };
+    static FONT_SIZE: Field = Field {
+        key: "font_size",
+        label: |text| text.property_ui.font_size.clone(),
+        hint: |text| text.property_ui.font_size_hint.clone(),
+        kind: FieldKind::Number {
+            minimum: 1,
+            maximum: 128,
+        },
     };
     static DEVICE: Field = Field {
         key: "device_id",
@@ -132,6 +199,16 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
 
     let mut fields = match kind.trim() {
         "color_source" => vec![&COLOR],
+        "image_source" => vec![&PATH],
+        "image_slideshow" => vec![
+            &PATHS,
+            &SLIDE_TIME,
+            &FADE,
+            &TRANSITION_TIME,
+            &LOOP,
+            &RANDOMIZE,
+        ],
+        "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         #[cfg(target_os = "windows")]
         "screen_capture" => vec![&MONITOR, &DEVICE],
         #[cfg(not(target_os = "windows"))]
@@ -481,6 +558,68 @@ mod tests {
         assert_eq!(rows[1].number, 640);
         assert_eq!(rows[1].kind, KIND_NUMBER);
         assert_eq!(rows[0].kind, KIND_COLOR);
+    }
+
+    #[test]
+    fn text_sources_expose_text_colour_font_size_and_video_size() {
+        let document =
+            "color = \"#FFFFFFFF\"\nfont_size = 24\nheight = 360\ntext = \"OBS-RS\"\nwidth = 640\n";
+
+        let rows = rows("text_source", document, UiLocale::English);
+
+        let keys = rows
+            .iter()
+            .map(|row| row.key.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["text", "color", "font_size", "width", "height"]);
+        assert_eq!(rows[0].kind, KIND_TEXT);
+        assert_eq!(rows[2].kind, KIND_NUMBER);
+        assert_eq!(rows[2].number, 24);
+    }
+
+    #[test]
+    fn image_sources_expose_path_and_video_size() {
+        let document = "height = 360\npath = \"/tmp/example.png\"\nwidth = 640\n";
+
+        let rows = rows("image_source", document, UiLocale::English);
+
+        let keys = rows
+            .iter()
+            .map(|row| row.key.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["path", "width", "height"]);
+        assert_eq!(rows[0].kind, KIND_TEXT);
+        assert_eq!(rows[0].text, "/tmp/example.png");
+    }
+
+    #[test]
+    fn image_slideshows_expose_paths_interval_loop_and_video_size() {
+        let document =
+            "fade = false\nheight = 360\nloop = true\npaths = \"/tmp/a.png\\n/tmp/b.png\"\nrandomize = false\nslide_time_ms = 8000\ntransition_ms = 500\nwidth = 640\n";
+
+        let rows = rows("image_slideshow", document, UiLocale::English);
+
+        let keys = rows
+            .iter()
+            .map(|row| row.key.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                "paths",
+                "slide_time_ms",
+                "fade",
+                "transition_ms",
+                "loop",
+                "randomize",
+                "width",
+                "height"
+            ]
+        );
+        assert_eq!(rows[1].kind, KIND_NUMBER);
+        assert_eq!(rows[1].number, 8_000);
+        assert!(!rows[2].toggle);
+        assert!(rows[4].toggle);
     }
 
     #[test]

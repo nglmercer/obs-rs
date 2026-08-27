@@ -1,7 +1,9 @@
-use obs_rs_media::FrameTransition;
+use std::{fmt, sync::Arc};
+
+use obs_rs_media::{FrameTransition, MediaError, StingerClip, TransitionSpec};
 use obs_rs_project::{ProjectCommand, SceneItemDuplicateMode};
 
-use super::{error::UiError, MAX_SHORTCUT_KEY_BYTES};
+use super::{error::UiError, MAX_SHORTCUT_KEY_BYTES, MAX_SHORTCUT_TEXT_BYTES};
 
 /// Which scene view a desktop surface is showing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -10,6 +12,164 @@ pub enum SceneView {
     Preview,
     /// The scene currently sent to program output.
     Program,
+}
+
+/// The last Preview/Program choices associated with one project document and
+/// profile.
+///
+/// This is a desktop-session snapshot rather than project content. Frontends
+/// may persist a bounded collection of these records in their own settings
+/// document and feed them back into [`DesktopState`](crate::DesktopState) at
+/// startup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProjectSceneSelection {
+    key: String,
+    profile: String,
+    preview: Option<String>,
+    program: Option<String>,
+}
+
+/// A transient scene transition that a renderer should display between two
+/// scene IDs. It is intentionally not part of the project document: the
+/// active transition is a live presentation effect and disappears at its
+/// duration boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransitionSnapshot {
+    source_scene: String,
+    destination_scene: String,
+    transition: FrameTransition,
+    stinger: Option<StingerSnapshot>,
+}
+
+/// Renderer-facing Stinger data backed by a preloaded, bounded clip.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StingerSnapshot {
+    clip: Arc<StingerClip>,
+    progress_milli: u16,
+}
+
+impl TransitionSnapshot {
+    /// Creates a renderer-facing transition snapshot.
+    #[must_use]
+    pub fn new(
+        source_scene: impl Into<String>,
+        destination_scene: impl Into<String>,
+        transition: FrameTransition,
+    ) -> Self {
+        Self {
+            source_scene: source_scene.into(),
+            destination_scene: destination_scene.into(),
+            transition,
+            stinger: None,
+        }
+    }
+
+    /// Creates a renderer-facing snapshot for a preloaded Stinger clip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MediaError::InvalidTransition`] when the progress is
+    /// outside the normalized 0..=1000 range.
+    #[must_use = "handle the transition snapshot result"]
+    pub fn new_stinger(
+        source_scene: impl Into<String>,
+        destination_scene: impl Into<String>,
+        clip: Arc<StingerClip>,
+        progress_milli: u16,
+    ) -> Result<Self, MediaError> {
+        if progress_milli > 1_000 {
+            return Err(MediaError::InvalidTransition { progress_milli });
+        }
+        Ok(Self {
+            source_scene: source_scene.into(),
+            destination_scene: destination_scene.into(),
+            transition: FrameTransition::Cut,
+            stinger: Some(StingerSnapshot {
+                clip,
+                progress_milli,
+            }),
+        })
+    }
+
+    /// Returns the scene being transitioned away from.
+    #[must_use]
+    pub fn source_scene(&self) -> &str {
+        &self.source_scene
+    }
+
+    /// Returns the scene being transitioned to.
+    #[must_use]
+    pub fn destination_scene(&self) -> &str {
+        &self.destination_scene
+    }
+
+    /// Returns the bounded transition sample for this render tick.
+    #[must_use]
+    pub const fn transition(&self) -> FrameTransition {
+        self.transition
+    }
+
+    /// Returns the optional preloaded Stinger payload.
+    #[must_use]
+    pub fn stinger(&self) -> Option<&StingerSnapshot> {
+        self.stinger.as_ref()
+    }
+}
+
+impl StingerSnapshot {
+    /// Returns the immutable preloaded clip.
+    #[must_use]
+    pub fn clip(&self) -> &StingerClip {
+        &self.clip
+    }
+
+    /// Returns the bounded normalized render progress.
+    #[must_use]
+    pub const fn progress_milli(&self) -> u16 {
+        self.progress_milli
+    }
+}
+
+impl ProjectSceneSelection {
+    /// Creates a snapshot from the document key, profile, and scene choices.
+    #[must_use]
+    pub fn new(
+        key: impl Into<String>,
+        profile: impl Into<String>,
+        preview: Option<String>,
+        program: Option<String>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            profile: profile.into(),
+            preview,
+            program,
+        }
+    }
+
+    /// Returns the document key used to associate this snapshot.
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the active profile at the time of the snapshot.
+    #[must_use]
+    pub fn profile(&self) -> &str {
+        &self.profile
+    }
+
+    /// Returns the selected Preview scene, if one was selected.
+    #[must_use]
+    pub fn preview(&self) -> Option<&str> {
+        self.preview.as_deref()
+    }
+
+    /// Returns the selected Program scene, if one was selected.
+    #[must_use]
+    pub fn program(&self) -> Option<&str> {
+        self.program.as_deref()
+    }
 }
 
 /// Supported labels for toolkit-neutral state surfaces.
@@ -55,8 +215,11 @@ pub struct MixerChannel {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) gain_milli: u16,
+    pub(crate) pan_milli: i32,
     pub(crate) muted: bool,
     pub(crate) peak_milli: u16,
+    pub(crate) peak_hold_milli: u16,
+    pub(crate) clipped: bool,
 }
 
 impl MixerChannel {
@@ -78,6 +241,12 @@ impl MixerChannel {
         self.gain_milli
     }
 
+    /// Returns stereo pan in thousandths of a full left/right turn.
+    #[must_use]
+    pub const fn pan_milli(&self) -> i32 {
+        self.pan_milli
+    }
+
     /// Returns whether the channel is muted.
     #[must_use]
     pub const fn muted(&self) -> bool {
@@ -89,6 +258,18 @@ impl MixerChannel {
     pub const fn peak_milli(&self) -> u16 {
         self.peak_milli
     }
+
+    /// Returns the latest bounded held peak meter value in thousandths.
+    #[must_use]
+    pub const fn peak_hold_milli(&self) -> u16 {
+        self.peak_hold_milli
+    }
+
+    /// Returns whether the channel is within its bounded clip indication.
+    #[must_use]
+    pub const fn clipped(&self) -> bool {
+        self.clipped
+    }
 }
 
 /// A user action that can be bound to a keyboard shortcut.
@@ -96,6 +277,10 @@ impl MixerChannel {
 pub enum UiAction {
     /// Swap the selected preview and program scenes.
     SwapPreviewProgram,
+    /// Select the previous scene in the profile's persistent scene order.
+    PreviousPreviewScene,
+    /// Select the next scene in the profile's persistent scene order.
+    NextPreviewScene,
     /// Begin a recording output.
     StartRecording,
     /// Stop a recording output.
@@ -108,6 +293,36 @@ pub enum UiAction {
     Undo,
     /// Reapply the most recently undone project state.
     Redo,
+    /// Save the current project through the frontend's project-file boundary.
+    SaveProject,
+    /// Send the selected preview scene to program using a cut.
+    CutTransition,
+    /// Start a cross-fade through the frontend's transition/output boundary.
+    FadeTransition,
+    /// Save the active replay buffer through the frontend's output boundary.
+    SaveReplayBuffer,
+    /// Start replay capture through the frontend's output boundary.
+    StartReplayBuffer,
+    /// Stop replay capture through the frontend's output boundary.
+    StopReplayBuffer,
+    /// Toggle the microphone mixer channel mute state.
+    ToggleMicrophoneMute,
+    /// Toggle the desktop-audio mixer channel mute state.
+    ToggleDesktopMute,
+    /// Unmute the microphone while a bound key is held.
+    PushToTalkMicrophone,
+    /// Mute the microphone while a bound key is held.
+    PushToMuteMicrophone,
+    /// Toggle the desktop between the Studio and single-canvas views.
+    ToggleStudioMode,
+    /// Toggle visibility for the currently selected source item.
+    ToggleSelectedSourceVisibility,
+    /// Toggle locking for the currently selected source item.
+    ToggleSelectedSourceLock,
+    /// Toggle the projector for the currently selected source item.
+    ToggleSelectedSourceProjector,
+    /// Toggle the projector for the current Preview scene.
+    TogglePreviewSceneProjector,
 }
 
 /// A validated, sortable keyboard shortcut description.
@@ -118,20 +333,74 @@ pub struct Shortcut {
 }
 
 impl Shortcut {
+    /// Control modifier bit.
+    pub const CONTROL: u8 = 1 << 0;
+    /// Shift modifier bit.
+    pub const SHIFT: u8 = 1 << 1;
+    /// Alt/Option modifier bit.
+    pub const ALT: u8 = 1 << 2;
+
+    const MODIFIER_MASK: u8 = Self::CONTROL | Self::SHIFT | Self::ALT;
+
     /// Creates a shortcut from a modifier bitset and key name.
     ///
     /// # Errors
     ///
     /// Returns [`UiError::InvalidShortcut`] for an empty or oversized key.
     pub fn new(modifiers: u8, key: &str) -> Result<Self, UiError> {
-        let key = key.trim();
-        if key.is_empty() || key.len() > MAX_SHORTCUT_KEY_BYTES {
+        if modifiers & !Self::MODIFIER_MASK != 0 {
             return Err(UiError::InvalidShortcut);
         }
-        Ok(Self {
-            modifiers,
-            key: key.to_owned(),
-        })
+        let key = normalize_key(key)?;
+        Ok(Self { modifiers, key })
+    }
+
+    /// Parses the canonical display form used by the settings document.
+    ///
+    /// An empty value is a valid unbinding and returns `Ok(None)`. Modifier
+    /// order is normalized on output, while duplicate, misplaced, or empty
+    /// components are rejected before they can reach runtime matching.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::InvalidShortcut`] for malformed, oversized, or
+    /// unsupported modifier input.
+    pub fn parse(text: &str) -> Result<Option<Self>, UiError> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(None);
+        }
+        if text.len() > MAX_SHORTCUT_TEXT_BYTES {
+            return Err(UiError::InvalidShortcut);
+        }
+
+        let parts = text.split('+').collect::<Vec<_>>();
+        let mut modifiers = 0;
+        let mut key = None;
+        for (index, part) in parts.iter().enumerate() {
+            let part = part.trim();
+            if part.is_empty() {
+                return Err(UiError::InvalidShortcut);
+            }
+            let modifier = match part.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => Some(Self::CONTROL),
+                "shift" => Some(Self::SHIFT),
+                "alt" | "option" => Some(Self::ALT),
+                _ => None,
+            };
+            if let Some(modifier) = modifier {
+                if key.is_some() || modifiers & modifier != 0 {
+                    return Err(UiError::InvalidShortcut);
+                }
+                modifiers |= modifier;
+            } else if index + 1 == parts.len() && key.is_none() {
+                key = Some(part);
+            } else {
+                return Err(UiError::InvalidShortcut);
+            }
+        }
+
+        Self::new(modifiers, key.ok_or(UiError::InvalidShortcut)?).map(Some)
     }
 
     /// Returns the modifier bitset chosen by the frontend.
@@ -145,6 +414,47 @@ impl Shortcut {
     pub fn key(&self) -> &str {
         &self.key
     }
+}
+
+impl fmt::Display for Shortcut {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut has_modifier = false;
+        for (modifier, name) in [
+            (Self::CONTROL, "Ctrl"),
+            (Self::SHIFT, "Shift"),
+            (Self::ALT, "Alt"),
+        ] {
+            if self.modifiers & modifier != 0 {
+                if has_modifier {
+                    formatter.write_str("+")?;
+                }
+                formatter.write_str(name)?;
+                has_modifier = true;
+            }
+        }
+        if has_modifier {
+            formatter.write_str("+")?;
+        }
+        formatter.write_str(&self.key)
+    }
+}
+
+fn normalize_key(key: &str) -> Result<String, UiError> {
+    let key = key.trim();
+    if key.is_empty() || key.len() > MAX_SHORTCUT_KEY_BYTES || key.contains('+') {
+        return Err(UiError::InvalidShortcut);
+    }
+    let lower = key.to_ascii_lowercase();
+    let canonical = match lower.as_str() {
+        "space" | "spacebar" => "Space".to_owned(),
+        "return" | "enter" => "Enter".to_owned(),
+        "tab" => "Tab".to_owned(),
+        _ => key.to_uppercase(),
+    };
+    if canonical.len() > MAX_SHORTCUT_KEY_BYTES {
+        return Err(UiError::InvalidShortcut);
+    }
+    Ok(canonical)
 }
 
 /// A bounded user-visible diagnostic notice.
@@ -183,26 +493,51 @@ pub enum UiCommand {
     SelectProfile { id: String },
     /// Select the scene shown in preview.
     SelectPreviewScene { id: String },
+    /// Select the previous or next scene in the active profile's scene order.
+    SelectAdjacentPreviewScene { direction: i8 },
     /// Select the scene sent to program output.
     SelectProgramScene { id: String },
     /// Select a source item from the current preview scene.
     SelectSource { id: String },
+    /// Toggle one source item without disturbing the other selected items.
+    ToggleSourceSelection { id: String },
+    /// Replace or extend the current selection with scene-item IDs.
+    SelectSources { ids: Vec<String>, additive: bool },
     /// Copy one scene item into the transient desktop clipboard.
     CopySource { id: String },
-    /// Paste the copied scene item into the current preview scene.
-    PasteSource { mode: SceneItemDuplicateMode },
+    /// Paste the copied scene item into the current preview scene or the
+    /// group named by `target`. An empty target means the scene root.
+    PasteSource {
+        mode: SceneItemDuplicateMode,
+        target: String,
+    },
     /// Select the labels used by accessible frontends.
     SetLocale { locale: UiLocale },
     /// Replace the current scene transition policy.
     SetTransition { transition: FrameTransition },
-    /// Send the selected preview scene to program using one transition.
-    TakePreview { transition: FrameTransition },
+    /// Send the selected preview scene to program using one bounded transition.
+    TakePreview {
+        transition: FrameTransition,
+        duration_ms: u32,
+    },
+    /// Send the selected preview scene to program using a preloaded Stinger.
+    TakeStinger {
+        clip: Arc<StingerClip>,
+        duration_ms: u32,
+    },
+    /// Persist or clear the transition override for the selected preview
+    /// scene. The override is stored on the destination scene in the project.
+    SetPreviewSceneTransition { transition: Option<TransitionSpec> },
     /// Set one mixer channel's linear gain in thousandths.
     SetMixerGain { id: String, gain_milli: u16 },
+    /// Set one mixer channel's stereo pan in thousandths (`-1000..1000`).
+    SetMixerPan { id: String, pan_milli: i32 },
     /// Rebuild the audio mixer at a new sample rate and channel count.
     SetAudioFormat { sample_rate: u32, channels: u16 },
     /// Toggle one mixer channel's mute state.
     ToggleMixerMute { id: String },
+    /// Set one mixer channel's mute state without toggling it.
+    SetMixerMute { id: String, muted: bool },
     /// Begin recording.
     StartRecording,
     /// Stop recording.

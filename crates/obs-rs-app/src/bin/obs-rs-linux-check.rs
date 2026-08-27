@@ -262,7 +262,14 @@ fn check_pipewire() -> CheckResult {
     };
     let Some(device) = devices
         .iter()
-        .find(|device| device.kind() == AudioDeviceKind::Input && device.available())
+        .find(|device| {
+            device.kind() == AudioDeviceKind::Input && device.available() && device.is_default()
+        })
+        .or_else(|| {
+            devices
+                .iter()
+                .find(|device| device.kind() == AudioDeviceKind::Input && device.available())
+        })
     else {
         return CheckResult::skip("no available PipeWire audio source".to_owned());
     };

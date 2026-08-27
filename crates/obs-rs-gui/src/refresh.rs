@@ -1,13 +1,20 @@
 use std::{cell::RefCell, rc::Rc, time::Instant};
 
-use obs_rs_media::{FrameTransition, RawVideoFrame, VideoFrame};
-use obs_rs_project::{Profile, SceneItemSpec, SceneSpec};
+use obs_rs_media::{RawVideoFrame, VideoFrame};
+use obs_rs_project::{Profile, ProjectCommand, SceneItemSpec, SceneSpec};
 use obs_rs_ui::{DesktopState, UiCommand, UiLocale};
-use slint::{Image, Model, ModelRc, SharedString, VecModel, Weak};
+use slint::{DataTransfer, Image, Model, ModelRc, SharedString, VecModel, Weak};
 
+use crate::preview_worker::{multiview_grid_dimensions, MAX_MULTIVIEW_SCENES};
+#[path = "refresh_transitions.rs"]
+mod refresh_transitions;
 use crate::{
-    frame_to_image, project_store, LocaleOption, MainWindow, MixerRow, OutputRuntime,
-    PreviewSurface, PreviewWorker, ProfileRow, SceneRow, SourceRow,
+    frame_to_image, project_store, selection_overlay, set_selection_overlay, LocaleOption,
+    MainWindow, MixerRow, MoveTarget, MultiviewScene, OutputRuntime, PreviewSurface, PreviewWorker,
+    ProfileRow, SceneRow, SourceRow,
+};
+pub(crate) use refresh_transitions::{
+    scene_transition_fields, transition_kind, transition_label_for_locale,
 };
 
 thread_local! {
@@ -42,6 +49,177 @@ pub(crate) fn dispatch_and_refresh(
     }
 }
 
+const MAX_SOURCE_ROW_DEPTH: usize = crate::callbacks::MAX_SOURCE_TARGET_DEPTH;
+
+#[derive(Clone, Debug)]
+struct GroupDestination {
+    path: Vec<String>,
+    name: String,
+    enabled: bool,
+}
+
+fn collect_group_destinations(
+    profile: &Profile,
+    items: &[SceneItemSpec],
+    parent_path: &[String],
+    ancestors_unlocked: bool,
+    destinations: &mut Vec<GroupDestination>,
+) {
+    for item in items {
+        let mut path = parent_path.to_vec();
+        path.push(item.id().to_string());
+        let enabled = ancestors_unlocked && !item.locked();
+        if let Some(group) = item.group() {
+            destinations.push(GroupDestination {
+                path: path.clone(),
+                name: format!("{}{}", "  ".repeat(path.len()), group.name()),
+                enabled,
+            });
+            collect_group_destinations(profile, group.items(), &path, enabled, destinations);
+        } else if let Some(child_scene) = item.scene_id() {
+            let Some(scene) = profile.scene(child_scene) else {
+                continue;
+            };
+            destinations.push(GroupDestination {
+                path: path.clone(),
+                name: format!("{}{}", "  ".repeat(path.len()), scene.name()),
+                enabled,
+            });
+            if path.len() < MAX_SOURCE_ROW_DEPTH {
+                collect_group_destinations(profile, scene.items(), &path, enabled, destinations);
+            }
+        }
+    }
+}
+
+fn move_targets_for_row(
+    source_target: &str,
+    parent_path: &[String],
+    destinations: &[GroupDestination],
+    root_name: &str,
+) -> Vec<MoveTarget> {
+    let source_path = source_target
+        .split('/')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut targets = Vec::with_capacity(destinations.len().saturating_add(1));
+    targets.push(MoveTarget {
+        id: "".into(),
+        name: root_name.into(),
+        enabled: !parent_path.is_empty(),
+    });
+    targets.extend(destinations.iter().map(|destination| MoveTarget {
+        id: destination.path.join("/").into(),
+        name: destination.name.clone().into(),
+        enabled: destination.enabled
+            && destination.path != parent_path
+            && !destination.path.starts_with(&source_path),
+    }));
+    targets
+}
+
+pub(crate) fn append_source_rows(
+    rows: &mut Vec<SourceRow>,
+    profile: &Profile,
+    items: &[SceneItemSpec],
+    state: &DesktopState,
+    group_path: &mut Vec<String>,
+) {
+    let mut destinations = Vec::new();
+    collect_group_destinations(profile, items, &[], true, &mut destinations);
+    let root_name = crate::i18n::with_catalog(state.locale(), |text| text.scene_root.to_string());
+    append_source_rows_inner(
+        rows,
+        profile,
+        items,
+        state,
+        group_path,
+        &destinations,
+        &root_name,
+    );
+}
+
+fn append_source_rows_inner(
+    rows: &mut Vec<SourceRow>,
+    profile: &Profile,
+    items: &[SceneItemSpec],
+    state: &DesktopState,
+    group_path: &mut Vec<String>,
+    destinations: &[GroupDestination],
+    root_name: &str,
+) {
+    let count = i32::try_from(items.len()).unwrap_or(i32::MAX);
+    for (index, item) in items.iter().enumerate() {
+        let target = if group_path.is_empty() {
+            item.id().to_string()
+        } else {
+            format!("{}/{}", group_path.join("/"), item.id())
+        };
+        let (base_name, kind, is_group) = if let Some(source) = profile
+            .source(item.source_id())
+            .filter(|_| item.is_source())
+        {
+            (
+                source.name().to_owned(),
+                source.kind().as_str().to_owned(),
+                false,
+            )
+        } else if let Some(scene) = item.scene_id().and_then(|scene_id| profile.scene(scene_id)) {
+            (scene.name().to_owned(), "scene".to_owned(), false)
+        } else if let Some(group) = item.group() {
+            (group.name().to_owned(), "group".to_owned(), true)
+        } else {
+            (item.source_id().as_str().to_owned(), String::new(), false)
+        };
+        let name = if group_path.is_empty() {
+            base_name
+        } else {
+            format!("{}{}", "  ".repeat(group_path.len()), base_name)
+        };
+        let selected = state.is_source_selected(target.as_str());
+        rows.push(SourceRow {
+            id: target.clone().into(),
+            target: target.clone().into(),
+            name: name.into(),
+            kind: kind.into(),
+            order: (index + 1).to_string().into(),
+            count,
+            nested: !group_path.is_empty(),
+            group: is_group,
+            selected,
+            visible: item.visible(),
+            locked: item.locked(),
+            first: index == 0,
+            last: index + 1 == items.len(),
+            parent_path: group_path.join("/").into(),
+            index: i32::try_from(index).unwrap_or(i32::MAX),
+            container: is_group || item.is_scene_reference(),
+            drag_data: DataTransfer::from(SharedString::from(target.clone())),
+            move_targets: ModelRc::new(VecModel::from(move_targets_for_row(
+                target.as_str(),
+                group_path,
+                destinations,
+                root_name,
+            ))),
+        });
+        if let Some(group) = item.group() {
+            if group_path.len() < MAX_SOURCE_ROW_DEPTH {
+                group_path.push(item.id().to_string());
+                append_source_rows_inner(
+                    rows,
+                    profile,
+                    group.items(),
+                    state,
+                    group_path,
+                    destinations,
+                    root_name,
+                );
+                group_path.pop();
+            }
+        }
+    }
+}
+
 pub(crate) fn refresh_ui(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -69,6 +247,7 @@ pub(crate) fn refresh_ui(
         ui.set_preview_scene(state.preview_scene().unwrap_or("none").into());
         ui.set_program_scene(state.program_scene().unwrap_or("none").into());
         ui.set_transition(transition_label_for_locale(locale, state.transition()).into());
+        ui.set_transition_kind(transition_kind(state.transition()).into());
         ui.set_recording(state.recording());
         ui.set_streaming(state.streaming());
         ui.set_dirty(state.is_dirty());
@@ -117,6 +296,9 @@ pub(crate) fn refresh_ui(
     let render_error = if let Some(error) = sync_error {
         ui.set_preview_image(Image::default());
         ui.set_program_image(Image::default());
+        ui.set_multiview_image(Image::default());
+        ui.set_source_projector_image(Image::default());
+        ui.set_scene_projector_image(Image::default());
         Some(format!("Preview surface: {error}"))
     } else {
         None
@@ -124,24 +306,51 @@ pub(crate) fn refresh_ui(
     ui.set_status_message(render_error.unwrap_or(notice).into());
 }
 
-/// Applies the newest completed background composition without waiting for one.
-pub(crate) fn refresh_preview_frames_for_view(
-    ui: &MainWindow,
-    worker: &PreviewWorker,
-) -> (
+type RefreshedPreviewFrames = (
     Option<VideoFrame>,
     Option<VideoFrame>,
     Option<RawVideoFrame>,
+    Option<VideoFrame>,
     Option<String>,
-) {
+);
+
+/// Applies the newest completed background composition without waiting for one.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the refresh boundary applies all bounded consumer results together"
+)]
+pub(crate) fn refresh_preview_frames_for_view(
+    ui: &MainWindow,
+    worker: &PreviewWorker,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) -> RefreshedPreviewFrames {
     let Some(result) = worker.try_take_latest() else {
-        return (None, None, None, None);
+        return (None, None, None, None, None);
     };
+    let mut settings_updated = false;
+    for (profile, source, settings) in result.source_settings_updates.iter().cloned() {
+        match state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::SetSourceSettings {
+                profile,
+                source,
+                settings,
+            })) {
+            Ok(()) => settings_updated = true,
+            Err(error) => {
+                ui.set_status_message(format!("Source settings update failed: {error}").into());
+            }
+        }
+    }
+    if settings_updated {
+        refresh_ui(ui, state, surface);
+    }
     match (&result.preview_scene, &result.preview_frame) {
         (_, Some(frame)) => {
             let copy_started = Instant::now();
             let image = frame_to_image(frame);
-            worker.record_frame_copy(copy_started.elapsed());
+            worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
             let update_started = Instant::now();
             ui.set_preview_image(image);
             worker.record_slint_update(update_started.elapsed());
@@ -153,7 +362,7 @@ pub(crate) fn refresh_preview_frames_for_view(
         (_, Some(frame)) => {
             let copy_started = Instant::now();
             let image = frame_to_image(frame);
-            worker.record_frame_copy(copy_started.elapsed());
+            worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
             let update_started = Instant::now();
             ui.set_program_image(image);
             worker.record_slint_update(update_started.elapsed());
@@ -161,10 +370,40 @@ pub(crate) fn refresh_preview_frames_for_view(
         (None, None) => ui.set_program_image(Image::default()),
         (Some(_), None) => {}
     }
+    if let Some(frame) = result.multiview_frame.as_ref() {
+        let copy_started = Instant::now();
+        let image = frame_to_image(frame);
+        worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
+        let update_started = Instant::now();
+        ui.set_multiview_image(image);
+        worker.record_slint_update(update_started.elapsed());
+    } else {
+        ui.set_multiview_image(Image::default());
+    }
+    if let Some(frame) = result.source_projector_frame.as_ref() {
+        let copy_started = Instant::now();
+        let image = frame_to_image(frame);
+        worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
+        let update_started = Instant::now();
+        ui.set_source_projector_image(image);
+        worker.record_slint_update(update_started.elapsed());
+    } else {
+        ui.set_source_projector_image(Image::default());
+    }
+    if let Some(frame) = result.scene_projector_frame.as_ref() {
+        let copy_started = Instant::now();
+        let image = frame_to_image(frame);
+        worker.record_frame_copy(copy_started.elapsed(), frame.format().rgba_bytes());
+        let update_started = Instant::now();
+        ui.set_scene_projector_image(image);
+        worker.record_slint_update(update_started.elapsed());
+    } else {
+        ui.set_scene_projector_image(Image::default());
+    }
     let performance = worker.performance();
     ui.set_preview_metrics(
         format!(
-            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · copy p95={} µs · Slint p95={} µs · callback p95={} µs",
+            "{} · queue={} · dropped={} · render p50/p95/p99/max={}/{}/{}/{} µs · program p95={} µs · multiview p95={} µs · source projector p95={} µs · scene projector p95={} µs · copy p95={} µs bytes={} · Slint p95={} µs · callback p95={} µs",
             result.metrics,
             worker.queue_depth(),
             worker.dropped_requests(),
@@ -173,7 +412,11 @@ pub(crate) fn refresh_preview_frames_for_view(
             nanos_to_micros(performance.preview_render.percentile_nanos(99)),
             nanos_to_micros(performance.preview_render.max_nanos()),
             nanos_to_micros(performance.program_render.percentile_nanos(95)),
+            nanos_to_micros(performance.multiview_render.percentile_nanos(95)),
+            nanos_to_micros(performance.source_projector_render.percentile_nanos(95)),
+            nanos_to_micros(performance.scene_projector_render.percentile_nanos(95)),
             nanos_to_micros(performance.frame_copy.percentile_nanos(95)),
+            performance.frame_copy_bytes,
             nanos_to_micros(performance.slint_update.percentile_nanos(95)),
             nanos_to_micros(performance.ui_callback.percentile_nanos(95)),
         )
@@ -183,6 +426,7 @@ pub(crate) fn refresh_preview_frames_for_view(
         result.preview_frame,
         result.program_frame,
         result.program_output,
+        result.program_output_frame,
         result.error.map(|error| format!("Preview worker: {error}")),
     )
 }
@@ -192,9 +436,61 @@ const fn nanos_to_micros(nanos: u64) -> u64 {
 }
 
 pub(crate) fn refresh_output_ui(ui: &MainWindow, output: &Rc<RefCell<OutputRuntime>>) {
+    let candidates = output.borrow_mut().take_remux_candidate_result();
+    if let Some(result) = candidates {
+        match result {
+            Ok(candidates) if candidates.is_empty() => {
+                ui.set_status_message(
+                    "No interrupted automatic-remux recordings were found".into(),
+                );
+            }
+            Ok(candidates) => {
+                let rows = candidates
+                    .into_iter()
+                    .map(|path| path.to_string_lossy().into_owned().into())
+                    .collect::<Vec<SharedString>>();
+                if let Some(first) = rows.first() {
+                    ui.set_remux_recovery_path(first.clone());
+                }
+                ui.set_remux_recovery_candidates(ModelRc::new(VecModel::from(rows)));
+                ui.set_active_modal(13);
+                ui.set_status_message("Select an interrupted recording to recover".into());
+            }
+            Err(error) => {
+                ui.set_status_message(format!("Recording recovery scan failed: {error}").into());
+            }
+        }
+    }
+    let recovery = output.borrow_mut().take_remux_recovery_result();
+    if let Some(result) = recovery {
+        match result {
+            Ok(obs_rs_engine::RemuxRecovery::Recovered { bytes }) => {
+                ui.set_status_message(
+                    format!("Interrupted recording recovered ({bytes} bytes)").into(),
+                );
+            }
+            Ok(obs_rs_engine::RemuxRecovery::NoCandidate) => {
+                ui.set_status_message("No interrupted automatic-remux recording was found".into());
+            }
+            Err(error) => {
+                ui.set_status_message(format!("Recording recovery failed: {error}").into());
+            }
+        }
+    }
     let output = output.borrow();
-    ui.set_output_status(output.output_status().into());
-    ui.set_output_metrics(output.output_metrics().into());
+    let status = output.output_status();
+    let metrics = output.output_metrics();
+    let multiview = output.multiview_telemetry();
+    ui.set_output_status(status.clone().into());
+    ui.set_output_metrics(metrics.into());
+    ui.set_multiview_status(status.into());
+    ui.set_multiview_metrics(multiview.metrics.into());
+    ui.set_multiview_audio_db(peak_db(multiview.audio_peak_milli));
+    let (replay_buffering, replay_saving) = output.replay_controls();
+    ui.set_replay_buffering(replay_buffering);
+    ui.set_replay_saving(replay_saving);
+    ui.set_remux_recovery_supported(output.remux_recovery_supported());
+    ui.set_remux_recovery_running(output.remux_recovery_running());
     ui.set_recording_elapsed(output.recording_elapsed().into());
 }
 
@@ -242,17 +538,60 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     let locale = state.locale();
     let roles = SceneRoleLabels::for_locale(locale);
     let scene_rows = profile.map_or_else(Vec::new, |profile| {
-        profile
-            .scenes()
-            .map(|scene| SceneRow {
+        let scenes = profile.scenes().collect::<Vec<_>>();
+        let count = i32::try_from(scenes.len()).unwrap_or(i32::MAX);
+        scenes
+            .into_iter()
+            .enumerate()
+            .map(|(index, scene)| SceneRow {
                 role: roles.role(state, scene.id().as_str()),
                 id: scene.id().as_str().into(),
                 name: scene.name().into(),
+                index: i32::try_from(index).unwrap_or(i32::MAX),
+                count,
+                drag_data: DataTransfer::from(SharedString::from(scene.id().as_str())),
             })
             .collect::<Vec<_>>()
     });
     if !model_matches(&ui.get_scene_rows(), &scene_rows) {
         ui.set_scene_rows(ModelRc::new(VecModel::from(scene_rows)));
+    }
+    let multiview_scenes = profile.map_or_else(Vec::new, |profile| {
+        let scenes = profile
+            .scenes()
+            .take(MAX_MULTIVIEW_SCENES)
+            .collect::<Vec<_>>();
+        let count = i32::try_from(scenes.len()).unwrap_or(i32::MAX);
+        let (columns, rows) = multiview_grid_dimensions(scenes.len().max(1));
+        let columns_f = f32::from(u16::try_from(columns).unwrap_or(u16::MAX));
+        let rows_f = f32::from(u16::try_from(rows).unwrap_or(u16::MAX));
+        let tile_width = 1.0_f32 / columns_f;
+        let tile_height = 1.0_f32 / rows_f;
+        scenes
+            .into_iter()
+            .enumerate()
+            .map(|(index, scene)| {
+                let preview = state.preview_scene() == Some(scene.id().as_str());
+                let program = state.program_scene() == Some(scene.id().as_str());
+                MultiviewScene {
+                    id: scene.id().as_str().into(),
+                    name: scene.name().into(),
+                    role: roles.role(state, scene.id().as_str()),
+                    index: i32::try_from(index).unwrap_or(i32::MAX),
+                    count,
+                    preview,
+                    program,
+                    x: f32::from(u16::try_from(index % columns).unwrap_or(u16::MAX)) * tile_width,
+                    y: f32::from(u16::try_from(index / columns).unwrap_or(u16::MAX)) * tile_height,
+                    width: tile_width,
+                    height: tile_height,
+                    selected: preview || program,
+                }
+            })
+            .collect::<Vec<_>>()
+    });
+    if !model_matches(&ui.get_multiview_scenes(), &multiview_scenes) {
+        ui.set_multiview_scenes(ModelRc::new(VecModel::from(multiview_scenes)));
     }
 
     let source_scene = state.preview_scene().unwrap_or("none");
@@ -266,63 +605,126 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
         ui.set_scene_name(selected_scene_name.into());
         ui.set_scene_name_version(ui.get_scene_name().clone());
     }
+    let transition_fields = scene_transition_fields(selected_scene);
+    let properties_version = format!(
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        transition_fields.index,
+        transition_fields.direction_index,
+        transition_fields.swipe_in,
+        transition_fields.luma_pattern_index,
+        transition_fields.luma_invert,
+        transition_fields.duration,
+        transition_fields.color,
+        transition_fields.softness,
+        transition_fields.stinger.path,
+        transition_fields.stinger.transition_point,
+        transition_fields.stinger.preload,
+        transition_fields.stinger.hardware_decode
+    );
+    // Refresh ticks continue while a modal is open. Do not replace text the
+    // user is editing; the next tick after acceptance/cancel synchronizes the
+    // dialog fields with the selected scene again.
+    if ui.get_active_modal() != 5
+        && ui.get_scene_properties_version().as_str() != properties_version
+    {
+        ui.set_scene_transition_index(transition_fields.index);
+        ui.set_scene_transition_direction_index(transition_fields.direction_index);
+        ui.set_scene_transition_swipe_in(transition_fields.swipe_in);
+        ui.set_scene_transition_luma_pattern_index(transition_fields.luma_pattern_index);
+        ui.set_scene_transition_luma_invert(transition_fields.luma_invert);
+        ui.set_scene_transition_duration(transition_fields.duration.into());
+        ui.set_scene_transition_color(transition_fields.color.into());
+        ui.set_scene_transition_luma_softness(transition_fields.softness.into());
+        ui.set_scene_stinger_path(transition_fields.stinger.path.into());
+        ui.set_scene_stinger_transition_point(transition_fields.stinger.transition_point.into());
+        ui.set_scene_stinger_preload(transition_fields.stinger.preload);
+        ui.set_scene_stinger_hardware_decode(transition_fields.stinger.hardware_decode);
+        ui.set_scene_properties_version(properties_version.into());
+    }
 
-    // The dock selection is a scene-item ID. Source configuration is resolved
-    // through the profile registry so two rows can point at the same source.
+    // The dock selection is a bounded scene-item path. Source configuration is
+    // resolved through the profile registry so two rows can point at the same
+    // source, including when one row is nested in a group.
     let selected_source = state.selected_source().unwrap_or("none");
-    let mut selected_item = None;
-    let mut selected_source_spec = None;
     let source_rows = selected_scene.map_or_else(Vec::new, |scene| {
-        scene
-            .items()
-            .iter()
-            .enumerate()
-            .map(|(index, item)| {
-                let selected = item.id().as_str() == selected_source;
-                if selected {
-                    selected_item = Some(item);
-                    selected_source_spec =
-                        profile.and_then(|profile| profile.source(item.source_id()));
-                }
-                let source = profile.and_then(|profile| profile.source(item.source_id()));
-                SourceRow {
-                    id: item.id().as_str().into(),
-                    name: source.map_or_else(
-                        || item.source_id().as_str().into(),
-                        |source| source.name().into(),
-                    ),
-                    kind: source
-                        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
-                        .into(),
-                    order: (index + 1).to_string().into(),
-                    selected,
-                    visible: item.visible(),
-                    locked: item.locked(),
-                    first: index == 0,
-                    last: index + 1 == scene.items().len(),
-                }
+        let Some(profile) = profile else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        append_source_rows(&mut rows, profile, scene.items(), state, &mut Vec::new());
+        rows
+    });
+    let selected_row = source_rows
+        .iter()
+        .find(|row| row.target.as_str() == selected_source);
+    let selected_source_count = selected_row.map_or_else(
+        || {
+            selected_scene.map_or(0, |scene| {
+                i32::try_from(scene.items().len()).unwrap_or(i32::MAX)
             })
-            .collect::<Vec<_>>()
+        },
+        |row| row.count,
+    );
+    let selected_source_first = selected_row.is_some_and(|row| row.first);
+    let selected_source_last = selected_row.is_some_and(|row| row.last);
+    let selected_source_is_nested = selected_row.is_some_and(|row| row.nested);
+    let selected_item = profile.and_then(|profile| {
+        crate::callbacks::canvas::canvas_item_for_target(profile, source_scene, selected_source)
+    });
+    let selected_source_spec = selected_item.and_then(|item| {
+        item.is_source()
+            .then(|| profile.and_then(|profile| profile.source(item.source_id())))
+            .flatten()
     });
     ui.set_source_scene(source_scene.into());
+    ui.set_source_count(selected_source_count);
+    let selected_move_targets = selected_row.map_or_else(
+        || ModelRc::new(VecModel::from(Vec::<MoveTarget>::new())),
+        |row| row.move_targets.clone(),
+    );
     if !model_matches(&ui.get_source_rows(), &source_rows) {
         ui.set_source_rows(ModelRc::new(VecModel::from(source_rows)));
     }
-    let selected_source_index = selected_scene.and_then(|scene| {
-        scene
-            .items()
-            .iter()
-            .position(|item| item.id().as_str() == selected_source)
-    });
+    ui.set_selected_source_move_targets(selected_move_targets);
     ui.set_selected_source_visible(selected_item.is_some_and(SceneItemSpec::visible));
-    ui.set_selected_source_locked(selected_item.is_some_and(SceneItemSpec::locked));
-    ui.set_selected_source_first(selected_source_index == Some(0));
-    ui.set_selected_source_last(
-        selected_source_index.is_some_and(|index| {
-            selected_scene.is_some_and(|scene| index + 1 == scene.items().len())
-        }),
+    ui.set_selected_source_locked(
+        selected_item.is_some()
+            && profile.is_some_and(|profile| {
+                crate::callbacks::canvas::canvas_target_is_locked_in_profile(
+                    profile,
+                    source_scene,
+                    selected_source,
+                )
+            }),
     );
+    ui.set_selected_source_first(selected_source_first);
+    ui.set_selected_source_last(selected_source_last);
     ui.set_can_paste(state.can_paste_source());
+    let can_group_sources = profile.is_some_and(|profile| {
+        let selected = state.selected_sources().collect::<Vec<_>>();
+        let Some(parent_path) = crate::callbacks::common_source_parent(selected.iter().copied())
+        else {
+            return false;
+        };
+        let parent_exists = if parent_path.is_empty() {
+            true
+        } else {
+            let parent_target = parent_path.join("/");
+            crate::callbacks::canvas::canvas_item_for_target(
+                profile,
+                source_scene,
+                parent_target.as_str(),
+            )
+            .is_some_and(|item| item.is_group() || item.is_scene_reference())
+        };
+        selected.len() >= 2
+            && parent_exists
+            && selected.iter().all(|target| {
+                crate::callbacks::canvas::canvas_item_for_target(profile, source_scene, target)
+                    .is_some_and(|item| !item.locked())
+            })
+    });
+    ui.set_can_group_sources(can_group_sources);
 
     let selected_settings =
         selected_source_spec.map_or_else(String::new, |source| source.settings().serialize());
@@ -339,21 +741,28 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
             .unwrap_or(1_080)
             .max(1),
     );
-    let rect = selected_item.map(|item| crate::item_rect(item.transform(), canvas));
-    ui.set_item_active(rect.is_some());
-    ui.set_item_locked(selected_item.is_some_and(SceneItemSpec::locked));
-    if let Some(rect) = rect {
-        ui.set_item_x(i32::try_from(rect.x).unwrap_or(0));
-        ui.set_item_y(i32::try_from(rect.y).unwrap_or(0));
-        ui.set_item_width(i32::try_from(rect.width).unwrap_or(0));
-        ui.set_item_height(i32::try_from(rect.height).unwrap_or(0));
-    }
+    let overlay = selection_overlay(state, canvas);
+    ui.set_item_locked(selected_scene.is_some_and(|scene| {
+        profile.is_some_and(|profile| {
+            state.selected_sources().any(|target| {
+                crate::callbacks::canvas::canvas_target_is_locked_in_profile(
+                    profile,
+                    scene.id().as_str(),
+                    target,
+                )
+            })
+        })
+    }));
+    set_selection_overlay(ui, overlay.as_ref());
     // Only a display-backed source offers the picker, so the docks derive the
     // affordance from the selected row instead of guessing from the name.
     ui.set_selected_source_is_screen(
         selected_source_spec
             .is_some_and(|source| crate::kind_selects_monitor(source.kind().as_str())),
     );
+    ui.set_selected_source_is_group(selected_item.is_some_and(SceneItemSpec::is_group));
+    ui.set_selected_source_is_scene(selected_item.is_some_and(SceneItemSpec::is_scene_reference));
+    ui.set_selected_source_is_nested(selected_source_is_nested);
 
     refresh_mixer_rows(ui, state);
 }
@@ -363,14 +772,22 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
 /// The live input meter refreshes far more often than the scene graph, so it
 /// updates these rows on their own rather than running a whole dock refresh.
 pub(crate) fn refresh_mixer_rows(ui: &MainWindow, state: &DesktopState) {
-    let mixer_rows = state
-        .mixer_channels()
-        .map(|channel| MixerRow {
+    let channels = state.mixer_channels().collect::<Vec<_>>();
+    let count = i32::try_from(channels.len()).unwrap_or(i32::MAX);
+    let mixer_rows = channels
+        .into_iter()
+        .enumerate()
+        .map(|(index, channel)| MixerRow {
             id: channel.id().into(),
             name: channel.name().into(),
+            index: i32::try_from(index).unwrap_or(i32::MAX),
+            count,
             gain: f32::from(channel.gain_milli()) / 1_000.0,
+            pan: f32::from(i16::try_from(channel.pan_milli()).unwrap_or(0)) / 1_000.0,
             peak_db: peak_db(channel.peak_milli()),
+            peak_hold_db: peak_db(channel.peak_hold_milli()),
             muted: channel.muted(),
+            clipped: channel.clipped(),
         })
         .collect::<Vec<_>>();
     if !model_matches(&ui.get_mixer_rows(), &mixer_rows) {
@@ -433,13 +850,6 @@ impl SceneRoleLabels {
     }
 }
 
-pub(crate) fn transition_label_for_locale(locale: UiLocale, transition: FrameTransition) -> String {
-    // Borrows the two strings it needs from the cached catalog instead of
-    // materializing a whole catalog for them.
-    crate::i18n::with_catalog(locale, |text| match transition {
-        FrameTransition::Cut => text.cut.to_string(),
-        FrameTransition::CrossFade { progress_milli } => {
-            format!("{} {progress_milli}/1000", text.fade)
-        }
-    })
-}
+#[cfg(test)]
+#[path = "refresh_tests.rs"]
+mod tests;

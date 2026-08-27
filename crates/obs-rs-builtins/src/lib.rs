@@ -16,7 +16,9 @@ use obs_rs_capture::{CaptureDeviceInfo, CaptureError, CaptureProvider, Simulated
 use obs_rs_plugin_api::{Plugin, PluginError, PluginManifest, SourceFactory};
 
 mod factories;
+mod image;
 mod portable;
+mod text;
 #[cfg(target_os = "linux")]
 mod wayland;
 #[cfg(target_os = "windows")]
@@ -29,6 +31,12 @@ mod tests;
 
 /// Stable kind identifier for the solid color source.
 pub const COLOR_SOURCE_KIND: &str = "color_source";
+/// Stable kind identifier for the bounded portable bitmap text source.
+pub const TEXT_SOURCE_KIND: &str = "text_source";
+/// Stable kind identifier for the bounded static image source.
+pub const IMAGE_SOURCE_KIND: &str = "image_source";
+/// Stable kind identifier for the bounded timestamp-driven image slideshow.
+pub const IMAGE_SLIDESHOW_SOURCE_KIND: &str = "image_slideshow";
 pub use obs_rs_capture::CAMERA_CAPTURE_SOURCE_KIND as BUILTIN_CAMERA_SOURCE_KIND;
 pub use obs_rs_capture::SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_SCREEN_SOURCE_KIND;
 pub use obs_rs_capture::TEST_PATTERN_SOURCE_KIND as BUILTIN_TEST_PATTERN_SOURCE_KIND;
@@ -58,13 +66,22 @@ impl BuiltinPlugin {
         })
     }
 
-    /// Discovers deterministic CPU fallback capture devices.
+    /// Discovers deterministic CPU fallback devices for portable sources.
+    ///
+    /// Cameras are intentionally excluded: the built-in camera source and its
+    /// device catalog are Nokhwa-backed on supported platforms. Call
+    /// [`Self::discover_platform_capture_devices_for_kind`] with
+    /// [`CaptureKind::Camera`] for that catalog.
     ///
     /// # Errors
     ///
     /// Returns [`CaptureError`] if the built-in device descriptors are invalid.
     pub fn discover_capture_devices(&self) -> Result<Vec<CaptureDeviceInfo>, CaptureError> {
-        SimulatedCaptureProvider::new().discover()
+        Ok(SimulatedCaptureProvider::new()
+            .discover()?
+            .into_iter()
+            .filter(|device| device.kind() != CaptureKind::Camera)
+            .collect())
     }
 
     /// Discovers host-platform devices through the platform provider seam.

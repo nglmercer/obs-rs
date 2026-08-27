@@ -1,15 +1,38 @@
-use std::{cell::RefCell, error::Error, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    error::Error,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use obs_rs_diagnostics::{AtomicDiagnosticFileWriter, DiagnosticBundle};
+use obs_rs_media::StingerSpec;
 use obs_rs_project::{ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
 use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
+use super::output::{scene_transition_spec, SceneTransitionInput};
 use crate::{
-    refresh_ui, source_settings, MainWindow, OutputRuntime, PreviewSurface, RuntimeDiagnostics,
+    refresh_ui, source_settings_for_canvas, MainWindow, OutputRuntime, PreviewSurface,
+    RuntimeDiagnostics,
 };
 #[cfg(target_os = "windows")]
 use obs_rs_capture_windows::WindowsCaptureAdapter;
+
+#[cfg(test)]
+#[path = "project_tests.rs"]
+mod tests;
+
+const DISCARD_NEW_PROJECT: i32 = 4;
+const DISCARD_EXIT: i32 = 5;
+const DISCARD_SWITCH_COLLECTION: i32 = 6;
+const DISCARD_IMPORT_COLLECTION: i32 = 7;
+const DISCARD_LOAD_PROJECT: i32 = 8;
+const DISCARD_RECOVER_PROJECT: i32 = 9;
+const PROJECT_RECOVERY_MODAL: i32 = 14;
+const PROJECT_RECOVERY_DISCARD_MODAL: i32 = 15;
+pub(crate) const PROJECT_EXTENSION: &str = "obsrproj";
+const LEGACY_PROJECT_EXTENSION: &str = "json";
 
 pub(crate) fn install_project_callbacks(
     ui: &MainWindow,
@@ -25,6 +48,28 @@ pub(crate) fn install_project_callbacks(
     });
 
     let weak = ui.as_weak();
+    ui.on_open_save_project_as(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_project_dialog_mode(3);
+            ui.set_active_modal(1);
+        }
+    });
+
+    let weak = ui.as_weak();
+    let save_as_state = Rc::clone(state);
+    let save_as_surface = Rc::clone(surface);
+    ui.on_save_project_as(move |path| {
+        save_as_and_refresh(&weak, &save_as_state, &save_as_surface, path.as_str());
+    });
+
+    let weak = ui.as_weak();
+    let save_discard_state = Rc::clone(state);
+    let save_discard_surface = Rc::clone(surface);
+    ui.on_save_discard(move |action| {
+        save_and_resolve_discard(&weak, &save_discard_state, &save_discard_surface, action);
+    });
+
+    let weak = ui.as_weak();
     let load_state = Rc::clone(state);
     let load_surface = Rc::clone(surface);
     ui.on_load_project(move || {
@@ -35,7 +80,34 @@ pub(crate) fn install_project_callbacks(
     let recover_state = Rc::clone(state);
     let recover_surface = Rc::clone(surface);
     ui.on_recover_project(move || {
-        recover_and_refresh(&weak, &recover_state, &recover_surface);
+        if let Some(ui) = weak.upgrade() {
+            if ui.get_active_modal() == PROJECT_RECOVERY_MODAL {
+                recover_and_refresh(&weak, &recover_state, &recover_surface);
+            } else {
+                open_recovery_dialog(&ui, &recover_state, &recover_surface);
+            }
+        }
+    });
+
+    let weak = ui.as_weak();
+    let discard_recovery_state = Rc::clone(state);
+    let discard_recovery_surface = Rc::clone(surface);
+    ui.on_discard_project_recovery(move || {
+        if let Some(ui) = weak.upgrade() {
+            if ui.get_active_modal() == PROJECT_RECOVERY_DISCARD_MODAL {
+                discard_recovery_and_refresh(
+                    &weak,
+                    &discard_recovery_state,
+                    &discard_recovery_surface,
+                );
+            } else {
+                open_discard_recovery_dialog(
+                    &ui,
+                    &discard_recovery_state,
+                    &discard_recovery_surface,
+                );
+            }
+        }
     });
 
     let weak = ui.as_weak();
@@ -104,8 +176,42 @@ pub(crate) fn atomic_write_paths(
     Ok((final_path, temp_path))
 }
 
+/// Validates a path before it becomes a project store key or reaches the
+/// filesystem.
+///
+/// `.obsrproj` is the current project extension. The shipped default still
+/// uses `.json`, so that legacy extension remains readable and writable while
+/// existing installations move to the native project name.
+pub(crate) fn validate_project_path(path: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(std::io::Error::other("project path is empty").into());
+    }
+    let path = Path::new(path);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| std::io::Error::other("project path must name a file"))?;
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    let supported = extension.is_some_and(|extension| {
+        extension.eq_ignore_ascii_case(PROJECT_EXTENSION)
+            || extension.eq_ignore_ascii_case(LEGACY_PROJECT_EXTENSION)
+    });
+    if !supported {
+        return Err(std::io::Error::other(format!(
+            "project path must name a .{PROJECT_EXTENSION} file (legacy .{LEGACY_PROJECT_EXTENSION} is also supported)"
+        ))
+        .into());
+    }
+    if file_name == "." || file_name == ".." {
+        return Err(std::io::Error::other("project path must name a file").into());
+    }
+    Ok(path.to_path_buf())
+}
+
 pub(crate) fn project_store(path: &str) -> Result<Rc<ProjectFileStore>, Box<dyn Error>> {
     let key = path.trim().to_owned();
+    validate_project_path(&key)?;
     PROJECT_STORE_CACHE.with(|cache| {
         if let Some((cached_path, store)) = cache.borrow().as_ref() {
             if *cached_path == key {
@@ -142,6 +248,112 @@ fn save_and_refresh(
     }
 }
 
+/// Saves the current document to a new path and makes that path the active
+/// document only after the atomic write succeeds.
+fn save_as_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    target_path: &str,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let current_path = ui.get_project_path().to_string();
+    let target_path = target_path.trim().to_owned();
+    let result: Result<usize, Box<dyn Error>> = (|| {
+        let bytes = save_project_as_document(state, &current_path, &target_path)?;
+        ui.set_project_path(target_path.as_str().into());
+        Ok(bytes)
+    })();
+    match result {
+        Ok(bytes) => {
+            crate::refresh::invalidate_recovery_cache();
+            refresh_ui(&ui, state, surface);
+            ui.set_status_message(format!("Saved project as {target_path} ({bytes} bytes)").into());
+        }
+        Err(error) => ui.set_status_message(format!("Save As failed: {error}").into()),
+    }
+}
+
+/// Performs the Save As state transition behind the GUI callback boundary.
+///
+/// A different existing file is rejected before the project session or its
+/// selection key changes. The currently active path remains a valid explicit
+/// Save target, which makes repeated Save As calls deterministic.
+fn save_project_as_document(
+    state: &Rc<RefCell<DesktopState>>,
+    current_path: &str,
+    target_path: &str,
+) -> Result<usize, Box<dyn Error>> {
+    let current_path = current_path.trim();
+    let target_path = target_path.trim();
+    if target_path.is_empty() {
+        return Err(std::io::Error::other("project Save As path is empty").into());
+    }
+    let target = validate_project_path(target_path)?;
+    if target_path != current_path && target.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("Save As target already exists: {target_path}"),
+        )
+        .into());
+    }
+    let store = project_store(target_path)?;
+    let bytes = state.borrow_mut().save_project(&store)?;
+    state.borrow_mut().set_project_selection_key(target_path);
+    Ok(bytes)
+}
+
+fn save_and_resolve_discard(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+    action: i32,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let path = ui.get_project_path().to_string();
+    let result: Result<usize, Box<dyn Error>> = (|| {
+        let store = project_store(&path)?;
+        Ok(state.borrow_mut().save_project(&store)?)
+    })();
+    match result {
+        Ok(bytes) => {
+            crate::refresh::invalidate_recovery_cache();
+            refresh_ui(&ui, state, surface);
+            ui.set_pending_discard(0);
+            continue_after_discard_save(&ui, action);
+            if action != 5 {
+                ui.set_status_message(format!("Saved {bytes} bytes to {path}").into());
+            }
+        }
+        Err(error) => ui.set_status_message(format!("Save failed: {error}").into()),
+    }
+}
+
+fn continue_after_discard_save(ui: &MainWindow, action: i32) {
+    match action {
+        DISCARD_NEW_PROJECT => ui.invoke_new_project(),
+        DISCARD_EXIT => {
+            let _ = slint::quit_event_loop();
+        }
+        DISCARD_SWITCH_COLLECTION => ui.invoke_select_collection(ui.get_pending_collection()),
+        DISCARD_IMPORT_COLLECTION => {
+            ui.set_collection_transfer_path("".into());
+            ui.set_project_dialog_mode(2);
+            ui.set_active_modal(1);
+        }
+        DISCARD_LOAD_PROJECT => {
+            ui.set_project_dialog_mode(4);
+            ui.set_active_modal(1);
+        }
+        DISCARD_RECOVER_PROJECT => ui.invoke_recover_project(),
+        _ => {}
+    }
+}
+
 fn load_and_refresh(
     weak: &Weak<MainWindow>,
     state: &Rc<RefCell<DesktopState>>,
@@ -153,7 +365,7 @@ fn load_and_refresh(
     let path = ui.get_project_path().to_string();
     let result: Result<(), Box<dyn Error>> = (|| {
         let store = project_store(&path)?;
-        state.borrow_mut().load_project(&store)?;
+        state.borrow_mut().load_project_for_key(&store, &path)?;
         Ok(())
     })();
     match result {
@@ -163,6 +375,60 @@ fn load_and_refresh(
             ui.set_status_message(format!("Loaded project from {path}").into());
         }
         Err(error) => ui.set_status_message(format!("Load failed: {error}").into()),
+    }
+}
+
+fn open_recovery_dialog(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let path = ui.get_project_path().to_string();
+    let result = project_store(&path).map(|store| {
+        store
+            .recovery_available()
+            .then(|| format!("{path}\n{}", store.temp_path().display()))
+    });
+    match result {
+        Ok(Some(detail)) => {
+            ui.set_status_message(detail.into());
+            ui.set_active_modal(PROJECT_RECOVERY_MODAL);
+        }
+        Ok(None) => {
+            refresh_ui(ui, state, surface);
+            ui.set_status_message("No recoverable project was found".into());
+        }
+        Err(error) => {
+            refresh_ui(ui, state, surface);
+            ui.set_status_message(format!("Recovery check failed: {error}").into());
+        }
+    }
+}
+
+fn open_discard_recovery_dialog(
+    ui: &MainWindow,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let path = ui.get_project_path().to_string();
+    let result = project_store(&path).map(|store| {
+        store
+            .recovery_available()
+            .then(|| format!("{path}\n{}", store.temp_path().display()))
+    });
+    match result {
+        Ok(Some(detail)) => {
+            ui.set_status_message(detail.into());
+            ui.set_active_modal(PROJECT_RECOVERY_DISCARD_MODAL);
+        }
+        Ok(None) => {
+            refresh_ui(ui, state, surface);
+            ui.set_status_message("No recoverable project was found".into());
+        }
+        Err(error) => {
+            refresh_ui(ui, state, surface);
+            ui.set_status_message(format!("Recovery check failed: {error}").into());
+        }
     }
 }
 
@@ -177,18 +443,54 @@ fn recover_and_refresh(
     let path = ui.get_project_path().to_string();
     let result: Result<bool, Box<dyn Error>> = (|| {
         let store = project_store(&path)?;
-        Ok(state.borrow_mut().recover_project(&store)?)
+        Ok(state.borrow_mut().recover_project_for_key(&store, &path)?)
     })();
     match result {
         Ok(true) => {
             crate::refresh::invalidate_recovery_cache();
             refresh_ui(&ui, state, surface);
+            ui.set_active_modal(0);
             ui.set_status_message(
                 format!("Recovered interrupted project for {path}; save to publish it").into(),
             );
         }
-        Ok(false) => ui.set_status_message("No recoverable project was found".into()),
+        Ok(false) => {
+            crate::refresh::invalidate_recovery_cache();
+            refresh_ui(&ui, state, surface);
+            ui.set_active_modal(0);
+            ui.set_status_message("No recoverable project was found".into());
+        }
         Err(error) => ui.set_status_message(format!("Recovery failed: {error}").into()),
+    }
+}
+
+fn discard_recovery_and_refresh(
+    weak: &Weak<MainWindow>,
+    state: &Rc<RefCell<DesktopState>>,
+    surface: &Rc<RefCell<PreviewSurface>>,
+) {
+    let Some(ui) = weak.upgrade() else {
+        return;
+    };
+    let path = ui.get_project_path().to_string();
+    let result: Result<bool, Box<dyn Error>> = (|| {
+        let store = project_store(&path)?;
+        Ok(store.discard_recovery()?)
+    })();
+    match result {
+        Ok(true) => {
+            crate::refresh::invalidate_recovery_cache();
+            refresh_ui(&ui, state, surface);
+            ui.set_active_modal(0);
+            ui.set_status_message(format!("Discarded project recovery file for {path}").into());
+        }
+        Ok(false) => {
+            crate::refresh::invalidate_recovery_cache();
+            refresh_ui(&ui, state, surface);
+            ui.set_active_modal(0);
+            ui.set_status_message("No recoverable project was found".into());
+        }
+        Err(error) => ui.set_status_message(format!("Discard recovery failed: {error}").into()),
     }
 }
 
@@ -217,7 +519,7 @@ fn export_diagnostics(
         bundle.insert_text(
             "runtime",
             &format!(
-                "render_calls={} source_requests={} source_frames={} empty_sources={} failed_sources={} contract_violations={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_scenes={} limit_sources={} limit_filters_per_source={}",
+                "render_calls={} source_requests={} source_frames={} empty_sources={} failed_sources={} contract_violations={} transformed={} filtered={} blends={} usage_plugins={} usage_source_kinds={} usage_docks={} usage_scenes={} usage_sources={} usage_filters={} limit_plugins={} limit_source_kinds={} limit_docks={} limit_scenes={} limit_sources={} limit_filters_per_source={}",
                 metrics.render_calls(),
                 metrics.source_requests(),
                 metrics.source_frames(),
@@ -229,11 +531,13 @@ fn export_diagnostics(
                 metrics.blended_layers(),
                 usage.plugins(),
                 usage.source_kinds(),
+                usage.docks(),
                 usage.scenes(),
                 usage.sources(),
                 usage.filters(),
                 limits.max_plugins(),
                 limits.max_source_kinds(),
+                limits.max_docks(),
                 limits.max_scenes(),
                 limits.max_sources(),
                 limits.max_filters_per_source()
@@ -248,6 +552,14 @@ fn export_diagnostics(
                 "none".to_owned()
             } else {
                 diagnostics.failures.join("\n")
+            },
+        )?;
+        bundle.insert_text(
+            "filter-diagnostics",
+            &if diagnostics.filter_diagnostics.is_empty() {
+                "none".to_owned()
+            } else {
+                diagnostics.filter_diagnostics.join("\n")
             },
         )?;
         bundle.insert_text("platform", &platform_diagnostics(&diagnostics))?;
@@ -325,6 +637,12 @@ fn add_scene_and_refresh(
                 profile,
                 scene,
             }))?;
+        // OBS makes a newly created scene the current preview scene. Keep the
+        // selection as a UI-state transition next to the project mutation so
+        // the project model does not gain a second active-scene field.
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectPreviewScene { id: id.to_owned() })?;
         Ok(())
     })();
     let Some(ui) = weak.upgrade() else {
@@ -340,12 +658,51 @@ fn add_scene_and_refresh(
     }
 }
 
-pub(crate) fn rename_scene_and_refresh(
+pub(crate) struct SceneStingerDraft<'a> {
+    pub(super) path: &'a str,
+    pub(super) transition_point: &'a str,
+    pub(super) preload: bool,
+    pub(super) hardware_decode: bool,
+}
+
+pub(crate) struct ScenePropertiesDraft<'a> {
+    pub(super) name: &'a str,
+    pub(super) transition_index: i32,
+    pub(super) transition_direction_index: i32,
+    pub(super) transition_swipe_in: bool,
+    pub(super) transition_luma_pattern_index: i32,
+    pub(super) transition_luma_invert: bool,
+    pub(super) transition_luma_softness: &'a str,
+    pub(super) duration: &'a str,
+    pub(super) color: &'a str,
+    pub(super) stinger: SceneStingerDraft<'a>,
+}
+
+pub(crate) fn apply_scene_properties_and_refresh(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
     surface: &Rc<RefCell<PreviewSurface>>,
-    name: &str,
+    draft: &ScenePropertiesDraft<'_>,
 ) {
+    let name = draft.name;
+    let transition_index = draft.transition_index;
+    let transition_direction_index = draft.transition_direction_index;
+    let transition_swipe_in = draft.transition_swipe_in;
+    let transition_luma_pattern_index = draft.transition_luma_pattern_index;
+    let transition_luma_invert = draft.transition_luma_invert;
+    let transition_luma_softness = draft.transition_luma_softness;
+    let duration = draft.duration;
+    let color = draft.color;
+    let transition_input = |kind| SceneTransitionInput {
+        kind,
+        duration,
+        color,
+        direction_index: transition_direction_index,
+        swipe_in: transition_swipe_in,
+        luma_pattern_index: transition_luma_pattern_index,
+        luma_invert: transition_luma_invert,
+        luma_softness: transition_luma_softness,
+    };
     let result: Result<(), Box<dyn Error>> = (|| {
         let profile = state
             .borrow()
@@ -358,18 +715,63 @@ pub(crate) fn rename_scene_and_refresh(
             .preview_scene()
             .map(str::to_owned)
             .ok_or_else(|| std::io::Error::other("no preview scene is selected"))?;
+        let transition = match transition_index {
+            0 => None,
+            1 => Some(
+                scene_transition_spec(&transition_input("cut")).map_err(std::io::Error::other)?,
+            ),
+            2 => Some(
+                scene_transition_spec(&transition_input("cross_fade"))
+                    .map_err(std::io::Error::other)?,
+            ),
+            3 => Some(
+                scene_transition_spec(&transition_input("fade_to_color"))
+                    .map_err(std::io::Error::other)?,
+            ),
+            4 => Some(
+                scene_transition_spec(&transition_input("slide")).map_err(std::io::Error::other)?,
+            ),
+            5 => Some(
+                scene_transition_spec(&transition_input("swipe")).map_err(std::io::Error::other)?,
+            ),
+            6 => Some(
+                scene_transition_spec(&transition_input("luma_wipe"))
+                    .map_err(std::io::Error::other)?,
+            ),
+            _ => {
+                return Err(std::io::Error::other("Scene transition selection is invalid").into());
+            }
+        };
+        let stinger = if draft.stinger.path.trim().is_empty() {
+            None
+        } else {
+            let transition_point = draft
+                .stinger
+                .transition_point
+                .trim()
+                .parse::<u16>()
+                .map_err(|_| std::io::Error::other("Stinger transition point must be 1–999"))?;
+            Some(StingerSpec::new(
+                draft.stinger.path.trim(),
+                transition_point,
+                draft.stinger.preload,
+                draft.stinger.hardware_decode,
+            )?)
+        };
         state
             .borrow_mut()
-            .dispatch(UiCommand::Project(ProjectCommand::SetSceneName {
+            .dispatch(UiCommand::Project(ProjectCommand::SetSceneProperties {
                 profile,
                 scene,
                 name: name.to_owned(),
+                transition,
+                stinger,
             }))?;
         Ok(())
     })();
     match result {
         Ok(()) => refresh_ui(ui, state, surface),
-        Err(error) => ui.set_status_message(format!("Rename scene failed: {error}").into()),
+        Err(error) => ui.set_status_message(format!("Scene properties failed: {error}").into()),
     }
 }
 
@@ -385,12 +787,29 @@ pub(crate) fn duplicate_scene_and_refresh(
         .project()
         .active_profile()
         .to_string();
-    let result = state
-        .borrow_mut()
-        .dispatch(UiCommand::Project(ProjectCommand::DuplicateScene {
-            profile,
-            scene: scene_id.to_owned(),
-        }));
+    let result: Result<(), Box<dyn Error>> = (|| {
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::Project(ProjectCommand::DuplicateScene {
+                profile,
+                scene: scene_id.to_owned(),
+            }))?;
+        // Profile::add_scene appends the validated duplicate to the persistent
+        // order. Read that result back from the project instead of rebuilding
+        // the command's identifier-suffix policy in the GUI.
+        let duplicate = state
+            .borrow()
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .and_then(|profile| profile.scenes().last())
+            .map(|scene| scene.id().to_string())
+            .ok_or_else(|| std::io::Error::other("duplicated scene is unavailable"))?;
+        state
+            .borrow_mut()
+            .dispatch(UiCommand::SelectPreviewScene { id: duplicate })?;
+        Ok(())
+    })();
     let Some(ui) = weak.upgrade() else {
         return;
     };
@@ -408,7 +827,7 @@ pub(crate) fn add_source_and_refresh(
     kind: &str,
     name: &str,
 ) {
-    let (profile, scene) = {
+    let (profile, scene, canvas_width, canvas_height) = {
         let state = state.borrow();
         let profile = state
             .project_session()
@@ -419,11 +838,24 @@ pub(crate) fn add_source_and_refresh(
             .preview_scene()
             .map(str::to_owned)
             .ok_or_else(|| std::io::Error::other("no preview scene is selected"));
-        (profile, scene)
+        let (canvas_width, canvas_height) = state
+            .project_session()
+            .project()
+            .active_profile_spec()
+            .map_or((1_280, 720), |profile| {
+                let format = profile.video_format();
+                (format.width(), format.height())
+            });
+        (profile, scene, canvas_width, canvas_height)
     };
     let result: Result<(), Box<dyn Error>> = (|| {
         let scene = scene?;
-        let source = SourceSpec::new(id, kind, name, source_settings(kind)?)?;
+        let source = SourceSpec::new(
+            id,
+            kind,
+            name,
+            source_settings_for_canvas(kind, canvas_width, canvas_height)?,
+        )?;
         state
             .borrow_mut()
             .dispatch(UiCommand::Project(ProjectCommand::AddSource {

@@ -1,0 +1,57 @@
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import {
+    AspectRatioLabel,
+    BrowsePathRow,
+    CheckRow,
+    ColorSwatch,
+    EditableResolutionCombo,
+    SegmentedControl,
+    SettingHint,
+    SettingRow,
+    SettingsCombo,
+    SettingsField,
+    SettingsGroup,
+    SettingsSection,
+    SettingsSlider,
+    SettingsSpinBox,
+    SettingsWarning,
+} from "settings_widgets.slint";
+import { I18n } from "i18n.slint";
+import { Metrics, Palette } from "palette.slint";
+
+// One component per settings category. Each takes only the properties it edits
+// and reports changes upward; the window owns the draft state.
+
+export component AccessibilityPage inherits VerticalLayout {
+    in-out property <string> preview-border-color;
+    in-out property <string> program-border-color;
+    in property <brush> preview-swatch;
+    in property <brush> program-swatch;
+    callback changed();
+    spacing: Metrics.ui.page-spacing;
+
+    SettingsGroup {
+        title: I18n.text.settings_ui.group_colors;
+        SettingRow {
+            label: I18n.text.settings_ui.preview_border_color;
+            SettingsField {
+                text <=> root.preview-border-color;
+                placeholder-text: "#60A5FA";
+                edited => { root.changed(); }
+            }
+            ColorSwatch { value: root.preview-swatch; }
+        }
+        SettingRow {
+            label: I18n.text.settings_ui.program_border_color;
+            SettingsField {
+                text <=> root.program-border-color;
+                placeholder-text: "#F87171";
+                edited => { root.changed(); }
+            }
+            ColorSwatch { value: root.program-swatch; }
+        }
+        SettingHint { text: I18n.text.settings_ui.accessibility_hint; }
+    }
+    Rectangle { vertical-stretch: 1; }
+}
+

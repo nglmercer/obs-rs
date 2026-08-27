@@ -1,31 +1,42 @@
 use std::{
     error::Error,
-    sync::Arc,
+    path::PathBuf,
+    sync::{mpsc, Arc},
     time::{Duration, Instant},
 };
 
-use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider};
+use obs_rs_audio::{
+    AudioDeviceInfo, AudioFormat, AudioInputProvider, AudioMonitorMode, AudioOutputProvider,
+};
 #[cfg(not(target_os = "windows"))]
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
 #[cfg(target_os = "windows")]
 use obs_rs_audio_wasapi::WasapiAudioProvider;
 use obs_rs_engine::{
-    output_capabilities_snapshot, EngineAudioChannel, EngineConfig, EngineSession, EngineWorker,
-    OutputCapabilitiesSnapshot, OutputEvent, OutputLifecycle,
+    output_capabilities_snapshot, EngineConfig, EngineSession, EngineWorker,
+    OutputCapabilitiesSnapshot, OutputLifecycle, RemuxRecovery,
 };
 use obs_rs_media::{FrameScaler, RawVideoFrame, ScaleFilter, VideoFormat, VideoFrame};
 use obs_rs_output::{
-    AudioCodec, AudioEncoderConfig, EncoderImplementation, RtmpConfig, StreamProtocol, StreamState,
-    StreamTarget, VideoCodec, VideoEncoderConfig,
+    AudioEncoderConfig, OutputProfile, RtmpConfig, SegmentedRecordingPolicy, StreamState,
+    StreamTarget, VideoEncoderConfig,
 };
 use obs_rs_project::Project;
 
-use crate::AppSettings;
+use crate::settings::{REPLAY_BUFFER_CAPACITY_MIB_DEFAULT, REPLAY_BUFFER_DURATION_DEFAULT};
 
 #[cfg(target_os = "windows")]
 const AUDIO_BACKEND_LABEL: &str = "WASAPI";
 #[cfg(not(target_os = "windows"))]
 const AUDIO_BACKEND_LABEL: &str = "PipeWire";
+
+mod audio;
+mod recording;
+mod streaming;
+
+use recording::{output_only_project, replay_capacity_bytes, replay_save_label};
+#[cfg(test)]
+pub(crate) use streaming::stream_protocol_label;
 
 /// One entry in the settings window's audio-input picker.
 ///
@@ -38,14 +49,34 @@ pub(crate) struct AudioInputEntry {
     pub(crate) available: bool,
 }
 
+/// One entry in the settings window's local monitor-output picker.
+pub(crate) struct AudioOutputEntry {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) available: bool,
+}
+
+/// Bounded telemetry projected into the multiview overlay.
+///
+/// The preview worker does not inspect output state and the UI does not read
+/// the engine snapshot directly. Keeping this projection at the output
+/// boundary prevents a second status source while allowing the multiview to
+/// show operator-facing health without opening another runtime.
+pub(crate) struct MultiviewTelemetry {
+    pub(crate) metrics: String,
+    pub(crate) audio_peak_milli: u16,
+}
+
 /// GUI-owned handle over the portable engine output boundary.
 pub(crate) struct OutputRuntime {
     worker: EngineWorker,
     audio_provider: Arc<dyn AudioInputProvider>,
+    audio_format: AudioFormat,
     format: VideoFormat,
     last_revision: u64,
     format_drops: u64,
     audio_input_id: Option<String>,
+    monitor_output_id: Option<String>,
     audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
     recording_started_at: Option<Instant>,
     stream_protocol: Option<&'static str>,
@@ -54,12 +85,26 @@ pub(crate) struct OutputRuntime {
     configured_audio_encoder: AudioEncoderConfig,
     recording_video_encoder: VideoEncoderConfig,
     recording_audio_encoder: AudioEncoderConfig,
+    replay_buffer_capacity_bytes: usize,
+    replay_buffer_duration: Duration,
+    segmented_recording_policy: Option<SegmentedRecordingPolicy>,
+    segmented_recording_requested: bool,
+    auto_remux_requested: bool,
+    auto_remux_enabled: bool,
+    remux_recovery: Option<mpsc::Receiver<Result<RemuxRecovery, String>>>,
+    remux_candidates: Option<mpsc::Receiver<Result<Vec<PathBuf>, String>>>,
+    recording_profile: Option<OutputProfile>,
     /// A canvas change accepted while an output was running.
     ///
     /// Rebuilding the encoders mid-recording would break the container's frame
     /// geometry, so the change is held here and applied at the next idle
     /// boundary instead of being either silently dropped or forced through.
     staged_video_format: Option<VideoFormat>,
+    /// An audio-format change accepted while an output was running.
+    ///
+    /// Device negotiation and packet caps are rebuilt only after the output
+    /// stops, so an active recording never changes format mid-container.
+    staged_audio_format: Option<AudioFormat>,
     /// Resamples the canvas to the encoded output size.
     ///
     /// The engine encodes whatever it is handed, so scaling belongs on this
@@ -102,28 +147,85 @@ impl OutputRuntime {
 
     /// Creates an output with a persisted input selection. Device discovery and
     /// process startup remain inside the engine worker's construction path.
+    #[cfg(test)]
     pub(crate) fn with_audio_input(
         format: VideoFormat,
         audio_format: AudioFormat,
         audio_input_id: Option<&str>,
     ) -> Result<Self, Box<dyn Error>> {
+        Self::with_audio_input_and_sync_offsets(format, audio_format, audio_input_id, 0, 0)
+    }
+
+    /// Creates an output with persisted input selection and bounded audio
+    /// synchronization offsets.
+    #[cfg(test)]
+    pub(crate) fn with_audio_input_and_sync_offsets(
+        format: VideoFormat,
+        audio_format: AudioFormat,
+        audio_input_id: Option<&str>,
+        audio_input_sync_offset_millis: u32,
+        desktop_audio_sync_offset_millis: u32,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::with_audio_settings(
+            format,
+            audio_format,
+            audio_input_id,
+            audio_input_sync_offset_millis,
+            desktop_audio_sync_offset_millis,
+            None,
+            AudioMonitorMode::Off,
+            AudioMonitorMode::Off,
+        )
+    }
+
+    /// Creates an output with the complete persisted audio-control boundary.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "this constructor mirrors the bounded persisted audio settings boundary"
+    )]
+    pub(crate) fn with_audio_settings(
+        format: VideoFormat,
+        audio_format: AudioFormat,
+        audio_input_id: Option<&str>,
+        audio_input_sync_offset_millis: u32,
+        desktop_audio_sync_offset_millis: u32,
+        monitor_output_id: Option<&str>,
+        microphone_monitor_mode: AudioMonitorMode,
+        desktop_monitor_mode: AudioMonitorMode,
+    ) -> Result<Self, Box<dyn Error>> {
         #[cfg(target_os = "windows")]
-        let audio_provider: Arc<dyn AudioInputProvider> = Arc::new(WasapiAudioProvider::new());
+        let audio_provider = Arc::new(WasapiAudioProvider::new());
         #[cfg(not(target_os = "windows"))]
-        let audio_provider: Arc<dyn AudioInputProvider> = Arc::new(PipeWireAudioProvider::new());
-        let provider_for_engine = Arc::clone(&audio_provider);
-        let mut config = EngineConfig::new(audio_format).with_audio_provider(provider_for_engine);
+        let audio_provider = Arc::new(PipeWireAudioProvider::new());
+        let provider_for_engine: Arc<dyn AudioInputProvider> = Arc::clone(&audio_provider);
+        let output_provider_for_engine: Arc<dyn AudioOutputProvider> =
+            Arc::clone(&audio_provider);
+        let mut config = EngineConfig::new(audio_format)
+            .with_audio_provider(provider_for_engine)
+            .with_audio_output_provider(output_provider_for_engine)
+            .with_audio_input_sync_offset_millis(audio_input_sync_offset_millis)
+            .with_desktop_audio_sync_offset_millis(desktop_audio_sync_offset_millis)
+            .with_audio_input_monitor_mode(microphone_monitor_mode)
+            .with_desktop_monitor_mode(desktop_monitor_mode);
         if let Some(audio_input_id) = audio_input_id {
             config = config.with_audio_input_id(audio_input_id);
+        }
+        if let Some(monitor_output_id) = monitor_output_id {
+            config = config.with_monitor_output_id(monitor_output_id);
         }
         let engine = EngineSession::for_format(format, config)?;
         Ok(Self {
             worker: EngineWorker::spawn(engine)?,
             audio_provider,
+            audio_format,
             format,
             last_revision: 0,
             format_drops: 0,
             audio_input_id: audio_input_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            monitor_output_id: monitor_output_id
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned),
@@ -135,7 +237,17 @@ impl OutputRuntime {
             configured_audio_encoder: AudioEncoderConfig::default(),
             recording_video_encoder: VideoEncoderConfig::default(),
             recording_audio_encoder: AudioEncoderConfig::default(),
+            replay_buffer_capacity_bytes: replay_capacity_bytes(REPLAY_BUFFER_CAPACITY_MIB_DEFAULT),
+            replay_buffer_duration: Duration::from_secs(u64::from(REPLAY_BUFFER_DURATION_DEFAULT)),
+            segmented_recording_policy: None,
+            segmented_recording_requested: false,
+            auto_remux_requested: false,
+            auto_remux_enabled: false,
+            remux_recovery: None,
+            remux_candidates: None,
+            recording_profile: None,
             staged_video_format: None,
+            staged_audio_format: None,
             scaler: None,
             output_format: format,
             scale_filter: ScaleFilter::default(),
@@ -154,6 +266,29 @@ impl OutputRuntime {
     /// Takes the staged canvas change, if the caller is at an idle boundary.
     pub(crate) fn take_staged_video_format(&mut self) -> Option<VideoFormat> {
         self.staged_video_format.take()
+    }
+
+    /// Holds an audio-format change until the running output stops.
+    pub(crate) fn stage_audio_format(&mut self, format: AudioFormat) {
+        self.staged_audio_format = Some(format);
+    }
+
+    /// Takes the staged audio-format change, if the caller is at an idle
+    /// boundary.
+    pub(crate) fn take_staged_audio_format(&mut self) -> Option<AudioFormat> {
+        self.staged_audio_format.take()
+    }
+
+    /// Returns whether an audio-format change is waiting for the output to
+    /// stop.
+    #[cfg(test)]
+    pub(crate) const fn has_staged_audio_format(&self) -> bool {
+        self.staged_audio_format.is_some()
+    }
+
+    /// Returns the audio format currently negotiated by the engine worker.
+    pub(crate) const fn audio_format(&self) -> AudioFormat {
+        self.audio_format
     }
 
     /// Returns whether a canvas change is waiting for the output to stop.
@@ -301,129 +436,6 @@ impl OutputRuntime {
             && self.output_format.height() == self.format.height()
     }
 
-    pub(crate) fn start_recording(&mut self, path: &str) -> Result<(), Box<dyn Error>> {
-        if path.to_ascii_lowercase().ends_with(".mkv") {
-            self.worker.start_recording_configured(
-                path,
-                self.recording_video_encoder.clone(),
-                self.recording_audio_encoder.clone(),
-            )?;
-        } else {
-            self.worker.start_recording(path)?;
-        }
-        self.recording_started_at = Some(Instant::now());
-        Ok(())
-    }
-
-    pub(crate) fn finish_recording(&mut self) -> Result<usize, Box<dyn Error>> {
-        let bytes = self.worker.finish_recording()?;
-        self.recording_started_at = None;
-        Ok(bytes)
-    }
-
-    pub(crate) fn abort_recording(&mut self) {
-        self.worker.abort_recording();
-        self.recording_started_at = None;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn start_streaming(&mut self, address: &str) -> Result<(), Box<dyn Error>> {
-        self.worker.start_streaming(address)?;
-        self.stream_protocol = Some(stream_protocol_label(address));
-        Ok(())
-    }
-
-    pub(crate) fn configure_stream(&mut self, settings: &AppSettings) {
-        self.configured_stream = settings.stream_target();
-        // The recording encoder is derived from the quality preset at the
-        // encoded geometry, so a preset means the same thing to the encoder as
-        // it does on the Output page.
-        let codec = settings.effective_recording_codec();
-        self.recording_video_encoder = VideoEncoderConfig {
-            implementation: self
-                .capabilities
-                .video_encoders()
-                .iter()
-                .find(|encoder| encoder.codec() == codec)
-                .map_or_else(EncoderImplementation::default, |encoder| {
-                    EncoderImplementation::new(encoder.id())
-                }),
-            ..settings.recording_video_encoder(self.output_format)
-        };
-        self.recording_audio_encoder = AudioEncoderConfig {
-            implementation: if settings.recording_audio_encoder.is_automatic() {
-                self.capabilities
-                    .audio_encoders()
-                    .iter()
-                    .find(|encoder| encoder.codec() == AudioCodec::Aac)
-                    .map_or_else(EncoderImplementation::default, |encoder| {
-                        EncoderImplementation::new(encoder.id())
-                    })
-            } else {
-                settings.recording_audio_encoder.clone()
-            },
-            ..settings.recording_audio_encoder_config()
-        };
-        self.configured_video_encoder = settings.rtmp.video.clone();
-        self.configured_audio_encoder = settings.rtmp.audio.clone();
-        if settings.stream_protocol == StreamProtocol::Whip {
-            self.configured_video_encoder.codec = VideoCodec::Vp8;
-            self.configured_video_encoder.implementation = EncoderImplementation::default();
-            self.configured_video_encoder.profile = None;
-            self.configured_audio_encoder.codec = AudioCodec::Opus;
-            self.configured_audio_encoder.implementation = EncoderImplementation::default();
-        }
-        if self.configured_video_encoder.implementation.is_automatic() {
-            if let Some(encoder) = self
-                .capabilities
-                .video_encoders()
-                .iter()
-                .find(|encoder| encoder.codec() == self.configured_video_encoder.codec)
-            {
-                self.configured_video_encoder.implementation =
-                    obs_rs_output::EncoderImplementation::new(encoder.id());
-            }
-        }
-        if self.configured_audio_encoder.implementation.is_automatic() {
-            if let Some(encoder) = self
-                .capabilities
-                .audio_encoders()
-                .iter()
-                .find(|encoder| encoder.codec() == self.configured_audio_encoder.codec)
-            {
-                self.configured_audio_encoder.implementation =
-                    obs_rs_output::EncoderImplementation::new(encoder.id());
-            }
-        }
-    }
-
-    pub(crate) fn start_configured_stream(&mut self) -> Result<&'static str, Box<dyn Error>> {
-        let protocol = stream_protocol_name(self.configured_stream.protocol());
-        self.worker.start_streaming_target_configured(
-            self.configured_stream.clone(),
-            self.configured_video_encoder.clone(),
-            self.configured_audio_encoder.clone(),
-        )?;
-        self.stream_protocol = Some(protocol);
-        Ok(protocol)
-    }
-
-    pub(crate) fn finish_streaming(&mut self) -> Result<(), Box<dyn Error>> {
-        self.worker.finish_streaming()?;
-        Ok(())
-    }
-
-    pub(crate) fn take_output_events(&mut self) -> Vec<OutputEvent> {
-        let events = self.worker.take_output_events();
-        if events
-            .iter()
-            .any(|event| matches!(event, OutputEvent::Stopped | OutputEvent::Failed { .. }))
-        {
-            self.stream_protocol = None;
-        }
-        events
-    }
-
     /// Enqueues a program frame and its due audio without blocking the GUI.
     ///
     /// A frame at the canvas geometry is resampled to the encoded geometry
@@ -466,94 +478,6 @@ impl OutputRuntime {
         let _ = self.worker.try_push_raw_frame(frame);
     }
 
-    /// Samples live input for mixer meters while no output is encoding.
-    pub(crate) fn monitor_audio(&self, frame: &VideoFrame) {
-        let _ = self.worker.try_monitor_audio(frame.timestamp());
-    }
-
-    pub(crate) fn set_channel_gain_milli(
-        &mut self,
-        id: &str,
-        gain_milli: u16,
-    ) -> Result<(), Box<dyn Error>> {
-        self.worker
-            .set_channel_gain_milli(engine_channel(id), gain_milli)?;
-        Ok(())
-    }
-
-    pub(crate) fn set_channel_muted(
-        &mut self,
-        id: &str,
-        muted: bool,
-    ) -> Result<(), Box<dyn Error>> {
-        self.worker.set_channel_muted(engine_channel(id), muted)?;
-        Ok(())
-    }
-
-    /// Requests a live microphone/input switch on the output worker.
-    pub(crate) fn set_audio_input_id(
-        &mut self,
-        device_id: Option<&str>,
-    ) -> Result<(), Box<dyn Error>> {
-        self.worker.set_audio_input_id(device_id)?;
-        self.audio_input_id = device_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned);
-        Ok(())
-    }
-
-    /// Returns the persisted/selected input ID, or an empty string for auto.
-    #[cfg(test)]
-    pub(crate) fn audio_input_id(&self) -> Option<&str> {
-        self.audio_input_id.as_deref()
-    }
-
-    /// Returns the live input peak in thousandths of full scale.
-    ///
-    /// This is what the mixer meter shows: the engine measures it on the block
-    /// it actually captured, so the meter moves with the real microphone.
-    pub(crate) fn input_peak_milli(&self) -> u16 {
-        self.worker.snapshot().engine.stats.microphone_peak_milli
-    }
-
-    pub(crate) fn desktop_peak_milli(&self) -> u16 {
-        self.worker.snapshot().engine.stats.desktop_peak_milli
-    }
-
-    /// Returns whether the engine is running on the deterministic fallback
-    /// generator instead of a real capture device.
-    pub(crate) fn audio_is_fallback(&self) -> bool {
-        self.worker.snapshot().engine.audio_fallback
-    }
-
-    /// Returns the display name of the selected input, for the mixer row.
-    pub(crate) fn audio_input_name(&mut self) -> String {
-        let Some(id) = self.audio_input_id.clone() else {
-            return "Default input".to_owned();
-        };
-        self.discover_audio_devices()
-            .ok()
-            .and_then(|devices| {
-                devices
-                    .iter()
-                    .find(|device| device.id() == id)
-                    .map(|device| device.name().to_owned())
-            })
-            .unwrap_or(id)
-    }
-
-    /// Returns the playback monitor the desktop channel captures, if any.
-    ///
-    /// `None` means the channel is genuinely silent, which the mixer row shows
-    /// as such instead of naming a device that is not being read.
-    pub(crate) fn desktop_audio_name(&self) -> Option<String> {
-        match self.worker.snapshot().engine.desktop_audio {
-            obs_rs_engine::DesktopAudioSource::Monitor(name) => Some(name),
-            obs_rs_engine::DesktopAudioSource::Silent(_) => None,
-        }
-    }
-
     pub(crate) fn output_status(&self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;
@@ -580,6 +504,7 @@ impl OutputRuntime {
         } else {
             "audio live"
         };
+        let replay_save = replay_save_label(&engine.replay_save_status);
         let worker = if snapshot.alive {
             "worker live"
         } else {
@@ -594,7 +519,9 @@ impl OutputRuntime {
             .collect::<Vec<_>>()
             .join("/");
         format!(
-            "Output: recording {recording} · stream {streaming} · {audio} · {worker} · available {protocols}"
+            "Output: recording {recording} · stream {streaming} · replay {} ({} packets) · replay save {replay_save} · {audio} · {worker} · available {protocols}",
+            engine.replay_lifecycle.label(),
+            engine.replay_buffer_packets,
         )
     }
 
@@ -610,22 +537,32 @@ impl OutputRuntime {
                 )
             });
         let mut native_submit_max = 0;
+        let mut native_queue_bytes = 0;
         if let Some(metrics) = engine.production_stream_metrics {
             sent = metrics
                 .video_submitted
                 .saturating_add(metrics.audio_submitted);
             dropped = metrics.dropped;
             reconnects = metrics.reconnects;
+            native_queue_bytes = metrics
+                .video_queue_bytes
+                .saturating_add(metrics.audio_queue_bytes);
             native_submit_max = metrics.max_submit_latency_nanos;
         }
         format!(
-            "frames={} · audio_blocks={} · audio_per_tick={} · submitted={} · dropped={} · queued={} B · worker_queued={} · reconnects={} · submit p50/p95/p99/max={}/{}/{}/{} µs · native_submit_max={} µs · video_encode p50/p95/p99/max={}/{}/{}/{} µs · audio_encode p95={} µs · frame_drops={} · format_drops={} · unscalable_drops={} · peak={}‰",
+            "frames={} · audio_blocks={} · audio_per_tick={} · av_sync_obs={} · av_sync_in_sync={} · av_sync_behind={} · av_sync_ahead={} · av_sync_max_ns={} · submitted={} · dropped={} · queued={} B · native_queue={} B · worker_queued={} · reconnects={} · submit p50/p95/p99/max={}/{}/{}/{} µs · native_submit_max={} µs · video_encode p50/p95/p99/max={}/{}/{}/{} µs · audio_encode p95={} µs · frame_drops={} · format_drops={} · unscalable_drops={} · peak={}‰",
             engine.stats.video_frames,
             engine.stats.audio_blocks,
             engine.stats.audio_blocks_per_video_tick,
+            engine.stats.av_sync.observations(),
+            engine.stats.av_sync.in_sync(),
+            engine.stats.av_sync.audio_behind(),
+            engine.stats.av_sync.audio_ahead(),
+            engine.stats.av_sync.max_abs_delta_nanos(),
             sent,
             dropped,
             engine.stream_queued_bytes,
+            native_queue_bytes,
             snapshot.queued_frames,
             reconnects,
             engine.stats.output_submit_latency.percentile_nanos(50) / 1_000,
@@ -643,6 +580,23 @@ impl OutputRuntime {
             self.unscalable_drops,
             engine.stats.audio_peak_milli
         )
+    }
+
+    /// Returns the small, bounded telemetry slice needed by multiview.
+    pub(crate) fn multiview_telemetry(&self) -> MultiviewTelemetry {
+        let snapshot = self.worker.snapshot();
+        let engine = snapshot.engine;
+        MultiviewTelemetry {
+            metrics: format!(
+                "frames={} · dropped={} · audio blocks={} · queued={} B · replay={} packets",
+                engine.stats.video_frames,
+                snapshot.dropped_frames,
+                engine.stats.audio_blocks,
+                engine.stream_queued_bytes,
+                engine.replay_buffer_packets,
+            ),
+            audio_peak_milli: engine.stats.audio_peak_milli,
+        }
     }
 
     /// Returns the live recording duration in the status-bar format.
@@ -689,20 +643,28 @@ impl OutputRuntime {
                 )
             });
         let mut native_submit_max = 0;
+        let mut native_queue_bytes = 0;
         if let Some(metrics) = engine.production_stream_metrics {
             sent = metrics
                 .video_submitted
                 .saturating_add(metrics.audio_submitted);
             dropped = metrics.dropped;
             reconnects = metrics.reconnects;
+            native_queue_bytes = metrics
+                .video_queue_bytes
+                .saturating_add(metrics.audio_queue_bytes);
             native_submit_max = metrics.max_submit_latency_nanos;
         }
+        let replay_save = replay_save_label(&engine.replay_save_status);
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} replay_lifecycle={} replay_save={} replay_packets={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_queue_bytes={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} av_sync_obs={} av_sync_in_sync={} av_sync_behind={} av_sync_ahead={} av_sync_max_ns={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} filter_diagnostics={:?} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
             engine.streaming,
+            engine.replay_lifecycle.label(),
+            replay_save,
+            engine.replay_buffer_packets,
             self.stream_protocol.unwrap_or("none"),
             engine.recording_lifecycle.label(),
             engine.streaming_lifecycle.label(),
@@ -717,6 +679,7 @@ impl OutputRuntime {
             sent,
             dropped,
             reconnects,
+            native_queue_bytes,
             native_submit_max,
             engine.stats.output_submit_latency.percentile_nanos(50),
             engine.stats.output_submit_latency.percentile_nanos(95),
@@ -728,6 +691,11 @@ impl OutputRuntime {
             engine.stats.video_encode_latency.max_nanos(),
             engine.stats.audio_encode_latency.percentile_nanos(95),
             engine.stats.audio_blocks_per_video_tick,
+            engine.stats.av_sync.observations(),
+            engine.stats.av_sync.in_sync(),
+            engine.stats.av_sync.audio_behind(),
+            engine.stats.av_sync.audio_ahead(),
+            engine.stats.av_sync.max_abs_delta_nanos(),
             snapshot.dropped_frames,
             self.format_drops,
             self.unscalable_drops,
@@ -736,118 +704,9 @@ impl OutputRuntime {
             engine.stats.audio_blocks,
             engine.stats.audio_fallback_blocks,
             engine.stats.audio_peak_milli,
+            engine.filter_diagnostics,
             engine.last_error.as_deref().unwrap_or("none")
         )
-    }
-
-    pub(crate) fn audio_devices_summary(&mut self) -> String {
-        match self.discover_audio_devices() {
-            Ok(devices) if devices.is_empty() => {
-                format!("{AUDIO_BACKEND_LABEL}: no audio devices; deterministic fallback available")
-            }
-            Ok(devices) => devices
-                .iter()
-                .map(|device| {
-                    let kind = match device.kind() {
-                        AudioDeviceKind::Input => "input",
-                        AudioDeviceKind::Output => "output",
-                    };
-                    let availability = if device.available() {
-                        "ready"
-                    } else {
-                        "missing"
-                    };
-                    format!(
-                        "{kind}: {} ({}) [{availability}]",
-                        device.name(),
-                        device.id()
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(" · "),
-            Err(error) => {
-                format!(
-                    "{AUDIO_BACKEND_LABEL} unavailable: {error}; deterministic fallback available"
-                )
-            }
-        }
-    }
-
-    /// Returns discoverable platform input devices as stable ID/label pairs.
-    ///
-    /// Discovery is cached briefly because opening Settings should not invoke
-    /// `pw-dump` repeatedly while the user moves between fields.
-    pub(crate) fn audio_input_devices(&mut self) -> Vec<(String, String)> {
-        self.discover_audio_devices()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|device| device.kind() == AudioDeviceKind::Input && device.available())
-            .map(|device| (device.id().to_owned(), device.name().to_owned()))
-            .collect()
-    }
-
-    /// Returns the input picker's entries, keeping `selected` even if it is gone.
-    ///
-    /// A device that is unplugged, or whose service has restarted, disappears
-    /// from discovery. Dropping the user's selection at that moment would
-    /// silently rewrite it to "automatic" the next time settings were applied,
-    /// so the missing device stays in the list marked unavailable and is only
-    /// forgotten when the user picks something else.
-    pub(crate) fn audio_input_entries(&mut self, selected: &str) -> Vec<AudioInputEntry> {
-        let mut entries = self
-            .audio_input_devices()
-            .into_iter()
-            .map(|(id, name)| AudioInputEntry {
-                id,
-                name,
-                available: true,
-            })
-            .collect::<Vec<_>>();
-        let selected = selected.trim();
-        if !selected.is_empty() && !entries.iter().any(|entry| entry.id == selected) {
-            entries.push(AudioInputEntry {
-                // The stored ID is all that is left of a device that is not in
-                // the graph, so it is also the only label available for it.
-                name: selected.to_owned(),
-                id: selected.to_owned(),
-                available: false,
-            });
-        }
-        entries
-    }
-
-    /// Discards the discovery cache so the next read re-queries the platform.
-    ///
-    /// This is what makes a hot-plug visible without waiting for the cache to
-    /// expire, and it is why the refresh action is explicit rather than a poll.
-    pub(crate) fn refresh_audio_devices(&mut self) {
-        self.audio_devices_cache = None;
-    }
-
-    /// Returns whether the selected input is currently present in the graph.
-    ///
-    /// `true` for the automatic route, which is by definition always resolvable.
-    pub(crate) fn audio_input_available(&mut self) -> bool {
-        let Some(selected) = self.audio_input_id.clone() else {
-            return true;
-        };
-        self.audio_input_devices()
-            .iter()
-            .any(|(id, _)| *id == selected)
-    }
-
-    fn discover_audio_devices(
-        &mut self,
-    ) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
-        let now = Instant::now();
-        if let Some((discovered_at, devices)) = self.audio_devices_cache.as_ref() {
-            if now.saturating_duration_since(*discovered_at) < Duration::from_secs(2) {
-                return Ok(devices.clone());
-            }
-        }
-        let devices = self.audio_provider.discover()?;
-        self.audio_devices_cache = Some((now, devices.clone()));
-        Ok(devices)
     }
 
     /// Returns the recording and streaming phases the desktop reconciles against.
@@ -865,47 +724,5 @@ impl OutputRuntime {
         } else {
             (OutputLifecycle::Failed, OutputLifecycle::Failed)
         }
-    }
-}
-
-/// Builds the one-profile project an output-only engine session encodes with.
-fn output_only_project(format: VideoFormat) -> Result<Project, Box<dyn Error>> {
-    let mut project = Project::new("OBS-RS output session")?;
-    project.add_profile(obs_rs_project::Profile::new(
-        "default",
-        "Default output",
-        format,
-    )?)?;
-    Ok(project)
-}
-
-const fn stream_protocol_name(protocol: StreamProtocol) -> &'static str {
-    match protocol {
-        StreamProtocol::Rtmp => "RTMP",
-        StreamProtocol::Rtmps => "RTMPS",
-        StreamProtocol::Srt => "SRT",
-        StreamProtocol::Whip => "WHIP",
-        StreamProtocol::Hls => "HLS",
-        StreamProtocol::Rist => "RIST",
-        StreamProtocol::Reference => "Reference",
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn stream_protocol_label(address: &str) -> &'static str {
-    match address.trim().split(':').next() {
-        Some("srt") => "SRT",
-        Some("rtmp") => "RTMP",
-        Some("rtmps") => "RTMPS",
-        Some("ws" | "wss") => "OBSR-WebSocket",
-        _ => "OBSR-TCP",
-    }
-}
-
-fn engine_channel(id: &str) -> EngineAudioChannel {
-    if id == crate::MIC_CHANNEL_ID {
-        EngineAudioChannel::Microphone
-    } else {
-        EngineAudioChannel::Desktop
     }
 }

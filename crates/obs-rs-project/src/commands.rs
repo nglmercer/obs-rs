@@ -1,189 +1,36 @@
 use super::{
     error::ProjectError,
     model::{
-        Profile, Project, RenderBackendPreference, SceneItemSpec, SceneSpec, SourceFilterCategory,
-        SourceFilterSpec, SourceSpec,
+        Profile, Project, RenderBackendPreference, SceneItemSpec, SceneSpec, SourceFilterSpec,
+        SourceSpec,
     },
     validation::{identifier, source_id},
 };
 use obs_rs_config::Config;
 use obs_rs_media::{FrameFilter, FrameTransform, VideoFormat};
 use obs_rs_output::OutputProfileKind;
-use obs_rs_util::{Identifier, MAX_IDENTIFIER_BYTES};
+use obs_rs_util::Identifier;
+use std::collections::HashSet;
 
-/// How a scene item is copied when a reference is pasted or duplicated.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SceneItemDuplicateMode {
-    /// Add another item pointing at the existing source definition.
-    Reference,
-    /// Clone the source definition and add an item pointing at the clone.
-    DuplicateSource,
-}
-/// Commands that mutate project state through one validated path.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ProjectCommand {
-    /// Adds a profile.
-    AddProfile(Profile),
-    /// Selects an existing profile.
-    SetActiveProfile { id: String },
-    /// Replaces one profile's canvas resolution and frame rate.
-    SetProfileVideoFormat {
-        profile: String,
-        format: VideoFormat,
-    },
-    /// Selects the preferred renderer while retaining runtime fallback.
-    SetProfileRenderBackend {
-        profile: String,
-        backend: RenderBackendPreference,
-    },
-    /// Selects an exact output profile for runtime capability negotiation.
-    SetProfileOutput {
-        profile: String,
-        output: OutputProfileKind,
-    },
-    /// Adds a scene to a profile.
-    AddScene { profile: String, scene: SceneSpec },
-    /// Duplicates one scene with a fresh project-local ID.
-    DuplicateScene { profile: String, scene: String },
-    /// Duplicates one scene and chooses whether its items keep source
-    /// references or receive cloned source definitions.
-    DuplicateSceneWithMode {
-        profile: String,
-        scene: String,
-        mode: SceneItemDuplicateMode,
-    },
-    /// Adds a source to the profile registry and creates its first scene item.
-    AddSource {
-        profile: String,
-        scene: String,
-        source: SourceSpec,
-    },
-    /// Adds an item referencing an already registered source.
-    AddSceneItem {
-        profile: String,
-        scene: String,
-        item: SceneItemSpec,
-    },
-    /// Removes one scene item while retaining the source definition.
-    RemoveSceneItem {
-        profile: String,
-        scene: String,
-        item: String,
-    },
-    /// Duplicates one scene item as a reference or with a cloned source.
-    DuplicateSceneItem {
-        profile: String,
-        scene: String,
-        item: String,
-        mode: SceneItemDuplicateMode,
-    },
-    /// Pastes a previously copied scene item into a scene as a reference or
-    /// with a cloned source definition.
-    PasteSceneItem {
-        profile: String,
-        scene: String,
-        item: SceneItemSpec,
-        mode: SceneItemDuplicateMode,
-    },
-    /// Removes a scene from a profile.
-    RemoveScene { profile: String, scene: String },
-    /// Renames a scene in a profile.
-    SetSceneName {
-        profile: String,
-        scene: String,
-        name: String,
-    },
-    /// Duplicates one source definition without attaching it to a scene.
-    DuplicateSource { profile: String, source: String },
-    /// Replaces one source's display name.
-    SetSourceName {
-        profile: String,
-        source: String,
-        name: String,
-    },
-    /// Replaces one source's validated settings document.
-    SetSourceSettings {
-        profile: String,
-        source: String,
-        settings: Config,
-    },
-    /// Replaces one scene item's transform.
-    SetSceneItemTransform {
-        profile: String,
-        scene: String,
-        item: String,
-        transform: FrameTransform,
-    },
-    /// Adds one persistent source filter instance.
-    AddSourceFilter {
-        profile: String,
-        source: String,
-        filter: SourceFilterSpec,
-    },
-    /// Removes one persistent source filter instance.
-    RemoveSourceFilter {
-        profile: String,
-        source: String,
-        filter: String,
-    },
-    /// Replaces one source filter's display name.
-    SetSourceFilterName {
-        profile: String,
-        source: String,
-        filter: String,
-        name: String,
-    },
-    /// Enables or disables one source filter instance.
-    SetSourceFilterEnabled {
-        profile: String,
-        source: String,
-        filter: String,
-        enabled: bool,
-    },
-    /// Replaces one source filter's independent settings document.
-    SetSourceFilterSettings {
-        profile: String,
-        source: String,
-        filter: String,
-        settings: Config,
-    },
-    /// Moves one source filter to an existing order position.
-    MoveSourceFilter {
-        profile: String,
-        source: String,
-        filter: String,
-        target_index: usize,
-    },
-    /// Reorders one scene item within a scene.
-    MoveSceneItem {
-        profile: String,
-        scene: String,
-        item: String,
-        target_index: usize,
-    },
-    /// Removes one source item from a scene.
-    RemoveSource { profile: String, source: String },
-    /// Replaces the ordered filter chain for one source.
-    SetSourceFilters {
-        profile: String,
-        source: String,
-        filters: Vec<FrameFilter>,
-    },
-    /// Changes whether one scene item participates in scene composition.
-    SetSceneItemVisibility {
-        profile: String,
-        scene: String,
-        item: String,
-        visible: bool,
-    },
-    /// Changes whether one scene item is protected from desktop editing.
-    SetSceneItemLocked {
-        profile: String,
-        scene: String,
-        item: String,
-        locked: bool,
-    },
-}
+mod filters;
+mod groups;
+mod source_definitions;
+
+use filters::legacy_filter_spec;
+use groups::{
+    duplicate_group_item, duplicate_scene_item_target, group_scene_items_target, move_group_item,
+    move_scene_item_target, move_scene_item_to_parent_target, paste_group_item, remove_group_item,
+    remove_scene_item_target, remove_scene_items, set_group_item_locked, set_group_item_transform,
+    set_group_item_visibility, set_scene_item_group_name_target, set_scene_item_locked_target,
+    set_scene_item_transform_target, set_scene_item_visibility_target, ungroup_scene_item_target,
+};
+
+pub(super) use source_definitions::copy_identity;
+use source_definitions::{duplicate_source, remove_source, set_source_name, set_source_settings};
+
+mod types;
+
+pub use types::{ProjectCommand, SceneItemDuplicateMode};
 
 impl Project {
     /// Applies one command atomically from the caller's perspective.
@@ -228,23 +75,58 @@ impl Project {
                 scene,
                 item,
             } => add_scene_item(self, &profile, &scene, item),
+            ProjectCommand::GroupSceneItems {
+                profile,
+                scene,
+                items,
+                group,
+            } => group_scene_items_target(self, &profile, &scene, &items, group),
+            ProjectCommand::UngroupSceneItem {
+                profile,
+                scene,
+                group,
+            } => ungroup_scene_item_target(self, &profile, &scene, &group),
             ProjectCommand::RemoveSceneItem {
                 profile,
                 scene,
                 item,
-            } => remove_scene_item(self, &profile, &scene, &item),
+            } => {
+                if item.contains('/') {
+                    remove_scene_item_target(self, &profile, &scene, &item)
+                } else {
+                    remove_scene_item(self, &profile, &scene, &item)
+                }
+            }
+            ProjectCommand::RemoveSceneItems {
+                profile,
+                scene,
+                items,
+            } => remove_scene_items(self, &profile, &scene, &items),
             ProjectCommand::DuplicateSceneItem {
                 profile,
                 scene,
                 item,
                 mode,
-            } => duplicate_scene_item(self, &profile, &scene, &item, mode),
+            } => {
+                if item.contains('/') {
+                    duplicate_scene_item_target(self, &profile, &scene, &item, mode)
+                } else {
+                    duplicate_scene_item(self, &profile, &scene, &item, mode)
+                }
+            }
             ProjectCommand::PasteSceneItem {
                 profile,
                 scene,
                 item,
                 mode,
             } => paste_scene_item(self, &profile, &scene, item, mode),
+            ProjectCommand::PasteGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+                mode,
+            } => paste_group_item(self, &profile, &scene, &group_path, item, mode),
             ProjectCommand::RemoveScene { profile, scene } => {
                 let profile_id = identifier(&profile, "profile id")?;
                 let profile = self
@@ -268,6 +150,49 @@ impl Project {
                     .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
                 scene.set_name(&name)
             }
+            ProjectCommand::SetSceneProperties {
+                profile,
+                scene,
+                name,
+                transition,
+                stinger,
+            } => {
+                let profile_id = identifier(&profile, "profile id")?;
+                let profile = self
+                    .profile_mut(&profile_id)
+                    .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
+                let scene_id = identifier(&scene, "scene id")?;
+                let scene = profile
+                    .scene_mut(&scene_id)
+                    .ok_or_else(|| ProjectError::UnknownScene(scene_id.clone()))?;
+                scene.set_name(&name)?;
+                scene.set_transition_override(transition);
+                scene.set_stinger_override(stinger);
+                Ok(())
+            }
+            ProjectCommand::SetSceneTransitionOverride {
+                profile,
+                scene,
+                transition,
+            } => {
+                let scene = scene_mut(self, &profile, &scene)?;
+                scene.set_transition_override(transition);
+                Ok(())
+            }
+            ProjectCommand::SetSceneStingerOverride {
+                profile,
+                scene,
+                stinger,
+            } => {
+                let scene = scene_mut(self, &profile, &scene)?;
+                scene.set_stinger_override(stinger);
+                Ok(())
+            }
+            ProjectCommand::MoveScene {
+                profile,
+                scene,
+                target_index,
+            } => move_scene(self, &profile, &scene, target_index),
             ProjectCommand::DuplicateSource { profile, source } => {
                 duplicate_source(self, &profile, &source)
             }
@@ -276,6 +201,12 @@ impl Project {
                 source,
                 name,
             } => set_source_name(self, &profile, &source, &name),
+            ProjectCommand::SetGroupName {
+                profile,
+                scene,
+                group_path,
+                name,
+            } => set_scene_item_group_name_target(self, &profile, &scene, &group_path, &name),
             ProjectCommand::SetSourceSettings {
                 profile,
                 source,
@@ -287,6 +218,11 @@ impl Project {
                 item,
                 transform,
             } => set_scene_item_transform(self, &profile, &scene, &item, transform),
+            ProjectCommand::SetSceneItemTransforms {
+                profile,
+                scene,
+                items,
+            } => set_scene_item_transforms(self, &profile, &scene, items),
             ProjectCommand::AddSourceFilter {
                 profile,
                 source,
@@ -338,12 +274,73 @@ impl Project {
                 item,
                 locked,
             } => set_scene_item_locked(self, &profile, &scene, &item, locked),
+            ProjectCommand::SetGroupItemVisibility {
+                profile,
+                scene,
+                group_path,
+                item,
+                visible,
+            } => set_group_item_visibility(self, &profile, &scene, &group_path, &item, visible),
+            ProjectCommand::SetGroupItemLocked {
+                profile,
+                scene,
+                group_path,
+                item,
+                locked,
+            } => set_group_item_locked(self, &profile, &scene, &group_path, &item, locked),
+            ProjectCommand::SetGroupItemTransform {
+                profile,
+                scene,
+                group_path,
+                item,
+                transform,
+            } => set_group_item_transform(self, &profile, &scene, &group_path, &item, transform),
             ProjectCommand::MoveSceneItem {
                 profile,
                 scene,
                 item,
                 target_index,
-            } => move_scene_item(self, &profile, &scene, &item, target_index),
+            } => {
+                if item.contains('/') {
+                    move_scene_item_target(self, &profile, &scene, &item, target_index)
+                } else {
+                    move_scene_item(self, &profile, &scene, &item, target_index)
+                }
+            }
+            ProjectCommand::MoveSceneItemToParent {
+                profile,
+                scene,
+                item,
+                destination,
+                target_index,
+            } => move_scene_item_to_parent_target(
+                self,
+                &profile,
+                &scene,
+                &item,
+                &destination,
+                target_index,
+            ),
+            ProjectCommand::MoveGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+                target_index,
+            } => move_group_item(self, &profile, &scene, &group_path, &item, target_index),
+            ProjectCommand::RemoveGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+            } => remove_group_item(self, &profile, &scene, &group_path, &item),
+            ProjectCommand::DuplicateGroupItem {
+                profile,
+                scene,
+                group_path,
+                item,
+                mode,
+            } => duplicate_group_item(self, &profile, &scene, &group_path, &item, mode),
             ProjectCommand::RemoveSource { profile, source } => {
                 remove_source(self, &profile, &source)
             }
@@ -392,10 +389,27 @@ fn set_profile_output(
 
 fn add_scene(project: &mut Project, profile: &str, scene: SceneSpec) -> Result<(), ProjectError> {
     let profile_id = identifier(profile, "profile id")?;
+    let profile = project
+        .profile_mut(&profile_id)
+        .ok_or(ProjectError::UnknownProfile(profile_id))?;
+    for item in scene.items() {
+        validate_scene_item(profile, scene.id(), item, 0)?;
+    }
+    profile.add_scene(scene)
+}
+
+fn move_scene(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    target_index: usize,
+) -> Result<(), ProjectError> {
+    let profile_id = identifier(profile, "profile id")?;
+    let scene_id = identifier(scene, "scene id")?;
     project
         .profile_mut(&profile_id)
-        .ok_or(ProjectError::UnknownProfile(profile_id))?
-        .add_scene(scene)
+        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?
+        .move_scene(&scene_id, target_index)
 }
 
 fn duplicate_scene(
@@ -424,29 +438,7 @@ fn duplicate_scene(
         let mut source_ids: std::collections::HashMap<Identifier, Identifier> =
             std::collections::HashMap::new();
         for item in &mut duplicate.items {
-            let original_source_id = item.source_id().clone();
-            let new_source_id = if let Some(new_id) = source_ids.get(&original_source_id) {
-                new_id.clone()
-            } else {
-                let source = profile
-                    .source(&original_source_id)
-                    .cloned()
-                    .ok_or_else(|| ProjectError::UnknownSource(original_source_id.clone()))?;
-                let (new_id, new_name) =
-                    copy_identity(source.id().as_str(), source.name(), |candidate| {
-                        profile.has_source(candidate)
-                            || cloned_sources
-                                .iter()
-                                .any(|source: &SourceSpec| source.id().as_str() == candidate)
-                    })?;
-                let mut source = source;
-                source.id = new_id.clone();
-                source.name = new_name;
-                source_ids.insert(original_source_id, new_id.clone());
-                cloned_sources.push(source);
-                new_id
-            };
-            item.source_id = new_source_id;
+            duplicate_item_sources(profile, item, &mut source_ids, &mut cloned_sources)?;
         }
         profile.add_sources(cloned_sources)?;
     }
@@ -466,6 +458,130 @@ fn scene_mut<'a>(
     profile
         .scene_mut(&scene_id)
         .ok_or(ProjectError::UnknownScene(scene_id))
+}
+
+fn validate_scene_target(
+    profile: &Profile,
+    owner: &Identifier,
+    target: &Identifier,
+) -> Result<(), ProjectError> {
+    if profile.scene(target).is_none() {
+        return Err(ProjectError::UnknownScene(target.clone()));
+    }
+    if owner == target {
+        return Err(ProjectError::CircularSceneReference(owner.clone()));
+    }
+    let mut visited = HashSet::new();
+    if scene_reaches(profile, target, owner, &mut visited)? {
+        return Err(ProjectError::CircularSceneReference(owner.clone()));
+    }
+    Ok(())
+}
+
+fn scene_reaches(
+    profile: &Profile,
+    current: &Identifier,
+    target: &Identifier,
+    visited: &mut HashSet<Identifier>,
+) -> Result<bool, ProjectError> {
+    if current == target {
+        return Ok(true);
+    }
+    if !visited.insert(current.clone()) {
+        return Ok(false);
+    }
+    let scene = profile
+        .scene(current)
+        .ok_or_else(|| ProjectError::UnknownScene(current.clone()))?;
+    for item in scene.items() {
+        if scene_item_reaches(profile, item, target, visited)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn scene_item_reaches(
+    profile: &Profile,
+    item: &SceneItemSpec,
+    target: &Identifier,
+    visited: &mut HashSet<Identifier>,
+) -> Result<bool, ProjectError> {
+    if let Some(next) = item.scene_id() {
+        if scene_reaches(profile, next, target, visited)? {
+            return Ok(true);
+        }
+    }
+    if let Some(group) = item.group() {
+        for child in group.items() {
+            if scene_item_reaches(profile, child, target, visited)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn validate_scene_item(
+    profile: &Profile,
+    owner: &Identifier,
+    item: &SceneItemSpec,
+    group_depth: usize,
+) -> Result<(), ProjectError> {
+    if let Some(target) = item.scene_id() {
+        validate_scene_target(profile, owner, target)?;
+    } else if item.is_source() && !profile.has_source(item.source_id()) {
+        return Err(ProjectError::UnknownSource(item.source_id().clone()));
+    }
+    if let Some(group) = item.group() {
+        if group_depth >= super::model::MAX_GROUP_NESTING_DEPTH {
+            return Err(ProjectError::GroupNestingTooDeep(
+                super::model::MAX_GROUP_NESTING_DEPTH,
+            ));
+        }
+        for child in group.items() {
+            validate_scene_item(profile, owner, child, group_depth.saturating_add(1))?;
+        }
+    }
+    Ok(())
+}
+
+fn duplicate_item_sources(
+    profile: &Profile,
+    item: &mut SceneItemSpec,
+    source_ids: &mut std::collections::HashMap<Identifier, Identifier>,
+    cloned_sources: &mut Vec<SourceSpec>,
+) -> Result<(), ProjectError> {
+    if item.is_source() {
+        let original_source_id = item.source_id().clone();
+        let new_source_id = if let Some(new_id) = source_ids.get(&original_source_id) {
+            new_id.clone()
+        } else {
+            let source = profile
+                .source(&original_source_id)
+                .cloned()
+                .ok_or_else(|| ProjectError::UnknownSource(original_source_id.clone()))?;
+            let (new_id, new_name) =
+                copy_identity(source.id().as_str(), source.name(), |candidate| {
+                    profile.has_source(candidate)
+                        || cloned_sources
+                            .iter()
+                            .any(|source: &SourceSpec| source.id().as_str() == candidate)
+                })?;
+            let mut source = source;
+            source.id = new_id.clone();
+            source.name = new_name;
+            source_ids.insert(original_source_id, new_id.clone());
+            cloned_sources.push(source);
+            new_id
+        };
+        item.set_source_id(new_source_id);
+    } else if let Some(group) = item.group_mut() {
+        for child in group.items_mut() {
+            duplicate_item_sources(profile, child, source_ids, cloned_sources)?;
+        }
+    }
+    Ok(())
 }
 
 fn add_source(
@@ -505,13 +621,10 @@ fn add_scene_item(
 ) -> Result<(), ProjectError> {
     let profile_id = identifier(profile, "profile id")?;
     let scene_id = identifier(scene, "scene id")?;
-    let source_id = item.source_id().clone();
     let profile = project
         .profile_mut(&profile_id)
         .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-    if !profile.has_source(&source_id) {
-        return Err(ProjectError::UnknownSource(source_id));
-    }
+    validate_scene_item(profile, &scene_id, &item, 0)?;
     profile
         .scene_mut(&scene_id)
         .ok_or(ProjectError::UnknownScene(scene_id))?
@@ -576,6 +689,21 @@ fn paste_scene_item(
         }
     };
 
+    if item.scene_id().is_some() || item.is_group() {
+        validate_scene_item(profile, &scene_id, &item, 0)?;
+        if item.is_group() && mode == SceneItemDuplicateMode::DuplicateSource {
+            let mut cloned_sources = Vec::new();
+            let mut source_ids = std::collections::HashMap::new();
+            duplicate_item_sources(profile, &mut item, &mut source_ids, &mut cloned_sources)?;
+            profile.add_sources(cloned_sources)?;
+        }
+        item.id = duplicate_item_id;
+        return profile
+            .scene_mut(&scene_id)
+            .ok_or(ProjectError::UnknownScene(scene_id))?
+            .add_item(item);
+    }
+
     let source_id = match mode {
         SceneItemDuplicateMode::Reference => {
             let source_id = item.source_id().clone();
@@ -602,7 +730,7 @@ fn paste_scene_item(
         }
     };
     item.id = duplicate_item_id;
-    item.source_id = source_id;
+    item.set_source_id(source_id);
     profile
         .scene_mut(&scene_id)
         .ok_or(ProjectError::UnknownScene(scene_id))?
@@ -621,86 +749,6 @@ fn source_mut<'a>(
         .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?
         .source_mut(&source_id)
         .ok_or(ProjectError::UnknownSource(source_id))
-}
-
-fn set_source_settings(
-    project: &mut Project,
-    profile: &str,
-    source: &str,
-    settings: Config,
-) -> Result<(), ProjectError> {
-    source_mut(project, profile, source)?.set_settings(settings);
-    Ok(())
-}
-
-fn duplicate_source(
-    project: &mut Project,
-    profile: &str,
-    source: &str,
-) -> Result<(), ProjectError> {
-    let source_id = source_id(source)?;
-    let profile_id = identifier(profile, "profile id")?;
-    let profile = project
-        .profile_mut(&profile_id)
-        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?;
-    let original = profile
-        .source(&source_id)
-        .cloned()
-        .ok_or_else(|| ProjectError::UnknownSource(source_id.clone()))?;
-    let (id, name) = copy_identity(original.id().as_str(), original.name(), |candidate| {
-        profile.has_source(candidate)
-    })?;
-    let mut duplicate = original;
-    duplicate.id = id;
-    duplicate.name = name;
-    profile.add_source(duplicate)
-}
-
-fn set_source_name(
-    project: &mut Project,
-    profile: &str,
-    source: &str,
-    name: &str,
-) -> Result<(), ProjectError> {
-    source_mut(project, profile, source)?.set_name(name)
-}
-
-/// Builds a deterministic copy ID and display name without letting the GUI
-/// invent identifiers or bypass the project's validation rules.
-fn copy_identity(
-    base_id: &str,
-    base_name: &str,
-    is_taken: impl Fn(&str) -> bool,
-) -> Result<(Identifier, String), ProjectError> {
-    for ordinal in 1..=10_000_u32 {
-        let suffix = if ordinal == 1 {
-            "_copy".to_owned()
-        } else {
-            format!("_copy_{ordinal}")
-        };
-        let prefix_length = MAX_IDENTIFIER_BYTES.saturating_sub(suffix.len());
-        let prefix = base_id
-            .get(..base_id.len().min(prefix_length))
-            .unwrap_or(base_id);
-        let candidate = format!("{prefix}{suffix}");
-        if !is_taken(&candidate) {
-            let id =
-                Identifier::new(&candidate).map_err(|error| ProjectError::InvalidIdentifier {
-                    kind: "duplicate id",
-                    error,
-                })?;
-            let name = if ordinal == 1 {
-                format!("{base_name} Copy")
-            } else {
-                format!("{base_name} Copy {ordinal}")
-            };
-            return Ok((id, name));
-        }
-    }
-    Err(ProjectError::InvalidIdentifier {
-        kind: "duplicate id",
-        error: obs_rs_util::IdentifierError::TooLong,
-    })
 }
 
 fn item_mut<'a>(
@@ -723,6 +771,42 @@ fn set_scene_item_transform(
     transform: FrameTransform,
 ) -> Result<(), ProjectError> {
     item_mut(project, profile, scene, item)?.set_transform(transform);
+    Ok(())
+}
+
+fn set_scene_item_transforms(
+    project: &mut Project,
+    profile: &str,
+    scene: &str,
+    items: Vec<(String, FrameTransform)>,
+) -> Result<(), ProjectError> {
+    // Canvas gestures can address a nested group child with its stable
+    // `group/child` path. Apply the complete batch to a clone so a malformed
+    // or locked later target cannot leave an earlier target half-mutated.
+    let mut candidate = project.clone();
+    let mut seen = HashSet::with_capacity(items.len());
+    for (item, transform) in items {
+        if !seen.insert(item.clone()) {
+            return Err(identifier(&item, "scene item id").map_or(
+                ProjectError::InvalidGroupSelection,
+                ProjectError::UnknownSceneItem,
+            ));
+        }
+        if item.contains('/') {
+            set_scene_item_transform_target(&mut candidate, profile, scene, &item, transform)?;
+        } else {
+            let item_id = identifier(&item, "scene item id")?;
+            let scene_spec = scene_mut(&mut candidate, profile, scene)?;
+            if !scene_spec.has_item(&item_id) {
+                return Err(ProjectError::UnknownSceneItem(item_id));
+            }
+            scene_spec
+                .item_mut(&item_id)
+                .expect("validated scene item exists")
+                .set_transform(transform);
+        }
+    }
+    *project = candidate;
     Ok(())
 }
 
@@ -821,33 +905,6 @@ fn move_source_filter(
     source_mut(project, profile, source)?.move_filter(&filter, target_index)
 }
 
-fn legacy_filter_spec(index: usize, filter: FrameFilter) -> Result<SourceFilterSpec, ProjectError> {
-    let (kind, name, settings) = match filter {
-        FrameFilter::Grayscale => ("grayscale", "Grayscale", Config::new()),
-        FrameFilter::Brightness { milli } => {
-            let mut settings = Config::new();
-            settings
-                .set("milli", &milli.to_string())
-                .map_err(ProjectError::Config)?;
-            ("brightness", "Brightness", settings)
-        }
-        FrameFilter::Opacity(value) => {
-            let mut settings = Config::new();
-            settings
-                .set("value", &value.to_string())
-                .map_err(ProjectError::Config)?;
-            ("opacity", "Opacity", settings)
-        }
-    };
-    SourceFilterSpec::with_category(
-        &format!("legacy_filter_{}", index.saturating_add(1)),
-        name,
-        kind,
-        SourceFilterCategory::Effect,
-        settings,
-    )
-}
-
 fn set_scene_item_visibility(
     project: &mut Project,
     profile: &str,
@@ -855,6 +912,9 @@ fn set_scene_item_visibility(
     item: &str,
     visible: bool,
 ) -> Result<(), ProjectError> {
+    if item.contains('/') {
+        return set_scene_item_visibility_target(project, profile, scene, item, visible);
+    }
     item_mut(project, profile, scene, item)?.set_visible(visible);
     Ok(())
 }
@@ -866,6 +926,9 @@ fn set_scene_item_locked(
     item: &str,
     locked: bool,
 ) -> Result<(), ProjectError> {
+    if item.contains('/') {
+        return set_scene_item_locked_target(project, profile, scene, item, locked);
+    }
     item_mut(project, profile, scene, item)?.set_locked(locked);
     Ok(())
 }
@@ -879,14 +942,4 @@ fn move_scene_item(
 ) -> Result<(), ProjectError> {
     let item = identifier(item, "scene item id")?;
     scene_mut(project, profile, scene)?.move_item(&item, target_index)
-}
-
-fn remove_source(project: &mut Project, profile: &str, source: &str) -> Result<(), ProjectError> {
-    let source = source_id(source)?;
-    let profile_id = identifier(profile, "profile id")?;
-    project
-        .profile_mut(&profile_id)
-        .ok_or_else(|| ProjectError::UnknownProfile(profile_id.clone()))?
-        .remove_source(&source)
-        .map(|_| ())
 }

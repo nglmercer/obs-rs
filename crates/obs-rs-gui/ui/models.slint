@@ -2,18 +2,60 @@
         id: string,
         name: string,
         role: string,
+        index: int,
+        count: int,
+        // Stable scene identity carried by the real dock drag gesture. Rust
+        // still resolves the destination and commits the project command.
+        drag-data: data-transfer,
+    }
+
+    // One bounded multiview tile. Geometry is normalized so the same Rust
+    // layout drives both the compositor's tile order and the Slint labels.
+    export struct MultiviewScene {
+        id: string,
+        name: string,
+        role: string,
+        index: int,
+        count: int,
+        preview: bool,
+        program: bool,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        selected: bool,
+    }
+
+    // One valid or intentionally disabled destination in the source dock's
+    // Move to group menu. Rust supplies the stable path; Slint only renders
+    // the label and forwards the action.
+    export struct MoveTarget {
+        id: string,
+        name: string,
+        enabled: bool,
     }
 
     export struct SourceRow {
         id: string,
+        // Stable action target: a top-level item ID or an outer-to-inner
+        // group path such as `overlay-group/child`.
+        target: string,
         name: string,
         kind: string,
         order: string,
+        count: int,
+        nested: bool,
+        group: bool,
         selected: bool,
         visible: bool,
         locked: bool,
         first: bool,
         last: bool,
+        parent-path: string,
+        index: int,
+        container: bool,
+        drag-data: data-transfer,
+        move-targets: [MoveTarget],
     }
 
     // One persistent source-filter instance in the standalone Filters window.
@@ -22,6 +64,8 @@
         name: string,
         kind: string,
         category: string,
+        index: int,
+        count: int,
         enabled: bool,
         selected: bool,
     }
@@ -42,10 +86,46 @@
     export struct MixerRow {
         id: string,
         name: string,
+        index: int,
+        count: int,
         gain: float,
+        pan: float,
         // Logarithmic full-scale value used by the operator-facing VU meter.
         peak-db: float,
+        // Held peak indicator follows the bounded Rust-owned meter ballistics.
+        peak-hold-db: float,
         muted: bool,
+        clipped: bool,
+    }
+
+    // One leaf projection of the Rust-owned dock tree. Coordinates are
+    // normalized to 0..=1000 so the workspace can resize without rebuilding
+    // the layout in Slint. Tab IDs are fixed-capacity because the studio has a
+    // bounded built-in dock catalog.
+    export struct DockPane {
+        panel-kind: int,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        tab-group: int,
+        tab-index: int,
+        tab-count: int,
+        tab-a: int,
+        tab-b: int,
+        tab-c: int,
+        tab-d: int,
+        tab-e: int,
+        tab-f: int,
+        active: bool,
+    }
+
+    // One typed splitter handle in the Rust-owned dock tree. Axis 0 divides
+    // width; axis 1 divides height. The boundary is normalized to 0..=1.
+    export struct DockSplitter {
+        id: int,
+        boundary: float,
+        axis: int,
     }
 
     // One entry in the Add Source kind list. `obsolete` groups deprecated kinds
@@ -55,6 +135,8 @@
         label: string,
         icon: string,
         obsolete: bool,
+        index: int,
+        count: int,
     }
 
     // One selectable display in the monitor picker. The normalized fields place
@@ -81,6 +163,8 @@
         kind_label: string,
         scene: string,
         icon: string,
+        index: int,
+        count: int,
         selected: bool,
     }
 

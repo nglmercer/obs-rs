@@ -1,4 +1,5 @@
 import { Button, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
 import { Palette } from "palette.slint";
 
 export component StudioPanel inherits Rectangle {
@@ -84,6 +85,12 @@ export component TabButton inherits Rectangle {
     in property <string> label;
     in property <bool> active;
     callback clicked();
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-enabled: true;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.active;
+    accessible-action-default => root.clicked();
     min-width: 64px;
     height: 34px;
     background: active ? Palette.tokens.row-selected-bg : Palette.tokens.row-bg;
@@ -113,6 +120,10 @@ export component NavMenuButton inherits Rectangle {
     in property <string> icon-name;
     in property <bool> active;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: true;
+    accessible-action-default => root.clicked();
     height: 32px;
     min-width: 58px;
     background: active ? Palette.tokens.header-active-bg : transparent;
@@ -153,6 +164,16 @@ export component MenuEntry inherits Rectangle {
     // Right-aligned accelerator text, e.g. "Ctrl+Z". Empty hides the column.
     in property <string> shortcut;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        if root.enabled {
+            root.clicked();
+        }
+    }
     width: 208px;
     height: 28px;
     background: root.enabled && touch.has-hover
@@ -226,6 +247,17 @@ export component CompactButton inherits Rectangle {
     in property <string> hint;
     in property <bool> enabled: true;
     callback clicked();
+    // Compact controls have no visible text; expose the existing localized
+    // hint as the button's accessible name for keyboard and screen-reader
+    // traversal.
+    accessible-role: button;
+    accessible-label: root.hint;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if root.enabled {
+            root.clicked();
+        }
+    }
     width: 28px;
     height: 24px;
     opacity: enabled ? 1 : 0.45;
@@ -250,6 +282,9 @@ export component CompactButton inherits Rectangle {
 component HeaderButton inherits Rectangle {
     in property <string> icon-name;
     callback clicked();
+    accessible-role: button;
+    accessible-enabled: true;
+    accessible-action-default => root.clicked();
     width: 19px;
     height: 20px;
     y: 2px;
@@ -268,22 +303,21 @@ component HeaderButton inherits Rectangle {
 }
 
 // OBS dock title bars are grab handles for the whole strip, not just a grip
-// glyph, so the touch area spans the header and every 24px of horizontal travel
-// swaps the dock with its neighbour.
+// glyph. Pointer coordinates are reported to the Rust dock tree so a drag can
+// become a reorder, tab insertion, or directional split.
 export component DockHeader inherits Rectangle {
     in property <string> title;
     in property <int> panel-kind;
     // A floating dock shows the button that returns it to the dock row.
     in property <bool> floating;
     callback move-panel(int, int);
+    callback dock-drag-start(int, float, float);
+    callback dock-drag-moved(int, float, float);
+    callback dock-drag-end(int, float, float);
     callback float-panel(int);
     callback close-panel(int);
 
-    // The drag accumulates until it passes the threshold, so a reorder happens
-    // once per dock width crossed rather than on every pointer sample.
-    property <length> drag-origin-x: 0px;
     property <bool> dragging: drag-area.pressed;
-    property <length> reorder-threshold: 28px;
 
     height: 24px;
     background: dragging ? Palette.tokens.header-active-bg : Palette.tokens.header-bg;
@@ -296,19 +330,24 @@ export component DockHeader inherits Rectangle {
             ? MouseCursor.default
             : (self.pressed ? MouseCursor.grabbing : MouseCursor.grab);
         pointer-event(event) => {
-            if (event.kind == PointerEventKind.down) {
-                root.drag-origin-x = self.mouse-x;
+            if (event.kind == PointerEventKind.down && !root.floating) {
+                root.dock-drag-start(
+                    root.panel-kind,
+                    (self.absolute-position.x + self.mouse-x) / 1px,
+                    (self.absolute-position.y + self.mouse-y) / 1px);
+            } else if (event.kind == PointerEventKind.up && !root.floating) {
+                root.dock-drag-end(
+                    root.panel-kind,
+                    (self.absolute-position.x + self.mouse-x) / 1px,
+                    (self.absolute-position.y + self.mouse-y) / 1px);
             }
         }
         moved => {
             if (!root.floating && self.pressed) {
-                if (self.mouse-x - root.drag-origin-x > root.reorder-threshold) {
-                    root.drag-origin-x = self.mouse-x;
-                    root.move-panel(root.panel-kind, 1);
-                } else if (self.mouse-x - root.drag-origin-x < -root.reorder-threshold) {
-                    root.drag-origin-x = self.mouse-x;
-                    root.move-panel(root.panel-kind, -1);
-                }
+                root.dock-drag-moved(
+                    root.panel-kind,
+                    (self.absolute-position.x + self.mouse-x) / 1px,
+                    (self.absolute-position.y + self.mouse-y) / 1px);
             }
         }
         Text {
@@ -327,11 +366,14 @@ export component DockHeader inherits Rectangle {
     HeaderButton {
         x: parent.width - 42px;
         icon-name: root.floating ? "down" : "up";
+        accessible-label: (root.floating ? I18n.text.dock_redock : I18n.text.dock_float)
+            + ": " + root.title;
         clicked => { root.float-panel(root.panel-kind); }
     }
     HeaderButton {
         x: parent.width - 21px;
         icon-name: "remove";
+        accessible-label: I18n.text.dock_close + ": " + root.title;
         clicked => { root.close-panel(root.panel-kind); }
     }
 }
@@ -395,6 +437,10 @@ export component MenuBarButton inherits Rectangle {
     in property <string> label;
     in property <bool> active;
     callback clicked();
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: true;
+    accessible-action-default => root.clicked();
     height: 24px;
     width: text-label.preferred-width + 18px;
     background: active ? Palette.tokens.header-active-bg : transparent;
@@ -413,72 +459,141 @@ export component MenuBarButton inherits Rectangle {
     }
 }
 
-export component ModalShell inherits Rectangle {
+export component ModalShell inherits FocusScope {
     in property <bool> open;
     in property <string> title;
     in property <string> subtitle;
     in property <string> accept-label;
+    in property <string> alternate-label;
     in property <string> cancel-label;
     in property <length> panel-width: 560px;
     in property <length> panel-height: 390px;
     callback close();
     callback accepted();
+    callback alternate();
 
     visible: open;
+    // The shell itself is the keyboard owner. Keeping the visual scrim in a
+    // child Rectangle lets the FocusScope receive keys even when the dialog's
+    // text editor or buttons are the current focused item.
+    enabled: true;
+    focus-on-click: false;
     x: 0;
     y: 0;
     width: 100%;
     height: 100%;
-    background: rgb(2, 6, 23, 214);
     z: 20;
 
-    TouchArea {
-        clicked => root.close();
+    changed visible => {
+        if self.visible {
+            self.focus();
+        }
+    }
+
+    // Keep keyboard events inside the active modal. Child editors and buttons
+    // handle their own input first; anything they do not consume must not fall
+    // through to the main window's output or project shortcuts.
+    capture-key-pressed(event) => {
+        // TextInput and Button implementations may consume Escape or Return
+        // before the event reaches this scope. Capture the modal commands
+        // first, while leaving ordinary typing to the child.
+        if !event.modifiers.control
+            && !event.modifiers.shift
+            && !event.modifiers.alt
+            && !event.modifiers.meta
+            && event.text == Key.Escape {
+            root.close();
+            return accept;
+        }
+        if !event.modifiers.control
+            && !event.modifiers.shift
+            && !event.modifiers.alt
+            && !event.modifiers.meta
+            && event.text == Key.Return {
+            root.accepted();
+            return accept;
+        }
+        reject
+    }
+    key-pressed(event) => {
+        if !event.modifiers.control
+            && !event.modifiers.shift
+            && !event.modifiers.alt
+            && !event.modifiers.meta
+            && event.text == Key.Escape {
+            root.close();
+            return accept;
+        }
+        if !event.modifiers.control
+            && !event.modifiers.shift
+            && !event.modifiers.alt
+            && !event.modifiers.meta
+            && event.text == Key.Return {
+            root.accepted();
+            return accept;
+        }
+        // The modal is the keyboard boundary while it is open. A child input
+        // that rejected a key has already had its chance above.
+        accept
     }
 
     Rectangle {
-        x: Math.max(18px, (root.width - root.panel-width) / 2);
-        y: Math.max(18px, (root.height - root.panel-height) / 2);
-        width: Math.min(root.panel-width, root.width - 36px);
-        height: Math.min(root.panel-height, root.height - 36px);
-        background: Palette.tokens.panel-bg;
-        border-width: 1px;
-        border-color: Palette.tokens.border-strong;
-        border-radius: 9px;
+        width: 100%;
+        height: 100%;
+        background: rgb(2, 6, 23, 214);
 
-        TouchArea { }
+        TouchArea {
+            clicked => root.close();
+        }
 
-        VerticalBox {
-            padding: 20px;
-            spacing: 12px;
-            Text {
-                text: root.title;
-                color: Palette.tokens.text-strong;
-                font-size: 18px;
-                font-weight: 700;
-            }
-            Text {
-                text: root.subtitle;
-                color: Palette.tokens.text-muted;
-                font-size: 12px;
-                wrap: word-wrap;
-            }
-            Rectangle {
-                vertical-stretch: 1;
-                @children
-            }
-            HorizontalBox {
-                alignment: end;
-                spacing: 8px;
-                // An informational dialog has nothing to cancel, so an empty
-                // label drops the button instead of showing a blank one.
-                if root.cancel-label != "" : Button {
-                    text: root.cancel-label;
-                    clicked => root.close();
+        Rectangle {
+            x: Math.max(18px, (root.width - root.panel-width) / 2);
+            y: Math.max(18px, (root.height - root.panel-height) / 2);
+            width: Math.min(root.panel-width, root.width - 36px);
+            height: Math.min(root.panel-height, root.height - 36px);
+            background: Palette.tokens.panel-bg;
+            border-width: 1px;
+            border-color: Palette.tokens.border-strong;
+            border-radius: 9px;
+
+            TouchArea { }
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+                Text {
+                    text: root.title;
+                    color: Palette.tokens.text-strong;
+                    font-size: 18px;
+                    font-weight: 700;
                 }
-                Button {
-                    text: root.accept-label;
-                    clicked => root.accepted();
+                Text {
+                    text: root.subtitle;
+                    color: Palette.tokens.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    @children
+                }
+                HorizontalBox {
+                    alignment: end;
+                    spacing: 8px;
+                    // An informational dialog has nothing to cancel, so an empty
+                    // label drops the button instead of showing a blank one.
+                    if root.cancel-label != "" : Button {
+                        text: root.cancel-label;
+                        clicked => root.close();
+                    }
+                    if root.alternate-label != "" : Button {
+                        text: root.alternate-label;
+                        clicked => root.alternate();
+                    }
+                    Button {
+                        text: root.accept-label;
+                        clicked => root.accepted();
+                    }
                 }
             }
         }

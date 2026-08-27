@@ -13,8 +13,8 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::{
-    refresh_ui, source_settings, AddSourceWindow, I18n, MainWindow, Palette, PreviewSurface,
-    SourceCandidate, SourceKindRow,
+    refresh_ui, source_settings_for_canvas, AddSourceWindow, I18n, MainWindow, Palette,
+    PreviewSurface, SourceCandidate, SourceKindRow,
 };
 
 /// Sentinel kind id for the "Recently added" entry at the top of the list.
@@ -80,8 +80,9 @@ fn install_open(
         // Mirror whatever theme and language the studio is showing right now.
         controller.sync_theme(state.borrow().locale(), ui.global::<Palette>().get_tokens());
         refresh_window(&state, &controller);
-        if let Err(error) = controller.window.show() {
-            ui.set_status_message(format!("Add source window: {error}").into());
+        match controller.window.show() {
+            Ok(()) => controller.window.invoke_focus_keyboard_boundary(),
+            Err(error) => ui.set_status_message(format!("Add source window: {error}").into()),
         }
     });
 }
@@ -112,6 +113,16 @@ fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourc
     let close_controller = Rc::clone(controller);
     controller.window.on_close_window(move || {
         let _ = close_controller.window.hide();
+    });
+
+    // Native window-manager dismissal follows the same close path as the
+    // footer/ Escape action. The selection is session-local and is reset on
+    // the next open, so this only makes the standalone window lifecycle
+    // explicit without introducing another state owner.
+    let native_close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        native_close_controller.window.invoke_close_window();
+        slint::CloseRequestResponse::HideWindow
     });
 }
 
@@ -202,6 +213,8 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourceCo
         label: text.recently_added.clone(),
         icon: "source-generic".into(),
         obsolete: false,
+        index: 0,
+        count: 0,
     }];
     let mut listed = crate::preview::builtin_source_kinds()
         .into_iter()
@@ -214,11 +227,18 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourceCo
             label: kind_label(&text, kind.as_str()),
             icon: kind_icon(kind.as_str()).into(),
             obsolete: false,
+            index: 0,
+            count: 0,
         })
         .collect::<Vec<_>>();
     // OBS lists kinds by their displayed name, which is locale dependent.
     listed.sort_by(|left, right| left.label.cmp(&right.label));
     kind_rows.extend(listed);
+    let kind_count = i32::try_from(kind_rows.len()).unwrap_or(i32::MAX);
+    for (index, kind) in kind_rows.iter_mut().enumerate() {
+        kind.index = i32::try_from(index).unwrap_or(i32::MAX);
+        kind.count = kind_count;
+    }
     window.set_kind_rows(ModelRc::new(VecModel::from(kind_rows)));
 
     let target_scene = state.borrow().preview_scene().map(str::to_owned);
@@ -294,7 +314,14 @@ fn collect_candidates(
             kind_label: kind_label(text, source.kind().as_str()),
             scene: owner_scene.into(),
             icon: kind_icon(source.kind().as_str()).into(),
+            index: 0,
+            count: 0,
         });
+    }
+    let count = i32::try_from(candidates.len()).unwrap_or(i32::MAX);
+    for (index, candidate) in candidates.iter_mut().enumerate() {
+        candidate.index = i32::try_from(index).unwrap_or(i32::MAX);
+        candidate.count = count;
     }
     candidates
 }
@@ -322,7 +349,13 @@ fn create_source(
         kind_display(kind),
         next_ordinal(state, &scene, kind)
     );
-    let source = SourceSpec::new(&id, kind, &name, source_settings(kind)?)?;
+    let (canvas_width, canvas_height) = canvas_size(state);
+    let source = SourceSpec::new(
+        &id,
+        kind,
+        &name,
+        source_settings_for_canvas(kind, canvas_width, canvas_height)?,
+    )?;
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::AddSource {
@@ -591,6 +624,9 @@ fn next_ordinal(state: &Rc<RefCell<DesktopState>>, _scene: &str, kind: &str) -> 
 pub(crate) fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedString {
     match kind {
         "color_source" => text.kind_color_source.clone(),
+        "image_source" => text.kind_image_source.clone(),
+        "image_slideshow" => text.kind_image_slideshow.clone(),
+        "text_source" => text.kind_text_source.clone(),
         "test_pattern" => text.kind_test_pattern.clone(),
         "screen_capture" => text.kind_screen_capture.clone(),
         "window_capture" => text.kind_window_capture.clone(),
@@ -606,6 +642,9 @@ pub(crate) fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedStrin
 fn kind_display(kind: &str) -> &str {
     match kind {
         "color_source" => "Color",
+        "image_source" => "Image",
+        "image_slideshow" => "Image slideshow",
+        "text_source" => "Text",
         "test_pattern" => "Test pattern",
         "screen_capture" | "x11_screen_capture" | "wayland_screen_capture" => "Screen capture",
         "window_capture" | "x11_window_capture" => "Window capture",

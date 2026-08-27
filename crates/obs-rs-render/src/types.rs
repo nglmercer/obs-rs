@@ -1,3 +1,5 @@
+use obs_rs_media::VideoFormat;
+
 /// Stable handle for one backend-owned texture resource.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TextureId(pub(crate) u64);
@@ -7,6 +9,57 @@ impl TextureId {
     #[must_use]
     pub const fn value(self) -> u64 {
         self.0
+    }
+}
+
+/// The consumer that owns a render target's latency and size budget.
+///
+/// Keeping the role beside the format prevents a GUI viewport from being
+/// treated as an alias for the program canvas. A backend may share resources
+/// between roles, but the decision remains explicit at the submission boundary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RenderTargetRole {
+    /// The scene selected for the live program/output path.
+    Program,
+    /// The bounded desktop view of the live program feed.
+    ///
+    /// This is deliberately separate from [`Self::Program`]: the program
+    /// canvas may be 4K even when the studio window only needs a 1000px view.
+    ProgramPreview,
+    /// A bounded desktop preview viewport.
+    Preview,
+    /// A projector or multiview consumer.
+    Projector,
+    /// One bounded tile in the multiview compositor.
+    MultiviewTile,
+    /// A target whose pixels are being converted for an encoder.
+    Encoder,
+}
+
+/// A render target request with an explicit consumer role and media format.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RenderTarget {
+    role: RenderTargetRole,
+    format: VideoFormat,
+}
+
+impl RenderTarget {
+    /// Creates a target request.
+    #[must_use]
+    pub const fn new(role: RenderTargetRole, format: VideoFormat) -> Self {
+        Self { role, format }
+    }
+
+    /// Returns the consumer role.
+    #[must_use]
+    pub const fn role(self) -> RenderTargetRole {
+        self.role
+    }
+
+    /// Returns the target media format.
+    #[must_use]
+    pub const fn format(self) -> VideoFormat {
+        self.format
     }
 }
 
@@ -87,8 +140,10 @@ pub struct RenderMetrics {
     pub(crate) textures_created: u64,
     pub(crate) textures_destroyed: u64,
     pub(crate) uploads: u64,
+    pub(crate) uploaded_bytes: u64,
     pub(crate) compositions: u64,
     pub(crate) readbacks: u64,
+    pub(crate) readback_bytes: u64,
     pub(crate) color_conversions: u64,
     pub(crate) context_losses: u64,
     pub(crate) recoveries: u64,
@@ -112,7 +167,15 @@ impl RenderMetrics {
 
     /// Records one host-to-backend upload.
     pub fn record_upload(&mut self) {
+        self.record_upload_bytes(0);
+    }
+
+    /// Records one host-to-backend upload and its payload size.
+    pub fn record_upload_bytes(&mut self, bytes: usize) {
         self.uploads = self.uploads.saturating_add(1);
+        self.uploaded_bytes = self
+            .uploaded_bytes
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
     }
 
     /// Records one completed backend composition.
@@ -122,7 +185,15 @@ impl RenderMetrics {
 
     /// Records one explicit backend-to-host readback.
     pub fn record_readback(&mut self) {
+        self.record_readback_bytes(0);
+    }
+
+    /// Records one explicit backend-to-host readback and its payload size.
+    pub fn record_readback_bytes(&mut self, bytes: usize) {
         self.readbacks = self.readbacks.saturating_add(1);
+        self.readback_bytes = self
+            .readback_bytes
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
     }
 
     /// Records one device-side pixel-format conversion.
@@ -158,6 +229,12 @@ impl RenderMetrics {
         self.uploads
     }
 
+    /// Returns the cumulative host-to-backend payload size.
+    #[must_use]
+    pub const fn uploaded_bytes(self) -> u64 {
+        self.uploaded_bytes
+    }
+
     /// Returns the number of successful ordered compositions.
     #[must_use]
     pub const fn compositions(self) -> u64 {
@@ -168,6 +245,12 @@ impl RenderMetrics {
     #[must_use]
     pub const fn readbacks(self) -> u64 {
         self.readbacks
+    }
+
+    /// Returns the cumulative backend-to-host payload size.
+    #[must_use]
+    pub const fn readback_bytes(self) -> u64 {
+        self.readback_bytes
     }
 
     /// Returns the number of completed device-side color conversions.

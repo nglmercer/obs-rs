@@ -9,13 +9,21 @@ component FilterPropertyField inherits VerticalLayout {
     callback edited(string, string);
     spacing: 2px;
 
-    SettingRow {
+    if root.field.kind == 1 : SettingRow {
         label: root.field.label;
         SpinBox {
             value: root.field.number;
             minimum: root.field.minimum;
             maximum: root.field.maximum;
             edited(value) => { root.edited(root.field.key, value); }
+            horizontal-stretch: 1;
+        }
+    }
+    if root.field.kind == 2 : SettingRow {
+        label: root.field.label;
+        CheckBox {
+            checked: root.field.toggle;
+            toggled => { root.edited(root.field.key, self.checked ? "true" : "false"); }
             horizontal-stretch: 1;
         }
     }
@@ -54,7 +62,35 @@ export component SourceFiltersWindow inherits Window {
     callback edit-property(string, string);
     callback close-window();
 
-    HorizontalLayout {
+    filters-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+        // Filter edits apply immediately through typed callbacks. Escape only
+        // closes this editor; Return remains available to the name LineEdit.
+        capture-key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-window();
+                return accept;
+            }
+            reject
+        }
+        key-pressed(event) => {
+            if !event.modifiers.control
+                && !event.modifiers.shift
+                && !event.modifiers.alt
+                && !event.modifiers.meta
+                && event.text == Key.Escape {
+                root.close-window();
+                return accept;
+            }
+            reject
+        }
+
+        HorizontalLayout {
         padding: 12px;
         spacing: 12px;
 
@@ -79,6 +115,19 @@ export component SourceFiltersWindow inherits Window {
                             : Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;
+                        accessible-role: list-item;
+                        accessible-label: filter.id;
+                        accessible-description: filter.name + " · " + filter.kind;
+                        accessible-enabled: filter.id != "";
+                        accessible-item-selectable: true;
+                        accessible-item-selected: filter.selected;
+                        accessible-item-index: filter.index;
+                        accessible-item-count: filter.count;
+                        accessible-action-default => {
+                            if filter.id != "" {
+                                root.select-filter(filter.id);
+                            }
+                        }
                         HorizontalLayout {
                             padding-left: 6px;
                             padding-right: 4px;
@@ -134,6 +183,19 @@ export component SourceFiltersWindow inherits Window {
                             : Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;
+                        accessible-role: list-item;
+                        accessible-label: filter.id;
+                        accessible-description: filter.name + " · " + filter.kind;
+                        accessible-enabled: filter.id != "";
+                        accessible-item-selectable: true;
+                        accessible-item-selected: filter.selected;
+                        accessible-item-index: filter.index;
+                        accessible-item-count: filter.count;
+                        accessible-action-default => {
+                            if filter.id != "" {
+                                root.select-filter(filter.id);
+                            }
+                        }
                         HorizontalLayout {
                             padding-left: 6px;
                             padding-right: 4px;
@@ -225,5 +287,12 @@ export component SourceFiltersWindow inherits Window {
                 }
             }
         }
+    }
+    }
+
+    // Focus is explicit because the standalone window can be reopened after a
+    // child editor in another window owned keyboard focus.
+    public function focus-keyboard-boundary() {
+        filters-focus.focus();
     }
 }

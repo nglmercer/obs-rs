@@ -48,13 +48,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     runtime.register_plugin(&plugin)?;
     runtime.register_plugin(&sandbox_plugin)?;
     runtime.create_scene("main")?;
+    let format = VideoFormat::new(1_280, 720, FrameRate::new(30, 1)?)?;
 
     let background = runtime.create_source(
         "color_source",
         "background",
-        &color_settings("640", "360", "#102030FF"),
+        &color_settings(
+            &format.width().to_string(),
+            &format.height().to_string(),
+            "#102030FF",
+        ),
     )?;
-    let foreground = screen_source(&mut runtime)?;
+    let foreground = screen_source(&mut runtime, format)?;
     runtime.attach_source("main", background)?;
     runtime.attach_source("main", foreground)?;
     runtime.set_source_transform(
@@ -64,7 +69,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     runtime.add_source_filter(foreground, FrameFilter::Grayscale)?;
 
-    let format = VideoFormat::new(640, 360, FrameRate::new(30, 1)?)?;
     let mut pipeline = VideoPipeline::new(format, 2, DropPolicy::DropOldest)?;
     let outcome = pipeline.render_next(|deadline, output_format| {
         let request = VideoRequest::new(deadline.timestamp(), output_format);

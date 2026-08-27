@@ -1,0 +1,46 @@
+import { CheckBox, ComboBox, HorizontalBox, LineEdit, VerticalBox } from "std-widgets.slint";
+import { I18n } from "i18n.slint";
+import { Palette } from "palette.slint";
+
+/// Controls for the portable, asset-free Luma Wipe subset.
+export component TransitionLumaField inherits VerticalBox {
+    in-out property <int> pattern-index: 0;
+    in-out property <bool> invert: false;
+    in-out property <string> softness: "30";
+
+    spacing: 5px;
+    Text {
+        text: I18n.text.luma_pattern;
+        color: Palette.tokens.text-muted;
+        font-size: 11px;
+    }
+    ComboBox {
+        model: [I18n.text.luma_pattern_horizontal, I18n.text.luma_pattern_vertical];
+        current-index: root.pattern-index;
+        selected(value) => { root.pattern-index = self.current-index; }
+    }
+    HorizontalBox {
+        spacing: 5px;
+        Text {
+            text: I18n.text.luma_softness;
+            color: Palette.tokens.text-muted;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+        LineEdit {
+            text <=> root.softness;
+            width: 58px;
+            height: 28px;
+        }
+        Text {
+            text: "‰";
+            color: Palette.tokens.text-muted;
+            font-size: 10px;
+            vertical-alignment: center;
+        }
+    }
+    CheckBox {
+        text: I18n.text.luma_invert;
+        checked <=> root.invert;
+    }
+}
