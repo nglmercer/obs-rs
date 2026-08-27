@@ -115,6 +115,19 @@ export component SourceFiltersWindow inherits Window {
                             : Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;
+                        accessible-role: list-item;
+                        accessible-label: filter.id;
+                        accessible-description: filter.name + " · " + filter.kind;
+                        accessible-enabled: filter.id != "";
+                        accessible-item-selectable: true;
+                        accessible-item-selected: filter.selected;
+                        accessible-item-index: filter.index;
+                        accessible-item-count: filter.count;
+                        accessible-action-default => {
+                            if filter.id != "" {
+                                root.select-filter(filter.id);
+                            }
+                        }
                         HorizontalLayout {
                             padding-left: 6px;
                             padding-right: 4px;
@@ -170,6 +183,19 @@ export component SourceFiltersWindow inherits Window {
                             : Palette.tokens.row-bg;
                         border-width: 1px;
                         border-color: Palette.tokens.border;
+                        accessible-role: list-item;
+                        accessible-label: filter.id;
+                        accessible-description: filter.name + " · " + filter.kind;
+                        accessible-enabled: filter.id != "";
+                        accessible-item-selectable: true;
+                        accessible-item-selected: filter.selected;
+                        accessible-item-index: filter.index;
+                        accessible-item-count: filter.count;
+                        accessible-action-default => {
+                            if filter.id != "" {
+                                root.select-filter(filter.id);
+                            }
+                        }
                         HorizontalLayout {
                             padding-left: 6px;
                             padding-right: 4px;

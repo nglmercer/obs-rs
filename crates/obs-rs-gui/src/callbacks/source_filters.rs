@@ -653,23 +653,35 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &SourceFiltersC
         );
     }
     let selected = controller.selected.borrow().clone();
-    let make_row = |filter: &SourceFilterSpec| SourceFilterRow {
+    let make_row = |filter: &SourceFilterSpec, index: usize, count: i32| SourceFilterRow {
         id: filter.id().as_str().into(),
         name: filter.name().into(),
         kind: filter_display_name(filter.kind().as_str(), locale).into(),
         category: filter.category().id().into(),
+        index: i32::try_from(index).unwrap_or(i32::MAX),
+        count,
         enabled: filter.enabled(),
         selected: filter.id().as_str() == selected,
     };
-    let audio = filters
+    let audio_filters = filters
         .iter()
         .filter(|filter| filter.category() == SourceFilterCategory::AudioVideo)
-        .map(make_row)
         .collect::<Vec<_>>();
-    let effects = filters
+    let audio_count = i32::try_from(audio_filters.len()).unwrap_or(i32::MAX);
+    let audio = audio_filters
+        .into_iter()
+        .enumerate()
+        .map(|(index, filter)| make_row(filter, index, audio_count))
+        .collect::<Vec<_>>();
+    let effect_filters = filters
         .iter()
         .filter(|filter| filter.category() == SourceFilterCategory::Effect)
-        .map(make_row)
+        .collect::<Vec<_>>();
+    let effect_count = i32::try_from(effect_filters.len()).unwrap_or(i32::MAX);
+    let effects = effect_filters
+        .into_iter()
+        .enumerate()
+        .map(|(index, filter)| make_row(filter, index, effect_count))
         .collect::<Vec<_>>();
     controller
         .window

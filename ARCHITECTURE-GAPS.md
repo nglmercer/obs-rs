@@ -61,6 +61,14 @@ second capability state is introduced. The GUI fixture verifies both state
 transitions, while native screen-reader traversal and complete focus-order
 verification remain open.
 
+The Source Filters accessibility follow-up exposes both bounded filter lists as
+`ListItem` rows with stable filter targets, localized name/kind descriptions,
+selection state, per-list index/count metadata, and default selection actions.
+The actions reuse the existing standalone-window callback and keep filter
+properties/enable toggles as their own controls. The GUI fixture selects a
+filter through the accessible row action; native screen-reader traversal and
+complete focus-order verification remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

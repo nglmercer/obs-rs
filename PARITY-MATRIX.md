@@ -173,6 +173,16 @@ explanation; it never claims or starts a virtual-camera backend. The GUI
 fixture verifies both accessible state transitions, while native screen-reader
 traversal and complete focus-order verification remain partial.
 
+## Latest verified package: source-filter row accessibility semantics
+
+On 2026-08-27, the standalone Source Filters Audio/Video and Effect lists now
+expose each visible filter as a `ListItem` with a stable filter ID, localized
+display description, selected state, bounded per-list index/count, and a
+default selection action. The action reuses the existing typed filter callback;
+checkboxes and editor fields remain separate controls. The GUI fixture verifies
+an unselected Effect row and selects it through the accessibility action; native
+screen-reader traversal and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

@@ -1,4 +1,5 @@
 use super::*;
+use i_slint_backend_testing::AccessibleRole;
 
 #[path = "ui_source_drag_drop.rs"]
 mod source_drag_drop;
@@ -367,6 +368,38 @@ pub(super) fn render_source_filters_window(
     window.invoke_add_filter("grayscale".into());
     let selected_id = window.get_selected_filter_id();
     assert_eq!(selected_id, "grayscale");
+    let brightness_row = ElementHandle::find_by_accessible_label(window, "brightness")
+        .find(|row| {
+            row.accessible_role() == Some(AccessibleRole::ListItem)
+                && row.size().width > 200.0
+                && row.size().height >= 30.0
+        })
+        .expect("effect filter row is accessible");
+    assert_eq!(
+        brightness_row.accessible_description().as_deref(),
+        Some("Brightness · Brightness")
+    );
+    assert_eq!(brightness_row.accessible_enabled(), Some(true));
+    assert_eq!(brightness_row.accessible_item_selectable(), Some(true));
+    assert_eq!(brightness_row.accessible_item_selected(), Some(false));
+    assert_eq!(
+        brightness_row.accessible_item_count(),
+        Some(window.get_effect_rows().row_count())
+    );
+    brightness_row.invoke_accessible_default_action();
+    assert_eq!(window.get_selected_filter_id(), "brightness");
+    assert_eq!(
+        ElementHandle::find_by_accessible_label(window, "brightness")
+            .find(|row| {
+                row.accessible_role() == Some(AccessibleRole::ListItem)
+                    && row.size().width > 200.0
+                    && row.size().height >= 30.0
+            })
+            .expect("selected effect filter row is accessible")
+            .accessible_item_selected(),
+        Some(true)
+    );
+    window.invoke_select_filter("grayscale".into());
     window.invoke_rename_filter("Scene grayscale".into());
     window.invoke_move_filter(-1);
     window.invoke_select_filter("brightness".into());
