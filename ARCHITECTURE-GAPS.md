@@ -129,6 +129,12 @@ including the existing snap-behavior hint. The fixture verifies both controls
 without introducing page-side state; the remaining Settings pages, native
 screen-reader traversal, and complete focus-order verification remain open.
 
+The Appearance Settings accessibility follow-up connects the existing Theme and
+Style headings to their native `ComboBox` controls. The fixture verifies both
+controls without introducing page-side state; the compound font-size control,
+remaining Settings pages, native screen-reader traversal, and complete
+focus-order verification remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

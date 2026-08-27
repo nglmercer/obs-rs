@@ -45,6 +45,7 @@ export component AppearancePage inherits VerticalLayout {
             SettingsCombo {
                 model: root.theme-names;
                 current-index: root.theme-index;
+                accessible-label: I18n.text.settings_ui.theme;
                 selected(value) => { root.select-theme(self.current-index); }
             }
         }
@@ -53,6 +54,7 @@ export component AppearancePage inherits VerticalLayout {
             SettingsCombo {
                 model: root.style-names;
                 current-index: root.style-index;
+                accessible-label: I18n.text.settings_ui.style;
                 selected(value) => { root.select-style(self.current-index); }
             }
         }
@@ -85,4 +87,3 @@ export component AppearancePage inherits VerticalLayout {
 // Stream owns the destination only: where the frames go and how the connection
 // behaves. Everything about how they are encoded lives on the Output page,
 // which is the split OBS uses.
-

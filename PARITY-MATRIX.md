@@ -253,6 +253,13 @@ the snap-behavior hint. The GUI fixture verifies both controls without adding
 page-side state; the remaining Settings pages and native screen-reader
 traversal remain partial.
 
+## Latest verified package: Appearance Settings control accessibility
+
+On 2026-08-27, the Appearance Settings page now exposes the existing Theme and
+Style labels on their native `ComboBox` controls. The GUI fixture verifies both
+controls without adding page-side state; the compound font-size control and
+remaining Settings pages remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

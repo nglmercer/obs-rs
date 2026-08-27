@@ -662,6 +662,7 @@ pub(super) fn exercise_settings_commit(
 
     exercise_settings_category_accessibility(window);
     exercise_general_settings_control_accessibility(window);
+    exercise_appearance_settings_control_accessibility(window);
     exercise_settings_density_accessibility(window);
     exercise_mixer_settings_navigation(ui, window);
     exercise_stream_server_selection(window);
@@ -736,6 +737,24 @@ fn exercise_general_settings_control_accessibility(window: &SettingsWindow) {
         snap.accessible_description().as_deref(),
         Some("Sources snap to canvas and other visible sources within this distance. Ctrl temporarily disables snapping during a gesture.")
     );
+}
+
+/// Verifies that the Appearance page connects its visual Theme and Style
+/// labels to the native combo boxes without adding page-side state.
+fn exercise_appearance_settings_control_accessibility(window: &SettingsWindow) {
+    window.set_category(1);
+    for label in ["Theme", "Style"] {
+        let control = ElementHandle::find_by_accessible_label(window, label)
+            .find(|control| {
+                control.accessible_role() == Some(AccessibleRole::Combobox)
+                    && control.accessible_enabled() == Some(true)
+                    && control.size().width > 100.0
+                    && control.size().height > 20.0
+            })
+            .unwrap_or_else(|| panic!("the Appearance {label} control is accessible"));
+        assert_eq!(control.accessible_label().as_deref(), Some(label));
+    }
+    window.set_category(0);
 }
 
 /// Verifies the shared Appearance density selector as a bounded radio group
