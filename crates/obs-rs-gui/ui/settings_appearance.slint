@@ -65,6 +65,7 @@ export component AppearancePage inherits VerticalLayout {
         SettingRow {
             label: I18n.text.settings_ui.font_size;
             SettingsSlider {
+                control-label: I18n.text.settings_ui.font_size;
                 minimum: root.font-size-minimum;
                 maximum: root.font-size-maximum;
                 value: root.font-size;

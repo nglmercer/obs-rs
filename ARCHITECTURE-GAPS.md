@@ -130,10 +130,11 @@ without introducing page-side state; the remaining Settings pages, native
 screen-reader traversal, and complete focus-order verification remain open.
 
 The Appearance Settings accessibility follow-up connects the existing Theme and
-Style headings to their native `ComboBox` controls. The fixture verifies both
-controls without introducing page-side state; the compound font-size control,
-remaining Settings pages, native screen-reader traversal, and complete
-focus-order verification remain open.
+Style headings to their native `ComboBox` controls and propagates the Font size
+heading to both native controls in its paired `SpinBox`/`Slider`. The fixture
+verifies all four controls without introducing page-side state; remaining
+Settings pages, native screen-reader traversal, and complete focus-order
+verification remain open.
 
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged

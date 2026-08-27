@@ -256,9 +256,10 @@ traversal remain partial.
 ## Latest verified package: Appearance Settings control accessibility
 
 On 2026-08-27, the Appearance Settings page now exposes the existing Theme and
-Style labels on their native `ComboBox` controls. The GUI fixture verifies both
-controls without adding page-side state; the compound font-size control and
-remaining Settings pages remain partial.
+Style labels on their native `ComboBox` controls and the Font size label on both
+controls in its paired `SpinBox`/`Slider`. The GUI fixture verifies all four
+controls without adding page-side state; remaining Settings pages remain
+partial.
 
 ## Latest verified package: platform-specific dock rename key
 

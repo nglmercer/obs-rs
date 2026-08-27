@@ -91,6 +91,7 @@ export component SettingsSpinBox inherits SpinBox {
 // A slider paired with the numeric field that shows its value, which is how
 // the OBS Appearance page presents the font size.
 export component SettingsSlider inherits HorizontalLayout {
+    in property <string> control-label;
     in property <float> minimum;
     in property <float> maximum;
     in-out property <float> value;
@@ -104,6 +105,7 @@ export component SettingsSlider inherits HorizontalLayout {
         minimum: root.minimum;
         maximum: root.maximum;
         value: root.value;
+        accessible-label: root.control-label;
         edited(value) => {
             root.value = value;
             root.edited(value);
@@ -114,6 +116,7 @@ export component SettingsSlider inherits HorizontalLayout {
         minimum: root.minimum;
         maximum: root.maximum;
         value: root.value;
+        accessible-label: root.control-label;
         horizontal-stretch: 1;
         changed(value) => {
             root.value = Math.round(value);
