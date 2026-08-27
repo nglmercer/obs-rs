@@ -6,9 +6,12 @@ import { Palette } from "palette.slint";
 
 // One row of the kind list on the left.
 component KindRow inherits Rectangle {
+    in property <string> kind-id;
     in property <string> label;
     in property <string> icon-name;
     in property <bool> active;
+    in property <int> item-index;
+    in property <int> item-count;
     callback clicked();
 
     height: 32px;
@@ -16,6 +19,16 @@ component KindRow inherits Rectangle {
         ? Palette.tokens.accent
         : (touch.has-hover ? Palette.tokens.row-bg : transparent);
     border-radius: 3px;
+
+    accessible-role: list-item;
+    accessible-label: root.kind-id;
+    accessible-description: root.label;
+    accessible-enabled: root.kind-id != "";
+    accessible-item-selectable: true;
+    accessible-item-selected: root.active;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => root.clicked();
 
     HorizontalLayout {
         padding-left: 10px;
@@ -194,9 +207,12 @@ export component AddSourceWindow inherits Window {
                             vertical-alignment: bottom;
                         }
                         if kind.id != "" : KindRow {
+                            kind-id: kind.id;
                             label: kind.label;
                             icon-name: kind.icon;
                             active: root.selected-kind == kind.id;
+                            item-index: kind.index;
+                            item-count: kind.count;
                             clicked => { root.select-kind(kind.id); }
                         }
                     }

@@ -213,6 +213,8 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourceCo
         label: text.recently_added.clone(),
         icon: "source-generic".into(),
         obsolete: false,
+        index: 0,
+        count: 0,
     }];
     let mut listed = crate::preview::builtin_source_kinds()
         .into_iter()
@@ -225,11 +227,18 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourceCo
             label: kind_label(&text, kind.as_str()),
             icon: kind_icon(kind.as_str()).into(),
             obsolete: false,
+            index: 0,
+            count: 0,
         })
         .collect::<Vec<_>>();
     // OBS lists kinds by their displayed name, which is locale dependent.
     listed.sort_by(|left, right| left.label.cmp(&right.label));
     kind_rows.extend(listed);
+    let kind_count = i32::try_from(kind_rows.len()).unwrap_or(i32::MAX);
+    for (index, kind) in kind_rows.iter_mut().enumerate() {
+        kind.index = i32::try_from(index).unwrap_or(i32::MAX);
+        kind.count = kind_count;
+    }
     window.set_kind_rows(ModelRc::new(VecModel::from(kind_rows)));
 
     let target_scene = state.borrow().preview_scene().map(str::to_owned);

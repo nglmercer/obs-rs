@@ -202,6 +202,15 @@ the GUI fixture activates a visible existing-source card through the
 accessibility contract and verifies the subsequent add workflow. Native
 screen-reader traversal and complete focus-order verification remain partial.
 
+## Latest verified package: Add Source kind accessibility semantics
+
+On 2026-08-27, the Add Source kind list now exposes each selectable category as
+a `ListItem` with a stable kind ID, localized description, selected state,
+bounded index/count metadata, and a default action that reuses the existing
+kind-selection callback. The GUI fixture verifies the `Recently added` row
+through the accessibility contract without changing project state; native
+screen-reader traversal and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

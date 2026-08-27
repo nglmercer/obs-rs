@@ -85,6 +85,14 @@ than creating UI-side selection state; the fixture drives a materialized card
 through that contract before adding it to the target scene. Cards outside the
 current scroll viewport still require native traversal/scroll coverage.
 
+The Add Source kind accessibility follow-up applies the same bounded list
+contract to the selectable source categories: stable kind IDs, localized
+descriptions, selected state, index/count metadata, and default actions all
+project from the existing `AddSourceController` model. The fixture activates
+the `Recently added` row through that action and confirms the category remains
+owned by the controller; native screen-reader traversal and complete
+focus-order verification remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

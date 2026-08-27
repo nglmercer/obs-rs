@@ -1,6 +1,8 @@
 use super::*;
 use i_slint_backend_testing::AccessibleRole;
 
+#[path = "ui_add_source_accessibility.rs"]
+mod add_source_accessibility;
 #[path = "ui_source_drag_drop.rs"]
 mod source_drag_drop;
 #[path = "ui_source_selection.rs"]
@@ -728,6 +730,7 @@ pub(super) fn exercise_add_source_window(
         "add source window should show"
     );
 
+    add_source_accessibility::exercise_add_source_kind_accessibility(window);
     exercise_add_source_kind_pages(&controller, state, window);
 
     let scene = state
@@ -796,7 +799,7 @@ pub(super) fn exercise_add_source_window(
         .find(|row| row.index < 12)
         .expect("a visible existing source candidate is offered");
     let candidate_id = candidate.id.clone();
-    exercise_existing_candidate_accessibility(
+    add_source_accessibility::exercise_existing_candidate_accessibility(
         window,
         candidate_id.as_str(),
         candidate.name.as_str(),
@@ -850,42 +853,6 @@ fn exercise_add_source_kind_pages(
         );
         assert!(window.get_can_create(), "a real kind offers creation");
     }
-}
-
-/// Verifies one visible candidate card and exercises its existing toggle path
-/// through the testing backend's accessibility action.
-fn exercise_existing_candidate_accessibility(
-    window: &crate::AddSourceWindow,
-    candidate_id: &str,
-    candidate_name: &str,
-    candidate_scene: &str,
-) {
-    let candidate_card = ElementHandle::find_by_accessible_label(window, candidate_id)
-        .find(|card| {
-            card.accessible_role() == Some(AccessibleRole::ListItem)
-                && card.size().width > 100.0
-                && card.size().height > 100.0
-        })
-        .expect("visible existing source candidate card is accessible");
-    let description = candidate_card
-        .accessible_description()
-        .expect("candidate card has a human-readable description");
-    assert!(description.contains(candidate_name));
-    assert!(description.contains(candidate_scene));
-    assert_eq!(candidate_card.accessible_enabled(), Some(true));
-    assert_eq!(candidate_card.accessible_item_selectable(), Some(true));
-    assert_eq!(candidate_card.accessible_item_selected(), Some(false));
-    let candidate_count = window.get_candidates().row_count();
-    assert_eq!(
-        candidate_card.accessible_item_count(),
-        Some(candidate_count)
-    );
-    assert!(candidate_card
-        .accessible_item_index()
-        .is_some_and(|index| index < candidate_count));
-    candidate_card.invoke_accessible_default_action();
-    assert_eq!(window.get_selected_count(), 1);
-    assert_eq!(candidate_card.accessible_item_selected(), Some(true));
 }
 
 fn exercise_add_source_keyboard_boundary(window: &crate::AddSourceWindow) {
