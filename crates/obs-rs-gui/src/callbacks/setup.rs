@@ -350,6 +350,20 @@ fn install_window_callbacks(controller: &Rc<SetupController>) {
     controller
         .window
         .on_close_requested(move || close_controller.skip());
+    install_native_close(&controller.window);
+}
+
+/// Bridges the desktop window-manager close event to the wizard's existing
+/// close callback. Keeping the bridge separate means the native event cannot
+/// bypass the `skip()` policy owned by the controller.
+pub(crate) fn install_native_close(window: &SetupWindow) {
+    let weak = window.as_weak();
+    window.window().on_close_requested(move || {
+        if let Some(window) = weak.upgrade() {
+            window.invoke_close_requested();
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 fn install_polling(controller: &Rc<SetupController>) {

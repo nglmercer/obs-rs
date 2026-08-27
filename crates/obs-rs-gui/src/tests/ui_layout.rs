@@ -364,7 +364,14 @@ pub(super) fn render_setup_window() {
     let window = crate::SetupWindow::new().expect("setup window should instantiate");
     let closed = Rc::new(RefCell::new(false));
     let close_state = Rc::clone(&closed);
-    window.on_close_requested(move || *close_state.borrow_mut() = true);
+    let close_window = window.as_weak();
+    window.on_close_requested(move || {
+        *close_state.borrow_mut() = true;
+        if let Some(window) = close_window.upgrade() {
+            let _ = window.hide();
+        }
+    });
+    crate::callbacks::setup::install_native_close(&window);
     window.show().expect("setup window should show");
     window.invoke_focus_keyboard_boundary();
     window
@@ -390,7 +397,22 @@ pub(super) fn render_setup_window() {
         text: Key::Escape.into(),
     });
     assert!(*closed.borrow(), "plain Escape closes the setup wizard");
-    window.hide().expect("setup window should hide");
+
+    *closed.borrow_mut() = false;
+    window.show().expect("setup window should reopen");
+    window
+        .window()
+        .take_snapshot()
+        .expect("setup window should render before native close dispatch");
+    window.window().dispatch_event(WindowEvent::CloseRequested);
+    assert!(
+        *closed.borrow(),
+        "native close reaches the setup close callback"
+    );
+    assert!(
+        !window.window().is_visible(),
+        "native close hides the setup wizard"
+    );
 }
 
 /// Drives the display picker end to end: opening it for an X11 screen source,

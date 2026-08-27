@@ -71,6 +71,13 @@ path only makes the standalone window lifecycle explicit. The GUI fixture
 dispatches `CloseRequested` after the existing Escape path and verifies the
 window is hidden; complete focus traversal remains open.
 
+The Setup close-policy follow-up now bridges the native window-manager event to
+the existing `close-requested` callback. The controller therefore keeps
+ownership of the Skip policy, including its persisted setup state and cleanup
+of the blocking scrim, while the native event returns `HideWindow`. The GUI
+fixture exercises the shared bridge with Escape and `CloseRequested`;
+benchmark/apply behavior and complete focus traversal remain open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied
@@ -195,8 +202,9 @@ The standalone first-run Setup window now focuses an explicit keyboard
 boundary whenever it opens. Plain `Escape` follows the existing native-close
 meaning and exits setup without applying a benchmark; modified `Escape` is
 left available to child controls. The GUI fixture verifies rendering and both
-modifier paths. The benchmark/apply workflow and complete focus traversal
-remain open.
+modifier paths. Native window-manager close now reaches the same close callback
+through a shared bridge; the benchmark/apply workflow and complete focus
+traversal remain open.
 
 The Mixer options packet now keeps settings navigation contextual without
 creating another settings state owner. The Mixer dock's gear button traverses

@@ -112,6 +112,16 @@ opens, so no second project or UI state owner is introduced. The GUI fixture
 dispatches `CloseRequested` after the Escape path and verifies the window is
 hidden; complete focus-order verification remains partial.
 
+## Latest verified package: Setup native close policy
+
+On 2026-08-27, native window-manager dismissal of the first-run Setup wizard
+now invokes its existing `close-requested` callback before returning
+`HideWindow`. The controller remains responsible for Skip, including persisted
+setup state and removal of the blocking scrim; the native path cannot apply a
+benchmark. The GUI fixture exercises the shared bridge with Escape and
+`CloseRequested`; benchmark/apply behavior and complete focus-order
+verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the
@@ -287,6 +297,15 @@ keyboard boundary after it is shown. `Escape` closes through the existing Rust
 callback, while `Enter` remains available to the focused Create/Add control.
 The GUI fixture verifies both the real Escape event and native
 `CloseRequested` hide the window; complete focus traversal remains incomplete.
+
+## Latest verified package: Setup keyboard boundary
+
+On 2026-08-27, the first-run Setup wizard keeps an explicit focus boundary and
+uses plain Escape for its existing close callback. The native window-manager
+close now follows that same callback through the shared bridge, while modified
+Escape remains available to child controls. The GUI fixture verifies both
+modifier and native-close paths; benchmark/apply behavior and complete
+focus-order verification remain incomplete.
 
 ## Latest verified package: native slideshow directory Browse picker
 
