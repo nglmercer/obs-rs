@@ -213,6 +213,11 @@ export component SourceDock inherits Rectangle {
                     for source in source-rows : source-menu := SourceContextMenuArea {
                         height: 36px;
                         source-id: source.target;
+                        source-name: source.name;
+                        row-semantics: true;
+                        selected: source.selected;
+                        item-index: source.index;
+                        item-count: source.count;
                         source-kind: source.kind;
                         nested: source.nested;
                         group: source.group;

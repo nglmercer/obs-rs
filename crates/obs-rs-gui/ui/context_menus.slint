@@ -7,6 +7,11 @@ import { MoveTarget } from "models.slint";
 // button, so both entry points expose the identical menu.
 export component SourceContextMenuArea inherits Rectangle {
     in property <string> source-id;
+    in property <string> source-name;
+    in property <bool> row-semantics: false;
+    in property <bool> selected: false;
+    in property <int> item-index: 0;
+    in property <int> item-count: 0;
     in property <string> source-kind;
     in property <bool> nested: false;
     in property <bool> group: false;
@@ -21,10 +26,22 @@ export component SourceContextMenuArea inherits Rectangle {
     in property <bool> can-group;
     in property <[MoveTarget]> move-targets;
 
-    // The stable path is also the accessibility/test identity for a source
-    // row; it avoids making pointer automation depend on scroll position.
-    accessible-role: button;
+    // The stable path remains the accessibility/test identity for a source
+    // row; the human-readable name is carried as its description so pointer
+    // automation does not depend on scroll position or translated labels.
+    accessible-role: list-item;
     accessible-label: root.source-id;
+    accessible-description: root.source-name;
+    accessible-enabled: root.source-id != "";
+    accessible-item-selectable: root.row-semantics;
+    accessible-item-selected: root.row-semantics && root.selected;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => {
+        if root.row-semantics && root.source-id != "" {
+            root.select-source(root.source-id);
+        }
+    }
 
     callback select-source(string);
     callback select-source-with-mode(string, int);
@@ -282,11 +299,27 @@ export component SourceContextMenuArea inherits Rectangle {
 
 export component SceneContextMenuArea inherits Rectangle {
     in property <string> scene-id;
+    in property <string> scene-name;
+    in property <bool> selected;
+    in property <int> item-index;
+    in property <int> item-count;
     in property <bool> can-remove;
 
-    // Stable scene identity for screen readers and pointer-test fixtures.
-    accessible-role: button;
+    // Stable scene identity stays the label for screen-reader and pointer-test
+    // consumers; the visible scene name is the human-readable description.
+    accessible-role: list-item;
     accessible-label: root.scene-id;
+    accessible-description: root.scene-name;
+    accessible-enabled: root.scene-id != "";
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => {
+        if root.scene-id != "" {
+            root.select-scene(root.scene-id);
+        }
+    }
 
     callback select-scene(string);
     callback add-scene();

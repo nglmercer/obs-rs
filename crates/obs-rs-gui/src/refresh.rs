@@ -538,12 +538,17 @@ fn refresh_docks(ui: &MainWindow, state: &DesktopState, profile: Option<&Profile
     let locale = state.locale();
     let roles = SceneRoleLabels::for_locale(locale);
     let scene_rows = profile.map_or_else(Vec::new, |profile| {
-        profile
-            .scenes()
-            .map(|scene| SceneRow {
+        let scenes = profile.scenes().collect::<Vec<_>>();
+        let count = i32::try_from(scenes.len()).unwrap_or(i32::MAX);
+        scenes
+            .into_iter()
+            .enumerate()
+            .map(|(index, scene)| SceneRow {
                 role: roles.role(state, scene.id().as_str()),
                 id: scene.id().as_str().into(),
                 name: scene.name().into(),
+                index: i32::try_from(index).unwrap_or(i32::MAX),
+                count,
                 drag_data: DataTransfer::from(SharedString::from(scene.id().as_str())),
             })
             .collect::<Vec<_>>()

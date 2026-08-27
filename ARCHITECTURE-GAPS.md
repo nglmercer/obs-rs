@@ -30,6 +30,14 @@ The fixture verifies the visible Scenes header controls without changing the
 persisted layout. Native screen-reader traversal and complete focus-order
 verification remain open.
 
+The scene/source row accessibility follow-up now exposes each visible list row
+as a `ListItem` with its stable project target, human-readable description,
+selection state, bounded local index/count, and default selection action. The
+action invokes the existing Rust selection callback, so multi-selection and
+project state remain owned by one path. The GUI fixture verifies the live scene
+and source row models and selects both through the accessibility contract;
+native screen-reader traversal and full focus-order verification remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

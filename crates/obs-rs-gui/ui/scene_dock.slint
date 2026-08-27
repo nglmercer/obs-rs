@@ -117,6 +117,10 @@ export component SceneDock inherits Rectangle {
                         for scene in scene-rows : scene-menu := SceneContextMenuArea {
                             height: 38px;
                             scene-id: scene.id;
+                            scene-name: scene.name;
+                            selected: scene.role != "";
+                            item-index: scene.index;
+                            item-count: scene.count;
                             can-remove: scene-rows.length > 1;
                             select-scene(id) => {
                                 scene-focus.focus();

@@ -94,3 +94,46 @@ pub(super) fn exercise_navigation_accessibility(ui: &MainWindow) {
         "the accessible action closes the popup"
     );
 }
+
+/// Verifies that scene and source rows expose list-item state while retaining
+/// their stable project targets and selecting through the existing callbacks.
+pub(super) fn exercise_row_accessibility(ui: &MainWindow) {
+    let scene = find_accessible_row(ui, "preview");
+    let scene_count = ui.get_scene_rows().row_count();
+    assert_eq!(scene.accessible_description().as_deref(), Some("Preview"));
+    assert_eq!(scene.accessible_enabled(), Some(true));
+    assert_eq!(scene.accessible_item_selectable(), Some(true));
+    assert_eq!(scene.accessible_item_selected(), Some(true));
+    assert_eq!(scene.accessible_item_count(), Some(scene_count));
+    assert!(scene
+        .accessible_item_index()
+        .is_some_and(|index| index < scene_count));
+
+    let program = find_accessible_row(ui, "program");
+    program.invoke_accessible_default_action();
+    assert_eq!(ui.get_preview_scene().as_str(), "program");
+
+    let source = find_accessible_row(ui, "background_program");
+    assert_eq!(
+        source.accessible_description().as_deref(),
+        Some("Background")
+    );
+    assert_eq!(source.accessible_enabled(), Some(true));
+    assert_eq!(source.accessible_item_selectable(), Some(true));
+    assert_eq!(source.accessible_item_selected(), Some(true));
+    assert_eq!(source.accessible_item_count(), Some(1));
+    source.invoke_accessible_default_action();
+    assert_eq!(ui.get_selected_source().as_str(), "background_program");
+
+    // Leave the integrated fixture in the same scene/source state for the
+    // following keyboard, properties, and projector workflows.
+    ui.invoke_select_preview("preview".into());
+}
+
+fn find_accessible_row(ui: &MainWindow, target: &str) -> ElementHandle {
+    ElementHandle::find_by_accessible_label(ui, target)
+        .find(|row| {
+            row.accessible_role() == Some(AccessibleRole::ListItem) && row.size().height > 30.0
+        })
+        .unwrap_or_else(|| panic!("visible accessible list row for {target:?}"))
+}
