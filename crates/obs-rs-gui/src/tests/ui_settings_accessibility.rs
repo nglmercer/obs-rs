@@ -152,3 +152,25 @@ pub(super) fn exercise_settings_density_accessibility(window: &SettingsWindow) {
     assert_eq!(normal.accessible_checked(), Some(true));
     window.set_category(0);
 }
+
+/// Verifies that the Video page connects the always-present downscale-filter
+/// and FPS-type headings to their native combo boxes without adding page-side
+/// state. The resolution editor and conditional FPS fields remain separate
+/// packages because they have additional child/visibility semantics.
+pub(super) fn exercise_video_settings_control_accessibility(window: &SettingsWindow) {
+    window.set_category(5);
+    for (label, role) in [
+        ("Downscale filter", AccessibleRole::Combobox),
+        ("FPS type", AccessibleRole::Combobox),
+    ] {
+        let control = ElementHandle::find_by_accessible_label(window, label)
+            .find(|control| {
+                control.accessible_role() == Some(role)
+                    && control.size().width > 100.0
+                    && control.size().height > 20.0
+            })
+            .unwrap_or_else(|| panic!("the Video {label} control is accessible"));
+        assert_eq!(control.accessible_label().as_deref(), Some(label));
+    }
+    window.set_category(0);
+}

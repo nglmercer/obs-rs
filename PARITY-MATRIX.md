@@ -261,6 +261,13 @@ controls in its paired `SpinBox`/`Slider`. The GUI fixture verifies all four
 controls without adding page-side state; remaining Settings pages remain
 partial.
 
+## Latest verified package: Video Settings control accessibility
+
+On 2026-08-27, the Video Settings page now exposes the existing Downscale filter
+and FPS type labels on their always-present native `ComboBox` controls. The GUI
+fixture verifies both controls without adding page-side state; the compound
+resolution editor and conditional FPS fields remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

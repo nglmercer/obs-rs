@@ -136,6 +136,13 @@ verifies all four controls without introducing page-side state; remaining
 Settings pages, native screen-reader traversal, and complete focus-order
 verification remain open.
 
+The Video Settings accessibility follow-up connects the existing Downscale
+filter and FPS type headings to their always-present native `ComboBox` controls.
+The fixture verifies both controls without introducing page-side state; the
+compound resolution editor, conditional FPS fields, remaining Settings pages,
+native screen-reader traversal, and complete focus-order verification remain
+open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

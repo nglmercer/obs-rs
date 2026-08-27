@@ -92,6 +92,7 @@ export component VideoPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.scale-filter-names;
                 current-index: root.scale-filter-index;
+                accessible-label: I18n.text.settings_ui.downscale_filter;
                 // The filter only does anything when the two resolutions
                 // differ, so it says so rather than pretending otherwise.
                 enabled: root.downscale-active;
@@ -109,6 +110,7 @@ export component VideoPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.fps-mode-names;
                 current-index: root.fps-mode-index;
+                accessible-label: I18n.text.settings_ui.fps_type;
                 selected(value) => { root.select-fps-mode(self.current-index); }
             }
         }
@@ -151,4 +153,3 @@ export component VideoPage inherits VerticalLayout {
     }
     Rectangle { vertical-stretch: 1; }
 }
-
