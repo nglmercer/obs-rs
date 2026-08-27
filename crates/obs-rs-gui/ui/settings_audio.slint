@@ -59,6 +59,7 @@ export component AudioPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.sample-rate-names;
                 current-index: root.sample-rate-index;
+                accessible-label: I18n.text.settings_ui.sample_rate;
                 selected(value) => { root.select-sample-rate(self.current-index); }
             }
         }
@@ -67,6 +68,7 @@ export component AudioPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.channel-names;
                 current-index: root.channel-index;
+                accessible-label: I18n.text.settings_ui.channels;
                 selected(value) => { root.select-channels(self.current-index); }
             }
         }
@@ -75,6 +77,7 @@ export component AudioPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.audio-device-names;
                 current-index: root.audio-device-index;
+                accessible-label: I18n.text.settings_ui.audio_input_device;
                 selected(value) => { root.select-audio-device(self.current-index); }
             }
             Button {
@@ -88,6 +91,7 @@ export component AudioPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.audio-monitor-output-names;
                 current-index: root.audio-monitor-output-index;
+                accessible-label: I18n.text.settings_ui.audio_monitor_output;
                 selected(value) => { root.select-audio-monitor-output(self.current-index); }
             }
         }
@@ -107,6 +111,7 @@ export component AudioPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.microphone-monitor-mode-names;
                 current-index: root.microphone-monitor-mode-index;
+                accessible-label: I18n.text.settings_ui.microphone_monitor_mode;
                 selected(value) => { root.select-microphone-monitor-mode(self.current-index); }
             }
         }
@@ -115,6 +120,7 @@ export component AudioPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.desktop-monitor-mode-names;
                 current-index: root.desktop-monitor-mode-index;
+                accessible-label: I18n.text.settings_ui.desktop_audio_monitor_mode;
                 selected(value) => { root.select-desktop-monitor-mode(self.current-index); }
             }
         }
@@ -128,6 +134,7 @@ export component AudioPage inherits VerticalLayout {
                 value <=> root.audio-input-sync-offset;
                 minimum: 0;
                 maximum: 5000;
+                accessible-label: I18n.text.settings_ui.microphone_sync_offset;
                 edited(value) => { root.changed(); }
             }
         }
@@ -137,6 +144,7 @@ export component AudioPage inherits VerticalLayout {
                 value <=> root.desktop-audio-sync-offset;
                 minimum: 0;
                 maximum: 5000;
+                accessible-label: I18n.text.settings_ui.desktop_audio_sync_offset;
                 edited(value) => { root.changed(); }
             }
         }
@@ -153,4 +161,3 @@ export component AudioPage inherits VerticalLayout {
 // Video owns the canvas, the encoded output, and the frame rate as three
 // separate values: the output resolution is no longer an alias for the canvas,
 // which is what makes the downscale filter meaningful.
-

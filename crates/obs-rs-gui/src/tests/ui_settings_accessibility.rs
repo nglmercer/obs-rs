@@ -153,6 +153,40 @@ pub(super) fn exercise_settings_density_accessibility(window: &SettingsWindow) {
     window.set_category(0);
 }
 
+/// Verifies that the Audio page connects each visual row label to its native
+/// combo box or numeric field without introducing page-side state.
+pub(super) fn exercise_audio_settings_control_accessibility(window: &SettingsWindow) {
+    window.set_category(4);
+    for label in [
+        "Sample rate",
+        "Channels",
+        "Microphone / input",
+        "Monitor output",
+        "Microphone monitor mode",
+        "Desktop audio monitor mode",
+    ] {
+        assert_audio_control_accessible(window, label, AccessibleRole::Combobox);
+    }
+    for label in [
+        "Microphone sync offset (ms)",
+        "Desktop audio sync offset (ms)",
+    ] {
+        assert_audio_control_accessible(window, label, AccessibleRole::Spinbox);
+    }
+    window.set_category(0);
+}
+
+fn assert_audio_control_accessible(window: &SettingsWindow, label: &str, role: AccessibleRole) {
+    let control = ElementHandle::find_by_accessible_label(window, label)
+        .find(|control| {
+            control.accessible_role() == Some(role)
+                && control.size().width > 60.0
+                && control.size().height > 20.0
+        })
+        .unwrap_or_else(|| panic!("the Audio {label} control is accessible"));
+    assert_eq!(control.accessible_label().as_deref(), Some(label));
+}
+
 /// Verifies that the Video page connects the always-present downscale-filter
 /// and FPS-type headings to their native combo boxes without adding page-side
 /// state. The resolution editor and conditional FPS fields remain separate

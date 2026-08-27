@@ -270,6 +270,13 @@ GUI fixture verifies all six controls without adding page-side state and also
 exercises the Common, Integer, and Fractional FPS variants through their
 existing visibility properties. Remaining Settings pages remain partial.
 
+## Latest verified package: Audio Settings control accessibility
+
+On 2026-08-27, the Audio Settings page now exposes the existing General,
+Monitoring, and synchronization row labels on its six native `ComboBox` controls
+and two native `SpinBox` controls. The GUI fixture verifies all eight controls
+without adding page-side state; remaining Settings pages remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

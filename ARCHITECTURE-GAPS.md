@@ -145,6 +145,12 @@ Fractional FPS variants through the existing visibility properties. Remaining
 Settings pages, native screen-reader traversal, and complete focus-order
 verification remain open.
 
+The Audio Settings accessibility follow-up connects the existing General,
+Monitoring, and synchronization row labels to the six native `ComboBox` controls
+and two native `SpinBox` controls. The fixture verifies all eight controls
+without introducing page-side state; remaining Settings pages, native
+screen-reader traversal, and complete focus-order verification remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and
