@@ -69,6 +69,14 @@ properties/enable toggles as their own controls. The GUI fixture selects a
 filter through the accessible row action; native screen-reader traversal and
 complete focus-order verification remain open.
 
+The Settings category accessibility follow-up exposes the nine mutually
+exclusive sidebar pages as `Tab` elements with localized labels/descriptions,
+selected state, bounded index/count metadata, and default actions. Those
+actions mutate only the existing `SettingsWindow.category` property, while the
+GUI fixture switches between General and Appearance through the accessibility
+contract. Native screen-reader traversal and complete focus-order verification
+remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

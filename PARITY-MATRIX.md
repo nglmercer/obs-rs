@@ -183,6 +183,15 @@ checkboxes and editor fields remain separate controls. The GUI fixture verifies
 an unselected Effect row and selects it through the accessibility action; native
 screen-reader traversal and complete focus-order verification remain partial.
 
+## Latest verified package: Settings category accessibility semantics
+
+On 2026-08-27, the Settings sidebar categories now expose tab semantics,
+localized labels/descriptions, enabled and selected state, bounded index/count
+metadata, and default actions that reuse the existing `SettingsWindow.category`
+callbacks. The GUI fixture activates Appearance and General through the
+accessibility actions and verifies the live selected state; native
+screen-reader traversal and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

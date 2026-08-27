@@ -607,12 +607,52 @@ pub(super) fn exercise_settings_commit(
     ui.invoke_open_settings_window();
     assert!(!window.get_dirty(), "a freshly loaded draft is not dirty");
 
+    exercise_settings_category_accessibility(window);
     exercise_mixer_settings_navigation(ui, window);
     exercise_stream_server_selection(window);
 
     exercise_settings_apply_and_validation(window, &controller, &path);
     exercise_settings_keyboard_boundary(ui, window, &controller, &path);
     std::fs::remove_file(&path).expect("remove settings fixture");
+}
+
+/// Verifies that the settings sidebar exposes its mutually exclusive pages as
+/// tabs while keeping page selection in the `SettingsWindow` property.
+fn exercise_settings_category_accessibility(window: &SettingsWindow) {
+    let general = ElementHandle::find_by_accessible_label(window, "General")
+        .find(|tab| {
+            tab.accessible_role() == Some(AccessibleRole::Tab)
+                && tab.size().width > 100.0
+                && tab.size().height > 20.0
+        })
+        .expect("the General settings category is accessible");
+    assert_eq!(general.accessible_description().as_deref(), Some("General"));
+    assert_eq!(general.accessible_enabled(), Some(true));
+    assert_eq!(general.accessible_item_selectable(), Some(true));
+    assert_eq!(general.accessible_item_selected(), Some(true));
+    assert_eq!(general.accessible_item_index(), Some(0));
+    assert_eq!(general.accessible_item_count(), Some(9));
+
+    let appearance = ElementHandle::find_by_accessible_label(window, "Appearance")
+        .find(|tab| {
+            tab.accessible_role() == Some(AccessibleRole::Tab)
+                && tab.size().width > 100.0
+                && tab.size().height > 20.0
+        })
+        .expect("the Appearance settings category is accessible");
+    assert_eq!(appearance.accessible_item_selected(), Some(false));
+    assert_eq!(appearance.accessible_item_index(), Some(1));
+    assert_eq!(appearance.accessible_item_count(), Some(9));
+
+    appearance.invoke_accessible_default_action();
+    assert_eq!(window.get_category(), 1);
+    assert_eq!(general.accessible_item_selected(), Some(false));
+    assert_eq!(appearance.accessible_item_selected(), Some(true));
+
+    general.invoke_accessible_default_action();
+    assert_eq!(window.get_category(), 0);
+    assert_eq!(general.accessible_item_selected(), Some(true));
+    assert_eq!(appearance.accessible_item_selected(), Some(false));
 }
 
 fn exercise_settings_apply_and_validation(

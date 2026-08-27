@@ -304,6 +304,8 @@ export component CategoryRow inherits Rectangle {
     in property <string> label;
     in property <string> icon-name;
     in property <bool> active;
+    in property <int> item-index;
+    in property <int> item-count;
     callback clicked();
 
     height: Metrics.ui.sidebar-row-height;
@@ -311,6 +313,16 @@ export component CategoryRow inherits Rectangle {
         ? Palette.tokens.accent
         : (touch.has-hover ? Palette.tokens.row-bg : transparent);
     border-radius: 2px;
+
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-description: root.label;
+    accessible-enabled: true;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.active;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => root.clicked();
 
     HorizontalLayout {
         padding-left: 9px;
