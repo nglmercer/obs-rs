@@ -608,6 +608,7 @@ pub(super) fn exercise_settings_commit(
     assert!(!window.get_dirty(), "a freshly loaded draft is not dirty");
 
     exercise_settings_category_accessibility(window);
+    exercise_settings_density_accessibility(window);
     exercise_mixer_settings_navigation(ui, window);
     exercise_stream_server_selection(window);
 
@@ -653,6 +654,46 @@ fn exercise_settings_category_accessibility(window: &SettingsWindow) {
     assert_eq!(window.get_category(), 0);
     assert_eq!(general.accessible_item_selected(), Some(true));
     assert_eq!(appearance.accessible_item_selected(), Some(false));
+}
+
+/// Verifies the shared Appearance density selector as a bounded radio group
+/// while retaining the `SettingsWindow` draft callback as its state owner.
+fn exercise_settings_density_accessibility(window: &SettingsWindow) {
+    window.set_category(1);
+    let normal = ElementHandle::find_by_accessible_label(window, "Normal")
+        .find(|option| {
+            option.accessible_role() == Some(AccessibleRole::RadioButton)
+                && option.size().width > 40.0
+                && option.size().height > 20.0
+        })
+        .expect("the Normal density option is accessible");
+    assert_eq!(normal.accessible_description().as_deref(), Some("Normal"));
+    assert_eq!(normal.accessible_enabled(), Some(true));
+    assert_eq!(normal.accessible_checkable(), Some(true));
+    assert_eq!(normal.accessible_checked(), Some(true));
+    assert_eq!(normal.accessible_item_index(), Some(2));
+    assert_eq!(normal.accessible_item_count(), Some(4));
+
+    let compact = ElementHandle::find_by_accessible_label(window, "Compact")
+        .find(|option| {
+            option.accessible_role() == Some(AccessibleRole::RadioButton)
+                && option.size().width > 40.0
+                && option.size().height > 20.0
+        })
+        .expect("the Compact density option is accessible");
+    assert_eq!(compact.accessible_checked(), Some(false));
+    assert_eq!(compact.accessible_item_index(), Some(1));
+    assert_eq!(compact.accessible_item_count(), Some(4));
+
+    compact.invoke_accessible_default_action();
+    assert_eq!(window.get_density_index(), 1);
+    assert_eq!(compact.accessible_checked(), Some(true));
+    assert_eq!(normal.accessible_checked(), Some(false));
+
+    normal.invoke_accessible_default_action();
+    assert_eq!(window.get_density_index(), 2);
+    assert_eq!(normal.accessible_checked(), Some(true));
+    window.set_category(0);
 }
 
 fn exercise_settings_apply_and_validation(

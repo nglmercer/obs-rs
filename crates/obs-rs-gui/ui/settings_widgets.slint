@@ -198,6 +198,20 @@ export component SegmentedControl inherits HorizontalLayout {
             : (touch.has-hover ? Palette.tokens.row-bg : Palette.tokens.control-bg);
         border-width: 1px;
         border-color: Palette.tokens.border;
+
+        accessible-role: radio-button;
+        accessible-label: option;
+        accessible-description: option;
+        accessible-enabled: true;
+        accessible-checkable: true;
+        accessible-checked: index == root.current-index;
+        accessible-item-index: index;
+        accessible-item-count: root.options.length;
+        accessible-action-default => {
+            root.current-index = index;
+            root.selected(index);
+        }
+
         Text {
             text: option;
             color: index == root.current-index ? white : Palette.tokens.text;

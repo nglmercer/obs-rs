@@ -93,6 +93,14 @@ the `Recently added` row through that action and confirms the category remains
 owned by the controller; native screen-reader traversal and complete
 focus-order verification remain open.
 
+The shared Settings `SegmentedControl` accessibility follow-up exposes each
+mutually exclusive option as a `RadioButton` with a visible label,
+checkable/checked state, bounded index/count metadata, and a default action
+that reuses the existing page callback. The density fixture switches Compact
+and restores Normal through that contract; no second draft state is created.
+Native screen-reader traversal and complete focus-order verification remain
+open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

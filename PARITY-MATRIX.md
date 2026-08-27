@@ -211,6 +211,15 @@ kind-selection callback. The GUI fixture verifies the `Recently added` row
 through the accessibility contract without changing project state; native
 screen-reader traversal and complete focus-order verification remain partial.
 
+## Latest verified package: Settings segmented-control accessibility semantics
+
+On 2026-08-27, the shared Settings `SegmentedControl` now exposes each option
+as a radio button with its label/description, enabled and checked state,
+bounded index/count metadata, and a default action that reuses the existing
+selection callback. The GUI fixture verifies the Appearance density options,
+switches Compact and restores Normal through accessible actions; native
+screen-reader traversal and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the
