@@ -116,6 +116,13 @@ through the testing backend without adding form state; advanced text editing,
 native screen-reader traversal, and complete focus-order verification remain
 open.
 
+The modal-form accessibility follow-up propagates existing visual headings to
+the simple text and choice controls in project, scene, source, output,
+collection, and remux dialogs. The GUI fixture verifies scene creation, scene
+properties, and source rename inputs by role and label; transition subforms,
+native screen-reader traversal, and complete focus-order verification remain
+open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

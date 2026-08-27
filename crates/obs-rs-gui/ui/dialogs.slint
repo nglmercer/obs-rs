@@ -55,6 +55,9 @@ export component ProjectDialog inherits ModalShell {
                 placeholder-text: mode == 1
                     ? "obs-rs-collection.obsrproj"
                     : "/path/to/collection.obsrproj";
+                accessible-label: mode == 1
+                    ? I18n.text.collection_export_path
+                    : I18n.text.collection_import_path;
                 horizontal-stretch: 1;
             }
             Button {
@@ -69,6 +72,7 @@ export component ProjectDialog inherits ModalShell {
             LineEdit {
                 text <=> project-path;
                 placeholder-text: "obs-rs-project.obsrproj";
+                accessible-label: I18n.text.project_file;
                 horizontal-stretch: 1;
             }
             Button {
@@ -80,11 +84,13 @@ export component ProjectDialog inherits ModalShell {
         if mode == 0 : LineEdit {
             text <=> project-path;
             placeholder-text: "obs-rs-project.json";
+            accessible-label: I18n.text.project_file;
         }
         if mode == 0 : FieldHeading { text: I18n.text.diagnostics_file; }
         if mode == 0 : LineEdit {
             text <=> diagnostics-path;
             placeholder-text: "obs-rs-diagnostics.obsrdg";
+            accessible-label: I18n.text.diagnostics_file;
         }
         if mode != 4 : MutedText {
             text: I18n.text.atomic_save_hint;
@@ -117,11 +123,13 @@ export component SceneDialog inherits ModalShell {
         LineEdit {
             text <=> new-scene-id;
             placeholder-text: "scene-id";
+            accessible-label: I18n.text.identifier;
         }
         FieldHeading { text: I18n.text.display_name; }
         LineEdit {
             text <=> new-scene-name;
             placeholder-text: I18n.text.scene_name_placeholder;
+            accessible-label: I18n.text.display_name;
         }
     }
 }
@@ -174,6 +182,7 @@ export component RenameSceneDialog inherits ModalShell {
         LineEdit {
             text <=> scene-name;
             placeholder-text: I18n.text.scene_name_placeholder;
+            accessible-label: I18n.text.scene_name;
         }
         FieldHeading { text: I18n.text.transition_title; }
         ComboBox {
@@ -187,6 +196,7 @@ export component RenameSceneDialog inherits ModalShell {
                 I18n.text.luma_wipe
             ];
             current-index: root.transition-index;
+            accessible-label: I18n.text.transition_title;
             selected(value) => { root.transition-index = self.current-index; }
         }
         if root.transition-index == 4 || root.transition-index == 5 : TransitionDirectionField {
@@ -205,11 +215,13 @@ export component RenameSceneDialog inherits ModalShell {
         if root.transition-index != 0 : LineEdit {
             text <=> root.transition-duration;
             placeholder-text: "300";
+            accessible-label: I18n.text.duration;
         }
         if root.transition-index == 3 : FieldHeading { text: I18n.text.property_ui.color; }
         if root.transition-index == 3 : LineEdit {
             text <=> root.transition-color;
             placeholder-text: "#000000FF";
+            accessible-label: I18n.text.property_ui.color;
         }
         MutedText { text: I18n.text.transition_override_hint; }
         FieldHeading { text: I18n.text.stinger_title; }
@@ -219,6 +231,7 @@ export component RenameSceneDialog inherits ModalShell {
             LineEdit {
                 text <=> root.stinger-path;
                 placeholder-text: "assets/transition.webm";
+                accessible-label: I18n.text.stinger_resource_path;
                 horizontal-stretch: 1;
             }
             Button {
@@ -231,6 +244,7 @@ export component RenameSceneDialog inherits ModalShell {
         LineEdit {
             text <=> root.stinger-transition-point;
             placeholder-text: "500";
+            accessible-label: I18n.text.stinger_transition_point;
         }
         CheckBox {
             text: I18n.text.stinger_preload;
@@ -269,6 +283,7 @@ export component RenameSourceDialog inherits ModalShell {
         LineEdit {
             text <=> source-name;
             placeholder-text: I18n.text.source_name_placeholder;
+            accessible-label: I18n.text.source_name;
         }
     }
 }
@@ -291,6 +306,7 @@ export component OutputDialog inherits ModalShell {
         LineEdit {
             text <=> recording-path;
             placeholder-text: "obs-rs-recording.obsr";
+            accessible-label: I18n.text.recording_file;
         }
         FieldHeading {
             text: I18n.text.streaming_address;
@@ -298,6 +314,7 @@ export component OutputDialog inherits ModalShell {
         LineEdit {
             text <=> streaming-address;
             placeholder-text: "127.0.0.1:9000";
+            accessible-label: I18n.text.streaming_address;
         }
         MutedText {
             text: I18n.text.output_hint;
@@ -342,6 +359,7 @@ export component CollectionDialog inherits ModalShell {
         LineEdit {
             text <=> collection-name;
             placeholder-text: "untitled";
+            accessible-label: I18n.text.collection_name;
         }
     }
 }
@@ -450,6 +468,7 @@ export component RemuxRecoveryDialog inherits ModalShell {
         FieldHeading { text: I18n.text.recording_file; }
         ComboBox {
             model: root.candidates;
+            accessible-label: I18n.text.recording_file;
             selected(value) => { root.candidate-path = value; }
         }
     }

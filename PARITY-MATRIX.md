@@ -237,6 +237,14 @@ localized field label and hint through their native `LineEdit`, `SpinBox`,
 and size controls without introducing duplicate form state; advanced text
 editing and native screen-reader traversal remain partial.
 
+## Latest verified package: Modal form accessibility semantics
+
+On 2026-08-27, the simple text and choice controls in the project, scene,
+source, output, collection, and remux dialogs now expose the existing visual
+field headings as accessible labels. The GUI fixture verifies scene creation,
+scene properties, and source rename controls by role and label; transition
+subforms and native screen-reader traversal remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

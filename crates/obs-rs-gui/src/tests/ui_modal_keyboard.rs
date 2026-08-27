@@ -1,4 +1,5 @@
 use super::*;
+use i_slint_backend_testing::AccessibleRole;
 
 /// Verifies that the active modal owns Escape/Enter and prevents an unfinished
 /// draft from reaching the project or the main-window shortcut boundary.
@@ -39,6 +40,8 @@ pub(super) fn exercise_modal_keyboard_boundary(
 fn exercise_scene_properties(ui: &MainWindow, state: &Rc<RefCell<DesktopState>>, original: &str) {
     ui.set_active_modal(5);
     ui.set_scene_name("Canceled modal edit".into());
+    assert_modal_control_accessibility(ui, "Scene name", AccessibleRole::TextInput);
+    assert_modal_control_accessibility(ui, "Scene Transitions", AccessibleRole::Combobox);
     ui.window()
         .take_snapshot()
         .expect("active modal should render before key dispatch");
@@ -106,6 +109,8 @@ fn exercise_scene_creation(
     ui.set_active_modal(2);
     ui.set_new_scene_id(added_scene.into());
     ui.set_new_scene_name("Added from modal Enter".into());
+    assert_modal_control_accessibility(ui, "Scene id", AccessibleRole::TextInput);
+    assert_modal_control_accessibility(ui, "Display name", AccessibleRole::TextInput);
     ui.window()
         .take_snapshot()
         .expect("scene dialog should render before Enter dispatch");
@@ -138,6 +143,7 @@ fn exercise_source_rename(
     ui.set_active_modal(12);
     ui.set_source_rename_target(source_id.into());
     ui.set_source_name_draft("Renamed from modal Enter".into());
+    assert_modal_control_accessibility(ui, "Source name", AccessibleRole::TextInput);
     ui.window()
         .take_snapshot()
         .expect("source rename dialog should render before Enter dispatch");
@@ -179,4 +185,16 @@ fn source_name(state: &Rc<RefCell<DesktopState>>, id: &str) -> Option<String> {
         .active_profile_spec()
         .and_then(|profile| profile.source(id))
         .map(|source| source.name().to_owned())
+}
+
+fn assert_modal_control_accessibility(ui: &MainWindow, label: &str, role: AccessibleRole) {
+    let control = ElementHandle::find_by_accessible_label(ui, label)
+        .find(|control| {
+            control.accessible_role() == Some(role)
+                && control.accessible_enabled() == Some(true)
+                && control.size().width > 100.0
+                && control.size().height > 20.0
+        })
+        .unwrap_or_else(|| panic!("visible modal control for {label:?}"));
+    assert_eq!(control.accessible_label().as_deref(), Some(label));
 }
