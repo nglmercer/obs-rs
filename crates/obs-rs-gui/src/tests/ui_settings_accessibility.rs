@@ -174,3 +174,29 @@ pub(super) fn exercise_video_settings_control_accessibility(window: &SettingsWin
     }
     window.set_category(0);
 }
+
+/// Verifies that both sides of the bounded Video resolution editor inherit
+/// their row label without duplicating the resolution draft in the fixture.
+pub(super) fn exercise_video_resolution_accessibility(window: &SettingsWindow) {
+    window.set_category(5);
+    for label in ["Base (canvas) resolution", "Output (scaled) resolution"] {
+        let field = ElementHandle::find_by_accessible_label(window, label)
+            .find(|control| {
+                control.accessible_role() == Some(AccessibleRole::TextInput)
+                    && control.size().width > 100.0
+                    && control.size().height > 20.0
+            })
+            .unwrap_or_else(|| panic!("the Video {label} text field is accessible"));
+        assert_eq!(field.accessible_label().as_deref(), Some(label));
+
+        let picker = ElementHandle::find_by_accessible_label(window, label)
+            .find(|control| {
+                control.accessible_role() == Some(AccessibleRole::Combobox)
+                    && control.size().width > 100.0
+                    && control.size().height > 20.0
+            })
+            .unwrap_or_else(|| panic!("the Video {label} suggestion picker is accessible"));
+        assert_eq!(picker.accessible_label().as_deref(), Some(label));
+    }
+    window.set_category(0);
+}

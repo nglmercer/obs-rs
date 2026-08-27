@@ -57,6 +57,7 @@ export component VideoPage inherits VerticalLayout {
         SettingRow {
             label: I18n.text.settings_ui.base_resolution;
             EditableResolutionCombo {
+                control-label: I18n.text.settings_ui.base_resolution;
                 suggestions: root.resolution-names;
                 value <=> root.base-resolution;
                 valid: root.base-resolution-valid;
@@ -72,6 +73,7 @@ export component VideoPage inherits VerticalLayout {
         SettingRow {
             label: I18n.text.settings_ui.output_resolution;
             EditableResolutionCombo {
+                control-label: I18n.text.settings_ui.output_resolution;
                 suggestions: root.resolution-names;
                 value <=> root.output-resolution;
                 valid: root.output-resolution-valid;

@@ -137,9 +137,10 @@ Settings pages, native screen-reader traversal, and complete focus-order
 verification remain open.
 
 The Video Settings accessibility follow-up connects the existing Downscale
-filter and FPS type headings to their always-present native `ComboBox` controls.
-The fixture verifies both controls without introducing page-side state; the
-compound resolution editor, conditional FPS fields, remaining Settings pages,
+filter and FPS type headings to their always-present native `ComboBox` controls,
+and propagates the Base and Output resolution headings to both children of each
+bounded resolution editor. The fixture verifies all six controls without
+introducing page-side state; conditional FPS fields, remaining Settings pages,
 native screen-reader traversal, and complete focus-order verification remain
 open.
 

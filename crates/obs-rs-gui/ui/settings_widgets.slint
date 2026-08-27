@@ -253,6 +253,7 @@ export component AspectRatioLabel inherits Text {
 // is immediate — the field turns to the warning colour and the row reports the
 // failure upward — because the value is committed by Apply, not by the field.
 export component EditableResolutionCombo inherits HorizontalLayout {
+    in property <string> control-label;
     in property <[string]> suggestions;
     in-out property <string> value;
     in property <bool> valid: true;
@@ -269,6 +270,7 @@ export component EditableResolutionCombo inherits HorizontalLayout {
         height: Metrics.ui.control-height;
         horizontal-stretch: 1;
         placeholder-text: "1920x1080";
+        accessible-label: root.control-label;
         edited => { root.edited(self.text); }
     }
     // The picker is a separate control rather than an editable combo because
@@ -279,6 +281,7 @@ export component EditableResolutionCombo inherits HorizontalLayout {
         current-index: root.suggestion-index;
         width: 132px;
         height: Metrics.ui.control-height;
+        accessible-label: root.control-label;
         selected(value) => {
             root.value = value;
             root.selected(value);

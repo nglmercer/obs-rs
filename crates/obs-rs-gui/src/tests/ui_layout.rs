@@ -1,7 +1,8 @@
 use super::ui_settings_accessibility::{
     exercise_appearance_settings_control_accessibility,
     exercise_general_settings_control_accessibility, exercise_settings_category_accessibility,
-    exercise_settings_density_accessibility, exercise_video_settings_control_accessibility,
+    exercise_settings_density_accessibility, exercise_video_resolution_accessibility,
+    exercise_video_settings_control_accessibility,
 };
 use super::*;
 use i_slint_backend_testing::AccessibleRole;
@@ -670,6 +671,7 @@ pub(super) fn exercise_settings_commit(
     exercise_appearance_settings_control_accessibility(window);
     exercise_settings_density_accessibility(window);
     exercise_video_settings_control_accessibility(window);
+    exercise_video_resolution_accessibility(window);
     exercise_mixer_settings_navigation(ui, window);
     exercise_stream_server_selection(window);
 
