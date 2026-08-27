@@ -266,8 +266,9 @@ partial.
 On 2026-08-27, the Video Settings page now exposes the existing Downscale filter
 and FPS type labels on their always-present native `ComboBox` controls, plus the
 Base and Output resolution labels on both children of each bounded editor. The
-GUI fixture verifies all six controls without adding page-side state; conditional
-FPS fields remain partial.
+GUI fixture verifies all six controls without adding page-side state and also
+exercises the Common, Integer, and Fractional FPS variants through their
+existing visibility properties. Remaining Settings pages remain partial.
 
 ## Latest verified package: platform-specific dock rename key
 

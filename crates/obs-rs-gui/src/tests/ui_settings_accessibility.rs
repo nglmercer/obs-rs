@@ -200,3 +200,37 @@ pub(super) fn exercise_video_resolution_accessibility(window: &SettingsWindow) {
     }
     window.set_category(0);
 }
+
+/// Verifies every conditional FPS control through the existing visibility
+/// properties, keeping the Video page's callback and draft ownership intact.
+pub(super) fn exercise_video_fps_accessibility(window: &SettingsWindow) {
+    window.set_category(5);
+
+    window.set_fps_common(true);
+    window.set_fps_integer(false);
+    window.set_fps_fractional(false);
+    assert_video_control_accessible(window, "Common FPS value", AccessibleRole::Combobox);
+
+    window.set_fps_common(false);
+    window.set_fps_integer(true);
+    window.set_fps_fractional(false);
+    assert_video_control_accessible(window, "FPS value", AccessibleRole::Spinbox);
+
+    window.set_fps_integer(false);
+    window.set_fps_fractional(true);
+    assert_video_control_accessible(window, "FPS numerator", AccessibleRole::Spinbox);
+    assert_video_control_accessible(window, "FPS denominator", AccessibleRole::Spinbox);
+
+    window.set_category(0);
+}
+
+fn assert_video_control_accessible(window: &SettingsWindow, label: &str, role: AccessibleRole) {
+    let control = ElementHandle::find_by_accessible_label(window, label)
+        .find(|control| {
+            control.accessible_role() == Some(role)
+                && control.size().width > 60.0
+                && control.size().height > 20.0
+        })
+        .unwrap_or_else(|| panic!("the Video {label} control is accessible"));
+    assert_eq!(control.accessible_label().as_deref(), Some(label));
+}

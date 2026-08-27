@@ -121,6 +121,7 @@ export component VideoPage inherits VerticalLayout {
             SettingsCombo {
                 model: root.frame-rate-names;
                 current-index: root.frame-rate-index;
+                accessible-label: I18n.text.settings_ui.frame_rate;
                 selected(value) => { root.select-frame-rate(self.current-index); }
             }
         }
@@ -130,6 +131,7 @@ export component VideoPage inherits VerticalLayout {
                 value <=> root.fps-numerator;
                 minimum: 1;
                 maximum: 240;
+                accessible-label: I18n.text.settings_ui.integer_fps;
                 edited(value) => { root.changed(); }
             }
         }
@@ -139,6 +141,7 @@ export component VideoPage inherits VerticalLayout {
                 value <=> root.fps-numerator;
                 minimum: 1;
                 maximum: 1000000;
+                accessible-label: I18n.text.settings_ui.fps_numerator;
                 edited(value) => { root.changed(); }
             }
         }
@@ -148,6 +151,7 @@ export component VideoPage inherits VerticalLayout {
                 value <=> root.fps-denominator;
                 minimum: 1;
                 maximum: 100000;
+                accessible-label: I18n.text.settings_ui.fps_denominator;
                 edited(value) => { root.changed(); }
             }
         }
