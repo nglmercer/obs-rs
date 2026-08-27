@@ -420,6 +420,18 @@ fn exercise_monitor_keyboard_boundary(ui: &MainWindow, window: &crate::MonitorWi
     window
         .window()
         .take_snapshot()
+        .expect("monitor window should render before native close dispatch");
+    window.window().dispatch_event(WindowEvent::CloseRequested);
+
+    ui.invoke_open_monitor_window();
+    assert!(
+        !window.get_capture_whole_desktop(),
+        "native window close discards the monitor picker draft"
+    );
+    window.set_capture_whole_desktop(true);
+    window
+        .window()
+        .take_snapshot()
         .expect("monitor window should render before Enter dispatch");
     window.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Return.into(),

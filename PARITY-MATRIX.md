@@ -83,6 +83,15 @@ when the window is reopened, then retains the existing Escape path. Native
 close policies for the remaining standalone editors and complete focus
 traversal remain partial.
 
+## Latest verified package: Monitor picker native close policy
+
+On 2026-08-26, native window-manager dismissal of the Monitor picker now
+returns `HideWindow` and discards the temporary whole-desktop choice just like
+Escape. The GUI fixture reopens the picker after `CloseRequested` and verifies
+that the persisted display selection remains unchanged before exercising the
+existing Enter acceptance path. Native close policies for the remaining
+standalone editors and complete focus traversal remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

@@ -280,6 +280,14 @@ fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<MonitorC
     controller.window.on_cancel_monitor(move || {
         let _ = cancel_controller.window.hide();
     });
+
+    // Native window-manager dismissal must discard the temporary display
+    // choice just like Escape and leave the persisted source untouched.
+    let native_close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        let _ = native_close_controller.window.hide();
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 fn install_commit(

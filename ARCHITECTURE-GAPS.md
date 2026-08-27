@@ -49,6 +49,13 @@ native dismissal explicit and keeps the editor lifecycle bounded. Native close
 behavior for the remaining standalone editors and complete focus traversal
 remain open.
 
+The Monitor picker close-policy follow-up routes native dismissal through the
+same cancel boundary as Escape. A temporary whole-desktop/display choice is
+discarded before the picker hides, so reopening still reflects the persisted
+screen-source setting; the Wayland portal handshake remains a separate async
+capability boundary. Native close behavior for the remaining standalone
+editors and complete focus traversal remain open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied
