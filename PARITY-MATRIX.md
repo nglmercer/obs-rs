@@ -122,6 +122,16 @@ benchmark. The GUI fixture exercises the shared bridge with Escape and
 `CloseRequested`; benchmark/apply behavior and complete focus-order
 verification remain partial.
 
+## Latest verified package: Projector native close policy
+
+On 2026-08-27, native window-manager dismissal of ProjectorWindow now invokes
+the existing `close_projector` callback before returning `HideWindow`. The
+projector remembers bounded geometry and monitor state, releases its shared
+feed through the same path as Escape, and does not open a second capture
+runtime. The GUI fixture dispatches `CloseRequested` on a real program
+projector and verifies its lifecycle closes; native multi-monitor/DPI and
+complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

@@ -853,6 +853,15 @@ fn open_projector(
 
     let close_projectors = Rc::clone(projectors);
     window.on_close_requested(move || close_projector(&close_projectors, feed));
+    let native_close_window = window.as_weak();
+    window.window().on_close_requested(move || {
+        if let Some(window) = native_close_window.upgrade() {
+            window.invoke_close_requested();
+        }
+        // The generated callback owns geometry/monitor persistence and the
+        // shared-feed release; this response completes the native handshake.
+        slint::CloseRequestResponse::HideWindow
+    });
     let fullscreen_window = window.as_weak();
     window.on_toggle_fullscreen(move || {
         if let Some(window) = fullscreen_window.upgrade() {

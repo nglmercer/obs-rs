@@ -230,6 +230,13 @@ another dock or dialog; the GUI menu fixture drives both F11 transitions and
 closes the real program projector with Escape. Native multi-monitor/DPI and
 projector focus traversal remain open.
 
+The projector close-policy follow-up routes native window-manager dismissal
+through the same `close_projector` callback used by Escape. Geometry and
+monitor state are remembered, the shared projector feed is released, and the
+native event returns `HideWindow` without opening another capture runtime. The
+GUI fixture dispatches `CloseRequested` on a real program projector; native
+multi-monitor/DPI and projector focus traversal remain open.
+
 The floating-dock close follow-up now routes the native window-manager close
 request through the same Rust `redock()` path as the dock header. Closing a
 detached mixer therefore clears its floating projection, remembers its bounded
