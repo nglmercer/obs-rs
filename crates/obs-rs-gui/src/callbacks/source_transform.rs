@@ -144,6 +144,15 @@ fn install_actions(
     controller.window.on_close_window(move || {
         let _ = close_controller.window.hide();
     });
+
+    // Native window-manager close has the same cancel semantics as the
+    // explicit Cancel button, so a transient transform cannot be committed
+    // merely by dismissing the window chrome.
+    let native_close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        let _ = native_close_controller.window.hide();
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 fn populate_from_project(

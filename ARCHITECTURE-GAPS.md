@@ -36,6 +36,12 @@ source-settings draft is therefore discarded before the window is hidden, and
 reopening rebuilds it from the persisted source. Native close behavior for the
 other standalone editors and complete focus traversal remain open.
 
+The Transform editor close-policy follow-up applies the same rule to transient
+scene-item geometry: native window-manager close hides the editor without
+committing a reset or partial draft, and reopening reconstructs the last
+committed transform. Native close behavior for the remaining standalone
+editors and complete focus traversal remain open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied

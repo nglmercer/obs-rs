@@ -65,6 +65,15 @@ the persisted path is restored instead of committing the staged draft. Native
 close policies for the other standalone editors and complete focus traversal
 remain partial.
 
+## Latest verified package: Transform editor native close policy
+
+On 2026-08-26, a native window-manager close of the Transform editor now hides
+the window without committing its transient geometry draft. The GUI fixture
+resets a committed transform, dispatches `CloseRequested`, reopens the editor,
+and verifies that the committed position remains intact before exercising the
+existing Escape cancel path. Native close policies for the remaining standalone
+editors and complete focus traversal remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

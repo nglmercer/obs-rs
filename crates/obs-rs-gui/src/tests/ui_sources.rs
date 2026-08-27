@@ -633,6 +633,24 @@ pub(super) fn exercise_source_transform_window(
         .window()
         .take_snapshot()
         .expect("transform window should render before Escape dispatch");
+    window.window().dispatch_event(WindowEvent::CloseRequested);
+
+    ui.invoke_open_source_transform_window();
+    assert_eq!(
+        window.get_position_x(),
+        42,
+        "native window close discards the local transform draft"
+    );
+    assert_eq!(
+        window.get_position_y(),
+        -7,
+        "native window close preserves the committed transform"
+    );
+    window.invoke_reset_transform();
+    window
+        .window()
+        .take_snapshot()
+        .expect("transform window should render before Escape dispatch");
     window.window().dispatch_event(WindowEvent::KeyPressed {
         text: Key::Escape.into(),
     });
