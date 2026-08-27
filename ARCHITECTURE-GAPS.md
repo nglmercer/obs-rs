@@ -109,6 +109,13 @@ does not duplicate rows in Rust: the index comes from the Slint repeater and
 the row remains a projection of `MonitorRow`. Map-tile semantics, native
 screen-reader traversal, and portal-owned display selection remain open.
 
+The Source Properties form accessibility follow-up propagates each dynamic
+property's existing visual label and hint to its native `LineEdit`, `SpinBox`,
+`CheckBox`, or `ComboBox` control. The fixture verifies color and size fields
+through the testing backend without adding form state; advanced text editing,
+native screen-reader traversal, and complete focus-order verification remain
+open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

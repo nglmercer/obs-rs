@@ -229,6 +229,14 @@ that reuses the existing monitor-selection callback. The GUI fixture verifies
 both display rows and activates the secondary monitor through accessibility;
 the map and native screen-reader traversal remain separate follow-up scopes.
 
+## Latest verified package: Source Properties form accessibility semantics
+
+On 2026-08-27, dynamic Source Properties controls now expose the existing
+localized field label and hint through their native `LineEdit`, `SpinBox`,
+`CheckBox`, or `ComboBox` accessibility nodes. The GUI fixture verifies color
+and size controls without introducing duplicate form state; advanced text
+editing and native screen-reader traversal remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

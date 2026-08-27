@@ -1,4 +1,5 @@
 use super::*;
+use i_slint_backend_testing::AccessibleRole;
 
 pub(super) fn render_source_properties_window() {
     let window = SourcePropertiesWindow::new().expect("properties window should instantiate");
@@ -11,6 +12,10 @@ pub(super) fn render_source_properties_window() {
         UiLocale::English,
     ))));
     window.show().expect("properties window should show");
+    window
+        .global::<I18n>()
+        .set_text(crate::i18n::catalog(UiLocale::English));
+    exercise_property_control_accessibility(&window);
     for locale in UiLocale::supported() {
         window
             .global::<I18n>()
@@ -22,6 +27,42 @@ pub(super) fn render_source_properties_window() {
         assert!(snapshot.width() > 0 && snapshot.height() > 0);
     }
     window.hide().expect("properties window should hide");
+}
+
+/// Verifies that the dynamic property widgets inherit the visual field label
+/// and hint without creating a second form model or changing edit behavior.
+fn exercise_property_control_accessibility(window: &SourcePropertiesWindow) {
+    let color = find_property_control(window, "Color", AccessibleRole::TextInput);
+    assert_eq!(
+        color.accessible_description().as_deref(),
+        Some("Hexadecimal #RRGGBBAA.")
+    );
+    assert_eq!(color.accessible_enabled(), Some(true));
+
+    let width = find_property_control(window, "Width", AccessibleRole::Spinbox);
+    assert_eq!(
+        width.accessible_description().as_deref(),
+        Some("Size of the frames this source renders into the scene.")
+    );
+    assert_eq!(width.accessible_enabled(), Some(true));
+
+    let height = find_property_control(window, "Height", AccessibleRole::Spinbox);
+    assert_eq!(height.accessible_description().as_deref(), Some(""));
+    assert_eq!(height.accessible_enabled(), Some(true));
+}
+
+fn find_property_control(
+    window: &SourcePropertiesWindow,
+    label: &str,
+    role: AccessibleRole,
+) -> ElementHandle {
+    ElementHandle::find_by_accessible_label(window, label)
+        .find(|control| {
+            control.accessible_role() == Some(role)
+                && control.size().width > 100.0
+                && control.size().height > 20.0
+        })
+        .unwrap_or_else(|| panic!("visible source-property control for {label:?}"))
 }
 
 /// Verifies that an image source gets the native Browse capability while its

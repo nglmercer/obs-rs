@@ -21,6 +21,8 @@ component PropertyField inherits VerticalLayout {
             spacing: 8px;
             LineEdit {
                 text: root.field.text;
+                accessible-label: root.field.label;
+                accessible-description: root.field.hint;
                 edited => { root.edited(root.field.key, self.text); }
                 horizontal-stretch: 1;
             }
@@ -36,6 +38,8 @@ component PropertyField inherits VerticalLayout {
             value: root.field.number;
             minimum: root.field.minimum;
             maximum: root.field.maximum;
+            accessible-label: root.field.label;
+            accessible-description: root.field.hint;
             edited(value) => { root.edited(root.field.key, value); }
             horizontal-stretch: 1;
         }
@@ -44,6 +48,8 @@ component PropertyField inherits VerticalLayout {
         label: root.field.label;
         CheckBox {
             checked: root.field.toggle;
+            accessible-label: root.field.label;
+            accessible-description: root.field.hint;
             toggled => { root.edited(root.field.key, self.checked ? "true" : "false"); }
             horizontal-stretch: 1;
         }
@@ -53,6 +59,8 @@ component PropertyField inherits VerticalLayout {
         ComboBox {
             model: root.field.choices;
             current-index: root.field.choice_index;
+            accessible-label: root.field.label;
+            accessible-description: root.field.hint;
             // A choice reports its index; Rust maps it back to the stored value.
             selected(value) => { root.edited(root.field.key, self.current-index); }
             horizontal-stretch: 1;
@@ -64,6 +72,8 @@ component PropertyField inherits VerticalLayout {
         LineEdit {
             text: root.field.text;
             placeholder-text: "#405070FF";
+            accessible-label: root.field.label;
+            accessible-description: root.field.hint;
             edited => { root.edited(root.field.key, self.text); }
             horizontal-stretch: 1;
         }
