@@ -132,6 +132,7 @@ enum WorkerCommand {
     ),
     SetMuted(EngineAudioChannel, bool, mpsc::Sender<Result<(), String>>),
     SetAudioInput(Option<String>, mpsc::Sender<Result<(), String>>),
+    SetDesktopAudio(Option<String>, mpsc::Sender<Result<(), String>>),
     SetMonitorMode(
         EngineAudioChannel,
         AudioMonitorMode,
@@ -649,6 +650,30 @@ impl EngineWorker {
         let (reply, receive) = mpsc::channel();
         self.sender
             .send(WorkerCommand::SetAudioInput(
+                device_id.map(str::to_owned),
+                reply,
+            ))
+            .map_err(|_| worker_closed())?;
+        receive
+            .recv()
+            .map_err(|_| worker_closed())?
+            .map_err(EngineError::Worker)
+    }
+
+    /// Switches the worker-owned desktop loopback output without blocking the
+    /// GUI on platform device setup.
+    ///
+    /// `None` selects the provider's default render route. The platform
+    /// provider remains responsible for deciding whether that route can be
+    /// opened as a loopback input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the worker has already closed.
+    pub fn set_desktop_audio_id(&self, device_id: Option<&str>) -> Result<(), EngineError> {
+        let (reply, receive) = mpsc::channel();
+        self.sender
+            .send(WorkerCommand::SetDesktopAudio(
                 device_id.map(str::to_owned),
                 reply,
             ))

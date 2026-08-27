@@ -29,6 +29,7 @@ obs-rs-project = { path = "../obs-rs-project" }
 obs-rs-render = { path = "../obs-rs-render" }
 obs-rs-render-wgpu = { path = "../obs-rs-render-wgpu", features = ["gpu"] }
 obs-rs-ui = { path = "../obs-rs-ui" }
+obs-rs-util = { path = "../obs-rs-util" }
 slint = { version = "1.17.1", default-features = false, features = [
     "accessibility",
     "backend-winit",

@@ -294,6 +294,16 @@ fn capture_source_defaults_have_a_real_selectable_device_id() {
         if kind == "camera_capture" && devices.is_empty() {
             assert_eq!(device_id, "nokhwa-camera-0");
         } else {
+            #[cfg(target_os = "windows")]
+            if devices.is_empty() {
+                let picker_id = match kind {
+                    "screen_capture" => "wgc-screen-picker",
+                    "window_capture" => "wgc-window-picker",
+                    _ => unreachable!("camera empty case was handled above"),
+                };
+                assert_eq!(device_id, picker_id);
+                continue;
+            }
             assert!(
                 devices.iter().any(|(id, _)| id == device_id),
                 "{kind} default must be in its device catalog"

@@ -1,6 +1,6 @@
 [package]
 name = "obs-rs-audio-wasapi"
-description = "Windows shared-mode audio input for OBS-RS"
+description = "Windows shared-mode audio input, loopback, and monitoring for OBS-RS"
 edition.workspace = true
 publish.workspace = true
 version.workspace = true

@@ -137,7 +137,11 @@ impl PreviewCompositor {
         match self {
             Self::Wgpu(compositor) => (
                 compositor.backend.adapter_capabilities().name().to_owned(),
-                compositor.backend.adapter_capabilities().backend().to_owned(),
+                compositor
+                    .backend
+                    .adapter_capabilities()
+                    .backend()
+                    .to_owned(),
             ),
             Self::Cpu { reason } => (
                 "CPU fallback".to_owned(),

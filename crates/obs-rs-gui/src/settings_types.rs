@@ -343,6 +343,9 @@ pub(crate) struct AppSettings {
     /// default input and keeps the deterministic fallback as a safe last
     /// resort.
     pub(crate) audio_input_id: String,
+    /// Provider-stable render-device ID used for desktop/system loopback;
+    /// empty selects the provider's default output route.
+    pub(crate) desktop_audio_id: String,
     /// Provider-stable local monitor-output ID; empty disables local playback.
     pub(crate) audio_monitor_output_id: String,
     /// Monitor destination policy for the microphone channel.
@@ -446,6 +449,7 @@ impl Default for AppSettings {
             rist: RistConfig::default(),
             reference_address: "127.0.0.1:9000".to_owned(),
             audio_input_id: String::new(),
+            desktop_audio_id: String::new(),
             audio_monitor_output_id: String::new(),
             microphone_monitor_mode: AudioMonitorMode::Off,
             desktop_audio_monitor_mode: AudioMonitorMode::Off,

@@ -4,9 +4,8 @@
 
 use crate::portable::parse_format;
 use obs_rs_capture::{
-    CaptureKind, CaptureLifecycleState, CaptureRequest, PlatformCaptureAdapter,
-    ThreadedCaptureDevice, VideoCaptureDevice, SCREEN_CAPTURE_SOURCE_KIND,
-    WINDOW_CAPTURE_SOURCE_KIND,
+    CaptureLifecycleState, CaptureRequest, PlatformCaptureAdapter, ThreadedCaptureDevice,
+    SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
 };
 use obs_rs_capture_windows::WindowsCaptureAdapter;
 use obs_rs_config::Config;
@@ -19,6 +18,8 @@ enum WindowsTarget {
     Screen,
     Window,
 }
+
+const WINDOWS_CAPTURE_RETRY_FRAMES: u32 = 30;
 
 pub(crate) struct WindowsCaptureFactory {
     kind: Identifier,
@@ -50,7 +51,7 @@ impl SourceFactory for WindowsCaptureFactory {
     fn create(&self, name: &str, settings: &Config) -> Result<Box<dyn Source>, SourceError> {
         let format = parse_format(settings)?;
         let device_id = selected_device(settings, self.target);
-        let device = open_capture_device(name, format, self.target, &device_id)?;
+        let device = open_capture_device(name, format, &device_id);
         Ok(Box::new(WindowsCaptureSource {
             kind: self.kind.clone(),
             name: name.to_owned(),
@@ -58,6 +59,9 @@ impl SourceFactory for WindowsCaptureFactory {
             device_id,
             format,
             device,
+            failure: None,
+            retry_countdown: WINDOWS_CAPTURE_RETRY_FRAMES,
+            shutdown_blocked: false,
         }))
     }
 }
@@ -76,27 +80,12 @@ fn selected_device(settings: &Config, target: WindowsTarget) -> String {
         )
 }
 
-enum WindowsCaptureBackend {
-    Native(ThreadedCaptureDevice),
-    Fallback(obs_rs_capture::SimulatedCaptureDevice),
-}
-
-fn open_capture_device(
-    name: &str,
-    format: VideoFormat,
-    target: WindowsTarget,
-    device_id: &str,
-) -> Result<WindowsCaptureBackend, SourceError> {
+fn open_capture_device(name: &str, format: VideoFormat, device_id: &str) -> ThreadedCaptureDevice {
     let adapter = WindowsCaptureAdapter::default();
-    if !adapter.helper().is_file() {
-        return fallback_backend(name, format, target).map(WindowsCaptureBackend::Fallback);
-    }
     let stable_id = device_id.to_owned();
-    Ok(WindowsCaptureBackend::Native(ThreadedCaptureDevice::open(
-        CaptureRequest::output(format),
-        name,
-        move || adapter.open(&stable_id),
-    )))
+    ThreadedCaptureDevice::open(CaptureRequest::output(format), name, move || {
+        adapter.open(&stable_id)
+    })
 }
 
 struct WindowsCaptureSource {
@@ -105,7 +94,10 @@ struct WindowsCaptureSource {
     target: WindowsTarget,
     device_id: String,
     format: VideoFormat,
-    device: WindowsCaptureBackend,
+    device: ThreadedCaptureDevice,
+    failure: Option<String>,
+    retry_countdown: u32,
+    shutdown_blocked: bool,
 }
 
 impl Source for WindowsCaptureSource {
@@ -123,9 +115,18 @@ impl Source for WindowsCaptureSource {
         if format == self.format && device_id == self.device_id {
             return Ok(());
         }
-        self.device = open_capture_device(&self.name, format, self.target, &device_id)?;
+        if !self.device.shutdown() {
+            self.shutdown_blocked = true;
+            return Err(SourceError::Unavailable(
+                "the previous Windows capture helper is still shutting down".to_owned(),
+            ));
+        }
+        self.device = open_capture_device(&self.name, format, &device_id);
         self.device_id = device_id;
         self.format = format;
+        self.failure = None;
+        self.retry_countdown = WINDOWS_CAPTURE_RETRY_FRAMES;
+        self.shutdown_blocked = false;
         Ok(())
     }
 
@@ -136,59 +137,55 @@ impl Source for WindowsCaptureSource {
                 requested: request.format(),
             });
         }
-        let result = match &mut self.device {
-            WindowsCaptureBackend::Native(device) => {
-                if matches!(
-                    device.state(),
-                    CaptureLifecycleState::Lost | CaptureLifecycleState::Denied
-                ) {
-                    Err(device.failure().map_or_else(
-                        || "Windows capture helper stopped".to_owned(),
-                        |error| error.to_string(),
-                    ))
-                } else {
-                    device
-                        .poll_frame(request.timestamp())
-                        .map_err(|error| error.to_string())
+        if matches!(
+            self.device.state(),
+            CaptureLifecycleState::Lost | CaptureLifecycleState::Denied
+        ) {
+            let failure = self.device.failure().map_or_else(
+                || "Windows capture helper stopped".to_owned(),
+                |error| error.to_string(),
+            );
+            self.failure = Some(failure.clone());
+            if self.device.state() == CaptureLifecycleState::Lost {
+                self.retry_countdown = self.retry_countdown.saturating_sub(1);
+                if self.retry_countdown == 0 {
+                    self.reopen();
                 }
             }
-            WindowsCaptureBackend::Fallback(device) => device
-                .next_frame(request.timestamp())
-                .map_err(|error| error.to_string()),
-        };
-        match result {
-            Ok(frame) => Ok(frame),
-            Err(error) if matches!(&self.device, WindowsCaptureBackend::Native(_)) => {
-                self.device = WindowsCaptureBackend::Fallback(fallback_backend(
-                    &self.name,
-                    self.format,
-                    self.target,
-                )?);
-                match &mut self.device {
-                    WindowsCaptureBackend::Fallback(device) => device
-                        .next_frame(request.timestamp())
-                        .map_err(|fallback| SourceError::Unavailable(fallback.to_string())),
-                    WindowsCaptureBackend::Native(_) => Err(SourceError::Unavailable(error)),
-                }
-            }
-            Err(error) => Err(SourceError::Unavailable(error)),
+            return Err(SourceError::Unavailable(
+                self.failure.clone().unwrap_or(failure),
+            ));
         }
+        self.device
+            .poll_frame(request.timestamp())
+            .map_err(|error| {
+                self.failure = Some(error.to_string());
+                SourceError::Unavailable(error.to_string())
+            })
     }
 }
 
-fn fallback_backend(
-    name: &str,
-    format: VideoFormat,
-    target: WindowsTarget,
-) -> Result<obs_rs_capture::SimulatedCaptureDevice, SourceError> {
-    let (kind_name, kind) = match target {
-        WindowsTarget::Screen => (SCREEN_CAPTURE_SOURCE_KIND, CaptureKind::Screen),
-        WindowsTarget::Window => (WINDOW_CAPTURE_SOURCE_KIND, CaptureKind::Window),
-    };
-    let mut device = obs_rs_capture::SimulatedCaptureDevice::new(kind_name, name, kind)
-        .map_err(|error| SourceError::Unavailable(error.to_string()))?;
-    device
-        .start(format)
-        .map_err(|error| SourceError::Unavailable(error.to_string()))?;
-    Ok(device)
+impl WindowsCaptureSource {
+    fn reopen(&mut self) {
+        if self.shutdown_blocked {
+            return;
+        }
+        if !self.device.shutdown() {
+            self.shutdown_blocked = true;
+            self.failure = Some(
+                "the previous Windows capture helper is still shutting down; retry postponed"
+                    .to_owned(),
+            );
+            return;
+        }
+        let adapter = WindowsCaptureAdapter::default();
+        let stable_id = self.device_id.clone();
+        self.device = ThreadedCaptureDevice::open(
+            CaptureRequest::output(self.format),
+            &self.name,
+            move || adapter.open(&stable_id),
+        );
+        self.failure = Some("reconnecting Windows capture helper".to_owned());
+        self.retry_countdown = WINDOWS_CAPTURE_RETRY_FRAMES;
+    }
 }

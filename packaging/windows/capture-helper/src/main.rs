@@ -8,16 +8,14 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     error::Error,
-    io::{self, BufWriter, Write},
-    process, thread,
-    time::{Duration, Instant},
+    io::{self, BufWriter, Read, Write},
+    process,
+    time::Instant,
 };
 
-use obs_rs_capture::{
-    discover_nokhwa_camera_devices, write_frame_packet, NokhwaCaptureDevice, VideoCaptureDevice,
-};
+use obs_rs_capture::write_frame_packet;
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 use windows_capture::{
     capture::{Context, GraphicsCaptureApiHandler},
@@ -30,6 +28,8 @@ use windows_capture::{
     },
     window::Window,
 };
+#[cfg(target_os = "windows")]
+use winsafe::{self as w, prelude::*};
 
 const PROTOCOL: &str = "OBSRWIN1";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -153,13 +153,13 @@ fn discover() -> Result<(), BoxError> {
     let primary_name = Monitor::primary()
         .ok()
         .and_then(|monitor| monitor.device_name().ok());
+    let monitor_geometry = monitor_geometry()?;
     let mut remaining_records = MAX_DISCOVERY_RECORDS;
     let mut x = 0_i32;
     for monitor in monitors {
         if remaining_records == 0 {
             break;
         }
-        let index = monitor.index()?;
         let device_name = monitor.device_name()?;
         let name = monitor
             .name()
@@ -168,10 +168,14 @@ fn discover() -> Result<(), BoxError> {
             .unwrap_or_else(|| device_name.clone());
         let width = monitor.width()?;
         let height = monitor.height()?;
-        let primary = primary_name.as_deref() == Some(device_name.as_str());
+        let (monitor_x, monitor_y, primary) = monitor_geometry
+            .get(&device_name)
+            .copied()
+            .unwrap_or_else(|| (x, 0, primary_name.as_deref() == Some(device_name.as_str())));
         writeln!(
             stdout,
-            "screen\twgc-screen-{index}\t{}\t{x}\t0\t{width}\t{height}\t{}",
+            "screen\t{}\t{}\t{monitor_x}\t{monitor_y}\t{width}\t{height}\t{}",
+            monitor_id(&device_name),
             clean_field(&name),
             i32::from(primary)
         )?;
@@ -189,7 +193,7 @@ fn discover() -> Result<(), BoxError> {
             continue;
         }
         let process_name = window.process_name().unwrap_or_default();
-        let id = window_id(window, &title, &process_name);
+        let id = window_id(window);
         if !window_ids.insert(id.clone()) {
             continue;
         }
@@ -202,28 +206,43 @@ fn discover() -> Result<(), BoxError> {
         remaining_records -= 1;
     }
 
-    if let Ok(cameras) = discover_nokhwa_camera_devices() {
-        for camera in cameras {
-            if remaining_records == 0 {
-                break;
-            }
-            writeln!(
-                stdout,
-                "camera\t{}\t{}",
-                camera.id(),
-                clean_field(camera.name())
-            )?;
-            remaining_records -= 1;
-        }
-    }
     stdout.flush()?;
     Ok(())
 }
 
+/// Returns desktop-space monitor geometry from the safe Windows API wrapper.
+///
+/// `windows-capture` intentionally exposes the capture handle but not the
+/// monitor rectangle. Keeping this small query in the helper preserves
+/// negative coordinates for left/top monitors without exposing an HMONITOR to
+/// the portable workspace.
+#[cfg(target_os = "windows")]
+fn monitor_geometry() -> Result<HashMap<String, (i32, i32, bool)>, BoxError> {
+    let mut geometry = HashMap::new();
+    w::HDC::NULL.EnumDisplayMonitors(None, |monitor, _dc, rectangle| {
+        let mut info = w::MONITORINFOEX::default();
+        if monitor.GetMonitorInfo(&mut info).is_err() {
+            return false;
+        }
+        geometry.insert(
+            info.szDevice().clone(),
+            (
+                rectangle.left,
+                rectangle.top,
+                info.dwFlags == w::co::MONITORINFOF::PRIMARY,
+            ),
+        );
+        true
+    })?;
+    Ok(geometry)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn monitor_geometry() -> Result<HashMap<String, (i32, i32, bool)>, BoxError> {
+    Ok(HashMap::new())
+}
+
 fn capture_device(device: &str, format: VideoFormat) -> Result<(), BoxError> {
-    if device == "media-foundation-camera-default" || device.starts_with("nokhwa-camera-") {
-        return capture_camera(device, format);
-    }
     if device == "wgc-window-picker" || device.starts_with("wgc-window-") {
         let window = resolve_window(device)?;
         return run_graphics_capture(window, format);
@@ -239,11 +258,17 @@ fn resolve_monitor(device: &str) -> Result<Monitor, BoxError> {
     if device == "wgc-screen-picker" {
         return Ok(Monitor::primary()?);
     }
-    let index = device
+    let _ = device
         .strip_prefix("wgc-screen-")
-        .ok_or_else(|| invalid("invalid display capture ID"))?
-        .parse::<usize>()?;
-    Ok(Monitor::from_index(index)?)
+        .ok_or_else(|| invalid("invalid display capture ID"))?;
+    Monitor::enumerate()?
+        .into_iter()
+        .find(|monitor| {
+            monitor
+                .device_name()
+                .is_ok_and(|name| monitor_id(&name) == device)
+        })
+        .ok_or_else(|| invalid("the selected display is no longer available"))
 }
 
 fn resolve_window(device: &str) -> Result<Window, BoxError> {
@@ -253,34 +278,8 @@ fn resolve_window(device: &str) -> Result<Window, BoxError> {
     let windows = Window::enumerate()?;
     windows
         .into_iter()
-        .find(|window| {
-            let title = window.title().unwrap_or_default();
-            let process_name = window.process_name().unwrap_or_default();
-            window_id(*window, &title, &process_name) == device
-        })
+        .find(|window| window_id(*window) == device)
         .ok_or_else(|| invalid("the selected window is no longer available"))
-}
-
-fn capture_camera(device: &str, format: VideoFormat) -> Result<(), BoxError> {
-    let cameras = discover_nokhwa_camera_devices()?;
-    let camera = if device == "media-foundation-camera-default" {
-        cameras.first()
-    } else {
-        cameras.iter().find(|camera| camera.id().as_str() == device)
-    }
-    .ok_or_else(|| invalid("the selected camera is no longer available"))?;
-    let mut capture = NokhwaCaptureDevice::from_device_id(camera.id().as_str(), camera.name())?;
-    capture.start(format)?;
-    let start = Instant::now();
-    let mut stdout = BufWriter::new(io::stdout().lock());
-    loop {
-        if let Some(frame) = capture.next_frame(elapsed_timestamp(start))? {
-            write_frame_packet(&frame, &mut stdout)?;
-            stdout.flush()?;
-        } else {
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
 }
 
 fn run_graphics_capture<T>(item: T, format: VideoFormat) -> Result<(), BoxError>
@@ -301,8 +300,22 @@ where
         ColorFormat::Rgba8,
         format,
     );
-    FrameWriter::start(settings)
-        .map_err(|error| invalid(format!("start graphics capture: {error}")))
+    let control = FrameWriter::start_free_threaded(settings)
+        .map_err(|error| invalid(format!("start graphics capture: {error}")))?;
+    wait_for_parent_shutdown()?;
+    control
+        .stop()
+        .map_err(|error| invalid(format!("stop graphics capture: {error}")))
+}
+
+/// The parent closes stdin when the source is stopped. Reading it on the
+/// helper's main thread leaves the Graphics Capture callback free to publish
+/// frames while still giving the host a graceful stop path.
+fn wait_for_parent_shutdown() -> Result<(), io::Error> {
+    let mut stdin = io::stdin().lock();
+    let mut buffer = [0_u8; 1024];
+    while stdin.read(&mut buffer)? != 0 {}
+    Ok(())
 }
 
 struct FrameWriter {
@@ -358,6 +371,12 @@ fn resize_rgba(
     target_width: u32,
     target_height: u32,
 ) -> Result<Vec<u8>, BoxError> {
+    if source_width == 0 || source_height == 0 {
+        return Err(invalid("captured frame dimensions must be non-zero"));
+    }
+    if target_width == 0 || target_height == 0 {
+        return Err(invalid("output frame dimensions must be non-zero"));
+    }
     let source_size = usize::try_from(source_width)
         .ok()
         .and_then(|width| {
@@ -404,10 +423,17 @@ fn resize_rgba(
     Ok(target)
 }
 
-fn window_id(window: Window, title: &str, process_name: &str) -> String {
-    let process_id = window.process_id().unwrap_or_default();
-    let key = format!("{process_id}:{process_name}:{title}");
+fn window_id(window: Window) -> String {
+    // HWND values are stable for the lifetime of a desktop session and avoid
+    // changing the persisted target when an application updates its title.
+    // Only the hashed text crosses the helper boundary; the native handle
+    // never enters portable workspace code.
+    let key = format!("{:p}", window.as_raw_hwnd());
     format!("wgc-window-{:016x}", stable_hash(&key))
+}
+
+fn monitor_id(device_name: &str) -> String {
+    format!("wgc-screen-{:016x}", stable_hash(device_name))
 }
 
 fn stable_hash(value: &str) -> u64 {
@@ -435,4 +461,49 @@ fn clean_field(value: &str) -> String {
 
 fn invalid(message: impl Into<String>) -> BoxError {
     Box::new(io::Error::new(io::ErrorKind::InvalidInput, message.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resize_keeps_rgba_channel_order_and_handles_padding() {
+        let source = [
+            10, 20, 30, 40, 50, 60, 70, 80, // row 0
+            90, 100, 110, 120, 130, 140, 150, 160, // row 1
+            0, 0, 0, 0, // ignored row padding
+        ];
+        let resized = resize_rgba(&source, 2, 2, 1, 1).expect("resize");
+        assert_eq!(resized, vec![10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn resize_uses_nearest_source_pixels() {
+        let source = [
+            1, 2, 3, 4, 5, 6, 7, 8, // row 0
+            9, 10, 11, 12, 13, 14, 15, 16, // row 1
+        ];
+        let resized = resize_rgba(&source, 2, 2, 4, 4).expect("resize");
+        assert_eq!(&resized[0..4], &[1, 2, 3, 4]);
+        assert_eq!(&resized[12..16], &[5, 6, 7, 8]);
+        assert_eq!(&resized[48..52], &[9, 10, 11, 12]);
+        assert_eq!(&resized[60..64], &[13, 14, 15, 16]);
+    }
+
+    #[test]
+    fn resize_rejects_truncated_or_zero_dimension_frames() {
+        assert!(resize_rgba(&[0; 3], 1, 1, 1, 1).is_err());
+        assert!(resize_rgba(&[0; 4], 0, 1, 1, 1).is_err());
+        assert!(resize_rgba(&[0; 4], 1, 1, 0, 1).is_err());
+    }
+
+    #[test]
+    fn stable_window_ids_are_deterministic() {
+        let window = Window::from_raw_hwnd(std::ptr::null_mut());
+        let first = window_id(window);
+        let second = window_id(window);
+        assert_eq!(first, second);
+        assert!(first.starts_with("wgc-window-"));
+    }
 }

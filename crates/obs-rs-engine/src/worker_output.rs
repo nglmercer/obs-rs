@@ -1,8 +1,6 @@
 use std::{path::PathBuf, sync::mpsc, time::Duration};
 
-#[cfg(feature = "production-gstreamer")]
 use crate::RemuxRecovery;
-#[cfg(feature = "production-gstreamer")]
 use obs_rs_output::OutputProfile;
 use obs_rs_output::{
     AudioEncoderConfig, SegmentedRecordingPolicy, StreamTarget, VideoEncoderConfig,
@@ -678,4 +676,100 @@ impl EngineWorker {
             }
         }
     }
+}
+
+#[cfg(not(feature = "production-gstreamer"))]
+#[allow(
+    clippy::missing_errors_doc,
+    reason = "portable stubs all return the same explicit optional-runtime error"
+)]
+impl EngineWorker {
+    /// Reports that automatic remux is unavailable in the portable build.
+    pub fn start_remux_recording(&self, _path: impl Into<PathBuf>) -> Result<(), EngineError> {
+        Err(native_output_unavailable())
+    }
+
+    /// Reports that automatic remux is unavailable in the portable build.
+    pub fn start_remux_recording_configured(
+        &self,
+        _path: impl Into<PathBuf>,
+        _video: VideoEncoderConfig,
+        _audio: AudioEncoderConfig,
+    ) -> Result<(), EngineError> {
+        Err(native_output_unavailable())
+    }
+
+    /// Reports that interrupted-remux recovery is unavailable in the portable
+    /// build.
+    pub fn recover_interrupted_remux_recording(
+        &self,
+        _path: impl Into<PathBuf>,
+    ) -> Result<RemuxRecovery, EngineError> {
+        Err(native_output_unavailable())
+    }
+
+    /// Reports that interrupted-remux recovery is unavailable in the portable
+    /// build without starting a worker request.
+    pub fn try_recover_interrupted_remux_recording(
+        &self,
+        _path: impl Into<PathBuf>,
+    ) -> Result<mpsc::Receiver<Result<RemuxRecovery, String>>, EngineError> {
+        Err(native_output_unavailable())
+    }
+
+    /// Reports that interrupted-remux discovery is unavailable in the portable
+    /// build.
+    pub fn discover_interrupted_remux_candidates(
+        &self,
+        _directory: impl Into<PathBuf>,
+    ) -> Result<Vec<PathBuf>, EngineError> {
+        Err(native_output_unavailable())
+    }
+
+    /// Reports that interrupted-remux discovery is unavailable in the portable
+    /// build without starting a worker request.
+    pub fn try_discover_interrupted_remux_candidates(
+        &self,
+        _directory: impl Into<PathBuf>,
+    ) -> Result<mpsc::Receiver<Result<Vec<PathBuf>, String>>, EngineError> {
+        Err(native_output_unavailable())
+    }
+
+    /// Reports that explicit production profiles are unavailable in the
+    /// portable build.
+    pub fn start_recording_profile(
+        &self,
+        _path: impl Into<PathBuf>,
+        _profile: OutputProfile,
+        _encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        Err(native_output_unavailable())
+    }
+
+    /// Reports that automatic remux is unavailable in the portable build.
+    pub fn try_start_remux_recording(
+        &self,
+        _path: impl Into<PathBuf>,
+        _encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        Err(native_output_unavailable())
+    }
+
+    /// Reports that explicit production profiles are unavailable in the
+    /// portable build.
+    pub fn try_start_recording_profile(
+        &self,
+        _path: impl Into<PathBuf>,
+        _profile: OutputProfile,
+        _encoder_config: Option<(VideoEncoderConfig, AudioEncoderConfig)>,
+    ) -> Result<(), EngineError> {
+        Err(native_output_unavailable())
+    }
+}
+
+#[cfg(not(feature = "production-gstreamer"))]
+fn native_output_unavailable() -> EngineError {
+    EngineError::InvalidConfiguration(
+        "production GStreamer output is unavailable in this build".to_owned(),
+    )
 }

@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use obs_rs_util::replace_file;
+
 use super::{bundle::DiagnosticBundle, error::DiagnosticError, types::DiagnosticFileState};
 /// A crash-safe diagnostics writer using temporary-file plus rename finalization.
 pub struct AtomicDiagnosticFileWriter {
@@ -60,7 +62,7 @@ impl AtomicDiagnosticFileWriter {
                 .map_err(|error| io_error("write temporary file", &error))?;
             file.sync_all()
                 .map_err(|error| io_error("sync temporary file", &error))?;
-            fs::rename(&self.temp_path, &self.final_path)
+            replace_file(&self.temp_path, &self.final_path)
                 .map_err(|error| io_error("rename diagnostics bundle", &error))?;
             Ok::<(), DiagnosticError>(())
         })();

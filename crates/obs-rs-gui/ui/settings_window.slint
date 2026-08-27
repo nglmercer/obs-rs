@@ -142,6 +142,8 @@ export component SettingsWindow inherits Window {
     in-out property <int> channel-index;
     in property <[string]> audio-device-names;
     in-out property <int> audio-device-index;
+    in property <[string]> desktop-audio-device-names;
+    in-out property <int> desktop-audio-device-index;
     in property <[string]> audio-monitor-output-names;
     in-out property <int> audio-monitor-output-index;
     in property <[string]> microphone-monitor-mode-names;
@@ -152,6 +154,7 @@ export component SettingsWindow inherits Window {
     in-out property <int> desktop-audio-sync-offset;
     in property <string> devices-summary;
     in property <bool> audio-input-missing;
+    in property <bool> desktop-audio-missing;
     in property <bool> audio-monitor-output-missing;
     callback refresh-audio-devices();
     // Video
@@ -235,6 +238,7 @@ export component SettingsWindow inherits Window {
     callback select-fps-mode(int);
     callback select-frame-rate(int);
     callback select-audio-monitor-output(int);
+    callback select-desktop-audio-device(int);
     callback select-microphone-monitor-mode(int);
     callback select-desktop-monitor-mode(int);
     callback browse-recording-directory();
@@ -581,6 +585,8 @@ export component SettingsWindow inherits Window {
                         channel-index: root.channel-index;
                         audio-device-names: root.audio-device-names;
                         audio-device-index: root.audio-device-index;
+                        desktop-audio-device-names: root.desktop-audio-device-names;
+                        desktop-audio-device-index: root.desktop-audio-device-index;
                         audio-monitor-output-names: root.audio-monitor-output-names;
                         audio-monitor-output-index: root.audio-monitor-output-index;
                         microphone-monitor-mode-names: root.microphone-monitor-mode-names;
@@ -591,6 +597,7 @@ export component SettingsWindow inherits Window {
                         desktop-audio-sync-offset: root.desktop-audio-sync-offset;
                         devices-summary: root.devices-summary;
                         audio-input-missing: root.audio-input-missing;
+                        desktop-audio-missing: root.desktop-audio-missing;
                         audio-monitor-output-missing: root.audio-monitor-output-missing;
                         refresh-audio-devices() => { root.refresh-audio-devices(); }
                         select-sample-rate(index) => {
@@ -603,6 +610,10 @@ export component SettingsWindow inherits Window {
                         }
                         select-audio-device(index) => {
                             root.audio-device-index = index;
+                            root.dirty = true;
+                        }
+                        select-desktop-audio-device(index) => {
+                            root.desktop-audio-device-index = index;
                             root.dirty = true;
                         }
                         select-audio-monitor-output(index) => {

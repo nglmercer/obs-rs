@@ -76,6 +76,7 @@ pub(crate) struct OutputRuntime {
     last_revision: u64,
     format_drops: u64,
     audio_input_id: Option<String>,
+    desktop_audio_id: Option<String>,
     monitor_output_id: Option<String>,
     audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
     recording_started_at: Option<Instant>,
@@ -173,6 +174,7 @@ impl OutputRuntime {
             audio_input_sync_offset_millis,
             desktop_audio_sync_offset_millis,
             None,
+            None,
             AudioMonitorMode::Off,
             AudioMonitorMode::Off,
         )
@@ -189,6 +191,7 @@ impl OutputRuntime {
         audio_input_id: Option<&str>,
         audio_input_sync_offset_millis: u32,
         desktop_audio_sync_offset_millis: u32,
+        desktop_audio_id: Option<&str>,
         monitor_output_id: Option<&str>,
         microphone_monitor_mode: AudioMonitorMode,
         desktop_monitor_mode: AudioMonitorMode,
@@ -197,9 +200,8 @@ impl OutputRuntime {
         let audio_provider = Arc::new(WasapiAudioProvider::new());
         #[cfg(not(target_os = "windows"))]
         let audio_provider = Arc::new(PipeWireAudioProvider::new());
-        let provider_for_engine: Arc<dyn AudioInputProvider> = Arc::clone(&audio_provider);
-        let output_provider_for_engine: Arc<dyn AudioOutputProvider> =
-            Arc::clone(&audio_provider);
+        let provider_for_engine: Arc<dyn AudioInputProvider> = audio_provider.clone();
+        let output_provider_for_engine: Arc<dyn AudioOutputProvider> = audio_provider.clone();
         let mut config = EngineConfig::new(audio_format)
             .with_audio_provider(provider_for_engine)
             .with_audio_output_provider(output_provider_for_engine)
@@ -209,6 +211,9 @@ impl OutputRuntime {
             .with_desktop_monitor_mode(desktop_monitor_mode);
         if let Some(audio_input_id) = audio_input_id {
             config = config.with_audio_input_id(audio_input_id);
+        }
+        if let Some(desktop_audio_id) = desktop_audio_id {
+            config = config.with_desktop_audio_id(desktop_audio_id);
         }
         if let Some(monitor_output_id) = monitor_output_id {
             config = config.with_monitor_output_id(monitor_output_id);
@@ -222,6 +227,10 @@ impl OutputRuntime {
             last_revision: 0,
             format_drops: 0,
             audio_input_id: audio_input_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            desktop_audio_id: desktop_audio_id
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned),

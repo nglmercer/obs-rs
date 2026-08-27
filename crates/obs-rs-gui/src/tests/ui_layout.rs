@@ -536,13 +536,17 @@ pub(super) fn exercise_monitor_selection(
     } else {
         "x11_screen_capture"
     };
-    let mut settings = source_settings(kind).expect("screen defaults");
+    let settings = source_settings(kind).expect("screen defaults");
     #[cfg(target_os = "linux")]
-    settings
-        .set("monitor", "DP-1")
-        .expect("monitor draft fixture");
-    let source = SourceSpec::new("gui-screen", kind, "GUI screen", settings)
-        .expect("screen source");
+    let settings = {
+        let mut settings = settings;
+        settings
+            .set("monitor", "DP-1")
+            .expect("monitor draft fixture");
+        settings
+    };
+    let source =
+        SourceSpec::new("gui-screen", kind, "GUI screen", settings).expect("screen source");
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::AddSource {

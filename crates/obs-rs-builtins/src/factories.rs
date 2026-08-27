@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use obs_rs_capture::NokhwaCaptureFactory;
+use obs_rs_capture::TestPatternFactory;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 use obs_rs_capture::CAMERA_CAPTURE_SOURCE_KIND;
-use obs_rs_capture::{
-    CaptureKind, SimulatedCaptureFactory, TestPatternFactory,
-};
+#[cfg(not(target_os = "windows"))]
+use obs_rs_capture::{CaptureKind, SimulatedCaptureFactory};
 #[cfg(not(target_os = "windows"))]
 use obs_rs_capture::{SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND};
 use obs_rs_plugin_api::{PluginError, SourceFactory};
@@ -16,10 +16,10 @@ use crate::portable::ColorSourceFactory;
 use crate::text::TextSourceFactory;
 #[cfg(target_os = "linux")]
 use crate::wayland::WaylandCaptureFactory;
-#[cfg(target_os = "linux")]
-use crate::x11::X11CaptureFactory;
 #[cfg(target_os = "windows")]
 use crate::windows::WindowsCaptureFactory;
+#[cfg(target_os = "linux")]
+use crate::x11::X11CaptureFactory;
 
 pub(crate) fn build() -> Result<Vec<Arc<dyn SourceFactory>>, PluginError> {
     let color_factory = ColorSourceFactory::new()?;

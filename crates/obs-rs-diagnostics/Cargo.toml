@@ -6,3 +6,4 @@ publish.workspace = true
 version.workspace = true
 
 [dependencies]
+obs-rs-util = { path = "../obs-rs-util" }

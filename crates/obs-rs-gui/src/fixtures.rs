@@ -250,6 +250,10 @@ pub(crate) fn kind_runs_in_this_session(kind: &str) -> bool {
         // see Xwayland's own surfaces, so both are hidden rather than offered
         // as sources that would render a black frame.
         "x11_screen_capture" | "x11_window_capture" => !wayland_session(),
+        #[cfg(target_os = "windows")]
+        "screen_capture" => !platform_devices_for_kind(CaptureKind::Screen).is_empty(),
+        #[cfg(target_os = "windows")]
+        "window_capture" => !platform_devices_for_kind(CaptureKind::Window).is_empty(),
         _ => true,
     }
 }
@@ -388,11 +392,10 @@ pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
 
 /// Returns the devices that a source-properties editor can select.
 ///
-/// The returned list matches the backend behind the source kind. The generic
-/// portable screen/window sources expose deterministic fallback devices; the
-/// camera source and Linux X11 sources expose only their native adapters. This
-/// prevents a device from appearing selectable in a factory where it would
-/// silently have no effect.
+/// The returned list matches the backend behind the source kind. Native
+/// Windows screen/window and camera sources expose only descriptors returned by
+/// their real adapters; no picker entry is synthesized when the backend is
+/// missing or unavailable.
 pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let kind = kind.trim();
     let wanted = match kind {

@@ -1,7 +1,11 @@
 //! GUI-side preloading boundary for scene-owned Stinger resources.
 
+#[cfg(feature = "production-gstreamer")]
 use obs_rs_engine::GStreamerStingerLoader;
-use obs_rs_media::{MediaError, StingerClip, StingerLoadQueueError, StingerSpec, VideoFormat};
+use obs_rs_media::{
+    MediaError, StingerClip, StingerLoadQueueError, StingerResourceFailure, StingerSpec,
+    VideoFormat,
+};
 use obs_rs_project::Project;
 use obs_rs_ui::{StingerLoadSession, StingerLoadState};
 use std::{fmt, sync::Arc};
@@ -60,7 +64,22 @@ impl StingerLoadController {
     /// No file or decoder work occurs until a preloaded scene resource is
     /// submitted by [`Self::sync`].
     pub(crate) fn native(target_format: VideoFormat) -> Result<Self, std::io::Error> {
-        Self::with_loader(GStreamerStingerLoader, target_format)
+        #[cfg(feature = "production-gstreamer")]
+        {
+            Self::with_loader(GStreamerStingerLoader, target_format)
+        }
+        #[cfg(not(feature = "production-gstreamer"))]
+        {
+            Self::with_loader(
+                |_request: &obs_rs_media::StingerLoadRequest,
+                 _cancellation: &obs_rs_media::StingerLoadCancellation| {
+                    Err(MediaError::StingerResource {
+                        failure: StingerResourceFailure::DecoderUnavailable,
+                    })
+                },
+                target_format,
+            )
+        }
     }
 
     /// Builds a controller with an injected loader for deterministic tests and

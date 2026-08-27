@@ -31,6 +31,8 @@ control surfaces:
 - `obs-rs-audio-pipewire` provides the Linux PipeWire process adapter with stable
   `pw-dump` node enumeration, bounded raw `f32` input blocks, an optional output
   sink, and typed discovery/start/read/stop failures.
+- `obs-rs-audio-wasapi` provides the Windows shared-mode WASAPI/CPAL adapter for
+  microphone input, render-device loopback, and bounded local monitoring output.
 - `obs-rs-capture` defines Rust capture-device lifecycle, permission, hot-plug
   catalog/provider contracts, atomic discovery refresh, deterministic animated test
   backends, a direct Linux X11 screen adapter with `RandR` monitor enumeration and
@@ -173,9 +175,60 @@ the live `PipeWire` capture is running or the deterministic fallback took over;
 this managed host cannot provide live unplug/replug evidence.
 
 Settings, the reopened project, and the dock layout are stored under
-`$XDG_CONFIG_HOME/obs-rs` (a file already present in the working directory keeps
-being used, so existing installs are unaffected). Both restore behaviours can be
-turned off on the settings window's Advanced page.
+`$XDG_CONFIG_HOME/obs-rs` on Linux and `%APPDATA%\obs-rs` (falling back to
+`%LOCALAPPDATA%\obs-rs`) on Windows. A file already present in the working
+directory keeps being used, so existing installs are unaffected. Both restore
+behaviours can be turned off on the settings window's Advanced page.
+
+### Windows capture, audio, and packaging
+
+Windows support targets 64-bit Windows 10 version 1809 or later with the MSVC
+toolchain. Version 1809 is the minimum for the Windows Graphics Capture APIs
+used by the Rust-built helper. A normal interactive desktop session is required
+for display/window capture; a service or locked session may report a typed
+unavailable result.
+
+The Windows screen and window sources use the bundled
+`obs-rs-capture-windows-helper.exe`, which is found beside the GUI executable or
+under the per-user application directories, independent of the current working
+directory. Build and run the portable path with:
+
+```powershell
+cargo build --target x86_64-pc-windows-msvc -p obs-rs-gui --release
+cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --release
+$env:OBSR_CAPTURE_HELPER = "packaging/windows/capture-helper/target/release/obs-rs-capture-windows-helper.exe"
+cargo run -p obs-rs-app --bin obs-rs-windows-check
+.\packaging\windows\package.ps1
+```
+
+The acceptance binary prints machine-readable `pass`, `skip`, and `fail`
+records. A missing privacy grant, camera, microphone, render endpoint, helper,
+or interactive capture session is an explicit `skip`; it is never represented
+as a fake successful frame or audio stream.
+
+Windows Graphics Capture follows the operating system's picker/session rules.
+Minimized, occluded, protected, DRM, secure-desktop, and permission-restricted
+content can be unavailable or black by design; the source keeps its target and
+reports the loss so it can recover when the target returns. Window IDs are
+stable for the current desktop session; display IDs use the Windows monitor
+device name when available. Per-monitor DPI and negative virtual-desktop
+coordinates are preserved by discovery.
+
+The Audio settings page exposes the default or explicit microphone, desktop
+loopback render device, and local monitor output. Microphone and loopback
+streams use bounded shared-mode WASAPI queues; unplugged devices remain selected
+and are retried with typed diagnostics. Windows camera sources use the shared
+Nokhwa path, so there is one canonical camera catalog rather than a second helper
+camera implementation. Microphone/camera privacy permissions are controlled by
+Windows Settings.
+
+The default Windows build uses the portable Rust reference output path and does
+not require GStreamer. RTMP, SRT, WebRTC, HLS, and other production profiles
+remain an explicitly optional GStreamer build; see
+[packaging/windows/README.md](packaging/windows/README.md) for its separate
+runtime/development prerequisites. Settings and diagnostics use `%APPDATA%`
+(or `%LOCALAPPDATA%` when needed) under `obs-rs`, and explicit user-supplied
+paths are preserved.
 
 ### On-disk formats
 
@@ -244,10 +297,11 @@ contract and a tested WebSocket packet transport are also present as reference
 boundaries.
 The release profile, pinned-toolchain CI workflow, and checksum manifest script
 are present. Remaining V1 gaps are explicit output lifecycle events,
-hot-plug monitoring, synchronization/staging for
-edits during active output, and full hardware capture coverage. The
-`obs-rs-linux-check` command reports pass/skip/fail for X11, PipeWire, and the
-300-tick A/V soak. The project intentionally does not claim feature
-parity with OBS Studio: macOS/Windows capture, GPU/zero-copy rendering,
+hot-plug monitoring, synchronization/staging for edits during active output,
+and the remaining performance matrix. The `obs-rs-linux-check` command reports
+pass/skip/fail for X11, PipeWire, and the 300-tick A/V soak;
+`obs-rs-windows-check` covers the Windows helper, camera, WASAPI, A/V, and
+cleanup paths with explicit hardware skips. The project intentionally does not
+claim feature parity with OBS Studio: macOS capture, GPU/zero-copy rendering,
 production codecs and protocols, full GUI localization/property dialogs, signed
 plugin distribution, signing, and update channels remain roadmap work.

@@ -8,7 +8,8 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use obs_rs_audio::{
-    AudioDeviceError, AudioDeviceInfo, AudioFormat, AudioInput, AudioInputProvider,
+    AudioDeviceError, AudioDeviceInfo, AudioFormat, AudioInput, AudioInputProvider, AudioOutput,
+    AudioOutputProvider,
 };
 
 #[cfg(target_os = "windows")]
@@ -41,6 +42,21 @@ impl AudioInputProvider for WasapiAudioProvider {
     }
 }
 
+#[cfg(target_os = "windows")]
+impl AudioOutputProvider for WasapiAudioProvider {
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+        windows::discover_outputs()
+    }
+
+    fn open_output(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+        windows::open_output(device_id, format)
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
 impl AudioInputProvider for WasapiAudioProvider {
     fn discover(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
@@ -60,10 +76,29 @@ impl AudioInputProvider for WasapiAudioProvider {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+impl AudioOutputProvider for WasapiAudioProvider {
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+        Err(AudioDeviceError::Unavailable(
+            "WASAPI output requires Windows".to_owned(),
+        ))
+    }
+
+    fn open_output(
+        &self,
+        _device_id: &str,
+        _format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+        Err(AudioDeviceError::Unavailable(
+            "WASAPI output requires Windows".to_owned(),
+        ))
+    }
+}
+
 /// A stable, bounded provider-facing identifier for a CPAL device.
 #[cfg(target_os = "windows")]
 fn stable_device_id(device_id: &cpal::DeviceId) -> String {
-    format!("wasapi:{device_id}")
+    device_id.to_string()
 }
 
 #[cfg(test)]

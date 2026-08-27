@@ -68,15 +68,37 @@ use obs_rs_output::{
     WebSocketPacketTransport,
 };
 use obs_rs_output_gstreamer::GStreamerCapabilitySnapshot;
-pub use obs_rs_output_gstreamer::{
-    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
-    VideoEncoderCapability,
-};
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
     stinger_decode_capabilities, write_interrupted_remux_manifest, GStreamerStingerLoader,
     RemuxRecovery, StingerDecodeCapabilities,
 };
+pub use obs_rs_output_gstreamer::{
+    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
+    VideoEncoderCapability,
+};
+#[cfg(not(feature = "production-gstreamer"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RemuxRecovery {
+    /// No native production-output runtime is provisioned in this build.
+    NoCandidate,
+    /// Kept shape-compatible with the provisioned native runtime.
+    Recovered { bytes: usize },
+}
+#[cfg(not(feature = "production-gstreamer"))]
+/// Reports that interrupted-remux recovery is unavailable in the portable
+/// build.
+/// # Errors
+///
+/// Always returns an explicit error because the optional native production
+/// output runtime is not included in the portable build.
+pub fn write_interrupted_remux_manifest(
+    _path: impl AsRef<std::path::Path>,
+) -> Result<(), EngineError> {
+    Err(EngineError::InvalidConfiguration(
+        "automatic remux requires the optional production-gstreamer feature".to_owned(),
+    ))
+}
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::Project;
 

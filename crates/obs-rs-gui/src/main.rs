@@ -127,8 +127,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let ui = MainWindow::new()?;
     ui.set_platform_macos(cfg!(target_os = "macos"));
+    #[cfg(feature = "production-gstreamer")]
     let stinger_decode_capabilities = obs_rs_engine::stinger_decode_capabilities();
+    #[cfg(feature = "production-gstreamer")]
     ui.set_scene_stinger_hardware_decode_enabled(stinger_decode_capabilities.hardware_available());
+    #[cfg(not(feature = "production-gstreamer"))]
+    ui.set_scene_stinger_hardware_decode_enabled(false);
     // Stored settings own the file paths and the stream destination, so they
     // are loaded before anything reads them.
     // A screenshot run must not depend on whatever this machine's settings
@@ -216,6 +220,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         (!settings.audio_input_id.is_empty()).then_some(settings.audio_input_id.as_str()),
         settings.audio_input_sync_offset_millis,
         settings.desktop_audio_sync_offset_millis,
+        (!settings.desktop_audio_id.is_empty()).then_some(settings.desktop_audio_id.as_str()),
         (!settings.audio_monitor_output_id.is_empty())
             .then_some(settings.audio_monitor_output_id.as_str()),
         settings.microphone_monitor_mode,

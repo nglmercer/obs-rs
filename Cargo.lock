@@ -4486,9 +4486,11 @@ version = "0.1.0"
 dependencies = [
  "obs-rs-audio",
  "obs-rs-audio-pipewire",
+ "obs-rs-audio-wasapi",
  "obs-rs-benchmark",
  "obs-rs-builtins",
  "obs-rs-capture",
+ "obs-rs-capture-windows",
  "obs-rs-clock",
  "obs-rs-config",
  "obs-rs-core",
@@ -4613,6 +4615,9 @@ dependencies = [
 [[package]]
 name = "obs-rs-diagnostics"
 version = "0.1.0"
+dependencies = [
+ "obs-rs-util",
+]
 
 [[package]]
 name = "obs-rs-engine"
@@ -4653,6 +4658,7 @@ dependencies = [
  "obs-rs-render",
  "obs-rs-render-wgpu",
  "obs-rs-ui",
+ "obs-rs-util",
  "slint",
  "slint-build",
 ]

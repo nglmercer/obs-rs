@@ -50,6 +50,8 @@ pub(crate) struct SettingsController {
     canvas: Rc<CanvasController>,
     /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_device_ids: RefCell<Vec<String>>,
+    /// IDs for the render devices used by desktop/system loopback.
+    audio_desktop_device_ids: RefCell<Vec<String>>,
     /// IDs are kept separate from the display labels shown by Slint's `ComboBox`.
     audio_monitor_output_ids: RefCell<Vec<String>>,
     protocol_ids: RefCell<Vec<StreamProtocol>>,
@@ -303,6 +305,7 @@ pub(crate) fn install_settings_window(
         projectors: Rc::clone(&peers.projectors),
         canvas: Rc::clone(&peers.canvas),
         audio_device_ids: RefCell::new(Vec::new()),
+        audio_desktop_device_ids: RefCell::new(Vec::new()),
         audio_monitor_output_ids: RefCell::new(Vec::new()),
         protocol_ids: RefCell::new(Vec::new()),
         video_encoder_ids: RefCell::new(Vec::new()),
@@ -839,6 +842,17 @@ pub(super) fn draft_audio_monitor_output_id(controller: &SettingsController) -> 
         .unwrap_or_default()
 }
 
+/// Returns the desktop-loopback render-device ID currently shown by the draft
+/// picker.
+pub(super) fn draft_desktop_audio_id(controller: &SettingsController) -> String {
+    controller
+        .audio_desktop_device_ids
+        .borrow()
+        .get(usize::try_from(controller.window.get_desktop_audio_device_index()).unwrap_or(0))
+        .cloned()
+        .unwrap_or_default()
+}
+
 pub(super) fn monitor_mode_index(mode: obs_rs_audio::AudioMonitorMode) -> i32 {
     AUDIO_MONITOR_MODES
         .iter()
@@ -871,6 +885,10 @@ pub(super) fn monitor_mode_names(locale: UiLocale) -> Vec<SharedString> {
 /// applying settings while it is missing cannot quietly reset the choice to
 /// "automatic". That is also what makes an explicit refresh useful — the same
 /// list rebuilt after a hot-plug simply promotes the entry back to available.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the settings page updates the three related audio pickers atomically"
+)]
 pub(super) fn populate_audio_devices(
     window: &SettingsWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -885,6 +903,10 @@ pub(super) fn populate_audio_devices(
             output.audio_input_entries(&settings.audio_input_id),
             output.audio_output_entries(&settings.audio_monitor_output_id),
         )
+    };
+    let desktop_output_entries = {
+        let mut output = output.borrow_mut();
+        output.audio_output_entries(&settings.desktop_audio_id)
     };
     let unavailable_suffix =
         crate::i18n::with_catalog(locale, |text| text.settings_ui.audio_input_missing.clone());
@@ -913,6 +935,40 @@ pub(super) fn populate_audio_devices(
     controller.audio_device_ids.replace(device_ids);
     window.set_audio_device_names(string_model(device_names.into_iter()));
     window.set_audio_device_index(i32::try_from(selected_device_index).unwrap_or(0));
+
+    let selected_desktop_index = if settings.desktop_audio_id.is_empty() {
+        0
+    } else {
+        desktop_output_entries
+            .iter()
+            .position(|entry| entry.id == settings.desktop_audio_id)
+            .map_or(0, |index| index.saturating_add(1))
+    };
+    let mut desktop_device_ids = vec![String::new()];
+    let mut desktop_device_names = vec![crate::i18n::with_catalog(locale, |text| {
+        text.settings_ui.desktop_audio_auto.clone()
+    })];
+    for entry in &desktop_output_entries {
+        desktop_device_ids.push(entry.id.clone());
+        desktop_device_names.push(if entry.available {
+            SharedString::from(entry.name.as_str())
+        } else {
+            SharedString::from(format!(
+                "{} {}",
+                entry.name,
+                crate::i18n::with_catalog(locale, |text| {
+                    text.settings_ui.audio_input_missing.clone()
+                })
+            ))
+        });
+    }
+    controller
+        .audio_desktop_device_ids
+        .replace(desktop_device_ids);
+    window.set_desktop_audio_device_names(string_model(desktop_device_names.into_iter()));
+    window.set_desktop_audio_device_index(i32::try_from(selected_desktop_index).unwrap_or(0));
+    window.set_desktop_audio_missing(desktop_output_entries.iter().any(|entry| !entry.available));
+
     let selected_monitor_index = if settings.audio_monitor_output_id.is_empty() {
         0
     } else {

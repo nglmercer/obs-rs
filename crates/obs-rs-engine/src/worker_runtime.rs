@@ -262,6 +262,11 @@ pub(super) fn worker_loop(
                 let _ = reply.send(Ok(()));
                 false
             }
+            WorkerCommand::SetDesktopAudio(device_id, reply) => {
+                session.set_desktop_audio_id(device_id.as_deref());
+                let _ = reply.send(Ok(()));
+                false
+            }
             WorkerCommand::SetMonitorMode(channel, mode, reply) => {
                 let result = session
                     .set_channel_monitor_mode(channel, mode)

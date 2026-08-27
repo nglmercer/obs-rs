@@ -446,6 +446,32 @@ but does not request unused GUI preview/program-view frames. The demand policy
 has pure state tests; live multi-monitor/projector cadence measurement remains
 part of the final performance matrix.
 
+## Windows acceptance and soak evidence
+
+The Windows capability checker was run in a real interactive session on
+2026-08-27 with the release capture helper and the default Windows audio path:
+
+```text
+cargo run -p obs-rs-app --bin obs-rs-windows-check
+check=display status=pass detail=device=wgc-screen-b39ba7a49ee19eea_size=320x180_timestamp_ns=191817600
+check=window status=pass detail=device=wgc-window-25f744a65d648162_size=320x180
+check=camera status=skip detail=no_native_Nokhwa_camera_is_present
+check=microphone status=pass detail=device=wasapi:{0.0.1.00000000}.{d78d2df4-628b-4a0e-97ed-0e363151c501}_frames=480_channels=1
+check=desktop_loopback status=skip detail=audio_device_unavailable:_WASAPI_input_stream_failed:_A_buffer_underrun_or_overrun_occurred.
+check=monitor_output status=pass detail=render_device=wasapi:{0.0.0.00000000}.{bdde2538-865e-4129-9573-2e798f22586f}_frames=480
+check=av_soak status=pass detail=seconds=2_frames=194_audio_blocks=198_audio_device=wasapi:{0.0.1.00000000}.{d78d2df4-628b-4a0e-97ed-0e363151c501}
+check=cleanup_restart status=pass detail=three_capture_start/stop_cycles_joined_cleanly
+```
+
+The run proves the bounded display/window helper lifecycle, microphone input,
+monitor output, two-second audio/video progress, and three clean capture
+restart cycles. This host had no native camera and its render loopback endpoint
+reported an idle WASAPI underrun, so those capabilities are explicit hardware
+skips rather than synthetic passes. The checker is a smoke/soak gate at
+320x180 for two seconds; it is not a sustained 1080p30/60 performance sign-off.
+The full matrix below remains required for release-grade latency, resource,
+copy, allocation, deadline, and multi-hour soak measurements.
+
 ## Acceptance measurements to add
 
 The next benchmark suite must record these fields for each fixture and for both
