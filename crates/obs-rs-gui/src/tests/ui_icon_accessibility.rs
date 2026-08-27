@@ -27,6 +27,27 @@ pub(super) fn exercise_compact_button_accessibility(ui: &MainWindow) {
         "the accessible action activates zoom"
     );
     ui.invoke_canvas_zoom_changed(0);
+
+    let virtual_camera = ElementHandle::find_by_accessible_label(ui, "Start Virtual Camera")
+        .find(|button| {
+            button.accessible_role() == Some(AccessibleRole::Button)
+                && button.accessible_enabled() == Some(true)
+                && button.size().width > 100.0
+                && button.size().height >= 30.0
+        })
+        .expect("virtual camera explanation action is discoverable");
+    assert_eq!(
+        virtual_camera.accessible_description().as_deref(),
+        Some(
+            "Virtual camera output is not available on this platform yet — nothing is sent to other applications."
+        )
+    );
+    assert_eq!(virtual_camera.accessible_checkable(), Some(true));
+    assert_eq!(virtual_camera.accessible_checked(), Some(false));
+    virtual_camera.invoke_accessible_default_action();
+    assert_eq!(virtual_camera.accessible_checked(), Some(true));
+    virtual_camera.invoke_accessible_default_action();
+    assert_eq!(virtual_camera.accessible_checked(), Some(false));
 }
 
 /// Verifies that dock-header actions expose the dock they operate on rather

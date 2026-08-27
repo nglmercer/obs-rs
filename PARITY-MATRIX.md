@@ -163,6 +163,16 @@ The GUI fixture discovers the live `Mic/Aux` row and verifies its accessible
 identity and metadata; native screen-reader traversal and complete focus-order
 verification remain partial.
 
+## Latest verified package: unavailable virtual-camera explanation action
+
+On 2026-08-27, the disabled Virtual Camera controls now retain their explicit
+unavailable state while the surrounding explanation affordance exposes a
+button role, localized capability description, checkable expanded state, and
+default accessibility action. The action only toggles the existing UI
+explanation; it never claims or starts a virtual-camera backend. The GUI
+fixture verifies both accessible state transitions, while native screen-reader
+traversal and complete focus-order verification remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

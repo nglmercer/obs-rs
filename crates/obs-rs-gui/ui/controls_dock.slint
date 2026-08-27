@@ -91,6 +91,19 @@ export component ControlsDock inherits Rectangle {
             // reads as a bug, an answered one reads as a limitation.
             Rectangle {
                 height: 30px;
+                // The disabled child controls describe the unavailable
+                // capability; this wrapper remains an enabled information
+                // action so keyboard and assistive-technology users can get
+                // the same explanation as pointer users.
+                accessible-role: button;
+                accessible-label: I18n.text.start_virtual_camera;
+                accessible-description: I18n.text.camera_unsupported_hint;
+                accessible-enabled: true;
+                accessible-checkable: true;
+                accessible-checked: root.virtual-camera-explained;
+                accessible-action-default => {
+                    root.virtual-camera-explained = !root.virtual-camera-explained;
+                }
                 HorizontalBox {
                     padding: 0px;
                     spacing: 4px;

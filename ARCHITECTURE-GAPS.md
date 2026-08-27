@@ -53,6 +53,14 @@ semantics, while the row remains a projection of `DesktopState` rather than a
 new selection owner. The GUI fixture verifies the live `Mic/Aux` row; native
 screen-reader traversal and complete focus-order verification remain open.
 
+The unavailable virtual-camera follow-up keeps the child controls disabled and
+adds an enabled, checkable information action to their existing wrapper. Its
+localized accessible description explains the missing capability, and its
+default action toggles only the existing explanation text; no fake backend or
+second capability state is introduced. The GUI fixture verifies both state
+transitions, while native screen-reader traversal and complete focus-order
+verification remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and
