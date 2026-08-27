@@ -318,6 +318,11 @@ pub(super) fn read_dock_splitters(ui: &MainWindow) -> Vec<crate::DockSplitter> {
 /// broken map binding or a missing catalog field fails the suite.
 pub(super) fn render_monitor_window() {
     let window = crate::MonitorWindow::new().expect("monitor window should instantiate");
+    let selected = Rc::new(RefCell::new(String::new()));
+    let selected_callback = Rc::clone(&selected);
+    window.on_select_monitor(move |id| {
+        *selected_callback.borrow_mut() = id.to_string();
+    });
     window.set_source_name("x11_screen_capture".into());
     window.set_monitor_rows(ModelRc::new(VecModel::from(vec![
         crate::MonitorRow {
@@ -345,6 +350,10 @@ pub(super) fn render_monitor_window() {
     ])));
     window.set_selected_id("DP-1".into());
     window.show().expect("monitor window should show");
+    window
+        .global::<I18n>()
+        .set_text(crate::i18n::catalog(UiLocale::English));
+    exercise_monitor_list_accessibility(&window, &selected);
     for locale in UiLocale::supported() {
         window
             .global::<I18n>()
@@ -356,6 +365,50 @@ pub(super) fn render_monitor_window() {
         assert!(snapshot.width() > 0 && snapshot.height() > 0);
     }
     window.hide().expect("monitor window should hide");
+}
+
+/// Verifies that the monitor list exposes stable display identities while
+/// retaining selection ownership in the existing standalone-window callback.
+fn exercise_monitor_list_accessibility(
+    window: &crate::MonitorWindow,
+    selected: &Rc<RefCell<String>>,
+) {
+    let primary = ElementHandle::find_by_accessible_label(window, "DP-1")
+        .find(|row| {
+            row.accessible_role() == Some(AccessibleRole::ListItem)
+                && row.size().width > 100.0
+                && row.size().height > 30.0
+        })
+        .expect("the primary monitor row is accessible");
+    assert_eq!(
+        primary.accessible_description().as_deref(),
+        Some("DP-1 · 1920x1080 at 0,0 · primary")
+    );
+    assert_eq!(primary.accessible_enabled(), Some(true));
+    assert_eq!(primary.accessible_item_selectable(), Some(true));
+    assert_eq!(primary.accessible_item_selected(), Some(true));
+    assert_eq!(primary.accessible_item_index(), Some(0));
+    assert_eq!(primary.accessible_item_count(), Some(2));
+
+    let secondary = ElementHandle::find_by_accessible_label(window, "HDMI-1")
+        .find(|row| {
+            row.accessible_role() == Some(AccessibleRole::ListItem)
+                && row.size().width > 100.0
+                && row.size().height > 30.0
+        })
+        .expect("the secondary monitor row is accessible");
+    assert_eq!(
+        secondary.accessible_description().as_deref(),
+        Some("HDMI-1 · 1280x1024 at 1920,0")
+    );
+    assert_eq!(secondary.accessible_enabled(), Some(true));
+    assert_eq!(secondary.accessible_item_selectable(), Some(true));
+    assert_eq!(secondary.accessible_item_selected(), Some(false));
+    assert_eq!(secondary.accessible_item_index(), Some(1));
+    assert_eq!(secondary.accessible_item_count(), Some(2));
+
+    secondary.invoke_accessible_default_action();
+    assert_eq!(selected.borrow().as_str(), "HDMI-1");
 }
 
 /// Verifies that the first-run setup window owns its Escape boundary without

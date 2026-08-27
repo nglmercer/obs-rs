@@ -101,6 +101,14 @@ and restores Normal through that contract; no second draft state is created.
 Native screen-reader traversal and complete focus-order verification remain
 open.
 
+The Monitor picker row accessibility follow-up exposes the visible display
+list as `ListItem` elements with stable monitor IDs, geometry/primary-display
+descriptions, selected state, bounded repeater indices/count, and default
+actions wired to the existing monitor-selection callback. It deliberately
+does not duplicate rows in Rust: the index comes from the Slint repeater and
+the row remains a projection of `MonitorRow`. Map-tile semantics, native
+screen-reader traversal, and portal-owned display selection remain open.
+
 The Source Properties close-policy follow-up routes a native window-manager
 close through the same cancel path as Escape and the Cancel button. A staged
 source-settings draft is therefore discarded before the window is hidden, and

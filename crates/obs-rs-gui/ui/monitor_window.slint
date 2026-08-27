@@ -7,10 +7,13 @@ import { Palette } from "palette.slint";
 // One row of the display list, showing the connector name beside the geometry
 // so two identical panels can still be told apart.
 component MonitorListRow inherits Rectangle {
+    in property <string> monitor-id;
     in property <string> name;
     in property <string> geometry;
     in property <bool> primary;
     in property <bool> active;
+    in property <int> item-index;
+    in property <int> item-count;
     callback clicked();
 
     height: 46px;
@@ -20,6 +23,17 @@ component MonitorListRow inherits Rectangle {
     border-width: 1px;
     border-color: active ? Palette.tokens.accent : Palette.tokens.border;
     border-radius: 3px;
+
+    accessible-role: list-item;
+    accessible-label: root.monitor-id;
+    accessible-description: root.monitor-id + " · " + root.geometry
+        + (root.primary ? " · " + I18n.text.monitor_ui.primary : "");
+    accessible-enabled: root.monitor-id != "";
+    accessible-item-selectable: true;
+    accessible-item-selected: root.active;
+    accessible-item-index: root.item-index;
+    accessible-item-count: root.item-count;
+    accessible-action-default => root.clicked();
 
     HorizontalLayout {
         padding-left: 10px;
@@ -190,11 +204,14 @@ export component MonitorWindow inherits Window {
                             height: 28px;
                             vertical-alignment: center;
                         }
-                        for monitor in root.monitor-rows : MonitorListRow {
+                        for monitor[index] in root.monitor-rows : MonitorListRow {
+                            monitor-id: monitor.id;
                             name: monitor.name;
                             geometry: monitor.geometry;
                             primary: monitor.primary;
                             active: monitor.selected;
+                            item-index: index;
+                            item-count: root.monitor-rows.length;
                             clicked => { root.select-monitor(monitor.id); }
                         }
                     }

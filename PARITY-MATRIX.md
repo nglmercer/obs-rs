@@ -220,6 +220,15 @@ selection callback. The GUI fixture verifies the Appearance density options,
 switches Compact and restores Normal through accessible actions; native
 screen-reader traversal and complete focus-order verification remain partial.
 
+## Latest verified package: Monitor picker row accessibility semantics
+
+On 2026-08-27, the Monitor picker display list now exposes each visible row as
+a `ListItem` with a stable monitor ID, geometry/primary-display description,
+selected state, bounded repeater index/count metadata, and a default action
+that reuses the existing monitor-selection callback. The GUI fixture verifies
+both display rows and activates the secondary monitor through accessibility;
+the map and native screen-reader traversal remain separate follow-up scopes.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the
