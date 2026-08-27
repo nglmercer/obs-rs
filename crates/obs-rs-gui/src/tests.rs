@@ -67,6 +67,8 @@ mod ui_source_dock_keyboard;
 mod ui_source_keyboard;
 #[path = "tests/ui_source_order_keyboard.rs"]
 mod ui_source_order_keyboard;
+#[path = "tests/ui_source_properties.rs"]
+mod ui_source_properties;
 #[path = "tests/ui_source_rename_keyboard.rs"]
 mod ui_source_rename_keyboard;
 #[path = "tests/ui_sources.rs"]

@@ -30,6 +30,12 @@ The fixture verifies the visible Scenes header controls without changing the
 persisted layout. Native screen-reader traversal and complete focus-order
 verification remain open.
 
+The Source Properties close-policy follow-up routes a native window-manager
+close through the same cancel path as Escape and the Cancel button. A staged
+source-settings draft is therefore discarded before the window is hidden, and
+reopening rebuilds it from the persisted source. Native close behavior for the
+other standalone editors and complete focus traversal remain open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied

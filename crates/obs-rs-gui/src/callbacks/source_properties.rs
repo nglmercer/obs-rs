@@ -270,6 +270,15 @@ fn install_commit(
     controller.window.on_cancel_properties(move || {
         let _ = cancel_controller.window.hide();
     });
+
+    // Treat the native window-manager close exactly like Cancel so a staged
+    // source-settings edit cannot escape the dialog without an explicit
+    // commit. The controller remains alive and can reopen a fresh draft.
+    let close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        let _ = close_controller.window.hide();
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 /// Describes the display a screen source is pointed at, for the picker button.

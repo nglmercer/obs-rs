@@ -56,6 +56,15 @@ accessibility actions. The GUI fixture verifies the visible Scenes header
 actions while leaving the persisted layout unchanged. Native screen-reader
 traversal and complete focus-order verification remain partial.
 
+## Latest verified package: Source Properties native close policy
+
+On 2026-08-26, a native window-manager close of Source Properties now follows
+the same cancel path as Escape and the Cancel button. The GUI fixture edits an
+image path, dispatches `CloseRequested`, reopens the dialog, and verifies that
+the persisted path is restored instead of committing the staged draft. Native
+close policies for the other standalone editors and complete focus traversal
+remain partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the

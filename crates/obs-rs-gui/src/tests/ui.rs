@@ -3,7 +3,7 @@ use super::{
     ui_icon_accessibility, ui_layout, ui_modal_keyboard, ui_navigation, ui_output, ui_project_open,
     ui_scene_dock_keyboard, ui_scene_rename_keyboard, ui_slideshow, ui_source_clipboard_modifiers,
     ui_source_delete_modifiers, ui_source_dock_keyboard, ui_source_order_keyboard,
-    ui_source_rename_keyboard, ui_sources,
+    ui_source_properties, ui_source_rename_keyboard, ui_sources,
 };
 
 #[test]
@@ -283,7 +283,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_layout::exercise_dock_layout(&ui, &docks);
     ui_layout::render_every_settings_category();
     ui_layout::exercise_settings_commit(&ui, &state, &surface, &canvas);
-    ui_sources::render_source_properties_window();
+    ui_source_properties::render_source_properties_window();
     ui_sources::render_source_filters_window(&ui, &state, &surface);
     ui_sources::exercise_source_transform_window(&ui, &state, &surface);
     ui_sources::exercise_source_keyboard_delete(&ui, &state, &surface);
@@ -311,7 +311,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_project_open::exercise_project_open_dialog(&ui);
     ui_project_open::exercise_project_recovery_dialog(&ui, &state);
     ui_navigation::exercise_context_menus(&ui, &state, &surface);
-    ui_sources::exercise_image_source_file_picker(&ui, &state, &surface);
+    ui_source_properties::exercise_image_source_file_picker(&ui, &state, &surface);
     ui_slideshow::exercise_slideshow_directory_picker(&ui, &state, &surface);
     ui_layout::render_setup_window();
 }
