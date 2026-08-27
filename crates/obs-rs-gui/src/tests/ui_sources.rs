@@ -810,6 +810,17 @@ fn exercise_add_source_keyboard_boundary(window: &crate::AddSourceWindow) {
         !window.window().is_visible(),
         "Escape closes the add source window"
     );
+
+    window.show().expect("add source window should reopen");
+    window
+        .window()
+        .take_snapshot()
+        .expect("add source window should render before native close dispatch");
+    window.window().dispatch_event(WindowEvent::CloseRequested);
+    assert!(
+        !window.window().is_visible(),
+        "native close closes the add source window"
+    );
 }
 
 /// Verifies the complete screen/camera source-properties path: selecting a

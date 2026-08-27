@@ -114,6 +114,16 @@ fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourc
     controller.window.on_close_window(move || {
         let _ = close_controller.window.hide();
     });
+
+    // Native window-manager dismissal follows the same close path as the
+    // footer/ Escape action. The selection is session-local and is reset on
+    // the next open, so this only makes the standalone window lifecycle
+    // explicit without introducing another state owner.
+    let native_close_controller = Rc::clone(controller);
+    controller.window.window().on_close_requested(move || {
+        native_close_controller.window.invoke_close_window();
+        slint::CloseRequestResponse::HideWindow
+    });
 }
 
 fn install_actions(

@@ -64,6 +64,13 @@ changes a draft value, dispatches a native close request, and verifies the
 committed value after reopening. Native close behavior for the remaining
 standalone editors and complete focus traversal remain open.
 
+The Add Source close-policy follow-up routes native window-manager dismissal
+through the existing `close-window` callback. Its selection and source-kind
+state remain session-local and are reset on the next open, so the native close
+path only makes the standalone window lifecycle explicit. The GUI fixture
+dispatches `CloseRequested` after the existing Escape path and verifies the
+window is hidden; complete focus traversal remains open.
+
 The source clipboard keyboard packet now maps OBS's local `Ctrl+C` and
 `Ctrl+V` workflow through the existing `DesktopState` clipboard. The main
 window forwards only the selected stable source path; Rust keeps the copied
@@ -181,8 +188,8 @@ remains open.
 The standalone Add Source browser now focuses an explicit keyboard boundary
 after each show. `Escape` closes it through the existing close callback, while
 `Enter` remains available to the distinct Create/Add buttons and other focused
-controls. The GUI fixture verifies that a real Escape event hides the window.
-OS close-request policy and complete focus traversal remain open.
+controls. The GUI fixture verifies both Escape and native `CloseRequested`
+events hide the window; complete focus traversal remains open.
 
 The standalone first-run Setup window now focuses an explicit keyboard
 boundary whenever it opens. Plain `Escape` follows the existing native-close

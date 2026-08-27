@@ -103,6 +103,15 @@ committed value before exercising the existing OK path. Native close policies
 for the remaining standalone editors and complete focus-order verification
 remain partial.
 
+## Latest verified package: Add Source native close policy
+
+On 2026-08-26, native window-manager dismissal of Add Source now invokes its
+existing `close-window` callback before returning `HideWindow`. The browser's
+selection and source-kind state remain session-local and are reset whenever it
+opens, so no second project or UI state owner is introduced. The GUI fixture
+dispatches `CloseRequested` after the Escape path and verifies the window is
+hidden; complete focus-order verification remains partial.
+
 ## Latest verified package: platform-specific dock rename key
 
 On 2026-08-26, the Scenes and Sources dock keyboard boundaries now follow the
@@ -276,8 +285,8 @@ remains incomplete.
 On 2026-08-26, the standalone Add Source browser now focuses an explicit
 keyboard boundary after it is shown. `Escape` closes through the existing Rust
 callback, while `Enter` remains available to the focused Create/Add control.
-The GUI fixture verifies that the real Escape event hides the window;
-OS close-request handling and complete focus traversal remain incomplete.
+The GUI fixture verifies both the real Escape event and native
+`CloseRequested` hide the window; complete focus traversal remains incomplete.
 
 ## Latest verified package: native slideshow directory Browse picker
 
