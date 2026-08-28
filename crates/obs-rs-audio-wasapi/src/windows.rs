@@ -31,6 +31,7 @@ const OUTPUT_STATE_FAILED: u8 = 2;
 
 enum CallbackBlock {
     Samples(Vec<f32>),
+    Xrun,
     Error(String),
 }
 
@@ -193,6 +194,11 @@ impl WasapiInput {
             })?;
             match block {
                 CallbackBlock::Samples(block) => self.pending.extend(block),
+                // CPAL reports a discontinuity as Xrun but keeps the WASAPI
+                // capture stream alive. Drop only that notification and wait
+                // for the next complete block; device invalidation and other
+                // errors still take the existing reconnect path.
+                CallbackBlock::Xrun => {}
                 CallbackBlock::Error(message) => {
                     self.state = AudioInputState::Failed;
                     return Err(AudioDeviceError::Unavailable(format!(
@@ -531,7 +537,12 @@ fn build_stream(
     error_sender: SyncSender<CallbackBlock>,
 ) -> Result<Stream, AudioDeviceError> {
     let error_callback = move |error: cpal::Error| {
-        let _ = error_sender.try_send(CallbackBlock::Error(error.to_string()));
+        let block = if error.kind() == cpal::ErrorKind::Xrun {
+            CallbackBlock::Xrun
+        } else {
+            CallbackBlock::Error(error.to_string())
+        };
+        let _ = error_sender.try_send(block);
     };
     match sample_format {
         SampleFormat::F32 => device
@@ -664,5 +675,24 @@ mod tests {
             receiver.try_recv().expect("callback error"),
             CallbackBlock::Error(_)
         ));
+    }
+
+    #[test]
+    fn input_xruns_are_ignored_until_a_complete_block_arrives() {
+        let format = AudioFormat::new(48_000, 1).expect("format");
+        let (sender, receiver) = mpsc::sync_channel(CALLBACK_QUEUE_CAPACITY);
+        sender.send(CallbackBlock::Xrun).expect("xrun");
+        sender
+            .send(CallbackBlock::Samples(vec![0.25, -0.25]))
+            .expect("samples");
+        let mut input = WasapiInput {
+            format,
+            state: AudioInputState::Stopped,
+            receiver,
+            pending: Vec::new(),
+            stream: None,
+        };
+        let samples = input.take_samples(2).expect("samples after xrun");
+        assert_eq!(samples, vec![0.25, -0.25]);
     }
 }

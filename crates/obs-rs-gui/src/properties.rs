@@ -210,9 +210,12 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         ],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         #[cfg(target_os = "windows")]
-        "screen_capture" => vec![&MONITOR, &DEVICE],
+        "screen_capture" => vec![&MONITOR, &DEVICE, &CURSOR],
         #[cfg(not(target_os = "windows"))]
         "screen_capture" => vec![&DEVICE],
+        #[cfg(target_os = "windows")]
+        "window_capture" => vec![&DEVICE, &CURSOR],
+        #[cfg(not(target_os = "windows"))]
         "window_capture" => vec![&DEVICE],
         "camera_capture" => {
             let mut camera_fields = vec![&DEVICE];
@@ -627,6 +630,27 @@ mod tests {
         let rows = rows("plugin_thing", "width = 2\nheight = 2\n", UiLocale::English);
 
         assert_eq!(rows.len(), 2);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_capture_sources_expose_the_cursor_setting() {
+        let screen_keys = fields("screen_capture", &[])
+            .into_iter()
+            .map(|field| field.key)
+            .collect::<Vec<_>>();
+        let window_keys = fields("window_capture", &[])
+            .into_iter()
+            .map(|field| field.key)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            screen_keys,
+            ["monitor", "device_id", "capture_cursor", "width", "height"]
+        );
+        assert_eq!(
+            window_keys,
+            ["device_id", "capture_cursor", "width", "height"]
+        );
     }
 
     #[test]

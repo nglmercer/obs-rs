@@ -17,8 +17,9 @@ fn main() -> ExitCode {
 
 #[cfg(target_os = "windows")]
 use std::{
+    error::Error,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(target_os = "windows")]
@@ -37,7 +38,15 @@ use obs_rs_capture::{
 #[cfg(target_os = "windows")]
 use obs_rs_capture_windows::WindowsCaptureAdapter;
 #[cfg(target_os = "windows")]
+use obs_rs_config::Config;
+#[cfg(target_os = "windows")]
+use obs_rs_engine::{EngineConfig, EngineSession};
+#[cfg(target_os = "windows")]
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+#[cfg(target_os = "windows")]
+use obs_rs_output::{MemoryMuxer, PacketKind, RleVideoEncoder};
+#[cfg(target_os = "windows")]
+use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 
 #[cfg(target_os = "windows")]
 struct CheckResult {
@@ -74,6 +83,7 @@ fn main() -> ExitCode {
     let checks = [
         ("display", check_display()),
         ("window", check_window()),
+        ("reference_recording", check_reference_recording()),
         ("camera", check_camera()),
         ("microphone", check_microphone()),
         ("desktop_loopback", check_desktop_loopback()),
@@ -124,7 +134,7 @@ fn open_windows_capture(
     device: &obs_rs_capture::CaptureDeviceInfo,
     format: VideoFormat,
 ) -> ThreadedCaptureDevice {
-    let adapter = WindowsCaptureAdapter::default();
+    let adapter = WindowsCaptureAdapter::default().with_capture_cursor(true);
     let stable_id = device.id().to_string();
     ThreadedCaptureDevice::open(CaptureRequest::output(format), device.name(), move || {
         adapter.open(&stable_id)
@@ -210,23 +220,149 @@ fn check_display() -> CheckResult {
 }
 
 #[cfg(target_os = "windows")]
+fn check_reference_recording() -> CheckResult {
+    let devices = match discover_windows() {
+        Ok(devices) => devices,
+        Err(error) => return capture_check_result(&error),
+    };
+    let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
+        return CheckResult::skip("reference recording needs a connected Windows display target");
+    };
+    let format = probe_video_format();
+    let frame = match capture_one(display, format, Duration::from_secs(8)) {
+        Ok(frame) => frame,
+        Err(error) => return capture_check_result_with_context(&error, "recording capture"),
+    };
+    let path = reference_recording_path();
+    let result = record_captured_frame(&path, format, &frame);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("windows-check.obsr")
+    )));
+    match result {
+        Ok((bytes, packets)) => CheckResult::pass(format!(
+            "device={} bytes={} packets={} container=OBSRPKT1",
+            display.id(),
+            bytes,
+            packets
+        )),
+        Err(error) => CheckResult::fail(error),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn record_captured_frame(
+    path: &std::path::Path,
+    format: VideoFormat,
+    frame: &VideoFrame,
+) -> Result<(usize, usize), String> {
+    let project = acceptance_project(format).map_err(|error| error.to_string())?;
+    let audio_format = AudioFormat::new(48_000, 2).map_err(|error| error.to_string())?;
+    let config =
+        EngineConfig::new(audio_format).with_video_encoder(Box::new(RleVideoEncoder::new(format)));
+    let mut engine = EngineSession::new(project, config).map_err(|error| error.to_string())?;
+    engine
+        .start_recording(path)
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = engine.push_program_frame(frame) {
+        engine.abort_recording();
+        return Err(error.to_string());
+    }
+    let bytes = engine
+        .finish_recording()
+        .map_err(|error| error.to_string())?;
+    let persisted = std::fs::read(path).map_err(|error| error.to_string())?;
+    if persisted.len() != bytes {
+        return Err(format!(
+            "recording byte count mismatch: engine={bytes} file={}",
+            persisted.len()
+        ));
+    }
+    let packets = MemoryMuxer::decode(&persisted).map_err(|error| error.to_string())?;
+    let has_video = packets
+        .iter()
+        .any(|packet| packet.kind() == PacketKind::Video);
+    let has_audio = packets
+        .iter()
+        .any(|packet| packet.kind() == PacketKind::Audio);
+    if !has_video || !has_audio {
+        return Err(format!(
+            "recording is missing media: video={has_video} audio={has_audio}"
+        ));
+    }
+    Ok((bytes, packets.len()))
+}
+
+#[cfg(target_os = "windows")]
+fn acceptance_project(format: VideoFormat) -> Result<Project, Box<dyn Error>> {
+    let mut project = Project::new("OBS-RS Windows acceptance")?;
+    let mut profile = Profile::new("windows-check", "Windows acceptance", format)?;
+    let mut settings = Config::new();
+    settings.set("width", &format.width().to_string())?;
+    settings.set("height", &format.height().to_string())?;
+    settings.set("color", "#203040FF")?;
+    let mut scene = SceneSpec::new("program", "Program")?;
+    scene.add_item(SceneItemSpec::for_source("background")?)?;
+    profile.add_source(SourceSpec::new(
+        "background",
+        "color_source",
+        "Background",
+        settings,
+    )?)?;
+    profile.add_scene(scene)?;
+    project.add_profile(profile)?;
+    Ok(project)
+}
+
+#[cfg(target_os = "windows")]
+fn reference_recording_path() -> std::path::PathBuf {
+    let token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    std::env::temp_dir().join(format!(
+        "obs-rs-windows-check-{}-{token}.obsr",
+        std::process::id()
+    ))
+}
+
+#[cfg(target_os = "windows")]
 fn check_window() -> CheckResult {
     let devices = match discover_windows() {
         Ok(devices) => devices,
         Err(error) => return capture_check_result(&error),
     };
-    let Some(window) = first_windows_device(&devices, CaptureKind::Window) else {
+    let windows = devices
+        .iter()
+        .filter(|device| device.kind() == CaptureKind::Window)
+        .filter(|device| device.permission() == CapturePermission::Granted)
+        .collect::<Vec<_>>();
+    if windows.is_empty() {
         return CheckResult::skip("Windows reported no capturable top-level window");
-    };
-    match capture_one(window, probe_video_format(), Duration::from_secs(8)) {
-        Ok(frame) => CheckResult::pass(format!(
-            "device={} size={}x{}",
-            window.id(),
-            frame.format().width(),
-            frame.format().height()
-        )),
-        Err(error) => capture_check_result(&error),
     }
+    let mut failures = Vec::new();
+    for window in windows.into_iter().take(8) {
+        match capture_one(window, probe_video_format(), Duration::from_secs(8)) {
+            Ok(frame) => {
+                return CheckResult::pass(format!(
+                    "device={} size={}x{}",
+                    window.id(),
+                    frame.format().width(),
+                    frame.format().height()
+                ));
+            }
+            Err(error) if is_hardware_unavailable(&error) => {
+                return capture_check_result_with_context(&error, "window capture");
+            }
+            Err(error) => failures.push(format!("{}: {error}", window.id())),
+        }
+    }
+    CheckResult::fail(format!(
+        "no enumerated window could be captured: {}",
+        failures.join("; ")
+    ))
 }
 
 #[cfg(target_os = "windows")]

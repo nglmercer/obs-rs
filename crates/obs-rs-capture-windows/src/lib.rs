@@ -67,6 +67,7 @@ pub struct WindowsDisplayInfo {
 #[derive(Clone, Debug)]
 pub struct WindowsCaptureAdapter {
     helper: PathBuf,
+    capture_cursor: Option<bool>,
 }
 
 impl Default for WindowsCaptureAdapter {
@@ -81,7 +82,16 @@ impl WindowsCaptureAdapter {
     pub fn new(helper: impl Into<PathBuf>) -> Self {
         Self {
             helper: helper.into(),
+            capture_cursor: None,
         }
+    }
+
+    /// Overrides the Windows Graphics Capture cursor policy for newly opened
+    /// screen and window devices.
+    #[must_use]
+    pub fn with_capture_cursor(mut self, capture_cursor: bool) -> Self {
+        self.capture_cursor = Some(capture_cursor);
+        self
     }
 
     /// Returns the helper executable path.
@@ -172,7 +182,7 @@ impl PlatformCaptureAdapter for WindowsCaptureAdapter {
                     ),
                 });
             };
-            NativeHelperDevice::new(&self.helper, stable_id, kind)
+            NativeHelperDevice::new(&self.helper, stable_id, kind, self.capture_cursor)
                 .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
         }
         #[cfg(not(target_os = "windows"))]
@@ -223,6 +233,7 @@ fn default_helper_path() -> PathBuf {
 struct NativeHelperDevice {
     helper: PathBuf,
     info: CaptureDeviceInfo,
+    capture_cursor: Option<bool>,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     stderr: Option<JoinHandle<String>>,
@@ -233,10 +244,16 @@ struct NativeHelperDevice {
 
 #[cfg(target_os = "windows")]
 impl NativeHelperDevice {
-    fn new(helper: &Path, stable_id: &str, kind: CaptureKind) -> Result<Self, CaptureError> {
+    fn new(
+        helper: &Path,
+        stable_id: &str,
+        kind: CaptureKind,
+        capture_cursor: Option<bool>,
+    ) -> Result<Self, CaptureError> {
         Ok(Self {
             helper: helper.to_owned(),
             info: CaptureDeviceInfo::new(stable_id, stable_id, kind)?,
+            capture_cursor,
             child: None,
             stdin: None,
             stderr: None,
@@ -259,7 +276,11 @@ impl VideoCaptureDevice for NativeHelperDevice {
         }
         validate_helper_version(&self.helper)?;
         let mut child = Command::new(&self.helper)
-            .args(capture_helper_args(self.info.id().as_str(), format))
+            .args(capture_helper_args(
+                self.info.id().as_str(),
+                format,
+                self.capture_cursor,
+            ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -418,7 +439,12 @@ fn read_helper_frames(
                 Ok(()) | Err(TrySendError::Full(_)) => {}
                 Err(TrySendError::Disconnected(_)) => return,
             },
-            Ok(None) => return,
+            Ok(None) => {
+                let _ = sender.send(Err(CaptureError::Protocol {
+                    message: "Windows capture helper frame stream ended".to_owned(),
+                }));
+                return;
+            }
             Err(error) => {
                 let _ = sender.send(Err(error));
                 return;
@@ -513,8 +539,12 @@ fn validate_helper_version(helper: &Path) -> Result<(), CaptureError> {
 }
 
 #[cfg(target_os = "windows")]
-fn capture_helper_args(stable_id: &str, format: VideoFormat) -> Vec<String> {
-    vec![
+fn capture_helper_args(
+    stable_id: &str,
+    format: VideoFormat,
+    capture_cursor: Option<bool>,
+) -> Vec<String> {
+    let mut args = vec![
         "--protocol".to_owned(),
         WINDOWS_HELPER_PROTOCOL.to_owned(),
         "--device".to_owned(),
@@ -527,7 +557,11 @@ fn capture_helper_args(stable_id: &str, format: VideoFormat) -> Vec<String> {
         format.frame_rate().numerator().to_string(),
         "--fps-denominator".to_owned(),
         format.frame_rate().denominator().to_string(),
-    ]
+    ];
+    if let Some(capture_cursor) = capture_cursor {
+        args.extend(["--capture-cursor".to_owned(), capture_cursor.to_string()]);
+    }
+    args
 }
 
 #[cfg(target_os = "windows")]
@@ -866,7 +900,7 @@ mod tests {
         let format = VideoFormat::new(1_280, 720, obs_rs_media::FrameRate::new(60, 1).unwrap())
             .expect("valid format");
         assert_eq!(
-            capture_helper_args("wgc-screen-2", format),
+            capture_helper_args("wgc-screen-2", format, Some(false)),
             vec![
                 "--protocol",
                 "OBSRWIN1",
@@ -880,6 +914,8 @@ mod tests {
                 "60",
                 "--fps-denominator",
                 "1",
+                "--capture-cursor",
+                "false",
             ]
         );
     }

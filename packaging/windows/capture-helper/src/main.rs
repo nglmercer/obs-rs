@@ -12,7 +12,7 @@ use std::{
     error::Error,
     io::{self, BufWriter, Read, Write},
     process,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use obs_rs_capture::write_frame_packet;
@@ -47,6 +47,7 @@ struct Arguments {
     height: Option<u32>,
     fps_numerator: Option<u32>,
     fps_denominator: Option<u32>,
+    capture_cursor: Option<bool>,
 }
 
 fn main() {
@@ -77,7 +78,7 @@ fn run() -> Result<(), BoxError> {
         .as_deref()
         .ok_or_else(|| invalid("--device is required for frame capture"))?;
     let format = requested_format(&arguments)?;
-    capture_device(device, format)
+    capture_device(device, format, arguments.capture_cursor)
 }
 
 fn parse_arguments<I>(arguments: I) -> Result<Arguments, BoxError>
@@ -99,6 +100,9 @@ where
             }
             "--fps-denominator" => {
                 parsed.fps_denominator = Some(parse_value(&mut iterator, "--fps-denominator")?);
+            }
+            "--capture-cursor" => {
+                parsed.capture_cursor = Some(parse_value(&mut iterator, "--capture-cursor")?);
             }
             other => return Err(invalid(format!("unknown argument {other}"))),
         }
@@ -242,14 +246,18 @@ fn monitor_geometry() -> Result<HashMap<String, (i32, i32, bool)>, BoxError> {
     Ok(HashMap::new())
 }
 
-fn capture_device(device: &str, format: VideoFormat) -> Result<(), BoxError> {
+fn capture_device(
+    device: &str,
+    format: VideoFormat,
+    capture_cursor: Option<bool>,
+) -> Result<(), BoxError> {
     if device == "wgc-window-picker" || device.starts_with("wgc-window-") {
         let window = resolve_window(device)?;
-        return run_graphics_capture(window, format);
+        return run_graphics_capture(window, format, capture_cursor);
     }
     if device == "wgc-screen-picker" || device.starts_with("wgc-screen-") {
         let monitor = resolve_monitor(device)?;
-        return run_graphics_capture(monitor, format);
+        return run_graphics_capture(monitor, format, capture_cursor);
     }
     Err(invalid(format!("unknown capture device {device}")))
 }
@@ -282,17 +290,23 @@ fn resolve_window(device: &str) -> Result<Window, BoxError> {
         .ok_or_else(|| invalid("the selected window is no longer available"))
 }
 
-fn run_graphics_capture<T>(item: T, format: VideoFormat) -> Result<(), BoxError>
+fn run_graphics_capture<T>(
+    item: T,
+    format: VideoFormat,
+    capture_cursor: Option<bool>,
+) -> Result<(), BoxError>
 where
     T: TryInto<windows_capture::settings::GraphicsCaptureItemType> + Send + 'static,
     T::Error: Error + Send + Sync + 'static,
 {
+    let cursor_settings = match capture_cursor {
+        Some(true) => CursorCaptureSettings::WithCursor,
+        Some(false) => CursorCaptureSettings::WithoutCursor,
+        None => CursorCaptureSettings::Default,
+    };
     let settings = Settings::new(
         item,
-        // Keep optional Graphics Capture toggles at their OS defaults. Older
-        // Windows builds expose the capture API but reject attempts to toggle
-        // cursor, border, or secondary-window behavior during session setup.
-        CursorCaptureSettings::Default,
+        cursor_settings,
         DrawBorderSettings::Default,
         SecondaryWindowSettings::Default,
         MinimumUpdateIntervalSettings::Default,
@@ -322,7 +336,31 @@ struct FrameWriter {
     format: VideoFormat,
     writer: BufWriter<io::Stdout>,
     scratch: Vec<u8>,
+    pacer: FramePacer,
     started: Instant,
+}
+
+struct FramePacer {
+    interval: Duration,
+    next_deadline: Instant,
+}
+
+impl FramePacer {
+    fn new(format: &VideoFormat, started: Instant) -> Self {
+        let interval_nanos = format.frame_rate().period_nanos().unwrap_or(1).max(1);
+        Self {
+            interval: Duration::from_nanos(interval_nanos),
+            next_deadline: started,
+        }
+    }
+
+    fn should_emit(&mut self, now: Instant) -> bool {
+        if now < self.next_deadline {
+            return false;
+        }
+        self.next_deadline = now.checked_add(self.interval).unwrap_or(now);
+        true
+    }
 }
 
 impl GraphicsCaptureApiHandler for FrameWriter {
@@ -330,11 +368,15 @@ impl GraphicsCaptureApiHandler for FrameWriter {
     type Error = BoxError;
 
     fn new(context: Context<Self::Flags>) -> Result<Self, Self::Error> {
+        let format = context.flags;
+        let started = Instant::now();
+        let pacer = FramePacer::new(&format, started);
         Ok(Self {
-            format: context.flags,
+            format,
             writer: BufWriter::new(io::stdout()),
             scratch: Vec::new(),
-            started: Instant::now(),
+            pacer,
+            started,
         })
     }
 
@@ -343,20 +385,23 @@ impl GraphicsCaptureApiHandler for FrameWriter {
         frame: &mut Frame,
         _capture_control: InternalCaptureControl,
     ) -> Result<(), Self::Error> {
-        let (source_width, source_height, source_pixels) = {
+        if !self.pacer.should_emit(Instant::now()) {
+            return Ok(());
+        }
+        let target_width = self.format.width();
+        let target_height = self.format.height();
+        let pixels = {
             let buffer = frame.buffer()?;
             let width = buffer.width();
             let height = buffer.height();
-            let pixels = buffer.as_nopadding_buffer(&mut self.scratch).to_vec();
-            (width, height, pixels)
+            resize_rgba(
+                buffer.as_nopadding_buffer(&mut self.scratch),
+                width,
+                height,
+                target_width,
+                target_height,
+            )?
         };
-        let pixels = resize_rgba(
-            &source_pixels,
-            source_width,
-            source_height,
-            self.format.width(),
-            self.format.height(),
-        )?;
         let output = VideoFrame::new(self.format, elapsed_timestamp(self.started), pixels)?;
         write_frame_packet(&output, &mut self.writer)?;
         self.writer.flush()?;
@@ -496,6 +541,27 @@ mod tests {
         assert!(resize_rgba(&[0; 3], 1, 1, 1, 1).is_err());
         assert!(resize_rgba(&[0; 4], 0, 1, 1, 1).is_err());
         assert!(resize_rgba(&[0; 4], 1, 1, 0, 1).is_err());
+    }
+
+    #[test]
+    fn frame_pacer_emits_immediately_then_waits_for_the_requested_period() {
+        let format =
+            VideoFormat::new(320, 180, FrameRate::new(30, 1).expect("rate")).expect("format");
+        let started = Instant::now();
+        let mut pacer = FramePacer::new(&format, started);
+        assert!(pacer.should_emit(started));
+        assert!(!pacer.should_emit(started + Duration::from_millis(10)));
+        assert!(pacer.should_emit(started + Duration::from_millis(34)));
+    }
+
+    #[test]
+    fn cursor_argument_is_optional_but_validated_when_present() {
+        let default = parse_arguments(Vec::<String>::new()).expect("default arguments");
+        assert_eq!(default.capture_cursor, None);
+        let disabled = parse_arguments(["--capture-cursor".to_owned(), "false".to_owned()])
+            .expect("cursor argument");
+        assert_eq!(disabled.capture_cursor, Some(false));
+        assert!(parse_arguments(["--capture-cursor".to_owned(), "maybe".to_owned(),]).is_err());
     }
 
     #[test]

@@ -180,6 +180,10 @@ pub(crate) fn source_settings_for_canvas(
             devices.first().map_or(fallback, |(id, _)| id.as_str())
         };
         settings.set("device_id", device_id)?;
+        #[cfg(target_os = "windows")]
+        if matches!(kind, "screen_capture" | "window_capture") {
+            settings.set("capture_cursor", "true")?;
+        }
     }
     if kind == "x11_screen_capture" {
         if let Ok(display) = std::env::var("DISPLAY") {

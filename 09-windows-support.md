@@ -1,5 +1,11 @@
 # Windows support plan
 
+The build/runtime checklist in this document is historical scaffolding. The
+authoritative verification baseline for full parity is
+[`10-windows-full-compatibility.md`](10-windows-full-compatibility.md), which
+keeps build, discovery, runtime behavior, and real Windows E2E acceptance as
+separate states.
+
 This is the checklist for bringing the Windows host to parity with the
 Linux/X11 vertical slice: a green build and test suite without any Unix
 dependency, native capture and audio adapters behind the existing Rust

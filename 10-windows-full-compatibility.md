@@ -1,0 +1,98 @@
+# Windows full-compatibility matrix
+
+This document is the verification baseline for the `windows-full-compatibility`
+work. It deliberately separates a Windows build from a usable feature. A row
+is not complete until its last column has a recorded result from a real Windows
+acceptance run.
+
+Baseline: `6d76c9f` (`main`), audited on 2026-08-28.
+
+## Status legend
+
+- `✅` verified by the current source/tests or a deterministic live probe.
+- `◐` an implementation or probe exists, but the repository does not yet prove
+  the complete user-facing behavior.
+- `—` no applicable discovery step or no Windows implementation is present.
+- `☐` no repeatable, recorded Windows end-to-end acceptance result exists.
+
+The `Actually works` column is intentionally conservative. In particular,
+`obs-rs-windows-check` is a runtime probe, but its hardware-dependent checks
+may report `skip`; a successful process exit therefore does not mean that all
+Windows features passed.
+
+## Feature matrix
+
+| Feature | Builds | Discovers | Actually captures/works | E2E tested on Windows | Evidence / next acceptance |
+| --- | --- | --- | --- | --- | --- |
+| Display capture | ✅ | ✅ | ◐ | ☐ | `obs-rs-capture-windows` launches the WGC helper and the Windows check probes one display. Capture at 30/60 fps on 1080p, 1440p, and 4K. |
+| Window capture | ✅ | ✅ | ◐ | ☐ | The helper enumerates top-level windows and resolves stable IDs. Verify resize, minimize, close/reopen, cloaking, and title changes. |
+| Camera capture | ✅ | ✅ | ◐ | ☐ | Nokhwa is used with the Windows Media Foundation input feature. Verify integrated, USB/UVC, capture-card, replug, and mode negotiation cases. |
+| Microphone input | ✅ | ✅ | ◐ | ☐ | WASAPI/CPAL input and format fallback are implemented. Record with a physical microphone and verify timestamp continuity. |
+| Desktop/system audio | ✅ | ✅ | ◐ | ☐ | WASAPI output endpoints are opened as loopback inputs. Verify audible desktop playback, silence handling, and default-render-device changes. |
+| Audio monitoring/output | ✅ | ✅ | ◐ | ☐ | WASAPI output sinks and the monitor worker exist. Verify monitoring while recording, format conversion, and unplug/replug recovery. |
+| Image source | ✅ | — | ✅ | ◐ | Portable source and GUI tests cover the path. Run the packaged GUI and load PNG/JPEG/WebP files from a Windows path. |
+| Image slideshow | ✅ | — | ✅ | ◐ | Portable slideshow tests cover timing and selection. Verify directory/file dialogs and long-running playback in the Windows GUI. |
+| Text source | ✅ | — | ✅ | ◐ | Portable text rendering is covered. Verify fonts, Unicode text, and Windows DPI scaling in the packaged GUI. |
+| Media source | — | — | — | ☐ | No built-in media source factory is currently present; define the supported formats/backend before marking this row complete. |
+| Scene compositing | ✅ | — | ✅ | ◐ | Core compositor and transform tests pass portably. Verify the WGC/camera/audio sources in a real Windows scene. |
+| Transforms/crop/scale | ✅ | — | ✅ | ◐ | Core transform/scaler tests pass portably. Verify mixed-DPI source sizes and output scaling in the GUI. |
+| Preview | ✅ | — | ◐ | ☐ | GUI smoke tests exercise wiring and the renderer has portable tests. Verify real WGC frames reach the visible preview. |
+| Recording | ✅ | — | ◐ | ☐ | Reference `OBSRPKT1` recording works; normal Windows builds remain reference-only unless the optional native GStreamer runtime is supplied. Verify a playable production file. |
+| Streaming | ✅ | — | ◐ | ☐ | Reference packet transports exist; production RTMP/SRT/etc. require the optional native GStreamer feature/runtime. Verify a real endpoint. |
+| Source persistence | ✅ | — | ✅ | ◐ | Project round-trip tests preserve source settings and target IDs. Reload a Windows project and capture the same selected display/window. |
+| Monitor/window hotplug | ✅ | ◐ | ◐ | ☐ | Discovery can be refreshed and capture loss triggers bounded reopen attempts; no hardware hotplug acceptance is recorded. |
+| Audio device hotplug | ✅ | ✅ | ◐ | ☐ | Discovery snapshots, default-route refresh, and engine reconnect logic exist. Change default devices and unplug the active route while recording. |
+| Diagnostics | ✅ | — | ◐ | ☐ | Windows version, GPU backend/adapter, and helper version are included in the diagnostics path. Export and inspect a packaged diagnostic bundle. |
+| Updater | ✅ | — | ◐ | ☐ | Windows-safe atomic publish logic exists. Exercise update, rollback/recovery, and locked-file behavior on a clean installation. |
+| Packaging | ✅ | — | ◐ | ☐ | The ZIP contains the GUI, app, check binary, helper, manifests, and checksums. Install/run it on a clean Windows 10/11 machine. |
+
+## Current verification commands
+
+The repository currently exercises the following layers:
+
+```text
+cargo fmt --all -- --check
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+cargo run -p obs-rs-gui -- --smoke
+cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --release
+cargo test --manifest-path packaging/windows/capture-helper/Cargo.toml
+cargo clippy --manifest-path packaging/windows/capture-helper/Cargo.toml -- -D warnings
+cargo run -p obs-rs-app --bin obs-rs-windows-check
+packaging/windows/package.ps1 -Configuration release -OutputDirectory <directory>
+```
+
+The Windows check should be run with `OBSR_CAPTURE_HELPER` pointing at the
+release helper. Its output must be archived with the Windows build, including
+`pass`, `skip`, and `fail` results, rather than reduced to the process exit
+code.
+
+## Latest local probe
+
+On 2026-08-28, this Windows host passed display capture, window capture,
+captured-frame reference recording, microphone input, monitor output, the
+desktop loopback, the two-second A/V soak, and three capture start/stop cycles.
+It skipped camera capture because no camera was connected. This is
+host-specific evidence; it does not close the cross-version, cross-GPU, or
+production-output acceptance rows.
+
+## Acceptance record format
+
+Every hardware run should record at least:
+
+```text
+OS build: Windows 10 22H2 or Windows 11 <build>
+GPU: Intel | AMD | NVIDIA, driver version
+Displays: count, resolution, refresh rate, DPI, layout
+Audio: microphone and render endpoint identifiers
+Capture: display/window, start time, duration, frames, dropped frames
+Output: recording profile/path or streaming protocol/endpoint
+Lifecycle: resize, close/reopen, device changes, sleep/resume
+Result: pass | fail, with the archived check output and media artifact
+```
+
+The P0 exit criteria are real display/window capture, microphone and desktop
+loopback capture, helper recovery, and production recording/streaming. A green
+compile, a reference packet, or a skipped hardware probe is not sufficient for
+full Windows parity.
