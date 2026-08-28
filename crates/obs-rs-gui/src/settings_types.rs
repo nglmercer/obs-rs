@@ -505,6 +505,33 @@ impl LayoutSettings {
 }
 
 impl AppSettings {
+    /// Downgrades persisted production selections when the current binary has
+    /// no usable native output backend.
+    ///
+    /// The reference packet path is deliberately portable, so a package built
+    /// without the optional GStreamer runtime can still record and stream. A
+    /// stale `.mkv`/RTMP selection must not be left in the live studio: it
+    /// would make the controls look configured while the first output action
+    /// could only fail at the engine boundary.
+    pub(crate) fn adapt_to_output_capabilities(&mut self, production_supported: bool) {
+        if production_supported {
+            return;
+        }
+
+        self.stream_protocol = StreamProtocol::Reference;
+        self.recording_format = RecordingFormat::ReferencePacket;
+        self.recording_auto_remux = false;
+        if Path::new(&self.recording_path)
+            .extension()
+            .is_none_or(|extension| !extension.eq_ignore_ascii_case("obsr"))
+        {
+            self.recording_path = PathBuf::from(&self.recording_path)
+                .with_extension(RecordingFormat::ReferencePacket.extension())
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
+
     /// Reads the window's current dock layout back into this document.
     pub(crate) fn capture_layout(&mut self, ui: &crate::MainWindow) {
         let order = read_model(&ui.get_panel_order());

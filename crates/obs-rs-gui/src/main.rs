@@ -148,7 +148,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         settings::AppSettings::load_with_status(&settings::settings_path())
     };
     let show_setup = settings_load.show_setup;
-    let settings = settings_load.settings;
+    let mut settings = settings_load.settings;
     ui.set_new_source_kind("test_pattern".into());
     ui.set_capture_capabilities(platform_capture_summary().into());
     let project = initial_project()?;
@@ -228,6 +228,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         settings.microphone_monitor_mode,
         settings.desktop_audio_monitor_mode,
     )?));
+    settings
+        .adapt_to_output_capabilities(output.borrow().capabilities().supports_production_output());
 
     // The mixer's live channel shows the input it captures from the first
     // frame, rather than a generic label that never matches the device list.

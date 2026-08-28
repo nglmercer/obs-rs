@@ -738,6 +738,34 @@ fn default_stream_config_selects_the_production_rtmp_path() {
     );
 }
 
+#[test]
+fn settings_fall_back_to_portable_output_when_native_backend_is_missing() {
+    let mut settings = AppSettings::default();
+
+    settings.adapt_to_output_capabilities(false);
+
+    assert_eq!(settings.stream_protocol, StreamProtocol::Reference);
+    assert_eq!(settings.recording_format, RecordingFormat::ReferencePacket);
+    assert!(!settings.recording_auto_remux);
+    assert_eq!(
+        Path::new(&settings.recording_path)
+            .extension()
+            .and_then(|value| value.to_str()),
+        Some("obsr")
+    );
+}
+
+#[test]
+fn production_settings_are_preserved_when_native_backend_is_ready() {
+    let mut settings = AppSettings::default();
+
+    settings.adapt_to_output_capabilities(true);
+
+    assert_eq!(settings.stream_protocol, StreamProtocol::Rtmp);
+    assert_eq!(settings.recording_format, RecordingFormat::Matroska);
+    assert!(settings.recording_path.ends_with(".mkv"));
+}
+
 fn expected_recording_path(settings: &AppSettings, extension: &str) -> String {
     std::path::Path::new(&settings.recording_directory)
         .join(format!("2024-02-29 12-30-45.{extension}"))
