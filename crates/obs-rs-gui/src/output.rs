@@ -326,14 +326,15 @@ impl OutputRuntime {
         project: Project,
         revision: u64,
     ) -> Result<(), Box<dyn Error>> {
-        if !self.needs_project_sync(revision) {
-            return Ok(());
-        }
         // Keep the output worker safe when an already-running application
         // receives a project from an older binary before the normal load
-        // migration has had a chance to rewrite it. The worker owns a clone,
-        // so this compatibility repair does not change the GUI's dirty state.
-        let (project, _) = crate::project_migration::migrate_project_for_host(project);
+        // migration has had a chance to rewrite it. Do this before the
+        // revision fast path: an in-memory legacy project can be presented at
+        // the current revision after a workspace/profile switch.
+        let (project, migrated) = crate::project_migration::migrate_project_for_host(project);
+        if !self.needs_project_sync(revision) && !migrated {
+            return Ok(());
+        }
         let next_format = project
             .active_profile_spec()
             .map(obs_rs_project::Profile::video_format);
