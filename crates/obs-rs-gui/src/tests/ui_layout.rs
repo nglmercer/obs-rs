@@ -475,12 +475,15 @@ pub(super) fn render_setup_window() {
     );
 }
 
-/// Drives the display picker end to end: opening it for an X11 screen source,
-/// accepting the whole-desktop choice, and confirming the project records it.
+/// Drives the display picker end to end: opening it for a platform screen
+/// source, accepting the automatic/whole-desktop choice, and confirming the
+/// project records it.
 fn exercise_monitor_keyboard_boundary(ui: &MainWindow, window: &crate::MonitorWindow) {
-    assert!(
-        !window.get_capture_whole_desktop(),
-        "the picker starts from the persisted display selection"
+    let expected_whole_desktop = cfg!(target_os = "windows");
+    assert_eq!(
+        window.get_capture_whole_desktop(),
+        expected_whole_desktop,
+        "the picker starts from the persisted platform display selection"
     );
     // Escape must discard the in-window selection. The whole-desktop choice is
     // available on every host, including a CI machine with no display server.
@@ -494,8 +497,9 @@ fn exercise_monitor_keyboard_boundary(ui: &MainWindow, window: &crate::MonitorWi
     });
 
     ui.invoke_open_monitor_window();
-    assert!(
-        !window.get_capture_whole_desktop(),
+    assert_eq!(
+        window.get_capture_whole_desktop(),
+        expected_whole_desktop,
         "Escape discards the monitor picker draft"
     );
     window.set_capture_whole_desktop(true);
@@ -506,8 +510,9 @@ fn exercise_monitor_keyboard_boundary(ui: &MainWindow, window: &crate::MonitorWi
     window.window().dispatch_event(WindowEvent::CloseRequested);
 
     ui.invoke_open_monitor_window();
-    assert!(
-        !window.get_capture_whole_desktop(),
+    assert_eq!(
+        window.get_capture_whole_desktop(),
+        expected_whole_desktop,
         "native window close discards the monitor picker draft"
     );
     window.set_capture_whole_desktop(true);
