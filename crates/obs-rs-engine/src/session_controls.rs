@@ -383,12 +383,15 @@ impl EngineSession {
         self.audio_backend = audio_backend;
         self.audio_fallback = audio_fallback;
         self.audio_active_device_id = audio_active_device_id;
-        self.audio_reconnect_at = audio_reconnect_deadline(audio_fallback);
+        self.audio_reconnect_at =
+            audio_reconnect_deadline(audio_fallback && self.config.audio_input_id.is_some());
         self.audio_input_delay = audio_input_delay;
         self.desktop_audio = desktop_audio;
         self.desktop_audio_backend = desktop_audio_backend;
         self.desktop_audio_active_device_id = desktop_audio_active_device_id;
-        self.desktop_audio_reconnect_at = audio_reconnect_deadline(self.desktop_audio.is_none());
+        self.desktop_audio_reconnect_at = audio_reconnect_deadline(
+            self.desktop_audio.is_none() && self.config.desktop_audio_id.is_some(),
+        );
         self.desktop_audio_delay = desktop_audio_delay;
         self.mixer.set_format(audio_format);
         self.timeline = MediaTimeline::new(
@@ -429,7 +432,8 @@ impl EngineSession {
         self.audio_fallback = audio_fallback;
         self.audio_active_device_id = audio_active_device_id;
         self.config.audio_input_id = device_id;
-        self.audio_reconnect_at = audio_reconnect_deadline(audio_fallback);
+        self.audio_reconnect_at =
+            audio_reconnect_deadline(audio_fallback && self.config.audio_input_id.is_some());
         self.next_audio_deadline = None;
         self.invalidate_audio_route_requests();
         self.last_error = None;
@@ -461,7 +465,9 @@ impl EngineSession {
         self.desktop_audio_backend = desktop_audio_backend;
         self.desktop_audio_active_device_id = desktop_audio_active_device_id;
         self.config.desktop_audio_id = device_id;
-        self.desktop_audio_reconnect_at = audio_reconnect_deadline(self.desktop_audio.is_none());
+        self.desktop_audio_reconnect_at = audio_reconnect_deadline(
+            self.desktop_audio.is_none() && self.config.desktop_audio_id.is_some(),
+        );
         self.next_audio_deadline = None;
         self.invalidate_audio_route_requests();
     }

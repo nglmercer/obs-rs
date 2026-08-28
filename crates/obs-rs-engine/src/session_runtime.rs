@@ -46,7 +46,6 @@ impl EngineSession {
                     self.audio_fallback = false;
                     self.audio_reconnect_at = None;
                     self.audio_input_delay.reset();
-                    self.next_audio_deadline = None;
                     self.last_error = None;
                 }
                 AudioRouteUpdate::Unavailable(reason) => {
@@ -64,7 +63,6 @@ impl EngineSession {
                     self.desktop_audio_active_device_id = Some(route.device_id);
                     self.desktop_audio_reconnect_at = None;
                     self.desktop_audio_delay.reset();
-                    self.next_audio_deadline = None;
                     self.last_error = None;
                 }
                 AudioRouteUpdate::Unavailable(reason) => {
@@ -74,11 +72,13 @@ impl EngineSession {
             }
         }
 
-        let watches_microphone = self.config.audio_input_id.is_none()
-            && !self.audio_fallback
-            && self.audio_active_device_id.is_some();
-        let watches_desktop =
-            self.config.desktop_audio_id.is_none() && self.desktop_audio_active_device_id.is_some();
+        // Keep automatic routes under the worker even when startup discovery
+        // found no device, or when the live route has already degraded to a
+        // fallback/silent state. That is what lets a microphone, playback
+        // endpoint, or default-device change recover without making the
+        // engine/audio tick perform native discovery or opening work.
+        let watches_microphone = self.config.audio_input_id.is_none();
+        let watches_desktop = self.config.desktop_audio_id.is_none();
         if (!watches_microphone && !watches_desktop)
             || timestamp < self.audio_route_refresh_at
             || self.audio_route_request_pending
@@ -101,7 +101,11 @@ impl EngineSession {
     }
 
     fn read_audio_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
-        if self.audio_fallback {
+        // Explicit selections retain their bounded synchronous retry for
+        // compatibility with the selected-route error path. Automatic routes
+        // are retried by `AudioRouteWorker` so a native provider cannot block
+        // the media tick while a device is absent or being re-enumerated.
+        if self.audio_fallback && self.config.audio_input_id.is_some() {
             self.try_reconnect_audio(timestamp);
         }
         match self
@@ -116,7 +120,12 @@ impl EngineSession {
                 self.audio_fallback = true;
                 self.audio_backend = format!("simulated fallback ({error})");
                 self.last_error = Some(error.to_string());
-                self.audio_reconnect_at = timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS);
+                self.audio_reconnect_at = self
+                    .config
+                    .audio_input_id
+                    .is_some()
+                    .then(|| timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS))
+                    .flatten();
                 self.audio_input = SimulatedAudioProvider::new()
                     .open_input("test-audio", self.config.audio_format)?;
                 // The fallback signal runs on its own clock, so the timeline's
@@ -165,11 +174,16 @@ impl EngineSession {
     ///
     /// A monitor that fails mid-session is closed rather than retried every
     /// block: the desktop channel degrades to silence and says so in the
-    /// backend label. A monitor is retried only at the bounded media-time
-    /// interval, which keeps a broken device from stalling every tick.
+    /// backend label. Explicit monitor selections are retried at a bounded
+    /// media-time interval; automatic routes are reopened by the route worker,
+    /// which keeps a broken device from stalling every tick.
     fn read_desktop_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
         let frames = self.config.audio_block_frames;
-        self.try_reconnect_desktop_audio(timestamp);
+        // Automatic routes are reopened by `AudioRouteWorker`; only an
+        // explicitly selected monitor uses the synchronous compatibility retry.
+        if self.config.desktop_audio_id.is_some() {
+            self.try_reconnect_desktop_audio(timestamp);
+        }
         if let Some(desktop) = self.desktop_audio.as_mut() {
             match desktop.read_block(timestamp, frames) {
                 Ok(buffer) => return Ok(buffer),
@@ -179,8 +193,12 @@ impl EngineSession {
                     self.desktop_audio_delay.reset();
                     self.desktop_audio_active_device_id = None;
                     self.desktop_audio_backend = format!("unavailable ({error})");
-                    self.desktop_audio_reconnect_at =
-                        timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS);
+                    self.desktop_audio_reconnect_at = self
+                        .config
+                        .desktop_audio_id
+                        .is_some()
+                        .then(|| timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS))
+                        .flatten();
                     self.last_error = Some(error.to_string());
                 }
             }

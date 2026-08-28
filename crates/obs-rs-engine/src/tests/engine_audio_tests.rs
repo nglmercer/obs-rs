@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+
 use super::*;
 
 #[test]
@@ -481,6 +483,104 @@ fn automatic_audio_routes_reconcile_a_live_default_change_off_tick() {
     assert!(opens.load(Ordering::Acquire) >= 3);
 }
 
+#[derive(Debug)]
+struct DeferredAudioProvider {
+    available: Arc<AtomicBool>,
+    opens: Arc<AtomicUsize>,
+}
+
+impl AudioInputProvider for DeferredAudioProvider {
+    fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+        if !self.available.load(Ordering::Acquire) {
+            return Ok(Vec::new());
+        }
+        let mut microphone = AudioDeviceInfo::new(
+            "deferred-input",
+            "Deferred microphone",
+            AudioDeviceKind::Input,
+        )?;
+        microphone.set_default(true);
+        let mut speakers = AudioDeviceInfo::new(
+            "deferred-output",
+            "Deferred speakers",
+            AudioDeviceKind::Output,
+        )?;
+        speakers.set_default(true);
+        Ok(vec![microphone, speakers])
+    }
+
+    fn open_input(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+        if device_id != "deferred-input" {
+            return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                device_id.to_owned(),
+            ));
+        }
+        self.opens.fetch_add(1, Ordering::AcqRel);
+        SimulatedAudioProvider::new().open_input("test-audio", format)
+    }
+
+    fn open_loopback(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+        if device_id != "deferred-output" {
+            return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                device_id.to_owned(),
+            ));
+        }
+        self.opens.fetch_add(1, Ordering::AcqRel);
+        SimulatedAudioProvider::new().open_input("test-audio", format)
+    }
+}
+
+#[test]
+fn automatic_audio_routes_recover_when_devices_appear_after_startup() {
+    let available = Arc::new(AtomicBool::new(false));
+    let opens = Arc::new(AtomicUsize::new(0));
+    let config = EngineConfig::default().with_audio_provider(Arc::new(DeferredAudioProvider {
+        available: Arc::clone(&available),
+        opens: Arc::clone(&opens),
+    }));
+    let mut engine = EngineSession::new(project(), config).expect("engine");
+
+    assert!(engine.snapshot().audio_fallback);
+    assert!(!engine.snapshot().desktop_audio.is_capturing());
+
+    available.store(true, Ordering::Release);
+    for attempt in 0..100_u64 {
+        engine
+            .drain_audio_until(Timestamp::from_millis(300 + attempt * 10))
+            .expect("deferred route audio");
+        let snapshot = engine.snapshot();
+        if !snapshot.audio_fallback && snapshot.desktop_audio.is_capturing() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+
+    let snapshot = engine.snapshot();
+    assert!(!snapshot.audio_fallback);
+    assert_eq!(snapshot.audio_backend, "Deferred microphone");
+    assert_eq!(
+        snapshot.desktop_audio,
+        DesktopAudioSource::Monitor("Deferred speakers".to_owned())
+    );
+    assert_eq!(
+        engine.audio_active_device_id.as_deref(),
+        Some("deferred-input")
+    );
+    assert_eq!(
+        engine.desktop_audio_active_device_id.as_deref(),
+        Some("deferred-output")
+    );
+    assert!(opens.load(Ordering::Acquire) >= 2);
+}
+
 #[test]
 fn explicit_audio_selection_ignores_a_live_default_change() {
     let phase = Arc::new(AtomicUsize::new(0));
@@ -764,9 +864,18 @@ fn automatic_audio_input_reconnects_after_a_bounded_media_interval() {
     assert!(engine.audio_active_device_id.is_none());
     assert_eq!(opens.load(Ordering::SeqCst), 1);
 
-    engine
-        .drain_audio_until(Timestamp::from_millis(1_100))
-        .expect("reconnected audio blocks");
+    let mut recovered = false;
+    for attempt in 0..100_u64 {
+        engine
+            .drain_audio_until(Timestamp::from_millis(1_100 + attempt * 10))
+            .expect("reconnected audio blocks");
+        if !engine.snapshot().audio_fallback {
+            recovered = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(recovered, "automatic input did not reconnect");
     let snapshot = engine.snapshot();
     assert!(!snapshot.audio_fallback);
     assert_eq!(
@@ -825,9 +934,18 @@ fn automatic_desktop_monitor_reconnects_after_a_bounded_media_interval() {
     assert!(engine.desktop_audio_active_device_id.is_none());
     assert_eq!(opens.load(Ordering::SeqCst), 1);
 
-    engine
-        .drain_audio_until(Timestamp::from_millis(1_100))
-        .expect("reconnected desktop blocks");
+    let mut recovered = false;
+    for attempt in 0..100_u64 {
+        engine
+            .drain_audio_until(Timestamp::from_millis(1_100 + attempt * 10))
+            .expect("reconnected desktop blocks");
+        if engine.snapshot().desktop_audio.is_capturing() {
+            recovered = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(recovered, "automatic desktop monitor did not reconnect");
     let snapshot = engine.snapshot();
     assert_eq!(
         snapshot.desktop_audio,

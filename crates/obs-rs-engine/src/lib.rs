@@ -262,10 +262,12 @@ impl EngineSession {
         )?;
         let (audio_input, audio_backend, audio_fallback, audio_active_device_id) =
             open_audio_input(&audio_provider, audio_format, audio_input_id.as_deref());
-        let audio_reconnect_at = audio_reconnect_deadline(audio_fallback);
+        let audio_reconnect_at =
+            audio_reconnect_deadline(audio_fallback && audio_input_id.is_some());
         let (desktop_audio, desktop_audio_backend, desktop_audio_active_device_id) =
             open_desktop_audio(&audio_provider, audio_format, desktop_audio_id.as_deref());
-        let desktop_audio_reconnect_at = audio_reconnect_deadline(desktop_audio.is_none());
+        let desktop_audio_reconnect_at =
+            audio_reconnect_deadline(desktop_audio.is_none() && desktop_audio_id.is_some());
         let audio_route_worker = AudioRouteWorker::spawn(Arc::clone(&audio_provider))
             .map_err(|error| EngineError::InvalidConfiguration(error.to_string()))?;
         let (monitor_output_worker, monitor_output_handle) =
