@@ -255,7 +255,7 @@ pub(crate) fn source_settings_for_canvas(
             };
         settings.set("device_id", &device_id)?;
         #[cfg(target_os = "windows")]
-        if kind == "screen_capture" && device_id.starts_with("wgc-screen-") {
+        if kind == "screen_capture" && is_explicit_windows_screen_target(&device_id) {
             // Keep a newly created source's monitor row aligned with the WGC
             // target chosen from the live display snapshot. The automatic
             // picker remains the fallback when discovery is unavailable.
@@ -299,6 +299,11 @@ pub(crate) fn source_settings_for_canvas(
         settings.set("capture_cursor", "true")?;
     }
     Ok(settings)
+}
+
+#[cfg(target_os = "windows")]
+fn is_explicit_windows_screen_target(device_id: &str) -> bool {
+    device_id.starts_with("wgc-screen-") && device_id != "wgc-screen-picker"
 }
 
 /// Source kinds whose frames come from one selectable display.

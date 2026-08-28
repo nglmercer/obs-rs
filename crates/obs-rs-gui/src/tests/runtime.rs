@@ -322,6 +322,15 @@ fn capture_source_defaults_have_a_real_selectable_device_id() {
     }
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn a_new_windows_screen_source_starts_on_the_automatic_display() {
+    let settings = source_settings("screen_capture").expect("screen defaults");
+
+    assert_eq!(settings.get("device_id"), Some("wgc-screen-picker"));
+    assert_eq!(settings.get("monitor"), Some(""));
+}
+
 #[test]
 fn only_screen_capture_kinds_offer_the_monitor_picker() {
     #[cfg(target_os = "linux")]

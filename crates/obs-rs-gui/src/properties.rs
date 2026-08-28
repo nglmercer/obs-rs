@@ -441,7 +441,7 @@ fn synchronize_windows_screen_settings(
     // persisted target. The helper only has a primary-display automatic
     // target, so an empty/whole-desktop sentinel maps to that target.
     let device_id = if key == "monitor" {
-        if value.starts_with("wgc-screen-") {
+        if is_explicit_windows_screen_target(value) {
             value
         } else {
             "wgc-screen-picker"
@@ -453,7 +453,7 @@ fn synchronize_windows_screen_settings(
     settings
         .set(
             "monitor",
-            if key == "monitor" || value.starts_with("wgc-screen-") {
+            if is_explicit_windows_screen_target(value) {
                 value
             } else {
                 WHOLE_DESKTOP
@@ -461,6 +461,11 @@ fn synchronize_windows_screen_settings(
         )
         .ok()?;
     Some(())
+}
+
+#[cfg(target_os = "windows")]
+fn is_explicit_windows_screen_target(value: &str) -> bool {
+    value.starts_with("wgc-screen-") && value != "wgc-screen-picker"
 }
 
 fn write_camera_mode(
@@ -896,6 +901,19 @@ mod tests {
         let updated = apply("screen_capture", document, "monitor", "0").expect("apply monitor");
         let settings = Config::parse(&updated).expect("document");
 
+        assert_eq!(settings.get("monitor"), Some(WHOLE_DESKTOP));
+        assert_eq!(settings.get("device_id"), Some("wgc-screen-picker"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn the_automatic_windows_target_is_not_an_explicit_monitor() {
+        assert!(!is_explicit_windows_screen_target("wgc-screen-picker"));
+        assert!(is_explicit_windows_screen_target("wgc-screen-secondary"));
+
+        let mut settings = Config::new();
+        synchronize_windows_screen_settings(&mut settings, "monitor", "wgc-screen-picker")
+            .expect("synchronize automatic monitor");
         assert_eq!(settings.get("monitor"), Some(WHOLE_DESKTOP));
         assert_eq!(settings.get("device_id"), Some("wgc-screen-picker"));
     }
