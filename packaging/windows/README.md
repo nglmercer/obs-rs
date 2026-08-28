@@ -36,6 +36,11 @@ For a real interactive-session check after extraction:
 conditions are reported as typed skips; protocol, frame-format, lifecycle, and
 cleanup errors fail the command.
 
+The first result is `capture_helper`. It verifies the packaged helper's
+OBSRWIN1 protocol and compatible major version before any display or window
+probe runs. The acceptance script requires this check, so a package with a
+missing or mismatched helper cannot be reported as a hardware pass.
+
 For a release-package hardware acceptance run, use the bundled script. It first
 verifies every packaged payload, records machine/GPU/display/audio metadata,
 requires the physical display, window, microphone, loopback, and monitor-output

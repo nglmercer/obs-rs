@@ -87,6 +87,7 @@ impl CheckResult {
 #[cfg(target_os = "windows")]
 fn main() -> ExitCode {
     let mut checks = vec![
+        ("capture_helper", check_capture_helper()),
         ("discovery_stability", check_discovery_stability()),
         ("target_persistence", check_target_persistence()),
         ("display", check_display()),
@@ -315,6 +316,20 @@ fn check_production_output() -> CheckResult {
             capabilities.video_encoders().len(),
             capabilities.audio_encoders().len(),
         ));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn check_capture_helper() -> CheckResult {
+    let adapter = WindowsCaptureAdapter::default();
+    match adapter.helper_version() {
+        Ok(version) => CheckResult::pass(format!(
+            "protocol={} version={} path={}",
+            obs_rs_capture_windows::WINDOWS_HELPER_PROTOCOL,
+            version,
+            adapter.helper().display()
+        )),
+        Err(error) => capture_check_result(&error),
     }
 }
 
@@ -1067,6 +1082,24 @@ fn open_probe_input(
 }
 
 #[cfg(target_os = "windows")]
+fn open_probe_loopback(
+    provider: WasapiAudioProvider,
+    device: &AudioDeviceInfo,
+) -> Result<(Box<dyn AudioInput>, AudioFormat), AudioDeviceError> {
+    let mut last_error = None;
+    for (sample_rate, channels) in PROBE_AUDIO_FORMATS {
+        let format = AudioFormat::new(sample_rate, channels).map_err(AudioDeviceError::from)?;
+        match provider.open_loopback(device.id(), format) {
+            Ok(input) => return Ok((input, format)),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        AudioDeviceError::Unavailable("no probe loopback format was accepted".to_owned())
+    }))
+}
+
+#[cfg(target_os = "windows")]
 fn open_probe_output(
     provider: WasapiAudioProvider,
     device: &AudioDeviceInfo,
@@ -1126,7 +1159,7 @@ fn check_desktop_loopback() -> CheckResult {
     let Some(device) = selected_audio_device(&devices, AudioDeviceKind::Output) else {
         return CheckResult::skip("no available WASAPI render endpoint for loopback");
     };
-    let (mut loopback, format) = match open_probe_input(provider, device) {
+    let (mut loopback, format) = match open_probe_loopback(provider, device) {
         Ok(input) => input,
         Err(error) => return CheckResult::skip(error.to_string()),
     };
