@@ -575,6 +575,10 @@ pub(super) fn catalog() -> UiText {
         source_settings: s("Settings"),
         capture_device: s("Capture device"),
         capture_device_hint: s("Choose the screen, window, or camera input used by this source."),
+        window_target: s("Window target"),
+        window_target_hint: s(
+            "Choose a visible window by title and process. The selection stays fixed if the foreground window changes.",
+        ),
         apply_settings: s("Apply settings"),
         transform: s("Transform · scale-x,scale-y,x,y,rotation,crop,flip-x,flip-y,opacity"),
         apply: s("Apply"),

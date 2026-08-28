@@ -581,6 +581,10 @@ pub(super) fn catalog() -> UiText {
         source_settings: s("Ajustes"),
         capture_device: s("Dispositivo de captura"),
         capture_device_hint: s("Elige la pantalla, ventana o cámara que usará esta fuente."),
+        window_target: s("Ventana objetivo"),
+        window_target_hint: s(
+            "Elige una ventana visible por título y proceso. La selección se mantiene aunque cambie la ventana en primer plano.",
+        ),
         apply_settings: s("Aplicar ajustes"),
         transform: s(
             "Transformación · escala-x,escala-y,x,y,rotación,recorte,voltear-x,voltear-y,opacidad",

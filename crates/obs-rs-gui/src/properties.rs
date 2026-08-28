@@ -152,6 +152,13 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         hint: |text| text.capture_device_hint.clone(),
         kind: FieldKind::Choice(device_choices),
     };
+    #[cfg(target_os = "windows")]
+    static WINDOW_TARGET: Field = Field {
+        key: "device_id",
+        label: |text| text.window_target.clone(),
+        hint: |text| text.window_target_hint.clone(),
+        kind: FieldKind::Choice(device_choices),
+    };
     static CAMERA_FORMAT: Field = Field {
         key: "capture_pixel_format",
         label: |text| text.property_ui.video_format.clone(),
@@ -221,7 +228,7 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         #[cfg(not(target_os = "windows"))]
         "screen_capture" => vec![&DEVICE],
         #[cfg(target_os = "windows")]
-        "window_capture" => vec![&DEVICE, &CURSOR, &BORDER],
+        "window_capture" => vec![&WINDOW_TARGET, &CURSOR, &BORDER],
         #[cfg(not(target_os = "windows"))]
         "window_capture" => vec![&DEVICE],
         "camera_capture" => {
@@ -780,6 +787,24 @@ mod tests {
                 "height"
             ]
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_window_capture_identifies_the_explicit_target_picker() {
+        let rows = rows(
+            "window_capture",
+            "device_id = \"wgc-window-123\"\n",
+            UiLocale::English,
+        );
+
+        assert_eq!(rows[0].key, "device_id");
+        assert_eq!(rows[0].label, "Window target");
+        assert!(rows[0].hint.contains("visible window"));
+        assert!(rows[0]
+            .choices
+            .iter()
+            .any(|choice| choice == "Unavailable target (wgc-window-123)"));
     }
 
     #[cfg(target_os = "windows")]
