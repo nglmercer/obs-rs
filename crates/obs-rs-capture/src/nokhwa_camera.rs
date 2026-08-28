@@ -268,7 +268,8 @@ fn discover_nokhwa_cameras_with_modes(
     let mut cameras = devices
         .into_iter()
         .filter_map(|device| {
-            let id = stable_camera_id(device.index());
+            let metadata = device.misc();
+            let id = stable_camera_id(device.index(), &metadata);
             let name = non_empty_name(device.human_name(), device.description());
             let modes = if include_modes {
                 Camera::new(
@@ -386,7 +387,19 @@ fn select_mode(modes: &[CameraMode], output: VideoFormat) -> Option<CameraMode> 
     })
 }
 
-fn stable_camera_id(index: &CameraIndex) -> String {
+fn stable_camera_id(index: &CameraIndex, metadata: &str) -> String {
+    #[cfg(target_os = "windows")]
+    if !metadata.trim().is_empty() {
+        return format!("nokhwa-camera-msmf-{}", hex_encode(metadata.as_bytes()));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = metadata;
+
+    stable_camera_index_id(index)
+}
+
+fn stable_camera_index_id(index: &CameraIndex) -> String {
     match index {
         CameraIndex::Index(number) => format!("nokhwa-camera-{number}"),
         CameraIndex::String(value) => {
@@ -415,6 +428,14 @@ fn camera_index_from_stable_id(id: &str) -> Result<CameraIndex, CaptureError> {
             .map_err(|_| invalid_id(id));
     }
     if let Some(value) = id.strip_prefix("nokhwa-camera-") {
+        if let Some(encoded) = value.strip_prefix("msmf-") {
+            let bytes = decode_hex(encoded).map_err(|()| invalid_id(id))?;
+            let metadata = String::from_utf8(bytes).map_err(|_| invalid_id(id))?;
+            if metadata.trim().is_empty() {
+                return Err(invalid_id(id));
+            }
+            return Ok(CameraIndex::String(metadata));
+        }
         if let Ok(index) = value.parse::<u32>() {
             return Ok(CameraIndex::Index(index));
         }
@@ -427,6 +448,30 @@ fn camera_index_from_stable_id(id: &str) -> Result<CameraIndex, CaptureError> {
         }
     }
     Err(invalid_id(id))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn decode_hex(value: &str) -> Result<Vec<u8>, ()> {
+    if value.is_empty() || !value.len().is_multiple_of(2) {
+        return Err(());
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).map_err(|_| ())?;
+            u8::from_str_radix(text, 16).map_err(|_| ())
+        })
+        .collect()
 }
 
 fn invalid_id(id: &str) -> CaptureError {
@@ -585,12 +630,27 @@ mod tests {
 
     #[test]
     fn stable_linux_ids_round_trip_to_nokhwa_indices() {
-        assert_eq!(stable_camera_id(&CameraIndex::Index(3)), "nokhwa-camera-3");
+        assert_eq!(
+            stable_camera_id(&CameraIndex::Index(3), ""),
+            "nokhwa-camera-3"
+        );
         let id = "nokhwa-camera-3";
         assert_eq!(camera_index_from_stable_id(id), Ok(CameraIndex::Index(3)));
         assert_eq!(
             camera_index_from_stable_id("v4l2-video3"),
             Ok(CameraIndex::Index(3))
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn media_foundation_symbolic_links_round_trip_without_index_churn() {
+        let symbolic_link = r"\\?\usb#vid_046d&pid_0825#camera#{7f1f}";
+        let id = stable_camera_id(&CameraIndex::Index(0), symbolic_link);
+        assert!(id.starts_with("nokhwa-camera-msmf-"));
+        assert_eq!(
+            camera_index_from_stable_id(&id),
+            Ok(CameraIndex::String(symbolic_link.to_owned()))
         );
     }
 
