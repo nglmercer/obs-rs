@@ -318,6 +318,16 @@ impl AudioInputProvider for MonitorProvider {
 
     fn open_input(
         &self,
+        _device_id: &str,
+        _format: AudioFormat,
+    ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+        Err(obs_rs_audio::AudioDeviceError::Unavailable(
+            "Speakers are playback-only; use loopback".to_owned(),
+        ))
+    }
+
+    fn open_loopback(
+        &self,
         device_id: &str,
         format: AudioFormat,
     ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {

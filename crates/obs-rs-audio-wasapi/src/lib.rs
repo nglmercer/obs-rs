@@ -40,6 +40,14 @@ impl AudioInputProvider for WasapiAudioProvider {
     ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
         windows::open_input(device_id, format)
     }
+
+    fn open_loopback(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+        windows::open_loopback(device_id, format)
+    }
 }
 
 #[cfg(target_os = "windows")]

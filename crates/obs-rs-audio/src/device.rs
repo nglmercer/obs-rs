@@ -221,6 +221,25 @@ pub trait AudioInputProvider: Send + Sync {
         device_id: &str,
         format: AudioFormat,
     ) -> Result<Box<dyn AudioInput>, AudioDeviceError>;
+
+    /// Opens a playback endpoint as a loopback input.
+    ///
+    /// Providers with a distinct loopback API should override this method.
+    /// The default keeps existing portable providers source-compatible: their
+    /// output-labelled test devices can expose monitor samples through the
+    /// same input implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioDeviceError`] when the endpoint or negotiated format is
+    /// unavailable.
+    fn open_loopback(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+        self.open_input(device_id, format)
+    }
 }
 
 /// Provider boundary for optional audio monitoring sinks.

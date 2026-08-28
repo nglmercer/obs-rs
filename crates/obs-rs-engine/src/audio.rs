@@ -6,7 +6,9 @@ use obs_rs_audio::{
 };
 use obs_rs_media::Timestamp;
 
-use super::audio_routes::{open_input_with_conversion, select_audio_device};
+use super::audio_routes::{
+    open_input_with_conversion, open_loopback_with_conversion, select_audio_device,
+};
 use super::AUDIO_RECONNECT_INTERVAL_NANOS;
 
 pub(super) fn open_audio_input(
@@ -66,7 +68,7 @@ pub(super) fn open_desktop_audio(
     let Some((device_id, device_name)) = selected else {
         return (None, "no playback monitor".to_owned(), None);
     };
-    match open_input_with_conversion(provider, &device_id, format) {
+    match open_loopback_with_conversion(provider, &device_id, format) {
         Ok(input) => (Some(input), device_name, Some(device_id)),
         Err(_) => (
             None,
@@ -84,7 +86,7 @@ pub(super) fn open_live_desktop_audio(
     let devices = provider.discover().ok()?;
     let (device_id, device_name) =
         select_audio_device(&devices, AudioDeviceKind::Output, requested_id)?;
-    let input = open_input_with_conversion(provider, &device_id, format).ok()?;
+    let input = open_loopback_with_conversion(provider, &device_id, format).ok()?;
     Some((input, device_name, device_id))
 }
 

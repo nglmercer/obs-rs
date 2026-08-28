@@ -19,6 +19,7 @@ pub(crate) const ROUTE_REFRESH_INTERVAL_NANOS: u64 = 250_000_000;
 
 const ROUTE_QUEUE_CAPACITY: usize = 1;
 const MAX_ROUTE_ERROR_CHARS: usize = 512;
+const ROUTE_SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
 /// One automatic-route refresh request. The sequence lets the engine discard a
 /// result that was already in flight when the user changed an explicit device
@@ -61,7 +62,7 @@ pub(crate) struct AudioRouteWorker {
     sender: SyncSender<AudioRouteRequest>,
     result: Arc<Mutex<Option<AudioRouteResult>>>,
     cancelled: Arc<AtomicBool>,
-    _join: JoinHandle<()>,
+    join: Option<JoinHandle<()>>,
 }
 
 impl AudioRouteWorker {
@@ -80,7 +81,7 @@ impl AudioRouteWorker {
             sender,
             result,
             cancelled,
-            _join: join,
+            join: Some(join),
         })
     }
 
@@ -106,9 +107,20 @@ impl AudioRouteWorker {
 impl Drop for AudioRouteWorker {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Release);
-        // The worker owns all provider discovery/opening work. Its join handle
-        // is intentionally detached so a native provider cannot block the
-        // engine owner during teardown.
+        // The worker owns all provider discovery/opening work. Join a healthy
+        // worker so an engine that repeatedly changes devices does not leave
+        // route threads behind; detach a native call that ignores
+        // cancellation after a bounded grace period.
+        let Some(join) = self.join.take() else {
+            return;
+        };
+        let deadline = std::time::Instant::now() + ROUTE_SHUTDOWN_GRACE;
+        while !join.is_finished() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if join.is_finished() {
+            let _ = join.join();
+        }
     }
 }
 
@@ -197,7 +209,12 @@ fn refresh_route(
     if active_id == Some(device_id.as_str()) {
         return AudioRouteUpdate::Unchanged;
     }
-    match open_input_with_conversion(provider, &device_id, format) {
+    let opened = if kind == AudioDeviceKind::Output {
+        open_loopback_with_conversion(provider, &device_id, format)
+    } else {
+        open_input_with_conversion(provider, &device_id, format)
+    };
+    match opened {
         Ok(input) => AudioRouteUpdate::Opened(AudioRoute {
             input,
             device_id,
@@ -234,6 +251,23 @@ pub(crate) fn open_input_with_conversion(
     device_id: &str,
     mix_format: AudioFormat,
 ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+    open_audio_with_conversion(provider, device_id, mix_format, false)
+}
+
+pub(crate) fn open_loopback_with_conversion(
+    provider: &Arc<dyn AudioInputProvider>,
+    device_id: &str,
+    mix_format: AudioFormat,
+) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+    open_audio_with_conversion(provider, device_id, mix_format, true)
+}
+
+fn open_audio_with_conversion(
+    provider: &Arc<dyn AudioInputProvider>,
+    device_id: &str,
+    mix_format: AudioFormat,
+    loopback: bool,
+) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
     let mut candidates = vec![mix_format];
     for (rate, channels) in [(48_000, 2), (44_100, 2), (48_000, 1), (44_100, 1)] {
         let candidate = AudioFormat::new(rate, channels)?;
@@ -243,7 +277,12 @@ pub(crate) fn open_input_with_conversion(
     }
     let mut last_error = None;
     for device_format in candidates {
-        match provider.open_input(device_id, device_format) {
+        let opened = if loopback {
+            provider.open_loopback(device_id, device_format)
+        } else {
+            provider.open_input(device_id, device_format)
+        };
+        match opened {
             Ok(input) if device_format == mix_format => return Ok(input),
             Ok(input) => {
                 return Ok(Box::new(ConvertedAudioInput {

@@ -86,7 +86,21 @@ pub(super) fn open_input(
     let device = host
         .device_by_id(&id)
         .ok_or_else(|| AudioDeviceError::Unavailable(device_id.to_owned()))?;
-    WasapiInput::open(&device, format).map(|input| Box::new(input) as Box<dyn AudioInput>)
+    WasapiInput::open(&device, format, false).map(|input| Box::new(input) as Box<dyn AudioInput>)
+}
+
+pub(super) fn open_loopback(
+    device_id: &str,
+    format: AudioFormat,
+) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+    let id = DeviceId::from_str(device_id).map_err(|error| {
+        AudioDeviceError::InvalidDevice(format!("invalid WASAPI device ID: {error}"))
+    })?;
+    let host = cpal::default_host();
+    let device = host
+        .device_by_id(&id)
+        .ok_or_else(|| AudioDeviceError::Unavailable(device_id.to_owned()))?;
+    WasapiInput::open(&device, format, true).map(|input| Box::new(input) as Box<dyn AudioInput>)
 }
 
 pub(super) fn open_output(
@@ -118,7 +132,11 @@ struct WasapiInput {
 }
 
 impl WasapiInput {
-    fn open(device: &Device, format: AudioFormat) -> Result<Self, AudioDeviceError> {
+    fn open(
+        device: &Device,
+        format: AudioFormat,
+        loopback: bool,
+    ) -> Result<Self, AudioDeviceError> {
         if format.channels() == 0 {
             return Err(AudioDeviceError::InvalidDevice(
                 "WASAPI input requires at least one channel".to_owned(),
@@ -128,10 +146,15 @@ impl WasapiInput {
         let sample_rate = format.sample_rate();
         // CPAL exposes a render endpoint's loopback stream through
         // `build_input_stream`, but its supported formats come from the
-        // output side of the endpoint. Asking an output device for input
-        // configs would always return an empty iterator and make desktop
-        // loopback look unavailable.
-        let config = if device.supports_output() {
+        // output side of the endpoint. Keep this choice explicit: a combined
+        // headset must use its input side for microphone capture and its
+        // output side for desktop loopback.
+        let config = if loopback {
+            if !device.supports_output() {
+                return Err(AudioDeviceError::Unavailable(
+                    "WASAPI endpoint does not support loopback".to_owned(),
+                ));
+            }
             device
                 .supported_output_configs()
                 .map_err(|error| unavailable("query WASAPI loopback formats", error))?
