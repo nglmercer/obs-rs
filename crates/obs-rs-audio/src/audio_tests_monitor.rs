@@ -33,6 +33,12 @@ struct CountingOutputProvider {
     fail_open: bool,
 }
 
+struct RecoveringOutputProvider {
+    attempts: Arc<AtomicUsize>,
+    writes: Arc<AtomicUsize>,
+    failures_before_open: usize,
+}
+
 struct GateOutput {
     format: AudioFormat,
     started: Arc<AtomicBool>,
@@ -114,6 +120,29 @@ impl AudioOutputProvider for CountingOutputProvider {
     }
 }
 
+impl AudioOutputProvider for RecoveringOutputProvider {
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+        Ok(Vec::new())
+    }
+
+    fn open_output(
+        &self,
+        _device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+        let attempt = self.attempts.fetch_add(1, Ordering::AcqRel) + 1;
+        if attempt <= self.failures_before_open {
+            return Err(AudioDeviceError::Unavailable(format!(
+                "test monitor unavailable on attempt {attempt}"
+            )));
+        }
+        Ok(Box::new(CountingOutput {
+            format,
+            writes: Arc::clone(&self.writes),
+        }))
+    }
+}
+
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -175,6 +204,45 @@ fn asynchronous_monitor_output_reports_open_failure_and_drops_after_close() {
     );
     assert!(!handle.try_write(buffer(&[0.1, 0.1])));
     assert_eq!(handle.snapshot().dropped_blocks, 1);
+}
+
+#[test]
+fn asynchronous_monitor_output_reopens_after_a_temporary_device_loss() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let writes = Arc::new(AtomicUsize::new(0));
+    let worker = AudioOutputWorker::spawn(
+        Arc::new(RecoveringOutputProvider {
+            attempts: Arc::clone(&attempts),
+            writes: Arc::clone(&writes),
+            failures_before_open: 1,
+        }),
+        "recovering-output",
+        format(),
+        1,
+    )
+    .expect("output worker");
+    let handle = worker.handle();
+    assert!(wait_until(Duration::from_secs(1), || {
+        handle.snapshot().reconnects >= 1
+    }));
+    assert!(wait_until(Duration::from_secs(2), || {
+        attempts.load(Ordering::Acquire) >= 2
+            && matches!(
+                handle.snapshot().state,
+                AudioOutputWorkerState::Starting | AudioOutputWorkerState::Running
+            )
+    }));
+    assert!(handle.try_write(buffer(&[0.4, 0.4])));
+    assert!(wait_until(Duration::from_secs(1), || {
+        writes.load(Ordering::Acquire) == 1
+    }));
+    let snapshot = handle.snapshot();
+    assert_eq!(snapshot.state, AudioOutputWorkerState::Running);
+    assert_eq!(snapshot.reconnects, 1);
+    drop(worker);
+    assert!(wait_until(Duration::from_secs(1), || {
+        matches!(handle.snapshot().state, AudioOutputWorkerState::Stopped)
+    }));
 }
 
 #[test]

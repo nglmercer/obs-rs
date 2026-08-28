@@ -16,6 +16,8 @@ const STATE_RUNNING: u8 = 1;
 const STATE_FAILED: u8 = 2;
 const STATE_STOPPED: u8 = 3;
 const MAX_ERROR_MESSAGE_CHARS: usize = 512;
+const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
 /// Lifecycle state published by an asynchronous monitoring-output worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,7 +26,7 @@ pub enum AudioOutputWorkerState {
     Starting,
     /// The output accepted at least one complete block.
     Running,
-    /// Device opening or a block write failed; no more blocks are accepted.
+    /// The latest device open or block write failed; bounded recovery is active.
     Failed,
     /// The worker has been cancelled and released its device.
     Stopped,
@@ -50,6 +52,8 @@ pub struct AudioOutputWorkerSnapshot {
     pub queued_blocks: usize,
     /// Blocks rejected because the handoff queue was full or closed.
     pub dropped_blocks: u64,
+    /// Number of bounded reopen attempts after an output failure.
+    pub reconnects: u64,
     /// The latest bounded device failure, if any.
     pub last_error: Option<String>,
 }
@@ -83,6 +87,7 @@ pub struct AudioOutputWorkerHandle {
     state: Arc<AtomicU8>,
     queued_blocks: Arc<AtomicUsize>,
     dropped_blocks: Arc<AtomicU64>,
+    reconnects: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
     cancelled: Arc<AtomicBool>,
 }
@@ -91,10 +96,15 @@ impl AudioOutputWorkerHandle {
     /// Attempts to submit one complete monitor block without waiting.
     ///
     /// Returns `false` when the bounded queue is full or the output worker has
-    /// failed/stopped. The rejected block is dropped and counted.
+    /// been cancelled or the current device attempt has failed. A failed
+    /// device remains restartable in the background, but blocks submitted
+    /// while it is unavailable are dropped instead of being played stale after
+    /// a later hot-plug recovery.
     #[must_use]
     pub fn try_write(&self, buffer: AudioBuffer) -> bool {
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancelled.load(Ordering::Acquire)
+            || self.state.load(Ordering::Acquire) == STATE_FAILED
+        {
             self.dropped_blocks.fetch_add(1, Ordering::Relaxed);
             return false;
         }
@@ -116,6 +126,7 @@ impl AudioOutputWorkerHandle {
             state: AudioOutputWorkerState::from_raw(self.state.load(Ordering::Acquire)),
             queued_blocks: self.queued_blocks.load(Ordering::Acquire),
             dropped_blocks: self.dropped_blocks.load(Ordering::Acquire),
+            reconnects: self.reconnects.load(Ordering::Acquire),
             last_error: self.last_error.lock().map_or_else(
                 |_| Some("audio output worker status unavailable".to_owned()),
                 |error| error.clone(),
@@ -134,7 +145,7 @@ impl AudioOutputWorkerHandle {
 pub struct AudioOutputWorker {
     handle: AudioOutputWorkerHandle,
     cancelled: Arc<AtomicBool>,
-    _join: JoinHandle<()>,
+    join: Option<JoinHandle<()>>,
 }
 
 impl AudioOutputWorker {
@@ -157,10 +168,12 @@ impl AudioOutputWorker {
         let state = Arc::new(AtomicU8::new(STATE_STARTING));
         let queued_blocks = Arc::new(AtomicUsize::new(0));
         let dropped_blocks = Arc::new(AtomicU64::new(0));
+        let reconnects = Arc::new(AtomicU64::new(0));
         let last_error = Arc::new(Mutex::new(None));
         let cancelled = Arc::new(AtomicBool::new(false));
         let thread_state = Arc::clone(&state);
         let thread_queued = Arc::clone(&queued_blocks);
+        let thread_reconnects = Arc::clone(&reconnects);
         let thread_last_error = Arc::clone(&last_error);
         let thread_cancelled = Arc::clone(&cancelled);
         let device_id = device_id.into();
@@ -174,6 +187,7 @@ impl AudioOutputWorker {
                     receiver,
                     thread_state,
                     thread_queued,
+                    thread_reconnects,
                     thread_last_error,
                     thread_cancelled,
                 );
@@ -186,11 +200,12 @@ impl AudioOutputWorker {
                 state,
                 queued_blocks,
                 dropped_blocks,
+                reconnects,
                 last_error,
                 cancelled: Arc::clone(&cancelled),
             },
             cancelled,
-            _join: join,
+            join: Some(join),
         })
     }
 
@@ -210,10 +225,21 @@ impl AudioOutputWorker {
 impl Drop for AudioOutputWorker {
     fn drop(&mut self) {
         // Cancellation is observed between complete device writes. Dropping
-        // the sender wakes a worker waiting for its next block; the JoinHandle
-        // is intentionally detached so a platform write cannot block the
-        // thread that owns the engine or GUI during teardown.
+        // the sender wakes a worker waiting for its next block. Join healthy
+        // workers within a bounded grace period so repeated monitor changes do
+        // not accumulate native streams; a wedged platform write is detached
+        // after the same bound so teardown remains non-blocking.
         self.cancelled.store(true, Ordering::Release);
+        let Some(join) = self.join.take() else {
+            return;
+        };
+        let deadline = std::time::Instant::now() + SHUTDOWN_GRACE;
+        while !join.is_finished() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if join.is_finished() {
+            let _ = join.join();
+        }
     }
 }
 
@@ -229,65 +255,105 @@ fn run_output_worker(
     receiver: mpsc::Receiver<AudioBuffer>,
     state: Arc<AtomicU8>,
     queued_blocks: Arc<AtomicUsize>,
+    reconnects: Arc<AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
     cancelled: Arc<AtomicBool>,
 ) {
-    if cancelled.load(Ordering::Acquire) {
-        state.store(STATE_STOPPED, Ordering::Release);
-        return;
-    }
-    let mut output = match provider.open_output(&device_id, format) {
-        Ok(output) => output,
-        Err(error) => {
-            fail_worker(&state, &last_error, error);
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            state.store(STATE_STOPPED, Ordering::Release);
             drain_queue(&receiver, &queued_blocks);
             return;
         }
-    };
-    if output.format() != format {
-        fail_worker(
-            &state,
-            &last_error,
-            format!(
-                "monitor output format {:?} does not match {:?}",
-                output.format(),
-                format
-            ),
-        );
-        output.stop();
-        drain_queue(&receiver, &queued_blocks);
-        return;
-    }
 
-    loop {
-        let buffer = match receiver.recv_timeout(Duration::from_millis(20)) {
-            Ok(buffer) => buffer,
-            Err(RecvTimeoutError::Disconnected) => break,
-            Err(RecvTimeoutError::Timeout) => {
-                if cancelled.load(Ordering::Acquire) {
-                    break;
+        let mut output = match provider.open_output(&device_id, format) {
+            Ok(output) => output,
+            Err(error) => {
+                fail_worker(&state, &last_error, error);
+                drain_queue(&receiver, &queued_blocks);
+                reconnects.fetch_add(1, Ordering::Relaxed);
+                if !wait_for_reconnect(&cancelled) {
+                    state.store(STATE_STOPPED, Ordering::Release);
+                    return;
                 }
                 continue;
             }
         };
-        queued_blocks.fetch_sub(1, Ordering::Release);
-        if cancelled.load(Ordering::Acquire) {
-            break;
-        }
-        if let Err(error) = output.write_block(&buffer) {
-            fail_worker(&state, &last_error, error);
-            drain_queue(&receiver, &queued_blocks);
+        if output.format() != format {
+            fail_worker(
+                &state,
+                &last_error,
+                format!(
+                    "monitor output format {:?} does not match {:?}",
+                    output.format(),
+                    format
+                ),
+            );
             output.stop();
+            drain_queue(&receiver, &queued_blocks);
+            reconnects.fetch_add(1, Ordering::Relaxed);
+            if !wait_for_reconnect(&cancelled) {
+                state.store(STATE_STOPPED, Ordering::Release);
+                return;
+            }
+            continue;
+        }
+        state.store(STATE_STARTING, Ordering::Release);
+
+        loop {
+            let buffer = match receiver.recv_timeout(Duration::from_millis(20)) {
+                Ok(buffer) => buffer,
+                Err(RecvTimeoutError::Disconnected) => {
+                    output.stop();
+                    state.store(STATE_STOPPED, Ordering::Release);
+                    drain_queue(&receiver, &queued_blocks);
+                    return;
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if cancelled.load(Ordering::Acquire) {
+                        output.stop();
+                        state.store(STATE_STOPPED, Ordering::Release);
+                        drain_queue(&receiver, &queued_blocks);
+                        return;
+                    }
+                    continue;
+                }
+            };
+            queued_blocks.fetch_sub(1, Ordering::Release);
+            if cancelled.load(Ordering::Acquire) {
+                output.stop();
+                state.store(STATE_STOPPED, Ordering::Release);
+                drain_queue(&receiver, &queued_blocks);
+                return;
+            }
+            if let Err(error) = output.write_block(&buffer) {
+                fail_worker(&state, &last_error, error);
+                drain_queue(&receiver, &queued_blocks);
+                output.stop();
+                break;
+            }
+            state.store(STATE_RUNNING, Ordering::Release);
+        }
+
+        reconnects.fetch_add(1, Ordering::Relaxed);
+        if !wait_for_reconnect(&cancelled) {
+            state.store(STATE_STOPPED, Ordering::Release);
+            drain_queue(&receiver, &queued_blocks);
             return;
         }
-        state.store(STATE_RUNNING, Ordering::Release);
     }
+}
 
-    output.stop();
-    if state.load(Ordering::Acquire) != STATE_FAILED {
-        state.store(STATE_STOPPED, Ordering::Release);
+fn wait_for_reconnect(cancelled: &AtomicBool) -> bool {
+    let deadline = std::time::Instant::now() + RECONNECT_INTERVAL;
+    while !cancelled.load(Ordering::Acquire) {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+        thread::sleep(remaining.min(Duration::from_millis(20)));
     }
-    drain_queue(&receiver, &queued_blocks);
+    false
 }
 
 fn drain_queue(receiver: &mpsc::Receiver<AudioBuffer>, queued_blocks: &AtomicUsize) {

@@ -7,6 +7,7 @@ use std::{
 
 use obs_rs_audio::{
     AudioDeviceInfo, AudioFormat, AudioInputProvider, AudioMonitorMode, AudioOutputProvider,
+    AudioOutputWorkerState,
 };
 #[cfg(not(target_os = "windows"))]
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
@@ -524,6 +525,17 @@ impl OutputRuntime {
         } else {
             "worker stopped"
         };
+        let monitor = engine.monitor_output.as_ref().map_or_else(
+            || "monitor off".to_owned(),
+            |monitor| {
+                format!(
+                    "monitor {} · {} reconnects · {} dropped",
+                    monitor_state_label(monitor.state),
+                    monitor.reconnects,
+                    monitor.dropped_blocks
+                )
+            },
+        );
         let protocols = self
             .capabilities
             .protocols()
@@ -533,7 +545,7 @@ impl OutputRuntime {
             .collect::<Vec<_>>()
             .join("/");
         format!(
-            "Output: recording {recording} · stream {streaming} · replay {} ({} packets) · replay save {replay_save} · {audio} · {worker} · available {protocols}",
+            "Output: recording {recording} · stream {streaming} · replay {} ({} packets) · replay save {replay_save} · {audio} · {monitor} · {worker} · available {protocols}",
             engine.replay_lifecycle.label(),
             engine.replay_buffer_packets,
         )
@@ -563,8 +575,19 @@ impl OutputRuntime {
                 .saturating_add(metrics.audio_queue_bytes);
             native_submit_max = metrics.max_submit_latency_nanos;
         }
+        let (monitor_state, monitor_queued, monitor_dropped, monitor_reconnects) = engine
+            .monitor_output
+            .as_ref()
+            .map_or(("off", 0, 0, 0), |monitor| {
+                (
+                    monitor_state_label(monitor.state),
+                    monitor.queued_blocks,
+                    monitor.dropped_blocks,
+                    monitor.reconnects,
+                )
+            });
         format!(
-            "frames={} · audio_blocks={} · audio_per_tick={} · av_sync_obs={} · av_sync_in_sync={} · av_sync_behind={} · av_sync_ahead={} · av_sync_max_ns={} · submitted={} · dropped={} · queued={} B · native_queue={} B · worker_queued={} · reconnects={} · submit p50/p95/p99/max={}/{}/{}/{} µs · native_submit_max={} µs · video_encode p50/p95/p99/max={}/{}/{}/{} µs · audio_encode p95={} µs · frame_drops={} · format_drops={} · unscalable_drops={} · peak={}‰",
+            "frames={} · audio_blocks={} · audio_per_tick={} · av_sync_obs={} · av_sync_in_sync={} · av_sync_behind={} · av_sync_ahead={} · av_sync_max_ns={} · submitted={} · dropped={} · queued={} B · native_queue={} B · worker_queued={} · reconnects={} · monitor={} monitor_queued={} monitor_dropped={} monitor_reconnects={} · submit p50/p95/p99/max={}/{}/{}/{} µs · native_submit_max={} µs · video_encode p50/p95/p99/max={}/{}/{}/{} µs · audio_encode p95={} µs · frame_drops={} · format_drops={} · unscalable_drops={} · peak={}‰",
             engine.stats.video_frames,
             engine.stats.audio_blocks,
             engine.stats.audio_blocks_per_video_tick,
@@ -579,6 +602,10 @@ impl OutputRuntime {
             native_queue_bytes,
             snapshot.queued_frames,
             reconnects,
+            monitor_state,
+            monitor_queued,
+            monitor_dropped,
+            monitor_reconnects,
             engine.stats.output_submit_latency.percentile_nanos(50) / 1_000,
             engine.stats.output_submit_latency.percentile_nanos(95) / 1_000,
             engine.stats.output_submit_latency.percentile_nanos(99) / 1_000,
@@ -670,8 +697,21 @@ impl OutputRuntime {
             native_submit_max = metrics.max_submit_latency_nanos;
         }
         let replay_save = replay_save_label(&engine.replay_save_status);
+        let (monitor_state, monitor_queued, monitor_dropped, monitor_reconnects, monitor_error) =
+            engine
+                .monitor_output
+                .as_ref()
+                .map_or(("off", 0, 0, 0, "none"), |monitor| {
+                    (
+                        monitor_state_label(monitor.state),
+                        monitor.queued_blocks,
+                        monitor.dropped_blocks,
+                        monitor.reconnects,
+                        monitor.last_error.as_deref().unwrap_or("none"),
+                    )
+                });
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} replay_lifecycle={} replay_save={} replay_packets={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_queue_bytes={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} av_sync_obs={} av_sync_in_sync={} av_sync_behind={} av_sync_ahead={} av_sync_max_ns={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} filter_diagnostics={:?} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} replay_lifecycle={} replay_save={} replay_packets={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} monitor_output_state={} monitor_output_queued={} monitor_output_dropped={} monitor_output_reconnects={} monitor_output_error={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_queue_bytes={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} av_sync_obs={} av_sync_in_sync={} av_sync_behind={} av_sync_ahead={} av_sync_max_ns={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} filter_diagnostics={:?} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
@@ -688,6 +728,11 @@ impl OutputRuntime {
             engine.desktop_audio.label(),
             engine.desktop_audio.is_capturing(),
             devices,
+            monitor_state,
+            monitor_queued,
+            monitor_dropped,
+            monitor_reconnects,
+            monitor_error,
             snapshot.queued_frames,
             engine.stream_queued_bytes,
             sent,
@@ -738,5 +783,14 @@ impl OutputRuntime {
         } else {
             (OutputLifecycle::Failed, OutputLifecycle::Failed)
         }
+    }
+}
+
+fn monitor_state_label(state: AudioOutputWorkerState) -> &'static str {
+    match state {
+        AudioOutputWorkerState::Starting => "starting",
+        AudioOutputWorkerState::Running => "running",
+        AudioOutputWorkerState::Failed => "failed-retrying",
+        AudioOutputWorkerState::Stopped => "stopped",
     }
 }
