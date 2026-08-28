@@ -451,7 +451,10 @@ impl VideoCaptureDevice for NativeHelperDevice {
         if let Some(frame) = mailbox.take_latest() {
             return Ok(Some(frame));
         }
-        mailbox.failure().map_or(Ok(None), |error| Err(error))
+        match mailbox.failure() {
+            Some(error) => Err(error),
+            None => Ok(None),
+        }
     }
 }
 
@@ -486,6 +489,10 @@ impl HelperFrameMailbox {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the reader thread owns the mailbox for its entire lifetime"
+)]
 fn read_helper_frames(
     mut stream: StreamCaptureDevice<BufReader<std::process::ChildStdout>>,
     mailbox: Arc<HelperFrameMailbox>,
