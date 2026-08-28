@@ -5,7 +5,7 @@ param(
     [int]$SoakSeconds = 1800,
     [switch]$RequireCamera,
     [switch]$RequireProduction,
-    [string]$ProductionStreamUrl = ""
+    [string]$ProductionStreamUrl = $env:OBS_RS_PRODUCTION_STREAM_URL
 )
 
 $ErrorActionPreference = "Stop"

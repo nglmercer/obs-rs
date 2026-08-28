@@ -108,3 +108,14 @@ use a different GStreamer installation from `PATH`.
 The Windows CI job intentionally runs the default feature set, so a machine
 without those native GStreamer packages still has a complete check, test, and
 GUI smoke path.
+
+The production acceptance workflow is a separate manual GitHub Actions lane:
+`.github/workflows/windows-production.yml`. Its self-hosted runner must be
+labelled `obs-rs-production` and expose `GSTREAMER_1_0_ROOT` and
+`GSTREAMER_1_0_DEVEL_ROOT` as runner environment variables pointing to matching
+64-bit MSVC runtime and development installations. It packages the native
+runtime, verifies the extracted archive, and runs the real display, audio,
+recording, and cleanup checks. Set the optional repository/environment secret
+`OBS_RS_PRODUCTION_STREAM_URL` to require a real RTMP, RTMPS, SRT, or RIST
+streaming acceptance; set the repository variable
+`OBS_RS_REQUIRE_PRODUCTION_STREAMING` to `1` when that secret must be present.
