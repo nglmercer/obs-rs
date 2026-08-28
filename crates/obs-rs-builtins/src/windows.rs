@@ -76,12 +76,15 @@ fn selected_device(settings: &Config, target: WindowsTarget) -> String {
     // settings only carried `device_id`, so retain that as a compatibility
     // fallback while making an explicit monitor selection authoritative.
     if target == WindowsTarget::Screen {
-        if let Some(monitor) = settings
-            .get("monitor")
-            .map(str::trim)
-            .filter(|value| value.starts_with("wgc-screen-"))
-        {
-            return monitor.to_owned();
+        if let Some(monitor) = settings.get("monitor").map(str::trim) {
+            return if monitor.starts_with("wgc-screen-") {
+                monitor.to_owned()
+            } else {
+                // An explicitly empty monitor means the automatic/primary
+                // display. It must override a stale device_id from an older
+                // picker schema rather than reopening that old display.
+                "wgc-screen-picker".to_owned()
+            };
         }
     }
     settings
@@ -267,6 +270,20 @@ mod tests {
         assert_eq!(
             selected_device(&settings, WindowsTarget::Screen),
             "wgc-screen-secondary"
+        );
+    }
+
+    #[test]
+    fn an_explicit_automatic_monitor_overrides_a_stale_device_setting() {
+        let mut settings = Config::new();
+        settings
+            .set("device_id", "wgc-screen-secondary")
+            .expect("device ID");
+        settings.set("monitor", "").expect("automatic monitor");
+
+        assert_eq!(
+            selected_device(&settings, WindowsTarget::Screen),
+            "wgc-screen-picker"
         );
     }
 
