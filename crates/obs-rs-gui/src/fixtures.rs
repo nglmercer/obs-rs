@@ -255,11 +255,17 @@ pub(crate) fn source_settings_for_canvas(
             };
         settings.set("device_id", &device_id)?;
         #[cfg(target_os = "windows")]
-        if kind == "screen_capture" && is_explicit_windows_screen_target(&device_id) {
-            // Keep a newly created source's monitor row aligned with the WGC
-            // target chosen from the live display snapshot. The automatic
-            // picker remains the fallback when discovery is unavailable.
-            settings.set("monitor", &device_id)?;
+        if kind == "screen_capture" {
+            // Keep the user-facing monitor setting explicit even when the
+            // backend target is the automatic primary-display picker. An
+            // absent key is ambiguous to older project readers and makes the
+            // properties/picker paths disagree about the initial selection.
+            let monitor = if is_explicit_windows_screen_target(&device_id) {
+                device_id.as_str()
+            } else {
+                ""
+            };
+            settings.set("monitor", monitor)?;
         }
         #[cfg(target_os = "windows")]
         if matches!(kind, "screen_capture" | "window_capture") {
