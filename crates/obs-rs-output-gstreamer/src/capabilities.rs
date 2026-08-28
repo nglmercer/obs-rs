@@ -24,6 +24,36 @@ const AV1_ENCODERS: &[&str] = &[
     "aomenc",
 ];
 
+/// Return the capability-probe executable from an explicit override, the
+/// packaged runtime beside the current executable, or `PATH`.
+///
+/// The native adapter uses `gst-inspect-1.0` for its allow-listed element
+/// probe. Packaged Windows builds must therefore be able to find the exact
+/// tool that belongs to the bundled runtime instead of accidentally probing a
+/// different system installation.
+pub(super) fn gst_inspect_command() -> Command {
+    if let Some(path) = std::env::var_os("OBSR_GST_INSPECT") {
+        if !path.is_empty() {
+            return Command::new(path);
+        }
+    }
+
+    let executable_name = if cfg!(target_os = "windows") {
+        "gst-inspect-1.0.exe"
+    } else {
+        "gst-inspect-1.0"
+    };
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            let bundled = parent.join(executable_name);
+            if bundled.is_file() {
+                return Command::new(bundled);
+            }
+        }
+    }
+    Command::new(executable_name)
+}
+
 /// Approved plugin selection, including hardware/software encoder choice.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GStreamerCapabilitySnapshot {
@@ -301,7 +331,7 @@ impl GStreamerCapabilitySnapshot {
                 audio_encoders: Vec::new(),
             };
         }
-        let runtime_version = Command::new("gst-inspect-1.0")
+        let runtime_version = gst_inspect_command()
             .arg("--version")
             .output()
             .ok()
@@ -605,7 +635,7 @@ pub(super) fn video_encoder_capability(element: &str) -> VideoEncoderCapability 
 }
 
 pub(super) fn encoder_option_capabilities(element: &str) -> VideoEncoderOptionCapabilities {
-    let inspection = Command::new("gst-inspect-1.0")
+    let inspection = gst_inspect_command()
         .arg(element)
         .output()
         .ok()

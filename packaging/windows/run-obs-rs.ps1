@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $runtime = Join-Path $root "gstreamer"
 $runtimeBin = Join-Path $runtime "bin"
+$runtimeInspect = Join-Path $runtimeBin "gst-inspect-1.0.exe"
 $runtimePlugins = Join-Path $runtime "lib\gstreamer-1.0"
 $runtimeScanner = Join-Path $runtime "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
 
@@ -17,11 +18,13 @@ if (Test-Path -LiteralPath $runtimeBin -PathType Container) {
     $runtimeCore = Join-Path $runtimeBin "gstreamer-1.0-0.dll"
     $runtimeScanner = Join-Path $runtime "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
     if (-not (Test-Path -LiteralPath $runtimeCore -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $runtimeInspect -PathType Leaf) -or
         -not (Test-Path -LiteralPath $runtimePlugins -PathType Container) -or
         -not (Test-Path -LiteralPath $runtimeScanner -PathType Leaf)) {
         throw "The bundled GStreamer runtime is incomplete; rebuild the package with -ProductionGStreamer"
     }
     $env:PATH = "$runtimeBin;$root;$env:PATH"
+    $env:OBSR_GST_INSPECT = $runtimeInspect
     $env:GST_PLUGIN_PATH = $runtimePlugins
     $env:GST_PLUGIN_PATH_1_0 = $runtimePlugins
     $env:GST_PLUGIN_SCANNER = $runtimeScanner

@@ -46,6 +46,7 @@ $runtimeMarker = Join-Path $root "GSTREAMER-RUNTIME.txt"
 if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
     $runtimeFiles = @(
         @{ Path = (Join-Path $root "gstreamer\bin\gstreamer-1.0-0.dll"); Type = "Leaf" },
+        @{ Path = (Join-Path $root "gstreamer\bin\gst-inspect-1.0.exe"); Type = "Leaf" },
         @{ Path = (Join-Path $root "gstreamer\lib\gstreamer-1.0"); Type = "Container" },
         @{ Path = (Join-Path $root "gstreamer\libexec\gstreamer-1.0\gst-plugin-scanner.exe"); Type = "Leaf" }
     )

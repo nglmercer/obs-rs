@@ -29,6 +29,10 @@ if ($ProductionGStreamer) {
     if (-not (Test-Path -LiteralPath $gstreamerCore -PathType Leaf)) {
         throw "GStreamer runtime is missing the core DLL: $gstreamerCore"
     }
+    $gstreamerInspect = Join-Path $gstreamerBin "gst-inspect-1.0.exe"
+    if (-not (Test-Path -LiteralPath $gstreamerInspect -PathType Leaf)) {
+        throw "GStreamer runtime is missing the capability probe tool: $gstreamerInspect"
+    }
     $gstreamerScanner = Join-Path $gstreamerRoot "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
     if (-not (Test-Path -LiteralPath $gstreamerScanner -PathType Leaf)) {
         throw "GStreamer runtime is missing the plugin scanner: $gstreamerScanner"
@@ -105,6 +109,8 @@ if ($ProductionGStreamer) {
         Copy-Item -LiteralPath $_.FullName -Destination $stagingDirectory
         Copy-Item -LiteralPath $_.FullName -Destination $runtimeBinDestination
     }
+    Copy-Item -LiteralPath $gstreamerInspect -Destination $stagingDirectory
+    Copy-Item -LiteralPath $gstreamerInspect -Destination $runtimeBinDestination
     $pluginDestination = Join-Path $gstreamerDirectory "lib\gstreamer-1.0"
     New-Item -ItemType Directory -Force -Path $pluginDestination | Out-Null
     Get-ChildItem -LiteralPath $gstreamerPlugins -Force |
@@ -124,6 +130,7 @@ if ($ProductionGStreamer) {
     @(
         "GStreamer runtime: $gstreamerRoot",
         "Native output feature: production-gstreamer",
+        "Capability probe: gst-inspect-1.0.exe",
         "Launch with run-obs-rs.ps1 so PATH, GST_PLUGIN_PATH, and the plugin scanner are configured.",
         "The runtime and Cargo development package must come from the same GStreamer release."
     ) | Set-Content -LiteralPath (Join-Path $stagingDirectory "GSTREAMER-RUNTIME.txt") -Encoding utf8

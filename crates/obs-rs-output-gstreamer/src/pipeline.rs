@@ -1,12 +1,10 @@
-use std::process::Command;
-
 use obs_rs_output::{
     AudioCodec, AudioEncoderConfig, OutputAudioCodec, OutputProfile, OutputProfileKind,
     OutputVideoCodec, VideoCodec, VideoEncoderConfig,
 };
 use url::Url;
 
-use super::capabilities::GStreamerCapabilitySnapshot;
+use super::capabilities::{gst_inspect_command, GStreamerCapabilitySnapshot};
 use super::destination::ProductionDestination;
 use super::{GStreamerError, MAX_PRODUCTION_METADATA_BYTES, PRODUCTION_METADATA_MAGIC};
 
@@ -324,7 +322,7 @@ const fn profile_audio_codec(codec: OutputAudioCodec) -> AudioCodec {
 }
 
 pub(super) fn element_available(element: &str) -> bool {
-    Command::new("gst-inspect-1.0")
+    gst_inspect_command()
         .args(["--exists", element])
         .status()
         .is_ok_and(|status| status.success())

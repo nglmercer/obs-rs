@@ -97,10 +97,13 @@ Then build and package with the opt-in feature and a matching runtime tree:
 ```
 
 The runtime directory must contain `bin\gstreamer-1.0-0.dll`,
-`lib\gstreamer-1.0`, and `libexec\gstreamer-1.0\gst-plugin-scanner.exe`.
+`bin\gst-inspect-1.0.exe`, `lib\gstreamer-1.0`, and
+`libexec\gstreamer-1.0\gst-plugin-scanner.exe`.
 The matching development package is still required at build time. The
-packager copies the runtime DLLs and plugins into the archive and writes the
-selected runtime into `GSTREAMER-RUNTIME.txt`.
+packager copies the runtime DLLs, capability probe, and plugins into the
+archive and writes the selected runtime into `GSTREAMER-RUNTIME.txt`. The
+launcher sets `OBSR_GST_INSPECT` so capability discovery cannot accidentally
+use a different GStreamer installation from `PATH`.
 
 The Windows CI job intentionally runs the default feature set, so a machine
 without those native GStreamer packages still has a complete check, test, and
