@@ -256,10 +256,15 @@ fn open_for_target(
         share_through_portal(ui, state, controller, target.clone());
         return;
     }
+    let text = crate::i18n::catalog(locale);
+    let automatic_label = if cfg!(target_os = "windows") {
+        text.monitor_ui.automatic_display.clone()
+    } else {
+        text.monitor_ui.whole_desktop.clone()
+    };
     let window = &controller.window;
-    window
-        .global::<I18n>()
-        .set_text(crate::i18n::catalog(locale));
+    window.global::<I18n>().set_text(text);
+    window.set_whole_desktop_label(automatic_label);
     controller.set_tokens(ui.global::<Palette>().get_tokens());
     let source_name = source_name_for_target(state, target);
     let saved_target_missing = controller.reload(
@@ -349,7 +354,11 @@ fn install_commit(
         });
         let label = if monitor.is_empty() {
             crate::i18n::with_catalog(state.borrow().locale(), |text| {
-                text.monitor_ui.whole_desktop.clone()
+                if cfg!(target_os = "windows") {
+                    text.monitor_ui.automatic_display.clone()
+                } else {
+                    text.monitor_ui.whole_desktop.clone()
+                }
             })
         } else {
             monitor.as_str().into()

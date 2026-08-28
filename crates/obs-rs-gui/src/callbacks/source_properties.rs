@@ -317,10 +317,17 @@ fn monitor_summary(document: &str, locale: UiLocale) -> SharedString {
         .ok()
         .and_then(|settings| settings.get("monitor").map(str::to_owned))
         .unwrap_or_default();
-    if monitor.trim().is_empty() {
-        crate::i18n::with_catalog(locale, |text| text.monitor_ui.whole_desktop.clone())
+    let monitor = monitor.trim();
+    if monitor.is_empty() || (cfg!(target_os = "windows") && monitor == "wgc-screen-picker") {
+        crate::i18n::with_catalog(locale, |text| {
+            if cfg!(target_os = "windows") {
+                text.monitor_ui.automatic_display.clone()
+            } else {
+                text.monitor_ui.whole_desktop.clone()
+            }
+        })
     } else {
-        monitor.as_str().into()
+        monitor.into()
     }
 }
 
@@ -351,4 +358,31 @@ fn source_name(state: &Rc<RefCell<DesktopState>>, target: &SourceTarget) -> Stri
         .profile(target.profile.as_str())
         .and_then(|profile| profile.source(target.source.as_str()))
         .map_or_else(|| target.source.clone(), |source| source.name().to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automatic_monitor_summary_uses_the_platform_label() {
+        let document = "device_id = \"wgc-screen-picker\"\nmonitor = \"\"\n";
+        let summary = monitor_summary(document, UiLocale::English);
+
+        #[cfg(target_os = "windows")]
+        assert_eq!(summary, "Primary display (automatic)");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(summary, "Capture the whole desktop instead of one display");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn legacy_windows_monitor_sentinel_uses_the_platform_label() {
+        let document = "monitor = \"wgc-screen-picker\"\n";
+
+        assert_eq!(
+            monitor_summary(document, UiLocale::English),
+            "Primary display (automatic)"
+        );
+    }
 }

@@ -83,6 +83,7 @@ export component MonitorWindow inherits Window {
     in property <string> source-name;
     in property <string> selected-id;
     in property <string> status;
+    in property <string> whole-desktop-label: I18n.text.monitor_ui.whole_desktop;
     in-out property <bool> capture-whole-desktop;
 
     callback select-monitor(string);
@@ -217,7 +218,7 @@ export component MonitorWindow inherits Window {
                     }
                 }
                 CheckBox {
-                    text: I18n.text.monitor_ui.whole_desktop;
+                    text: root.whole-desktop-label;
                     checked <=> root.capture-whole-desktop;
                 }
                 MutedText { text: root.status; }

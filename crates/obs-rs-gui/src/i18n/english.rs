@@ -84,6 +84,7 @@ pub(super) fn catalog() -> UiText {
                 "Pick the display this screen capture source reads. The map shows how the displays are arranged.",
             ),
             primary: s("primary"),
+            automatic_display: s("Primary display (automatic)"),
             whole_desktop: s("Capture the whole desktop instead of one display"),
             refresh: s("Refresh"),
             empty: s("No display was detected. Check that DISPLAY points at a running X11 server."),

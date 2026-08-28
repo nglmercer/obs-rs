@@ -84,6 +84,7 @@ pub(super) fn catalog() -> UiText {
                 "Elige la pantalla que lee esta fuente de captura. El mapa muestra cómo están dispuestas.",
             ),
             primary: s("principal"),
+            automatic_display: s("Pantalla principal (automática)"),
             whole_desktop: s("Capturar todo el escritorio en lugar de una pantalla"),
             refresh: s("Actualizar"),
             empty: s(
