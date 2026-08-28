@@ -44,6 +44,16 @@ foreach ($line in Get-Content -LiteralPath $sumsPath) {
 
 $runtimeMarker = Join-Path $root "GSTREAMER-RUNTIME.txt"
 if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
+    $markerVersionLine = Get-Content -LiteralPath $runtimeMarker |
+        Where-Object { $_ -match '^GStreamer version:\s*(?<version>\S+)\s*$' } |
+        Select-Object -First 1
+    if ($null -eq $markerVersionLine) {
+        throw "GStreamer runtime marker does not contain a version"
+    }
+    $markerVersionMatch = [System.Text.RegularExpressions.Regex]::Match(
+        $markerVersionLine,
+        '^GStreamer version:\s*(?<version>\S+)\s*$')
+    $runtimeVersion = $markerVersionMatch.Groups["version"].Value
     $runtimeFiles = @(
         @{ Path = (Join-Path $root "gstreamer\bin\gstreamer-1.0-0.dll"); Type = "Leaf" },
         @{ Path = (Join-Path $root "gstreamer\bin\gst-inspect-1.0.exe"); Type = "Leaf" },
@@ -54,6 +64,41 @@ if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
         if (-not (Test-Path -LiteralPath $runtimeFile.Path -PathType $runtimeFile.Type)) {
             throw "GStreamer runtime marker is present but the runtime is incomplete: $($runtimeFile.Path)"
         }
+    }
+    $runtime = Join-Path $root "gstreamer"
+    $runtimeBin = Join-Path $runtime "bin"
+    $runtimeInspect = Join-Path $runtimeBin "gst-inspect-1.0.exe"
+    $runtimePlugins = Join-Path $runtime "lib\gstreamer-1.0"
+    $runtimeScanner = Join-Path $runtime "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
+    $oldPath = $env:PATH
+    $oldPluginPath = $env:GST_PLUGIN_PATH
+    $oldPluginPath10 = $env:GST_PLUGIN_PATH_1_0
+    $oldScanner = $env:GST_PLUGIN_SCANNER
+    try {
+        $env:PATH = "$runtimeBin;$root;$oldPath"
+        $env:GST_PLUGIN_PATH = $runtimePlugins
+        $env:GST_PLUGIN_PATH_1_0 = $runtimePlugins
+        $env:GST_PLUGIN_SCANNER = $runtimeScanner
+        $probeOutput = (& $runtimeInspect --version 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw "bundled GStreamer capability probe failed to start"
+        }
+        $probeMatch = [System.Text.RegularExpressions.Regex]::Match(
+            $probeOutput,
+            '(?im)\bversion\s+(?<version>\d+\.\d+(?:\.\d+)?)')
+        if (-not $probeMatch.Success -or
+            $probeMatch.Groups["version"].Value -ne $runtimeVersion) {
+            throw "bundled GStreamer version does not match GSTREAMER-RUNTIME.txt"
+        }
+        & $runtimeInspect --exists appsrc 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "bundled GStreamer runtime cannot load the appsrc element"
+        }
+    } finally {
+        $env:PATH = $oldPath
+        $env:GST_PLUGIN_PATH = $oldPluginPath
+        $env:GST_PLUGIN_PATH_1_0 = $oldPluginPath10
+        $env:GST_PLUGIN_SCANNER = $oldScanner
     }
     Write-Output "Verified bundled GStreamer runtime inputs"
 }

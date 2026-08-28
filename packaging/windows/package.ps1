@@ -11,6 +11,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
 $stagingDirectory = Join-Path $outputRoot "obs-rs"
 $helperManifest = Join-Path $repoRoot "packaging\windows\capture-helper\Cargo.toml"
+$gstreamerVersion = $null
 
 if ($ProductionGStreamer) {
     if ([string]::IsNullOrWhiteSpace($GStreamerRuntimeDirectory)) {
@@ -37,6 +38,17 @@ if ($ProductionGStreamer) {
     if (-not (Test-Path -LiteralPath $gstreamerScanner -PathType Leaf)) {
         throw "GStreamer runtime is missing the plugin scanner: $gstreamerScanner"
     }
+    $probeOutput = (& $gstreamerInspect --version 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "GStreamer capability probe could not start: $gstreamerInspect"
+    }
+    $probeMatch = [System.Text.RegularExpressions.Regex]::Match(
+        $probeOutput,
+        '(?im)\bversion\s+(?<version>\d+\.\d+(?:\.\d+)?)')
+    if (-not $probeMatch.Success) {
+        throw "GStreamer capability probe returned no parseable version: $probeOutput"
+    }
+    $gstreamerVersion = $probeMatch.Groups["version"].Value
 } else {
     $gstreamerRoot = $null
     $gstreamerBin = $null
@@ -129,6 +141,7 @@ if ($ProductionGStreamer) {
     }
     @(
         "GStreamer runtime: $gstreamerRoot",
+        "GStreamer version: $gstreamerVersion",
         "Native output feature: production-gstreamer",
         "Capability probe: gst-inspect-1.0.exe",
         "Launch with run-obs-rs.ps1 so PATH, GST_PLUGIN_PATH, and the plugin scanner are configured.",

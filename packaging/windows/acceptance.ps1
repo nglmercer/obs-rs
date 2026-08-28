@@ -113,6 +113,13 @@ if ($RequireProduction) {
     }
 }
 
+if ($RequireProduction -or -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
+    $runtimeMarker = Join-Path $root "GSTREAMER-RUNTIME.txt"
+    if (-not (Test-Path -LiteralPath $runtimeMarker -PathType Leaf)) {
+        throw "production acceptance requires a package built with -ProductionGStreamer"
+    }
+}
+
 $env:OBSR_CAPTURE_HELPER = $helper
 $env:OBS_RS_SOAK_SECONDS = $SoakSeconds.ToString()
 $env:OBS_RS_ACCEPTANCE_ARTIFACTS = $artifacts
