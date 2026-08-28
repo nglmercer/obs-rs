@@ -291,6 +291,16 @@ fn capture_source_defaults_have_a_real_selectable_device_id() {
         let device_id = settings.get("device_id").expect("device id");
         assert!(!device_id.is_empty(), "{kind} must have a device id");
         let devices = capture_devices(kind);
+        #[cfg(target_os = "windows")]
+        if matches!(kind, "screen_capture" | "window_capture") {
+            let picker_id = match kind {
+                "screen_capture" => "wgc-screen-picker",
+                "window_capture" => "wgc-window-picker",
+                _ => unreachable!("kind was checked above"),
+            };
+            assert_eq!(device_id, picker_id);
+            continue;
+        }
         if kind == "camera_capture" && devices.is_empty() {
             assert_eq!(device_id, "nokhwa-camera-0");
         } else {

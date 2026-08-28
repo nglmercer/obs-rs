@@ -763,7 +763,9 @@ fn production_settings_are_preserved_when_native_backend_is_ready() {
 
     assert_eq!(settings.stream_protocol, StreamProtocol::Rtmp);
     assert_eq!(settings.recording_format, RecordingFormat::Matroska);
-    assert!(settings.recording_path.ends_with(".mkv"));
+    assert!(std::path::Path::new(&settings.recording_path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mkv")));
 }
 
 fn expected_recording_path(settings: &AppSettings, extension: &str) -> String {

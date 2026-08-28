@@ -652,6 +652,10 @@ impl OutputRuntime {
         format!("{hours:02}:{minutes:02}:{seconds:02}")
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "The diagnostic document intentionally exposes every live output counter in one record"
+    )]
     pub(crate) fn diagnostics_document(&mut self) -> String {
         let snapshot = self.worker.snapshot();
         let engine = snapshot.engine;

@@ -235,21 +235,31 @@ pub(crate) fn source_settings_for_canvas(
             _ => unreachable!("kind was checked above"),
         };
         let devices = capture_devices(kind);
-        let device_id = if kind == "camera_capture" {
-            devices
-                .iter()
-                .find(|(id, _)| id.starts_with("v4l2-") || id.starts_with("nokhwa-camera-"))
-                .map_or(fallback, |(id, _)| id.as_str())
-        } else {
-            devices.first().map_or(fallback, |(id, _)| id.as_str())
-        };
-        settings.set("device_id", device_id)?;
+        // A new Windows screen/window source must not silently bind to the
+        // first sorted item in a changing desktop catalog. Start at the
+        // explicit automatic target and let the picker make a concrete choice.
+        // Cameras remain deterministic: their native stable ID is needed to
+        // open the selected device and can be persisted immediately.
+        let device_id =
+            if cfg!(target_os = "windows") && matches!(kind, "screen_capture" | "window_capture") {
+                fallback.to_owned()
+            } else if kind == "camera_capture" {
+                devices
+                    .iter()
+                    .find(|(id, _)| id.starts_with("v4l2-") || id.starts_with("nokhwa-camera-"))
+                    .map_or_else(|| fallback.to_owned(), |(id, _)| id.clone())
+            } else {
+                devices
+                    .first()
+                    .map_or_else(|| fallback.to_owned(), |(id, _)| id.clone())
+            };
+        settings.set("device_id", &device_id)?;
         #[cfg(target_os = "windows")]
         if kind == "screen_capture" && device_id.starts_with("wgc-screen-") {
             // Keep a newly created source's monitor row aligned with the WGC
             // target chosen from the live display snapshot. The automatic
             // picker remains the fallback when discovery is unavailable.
-            settings.set("monitor", device_id)?;
+            settings.set("monitor", &device_id)?;
         }
         #[cfg(target_os = "windows")]
         if matches!(kind, "screen_capture" | "window_capture") {

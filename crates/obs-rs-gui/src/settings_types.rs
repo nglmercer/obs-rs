@@ -509,7 +509,7 @@ impl AppSettings {
     /// no usable native output backend.
     ///
     /// The reference packet path is deliberately portable, so a package built
-    /// without the optional GStreamer runtime can still record and stream. A
+    /// without the optional `GStreamer` runtime can still record and stream. A
     /// stale `.mkv`/RTMP selection must not be left in the live studio: it
     /// would make the controls look configured while the first output action
     /// could only fail at the engine boundary.

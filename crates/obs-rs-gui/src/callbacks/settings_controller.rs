@@ -73,7 +73,7 @@ pub(crate) struct SettingsController {
     browse_tool: Option<&'static str>,
     /// Native output runtime identity, if this binary was built with one.
     /// Kept separately so changing the UI locale can rebuild the status text
-    /// without probing GStreamer on the UI thread.
+    /// without probing `GStreamer` on the UI thread.
     production_runtime_version: Option<String>,
     production_output_supported: bool,
 }
@@ -650,7 +650,7 @@ fn apply_production_status(
 ) {
     let text = window.global::<I18n>().get_text().settings_ui;
     let status = production_supported
-        .then(|| runtime_version)
+        .then_some(runtime_version)
         .flatten()
         .map_or_else(
             || text.production_backend_unavailable.to_string(),
