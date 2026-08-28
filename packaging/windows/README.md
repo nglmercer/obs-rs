@@ -42,9 +42,10 @@ probe runs. The acceptance script requires this check, so a package with a
 missing or mismatched helper cannot be reported as a hardware pass.
 
 For a release-package hardware acceptance run, use the bundled script. It first
-verifies every packaged payload, records machine/GPU/display/audio metadata,
-requires the physical display, window, microphone, loopback, and monitor-output
-checks, and writes bounded soak telemetry:
+verifies every packaged payload, launches the extracted GUI through the bundled
+runtime launcher, records machine/GPU/display/audio metadata, requires the
+physical display, window, microphone, loopback, and monitor-output checks, and
+writes bounded soak telemetry:
 
 ```powershell
 .\acceptance.ps1 -SoakSeconds 1800

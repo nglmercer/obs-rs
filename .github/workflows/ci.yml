@@ -162,6 +162,13 @@ jobs:
             throw "expanded archive has no obs-rs package directory"
           }
           & (Join-Path $packageRoot.FullName "verify-package.ps1") -PackageDirectory $packageRoot.FullName
+          if ($LASTEXITCODE -ne 0) {
+            throw "expanded Windows package verification failed with exit code $LASTEXITCODE"
+          }
+          & (Join-Path $packageRoot.FullName "run-obs-rs.ps1") gui --smoke
+          if ($LASTEXITCODE -ne 0) {
+            throw "expanded Windows packaged GUI smoke failed with exit code $LASTEXITCODE"
+          }
 
       - name: Upload the Windows release bundle
         uses: actions/upload-artifact@v4

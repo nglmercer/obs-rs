@@ -121,7 +121,12 @@ if (-not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
 }
 
 $resultPath = Join-Path $artifacts "windows-check.txt"
+$guiSmokePath = Join-Path $artifacts "gui-smoke.txt"
 try {
+    & $launcher gui --smoke 2>&1 | Tee-Object -FilePath $guiSmokePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "packaged GUI smoke test failed with exit code $LASTEXITCODE"
+    }
     & $launcher check 2>&1 | Tee-Object -FilePath $resultPath
     if ($LASTEXITCODE -ne 0) {
         throw "Windows acceptance checks failed with exit code $LASTEXITCODE"
