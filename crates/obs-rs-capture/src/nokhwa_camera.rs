@@ -14,6 +14,8 @@ use nokhwa::{
     Camera, NokhwaError,
 };
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+#[cfg(target_os = "windows")]
+use sha2::{Digest, Sha256};
 
 use super::{
     device::{CaptureRequest, VideoCaptureDevice},
@@ -390,7 +392,14 @@ fn select_mode(modes: &[CameraMode], output: VideoFormat) -> Option<CameraMode> 
 fn stable_camera_id(index: &CameraIndex, metadata: &str) -> String {
     #[cfg(target_os = "windows")]
     if !metadata.trim().is_empty() {
-        return format!("nokhwa-camera-msmf-{}", hex_encode(metadata.as_bytes()));
+        // MSMF symbolic links are stable across device-order changes, but can
+        // be much longer than the 64-byte project identifier limit. Keep the
+        // persisted value bounded and resolve it back to the current catalog
+        // by digest when a camera is opened.
+        return format!(
+            "nokhwa-camera-msmf-hash-{}",
+            hex_encode(&camera_identity_digest(metadata))
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -428,6 +437,13 @@ fn camera_index_from_stable_id(id: &str) -> Result<CameraIndex, CaptureError> {
             .map_err(|_| invalid_id(id));
     }
     if let Some(value) = id.strip_prefix("nokhwa-camera-") {
+        #[cfg(target_os = "windows")]
+        if let Some(digest) = value
+            .strip_prefix("msmf-hash-")
+            .and_then(|value| decode_hex_exact::<16>(value).ok())
+        {
+            return camera_index_from_msmf_digest(id, digest);
+        }
         if let Some(encoded) = value.strip_prefix("msmf-") {
             let bytes = decode_hex(encoded).map_err(|()| invalid_id(id))?;
             let metadata = String::from_utf8(bytes).map_err(|_| invalid_id(id))?;
@@ -472,6 +488,31 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, ()> {
             u8::from_str_radix(text, 16).map_err(|_| ())
         })
         .collect()
+}
+
+fn decode_hex_exact<const N: usize>(value: &str) -> Result<[u8; N], ()> {
+    decode_hex(value)?.try_into().map_err(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+fn camera_identity_digest(metadata: &str) -> [u8; 16] {
+    let digest = Sha256::digest(metadata.as_bytes());
+    let mut identity = [0_u8; 16];
+    identity.copy_from_slice(&digest[..16]);
+    identity
+}
+
+#[cfg(target_os = "windows")]
+fn camera_index_from_msmf_digest(id: &str, digest: [u8; 16]) -> Result<CameraIndex, CaptureError> {
+    initialize_nokhwa();
+    let devices = query(ApiBackend::Auto).map_err(|error| map_nokhwa_error(&error))?;
+    devices
+        .into_iter()
+        .find(|device| camera_identity_digest(&device.misc()) == digest)
+        .map(|device| device.index().clone())
+        .ok_or_else(|| CaptureError::PlatformUnavailable {
+            message: format!("Nokhwa camera target is no longer available: {id}"),
+        })
 }
 
 fn invalid_id(id: &str) -> CaptureError {
@@ -644,10 +685,25 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn media_foundation_symbolic_links_round_trip_without_index_churn() {
+    fn media_foundation_symbolic_links_use_a_bounded_stable_identity() {
         let symbolic_link = r"\\?\usb#vid_046d&pid_0825#camera#{7f1f}";
         let id = stable_camera_id(&CameraIndex::Index(0), symbolic_link);
-        assert!(id.starts_with("nokhwa-camera-msmf-"));
+        assert!(id.starts_with("nokhwa-camera-msmf-hash-"));
+        assert!(id.len() <= obs_rs_util::MAX_IDENTIFIER_BYTES);
+        let digest = id
+            .strip_prefix("nokhwa-camera-msmf-hash-")
+            .and_then(|value| decode_hex_exact::<16>(value).ok())
+            .expect("bounded MSMF digest");
+        assert_eq!(digest, camera_identity_digest(symbolic_link));
+    }
+
+    #[test]
+    fn legacy_media_foundation_identity_still_decodes() {
+        let symbolic_link = r"\\?\usb#vid_046d&pid_0825#camera#{7f1f}";
+        let id = format!(
+            "nokhwa-camera-msmf-{}",
+            hex_encode(symbolic_link.as_bytes())
+        );
         assert_eq!(
             camera_index_from_stable_id(&id),
             Ok(CameraIndex::String(symbolic_link.to_owned()))

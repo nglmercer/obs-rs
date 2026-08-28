@@ -4568,6 +4568,7 @@ dependencies = [
  "obs-rs-media",
  "obs-rs-plugin-api",
  "obs-rs-util",
+ "sha2",
 ]
 
 [[package]]

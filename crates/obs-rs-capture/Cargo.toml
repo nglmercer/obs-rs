@@ -19,3 +19,4 @@ nokhwa = { version = "0.10.11", features = ["input-avfoundation", "camera-sync-i
 
 [target.'cfg(target_os = "windows")'.dependencies]
 nokhwa = { version = "0.10.11", features = ["input-msmf", "camera-sync-impl"] }
+sha2 = "0.10"
