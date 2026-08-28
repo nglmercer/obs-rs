@@ -67,7 +67,9 @@ pub use factories::{
     WAYLAND_SCREEN_CAPTURE_SOURCE_KIND, X11_SCREEN_CAPTURE_SOURCE_KIND,
     X11_WINDOW_CAPTURE_SOURCE_KIND,
 };
-pub use lifecycle::{AsyncCaptureDevice, CaptureCancellation, CaptureLifecycleState};
+pub use lifecycle::{
+    AsyncCaptureDevice, CaptureCancellation, CaptureLifecycleState, CaptureRetrySchedule,
+};
 pub use protocol::{
     encode_frame_packet, write_frame_packet, FRAME_STREAM_MAGIC, MAX_FRAME_STREAM_PACKET_BYTES,
 };

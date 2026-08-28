@@ -10,6 +10,53 @@ use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 
 use super::{CaptureError, VideoCaptureDevice};
 
+/// Media-time backoff used by sources that reconnect a lost native device.
+///
+/// Retry timing belongs to the source timeline rather than the compositor's
+/// render-call count. A render loop can run at 30, 60, or a variable rate, and
+/// a hidden source may not be rendered at all for a while. Scheduling against
+/// [`Timestamp`] keeps reconnect attempts bounded and deterministic in all
+/// three cases.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CaptureRetrySchedule {
+    interval_nanos: u64,
+    next_attempt: Timestamp,
+}
+
+impl CaptureRetrySchedule {
+    /// Creates a schedule that is due on its first observation.
+    #[must_use]
+    pub const fn new(interval_nanos: u64) -> Self {
+        Self {
+            interval_nanos: if interval_nanos == 0 {
+                1
+            } else {
+                interval_nanos
+            },
+            next_attempt: Timestamp::ZERO,
+        }
+    }
+
+    /// Returns whether a reconnect attempt is due at `now`.
+    #[must_use]
+    pub fn due(self, now: Timestamp) -> bool {
+        now >= self.next_attempt
+    }
+
+    /// Schedules the next attempt relative to the source's media time.
+    pub fn mark_attempt(&mut self, now: Timestamp) {
+        self.next_attempt = now
+            .checked_add(self.interval_nanos)
+            .unwrap_or_else(|| Timestamp::from_nanos(u64::MAX));
+    }
+
+    /// Makes the schedule immediately due, for example after an explicit
+    /// source-settings update.
+    pub const fn reset(&mut self) {
+        self.next_attempt = Timestamp::ZERO;
+    }
+}
+
 /// Observable lifecycle of an asynchronous platform capture session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CaptureLifecycleState {
@@ -274,5 +321,30 @@ const fn is_permission_denial(error: &CaptureError) -> bool {
 impl Drop for AsyncCaptureDevice {
     fn drop(&mut self) {
         self.cancelled.cancel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_schedule_uses_media_time_and_starts_due() {
+        let mut schedule = CaptureRetrySchedule::new(500_000_000);
+        assert!(schedule.due(Timestamp::ZERO));
+
+        schedule.mark_attempt(Timestamp::from_millis(1_000));
+        assert!(!schedule.due(Timestamp::from_millis(1_499)));
+        assert!(schedule.due(Timestamp::from_millis(1_500)));
+
+        schedule.reset();
+        assert!(schedule.due(Timestamp::ZERO));
+    }
+
+    #[test]
+    fn retry_schedule_handles_zero_intervals_and_timestamp_overflow() {
+        let mut schedule = CaptureRetrySchedule::new(0);
+        schedule.mark_attempt(Timestamp::from_nanos(u64::MAX));
+        assert!(schedule.due(Timestamp::from_nanos(u64::MAX)));
     }
 }

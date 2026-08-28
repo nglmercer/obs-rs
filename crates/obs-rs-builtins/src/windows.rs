@@ -4,12 +4,12 @@
 
 use crate::portable::parse_format;
 use obs_rs_capture::{
-    CaptureLifecycleState, CaptureRequest, PlatformCaptureAdapter, ThreadedCaptureDevice,
-    SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
+    CaptureLifecycleState, CaptureRequest, CaptureRetrySchedule, PlatformCaptureAdapter,
+    ThreadedCaptureDevice, SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND,
 };
 use obs_rs_capture_windows::WindowsCaptureAdapter;
 use obs_rs_config::Config;
-use obs_rs_media::{VideoFormat, VideoFrame};
+use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
 
@@ -19,7 +19,7 @@ enum WindowsTarget {
     Window,
 }
 
-const WINDOWS_CAPTURE_RETRY_FRAMES: u32 = 30;
+const WINDOWS_CAPTURE_RETRY_INTERVAL_NANOS: u64 = 500_000_000;
 
 pub(crate) struct WindowsCaptureFactory {
     kind: Identifier,
@@ -64,7 +64,7 @@ impl SourceFactory for WindowsCaptureFactory {
             capture_border,
             device,
             failure: None,
-            retry_countdown: WINDOWS_CAPTURE_RETRY_FRAMES,
+            retry_schedule: CaptureRetrySchedule::new(WINDOWS_CAPTURE_RETRY_INTERVAL_NANOS),
             shutdown_blocked: false,
         }))
     }
@@ -137,7 +137,7 @@ struct WindowsCaptureSource {
     capture_border: bool,
     device: ThreadedCaptureDevice,
     failure: Option<String>,
-    retry_countdown: u32,
+    retry_schedule: CaptureRetrySchedule,
     shutdown_blocked: bool,
 }
 
@@ -180,7 +180,7 @@ impl Source for WindowsCaptureSource {
         self.capture_cursor = capture_cursor;
         self.capture_border = capture_border;
         self.failure = None;
-        self.retry_countdown = WINDOWS_CAPTURE_RETRY_FRAMES;
+        self.retry_schedule.reset();
         self.shutdown_blocked = false;
         Ok(())
     }
@@ -202,9 +202,9 @@ impl Source for WindowsCaptureSource {
             );
             self.failure = Some(failure.clone());
             if self.device.state() == CaptureLifecycleState::Lost {
-                self.retry_countdown = self.retry_countdown.saturating_sub(1);
-                if self.retry_countdown == 0 {
-                    self.reopen();
+                let timestamp = request.timestamp();
+                if self.retry_schedule.due(timestamp) {
+                    self.reopen(timestamp);
                 }
             }
             return Err(SourceError::Unavailable(
@@ -221,16 +221,18 @@ impl Source for WindowsCaptureSource {
 }
 
 impl WindowsCaptureSource {
-    fn reopen(&mut self) {
-        if self.shutdown_blocked {
-            return;
-        }
+    fn reopen(&mut self, timestamp: Timestamp) {
+        // `shutdown` is retryable after a wedged helper eventually exits. The
+        // old implementation permanently returned once the first bounded
+        // shutdown timed out, which made a recoverable helper loss require a
+        // source-settings edit before capture could return.
         if !self.device.shutdown() {
             self.shutdown_blocked = true;
             self.failure = Some(
                 "the previous Windows capture helper is still shutting down; retry postponed"
                     .to_owned(),
             );
+            self.retry_schedule.mark_attempt(timestamp);
             return;
         }
         let adapter = WindowsCaptureAdapter::default()
@@ -243,7 +245,8 @@ impl WindowsCaptureSource {
             move || adapter.open(&stable_id),
         );
         self.failure = Some("reconnecting Windows capture helper".to_owned());
-        self.retry_countdown = WINDOWS_CAPTURE_RETRY_FRAMES;
+        self.retry_schedule.mark_attempt(timestamp);
+        self.shutdown_blocked = false;
     }
 }
 
