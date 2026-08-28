@@ -650,6 +650,7 @@ fn monitor_choices(_kind: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slint::Model;
 
     #[test]
     fn colour_sources_expose_a_colour_and_a_size() {
