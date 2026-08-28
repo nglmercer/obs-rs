@@ -192,6 +192,8 @@ pub(super) fn catalog() -> UiText {
             recording_format_locked_hint: s("Lossless recording uses the OBS-RS packet container, so the format cannot be changed while it is selected."),
             recording_auto_remux: s("Automatically remux Matroska recordings to MP4"),
             recording_auto_remux_unavailable: s("Automatic remux is available only for Matroska recordings with native H.264/AAC remux support, and is disabled while split recording is enabled."),
+            production_backend_ready: s("Native production output ready — GStreamer runtime: "),
+            production_backend_unavailable: s("Production output is unavailable in this build. Install/use a Windows package built with the native GStreamer runtime for encoded recording and streaming."),
             software_encoding_warning: s("Streaming and recording with the same software encoder doubles the CPU cost of every frame. Choose a hardware encoder for one of them, or set the recording quality to Same as stream."),
             aspect_ratio: s("Aspect ratio"),
             downscale_filter: s("Downscale filter"),

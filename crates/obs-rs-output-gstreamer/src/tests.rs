@@ -137,6 +137,9 @@ fn disabled_native_feature_never_claims_production_support() {
         assert!(!capabilities
             .output_capabilities()
             .supports(OutputProfileKind::MatroskaH264Aac));
+        let snapshot = capabilities.capabilities();
+        assert!(snapshot.native_runtime_version().is_none());
+        assert!(!snapshot.supports_production_output());
     }
 }
 

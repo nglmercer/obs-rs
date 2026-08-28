@@ -215,6 +215,10 @@ impl AudioEncoderCapability {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputCapabilitiesSnapshot {
+    /// Version reported by the native runtime used to probe the approved
+    /// elements. `None` means this binary was built without the native
+    /// adapter, or the runtime could not be started.
+    runtime_version: Option<String>,
     protocols: Vec<ProtocolCapability>,
     video_encoders: Vec<VideoEncoderCapability>,
     audio_encoders: Vec<AudioEncoderCapability>,
@@ -225,6 +229,24 @@ pub struct OutputCapabilitiesSnapshot {
 }
 
 impl OutputCapabilitiesSnapshot {
+    /// Returns the native runtime version used for capability discovery.
+    #[must_use]
+    pub fn native_runtime_version(&self) -> Option<&str> {
+        self.runtime_version.as_deref()
+    }
+
+    /// Returns whether at least one approved production profile is usable.
+    ///
+    /// The reference protocol is intentionally excluded: it is the portable
+    /// development/test path and does not produce a normal encoded media
+    /// output.
+    #[must_use]
+    pub fn supports_production_output(&self) -> bool {
+        self.protocols.iter().any(|capability| {
+            capability.available() && capability.protocol() != ProductionProtocol::Reference
+        }) || !self.recording_formats.is_empty()
+    }
+
     #[must_use]
     pub fn protocols(&self) -> &[ProtocolCapability] {
         &self.protocols
@@ -398,6 +420,7 @@ impl GStreamerCapabilitySnapshot {
     #[must_use]
     pub fn capabilities(&self) -> OutputCapabilitiesSnapshot {
         OutputCapabilitiesSnapshot {
+            runtime_version: self.runtime_version.clone(),
             protocols: self.protocols.clone(),
             video_encoders: self.video_encoders.clone(),
             audio_encoders: self.audio_encoders.clone(),

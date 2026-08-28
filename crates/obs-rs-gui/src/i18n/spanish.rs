@@ -194,6 +194,8 @@ pub(super) fn catalog() -> UiText {
             recording_format_locked_hint: s("La grabación sin pérdidas usa el contenedor de paquetes de OBS-RS, así que el formato no se puede cambiar mientras esté seleccionada."),
             recording_auto_remux: s("Convertir automáticamente las grabaciones Matroska a MP4"),
             recording_auto_remux_unavailable: s("La conversión automática solo está disponible para grabaciones Matroska con remux nativo H.264/AAC y se desactiva al dividir la grabación."),
+            production_backend_ready: s("Salida de producción nativa lista — runtime de GStreamer: "),
+            production_backend_unavailable: s("La salida de producción no está disponible en esta compilación. Usa un paquete de Windows creado con el runtime nativo de GStreamer para grabación y transmisión codificadas."),
             software_encoding_warning: s("Transmitir y grabar con el mismo codificador por software duplica el coste de CPU de cada fotograma. Elige un codificador por hardware para uno de los dos, o pon la calidad de grabación en Igual que la transmisión."),
             aspect_ratio: s("Relación de aspecto"),
             downscale_filter: s("Filtro de escala"),

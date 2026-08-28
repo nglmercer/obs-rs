@@ -71,6 +71,11 @@ pub(crate) struct SettingsController {
     draft_video: RefCell<VideoSettings>,
     /// The system directory chooser this session found, if any.
     browse_tool: Option<&'static str>,
+    /// Native output runtime identity, if this binary was built with one.
+    /// Kept separately so changing the UI locale can rebuild the status text
+    /// without probing GStreamer on the UI thread.
+    production_runtime_version: Option<String>,
+    production_output_supported: bool,
 }
 
 /// The directory choosers the Browse button can drive.
@@ -177,6 +182,11 @@ impl SettingsController {
         // The dropdown labels are catalog text too, so they are rebuilt with
         // the catalog rather than staying in the language the window opened in.
         populate_static_models(&self.window);
+        apply_production_status(
+            &self.window,
+            self.production_runtime_version.as_deref(),
+            self.production_output_supported,
+        );
         self.window
             .global::<Palette>()
             .set_tokens(self.settings.borrow().tokens());
@@ -292,6 +302,7 @@ pub(crate) fn install_settings_window(
     peers: &PeerWindows,
 ) -> Result<Rc<SettingsController>, slint::PlatformError> {
     let window = SettingsWindow::new()?;
+    let capabilities = output.borrow().capabilities().clone();
     let controller = Rc::new(SettingsController {
         window,
         settings: Rc::new(RefCell::new(settings)),
@@ -314,14 +325,13 @@ pub(crate) fn install_settings_window(
         recording_format_ids: RefCell::new(Vec::new()),
         recording_audio_encoder_ids: RefCell::new(Vec::new()),
         recording_audio_encoder_codecs: RefCell::new(Vec::new()),
-        segmented_recording_supported: output
-            .borrow()
-            .capabilities()
-            .supports_segmented_recording(),
-        remux_supported: output.borrow().capabilities().supports_remux(),
+        segmented_recording_supported: capabilities.supports_segmented_recording(),
+        remux_supported: capabilities.supports_remux(),
         video_encoder_hardware: RefCell::new(Vec::new()),
         draft_video: RefCell::new(VideoSettings::default()),
         browse_tool: detect_browse_tool(),
+        production_runtime_version: capabilities.native_runtime_version().map(str::to_owned),
+        production_output_supported: capabilities.supports_production_output(),
     });
 
     // The settings document is the persisted source of truth; the canvas
@@ -332,6 +342,11 @@ pub(crate) fn install_settings_window(
         .set_snap_distance(controller.settings.borrow().canvas_snap_distance);
 
     populate_static_models(&controller.window);
+    apply_production_status(
+        &controller.window,
+        controller.production_runtime_version.as_deref(),
+        controller.production_output_supported,
+    );
     install_stream_protocol_switch(&controller);
     output
         .borrow_mut()
@@ -579,6 +594,11 @@ pub(super) fn populate_stream_models(
     controller: &SettingsController,
     settings: &AppSettings,
 ) {
+    apply_production_status(
+        window,
+        output.capabilities().native_runtime_version(),
+        output.capabilities().supports_production_output(),
+    );
     let mut protocol_ids = Vec::new();
     let mut protocol_names = Vec::new();
     for capability in output
@@ -619,6 +639,24 @@ pub(super) fn populate_stream_models(
     show_protocol_fields(window, selected_protocol);
 
     populate_encoder_models(window, output, controller, settings);
+}
+
+/// Keeps the Output page honest about the difference between the portable
+/// reference path and a binary that can produce ordinary encoded media.
+fn apply_production_status(
+    window: &SettingsWindow,
+    runtime_version: Option<&str>,
+    production_supported: bool,
+) {
+    let text = window.global::<I18n>().get_text().settings_ui;
+    let status = production_supported
+        .then(|| runtime_version)
+        .flatten()
+        .map_or_else(
+            || text.production_backend_unavailable.to_string(),
+            |version| format!("{}{}", text.production_backend_ready, version),
+        );
+    window.set_production_status(status.into());
 }
 
 /// Fills the encoder pickers the Output page offers.

@@ -197,28 +197,18 @@ fn discover() -> Result<(), BoxError> {
     }
 
     let mut window_occurrences = HashMap::new();
-    for window in Window::enumerate()? {
+    for window in capturable_windows()? {
         if remaining_records == 0 {
             break;
         }
-        let title = window.title().unwrap_or_default();
-        if title.trim().is_empty() {
-            continue;
-        }
-        let process_name = window.process_name().unwrap_or_default();
-        if !window.width().is_ok_and(|width| width > 0)
-            || !window.height().is_ok_and(|height| height > 0)
-        {
-            continue;
-        }
-        let base_id = window_id(&title, &process_name);
+        let base_id = window_id(&window.title, &window.process_name);
         let occurrence = window_occurrences.entry(base_id.clone()).or_insert(0);
         let id = window_id_with_occurrence(&base_id, *occurrence);
         *occurrence = occurrence.saturating_add(1);
-        let name = if process_name.trim().is_empty() {
-            title
+        let name = if window.process_name.trim().is_empty() {
+            window.title
         } else {
-            format!("{title} ({process_name})")
+            format!("{} ({})", window.title, window.process_name)
         };
         writeln!(stdout, "window\t{id}\t{}", clean_field(&name))?;
         remaining_records -= 1;
@@ -226,6 +216,71 @@ fn discover() -> Result<(), BoxError> {
 
     stdout.flush()?;
     Ok(())
+}
+
+/// A discovery record sorted independently of the window manager's current
+/// z-order. Windows with the same title and executable therefore keep their
+/// occurrence suffix when another window is focused or raised.
+struct CapturableWindow {
+    window: Window,
+    title: String,
+    process_name: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn capturable_windows() -> Result<Vec<CapturableWindow>, BoxError> {
+    let mut windows = Vec::new();
+    for window in Window::enumerate()? {
+        if !window.is_valid() {
+            continue;
+        }
+        let title = window.title().unwrap_or_default();
+        if title.trim().is_empty() {
+            continue;
+        }
+        let process_name = window.process_name().unwrap_or_default();
+        let Ok(width) = window.width() else {
+            continue;
+        };
+        let Ok(height) = window.height() else {
+            continue;
+        };
+        if width <= 0 || height <= 0 {
+            continue;
+        }
+        let (x, y) = window.rect().map_or((0, 0), |rect| (rect.left, rect.top));
+        windows.push(CapturableWindow {
+            window,
+            title,
+            process_name,
+            x,
+            y,
+            width: u32::try_from(width).unwrap_or(0),
+            height: u32::try_from(height).unwrap_or(0),
+        });
+    }
+    windows.sort_by(|left, right| {
+        (
+            window_id(&left.title, &left.process_name),
+            left.y,
+            left.x,
+            left.width,
+            left.height,
+            left.window.as_raw_hwnd() as usize,
+        )
+            .cmp(&(
+                window_id(&right.title, &right.process_name),
+                right.y,
+                right.x,
+                right.width,
+                right.height,
+                right.window.as_raw_hwnd() as usize,
+            ))
+    });
+    Ok(windows)
 }
 
 /// Returns desktop-space monitor geometry from the safe Windows API wrapper.
@@ -305,26 +360,18 @@ fn resolve_window(device: &str) -> Result<Window, BoxError> {
         }
         return Ok(window);
     }
-    let windows = Window::enumerate()?;
+    let windows = capturable_windows()?;
     let mut window_occurrences = HashMap::new();
     windows
         .into_iter()
         .find(|window| {
-            let title = window.title().unwrap_or_default();
-            let process_name = window.process_name().unwrap_or_default();
-            if title.trim().is_empty()
-                || !window.is_valid()
-                || !window.width().is_ok_and(|width| width > 0)
-                || !window.height().is_ok_and(|height| height > 0)
-            {
-                return false;
-            }
-            let base_id = window_id(&title, &process_name);
+            let base_id = window_id(&window.title, &window.process_name);
             let occurrence = window_occurrences.entry(base_id.clone()).or_insert(0);
             let candidate = window_id_with_occurrence(&base_id, *occurrence);
             *occurrence = occurrence.saturating_add(1);
             candidate == device
         })
+        .map(|window| window.window)
         .ok_or_else(|| invalid("the selected window is no longer available"))
 }
 
@@ -400,6 +447,10 @@ struct FrameWriter {
     format: VideoFormat,
     writer: BufWriter<io::Stdout>,
     scratch: Vec<u8>,
+    /// Reused destination storage for the normalized frame. `VideoFrame`
+    /// gives it back after the packet is written, avoiding a 4K allocation on
+    /// every callback while preserving the helper's safe process boundary.
+    output: Vec<u8>,
     pacer: FramePacer,
     started: Instant,
 }
@@ -439,6 +490,7 @@ impl GraphicsCaptureApiHandler for FrameWriter {
             format,
             writer: BufWriter::new(io::stdout()),
             scratch: Vec::new(),
+            output: Vec::new(),
             pacer,
             started,
         })
@@ -458,21 +510,25 @@ impl GraphicsCaptureApiHandler for FrameWriter {
             let buffer = frame.buffer()?;
             let width = buffer.width();
             let height = buffer.height();
-            resize_rgba(
+            resize_rgba_into(
                 buffer.as_nopadding_buffer(&mut self.scratch),
                 width,
                 height,
                 target_width,
                 target_height,
-            )?
+                &mut self.output,
+            )?;
+            std::mem::take(&mut self.output)
         };
         let output = VideoFrame::new(self.format, elapsed_timestamp(self.started), pixels)?;
         write_frame_packet(&output, &mut self.writer)?;
         self.writer.flush()?;
+        self.output = output.into_pixels();
         Ok(())
     }
 }
 
+#[cfg(test)]
 fn resize_rgba(
     source: &[u8],
     source_width: u32,
@@ -480,6 +536,26 @@ fn resize_rgba(
     target_width: u32,
     target_height: u32,
 ) -> Result<Vec<u8>, BoxError> {
+    let mut target = Vec::new();
+    resize_rgba_into(
+        source,
+        source_width,
+        source_height,
+        target_width,
+        target_height,
+        &mut target,
+    )?;
+    Ok(target)
+}
+
+fn resize_rgba_into(
+    source: &[u8],
+    source_width: u32,
+    source_height: u32,
+    target_width: u32,
+    target_height: u32,
+    target: &mut Vec<u8>,
+) -> Result<(), BoxError> {
     if source_width == 0 || source_height == 0 {
         return Err(invalid("captured frame dimensions must be non-zero"));
     }
@@ -510,13 +586,16 @@ fn resize_rgba(
         .and_then(|pixels| pixels.checked_mul(4))
         .ok_or_else(|| invalid("output frame dimensions overflow"))?;
     if source_width == target_width && source_height == target_height {
-        return Ok(source[..source_size].to_vec());
+        target.clear();
+        target.extend_from_slice(&source[..source_size]);
+        return Ok(());
     }
     let source_width = usize::try_from(source_width).unwrap_or(usize::MAX);
     let source_height = usize::try_from(source_height).unwrap_or(usize::MAX);
     let target_width = usize::try_from(target_width).unwrap_or(usize::MAX);
     let target_height = usize::try_from(target_height).unwrap_or(usize::MAX);
-    let mut target = vec![0_u8; target_size];
+    target.clear();
+    target.resize(target_size, 0);
     for y in 0..target_height {
         let source_y = y.saturating_mul(source_height) / target_height;
         let source_row = source_y.saturating_mul(source_width).saturating_mul(4);
@@ -529,7 +608,7 @@ fn resize_rgba(
                 .copy_from_slice(&source[source_index..source_index + 4]);
         }
     }
-    Ok(target)
+    Ok(())
 }
 
 fn window_id(title: &str, process_name: &str) -> String {
@@ -613,6 +692,20 @@ mod tests {
         assert!(resize_rgba(&[0; 3], 1, 1, 1, 1).is_err());
         assert!(resize_rgba(&[0; 4], 0, 1, 1, 1).is_err());
         assert!(resize_rgba(&[0; 4], 1, 1, 0, 1).is_err());
+    }
+
+    #[test]
+    fn resize_reuses_the_caller_owned_output_buffer() {
+        let source = [1, 2, 3, 4, 5, 6, 7, 8];
+        let mut output = Vec::with_capacity(32);
+        let initial_capacity = output.capacity();
+        resize_rgba_into(&source, 2, 1, 2, 1, &mut output).expect("first resize");
+        assert_eq!(output, source);
+        assert_eq!(output.capacity(), initial_capacity);
+
+        resize_rgba_into(&source, 2, 1, 1, 1, &mut output).expect("second resize");
+        assert_eq!(output, vec![1, 2, 3, 4]);
+        assert_eq!(output.capacity(), initial_capacity);
     }
 
     #[test]

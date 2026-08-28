@@ -52,6 +52,7 @@ export component OutputPage inherits VerticalLayout {
     in property <bool> recording-format-locked;
     in-out property <bool> recording-auto-remux;
     in property <bool> recording-auto-remux-supported;
+    in property <string> production-status;
     in property <[string]> recording-codec-names;
     in property <int> recording-codec-index;
     in property <[string]> recording-audio-encoder-names;
@@ -93,6 +94,7 @@ export component OutputPage inherits VerticalLayout {
 
     SettingsGroup {
         title: I18n.text.settings_ui.group_streaming;
+        SettingHint { text: root.production-status; }
         SettingRow {
             label: I18n.text.settings_ui.video_bitrate;
             SettingsSpinBox { value <=> root.stream-video-bitrate; minimum: 100; maximum: 100000; edited(value) => { root.changed(); } }
@@ -300,4 +302,3 @@ export component OutputPage inherits VerticalLayout {
     }
     Rectangle { vertical-stretch: 1; }
 }
-
