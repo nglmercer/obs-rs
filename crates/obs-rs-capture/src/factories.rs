@@ -1,5 +1,5 @@
 use obs_rs_config::Config;
-use obs_rs_media::{VideoFormat, VideoFrame};
+use obs_rs_media::{Timestamp, VideoFormat, VideoFrame};
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
 
@@ -10,7 +10,10 @@ use super::{
     types::CaptureKind,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use super::{lifecycle::CaptureLifecycleState, threaded::ThreadedCaptureDevice};
+use super::{
+    lifecycle::{CaptureLifecycleState, CaptureRetrySchedule},
+    threaded::ThreadedCaptureDevice,
+};
 
 pub const TEST_PATTERN_SOURCE_KIND: &str = "test_pattern";
 /// Stable source kind for a screen capture source with a portable fallback.
@@ -157,13 +160,13 @@ impl SourceFactory for SimulatedCaptureFactory {
                 native_mode,
                 device: None,
                 failure: None,
-                retry_countdown: CAMERA_RETRY_FRAMES,
+                retry_schedule: CaptureRetrySchedule::new(CAMERA_RETRY_INTERVAL_NANOS),
                 shutdown_blocked: false,
             };
             // A camera that is unplugged, busy, or missing must not stop the
             // scene from being created: the source stays, reports why, and
             // recovers on its own once the camera is available again.
-            source.reopen();
+            source.reopen(Timestamp::ZERO);
             return Ok(Box::new(source));
         }
         let mut device = SimulatedCaptureDevice::new(device_id, name, self.capture_kind)
@@ -237,12 +240,12 @@ impl SourceFactory for NokhwaCaptureFactory {
             native_mode,
             device: None,
             failure: None,
-            retry_countdown: CAMERA_RETRY_FRAMES,
+            retry_schedule: CaptureRetrySchedule::new(CAMERA_RETRY_INTERVAL_NANOS),
             shutdown_blocked: false,
         };
         // Opening is asynchronous. A disconnected or busy camera remains a
         // valid project source and reports its Nokhwa failure on render.
-        source.reopen();
+        source.reopen(Timestamp::ZERO);
         Ok(Box::new(source))
     }
 }
@@ -310,8 +313,8 @@ struct NativeCameraSource {
     /// `None` while the camera cannot be opened; see `failure` for the reason.
     device: Option<ThreadedCaptureDevice>,
     failure: Option<String>,
-    /// Renders since the last attempt to reopen a camera that was unavailable.
-    retry_countdown: u32,
+    /// Media-time schedule for the next unavailable-camera reconnect attempt.
+    retry_schedule: CaptureRetrySchedule,
     /// Set when the previous worker could not be joined yet. No replacement
     /// may open the same physical camera until that worker has finished.
     shutdown_blocked: bool,
@@ -322,7 +325,7 @@ struct NativeCameraSource {
 /// Spawning a process on every frame would cost more than the capture itself,
 /// so a camera that is busy or unplugged is retried about twice a second.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-const CAMERA_RETRY_FRAMES: u32 = 15;
+const CAMERA_RETRY_INTERVAL_NANOS: u64 = 500_000_000;
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl NativeCameraSource {
@@ -331,8 +334,7 @@ impl NativeCameraSource {
     /// This returns immediately. A camera that is unplugged, busy, or missing
     /// therefore costs the scene nothing at all: the failure surfaces on a
     /// later render, and the retry path reopens it.
-    fn reopen(&mut self) {
-        self.retry_countdown = CAMERA_RETRY_FRAMES;
+    fn reopen(&mut self, timestamp: Timestamp) {
         self.failure = None;
         // The old worker is shut down before the new one is created. Assigning
         // over `self.device` would not do it: the replacement is constructed —
@@ -347,6 +349,7 @@ impl NativeCameraSource {
                 );
                 self.shutdown_blocked = true;
                 self.device = Some(previous);
+                self.retry_schedule.mark_attempt(timestamp);
                 return;
             }
         }
@@ -365,6 +368,7 @@ impl NativeCameraSource {
                     .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
             },
         ));
+        self.retry_schedule.mark_attempt(timestamp);
     }
 
     /// Returns the error to report while the camera is not delivering frames.
@@ -409,7 +413,7 @@ impl Source for NativeCameraSource {
         self.format = format;
         device_id.clone_into(&mut self.device_id);
         self.native_mode = native_mode;
-        self.reopen();
+        self.reopen(Timestamp::ZERO);
         Ok(())
     }
 
@@ -421,22 +425,24 @@ impl Source for NativeCameraSource {
             });
         }
         if self.shutdown_blocked {
+            let timestamp = request.timestamp();
             if self
                 .device
                 .as_ref()
                 .is_some_and(|device| device.state() == CaptureLifecycleState::Lost)
+                && self.retry_schedule.due(timestamp)
             {
-                self.reopen();
+                self.reopen(timestamp);
             } else {
                 return Err(self.unavailable());
             }
         }
         match self.device.as_ref().map(ThreadedCaptureDevice::state) {
-            // No worker at all: count down to the next attempt.
+            // No worker at all: wait for the next media-time attempt.
             None => {
-                self.retry_countdown = self.retry_countdown.saturating_sub(1);
-                if self.retry_countdown == 0 {
-                    self.reopen();
+                let timestamp = request.timestamp();
+                if self.retry_schedule.due(timestamp) {
+                    self.reopen(timestamp);
                 }
                 Err(self.unavailable())
             }
@@ -461,9 +467,9 @@ impl Source for NativeCameraSource {
                     .as_ref()
                     .and_then(ThreadedCaptureDevice::failure)
                     .map(|error| error.to_string());
-                self.retry_countdown = self.retry_countdown.saturating_sub(1);
-                if self.retry_countdown == 0 {
-                    self.reopen();
+                let timestamp = request.timestamp();
+                if self.retry_schedule.due(timestamp) {
+                    self.reopen(timestamp);
                 }
                 Err(self.unavailable())
             }
