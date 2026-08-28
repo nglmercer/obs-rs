@@ -52,7 +52,8 @@ impl SourceFactory for WindowsCaptureFactory {
         let format = parse_format(settings)?;
         let device_id = selected_device(settings, self.target);
         let capture_cursor = capture_cursor_setting(settings);
-        let device = open_capture_device(name, format, &device_id, capture_cursor);
+        let capture_border = capture_border_setting(settings);
+        let device = open_capture_device(name, format, &device_id, capture_cursor, capture_border);
         Ok(Box::new(WindowsCaptureSource {
             kind: self.kind.clone(),
             name: name.to_owned(),
@@ -60,6 +61,7 @@ impl SourceFactory for WindowsCaptureFactory {
             device_id,
             format,
             capture_cursor,
+            capture_border,
             device,
             failure: None,
             retry_countdown: WINDOWS_CAPTURE_RETRY_FRAMES,
@@ -89,13 +91,23 @@ fn capture_cursor_setting(settings: &Config) -> bool {
         .unwrap_or(true)
 }
 
+fn capture_border_setting(settings: &Config) -> bool {
+    settings
+        .get("capture_border")
+        .and_then(|value| value.trim().parse::<bool>().ok())
+        .unwrap_or(false)
+}
+
 fn open_capture_device(
     name: &str,
     format: VideoFormat,
     device_id: &str,
     capture_cursor: bool,
+    capture_border: bool,
 ) -> ThreadedCaptureDevice {
-    let adapter = WindowsCaptureAdapter::default().with_capture_cursor(capture_cursor);
+    let adapter = WindowsCaptureAdapter::default()
+        .with_capture_cursor(capture_cursor)
+        .with_capture_border(capture_border);
     let stable_id = device_id.to_owned();
     ThreadedCaptureDevice::open(CaptureRequest::output(format), name, move || {
         adapter.open(&stable_id)
@@ -109,6 +121,7 @@ struct WindowsCaptureSource {
     device_id: String,
     format: VideoFormat,
     capture_cursor: bool,
+    capture_border: bool,
     device: ThreadedCaptureDevice,
     failure: Option<String>,
     retry_countdown: u32,
@@ -128,9 +141,11 @@ impl Source for WindowsCaptureSource {
         let format = parse_format(settings)?;
         let device_id = selected_device(settings, self.target);
         let capture_cursor = capture_cursor_setting(settings);
+        let capture_border = capture_border_setting(settings);
         if format == self.format
             && device_id == self.device_id
             && capture_cursor == self.capture_cursor
+            && capture_border == self.capture_border
         {
             return Ok(());
         }
@@ -140,10 +155,17 @@ impl Source for WindowsCaptureSource {
                 "the previous Windows capture helper is still shutting down".to_owned(),
             ));
         }
-        self.device = open_capture_device(&self.name, format, &device_id, capture_cursor);
+        self.device = open_capture_device(
+            &self.name,
+            format,
+            &device_id,
+            capture_cursor,
+            capture_border,
+        );
         self.device_id = device_id;
         self.format = format;
         self.capture_cursor = capture_cursor;
+        self.capture_border = capture_border;
         self.failure = None;
         self.retry_countdown = WINDOWS_CAPTURE_RETRY_FRAMES;
         self.shutdown_blocked = false;
@@ -198,7 +220,9 @@ impl WindowsCaptureSource {
             );
             return;
         }
-        let adapter = WindowsCaptureAdapter::default().with_capture_cursor(self.capture_cursor);
+        let adapter = WindowsCaptureAdapter::default()
+            .with_capture_cursor(self.capture_cursor)
+            .with_capture_border(self.capture_border);
         let stable_id = self.device_id.clone();
         self.device = ThreadedCaptureDevice::open(
             CaptureRequest::output(self.format),

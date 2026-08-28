@@ -19,9 +19,7 @@ pub(super) fn install_collections(
         let path = id.to_string();
         let result: Result<(), Box<dyn Error>> = (|| {
             let store = project_store(&path)?;
-            select_state
-                .borrow_mut()
-                .load_project_for_key(&store, &path)?;
+            crate::load_project_for_host(&mut select_state.borrow_mut(), &store, &path)?;
             Ok(())
         })();
         match result {
@@ -221,9 +219,7 @@ pub(super) fn create_collection(
     let initial_document = DesktopState::new(initial_project()?).project_document();
     let store = project_store(&path_text)?;
     store.save_document(&initial_document)?;
-    state
-        .borrow_mut()
-        .load_project_for_key(&store, &path_text)?;
+    crate::load_project_for_host(&mut state.borrow_mut(), &store, &path_text)?;
     Ok(path)
 }
 
@@ -372,6 +368,7 @@ pub(super) fn import_collection(
         .to_str()
         .ok_or_else(|| std::io::Error::other("the import path is not valid UTF-8"))?;
     let project = project_store(source_text)?.load()?;
+    let (project, _migrated) = crate::project_migration::migrate_project_for_host(project);
     let document = project.serialize();
     let directory = target
         .parent()
@@ -383,9 +380,7 @@ pub(super) fn import_collection(
         .ok_or_else(|| std::io::Error::other("the target path is not valid UTF-8"))?;
     let store = project_store(target_text)?;
     store.save_document(&document)?;
-    state
-        .borrow_mut()
-        .load_project_for_key(&store, target_text)?;
+    crate::load_project_for_host(&mut state.borrow_mut(), &store, target_text)?;
     Ok(target)
 }
 

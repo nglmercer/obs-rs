@@ -363,16 +363,24 @@ fn load_and_refresh(
         return;
     };
     let path = ui.get_project_path().to_string();
-    let result: Result<(), Box<dyn Error>> = (|| {
+    let result: Result<bool, Box<dyn Error>> = (|| {
         let store = project_store(&path)?;
-        state.borrow_mut().load_project_for_key(&store, &path)?;
-        Ok(())
+        Ok(crate::load_project_for_host(
+            &mut state.borrow_mut(),
+            &store,
+            &path,
+        )?)
     })();
     match result {
-        Ok(()) => {
+        Ok(migrated) => {
             crate::refresh::invalidate_recovery_cache();
             refresh_ui(&ui, state, surface);
-            ui.set_status_message(format!("Loaded project from {path}").into());
+            let suffix = if migrated {
+                "; migrated platform capture sources"
+            } else {
+                ""
+            };
+            ui.set_status_message(format!("Loaded project from {path}{suffix}").into());
         }
         Err(error) => ui.set_status_message(format!("Load failed: {error}").into()),
     }
@@ -443,7 +451,11 @@ fn recover_and_refresh(
     let path = ui.get_project_path().to_string();
     let result: Result<bool, Box<dyn Error>> = (|| {
         let store = project_store(&path)?;
-        Ok(state.borrow_mut().recover_project_for_key(&store, &path)?)
+        Ok(crate::recover_project_for_host(
+            &mut state.borrow_mut(),
+            &store,
+            &path,
+        )?)
     })();
     match result {
         Ok(true) => {

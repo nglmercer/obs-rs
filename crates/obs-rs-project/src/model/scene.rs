@@ -203,6 +203,22 @@ impl SourceSpec {
         &self.kind
     }
 
+    /// Replaces the registered runtime source kind after validating it.
+    ///
+    /// This is primarily used by compatibility migrations when a project made
+    /// on one host stores a platform-specific source kind that has an
+    /// equivalent implementation on another host. The source ID and all scene
+    /// references remain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectError::InvalidIdentifier`] when `kind` is not a valid
+    /// source identifier.
+    pub fn set_kind(&mut self, kind: &str) -> Result<(), ProjectError> {
+        self.kind = identifier(kind, "source kind")?;
+        Ok(())
+    }
+
     /// Returns the user-facing source name.
     #[must_use]
     pub fn name(&self) -> &str {

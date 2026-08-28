@@ -64,9 +64,10 @@ only through typed Rust boundaries.
 - [x] Screen/window capture: implement the `obs-rs-capture-windows-helper`
   executable that `WindowsCaptureAdapter` already launches and speaks to
   (`OBSRWIN1` protocol): Windows Graphics Capture for screens/windows,
-  Media Foundation for cameras, writing bounded `OBSFRM01` RGBA packets to
-  stdout. The helper lives outside the workspace (it owns the COM/D3D
-  boundary) and ships as a separate binary; the repository keeps its
+  writing bounded `OBSFRM01` RGBA packets to stdout. Cameras use the separate
+  Nokhwa Media Foundation path in the main workspace; they are not routed
+  through this helper. The helper lives outside the workspace (it owns the
+  COM/D3D boundary) and ships as a separate binary; the repository keeps its
   no-native-source rule.
 - [x] Display picker: give the monitor window a Windows backend that lists
   displays from the capture helper's discovery, then un-gate the
@@ -86,9 +87,12 @@ only through typed Rust boundaries.
   helper version in the bounded diagnostics bundle.
 - [ ] Acceptance: the GUI runs a real screen capture session end to end on
   Windows, records an `OBSRPKT1` file from it, and the full test suite
-  passes in CI on both platforms.
+  passes in CI on both platforms. The repeatable Windows hardware lane is now
+  defined in `.github/workflows/hardware-soak.yml`; this checkbox remains open
+  until its archived run and production-output acceptance pass.
 
 The real Windows desktop capture portion was exercised locally: the helper
 captured the physical display and the engine committed a valid `OBSRPKT1`
-file. The remaining acceptance dependency is the hosted CI run on both
-platforms.
+file. The remaining acceptance dependency is the archived Windows hardware
+run on both supported OS generations, including production recording and
+streaming.

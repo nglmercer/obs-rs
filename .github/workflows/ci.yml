@@ -146,6 +146,8 @@ jobs:
             "obs-rs.exe",
             "obs-rs-windows-check.exe",
             "obs-rs-capture-windows-helper.exe",
+            "run-obs-rs.ps1",
+            "verify-package.ps1",
             "VERSION.txt",
             "SHA256SUMS.txt",
             "WINDOWS-README.md"
@@ -154,6 +156,11 @@ jobs:
               throw "Windows archive is missing $requiredFile"
             }
           }
+          $packageRoot = Get-ChildItem -LiteralPath $expanded -Directory -Filter "obs-rs" | Select-Object -First 1
+          if ($null -eq $packageRoot) {
+            throw "expanded archive has no obs-rs package directory"
+          }
+          & (Join-Path $packageRoot.FullName "verify-package.ps1") -PackageDirectory $packageRoot.FullName
 
       - name: Upload the Windows release bundle
         uses: actions/upload-artifact@v4

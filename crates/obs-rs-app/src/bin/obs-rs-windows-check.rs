@@ -39,6 +39,8 @@ use obs_rs_capture::{
 use obs_rs_capture_windows::WindowsCaptureAdapter;
 #[cfg(target_os = "windows")]
 use obs_rs_config::Config;
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+use obs_rs_engine::{output_capabilities_snapshot, ProductionProtocol};
 #[cfg(target_os = "windows")]
 use obs_rs_engine::{EngineConfig, EngineSession};
 #[cfg(target_os = "windows")]
@@ -80,7 +82,7 @@ impl CheckResult {
 
 #[cfg(target_os = "windows")]
 fn main() -> ExitCode {
-    let checks = [
+    let mut checks = vec![
         ("display", check_display()),
         ("window", check_window()),
         ("reference_recording", check_reference_recording()),
@@ -91,6 +93,7 @@ fn main() -> ExitCode {
         ("av_soak", check_av_soak()),
         ("cleanup_restart", check_cleanup_restart()),
     ];
+    checks.push(("production_output", check_production_output()));
     let mut failed = false;
     for (name, result) in checks {
         failed |= result.status == "fail";
@@ -104,6 +107,41 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn check_production_output() -> CheckResult {
+    #[cfg(not(feature = "production-gstreamer"))]
+    {
+        CheckResult::skip(
+            "production GStreamer output is not compiled; use the production-gstreamer package",
+        )
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    {
+        let capabilities = output_capabilities_snapshot();
+        let protocols = capabilities
+            .protocols()
+            .iter()
+            .filter(|capability| {
+                capability.available() && capability.protocol() != ProductionProtocol::Reference
+            })
+            .map(|capability| capability.protocol().id())
+            .collect::<Vec<_>>();
+        if protocols.is_empty() {
+            return CheckResult::skip(
+                "GStreamer is compiled in, but no approved production encoder/sink is available",
+            );
+        }
+        return CheckResult::pass(format!(
+            "protocols={} recording_formats={} video_encoders={} audio_encoders={}",
+            protocols.join(","),
+            capabilities.recording_formats().len(),
+            capabilities.video_encoders().len(),
+            capabilities.audio_encoders().len(),
+        ));
     }
 }
 
@@ -134,7 +172,9 @@ fn open_windows_capture(
     device: &obs_rs_capture::CaptureDeviceInfo,
     format: VideoFormat,
 ) -> ThreadedCaptureDevice {
-    let adapter = WindowsCaptureAdapter::default().with_capture_cursor(true);
+    let adapter = WindowsCaptureAdapter::default()
+        .with_capture_cursor(true)
+        .with_capture_border(false);
     let stable_id = device.id().to_string();
     ThreadedCaptureDevice::open(CaptureRequest::output(format), device.name(), move || {
         adapter.open(&stable_id)

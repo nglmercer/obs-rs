@@ -183,6 +183,13 @@ fn install_editing(
         }
     });
 
+    let refresh_state = Rc::clone(state);
+    let refresh_controller = Rc::clone(controller);
+    controller.window.on_refresh_properties(move || {
+        let locale = refresh_state.borrow().locale();
+        refresh_controller.refresh_rows(locale);
+    });
+
     // The picker edits the project directly, so the properties window hands the
     // request to the studio and closes its own draft to avoid two writers.
     let weak = ui.as_weak();

@@ -24,6 +24,7 @@ mod output;
 mod preview;
 mod preview_benchmark;
 mod preview_worker;
+mod project_migration;
 mod properties;
 mod refresh;
 mod settings;
@@ -72,6 +73,7 @@ pub(crate) use output::OutputRuntime;
 pub(crate) use preview::{frame_to_image, PreviewRenderer, PreviewSurface, RuntimeDiagnostics};
 pub(crate) use preview_benchmark::run_gui_setup_benchmark;
 pub(crate) use preview_worker::PreviewWorker;
+pub(crate) use project_migration::{load_project_for_host, recover_project_for_host};
 pub(crate) use refresh::{
     dispatch_and_refresh, refresh_output_ui, refresh_preview_frames_for_view, refresh_ui,
 };
@@ -425,16 +427,23 @@ fn restore_project(state: &Rc<RefCell<DesktopState>>, settings: &AppSettings) ->
         return None;
     }
     let result = project_store(path).and_then(|store| {
-        state.borrow_mut().load_project_for_key(&store, path)?;
+        let migrated = load_project_for_host(&mut state.borrow_mut(), &store, path)?;
         let preview = (!settings.last_preview_scene.is_empty())
             .then_some(settings.last_preview_scene.as_str());
         let program = (!settings.last_program_scene.is_empty())
             .then_some(settings.last_program_scene.as_str());
         state.borrow_mut().restore_scene_selection(preview, program);
-        Ok(())
+        Ok(migrated)
     });
     match result {
-        Ok(()) => Some(format!("Restored project from {path}")),
+        Ok(migrated) => {
+            let suffix = if migrated {
+                "; migrated platform capture sources"
+            } else {
+                ""
+            };
+            Some(format!("Restored project from {path}{suffix}"))
+        }
         Err(error) => Some(format!("Could not restore {path}: {error}")),
     }
 }

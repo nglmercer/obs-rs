@@ -196,6 +196,13 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         hint: |_| SharedString::new(),
         kind: FieldKind::Toggle,
     };
+    #[cfg(target_os = "windows")]
+    static BORDER: Field = Field {
+        key: "capture_border",
+        label: |text| text.property_ui.capture_border.clone(),
+        hint: |_| SharedString::new(),
+        kind: FieldKind::Toggle,
+    };
 
     let mut fields = match kind.trim() {
         "color_source" => vec![&COLOR],
@@ -210,11 +217,11 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         ],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         #[cfg(target_os = "windows")]
-        "screen_capture" => vec![&MONITOR, &DEVICE, &CURSOR],
+        "screen_capture" => vec![&MONITOR, &DEVICE, &CURSOR, &BORDER],
         #[cfg(not(target_os = "windows"))]
         "screen_capture" => vec![&DEVICE],
         #[cfg(target_os = "windows")]
-        "window_capture" => vec![&DEVICE, &CURSOR],
+        "window_capture" => vec![&DEVICE, &CURSOR, &BORDER],
         #[cfg(not(target_os = "windows"))]
         "window_capture" => vec![&DEVICE],
         "camera_capture" => {
@@ -288,7 +295,7 @@ fn row(
         }
         FieldKind::Choice(choices) => {
             row.kind = KIND_CHOICE;
-            let choices = choices(kind);
+            let choices = choices_for_field(field.key, choices(kind), &stored);
             row.choice_index = choices
                 .iter()
                 .position(|(value, _)| value == &stored)
@@ -303,7 +310,7 @@ fn row(
         }
         FieldKind::CameraChoice(choices) => {
             row.kind = KIND_CHOICE;
-            let choices = choices(camera_modes, settings);
+            let choices = choices_for_field(field.key, choices(camera_modes, settings), &stored);
             row.choice_index = choices
                 .iter()
                 .position(|(value, _)| value == &stored)
@@ -342,11 +349,23 @@ pub(crate) fn apply(kind: &str, document: &str, key: &str, value: &str) -> Optio
         .and_then(|field| match &field.kind {
             FieldKind::Choice(choices) => {
                 let index = value.parse::<usize>().ok()?;
-                Some(choices(kind).get(index)?.0.clone())
+                let stored = settings.get(field.key).unwrap_or_default();
+                Some(
+                    choices_for_field(field.key, choices(kind), stored)
+                        .get(index)?
+                        .0
+                        .clone(),
+                )
             }
             FieldKind::CameraChoice(choices) => {
                 let index = value.parse::<usize>().ok()?;
-                Some(choices(&camera_modes, &settings).get(index)?.0.clone())
+                let stored = settings.get(field.key).unwrap_or_default();
+                Some(
+                    choices_for_field(field.key, choices(&camera_modes, &settings), stored)
+                        .get(index)?
+                        .0
+                        .clone(),
+                )
             }
             _ => None,
         })
@@ -510,10 +529,46 @@ fn strip_alpha(value: &str) -> &str {
 
 /// Capture devices for the kinds that select one.
 fn device_choices(kind: &str) -> Vec<(String, String)> {
-    crate::capture_devices(kind)
+    let mut choices = Vec::new();
+    #[cfg(target_os = "windows")]
+    match kind.trim() {
+        "screen_capture" => choices.push((
+            "wgc-screen-picker".to_owned(),
+            "Primary display (automatic)".to_owned(),
+        )),
+        "window_capture" => choices.push((
+            "wgc-window-picker".to_owned(),
+            "Foreground window (automatic)".to_owned(),
+        )),
+        _ => {}
+    }
+    choices.extend(crate::capture_devices(kind));
+    choices
 }
 
-/// Windows for the X11 window source, with the whole desktop first.
+/// Retains a persisted target that is not in the current discovery snapshot.
+///
+/// The old UI fell back to index zero in this case, which made a closed window
+/// look like a different selected window. Keeping a visible unavailable entry
+/// lets the runtime report the original target and lets the user deliberately
+/// choose a replacement.
+fn choices_for_field(
+    key: &str,
+    mut choices: Vec<(String, String)>,
+    stored: &str,
+) -> Vec<(String, String)> {
+    if !stored.trim().is_empty() && choices.iter().all(|(value, _)| value != stored) {
+        choices.push((stored.to_owned(), format!("Unavailable target ({stored})")));
+    } else if key == "device_id" && stored.trim().is_empty() && choices.is_empty() {
+        // An absent camera/device ID remains an explicit unavailable target;
+        // an empty monitor/window sentinel is already represented by the
+        // whole-desktop choice in its dedicated picker.
+        choices.push((String::new(), "No target available".to_owned()));
+    }
+    choices
+}
+
+/// Windows for a window source, with the whole desktop first.
 ///
 /// The desktop entry is what a freshly added source shows while the user is
 /// still choosing, so the source is never blank and never an error.
@@ -526,7 +581,7 @@ fn window_choices(kind: &str) -> Vec<(String, String)> {
     choices
 }
 
-/// Displays for the X11 screen source, with the whole desktop first.
+/// Displays for a screen source, with the whole desktop first.
 fn monitor_choices(_kind: &str) -> Vec<(String, String)> {
     let mut choices = vec![(
         WHOLE_DESKTOP.to_owned(),
@@ -632,6 +687,25 @@ mod tests {
         assert_eq!(rows.len(), 2);
     }
 
+    #[test]
+    fn a_missing_persisted_capture_target_is_not_replaced_by_index_zero() {
+        let choices = choices_for_field(
+            "device_id",
+            vec![("wgc-screen-1".to_owned(), "Primary".to_owned())],
+            "wgc-screen-closed",
+        );
+        assert_eq!(
+            choices,
+            vec![
+                ("wgc-screen-1".to_owned(), "Primary".to_owned()),
+                (
+                    "wgc-screen-closed".to_owned(),
+                    "Unavailable target (wgc-screen-closed)".to_owned(),
+                ),
+            ]
+        );
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_capture_sources_expose_the_cursor_setting() {
@@ -645,11 +719,24 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             screen_keys,
-            ["monitor", "device_id", "capture_cursor", "width", "height"]
+            [
+                "monitor",
+                "device_id",
+                "capture_cursor",
+                "capture_border",
+                "width",
+                "height"
+            ]
         );
         assert_eq!(
             window_keys,
-            ["device_id", "capture_cursor", "width", "height"]
+            [
+                "device_id",
+                "capture_cursor",
+                "capture_border",
+                "width",
+                "height"
+            ]
         );
     }
 

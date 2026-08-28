@@ -6,6 +6,10 @@ edition.workspace = true
 publish.workspace = true
 version.workspace = true
 
+[features]
+default = []
+production-gstreamer = ["obs-rs-engine/production-gstreamer"]
+
 [[bin]]
 name = "obs-rs"
 path = "src/main.rs"

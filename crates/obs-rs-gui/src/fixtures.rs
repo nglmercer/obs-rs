@@ -6,6 +6,8 @@ use std::{
 };
 
 use obs_rs_builtins::BuiltinPlugin;
+#[cfg(target_os = "windows")]
+use obs_rs_capture::PlatformCaptureAdapter;
 use obs_rs_capture::{CameraMode, CaptureDeviceInfo, CaptureKind};
 #[cfg(target_os = "windows")]
 use obs_rs_capture_windows::WindowsCaptureAdapter;
@@ -87,21 +89,56 @@ pub(crate) fn initial_project() -> Result<Project, Box<dyn Error>> {
 }
 
 pub(crate) fn platform_capture_summary() -> String {
-    // Startup diagnostics do not need a complete catalog. The old full
-    // discovery walked every X11 window and opened every camera to enumerate
-    // its modes before the first window appeared. Screen/camera summaries are
-    // enough here; the properties picker performs kind-specific discovery.
-    let mut names = [CaptureKind::Screen, CaptureKind::Camera]
-        .into_iter()
-        .flat_map(platform_devices_for_kind)
-        .map(|device| device.name().to_owned())
-        .collect::<Vec<_>>();
-    names.sort();
-    names.dedup();
-    if names.is_empty() {
-        "Platform capture: no devices; CPU fallback sources available".to_owned()
-    } else {
-        format!("Platform capture: {}", names.join(", "))
+    #[cfg(target_os = "windows")]
+    {
+        let adapter = WindowsCaptureAdapter::default();
+        let capture = match adapter.discover() {
+            Ok(devices) => {
+                let displays = devices
+                    .iter()
+                    .filter(|device| device.kind() == CaptureKind::Screen)
+                    .count();
+                let windows = devices
+                    .iter()
+                    .filter(|device| device.kind() == CaptureKind::Window)
+                    .count();
+                format!(
+                    "Windows capture: helper={} displays={} windows={}",
+                    adapter.helper().display(),
+                    displays,
+                    windows
+                )
+            }
+            Err(error) => format!(
+                "Windows capture unavailable: helper={} error={error}",
+                adapter.helper().display()
+            ),
+        };
+        let camera = match platform_devices_for_kind(CaptureKind::Camera).len() {
+            0 => "cameras=0".to_owned(),
+            count => format!("cameras={count}"),
+        };
+        format!("{capture}; {camera}")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Startup diagnostics do not need a complete catalog. The old full
+        // discovery walked every X11 window and opened every camera to enumerate
+        // its modes before the first window appeared. Screen/camera summaries are
+        // enough here; the properties picker performs kind-specific discovery.
+        let mut names = [CaptureKind::Screen, CaptureKind::Camera]
+            .into_iter()
+            .flat_map(platform_devices_for_kind)
+            .map(|device| device.name().to_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        if names.is_empty() {
+            "Platform capture: no devices; CPU fallback sources available".to_owned()
+        } else {
+            format!("Platform capture: {}", names.join(", "))
+        }
     }
 }
 
@@ -183,6 +220,7 @@ pub(crate) fn source_settings_for_canvas(
         #[cfg(target_os = "windows")]
         if matches!(kind, "screen_capture" | "window_capture") {
             settings.set("capture_cursor", "true")?;
+            settings.set("capture_border", "false")?;
         }
     }
     if kind == "x11_screen_capture" {
@@ -255,9 +293,11 @@ pub(crate) fn kind_runs_in_this_session(kind: &str) -> bool {
         // as sources that would render a black frame.
         "x11_screen_capture" | "x11_window_capture" => !wayland_session(),
         #[cfg(target_os = "windows")]
-        "screen_capture" => !platform_devices_for_kind(CaptureKind::Screen).is_empty(),
-        #[cfg(target_os = "windows")]
-        "window_capture" => !platform_devices_for_kind(CaptureKind::Window).is_empty(),
+        // Keep native source kinds visible even when the helper is missing or
+        // the desktop is locked. The properties dialog can then explain the
+        // unavailable target and the user can install/restart the helper
+        // without the source disappearing from Add Source.
+        "screen_capture" | "window_capture" => true,
         _ => true,
     }
 }
@@ -398,8 +438,8 @@ pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
 ///
 /// The returned list matches the backend behind the source kind. Native
 /// Windows screen/window and camera sources expose only descriptors returned by
-/// their real adapters; no picker entry is synthesized when the backend is
-/// missing or unavailable.
+/// their real adapters; the properties layer may add an explicit automatic or
+/// unavailable entry when the backend is missing or a saved target is gone.
 pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let kind = kind.trim();
     let wanted = match kind {

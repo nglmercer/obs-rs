@@ -70,6 +70,7 @@ pub(super) fn catalog() -> UiText {
             display: s("X11 display"),
             display_hint: s("Usually :0. Leave it as the detected value unless a second server is running."),
             capture_cursor: s("Capture the mouse cursor"),
+            capture_border: s("Show the capture border"),
         },
         monitor_ui: MonitorText {
             window_title: s("Select display"),

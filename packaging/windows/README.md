@@ -21,6 +21,11 @@ directory and run `install.ps1` once if a per-user uninstall entry is wanted.
 The entry points to the included `uninstall.ps1` and does not require
 administrator access.
 
+If the archive was built with `-ProductionGStreamer`, start the GUI with
+`.\run-obs-rs.ps1 gui`. The launcher configures the bundled native DLLs,
+approved plugin directory, and plugin scanner. A default archive remains
+reference-output-only and does not include GStreamer.
+
 For a real interactive-session check after extraction:
 
 ```powershell
@@ -60,11 +65,18 @@ GStreamer. Builds that need RTMP, SRT, WebRTC, or HLS should install matching
 The runtime `bin` directory must be on `PATH`, and `PKG_CONFIG_PATH` (or the
 GStreamer pkg-config environment supplied by the installer) must point at the
 matching development package. Keep runtime and development versions identical.
-Then build with the opt-in feature:
+Then build and package with the opt-in feature and a matching runtime tree:
 
 ```powershell
-cargo build -p obs-rs-gui --features production-gstreamer --release
+.\packaging\windows\package.ps1 -ProductionGStreamer `
+  -GStreamerRuntimeDirectory 'C:\Program Files\gstreamer\1.0\msvc_x86_64'
 ```
+
+The runtime directory must contain `bin`, `lib\gstreamer-1.0`, and, when
+provided by the installer, `libexec\gstreamer-1.0\gst-plugin-scanner.exe`.
+The matching development package is still required at build time. The
+packager copies the runtime DLLs and plugins into the archive and writes the
+selected runtime into `GSTREAMER-RUNTIME.txt`.
 
 The Windows CI job intentionally runs the default feature set, so a machine
 without those native GStreamer packages still has a complete check, test, and

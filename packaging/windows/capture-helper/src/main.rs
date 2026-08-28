@@ -48,6 +48,7 @@ struct Arguments {
     fps_numerator: Option<u32>,
     fps_denominator: Option<u32>,
     capture_cursor: Option<bool>,
+    capture_border: Option<bool>,
 }
 
 fn main() {
@@ -78,7 +79,12 @@ fn run() -> Result<(), BoxError> {
         .as_deref()
         .ok_or_else(|| invalid("--device is required for frame capture"))?;
     let format = requested_format(&arguments)?;
-    capture_device(device, format, arguments.capture_cursor)
+    capture_device(
+        device,
+        format,
+        arguments.capture_cursor,
+        arguments.capture_border,
+    )
 }
 
 fn parse_arguments<I>(arguments: I) -> Result<Arguments, BoxError>
@@ -103,6 +109,9 @@ where
             }
             "--capture-cursor" => {
                 parsed.capture_cursor = Some(parse_value(&mut iterator, "--capture-cursor")?);
+            }
+            "--capture-border" => {
+                parsed.capture_border = Some(parse_value(&mut iterator, "--capture-border")?);
             }
             other => return Err(invalid(format!("unknown argument {other}"))),
         }
@@ -197,7 +206,12 @@ fn discover() -> Result<(), BoxError> {
             continue;
         }
         let process_name = window.process_name().unwrap_or_default();
-        let id = window_id(window);
+        if !window.width().is_ok_and(|width| width > 0)
+            || !window.height().is_ok_and(|height| height > 0)
+        {
+            continue;
+        }
+        let id = window_id(&title, &process_name);
         if !window_ids.insert(id.clone()) {
             continue;
         }
@@ -250,14 +264,15 @@ fn capture_device(
     device: &str,
     format: VideoFormat,
     capture_cursor: Option<bool>,
+    capture_border: Option<bool>,
 ) -> Result<(), BoxError> {
     if device == "wgc-window-picker" || device.starts_with("wgc-window-") {
         let window = resolve_window(device)?;
-        return run_graphics_capture(window, format, capture_cursor);
+        return run_graphics_capture(&window, format, capture_cursor, capture_border);
     }
     if device == "wgc-screen-picker" || device.starts_with("wgc-screen-") {
         let monitor = resolve_monitor(device)?;
-        return run_graphics_capture(monitor, format, capture_cursor);
+        return run_graphics_capture(&monitor, format, capture_cursor, capture_border);
     }
     Err(invalid(format!("unknown capture device {device}")))
 }
@@ -281,22 +296,36 @@ fn resolve_monitor(device: &str) -> Result<Monitor, BoxError> {
 
 fn resolve_window(device: &str) -> Result<Window, BoxError> {
     if device == "wgc-window-picker" {
-        return Ok(Window::foreground()?);
+        let window = Window::foreground()?;
+        if !window.is_valid()
+            || !window.width().is_ok_and(|width| width > 0)
+            || !window.height().is_ok_and(|height| height > 0)
+        {
+            return Err(invalid("the foreground window is not a capturable target"));
+        }
+        return Ok(window);
     }
     let windows = Window::enumerate()?;
     windows
         .into_iter()
-        .find(|window| window_id(*window) == device)
+        .find(|window| {
+            let title = window.title().unwrap_or_default();
+            let process_name = window.process_name().unwrap_or_default();
+            window_id(&title, &process_name) == device
+                && window.width().is_ok_and(|width| width > 0)
+                && window.height().is_ok_and(|height| height > 0)
+        })
         .ok_or_else(|| invalid("the selected window is no longer available"))
 }
 
 fn run_graphics_capture<T>(
-    item: T,
+    item: &T,
     format: VideoFormat,
     capture_cursor: Option<bool>,
+    capture_border: Option<bool>,
 ) -> Result<(), BoxError>
 where
-    T: TryInto<windows_capture::settings::GraphicsCaptureItemType> + Send + 'static,
+    T: TryInto<windows_capture::settings::GraphicsCaptureItemType> + Clone + Send + 'static,
     T::Error: Error + Send + Sync + 'static,
 {
     let cursor_settings = match capture_cursor {
@@ -304,22 +333,47 @@ where
         Some(false) => CursorCaptureSettings::WithoutCursor,
         None => CursorCaptureSettings::Default,
     };
-    let settings = Settings::new(
-        item,
-        cursor_settings,
-        DrawBorderSettings::Default,
-        SecondaryWindowSettings::Default,
-        MinimumUpdateIntervalSettings::Default,
-        DirtyRegionSettings::Default,
-        ColorFormat::Rgba8,
-        format,
-    );
-    let control = FrameWriter::start_free_threaded(settings)
-        .map_err(|error| invalid(format!("start graphics capture: {error}")))?;
+    let border_settings = match capture_border {
+        Some(true) => DrawBorderSettings::WithBorder,
+        Some(false) => DrawBorderSettings::WithoutBorder,
+        None => DrawBorderSettings::Default,
+    };
+    let start = |border_settings| {
+        let settings = Settings::new(
+            item.clone(),
+            cursor_settings,
+            border_settings,
+            SecondaryWindowSettings::Default,
+            MinimumUpdateIntervalSettings::Default,
+            DirtyRegionSettings::Default,
+            ColorFormat::Rgba8,
+            format,
+        );
+        FrameWriter::start_free_threaded(settings)
+    };
+    let control = match start(border_settings) {
+        Ok(control) => control,
+        Err(error)
+            if border_settings == DrawBorderSettings::WithoutBorder
+                && border_toggle_is_unsupported(&error.to_string()) =>
+        {
+            eprintln!(
+                "capture border policy is unavailable; retrying Windows Graphics Capture with the OS default"
+            );
+            start(DrawBorderSettings::Default)
+                .map_err(|error| invalid(format!("start graphics capture: {error}")))?
+        }
+        Err(error) => return Err(invalid(format!("start graphics capture: {error}"))),
+    };
     wait_for_parent_shutdown()?;
     control
         .stop()
         .map_err(|error| invalid(format!("stop graphics capture: {error}")))
+}
+
+fn border_toggle_is_unsupported(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("capture border") && message.contains("not supported")
 }
 
 /// The parent closes stdin when the source is stopped. Reading it on the
@@ -448,19 +502,19 @@ fn resize_rgba(
     if source_width == target_width && source_height == target_height {
         return Ok(source[..source_size].to_vec());
     }
+    let source_width = usize::try_from(source_width).unwrap_or(usize::MAX);
+    let source_height = usize::try_from(source_height).unwrap_or(usize::MAX);
+    let target_width = usize::try_from(target_width).unwrap_or(usize::MAX);
+    let target_height = usize::try_from(target_height).unwrap_or(usize::MAX);
     let mut target = vec![0_u8; target_size];
     for y in 0..target_height {
         let source_y = y.saturating_mul(source_height) / target_height;
+        let source_row = source_y.saturating_mul(source_width).saturating_mul(4);
+        let target_row = y.saturating_mul(target_width).saturating_mul(4);
         for x in 0..target_width {
             let source_x = x.saturating_mul(source_width) / target_width;
-            let source_index = (usize::try_from(source_y).unwrap_or(0)
-                * usize::try_from(source_width).unwrap_or(0)
-                + usize::try_from(source_x).unwrap_or(0))
-                * 4;
-            let target_index = (usize::try_from(y).unwrap_or(0)
-                * usize::try_from(target_width).unwrap_or(0)
-                + usize::try_from(x).unwrap_or(0))
-                * 4;
+            let source_index = source_row.saturating_add(source_x.saturating_mul(4));
+            let target_index = target_row.saturating_add(x.saturating_mul(4));
             target[target_index..target_index + 4]
                 .copy_from_slice(&source[source_index..source_index + 4]);
         }
@@ -468,12 +522,12 @@ fn resize_rgba(
     Ok(target)
 }
 
-fn window_id(window: Window) -> String {
-    // HWND values are stable for the lifetime of a desktop session and avoid
-    // changing the persisted target when an application updates its title.
-    // Only the hashed text crosses the helper boundary; the native handle
-    // never enters portable workspace code.
-    let key = format!("{:p}", window.as_raw_hwnd());
+fn window_id(title: &str, process_name: &str) -> String {
+    // A process/title identity survives an OBS-RS restart, unlike an HWND. It
+    // also deliberately stops resolving when the title changes, so a closed
+    // target cannot accidentally turn into a different window that reused the
+    // old native handle.
+    let key = format!("{}\0{}", process_name.trim(), title.trim());
     format!("wgc-window-{:016x}", stable_hash(&key))
 }
 
@@ -558,18 +612,44 @@ mod tests {
     fn cursor_argument_is_optional_but_validated_when_present() {
         let default = parse_arguments(Vec::<String>::new()).expect("default arguments");
         assert_eq!(default.capture_cursor, None);
+        assert_eq!(default.capture_border, None);
         let disabled = parse_arguments(["--capture-cursor".to_owned(), "false".to_owned()])
             .expect("cursor argument");
         assert_eq!(disabled.capture_cursor, Some(false));
+        let border = parse_arguments(["--capture-border".to_owned(), "true".to_owned()])
+            .expect("border argument");
+        assert_eq!(border.capture_border, Some(true));
         assert!(parse_arguments(["--capture-cursor".to_owned(), "maybe".to_owned(),]).is_err());
+        assert!(parse_arguments(["--capture-border".to_owned(), "maybe".to_owned(),]).is_err());
+    }
+
+    #[test]
+    fn border_fallback_only_matches_an_unsupported_border_error() {
+        assert!(border_toggle_is_unsupported(
+            "Graphics capture error: Toggling the capture border is not supported by the Graphics Capture API on this platform."
+        ));
+        assert!(!border_toggle_is_unsupported(
+            "the selected display is no longer available"
+        ));
     }
 
     #[test]
     fn stable_window_ids_are_deterministic() {
-        let window = Window::from_raw_hwnd(std::ptr::null_mut());
-        let first = window_id(window);
-        let second = window_id(window);
+        let first = window_id("OBS-RS", "obs-rs.exe");
+        let second = window_id("OBS-RS", "obs-rs.exe");
         assert_eq!(first, second);
         assert!(first.starts_with("wgc-window-"));
+    }
+
+    #[test]
+    fn window_identity_changes_when_the_title_or_process_changes() {
+        assert_ne!(
+            window_id("OBS-RS", "obs-rs.exe"),
+            window_id("Other project", "obs-rs.exe")
+        );
+        assert_ne!(
+            window_id("OBS-RS", "obs-rs.exe"),
+            window_id("OBS-RS", "other.exe")
+        );
     }
 }

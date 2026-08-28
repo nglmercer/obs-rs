@@ -5,7 +5,8 @@ work. It deliberately separates a Windows build from a usable feature. A row
 is not complete until its last column has a recorded result from a real Windows
 acceptance run.
 
-Baseline: `6d76c9f` (`main`), audited on 2026-08-28.
+Baseline: `6d76c9f` (`main`), audited on 2026-08-28. The
+`windows-full-compatibility` implementation pass is recorded below.
 
 ## Status legend
 
@@ -61,12 +62,39 @@ cargo test --manifest-path packaging/windows/capture-helper/Cargo.toml
 cargo clippy --manifest-path packaging/windows/capture-helper/Cargo.toml -- -D warnings
 cargo run -p obs-rs-app --bin obs-rs-windows-check
 packaging/windows/package.ps1 -Configuration release -OutputDirectory <directory>
+packaging/windows/verify-package.ps1 -PackageDirectory <extracted-package>
 ```
 
 The Windows check should be run with `OBSR_CAPTURE_HELPER` pointing at the
 release helper. Its output must be archived with the Windows build, including
 `pass`, `skip`, and `fail` results, rather than reduced to the process exit
 code.
+
+## Implementation pass
+
+The branch now covers the Windows user-facing boundaries that were previously
+only scaffolded:
+
+- projects loaded, recovered, imported, or switched on Windows migrate legacy
+  `wayland_*`/`x11_*` capture kinds to Windows Graphics Capture while preserving
+  source IDs and scene references; the document is left dirty so the target can
+  be reviewed and saved;
+- the screen and window property forms expose real WGC target discovery,
+  refresh controls, cursor capture, and the WGC border policy; a missing saved
+  target remains visible as unavailable instead of silently selecting another
+  device;
+- development builds find the separate helper under
+  `packaging/windows/capture-helper/`, while packaged builds keep the helper
+  beside the entry points and report its version in diagnostics;
+- the Windows package includes `run-obs-rs.ps1` and
+  `verify-package.ps1`; `-ProductionGStreamer` can copy a matching native
+  runtime and plugin tree into a self-contained archive;
+- `.github/workflows/hardware-soak.yml` provides a self-hosted Windows lane
+  for the real display, window, audio, reference-output, and cleanup probes.
+
+These changes improve the runtime path but do not mark hardware or production
+output rows complete. Those rows still require archived Windows 10/11 runs,
+real media artifacts, and the GPU/audio/DPI matrix below.
 
 ## Latest local probe
 

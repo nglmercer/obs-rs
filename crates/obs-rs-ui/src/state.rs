@@ -392,12 +392,38 @@ impl DesktopState {
     ///
     /// Returns [`UiError::Project`] when the file cannot be read or parsed.
     pub fn load_project(&mut self, store: &ProjectFileStore) -> Result<(), UiError> {
+        self.load_project_with(store, |project| (project, false))
+            .map(|_| ())
+    }
+
+    /// Loads a project after applying a caller-owned compatibility transform.
+    ///
+    /// The transform runs only after the project file has been parsed, and its
+    /// boolean result marks the loaded document dirty when the transform made
+    /// a persistent change. This keeps migrations in the UI boundary while
+    /// preserving the crash-safe project-store semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when the file cannot be read or parsed.
+    pub fn load_project_with<F>(
+        &mut self,
+        store: &ProjectFileStore,
+        transform: F,
+    ) -> Result<bool, UiError>
+    where
+        F: FnOnce(Project) -> (Project, bool),
+    {
         let project = store.load()?;
+        let (project, changed) = transform(project);
         self.project_selection_key = None;
         self.project_scene_selections.clear();
         self.replace_project(project);
+        if changed {
+            self.project.mark_dirty();
+        }
         self.notice("project loaded")?;
-        Ok(())
+        Ok(changed)
     }
 
     /// Loads a project while retaining its session-scoped Preview/Program
@@ -415,13 +441,37 @@ impl DesktopState {
         store: &ProjectFileStore,
         selection_key: &str,
     ) -> Result<(), UiError> {
+        self.load_project_for_key_with(store, selection_key, |project| (project, false))
+            .map(|_| ())
+    }
+
+    /// Loads a keyed project after applying a caller-owned compatibility
+    /// transform. A changed document is left dirty so the user can review and
+    /// explicitly save the migrated representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when the file cannot be read or parsed.
+    pub fn load_project_for_key_with<F>(
+        &mut self,
+        store: &ProjectFileStore,
+        selection_key: &str,
+        transform: F,
+    ) -> Result<bool, UiError>
+    where
+        F: FnOnce(Project) -> (Project, bool),
+    {
         let project = store.load()?;
+        let (project, changed) = transform(project);
         self.remember_project_selection();
         self.replace_project(project);
         self.project_selection_key = project_selection_key(selection_key);
         self.restore_project_selection();
+        if changed {
+            self.project.mark_dirty();
+        }
         self.notice("project loaded")?;
-        Ok(())
+        Ok(changed)
     }
 
     /// Recovers a complete temporary project left by an interrupted save.
@@ -434,9 +484,29 @@ impl DesktopState {
     /// Returns [`UiError::Project`] when the recovery artifact cannot be read or
     /// parsed.
     pub fn recover_project(&mut self, store: &ProjectFileStore) -> Result<bool, UiError> {
+        self.recover_project_with(store, |project| (project, false))
+    }
+
+    /// Recovers a project after applying a caller-owned compatibility
+    /// transform. Recovery is always dirty, whether or not the transform made
+    /// an additional change.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when the recovery artifact cannot be read
+    /// or parsed.
+    pub fn recover_project_with<F>(
+        &mut self,
+        store: &ProjectFileStore,
+        transform: F,
+    ) -> Result<bool, UiError>
+    where
+        F: FnOnce(Project) -> (Project, bool),
+    {
         let Some(project) = store.recover()? else {
             return Ok(false);
         };
+        let (project, _changed) = transform(project);
         self.project_selection_key = None;
         self.project_scene_selections.clear();
         self.replace_project(project);
@@ -456,9 +526,29 @@ impl DesktopState {
         store: &ProjectFileStore,
         selection_key: &str,
     ) -> Result<bool, UiError> {
+        self.recover_project_for_key_with(store, selection_key, |project| (project, false))
+    }
+
+    /// Recovers a keyed project after applying a caller-owned compatibility
+    /// transform. The recovered project remains dirty until explicitly saved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UiError::Project`] when the recovery artifact cannot be read
+    /// or parsed.
+    pub fn recover_project_for_key_with<F>(
+        &mut self,
+        store: &ProjectFileStore,
+        selection_key: &str,
+        transform: F,
+    ) -> Result<bool, UiError>
+    where
+        F: FnOnce(Project) -> (Project, bool),
+    {
         let Some(project) = store.recover()? else {
             return Ok(false);
         };
+        let (project, _changed) = transform(project);
         self.remember_project_selection();
         self.replace_project(project);
         self.project_selection_key = project_selection_key(selection_key);

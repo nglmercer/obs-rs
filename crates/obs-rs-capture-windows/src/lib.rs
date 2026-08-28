@@ -68,6 +68,7 @@ pub struct WindowsDisplayInfo {
 pub struct WindowsCaptureAdapter {
     helper: PathBuf,
     capture_cursor: Option<bool>,
+    capture_border: Option<bool>,
 }
 
 impl Default for WindowsCaptureAdapter {
@@ -83,6 +84,7 @@ impl WindowsCaptureAdapter {
         Self {
             helper: helper.into(),
             capture_cursor: None,
+            capture_border: None,
         }
     }
 
@@ -91,6 +93,14 @@ impl WindowsCaptureAdapter {
     #[must_use]
     pub fn with_capture_cursor(mut self, capture_cursor: bool) -> Self {
         self.capture_cursor = Some(capture_cursor);
+        self
+    }
+
+    /// Overrides the Windows Graphics Capture border policy for newly opened
+    /// screen and window devices.
+    #[must_use]
+    pub fn with_capture_border(mut self, capture_border: bool) -> Self {
+        self.capture_border = Some(capture_border);
         self
     }
 
@@ -182,8 +192,14 @@ impl PlatformCaptureAdapter for WindowsCaptureAdapter {
                     ),
                 });
             };
-            NativeHelperDevice::new(&self.helper, stable_id, kind, self.capture_cursor)
-                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
+            NativeHelperDevice::new(
+                &self.helper,
+                stable_id,
+                kind,
+                self.capture_cursor,
+                self.capture_border,
+            )
+            .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -206,6 +222,33 @@ fn helper_search_paths() -> Vec<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
             paths.push(parent.join(HELPER_EXE));
+        }
+        // A normal `cargo run` starts the GUI from the workspace target
+        // directory while the native helper deliberately has its own Cargo
+        // manifest. Include that sibling build output during development, but
+        // only when the repository layout is actually present so packaged
+        // lookup remains deterministic.
+        for ancestor in exe.ancestors().skip(1) {
+            let helper_manifest = ancestor
+                .join("packaging")
+                .join("windows")
+                .join("capture-helper")
+                .join("Cargo.toml");
+            if !helper_manifest.is_file() {
+                continue;
+            }
+            for profile in ["debug", "release"] {
+                paths.push(
+                    ancestor
+                        .join("packaging")
+                        .join("windows")
+                        .join("capture-helper")
+                        .join("target")
+                        .join(profile)
+                        .join(HELPER_EXE),
+                );
+            }
+            break;
         }
     }
     for variable in ["LOCALAPPDATA", "APPDATA"] {
@@ -234,6 +277,7 @@ struct NativeHelperDevice {
     helper: PathBuf,
     info: CaptureDeviceInfo,
     capture_cursor: Option<bool>,
+    capture_border: Option<bool>,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     stderr: Option<JoinHandle<String>>,
@@ -249,11 +293,13 @@ impl NativeHelperDevice {
         stable_id: &str,
         kind: CaptureKind,
         capture_cursor: Option<bool>,
+        capture_border: Option<bool>,
     ) -> Result<Self, CaptureError> {
         Ok(Self {
             helper: helper.to_owned(),
             info: CaptureDeviceInfo::new(stable_id, stable_id, kind)?,
             capture_cursor,
+            capture_border,
             child: None,
             stdin: None,
             stderr: None,
@@ -280,6 +326,7 @@ impl VideoCaptureDevice for NativeHelperDevice {
                 self.info.id().as_str(),
                 format,
                 self.capture_cursor,
+                self.capture_border,
             ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -543,6 +590,7 @@ fn capture_helper_args(
     stable_id: &str,
     format: VideoFormat,
     capture_cursor: Option<bool>,
+    capture_border: Option<bool>,
 ) -> Vec<String> {
     let mut args = vec![
         "--protocol".to_owned(),
@@ -560,6 +608,9 @@ fn capture_helper_args(
     ];
     if let Some(capture_cursor) = capture_cursor {
         args.extend(["--capture-cursor".to_owned(), capture_cursor.to_string()]);
+    }
+    if let Some(capture_border) = capture_border {
+        args.extend(["--capture-border".to_owned(), capture_border.to_string()]);
     }
     args
 }
@@ -900,7 +951,7 @@ mod tests {
         let format = VideoFormat::new(1_280, 720, obs_rs_media::FrameRate::new(60, 1).unwrap())
             .expect("valid format");
         assert_eq!(
-            capture_helper_args("wgc-screen-2", format, Some(false)),
+            capture_helper_args("wgc-screen-2", format, Some(false), Some(false)),
             vec![
                 "--protocol",
                 "OBSRWIN1",
@@ -915,6 +966,8 @@ mod tests {
                 "--fps-denominator",
                 "1",
                 "--capture-cursor",
+                "false",
+                "--capture-border",
                 "false",
             ]
         );

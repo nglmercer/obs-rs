@@ -33,3 +33,24 @@ jobs:
         with:
           name: linux-hardware-soak
           path: soak-results.txt
+
+  windows-hardware:
+    runs-on: [self-hosted, windows, x64, obs-rs-hardware]
+    timeout-minutes: 510
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Build the native capture helper
+        run: cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --release
+      - name: Run Windows capture/audio/output acceptance
+        shell: pwsh
+        env:
+          OBSR_CAPTURE_HELPER: ${{ github.workspace }}\packaging\windows\capture-helper\target\release\obs-rs-capture-windows-helper.exe
+          OBS_RS_SOAK_SECONDS: ${{ github.event_name == 'schedule' && '28800' || inputs.duration_seconds }}
+        run: cargo run -p obs-rs-app --release --bin obs-rs-windows-check | Tee-Object windows-soak-results.txt
+      - name: Upload telemetry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-hardware-soak
+          path: windows-soak-results.txt
