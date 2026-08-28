@@ -238,7 +238,10 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         "media_source" => vec![&MEDIA_PATH, &MEDIA_LOOP],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         #[cfg(target_os = "windows")]
-        "screen_capture" => vec![&MONITOR, &DEVICE, &CURSOR, &BORDER],
+        // `monitor` is the user-facing selector. It synchronizes the native
+        // `device_id` behind the scenes, so exposing both fields would give
+        // Windows users two controls that can disagree with one another.
+        "screen_capture" => vec![&MONITOR, &CURSOR, &BORDER],
         #[cfg(not(target_os = "windows"))]
         "screen_capture" => vec![&DEVICE],
         #[cfg(target_os = "windows")]
@@ -805,7 +808,6 @@ mod tests {
             screen_keys,
             [
                 "monitor",
-                "device_id",
                 "capture_cursor",
                 "capture_border",
                 "width",
@@ -840,7 +842,6 @@ mod tests {
             keys,
             [
                 "monitor",
-                "device_id",
                 "capture_cursor",
                 "capture_border",
                 "width",
