@@ -628,6 +628,11 @@ fn next_ordinal(state: &Rc<RefCell<DesktopState>>, _scene: &str, kind: &str) -> 
 /// Maps a runtime kind to its translated label, falling back to the raw id so
 /// a plugin kind this build does not know still shows something usable.
 pub(crate) fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedString {
+    // A project can remain in memory for one refresh before the load-boundary
+    // migration has written its canonical kind back. Keep the presentation
+    // layer on the host backend too, so a legacy Linux source cannot leak a
+    // misleading Wayland label into the Windows UI during that transition.
+    let kind = crate::project_migration::host_source_kind(kind);
     match kind {
         "color_source" => text.kind_color_source.clone(),
         "image_source" => text.kind_image_source.clone(),
@@ -647,6 +652,7 @@ pub(crate) fn kind_label(text: &crate::AddSourceText, kind: &str) -> SharedStrin
 
 /// Untranslated name used when generating a source name.
 fn kind_display(kind: &str) -> &str {
+    let kind = crate::project_migration::host_source_kind(kind);
     match kind {
         "color_source" => "Color",
         "image_source" => "Image",
@@ -662,6 +668,7 @@ fn kind_display(kind: &str) -> &str {
 }
 
 fn kind_icon(kind: &str) -> &'static str {
+    let kind = crate::project_migration::host_source_kind(kind);
     match kind {
         "color_source" => "source-color",
         "test_pattern" => "source-pattern",
@@ -669,5 +676,26 @@ fn kind_icon(kind: &str) -> &'static str {
         "window_capture" | "x11_window_capture" => "source-window",
         "camera_capture" => "source-camera",
         _ => "source-generic",
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::kind_label;
+    use crate::i18n::catalog;
+    use obs_rs_ui::UiLocale;
+
+    #[test]
+    fn legacy_linux_capture_kind_uses_the_native_windows_label() {
+        let text = catalog(UiLocale::English).add_source_ui;
+
+        assert_eq!(
+            kind_label(&text, "wayland_screen_capture"),
+            text.kind_screen_capture
+        );
+        assert_ne!(
+            kind_label(&text, "wayland_screen_capture"),
+            text.kind_wayland_screen_capture
+        );
     }
 }
