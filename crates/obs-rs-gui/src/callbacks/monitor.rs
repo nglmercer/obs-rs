@@ -577,7 +577,19 @@ fn current_monitor_for_target(
 ) -> Option<String> {
     let document = target_settings_document(state, target)?;
     let settings = Config::parse(&document).ok()?;
-    settings.get("monitor").map(str::to_owned)
+    monitor_target_from_settings(&settings)
+}
+
+fn monitor_target_from_settings(settings: &Config) -> Option<String> {
+    let monitor = settings.get("monitor").map(str::to_owned);
+    #[cfg(target_os = "windows")]
+    let monitor = monitor.or_else(|| {
+        settings
+            .get("device_id")
+            .filter(|device| device.starts_with("wgc-screen-"))
+            .map(str::to_owned)
+    });
+    monitor
 }
 
 /// Summarizes the detected displays under the list.
@@ -657,6 +669,20 @@ mod tests {
         assert_eq!(
             status_line(&[monitor("DP-1", 0, 0, 1920, 1080)], true),
             "1 detected: DP-1; saved display is unavailable"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn legacy_windows_device_id_is_used_when_monitor_is_missing() {
+        let mut settings = Config::new();
+        settings
+            .set("device_id", "wgc-screen-secondary")
+            .expect("device ID");
+
+        assert_eq!(
+            monitor_target_from_settings(&settings).as_deref(),
+            Some("wgc-screen-secondary")
         );
     }
 }

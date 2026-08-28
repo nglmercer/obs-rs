@@ -313,10 +313,20 @@ fn install_commit(
 
 /// Describes the display a screen source is pointed at, for the picker button.
 fn monitor_summary(document: &str, locale: UiLocale) -> SharedString {
-    let monitor = Config::parse(document)
-        .ok()
-        .and_then(|settings| settings.get("monitor").map(str::to_owned))
-        .unwrap_or_default();
+    let settings = Config::parse(document).ok();
+    let monitor = settings
+        .as_ref()
+        .and_then(|settings| settings.get("monitor").map(str::to_owned));
+    #[cfg(target_os = "windows")]
+    let monitor = monitor.or_else(|| {
+        settings.as_ref().and_then(|settings| {
+            settings
+                .get("device_id")
+                .filter(|device| device.starts_with("wgc-screen-"))
+                .map(str::to_owned)
+        })
+    });
+    let monitor = monitor.unwrap_or_default();
     let monitor = monitor.trim();
     if monitor.is_empty() || (cfg!(target_os = "windows") && monitor == "wgc-screen-picker") {
         crate::i18n::with_catalog(locale, |text| {
@@ -373,6 +383,17 @@ mod tests {
         assert_eq!(summary, "Primary display (automatic)");
         #[cfg(not(target_os = "windows"))]
         assert_eq!(summary, "Capture the whole desktop instead of one display");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn legacy_windows_device_id_is_used_when_monitor_is_missing() {
+        let document = "device_id = \"wgc-screen-secondary\"\n";
+
+        assert_eq!(
+            monitor_summary(document, UiLocale::English),
+            "wgc-screen-secondary"
+        );
     }
 
     #[cfg(target_os = "windows")]
