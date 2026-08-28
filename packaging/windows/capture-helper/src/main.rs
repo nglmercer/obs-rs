@@ -416,32 +416,45 @@ where
         Some(false) => DrawBorderSettings::WithoutBorder,
         None => DrawBorderSettings::Default,
     };
-    let start = |border_settings| {
+    let frame_period = Duration::from_nanos(format.frame_rate().period_nanos().unwrap_or(1).max(1));
+    let mut interval_settings = MinimumUpdateIntervalSettings::Custom(frame_period);
+    let mut border_settings = border_settings;
+    let start = |border_settings, interval_settings| {
         let settings = Settings::new(
             item.clone(),
             cursor_settings,
             border_settings,
             SecondaryWindowSettings::Default,
-            MinimumUpdateIntervalSettings::Default,
+            interval_settings,
             DirtyRegionSettings::Default,
             ColorFormat::Rgba8,
             format,
         );
         FrameWriter::start_free_threaded(settings)
     };
-    let control = match start(border_settings) {
-        Ok(control) => control,
-        Err(error)
-            if border_settings == DrawBorderSettings::WithoutBorder
-                && border_toggle_is_unsupported(&error.to_string()) =>
-        {
-            eprintln!(
-                "capture border policy is unavailable; retrying Windows Graphics Capture with the OS default"
-            );
-            start(DrawBorderSettings::Default)
-                .map_err(|error| invalid(format!("start graphics capture: {error}")))?
+    let control = loop {
+        match start(border_settings, interval_settings) {
+            Ok(control) => break control,
+            Err(error)
+                if border_settings != DrawBorderSettings::Default
+                    && border_toggle_is_unsupported(&error.to_string()) =>
+            {
+                eprintln!(
+                    "capture border policy is unavailable; retrying Windows Graphics Capture with the OS default"
+                );
+                border_settings = DrawBorderSettings::Default;
+            }
+            Err(error)
+                if interval_settings != MinimumUpdateIntervalSettings::Default
+                    && minimum_update_interval_is_unsupported(&error.to_string()) =>
+            {
+                eprintln!(
+                    "capture frame interval throttle is unavailable; using the Windows Graphics Capture default"
+                );
+                interval_settings = MinimumUpdateIntervalSettings::Default;
+            }
+            Err(error) => return Err(invalid(format!("start graphics capture: {error}"))),
         }
-        Err(error) => return Err(invalid(format!("start graphics capture: {error}"))),
     };
     wait_for_parent_shutdown()?;
     control
@@ -452,6 +465,11 @@ where
 fn border_toggle_is_unsupported(message: &str) -> bool {
     let message = message.to_ascii_lowercase();
     message.contains("capture border") && message.contains("not supported")
+}
+
+fn minimum_update_interval_is_unsupported(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("minimum update interval") && message.contains("not supported")
 }
 
 /// The parent closes stdin when the source is stopped. Reading it on the
@@ -472,8 +490,135 @@ struct FrameWriter {
     /// gives it back after the packet is written, avoiding a 4K allocation on
     /// every callback while preserving the helper's safe process boundary.
     output: Vec<u8>,
+    resize_plan: Option<RgbaResizePlan>,
     pacer: FramePacer,
     started: Instant,
+}
+
+/// Cached nearest-neighbor mappings for one source/output dimension pair.
+///
+/// WGC can deliver a new frame at 4K resolution many times per second. The
+/// source dimensions normally remain constant for the life of a helper, so
+/// calculating the row and column mappings once removes two integer divisions
+/// from the inner pixel loop while preserving the same deterministic scaler.
+struct RgbaResizePlan {
+    source_width: usize,
+    source_height: usize,
+    target_width: usize,
+    target_height: usize,
+    source_rows: Vec<usize>,
+    source_columns: Vec<usize>,
+    target_size: usize,
+}
+
+impl RgbaResizePlan {
+    fn new(
+        source_width: u32,
+        source_height: u32,
+        target_width: u32,
+        target_height: u32,
+    ) -> Result<Self, BoxError> {
+        if source_width == 0 || source_height == 0 {
+            return Err(invalid("captured frame dimensions must be non-zero"));
+        }
+        if target_width == 0 || target_height == 0 {
+            return Err(invalid("output frame dimensions must be non-zero"));
+        }
+        let source_width = usize::try_from(source_width)
+            .map_err(|_| invalid("captured frame dimensions overflow"))?;
+        let source_height = usize::try_from(source_height)
+            .map_err(|_| invalid("captured frame dimensions overflow"))?;
+        let target_width = usize::try_from(target_width)
+            .map_err(|_| invalid("output frame dimensions overflow"))?;
+        let target_height = usize::try_from(target_height)
+            .map_err(|_| invalid("output frame dimensions overflow"))?;
+        let target_size = target_width
+            .checked_mul(target_height)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| invalid("output frame dimensions overflow"))?;
+        let mut source_rows = Vec::new();
+        source_rows
+            .try_reserve_exact(target_height)
+            .map_err(|_| invalid("output frame dimensions exceed available memory"))?;
+        for y in 0..target_height {
+            let source_y = y.saturating_mul(source_height) / target_height;
+            source_rows.push(
+                source_y
+                    .checked_mul(source_width)
+                    .and_then(|pixels| pixels.checked_mul(4))
+                    .ok_or_else(|| invalid("captured frame dimensions overflow"))?,
+            );
+        }
+        let mut source_columns = Vec::new();
+        source_columns
+            .try_reserve_exact(target_width)
+            .map_err(|_| invalid("output frame dimensions exceed available memory"))?;
+        for x in 0..target_width {
+            let source_x = x.saturating_mul(source_width) / target_width;
+            source_columns.push(
+                source_x
+                    .checked_mul(4)
+                    .ok_or_else(|| invalid("captured frame dimensions overflow"))?,
+            );
+        }
+        Ok(Self {
+            source_width,
+            source_height,
+            target_width,
+            target_height,
+            source_rows,
+            source_columns,
+            target_size,
+        })
+    }
+
+    fn matches(
+        &self,
+        source_width: u32,
+        source_height: u32,
+        target_width: u32,
+        target_height: u32,
+    ) -> bool {
+        self.source_width == usize::try_from(source_width).unwrap_or(usize::MAX)
+            && self.source_height == usize::try_from(source_height).unwrap_or(usize::MAX)
+            && self.target_width == usize::try_from(target_width).unwrap_or(usize::MAX)
+            && self.target_height == usize::try_from(target_height).unwrap_or(usize::MAX)
+    }
+
+    fn resize(&self, source: &[u8], target: &mut Vec<u8>) -> Result<(), BoxError> {
+        let source_size = self
+            .source_width
+            .checked_mul(self.source_height)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| invalid("captured frame dimensions overflow"))?;
+        if source.len() < source_size {
+            return Err(invalid(
+                "captured frame payload is shorter than its dimensions",
+            ));
+        }
+        target.clear();
+        target.resize(self.target_size, 0);
+        for (y, source_row) in self.source_rows.iter().copied().enumerate() {
+            let target_row = y
+                .checked_mul(self.target_width)
+                .and_then(|pixels| pixels.checked_mul(4))
+                .ok_or_else(|| invalid("output frame dimensions overflow"))?;
+            for (x, source_column) in self.source_columns.iter().copied().enumerate() {
+                let source_index = source_row
+                    .checked_add(source_column)
+                    .ok_or_else(|| invalid("captured frame dimensions overflow"))?;
+                let target_index = target_row
+                    .checked_add(
+                        x.checked_mul(4)
+                            .ok_or_else(|| invalid("output frame dimensions overflow"))?,
+                    )
+                    .ok_or_else(|| invalid("output frame dimensions overflow"))?;
+                target[target_index..target_index + 4]
+                    .copy_from_slice(&source[source_index..source_index + 4]);
+            }
+        }
+        Ok(())
+    }
 }
 
 struct FramePacer {
@@ -512,6 +657,7 @@ impl GraphicsCaptureApiHandler for FrameWriter {
             writer: BufWriter::new(io::stdout()),
             scratch: Vec::new(),
             output: Vec::new(),
+            resize_plan: None,
             pacer,
             started,
         })
@@ -531,14 +677,25 @@ impl GraphicsCaptureApiHandler for FrameWriter {
             let buffer = frame.buffer()?;
             let width = buffer.width();
             let height = buffer.height();
-            resize_rgba_into(
-                buffer.as_nopadding_buffer(&mut self.scratch),
-                width,
-                height,
-                target_width,
-                target_height,
-                &mut self.output,
-            )?;
+            if self
+                .resize_plan
+                .as_ref()
+                .is_none_or(|plan| !plan.matches(width, height, target_width, target_height))
+            {
+                self.resize_plan = Some(RgbaResizePlan::new(
+                    width,
+                    height,
+                    target_width,
+                    target_height,
+                )?);
+            }
+            self.resize_plan
+                .as_ref()
+                .expect("resize plan was initialized")
+                .resize(
+                    buffer.as_nopadding_buffer(&mut self.scratch),
+                    &mut self.output,
+                )?;
             std::mem::take(&mut self.output)
         };
         let output = VideoFrame::new(self.format, elapsed_timestamp(self.started), pixels)?;
@@ -569,6 +726,7 @@ fn resize_rgba(
     Ok(target)
 }
 
+#[cfg(test)]
 fn resize_rgba_into(
     source: &[u8],
     source_width: u32,
@@ -577,59 +735,8 @@ fn resize_rgba_into(
     target_height: u32,
     target: &mut Vec<u8>,
 ) -> Result<(), BoxError> {
-    if source_width == 0 || source_height == 0 {
-        return Err(invalid("captured frame dimensions must be non-zero"));
-    }
-    if target_width == 0 || target_height == 0 {
-        return Err(invalid("output frame dimensions must be non-zero"));
-    }
-    let source_size = usize::try_from(source_width)
-        .ok()
-        .and_then(|width| {
-            usize::try_from(source_height)
-                .ok()
-                .and_then(|height| width.checked_mul(height))
-        })
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| invalid("captured frame dimensions overflow"))?;
-    if source.len() < source_size {
-        return Err(invalid(
-            "captured frame payload is shorter than its dimensions",
-        ));
-    }
-    let target_size = usize::try_from(target_width)
-        .ok()
-        .and_then(|width| {
-            usize::try_from(target_height)
-                .ok()
-                .and_then(|height| width.checked_mul(height))
-        })
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| invalid("output frame dimensions overflow"))?;
-    if source_width == target_width && source_height == target_height {
-        target.clear();
-        target.extend_from_slice(&source[..source_size]);
-        return Ok(());
-    }
-    let source_width = usize::try_from(source_width).unwrap_or(usize::MAX);
-    let source_height = usize::try_from(source_height).unwrap_or(usize::MAX);
-    let target_width = usize::try_from(target_width).unwrap_or(usize::MAX);
-    let target_height = usize::try_from(target_height).unwrap_or(usize::MAX);
-    target.clear();
-    target.resize(target_size, 0);
-    for y in 0..target_height {
-        let source_y = y.saturating_mul(source_height) / target_height;
-        let source_row = source_y.saturating_mul(source_width).saturating_mul(4);
-        let target_row = y.saturating_mul(target_width).saturating_mul(4);
-        for x in 0..target_width {
-            let source_x = x.saturating_mul(source_width) / target_width;
-            let source_index = source_row.saturating_add(source_x.saturating_mul(4));
-            let target_index = target_row.saturating_add(x.saturating_mul(4));
-            target[target_index..target_index + 4]
-                .copy_from_slice(&source[source_index..source_index + 4]);
-        }
-    }
-    Ok(())
+    RgbaResizePlan::new(source_width, source_height, target_width, target_height)?
+        .resize(source, target)
 }
 
 fn window_id(window: &Window, title: &str, process_name: &str) -> String {
@@ -748,6 +855,23 @@ mod tests {
     }
 
     #[test]
+    fn cached_resize_plan_matches_the_reference_scaler() {
+        let source = [
+            1, 2, 3, 4, 5, 6, 7, 8, // row 0
+            9, 10, 11, 12, 13, 14, 15, 16, // row 1
+        ];
+        let plan = RgbaResizePlan::new(2, 2, 4, 1).expect("resize plan");
+        assert!(plan.matches(2, 2, 4, 1));
+        assert!(!plan.matches(2, 2, 2, 1));
+        let mut cached = Vec::new();
+        plan.resize(&source, &mut cached).expect("cached resize");
+        assert_eq!(
+            cached,
+            resize_rgba(&source, 2, 2, 4, 1).expect("reference resize")
+        );
+    }
+
+    #[test]
     fn frame_pacer_emits_immediately_then_waits_for_the_requested_period() {
         let format =
             VideoFormat::new(320, 180, FrameRate::new(30, 1).expect("rate")).expect("format");
@@ -784,6 +908,16 @@ mod tests {
     }
 
     #[test]
+    fn interval_fallback_only_matches_an_unsupported_interval_error() {
+        assert!(minimum_update_interval_is_unsupported(
+            "Graphics capture error: The minimum update interval is not supported by this platform."
+        ));
+        assert!(!minimum_update_interval_is_unsupported(
+            "the selected display is no longer available"
+        ));
+    }
+
+    #[test]
     fn stable_window_ids_are_deterministic() {
         let first = native_window_id(42, 0x1234);
         let second = native_window_id(42, 0x1234);
@@ -793,14 +927,8 @@ mod tests {
 
     #[test]
     fn native_window_identity_changes_when_the_pid_or_handle_changes() {
-        assert_ne!(
-            native_window_id(42, 0x1234),
-            native_window_id(43, 0x1234)
-        );
-        assert_ne!(
-            native_window_id(42, 0x1234),
-            native_window_id(42, 0x1235)
-        );
+        assert_ne!(native_window_id(42, 0x1234), native_window_id(43, 0x1234));
+        assert_ne!(native_window_id(42, 0x1234), native_window_id(42, 0x1235));
     }
 
     #[test]
