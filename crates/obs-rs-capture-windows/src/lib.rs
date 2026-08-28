@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::{
     io::{BufReader, Read},
     process::{Child, ChildStderr, ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
+    sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -35,8 +35,6 @@ pub const WINDOWS_HELPER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const HELPER_EXE: &str = "obs-rs-capture-windows-helper.exe";
 const MAX_DISCOVERY_REPLY_BYTES: u64 = 256 * 1024;
 const MAX_DISCOVERY_RECORDS: usize = 512;
-#[cfg(target_os = "windows")]
-const HELPER_FRAME_QUEUE_CAPACITY: usize = 2;
 #[cfg(target_os = "windows")]
 const MAX_HELPER_DIAGNOSTICS_BYTES: u64 = 32 * 1024;
 #[cfg(target_os = "windows")]
@@ -281,7 +279,7 @@ struct NativeHelperDevice {
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     stderr: Option<JoinHandle<String>>,
-    frames: Option<Receiver<Result<VideoFrame, CaptureError>>>,
+    frames: Option<Arc<HelperFrameMailbox>>,
     reader: Option<JoinHandle<()>>,
     format: Option<VideoFormat>,
 }
@@ -376,11 +374,17 @@ impl VideoCaptureDevice for NativeHelperDevice {
             terminate_child(&mut child, Some(stderr));
             return Err(error);
         }
-        let (frame_sender, frame_receiver) = mpsc::sync_channel(HELPER_FRAME_QUEUE_CAPACITY);
+        // The compositor only needs the newest frame. A bounded FIFO makes a
+        // temporary render stall display stale frames after the helper has
+        // caught up; the latest-frame mailbox drops those stale frames at the
+        // capture boundary instead.
+        let frame_mailbox = Arc::new(HelperFrameMailbox::default());
         let reader = match thread::Builder::new()
             .name("obs-rs-capture-helper-frames".to_owned())
-            .spawn(move || read_helper_frames(stream, frame_sender))
-        {
+            .spawn({
+                let frame_mailbox = Arc::clone(&frame_mailbox);
+                move || read_helper_frames(stream, frame_mailbox)
+            }) {
             Ok(reader) => reader,
             Err(error) => {
                 let diagnostics = terminate_child(&mut child, Some(stderr));
@@ -397,16 +401,17 @@ impl VideoCaptureDevice for NativeHelperDevice {
         self.child = Some(child);
         self.stdin = Some(stdin);
         self.stderr = Some(stderr);
-        self.frames = Some(frame_receiver);
+        self.frames = Some(frame_mailbox);
         self.reader = Some(reader);
         self.format = Some(format);
         Ok(())
     }
 
     fn stop(&mut self) {
-        // Dropping the receiver lets the reader thread stop publishing while
-        // the child is being shut down. Killing the child below closes its
-        // stdout handle, which unblocks the reader if it is inside read().
+        // Dropping the mailbox handle lets the reader thread release its
+        // capture frame as soon as the child is being shut down. Killing the
+        // child below closes stdout, which unblocks the reader if it is inside
+        // a packet read.
         self.frames = None;
         self.format = None;
         // Closing stdin is the helper's graceful shutdown request. A bounded
@@ -442,58 +447,60 @@ impl VideoCaptureDevice for NativeHelperDevice {
     }
 
     fn next_frame(&mut self, _timestamp: Timestamp) -> Result<Option<VideoFrame>, CaptureError> {
-        let result = self
-            .frames
-            .as_ref()
-            .ok_or(CaptureError::NotRunning)?
-            .try_recv();
-        match result {
-            Ok(Ok(frame)) => Ok(Some(frame)),
-            Ok(Err(error)) => Err(error),
-            Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => {
-                let Some(child) = self.child.as_mut() else {
-                    return Err(CaptureError::Protocol {
-                        message: "Windows capture helper disappeared".to_owned(),
-                    });
-                };
-                match child.try_wait() {
-                    Ok(Some(status)) => Err(helper_exit_error(status, self.stderr.take())),
-                    Ok(None) => Err(CaptureError::Protocol {
-                        message: "Windows capture frame reader stopped unexpectedly".to_owned(),
-                    }),
-                    Err(error) => Err(CaptureError::Io {
-                        message: format!("check Windows capture helper: {error}"),
-                    }),
-                }
-            }
+        let mailbox = self.frames.as_ref().ok_or(CaptureError::NotRunning)?;
+        if let Some(frame) = mailbox.take_latest() {
+            return Ok(Some(frame));
         }
+        mailbox.failure().map_or(Ok(None), |error| Err(error))
     }
 }
 
 #[cfg(target_os = "windows")]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "the reader thread owns the channel endpoint for its entire lifetime"
-)]
+#[derive(Default)]
+struct HelperFrameMailbox {
+    latest: Mutex<Option<VideoFrame>>,
+    failure: Mutex<Option<CaptureError>>,
+}
+
+#[cfg(target_os = "windows")]
+impl HelperFrameMailbox {
+    fn publish(&self, frame: VideoFrame) {
+        if let Ok(mut latest) = self.latest.lock() {
+            *latest = Some(frame);
+        }
+    }
+
+    fn fail(&self, error: CaptureError) {
+        if let Ok(mut failure) = self.failure.lock() {
+            *failure = Some(error);
+        }
+    }
+
+    fn take_latest(&self) -> Option<VideoFrame> {
+        self.latest.lock().ok()?.take()
+    }
+
+    fn failure(&self) -> Option<CaptureError> {
+        self.failure.lock().ok()?.clone()
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn read_helper_frames(
     mut stream: StreamCaptureDevice<BufReader<std::process::ChildStdout>>,
-    sender: SyncSender<Result<VideoFrame, CaptureError>>,
+    mailbox: Arc<HelperFrameMailbox>,
 ) {
     loop {
         match stream.next_frame(Timestamp::ZERO) {
-            Ok(Some(frame)) => match sender.try_send(Ok(frame)) {
-                Ok(()) | Err(TrySendError::Full(_)) => {}
-                Err(TrySendError::Disconnected(_)) => return,
-            },
+            Ok(Some(frame)) => mailbox.publish(frame),
             Ok(None) => {
-                let _ = sender.send(Err(CaptureError::Protocol {
+                mailbox.fail(CaptureError::Protocol {
                     message: "Windows capture helper frame stream ended".to_owned(),
-                }));
+                });
                 return;
             }
             Err(error) => {
-                let _ = sender.send(Err(error));
+                mailbox.fail(error);
                 return;
             }
         }
@@ -657,16 +664,6 @@ fn join_stderr_reader(stderr: Option<JoinHandle<String>>) -> String {
     stderr
         .and_then(|reader| reader.join().ok())
         .unwrap_or_default()
-}
-
-#[cfg(target_os = "windows")]
-fn helper_exit_error(
-    status: std::process::ExitStatus,
-    stderr: Option<JoinHandle<String>>,
-) -> CaptureError {
-    CaptureError::Protocol {
-        message: helper_exit_message(status, &join_stderr_reader(stderr)),
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -971,5 +968,24 @@ mod tests {
                 "false",
             ]
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn helper_frame_mailbox_keeps_only_the_newest_frame() {
+        let format = VideoFormat::new(1, 1, obs_rs_media::FrameRate::new(30, 1).unwrap())
+            .expect("valid format");
+        let mailbox = HelperFrameMailbox::default();
+        mailbox.publish(VideoFrame::solid(format, Timestamp::ZERO, [255, 0, 0, 255]));
+        mailbox.publish(VideoFrame::solid(
+            format,
+            Timestamp::from_millis(33),
+            [0, 255, 0, 255],
+        ));
+
+        let frame = mailbox.take_latest().expect("latest frame");
+        assert_eq!(frame.timestamp(), Timestamp::from_millis(33));
+        assert_eq!(frame.pixels(), &[0, 255, 0, 255]);
+        assert!(mailbox.take_latest().is_none());
     }
 }
