@@ -5,6 +5,7 @@
 
 use std::{cell::RefCell, rc::Rc};
 
+use obs_rs_capture::CaptureKind;
 use obs_rs_config::Config;
 use obs_rs_ui::{DesktopState, UiLocale};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
@@ -187,6 +188,9 @@ fn install_editing(
     let refresh_controller = Rc::clone(controller);
     controller.window.on_refresh_properties(move || {
         let locale = refresh_state.borrow().locale();
+        let kind = refresh_controller.window.get_source_kind().to_string();
+        let document = refresh_controller.window.get_source_settings().to_string();
+        invalidate_capture_cache(&kind, &document);
         refresh_controller.refresh_rows(locale);
     });
 
@@ -223,6 +227,25 @@ fn install_editing(
             defaults_controller.refresh_rows(defaults_state.borrow().locale());
         }
     });
+}
+
+fn invalidate_capture_cache(kind: &str, document: &str) {
+    let capture_kind = match kind.trim() {
+        "screen_capture" | "x11_screen_capture" => Some(CaptureKind::Screen),
+        "window_capture" | "x11_window_capture" => Some(CaptureKind::Window),
+        "camera_capture" => Some(CaptureKind::Camera),
+        _ => None,
+    };
+    let camera_id = if capture_kind == Some(CaptureKind::Camera) {
+        Config::parse(document)
+            .ok()
+            .and_then(|settings| settings.get("device_id").map(str::to_owned))
+    } else {
+        None
+    };
+    if let Some(capture_kind) = capture_kind {
+        crate::fixtures::invalidate_capture_cache(capture_kind, camera_id.as_deref());
+    }
 }
 
 fn active_canvas_size(state: &Rc<RefCell<DesktopState>>) -> (u32, u32) {

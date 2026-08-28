@@ -17,6 +17,7 @@ use obs_rs_plugin_api::{Plugin, PluginError, PluginManifest, SourceFactory};
 
 mod factories;
 mod image;
+mod media;
 mod portable;
 mod text;
 #[cfg(target_os = "linux")]
@@ -37,6 +38,7 @@ pub const TEXT_SOURCE_KIND: &str = "text_source";
 pub const IMAGE_SOURCE_KIND: &str = "image_source";
 /// Stable kind identifier for the bounded timestamp-driven image slideshow.
 pub const IMAGE_SLIDESHOW_SOURCE_KIND: &str = "image_slideshow";
+pub use media::MEDIA_SOURCE_KIND;
 pub use obs_rs_capture::CAMERA_CAPTURE_SOURCE_KIND as BUILTIN_CAMERA_SOURCE_KIND;
 pub use obs_rs_capture::SCREEN_CAPTURE_SOURCE_KIND as BUILTIN_SCREEN_SOURCE_KIND;
 pub use obs_rs_capture::TEST_PATTERN_SOURCE_KIND as BUILTIN_TEST_PATTERN_SOURCE_KIND;

@@ -5,7 +5,13 @@ edition.workspace = true
 publish.workspace = true
 version.workspace = true
 
+[features]
+default = []
+production-gstreamer = ["dep:gstreamer", "dep:gstreamer-app"]
+
 [dependencies]
+gstreamer = { version = "0.24", features = ["v1_20"], optional = true }
+gstreamer-app = { version = "0.24", features = ["v1_20"], optional = true }
 image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "pnm", "webp"] }
 obs-rs-capture = { path = "../obs-rs-capture" }
 obs-rs-config = { path = "../obs-rs-config" }

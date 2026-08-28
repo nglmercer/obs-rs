@@ -602,7 +602,30 @@ fn builtins_expose_the_capture_source_kind() {
         .source_factories()
         .iter()
         .any(|factory| factory.kind().as_str() == IMAGE_SLIDESHOW_SOURCE_KIND));
+    assert!(plugin
+        .source_factories()
+        .iter()
+        .any(|factory| factory.kind().as_str() == MEDIA_SOURCE_KIND));
     assert_eq!(BUILTIN_TEST_PATTERN_SOURCE_KIND, "test_pattern");
+}
+
+#[test]
+fn media_source_can_be_created_before_a_file_is_selected() {
+    let plugin = BuiltinPlugin::new().expect("builtins are valid");
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == MEDIA_SOURCE_KIND)
+        .expect("media factory");
+    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+    let mut source = factory
+        .create("media", &settings("#000000FF"))
+        .expect("empty media source is valid");
+
+    assert!(source
+        .render(&VideoRequest::new(Timestamp::ZERO, format))
+        .expect("empty media source render")
+        .is_none());
 }
 
 #[test]

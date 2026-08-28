@@ -95,6 +95,12 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         hint: |text| text.property_ui.path_hint.clone(),
         kind: FieldKind::Text,
     };
+    static MEDIA_PATH: Field = Field {
+        key: "path",
+        label: |text| text.property_ui.media_path.clone(),
+        hint: |text| text.property_ui.media_path_hint.clone(),
+        kind: FieldKind::Text,
+    };
     static PATHS: Field = Field {
         key: "paths",
         label: |text| text.property_ui.paths.clone(),
@@ -129,6 +135,12 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         key: "loop",
         label: |text| text.property_ui.loop_label.clone(),
         hint: |text| text.property_ui.loop_hint.clone(),
+        kind: FieldKind::Toggle,
+    };
+    static MEDIA_LOOP: Field = Field {
+        key: "loop",
+        label: |text| text.property_ui.media_loop.clone(),
+        hint: |text| text.property_ui.media_loop_hint.clone(),
         kind: FieldKind::Toggle,
     };
     static RANDOMIZE: Field = Field {
@@ -222,6 +234,7 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
             &LOOP,
             &RANDOMIZE,
         ],
+        "media_source" => vec![&MEDIA_PATH, &MEDIA_LOOP],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         #[cfg(target_os = "windows")]
         "screen_capture" => vec![&MONITOR, &DEVICE, &CURSOR, &BORDER],
@@ -728,6 +741,24 @@ mod tests {
         assert_eq!(rows[1].number, 8_000);
         assert!(!rows[2].toggle);
         assert!(rows[4].toggle);
+    }
+
+    #[test]
+    fn media_sources_expose_a_media_path_loop_and_video_size() {
+        let rows = rows(
+            "media_source",
+            "height = 360\nloop = true\npath = \"\"\nwidth = 640\n",
+            UiLocale::English,
+        );
+
+        let keys = rows
+            .iter()
+            .map(|row| row.key.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(keys, ["path", "loop", "width", "height"]);
+        assert_eq!(rows[0].label, "Media path");
+        assert_eq!(rows[1].label, "Loop media");
+        assert!(rows[1].toggle);
     }
 
     #[test]

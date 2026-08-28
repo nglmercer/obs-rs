@@ -24,6 +24,7 @@ const MAX_PICKER_OUTPUT_BYTES: usize = MAX_PROJECT_PATH_BYTES + 1;
 enum PickerPurpose {
     StingerResource,
     SourceImage,
+    SourceMediaFile,
     SourceSlideshowDirectory,
     ProjectSaveAs,
     ProjectOpen,
@@ -36,6 +37,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => MAX_STINGER_RESOURCE_PATH_BYTES,
             Self::SourceImage
+            | Self::SourceMediaFile
             | Self::SourceSlideshowDirectory
             | Self::ProjectSaveAs
             | Self::ProjectOpen
@@ -48,6 +50,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger",
             Self::SourceImage => "Image",
+            Self::SourceMediaFile => "Media",
             Self::SourceSlideshowDirectory => "Slideshow",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project",
             Self::CollectionExport | Self::CollectionImport => "Collection",
@@ -60,6 +63,9 @@ impl PickerPurpose {
                 "Stinger file picker is unavailable; type the resource path manually"
             }
             Self::SourceImage => "Image file picker is unavailable; type the image path manually",
+            Self::SourceMediaFile => {
+                "Media file picker is unavailable; type the media path manually"
+            }
             Self::SourceSlideshowDirectory => {
                 "Slideshow directory picker is unavailable; type the image path manually"
             }
@@ -82,6 +88,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger file picker is already open",
             Self::SourceImage => "Image file picker is already open",
+            Self::SourceMediaFile => "Media file picker is already open",
             Self::SourceSlideshowDirectory => "Slideshow directory picker is already open",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project file picker is already open",
             Self::CollectionExport | Self::CollectionImport => {
@@ -94,6 +101,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "obs-rs-stinger-file-picker",
             Self::SourceImage => "obs-rs-image-file-picker",
+            Self::SourceMediaFile => "obs-rs-media-file-picker",
             Self::SourceSlideshowDirectory => "obs-rs-slideshow-directory-picker",
             Self::ProjectSaveAs => "obs-rs-project-file-picker",
             Self::ProjectOpen => "obs-rs-project-open-file-picker",
@@ -106,6 +114,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Opening Stinger file picker…",
             Self::SourceImage => "Opening image file picker…",
+            Self::SourceMediaFile => "Opening media file picker…",
             Self::SourceSlideshowDirectory => "Opening slideshow directory picker…",
             Self::ProjectSaveAs | Self::ProjectOpen => "Opening project file picker…",
             Self::CollectionExport | Self::CollectionImport => "Opening collection file picker…",
@@ -116,6 +125,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger file selection cancelled",
             Self::SourceImage => "Image file selection cancelled",
+            Self::SourceMediaFile => "Media file selection cancelled",
             Self::SourceSlideshowDirectory => "Slideshow directory selection cancelled",
             Self::ProjectSaveAs | Self::ProjectOpen => "Project file selection cancelled",
             Self::CollectionExport | Self::CollectionImport => {
@@ -128,6 +138,7 @@ impl PickerPurpose {
         match self {
             Self::StingerResource => "Stinger resource selected",
             Self::SourceImage => "Image source path selected",
+            Self::SourceMediaFile => "Media source path selected",
             Self::SourceSlideshowDirectory => "Slideshow directory selected",
             Self::ProjectSaveAs => "Project Save As path selected",
             Self::ProjectOpen => "Project path selected",
@@ -208,6 +219,11 @@ fn source_picker_request(
     match kind {
         "image_source" => Some((
             PickerPurpose::SourceImage,
+            "path",
+            settings.get("path").unwrap_or_default().to_owned(),
+        )),
+        "media_source" => Some((
+            PickerPurpose::SourceMediaFile,
             "path",
             settings.get("path").unwrap_or_default().to_owned(),
         )),
@@ -321,7 +337,9 @@ fn begin_picker(
     }
     let start = match purpose {
         PickerPurpose::StingerResource => ui.get_scene_stinger_path().to_string(),
-        PickerPurpose::SourceImage | PickerPurpose::SourceSlideshowDirectory => String::new(),
+        PickerPurpose::SourceImage
+        | PickerPurpose::SourceMediaFile
+        | PickerPurpose::SourceSlideshowDirectory => String::new(),
         PickerPurpose::ProjectSaveAs | PickerPurpose::ProjectOpen => {
             ui.get_project_path().to_string()
         }
@@ -347,6 +365,7 @@ fn begin_picker(
                                 ui.set_scene_stinger_path(path.into());
                             }
                             PickerPurpose::SourceImage
+                            | PickerPurpose::SourceMediaFile
                             | PickerPurpose::SourceSlideshowDirectory => {
                                 return;
                             }
@@ -493,6 +512,11 @@ fn configure_zenity(command: &mut Command, start: &str, purpose: PickerPurpose) 
             false,
             Some("Image files | *.png *.jpg *.jpeg *.gif *.webp *.pnm"),
         ),
+        PickerPurpose::SourceMediaFile => (
+            "Select media source",
+            false,
+            Some("Media files | *.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mp3 *.wav"),
+        ),
         PickerPurpose::SourceSlideshowDirectory => {
             unreachable!("slideshow directory picker is configured before the file-picker match")
         }
@@ -545,6 +569,11 @@ fn configure_kdialog(command: &mut Command, start: &str, purpose: PickerPurpose)
             ".",
             "Image files (*.png *.jpg *.jpeg *.gif *.webp *.pnm)",
         ),
+        PickerPurpose::SourceMediaFile => (
+            false,
+            ".",
+            "Media files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mp3 *.wav)",
+        ),
         PickerPurpose::SourceSlideshowDirectory => {
             unreachable!("slideshow directory picker is configured before the file-picker match")
         }
@@ -584,6 +613,9 @@ fn configure_osascript(command: &mut Command, purpose: PickerPurpose) {
         PickerPurpose::SourceImage => {
             "set selectedFile to choose file with prompt \"Select image source\"\nPOSIX path of selectedFile"
         }
+        PickerPurpose::SourceMediaFile => {
+            "set selectedFile to choose file with prompt \"Select media source\"\nPOSIX path of selectedFile"
+        }
         PickerPurpose::SourceSlideshowDirectory => {
             "set selectedFolder to choose folder with prompt \"Select slideshow directory\"\nPOSIX path of selectedFolder"
         }
@@ -618,6 +650,11 @@ fn configure_powershell(command: &mut Command, purpose: PickerPurpose) {
         PickerPurpose::SourceImage => (
             "OpenFileDialog",
             "Image files|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.pnm|All files|*.*",
+            false,
+        ),
+        PickerPurpose::SourceMediaFile => (
+            "OpenFileDialog",
+            "Media files|*.mp4;*.mkv;*.mov;*.avi;*.webm;*.m4v;*.mp3;*.wav|All files|*.*",
             false,
         ),
         PickerPurpose::SourceSlideshowDirectory => {
@@ -876,6 +913,76 @@ mod tests {
     }
 
     #[test]
+    fn media_picker_uses_open_dialogs_and_media_filters() {
+        let expected_zenity =
+            "--file-filter=Media files | *.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mp3 *.wav";
+        let expected_kdialog = "Media files (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mp3 *.wav)";
+        let expected_powershell =
+            "Media files|*.mp4;*.mkv;*.mov;*.avi;*.webm;*.m4v;*.mp3;*.wav|All files|*.*";
+
+        let mut zenity = Command::new("zenity");
+        configure_command(
+            &mut zenity,
+            "zenity",
+            "/tmp/example.mp4",
+            PickerPurpose::SourceMediaFile,
+        )
+        .expect("zenity media dialog");
+        let zenity_args = zenity
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(zenity_args
+            .iter()
+            .any(|arg| arg == "--title=Select media source"));
+        assert!(zenity_args.iter().any(|arg| arg == expected_zenity));
+        assert!(!zenity_args.iter().any(|arg| arg == "--save"));
+
+        let mut kdialog = Command::new("kdialog");
+        configure_command(
+            &mut kdialog,
+            "kdialog",
+            "/tmp/example.mp4",
+            PickerPurpose::SourceMediaFile,
+        )
+        .expect("kdialog media dialog");
+        let kdialog_args = kdialog
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(kdialog_args.iter().any(|arg| arg == "--getopenfilename"));
+        assert!(kdialog_args.iter().any(|arg| arg == expected_kdialog));
+
+        let mut osascript = Command::new("osascript");
+        configure_command(
+            &mut osascript,
+            "osascript",
+            "",
+            PickerPurpose::SourceMediaFile,
+        )
+        .expect("AppleScript media dialog");
+        assert!(osascript
+            .get_args()
+            .any(|arg| arg.to_string_lossy().contains("Select media source")));
+
+        let mut powershell = Command::new("powershell");
+        configure_command(
+            &mut powershell,
+            "powershell",
+            "",
+            PickerPurpose::SourceMediaFile,
+        )
+        .expect("PowerShell media dialog");
+        assert!(powershell
+            .get_args()
+            .any(|arg| arg.to_string_lossy().contains(expected_powershell)));
+        assert_eq!(
+            PickerPurpose::SourceMediaFile.path_limit(),
+            MAX_PROJECT_PATH_BYTES
+        );
+    }
+
+    #[test]
     fn slideshow_picker_uses_directory_dialogs() {
         let mut zenity = Command::new("zenity");
         configure_command(
@@ -965,6 +1072,13 @@ mod tests {
         assert_eq!(purpose, PickerPurpose::SourceImage);
         assert_eq!(property, "path");
         assert_eq!(start, "/tmp/example.png");
+
+        let (purpose, property, start) =
+            source_picker_request("media_source", "path = \"C:\\\\media\\\\example.mp4\"\n")
+                .expect("media picker");
+        assert_eq!(purpose, PickerPurpose::SourceMediaFile);
+        assert_eq!(property, "path");
+        assert_eq!(start, r"C:\media\example.mp4");
     }
 
     #[test]

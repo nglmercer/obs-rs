@@ -12,6 +12,7 @@ use obs_rs_capture::{SCREEN_CAPTURE_SOURCE_KIND, WINDOW_CAPTURE_SOURCE_KIND};
 use obs_rs_plugin_api::{PluginError, SourceFactory};
 
 use crate::image::{ImageSlideshowSourceFactory, ImageSourceFactory};
+use crate::media::MediaSourceFactory;
 use crate::portable::ColorSourceFactory;
 use crate::text::TextSourceFactory;
 #[cfg(target_os = "linux")]
@@ -25,6 +26,7 @@ pub(crate) fn build() -> Result<Vec<Arc<dyn SourceFactory>>, PluginError> {
     let color_factory = ColorSourceFactory::new()?;
     let image_factory = ImageSourceFactory::new()?;
     let slideshow_factory = ImageSlideshowSourceFactory::new()?;
+    let media_factory = MediaSourceFactory::new()?;
     let text_factory = TextSourceFactory::new()?;
     let test_pattern_factory = TestPatternFactory::new()?;
     #[cfg(not(target_os = "windows"))]
@@ -51,6 +53,7 @@ pub(crate) fn build() -> Result<Vec<Arc<dyn SourceFactory>>, PluginError> {
         Arc::new(color_factory),
         Arc::new(image_factory),
         Arc::new(slideshow_factory),
+        Arc::new(media_factory),
         Arc::new(text_factory),
         Arc::new(test_pattern_factory),
         screen_factory,

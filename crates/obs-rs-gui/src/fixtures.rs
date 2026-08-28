@@ -30,6 +30,29 @@ type CameraModeCache = BTreeMap<String, (Instant, Vec<CameraMode>)>;
 static PLATFORM_DISCOVERY_CACHE: OnceLock<Mutex<PlatformDiscoveryCache>> = OnceLock::new();
 static CAMERA_MODE_CACHE: OnceLock<Mutex<CameraModeCache>> = OnceLock::new();
 
+/// Drops cached native capture descriptors before an explicit picker refresh.
+///
+/// Discovery is intentionally cached for ordinary property-window repaints,
+/// but a Refresh button is an explicit request to observe hot-plug changes
+/// immediately. Keeping invalidation here also makes every picker use the same
+/// cache policy instead of one path showing stale devices for up to a second.
+pub(crate) fn invalidate_capture_cache(kind: CaptureKind, camera_id: Option<&str>) {
+    if let Some(cache) = PLATFORM_DISCOVERY_CACHE.get() {
+        if let Ok(mut snapshot) = cache.lock() {
+            snapshot.remove(&kind);
+        }
+    }
+    if kind == CaptureKind::Camera {
+        if let Some(camera_id) = camera_id.map(str::trim).filter(|id| !id.is_empty()) {
+            if let Some(cache) = CAMERA_MODE_CACHE.get() {
+                if let Ok(mut snapshot) = cache.lock() {
+                    snapshot.remove(camera_id);
+                }
+            }
+        }
+    }
+}
+
 fn platform_devices_for_kind(kind: CaptureKind) -> Vec<CaptureDeviceInfo> {
     let cache = PLATFORM_DISCOVERY_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
     let now = Instant::now();
@@ -184,6 +207,10 @@ pub(crate) fn source_settings_for_canvas(
         settings.set("transition_ms", "500")?;
         settings.set("loop", "true")?;
         settings.set("randomize", "false")?;
+    }
+    if kind.trim() == "media_source" {
+        settings.set("path", "")?;
+        settings.set("loop", "true")?;
     }
     if kind.trim() == "text_source" {
         settings.set("text", "OBS-RS")?;

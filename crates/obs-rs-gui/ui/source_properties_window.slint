@@ -185,7 +185,9 @@ export component SourcePropertiesWindow inherits Window {
                         browse-enabled: ((root.source-kind == "image_source"
                             && entry.key == "path")
                             || (root.source-kind == "image_slideshow"
-                                && entry.key == "paths"))
+                                && entry.key == "paths")
+                            || (root.source-kind == "media_source"
+                                && entry.key == "path"))
                             && root.source-file-picker-enabled;
                         refresh-enabled: entry.kind == 3
                             && (root.source-kind == "screen_capture"
@@ -196,7 +198,8 @@ export component SourcePropertiesWindow inherits Window {
                         refresh() => { root.refresh-properties(); }
                     }
                     if (root.source-kind == "image_source"
-                        || root.source-kind == "image_slideshow")
+                        || root.source-kind == "image_slideshow"
+                        || root.source-kind == "media_source")
                         && !root.source-file-picker-enabled : SettingHint {
                         text: I18n.text.property_ui.browse_unavailable_hint;
                     }
