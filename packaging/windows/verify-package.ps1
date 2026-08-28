@@ -94,6 +94,43 @@ if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
         if ($LASTEXITCODE -ne 0) {
             throw "bundled GStreamer runtime cannot load the appsrc element"
         }
+        function Test-BundledGStreamerElement {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$Element
+            )
+
+            & $runtimeInspect --exists $Element 2>&1 | Out-Null
+            return $LASTEXITCODE -eq 0
+        }
+        $requiredElements = @(
+            "appsrc",
+            "queue",
+            "videoconvert",
+            "audioconvert",
+            "audioresample",
+            "avenc_aac",
+            "h264parse",
+            "matroskamux",
+            "mp4mux",
+            "filesrc",
+            "matroskademux",
+            "aacparse",
+            "filesink"
+        )
+        $missingElements = @($requiredElements | Where-Object {
+            -not (Test-BundledGStreamerElement -Element $_)
+        })
+        if ($missingElements.Count -gt 0) {
+            throw "bundled GStreamer runtime is missing production recording elements: $($missingElements -join ', ')"
+        }
+        $h264Encoders = @("vah264enc", "vaapih264enc", "nvh264enc", "openh264enc")
+        $availableH264Encoders = @($h264Encoders | Where-Object {
+            Test-BundledGStreamerElement -Element $_
+        })
+        if ($availableH264Encoders.Count -eq 0) {
+            throw "bundled GStreamer runtime does not provide an approved H.264 encoder"
+        }
     } finally {
         $env:PATH = $oldPath
         $env:GST_PLUGIN_PATH = $oldPluginPath

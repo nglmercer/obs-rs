@@ -49,6 +49,43 @@ if ($ProductionGStreamer) {
         throw "GStreamer capability probe returned no parseable version: $probeOutput"
     }
     $gstreamerVersion = $probeMatch.Groups["version"].Value
+    function Test-GStreamerElement {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$Element
+        )
+
+        & $gstreamerInspect --exists $Element 2>&1 | Out-Null
+        return $LASTEXITCODE -eq 0
+    }
+    $requiredElements = @(
+        "appsrc",
+        "queue",
+        "videoconvert",
+        "audioconvert",
+        "audioresample",
+        "avenc_aac",
+        "h264parse",
+        "matroskamux",
+        "mp4mux",
+        "filesrc",
+        "matroskademux",
+        "aacparse",
+        "filesink"
+    )
+    $missingElements = @($requiredElements | Where-Object {
+        -not (Test-GStreamerElement -Element $_)
+    })
+    if ($missingElements.Count -gt 0) {
+        throw "GStreamer runtime is missing production recording elements: $($missingElements -join ', ')"
+    }
+    $h264Encoders = @("vah264enc", "vaapih264enc", "nvh264enc", "openh264enc")
+    $availableH264Encoders = @($h264Encoders | Where-Object {
+        Test-GStreamerElement -Element $_
+    })
+    if ($availableH264Encoders.Count -eq 0) {
+        throw "GStreamer runtime does not provide an approved H.264 encoder"
+    }
 } else {
     $gstreamerRoot = $null
     $gstreamerBin = $null
