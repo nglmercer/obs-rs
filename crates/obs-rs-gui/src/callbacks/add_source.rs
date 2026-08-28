@@ -295,7 +295,8 @@ fn collect_candidates(
     };
     let mut candidates = Vec::new();
     for source in profile.sources() {
-        if kind != RECENT_KIND && source.kind().as_str() != kind {
+        let source_kind = crate::project_migration::host_source_kind(source.kind().as_str());
+        if kind != RECENT_KIND && source_kind != kind {
             continue;
         }
         if already_in_scene(profile, target_scene, source) {
@@ -310,10 +311,10 @@ fn collect_candidates(
             selected: selected.contains(&id),
             id: id.into(),
             name: source.name().into(),
-            kind: source.kind().as_str().into(),
-            kind_label: kind_label(text, source.kind().as_str()),
+            kind: source_kind.into(),
+            kind_label: kind_label(text, source_kind),
             scene: owner_scene.into(),
-            icon: kind_icon(source.kind().as_str()).into(),
+            icon: kind_icon(source_kind).into(),
             index: 0,
             count: 0,
         });
@@ -553,7 +554,9 @@ fn source_kind(state: &Rc<RefCell<DesktopState>>, source: &str) -> String {
         .project()
         .active_profile_spec()
         .and_then(|profile| profile.source(source))
-        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
+        .map_or_else(String::new, |source| {
+            crate::project_migration::host_source_kind(source.kind().as_str()).to_owned()
+        })
 }
 
 fn target(state: &Rc<RefCell<DesktopState>>) -> Result<(String, String), Box<dyn Error>> {
@@ -604,6 +607,7 @@ fn unique_item_id(
 
 /// One-based count of sources of `kind` already in the profile, used for names.
 fn next_ordinal(state: &Rc<RefCell<DesktopState>>, _scene: &str, kind: &str) -> usize {
+    let kind = crate::project_migration::host_source_kind(kind);
     let state = state.borrow();
     let ordinal = state
         .project_session()
@@ -612,7 +616,9 @@ fn next_ordinal(state: &Rc<RefCell<DesktopState>>, _scene: &str, kind: &str) -> 
         .map_or(1, |profile| {
             profile
                 .sources()
-                .filter(|source| source.kind().as_str() == kind)
+                .filter(|source| {
+                    crate::project_migration::host_source_kind(source.kind().as_str()) == kind
+                })
                 .count()
                 + 1
         });

@@ -875,13 +875,15 @@ fn check_window() -> CheckResult {
     }
     let mut failures = Vec::new();
     for window in windows.into_iter().take(8) {
-        match capture_one(window, probe_video_format(), Duration::from_secs(8)) {
-            Ok(frame) => {
+        match capture_frames(window, probe_video_format(), 4, Duration::from_secs(8)) {
+            Ok((frame, frames, elapsed)) => {
                 return CheckResult::pass(format!(
-                    "device={} size={}x{}",
+                    "device={} size={}x{} frames={} elapsed_ms={}",
                     window.id(),
                     frame.format().width(),
-                    frame.format().height()
+                    frame.format().height(),
+                    frames,
+                    elapsed.as_millis()
                 ));
             }
             Err(error) if is_hardware_unavailable(&error) => {
@@ -907,14 +909,18 @@ fn check_camera() -> CheckResult {
     };
     let id = camera.id().to_string();
     let name = camera.name().to_owned();
+    let native_mode = camera.modes().first().copied();
     let opener_id = id.clone();
     let opener_name = name.clone();
     let format = probe_video_format();
-    let mut capture =
-        ThreadedCaptureDevice::open(CaptureRequest::output(format), &name, move || {
-            NokhwaCaptureDevice::from_device_id(&opener_id, &opener_name)
-                .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
-        });
+    let request = native_mode.map_or_else(
+        || CaptureRequest::output(format),
+        |mode| CaptureRequest::camera(format, mode),
+    );
+    let mut capture = ThreadedCaptureDevice::open(request, &name, move || {
+        NokhwaCaptureDevice::from_device_id(&opener_id, &opener_name)
+            .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
+    });
     let frame = wait_for_frame(&mut capture, format, Duration::from_secs(8));
     let stopped = capture.shutdown();
     if !stopped {
@@ -923,13 +929,29 @@ fn check_camera() -> CheckResult {
         );
     }
     match frame {
-        Ok(frame) => CheckResult::pass(format!(
-            "device={} modes={} size={}x{}",
-            id,
-            camera.modes().len(),
-            frame.format().width(),
-            frame.format().height()
-        )),
+        Ok(frame) => {
+            let mode = native_mode.map_or_else(
+                || "auto".to_owned(),
+                |mode| {
+                    format!(
+                        "{}x{}@{}/{} {}",
+                        mode.width(),
+                        mode.height(),
+                        mode.frame_rate().numerator(),
+                        mode.frame_rate().denominator(),
+                        mode.pixel_format()
+                    )
+                },
+            );
+            CheckResult::pass(format!(
+                "device={} modes={} selected_mode={} size={}x{}",
+                id,
+                camera.modes().len(),
+                mode,
+                frame.format().width(),
+                frame.format().height()
+            ))
+        }
         Err(error) => capture_check_result(&error),
     }
 }

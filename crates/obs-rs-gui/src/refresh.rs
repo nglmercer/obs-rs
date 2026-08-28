@@ -161,7 +161,7 @@ fn append_source_rows_inner(
         {
             (
                 source.name().to_owned(),
-                source.kind().as_str().to_owned(),
+                crate::project_migration::host_source_kind(source.kind().as_str()).to_owned(),
                 false,
             )
         } else if let Some(scene) = item.scene_id().and_then(|scene_id| profile.scene(scene_id)) {

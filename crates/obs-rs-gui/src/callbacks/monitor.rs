@@ -526,7 +526,9 @@ fn source_kind_for_target(state: &Rc<RefCell<DesktopState>>, target: &SourceTarg
         .project()
         .profile(target.profile.as_str())
         .and_then(|profile| profile.source(target.source.as_str()))
-        .map_or_else(String::new, |source| source.kind().as_str().to_owned())
+        .map_or_else(String::new, |source| {
+            crate::project_migration::host_source_kind(source.kind().as_str()).to_owned()
+        })
 }
 
 /// Returns the display name for a resolved scene-item target.

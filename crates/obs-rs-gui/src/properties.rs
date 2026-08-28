@@ -223,7 +223,8 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         kind: FieldKind::Toggle,
     };
 
-    let mut fields = match kind.trim() {
+    let kind = crate::project_migration::host_source_kind(kind);
+    let mut fields = match kind {
         "color_source" => vec![&COLOR],
         "image_source" => vec![&PATH],
         "image_slideshow" => vec![
@@ -256,7 +257,7 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         "wayland_screen_capture" => vec![&CURSOR],
         _ => Vec::new(),
     };
-    if kind.trim() != "camera_capture" {
+    if kind != "camera_capture" {
         fields.extend(SIZE_FIELDS.iter());
     }
     fields
@@ -264,6 +265,7 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
 
 /// Builds the dialog rows for `kind` from its current settings document.
 pub(crate) fn rows(kind: &str, document: &str, locale: UiLocale) -> Vec<PropertyRow> {
+    let kind = crate::project_migration::host_source_kind(kind);
     let settings = Config::parse(document).unwrap_or_default();
     let camera_modes = camera_modes_for_settings(kind, &settings);
     crate::i18n::with_catalog(locale, |text| {
@@ -357,6 +359,7 @@ fn row(
 /// Returns the new document, or `None` when the edit cannot be represented,
 /// which leaves the previous document in place rather than corrupting it.
 pub(crate) fn apply(kind: &str, document: &str, key: &str, value: &str) -> Option<String> {
+    let kind = crate::project_migration::host_source_kind(kind);
     let mut settings = Config::parse(document).ok()?;
     let camera_modes = camera_modes_for_settings(kind, &settings);
     let previous_device = settings.get("device_id").map(str::to_owned);
@@ -469,7 +472,7 @@ fn write_camera_mode(
 }
 
 fn camera_modes_for_settings(kind: &str, settings: &Config) -> Vec<CameraMode> {
-    if kind.trim() != "camera_capture" {
+    if crate::project_migration::host_source_kind(kind) != "camera_capture" {
         return Vec::new();
     }
     settings
@@ -812,6 +815,31 @@ mod tests {
         assert_eq!(
             window_keys,
             [
+                "device_id",
+                "capture_cursor",
+                "capture_border",
+                "width",
+                "height"
+            ]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn legacy_linux_screen_kind_uses_the_windows_capture_schema() {
+        let rows = rows(
+            "wayland_screen_capture",
+            "device_id = \"wgc-screen-picker\"\n",
+            UiLocale::English,
+        );
+        let keys = rows
+            .iter()
+            .map(|row| row.key.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                "monitor",
                 "device_id",
                 "capture_cursor",
                 "capture_border",

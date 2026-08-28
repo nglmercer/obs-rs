@@ -196,14 +196,19 @@ fn discover() -> Result<(), BoxError> {
         x = x.saturating_add(i32::try_from(width).unwrap_or(i32::MAX));
     }
 
-    let mut window_occurrences = HashMap::new();
+    let mut stable_occurrences = HashMap::new();
     for window in capturable_windows()? {
         if remaining_records == 0 {
             break;
         }
-        let base_id = window_id(&window.title, &window.process_name);
-        let occurrence = window_occurrences.entry(base_id.clone()).or_insert(0);
-        let id = window_id_with_occurrence(&base_id, *occurrence);
+        // The HWND/PID identity stays attached to the same live window when
+        // its title changes or it is resized. The legacy title/process ID is
+        // still resolved below so projects created by older helpers continue
+        // to load without silently selecting the first unrelated window.
+        let occurrence = stable_occurrences
+            .entry(window.stable_id.clone())
+            .or_insert(0);
+        let id = window_id_with_occurrence(&window.stable_id, *occurrence);
         *occurrence = occurrence.saturating_add(1);
         let name = if window.process_name.trim().is_empty() {
             window.title
@@ -223,6 +228,8 @@ fn discover() -> Result<(), BoxError> {
 /// occurrence suffix when another window is focused or raised.
 struct CapturableWindow {
     window: Window,
+    stable_id: String,
+    legacy_base_id: String,
     title: String,
     process_name: String,
     x: i32,
@@ -252,8 +259,12 @@ fn capturable_windows() -> Result<Vec<CapturableWindow>, BoxError> {
             continue;
         }
         let (x, y) = window.rect().map_or((0, 0), |rect| (rect.left, rect.top));
+        let stable_id = window_id(&window, &title, &process_name);
+        let legacy_base_id = legacy_window_id(&title, &process_name);
         windows.push(CapturableWindow {
             window,
+            stable_id,
+            legacy_base_id,
             title,
             process_name,
             x,
@@ -264,7 +275,7 @@ fn capturable_windows() -> Result<Vec<CapturableWindow>, BoxError> {
     }
     windows.sort_by(|left, right| {
         (
-            window_id(&left.title, &left.process_name),
+            &left.legacy_base_id,
             left.y,
             left.x,
             left.width,
@@ -272,7 +283,7 @@ fn capturable_windows() -> Result<Vec<CapturableWindow>, BoxError> {
             left.window.as_raw_hwnd() as usize,
         )
             .cmp(&(
-                window_id(&right.title, &right.process_name),
+                &right.legacy_base_id,
                 right.y,
                 right.x,
                 right.width,
@@ -361,13 +372,23 @@ fn resolve_window(device: &str) -> Result<Window, BoxError> {
         return Ok(window);
     }
     let windows = capturable_windows()?;
+    let mut stable_occurrences = HashMap::new();
     let mut window_occurrences = HashMap::new();
     windows
         .into_iter()
         .find(|window| {
-            let base_id = window_id(&window.title, &window.process_name);
-            let occurrence = window_occurrences.entry(base_id.clone()).or_insert(0);
-            let candidate = window_id_with_occurrence(&base_id, *occurrence);
+            let stable_occurrence = stable_occurrences
+                .entry(window.stable_id.clone())
+                .or_insert(0);
+            let stable_candidate = window_id_with_occurrence(&window.stable_id, *stable_occurrence);
+            *stable_occurrence = stable_occurrence.saturating_add(1);
+            if stable_candidate == device {
+                return true;
+            }
+            let occurrence = window_occurrences
+                .entry(window.legacy_base_id.clone())
+                .or_insert(0);
+            let candidate = window_id_with_occurrence(&window.legacy_base_id, *occurrence);
             *occurrence = occurrence.saturating_add(1);
             candidate == device
         })
@@ -611,11 +632,29 @@ fn resize_rgba_into(
     Ok(())
 }
 
-fn window_id(title: &str, process_name: &str) -> String {
-    // A process/title identity survives an OBS-RS restart, unlike an HWND. It
-    // also deliberately stops resolving when the title changes, so a closed
-    // target cannot accidentally turn into a different window that reused the
-    // old native handle.
+fn window_id(window: &Window, title: &str, process_name: &str) -> String {
+    // A PID/HWND pair remains attached to the same live top-level window when
+    // its title changes or its client area is resized. It also prevents a
+    // title-only match from silently selecting a different window after the
+    // original target closes. If a metadata query is temporarily unavailable,
+    // retain the legacy project-compatible identity as a bounded fallback.
+    if let Ok(process_id) = window.process_id() {
+        let hwnd = window.as_raw_hwnd() as usize;
+        if process_id != 0 && hwnd != 0 {
+            return native_window_id(process_id, hwnd);
+        }
+    }
+    legacy_window_id(title, process_name)
+}
+
+fn native_window_id(process_id: u32, hwnd: usize) -> String {
+    format!("wgc-window-{process_id:08x}-{hwnd:016x}")
+}
+
+fn legacy_window_id(title: &str, process_name: &str) -> String {
+    // Older helpers persisted a process/title identity. Keep resolving it for
+    // existing project files, but never emit it for a newly discovered window
+    // when a native identity is available.
     let key = format!("{}\0{}", process_name.trim(), title.trim());
     format!("wgc-window-{:016x}", stable_hash(&key))
 }
@@ -746,27 +785,39 @@ mod tests {
 
     #[test]
     fn stable_window_ids_are_deterministic() {
-        let first = window_id("OBS-RS", "obs-rs.exe");
-        let second = window_id("OBS-RS", "obs-rs.exe");
+        let first = native_window_id(42, 0x1234);
+        let second = native_window_id(42, 0x1234);
         assert_eq!(first, second);
         assert!(first.starts_with("wgc-window-"));
     }
 
     #[test]
-    fn window_identity_changes_when_the_title_or_process_changes() {
+    fn native_window_identity_changes_when_the_pid_or_handle_changes() {
         assert_ne!(
-            window_id("OBS-RS", "obs-rs.exe"),
-            window_id("Other project", "obs-rs.exe")
+            native_window_id(42, 0x1234),
+            native_window_id(43, 0x1234)
         );
         assert_ne!(
-            window_id("OBS-RS", "obs-rs.exe"),
-            window_id("OBS-RS", "other.exe")
+            native_window_id(42, 0x1234),
+            native_window_id(42, 0x1235)
+        );
+    }
+
+    #[test]
+    fn legacy_window_identity_remains_deterministic_for_project_migration() {
+        assert_eq!(
+            legacy_window_id("OBS-RS", "obs-rs.exe"),
+            legacy_window_id("OBS-RS", "obs-rs.exe")
+        );
+        assert_ne!(
+            legacy_window_id("OBS-RS", "obs-rs.exe"),
+            legacy_window_id("Other project", "obs-rs.exe")
         );
     }
 
     #[test]
     fn duplicate_window_identities_are_disambiguated_without_changing_the_first_id() {
-        let base = window_id("OBS-RS", "obs-rs.exe");
+        let base = legacy_window_id("OBS-RS", "obs-rs.exe");
         assert_eq!(window_id_with_occurrence(&base, 0), base);
         assert_ne!(
             window_id_with_occurrence(&base, 0),

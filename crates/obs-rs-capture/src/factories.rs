@@ -5,6 +5,7 @@ use obs_rs_util::Identifier;
 
 use super::{
     device::{CaptureRequest, VideoCaptureDevice},
+    error::CaptureError,
     settings::{parse_camera_mode, parse_format},
     simulated::{SimulatedCaptureDevice, TestPatternDevice},
     types::CaptureKind,
@@ -162,6 +163,7 @@ impl SourceFactory for SimulatedCaptureFactory {
                 failure: None,
                 retry_schedule: CaptureRetrySchedule::new(CAMERA_RETRY_INTERVAL_NANOS),
                 shutdown_blocked: false,
+                native_mode_fallback_attempted: false,
             };
             // A camera that is unplugged, busy, or missing must not stop the
             // scene from being created: the source stays, reports why, and
@@ -242,6 +244,7 @@ impl SourceFactory for NokhwaCaptureFactory {
             failure: None,
             retry_schedule: CaptureRetrySchedule::new(CAMERA_RETRY_INTERVAL_NANOS),
             shutdown_blocked: false,
+            native_mode_fallback_attempted: false,
         };
         // Opening is asynchronous. A disconnected or busy camera remains a
         // valid project source and reports its Nokhwa failure on render.
@@ -318,6 +321,8 @@ struct NativeCameraSource {
     /// Set when the previous worker could not be joined yet. No replacement
     /// may open the same physical camera until that worker has finished.
     shutdown_blocked: bool,
+    /// Prevents an unsupported persisted mode from causing endless retries.
+    native_mode_fallback_attempted: bool,
 }
 
 /// Renders between attempts to reopen an unavailable camera.
@@ -413,6 +418,7 @@ impl Source for NativeCameraSource {
         self.format = format;
         device_id.clone_into(&mut self.device_id);
         self.native_mode = native_mode;
+        self.native_mode_fallback_attempted = false;
         self.reopen(Timestamp::ZERO);
         Ok(())
     }
@@ -462,11 +468,27 @@ impl Source for NativeCameraSource {
             // the picture silently, so recovery is driven from the state rather
             // than from the poll result.
             Some(CaptureLifecycleState::Lost) => {
-                self.failure = self
+                let failure = self
                     .device
                     .as_ref()
-                    .and_then(ThreadedCaptureDevice::failure)
-                    .map(|error| error.to_string());
+                    .and_then(ThreadedCaptureDevice::failure);
+                self.failure = failure.as_ref().map(ToString::to_string);
+                if should_fallback_camera_mode(
+                    self.native_mode,
+                    self.native_mode_fallback_attempted,
+                    failure.as_ref(),
+                ) {
+                    // A reconnected camera may no longer advertise the exact
+                    // mode stored in the project. Permit one fresh native
+                    // negotiation while preserving the project settings for
+                    // the next properties refresh.
+                    self.native_mode = None;
+                    self.native_mode_fallback_attempted = true;
+                    self.failure = Some(
+                        "camera mode is no longer available; renegotiating the native mode"
+                            .to_owned(),
+                    );
+                }
                 let timestamp = request.timestamp();
                 if self.retry_schedule.due(timestamp) {
                     self.reopen(timestamp);
@@ -496,8 +518,55 @@ impl Source for NativeCameraSource {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn should_fallback_camera_mode(
+    native_mode: Option<super::types::CameraMode>,
+    fallback_attempted: bool,
+    failure: Option<&CaptureError>,
+) -> bool {
+    native_mode.is_some()
+        && !fallback_attempted
+        && failure.is_some_and(|error| matches!(error, CaptureError::UnsupportedFormat(_)))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn is_nokhwa_camera_id(id: &str) -> bool {
     // `v4l2-videoN` is retained as a project-file migration spelling, but it
     // is still opened by Nokhwa and never by a separate V4L2 backend.
     id.starts_with("v4l2-") || id.starts_with("nokhwa-camera-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use obs_rs_media::FrameRate;
+
+    #[test]
+    fn camera_mode_fallback_only_applies_to_an_unavailable_exact_mode() {
+        let mode = super::super::types::CameraMode::new(
+            super::super::types::CameraPixelFormat::Mjpeg,
+            640,
+            480,
+            FrameRate::new(30, 1).expect("frame rate"),
+        )
+        .expect("camera mode");
+        let format =
+            VideoFormat::new(320, 180, FrameRate::new(30, 1).expect("frame rate")).expect("format");
+        let unsupported = CaptureError::UnsupportedFormat(format);
+        assert!(should_fallback_camera_mode(
+            Some(mode),
+            false,
+            Some(&unsupported)
+        ));
+        assert!(!should_fallback_camera_mode(
+            Some(mode),
+            true,
+            Some(&unsupported)
+        ));
+        assert!(!should_fallback_camera_mode(
+            None,
+            false,
+            Some(&unsupported)
+        ));
+        assert!(!should_fallback_camera_mode(Some(mode), false, None));
+    }
 }

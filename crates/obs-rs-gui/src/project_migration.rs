@@ -109,6 +109,26 @@ fn windows_capture_kind(kind: &str) -> Option<&'static str> {
     }
 }
 
+/// Returns the source kind that the current host can actually instantiate.
+///
+/// Projects created by older Linux builds can still be present in memory when
+/// a user upgrades the application without reopening the project. Keeping
+/// this small, non-mutating normalization alongside the load migration lets
+/// property dialogs, discovery, and the preview use the Windows backend even
+/// during that transition. The load migration remains responsible for writing
+/// the canonical kind back to the project file.
+pub(crate) fn host_source_kind(kind: &str) -> &str {
+    let kind = kind.trim();
+    #[cfg(target_os = "windows")]
+    {
+        windows_capture_kind(kind).unwrap_or(kind)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        kind
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn set_setting(settings: &mut Config, key: &str, value: &str) {
     settings
@@ -200,5 +220,15 @@ mod tests {
         let (project, changed) = migrate_project_for_host(project);
         assert!(!changed);
         assert_eq!(project, original);
+    }
+
+    #[test]
+    fn normalizes_legacy_capture_kinds_without_mutating_the_input() {
+        assert_eq!(
+            host_source_kind(" wayland_screen_capture "),
+            "screen_capture"
+        );
+        assert_eq!(host_source_kind("x11_window_capture"), "window_capture");
+        assert_eq!(host_source_kind("color_source"), "color_source");
     }
 }

@@ -193,14 +193,15 @@ pub(crate) fn source_settings_for_canvas(
     canvas_width: u32,
     canvas_height: u32,
 ) -> Result<Config, Box<dyn Error>> {
+    let kind = crate::project_migration::host_source_kind(kind);
     let mut settings = video_settings_for_dimensions(canvas_width, canvas_height);
-    if kind.trim() == "color_source" {
+    if kind == "color_source" {
         settings.set("color", "#405070FF")?;
     }
-    if kind.trim() == "image_source" {
+    if kind == "image_source" {
         settings.set("path", "")?;
     }
-    if kind.trim() == "image_slideshow" {
+    if kind == "image_slideshow" {
         settings.set("paths", "")?;
         settings.set("slide_time_ms", "8000")?;
         settings.set("fade", "false")?;
@@ -208,16 +209,15 @@ pub(crate) fn source_settings_for_canvas(
         settings.set("loop", "true")?;
         settings.set("randomize", "false")?;
     }
-    if kind.trim() == "media_source" {
+    if kind == "media_source" {
         settings.set("path", "")?;
         settings.set("loop", "true")?;
     }
-    if kind.trim() == "text_source" {
+    if kind == "text_source" {
         settings.set("text", "OBS-RS")?;
         settings.set("color", "#FFFFFFFF")?;
         settings.set("font_size", "24")?;
     }
-    let kind = kind.trim();
     if matches!(kind, "screen_capture" | "window_capture" | "camera_capture") {
         let fallback = match kind {
             #[cfg(target_os = "windows")]
@@ -301,7 +301,7 @@ pub(crate) const MONITOR_SOURCE_KINDS: [&str; 0] = [];
 
 /// Returns whether `kind` reads a display the user can choose.
 pub(crate) fn kind_selects_monitor(kind: &str) -> bool {
-    MONITOR_SOURCE_KINDS.contains(&kind.trim())
+    MONITOR_SOURCE_KINDS.contains(&crate::project_migration::host_source_kind(kind))
 }
 
 /// Returns whether `kind` picks its display through the desktop portal.
@@ -320,7 +320,7 @@ pub(crate) fn kind_uses_portal(kind: &str) -> bool {
 /// portal to ask. Offering the wrong one is how a screen source ends up
 /// showing nothing, so the Add Source list hides it instead.
 pub(crate) fn kind_runs_in_this_session(kind: &str) -> bool {
-    match kind.trim() {
+    match crate::project_migration::host_source_kind(kind) {
         "wayland_screen_capture" => wayland_session(),
         // The X11 adapters share one limitation: under Wayland they only ever
         // see Xwayland's own surfaces, so both are hidden rather than offered
@@ -475,7 +475,7 @@ pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
 /// their real adapters; the properties layer may add an explicit automatic or
 /// unavailable entry when the backend is missing or a saved target is gone.
 pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
-    let kind = kind.trim();
+    let kind = crate::project_migration::host_source_kind(kind);
     let wanted = match kind {
         "screen_capture" | "x11_screen_capture" => CaptureKind::Screen,
         "window_capture" | "x11_window_capture" => CaptureKind::Window,

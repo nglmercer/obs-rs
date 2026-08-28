@@ -328,6 +328,11 @@ impl OutputRuntime {
         if !self.needs_project_sync(revision) {
             return Ok(());
         }
+        // Keep the output worker safe when an already-running application
+        // receives a project from an older binary before the normal load
+        // migration has had a chance to rewrite it. The worker owns a clone,
+        // so this compatibility repair does not change the GUI's dirty state.
+        let (project, _) = crate::project_migration::migrate_project_for_host(project);
         let next_format = project
             .active_profile_spec()
             .map(obs_rs_project::Profile::video_format);

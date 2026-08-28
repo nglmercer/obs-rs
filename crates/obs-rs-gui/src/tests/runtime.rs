@@ -321,8 +321,16 @@ fn only_screen_capture_kinds_offer_the_monitor_picker() {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        assert!(!kind_selects_monitor("x11_screen_capture"));
-        assert!(!kind_selects_monitor("wayland_screen_capture"));
+        #[cfg(target_os = "windows")]
+        {
+            assert!(kind_selects_monitor("x11_screen_capture"));
+            assert!(kind_selects_monitor("wayland_screen_capture"));
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(!kind_selects_monitor("x11_screen_capture"));
+            assert!(!kind_selects_monitor("wayland_screen_capture"));
+        }
     }
     assert!(!kind_selects_monitor("camera_capture"));
     #[cfg(target_os = "windows")]

@@ -130,7 +130,7 @@ fn open_for_target(
         return;
     };
     let locale = state.borrow().locale();
-    let kind = source_kind(state, &target);
+    let kind = crate::project_migration::host_source_kind(&source_kind(state, &target)).to_owned();
     let name = source_name(state, &target);
     let settings = target_settings_document(state, &target).unwrap_or_default();
     controller.target.replace(Some(target.clone()));
@@ -230,7 +230,7 @@ fn install_editing(
 }
 
 fn invalidate_capture_cache(kind: &str, document: &str) {
-    let capture_kind = match kind.trim() {
+    let capture_kind = match crate::project_migration::host_source_kind(kind) {
         "screen_capture" | "x11_screen_capture" => Some(CaptureKind::Screen),
         "window_capture" | "x11_window_capture" => Some(CaptureKind::Window),
         "camera_capture" => Some(CaptureKind::Camera),

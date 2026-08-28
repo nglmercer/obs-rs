@@ -88,9 +88,10 @@ impl PreviewRenderer {
             return true;
         };
         profile.sources().any(|source| {
-            applied
-                .source(source.id())
-                .is_some_and(|previous| previous.kind() != source.kind())
+            applied.source(source.id()).is_some_and(|previous| {
+                crate::project_migration::host_source_kind(previous.kind().as_str())
+                    != crate::project_migration::host_source_kind(source.kind().as_str())
+            })
         })
     }
 
@@ -150,7 +151,7 @@ impl PreviewRenderer {
     ) -> Result<(), Box<dyn Error>> {
         let Some(&id) = self.source_ids.get(source.id().as_str()) else {
             let id = self.runtime.create_source(
-                source.kind().as_str(),
+                crate::project_migration::host_source_kind(source.kind().as_str()),
                 source.name(),
                 source.settings(),
             )?;
@@ -161,14 +162,16 @@ impl PreviewRenderer {
         let previous = previous.ok_or_else(|| {
             std::io::Error::other(format!("source {} has no mirrored state", source.id()))
         })?;
-        if previous.kind() != source.kind() {
+        if crate::project_migration::host_source_kind(previous.kind().as_str())
+            != crate::project_migration::host_source_kind(source.kind().as_str())
+        {
             // Runtime source instances cannot change factory kind in place.
             // Scene references were cleared by `apply_profile` before this
             // path, so destroying this one source does not disturb any other
             // capture device.
             self.runtime.destroy_source(id)?;
             let id = self.runtime.create_source(
-                source.kind().as_str(),
+                crate::project_migration::host_source_kind(source.kind().as_str()),
                 source.name(),
                 source.settings(),
             )?;

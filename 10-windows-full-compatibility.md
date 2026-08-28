@@ -27,7 +27,7 @@ Windows features passed.
 | Feature | Builds | Discovers | Actually captures/works | E2E tested on Windows | Evidence / next acceptance |
 | --- | --- | --- | --- | --- | --- |
 | Display capture | ✅ | ✅ | ◐ | ☐ | `obs-rs-capture-windows` launches the WGC helper and the Windows check probes one display. Capture at 30/60 fps on 1080p, 1440p, and 4K. |
-| Window capture | ✅ | ✅ | ◐ | ☐ | The helper enumerates top-level windows and resolves stable IDs. Verify resize, minimize, close/reopen, cloaking, and title changes. |
+| Window capture | ✅ | ✅ | ◐ | ☐ | The helper enumerates top-level windows and emits PID+HWND IDs that survive title changes and resize; legacy title/process IDs remain resolvable. Verify minimize, close/reopen, cloaking, and process restart. |
 | Camera capture | ✅ | ✅ | ◐ | ☐ | Nokhwa is used with the Windows Media Foundation input feature. Verify integrated, USB/UVC, capture-card, replug, and mode negotiation cases. |
 | Microphone input | ✅ | ✅ | ◐ | ☐ | WASAPI/CPAL input and format fallback are implemented. Record with a physical microphone and verify timestamp continuity. |
 | Desktop/system audio | ✅ | ✅ | ◐ | ☐ | WASAPI output endpoints are opened as loopback inputs. Verify audible desktop playback, silence handling, and default-render-device changes. |
@@ -110,7 +110,8 @@ only scaffolded:
   60 FPS; its audio stability check verifies endpoint identity/default-route
   invariants;
 - native capture retries use media-time schedules, the helper publishes only
-  its newest complete frame, and bounded shutdown failures remain retryable;
+  its newest complete frame, bounded shutdown failures remain retryable, and
+  live window IDs are tied to the owning PID/HWND rather than a mutable title;
 - `.github/workflows/hardware-soak.yml` provides a self-hosted Windows lane
   for the real display, window, audio, reference-output, and cleanup probes.
 
