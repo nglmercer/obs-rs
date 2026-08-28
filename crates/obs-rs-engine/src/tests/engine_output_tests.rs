@@ -612,6 +612,7 @@ fn production_schemes_create_native_stream_outputs() {
         "rtmp://127.0.0.1:9/live/test",
         "rtmps://127.0.0.1:9/live/test",
         "srt://127.0.0.1:9",
+        "rist://127.0.0.1:5000",
     ] {
         let mut stream = StreamOutput::connect(endpoint, 1_048_576, 1, video, audio, None)
             .expect("native production pipeline");
@@ -638,6 +639,7 @@ fn production_only_streams_skip_reference_encoders_and_receive_raw_media() {
         "rtmp://127.0.0.1:9/live/test",
         "rtmps://127.0.0.1:9/live/test",
         "srt://127.0.0.1:9",
+        "rist://127.0.0.1:5000",
     ] {
         let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
         engine

@@ -128,6 +128,7 @@ pub(crate) fn stream_protocol_label(address: &str) -> &'static str {
         Some("srt") => "SRT",
         Some("rtmp") => "RTMP",
         Some("rtmps") => "RTMPS",
+        Some("rist") => "RIST",
         Some("ws" | "wss") => "OBSR-WebSocket",
         _ => "OBSR-TCP",
     }

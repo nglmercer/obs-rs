@@ -84,6 +84,7 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install.ps1") -Destination $sta
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall.ps1") -Destination $stagingDirectory
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "run-obs-rs.ps1") -Destination $stagingDirectory
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "verify-package.ps1") -Destination $stagingDirectory
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "acceptance.ps1") -Destination $stagingDirectory
 
 if ($ProductionGStreamer) {
     # Keep the native DLLs beside the entry points so Windows can resolve them

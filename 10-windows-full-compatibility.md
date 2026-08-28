@@ -70,6 +70,16 @@ release helper. Its output must be archived with the Windows build, including
 `pass`, `skip`, and `fail` results, rather than reduced to the process exit
 code.
 
+On Windows, the source-properties display field belongs to the native
+`screen_capture` source and lists the WGC display IDs returned by the helper.
+The automatic entry means the primary display; Windows Graphics Capture does
+not expose the X11-style whole-virtual-desktop target through this helper.
+Projects imported from older Linux sessions migrate legacy Wayland/X11 screen
+and window kinds when they are opened. Restart the rebuilt application and
+reopen or reload the project before inspecting those properties; an already
+running older binary can still show the legacy `Screen capture (Wayland)`
+dialog.
+
 ## Implementation pass
 
 The branch now covers the Windows user-facing boundaries that were previously

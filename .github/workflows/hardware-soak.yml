@@ -40,17 +40,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.97.1
-      - name: Build the native capture helper
-        run: cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --release
-      - name: Run Windows capture/audio/output acceptance
+      - name: Build and stage the Windows release package
         shell: pwsh
         env:
-          OBSR_CAPTURE_HELPER: ${{ github.workspace }}\packaging\windows\capture-helper\target\release\obs-rs-capture-windows-helper.exe
-          OBS_RS_SOAK_SECONDS: ${{ github.event_name == 'schedule' && '28800' || inputs.duration_seconds }}
-        run: cargo run -p obs-rs-app --release --bin obs-rs-windows-check | Tee-Object windows-soak-results.txt
+          OBS_RS_HARDWARE_SOAK_SECONDS: ${{ github.event_name == 'schedule' && '28800' || inputs.duration_seconds }}
+        run: |
+          $dist = Join-Path $env:RUNNER_TEMP "obs-rs-windows-hardware-dist"
+          .\packaging\windows\package.ps1 -Configuration release -OutputDirectory $dist
+          $archive = Get-ChildItem -LiteralPath $dist -Filter "obs-rs-windows-*-x86_64.zip" -File |
+            Select-Object -First 1
+          if ($null -eq $archive) {
+            throw "Windows hardware package was not created"
+          }
+          $expanded = Join-Path $env:RUNNER_TEMP "obs-rs-windows-hardware-expanded"
+          if (Test-Path -LiteralPath $expanded) {
+            Remove-Item -LiteralPath $expanded -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $expanded
+          $packageRoot = Get-ChildItem -LiteralPath $expanded -Directory -Filter "obs-rs" |
+            Select-Object -First 1
+          if ($null -eq $packageRoot) {
+            throw "expanded Windows hardware package has no obs-rs directory"
+          }
+          $artifacts = Join-Path $env:GITHUB_WORKSPACE "windows-hardware-artifacts"
+          & (Join-Path $packageRoot.FullName "acceptance.ps1") `
+            -PackageDirectory $packageRoot.FullName `
+            -OutputDirectory $artifacts `
+            -SoakSeconds ([int]$env:OBS_RS_HARDWARE_SOAK_SECONDS)
       - name: Upload telemetry
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: windows-hardware-soak
-          path: windows-soak-results.txt
+          path: windows-hardware-artifacts
+          if-no-files-found: warn

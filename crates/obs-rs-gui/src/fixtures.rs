@@ -218,6 +218,13 @@ pub(crate) fn source_settings_for_canvas(
         };
         settings.set("device_id", device_id)?;
         #[cfg(target_os = "windows")]
+        if kind == "screen_capture" && device_id.starts_with("wgc-screen-") {
+            // Keep a newly created source's monitor row aligned with the WGC
+            // target chosen from the live display snapshot. The automatic
+            // picker remains the fallback when discovery is unavailable.
+            settings.set("monitor", device_id)?;
+        }
+        #[cfg(target_os = "windows")]
         if matches!(kind, "screen_capture" | "window_capture") {
             settings.set("capture_cursor", "true")?;
             settings.set("capture_border", "false")?;
@@ -234,8 +241,8 @@ pub(crate) fn source_settings_for_canvas(
         if let Ok(display) = std::env::var("DISPLAY") {
             settings.set("display", &display)?;
         }
-        // An empty selection captures the whole desktop, so a freshly added
-        // window source renders something while the user picks a window.
+        // The empty selection lets a freshly added window source render the
+        // automatic target while the user picks a window.
         let window = capture_devices(kind)
             .first()
             .map_or_else(String::new, |(id, _)| id.clone());

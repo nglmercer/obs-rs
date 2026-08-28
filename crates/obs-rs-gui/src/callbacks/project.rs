@@ -5,6 +5,8 @@ use std::{
     rc::Rc,
 };
 
+#[cfg(target_os = "windows")]
+use obs_rs_capture::{CaptureKind, PlatformCaptureAdapter};
 use obs_rs_diagnostics::{AtomicDiagnosticFileWriter, DiagnosticBundle};
 use obs_rs_media::StingerSpec;
 use obs_rs_project::{ProjectCommand, ProjectFileStore, SceneSpec, SourceSpec};
@@ -598,12 +600,27 @@ fn platform_diagnostics(diagnostics: &RuntimeDiagnostics) -> String {
         let helper_version = WindowsCaptureAdapter::default()
             .helper_version()
             .unwrap_or_else(|error| format!("unavailable: {error}"));
+        let capture_inventory = WindowsCaptureAdapter::default().discover().map_or_else(
+            |error| format!("unavailable: {error}"),
+            |devices| {
+                let displays = devices
+                    .iter()
+                    .filter(|device| device.kind() == CaptureKind::Screen)
+                    .count();
+                let windows = devices
+                    .iter()
+                    .filter(|device| device.kind() == CaptureKind::Window)
+                    .count();
+                format!("displays={displays} windows={windows}")
+            },
+        );
         format!(
-            "os={}\ngpu_adapter={}\ngpu_backend={}\ncapture_helper_version={}",
+            "os={}\ngpu_adapter={}\ngpu_backend={}\ncapture_helper_version={}\ncapture_inventory={}",
             bounded_diagnostic_field(&windows_version),
             bounded_diagnostic_field(&diagnostics.gpu_adapter),
             bounded_diagnostic_field(&diagnostics.gpu_backend),
             bounded_diagnostic_field(&helper_version),
+            bounded_diagnostic_field(&capture_inventory),
         )
     }
     #[cfg(not(target_os = "windows"))]

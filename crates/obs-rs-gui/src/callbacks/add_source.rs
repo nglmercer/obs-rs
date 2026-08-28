@@ -146,8 +146,8 @@ fn install_actions(
         let created = result.is_ok();
         report(&ui, &create_state, &create_surface, result);
         refresh_window(&create_state, &create_controller);
-        // A new screen source captures every monitor until it is told which one
-        // to read, so the picker is offered as part of creating it.
+        // A new screen source starts on the platform's automatic display
+        // target, so the picker is offered as part of creating it.
         if created && crate::kind_selects_monitor(&kind) {
             ui.invoke_open_monitor_window();
         }

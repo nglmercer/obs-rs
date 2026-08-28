@@ -15,6 +15,8 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::{
     error::Error,
@@ -45,6 +47,8 @@ use obs_rs_engine::{output_capabilities_snapshot, ProductionProtocol};
 use obs_rs_engine::{EngineConfig, EngineSession};
 #[cfg(target_os = "windows")]
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+use obs_rs_output::OutputProfile;
 #[cfg(target_os = "windows")]
 use obs_rs_output::{MemoryMuxer, PacketKind, RleVideoEncoder};
 #[cfg(target_os = "windows")]
@@ -94,8 +98,15 @@ fn main() -> ExitCode {
         ("cleanup_restart", check_cleanup_restart()),
     ];
     checks.push(("production_output", check_production_output()));
+    checks.push(("production_recording", check_production_recording()));
+    checks.push(("production_streaming", check_production_streaming()));
     let mut failed = false;
     for (name, result) in checks {
+        let result = if result.status == "skip" && required_check(name) {
+            CheckResult::fail(format!("required check skipped: {}", result.detail))
+        } else {
+            result
+        };
         failed |= result.status == "fail";
         println!(
             "check={name} status={} detail={}",
@@ -107,6 +118,164 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn check_production_recording() -> CheckResult {
+    #[cfg(not(feature = "production-gstreamer"))]
+    {
+        CheckResult::skip(
+            "production recording is not compiled; use the production-gstreamer package",
+        )
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    {
+        let capabilities = output_capabilities_snapshot();
+        let profile = OutputProfile::matroska_h264_aac();
+        if !capabilities.recording_formats().contains(&profile.kind()) {
+            return CheckResult::skip(format!(
+                "native runtime does not advertise {} recording",
+                profile.kind().id()
+            ));
+        }
+        let devices = match discover_windows() {
+            Ok(devices) => devices,
+            Err(error) => return capture_check_result(&error),
+        };
+        let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
+            return CheckResult::skip(
+                "production recording needs a connected Windows display target",
+            );
+        };
+        let format = probe_video_format();
+        let frame = match capture_one(display, format, Duration::from_secs(8)) {
+            Ok(frame) => frame,
+            Err(error) => {
+                return capture_check_result_with_context(&error, "production recording capture")
+            }
+        };
+        let path = native_recording_path();
+        let result = record_native_frames(&path, format, &frame);
+        let artifact = if result.is_ok() {
+            preserve_native_recording(&path)
+        } else {
+            Ok(None)
+        };
+        remove_recording_artifacts(&path);
+        match (result, artifact) {
+            (Ok((bytes, frames)), Ok(artifact)) => {
+                let artifact =
+                    artifact.map_or_else(String::new, |path| format!(" artifact={path}"));
+                CheckResult::pass(format!(
+                    "device={} profile={} frames={} bytes={} container=Matroska{artifact}",
+                    display.id(),
+                    profile.kind().id(),
+                    frames,
+                    bytes
+                ))
+            }
+            (Ok(_), Err(error)) => CheckResult::fail(error),
+            (Err(error), _) => CheckResult::fail(error),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn check_production_streaming() -> CheckResult {
+    #[cfg(not(feature = "production-gstreamer"))]
+    {
+        CheckResult::skip(
+            "production streaming is not compiled; use the production-gstreamer package",
+        )
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    {
+        let Some(endpoint) = std::env::var("OBS_RS_PRODUCTION_STREAM_URL")
+            .ok()
+            .filter(|endpoint| !endpoint.trim().is_empty())
+        else {
+            return CheckResult::skip(
+                "set OBS_RS_PRODUCTION_STREAM_URL to run the live production-stream acceptance check",
+            );
+        };
+        let Some((scheme, _)) = endpoint.split_once("://") else {
+            return CheckResult::fail(
+                "OBS_RS_PRODUCTION_STREAM_URL must use rtmp://, rtmps://, srt://, or rist://",
+            );
+        };
+        let scheme = scheme.to_ascii_lowercase();
+        if !matches!(scheme.as_str(), "rtmp" | "rtmps" | "srt" | "rist") {
+            return CheckResult::fail(format!(
+                "unsupported production stream scheme {scheme}; expected rtmp/rtmps/srt/rist"
+            ));
+        }
+        let capabilities = output_capabilities_snapshot();
+        if !capabilities
+            .protocols()
+            .iter()
+            .any(|capability| capability.available() && capability.protocol().id() == scheme)
+        {
+            return CheckResult::skip(format!(
+                "native runtime does not advertise the {scheme} production protocol"
+            ));
+        }
+        let devices = match discover_windows() {
+            Ok(devices) => devices,
+            Err(error) => return capture_check_result(&error),
+        };
+        let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
+            return CheckResult::skip(
+                "production streaming needs a connected Windows display target",
+            );
+        };
+        let format = probe_video_format();
+        let frame = match capture_one(display, format, Duration::from_secs(8)) {
+            Ok(frame) => frame,
+            Err(error) => {
+                return capture_check_result_with_context(&error, "production streaming capture")
+            }
+        };
+        let mut engine = match acceptance_engine(format) {
+            Ok(engine) => engine,
+            Err(error) => return CheckResult::fail(error),
+        };
+        if let Err(error) = engine.start_streaming(&endpoint) {
+            return CheckResult::fail(format!("start {scheme} stream: {error}"));
+        }
+        for index in 0..4_u64 {
+            let timestamp = Timestamp::from_nanos(index.saturating_mul(33_333_333));
+            let stamped = frame.at_timestamp(timestamp);
+            if let Err(error) = engine.push_program_frame(&stamped) {
+                engine.finish_streaming().ok();
+                return CheckResult::fail(format!("push {scheme} stream media: {error}"));
+            }
+        }
+        let metrics = engine.snapshot().production_stream_metrics;
+        if let Err(error) = engine.finish_streaming() {
+            return CheckResult::fail(format!("finish {scheme} stream: {error}"));
+        }
+        let Some(metrics) = metrics else {
+            return CheckResult::fail(
+                "production stream did not expose native submission telemetry",
+            );
+        };
+        if metrics.video_submitted == 0 || metrics.audio_submitted == 0 {
+            return CheckResult::fail(format!(
+                "production stream submitted no complete media: video={} audio={} dropped={}",
+                metrics.video_submitted, metrics.audio_submitted, metrics.dropped
+            ));
+        }
+        CheckResult::pass(format!(
+            "device={} protocol={} video_submitted={} audio_submitted={} dropped={}",
+            display.id(),
+            scheme,
+            metrics.video_submitted,
+            metrics.audio_submitted,
+            metrics.dropped
+        ))
     }
 }
 
@@ -294,16 +463,21 @@ fn check_reference_recording() -> CheckResult {
 }
 
 #[cfg(target_os = "windows")]
+fn acceptance_engine(format: VideoFormat) -> Result<EngineSession, String> {
+    let project = acceptance_project(format).map_err(|error| error.to_string())?;
+    let audio_format = AudioFormat::new(48_000, 2).map_err(|error| error.to_string())?;
+    let config =
+        EngineConfig::new(audio_format).with_video_encoder(Box::new(RleVideoEncoder::new(format)));
+    EngineSession::new(project, config).map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "windows")]
 fn record_captured_frame(
     path: &std::path::Path,
     format: VideoFormat,
     frame: &VideoFrame,
 ) -> Result<(usize, usize), String> {
-    let project = acceptance_project(format).map_err(|error| error.to_string())?;
-    let audio_format = AudioFormat::new(48_000, 2).map_err(|error| error.to_string())?;
-    let config =
-        EngineConfig::new(audio_format).with_video_encoder(Box::new(RleVideoEncoder::new(format)));
-    let mut engine = EngineSession::new(project, config).map_err(|error| error.to_string())?;
+    let mut engine = acceptance_engine(format)?;
     engine
         .start_recording(path)
         .map_err(|error| error.to_string())?;
@@ -336,6 +510,44 @@ fn record_captured_frame(
     Ok((bytes, packets.len()))
 }
 
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn record_native_frames(
+    path: &Path,
+    format: VideoFormat,
+    frame: &VideoFrame,
+) -> Result<(usize, u64), String> {
+    let mut engine = acceptance_engine(format)?;
+    engine
+        .start_recording_profile(path, OutputProfile::matroska_h264_aac())
+        .map_err(|error| format!("start native recording: {error}"))?;
+    for index in 0..4_u64 {
+        let timestamp = Timestamp::from_nanos(index.saturating_mul(33_333_333));
+        let stamped = frame.at_timestamp(timestamp);
+        if let Err(error) = engine.push_program_frame(&stamped) {
+            engine.abort_recording();
+            return Err(format!("push native recording media: {error}"));
+        }
+    }
+    let bytes = match engine.finish_recording() {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            engine.abort_recording();
+            return Err(format!("finish native recording: {error}"));
+        }
+    };
+    let persisted = std::fs::read(path).map_err(|error| error.to_string())?;
+    if bytes == 0 || persisted.len() != bytes {
+        return Err(format!(
+            "native recording byte count is invalid: engine={bytes} file={}",
+            persisted.len()
+        ));
+    }
+    if persisted.len() < 4 || persisted[..4] != [0x1A, 0x45, 0xDF, 0xA3] {
+        return Err("native recording is not an EBML/Matroska file".to_owned());
+    }
+    Ok((bytes, 4))
+}
+
 #[cfg(target_os = "windows")]
 fn acceptance_project(format: VideoFormat) -> Result<Project, Box<dyn Error>> {
     let mut project = Project::new("OBS-RS Windows acceptance")?;
@@ -366,6 +578,46 @@ fn reference_recording_path() -> std::path::PathBuf {
         "obs-rs-windows-check-{}-{token}.obsr",
         std::process::id()
     ))
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn native_recording_path() -> PathBuf {
+    let token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    std::env::temp_dir().join(format!(
+        "obs-rs-windows-check-{}-{token}.mkv",
+        std::process::id()
+    ))
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn remove_recording_artifacts(path: &Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(path.with_extension("mkv.part"));
+    let _ = std::fs::remove_file(path.with_extension("mp4.part"));
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn preserve_native_recording(path: &Path) -> Result<Option<String>, String> {
+    let Some(directory) = std::env::var_os("OBS_RS_ACCEPTANCE_ARTIFACTS") else {
+        return Ok(None);
+    };
+    let directory = PathBuf::from(directory);
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "create production recording artifact directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    let destination = directory.join("production-recording.mkv");
+    std::fs::copy(path, &destination).map_err(|error| {
+        format!(
+            "preserve production recording artifact {}: {error}",
+            destination.display()
+        )
+    })?;
+    Ok(Some(destination.display().to_string()))
 }
 
 #[cfg(target_os = "windows")]
@@ -560,7 +812,10 @@ fn check_desktop_loopback() -> CheckResult {
     };
     let silence = match AudioBuffer::silence(format, Timestamp::ZERO, 480) {
         Ok(buffer) => buffer,
-        Err(error) => return CheckResult::fail(error.to_string()),
+        Err(error) => {
+            render.stop();
+            return CheckResult::fail(error.to_string());
+        }
     };
     if let Err(error) = render.write_block(&silence) {
         render.stop();
@@ -575,11 +830,14 @@ fn check_desktop_loopback() -> CheckResult {
                 block.frames()
             ))
         }
-        Ok(block) => CheckResult::fail(format!(
-            "WASAPI loopback returned invalid block: format={:?} frames={}",
-            block.format(),
-            block.frames()
-        )),
+        Ok(block) => {
+            render.stop();
+            CheckResult::fail(format!(
+                "WASAPI loopback returned invalid block: format={:?} frames={}",
+                block.format(),
+                block.frames()
+            ))
+        }
         Err(error) => {
             render.stop();
             CheckResult::skip(error.to_string())
@@ -641,7 +899,7 @@ fn check_av_soak() -> CheckResult {
     let seconds = std::env::var("OBS_RS_SOAK_SECONDS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
-        .map_or(2, |value| value.clamp(1, 30));
+        .map_or(2, |value| value.clamp(1, 8 * 60 * 60));
     let started = Instant::now();
     let deadline = started + Duration::from_secs(seconds);
     let mut frames = 0_u64;
@@ -767,4 +1025,21 @@ fn is_hardware_unavailable(error: &CaptureError) -> bool {
 #[cfg(target_os = "windows")]
 fn machine_detail(detail: &str) -> String {
     detail.split_whitespace().collect::<Vec<_>>().join("_")
+}
+
+#[cfg(target_os = "windows")]
+fn required_check(name: &str) -> bool {
+    let individual = format!("OBS_RS_REQUIRE_{}", name.to_ascii_uppercase());
+    environment_flag(&individual)
+        || (name.starts_with("production_") && environment_flag("OBS_RS_REQUIRE_PRODUCTION"))
+}
+
+#[cfg(target_os = "windows")]
+fn environment_flag(name: &str) -> bool {
+    std::env::var(name).ok().is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }

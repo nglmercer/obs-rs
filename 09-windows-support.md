@@ -96,3 +96,9 @@ captured the physical display and the engine committed a valid `OBSRPKT1`
 file. The remaining acceptance dependency is the archived Windows hardware
 run on both supported OS generations, including production recording and
 streaming.
+
+When an older project contains `wayland_screen_capture`, a rebuilt Windows
+application converts it to the native `screen_capture` source during project
+load. Reopen or reload that project after upgrading; the native properties
+dialog then shows the WGC display selector. The automatic Windows target is the
+primary display, while explicit monitor rows select individual displays.

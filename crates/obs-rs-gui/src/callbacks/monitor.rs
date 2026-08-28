@@ -1,9 +1,10 @@
 //! Controller for the display picker.
 //!
-//! A multi-head desktop is a single X11 screen, so "screen capture" without a
-//! chosen display grabs every monitor at once. This window is what turns that
-//! into an explicit choice; the selection is stored in the source's `monitor`
-//! setting and therefore travels with the project file.
+//! This window turns the platform's screen-capture target into an explicit
+//! choice; the selection is stored in the source's `monitor` setting and
+//! therefore travels with the project file. On X11 the empty target spans the
+//! virtual desktop, while Windows Graphics Capture uses its primary display
+//! as the automatic target and lists individual displays explicitly.
 
 use std::{cell::RefCell, rc::Rc};
 

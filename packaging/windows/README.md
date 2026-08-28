@@ -16,7 +16,7 @@ the MSVC target installed:
 The script creates `packaging/windows/dist/obs-rs-windows-<version>-x86_64.zip`
 and a matching `.sha256` file. The archive includes `VERSION.txt`,
 `SHA256SUMS.txt`, `THIRD-PARTY-NOTICES.md`, `WINDOWS-README.md`, the two app
-entry points, the acceptance checker, and the helper. Extract the `obs-rs`
+entry points, the acceptance scripts, and the helper. Extract the `obs-rs`
 directory and run `install.ps1` once if a per-user uninstall entry is wanted.
 The entry points to the included `uninstall.ps1` and does not require
 administrator access.
@@ -35,6 +35,22 @@ For a real interactive-session check after extraction:
 `pass`, `skip`, and `fail` are intentionally distinct. Hardware or privacy
 conditions are reported as typed skips; protocol, frame-format, lifecycle, and
 cleanup errors fail the command.
+
+For a release-package hardware acceptance run, use the bundled script. It first
+verifies every packaged payload, records machine/GPU/display/audio metadata,
+requires the physical display, window, microphone, loopback, and monitor-output
+checks, and writes bounded soak telemetry:
+
+```powershell
+.\acceptance.ps1 -SoakSeconds 1800
+```
+
+Add `-RequireCamera` on a machine with a connected camera. A provisioned
+production-output runner can also pass `-ProductionStreamUrl` to require native
+Matroska recording and a real RTMP, RTMPS, SRT, or RIST endpoint. The endpoint is
+used only for the live check and is not written to the telemetry artifact. When
+native recording is enabled, the resulting `production-recording.mkv` is kept
+in the acceptance artifact directory for independent playback inspection.
 
 ## Platform requirements and limitations
 

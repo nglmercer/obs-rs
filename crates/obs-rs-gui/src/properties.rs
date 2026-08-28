@@ -379,6 +379,10 @@ pub(crate) fn apply(kind: &str, document: &str, key: &str, value: &str) -> Optio
     } else {
         settings.set(key, &value).ok()?;
     }
+    #[cfg(target_os = "windows")]
+    if kind.trim() == "screen_capture" && matches!(key, "monitor" | "device_id") {
+        synchronize_windows_screen_settings(&mut settings, key, &value)?;
+    }
     if kind.trim() == "camera_capture"
         && key == "device_id"
         && previous_device.as_deref() != Some(value.as_str())
@@ -398,6 +402,39 @@ pub(crate) fn apply(kind: &str, document: &str, key: &str, value: &str) -> Optio
         }
     }
     Some(settings.serialize())
+}
+
+#[cfg(target_os = "windows")]
+fn synchronize_windows_screen_settings(
+    settings: &mut Config,
+    key: &str,
+    value: &str,
+) -> Option<()> {
+    // Keep the two Windows display selectors in sync. `monitor` is the
+    // user-facing display choice, while `device_id` is the backend's
+    // persisted target. The helper only has a primary-display automatic
+    // target, so an empty/whole-desktop sentinel maps to that target.
+    let device_id = if key == "monitor" {
+        if value.starts_with("wgc-screen-") {
+            value
+        } else {
+            "wgc-screen-picker"
+        }
+    } else {
+        value
+    };
+    settings.set("device_id", device_id).ok()?;
+    settings
+        .set(
+            "monitor",
+            if key == "monitor" || value.starts_with("wgc-screen-") {
+                value
+            } else {
+                WHOLE_DESKTOP
+            },
+        )
+        .ok()?;
+    Some(())
 }
 
 fn write_camera_mode(
@@ -581,12 +618,17 @@ fn window_choices(kind: &str) -> Vec<(String, String)> {
     choices
 }
 
-/// Displays for a screen source, with the whole desktop first.
+/// Displays for a screen source, with the automatic target first.
 fn monitor_choices(_kind: &str) -> Vec<(String, String)> {
-    let mut choices = vec![(
-        WHOLE_DESKTOP.to_owned(),
-        "All monitors (whole desktop)".to_owned(),
-    )];
+    let automatic_label = if cfg!(target_os = "windows") {
+        // Windows Graphics Capture resolves its automatic target to the
+        // primary display. It does not expose a single whole-virtual-desktop
+        // item through the helper.
+        "Primary display (automatic)"
+    } else {
+        "All monitors (whole desktop)"
+    };
+    let mut choices = vec![(WHOLE_DESKTOP.to_owned(), automatic_label.to_owned())];
     choices.extend(
         crate::fixtures::screen_monitors()
             .into_iter()
@@ -738,6 +780,38 @@ mod tests {
                 "height"
             ]
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn editing_a_windows_monitor_updates_the_wgc_device_target() {
+        let mut settings = Config::new();
+        settings
+            .set("device_id", "wgc-screen-picker")
+            .expect("device ID");
+        synchronize_windows_screen_settings(&mut settings, "monitor", "wgc-screen-secondary")
+            .expect("synchronize monitor");
+
+        // This remains deterministic when the helper is not installed: the
+        // built-in Windows test separately verifies that the adapter consumes
+        // this explicit target.
+        assert_eq!(settings.get("monitor"), settings.get("device_id"));
+        assert!(settings
+            .get("monitor")
+            .is_some_and(|value| value.starts_with("wgc-screen-") || value.is_empty()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn choosing_the_automatic_windows_display_clears_the_explicit_monitor() {
+        let document =
+            "capture_cursor = true\ndevice_id = \"wgc-screen-secondary\"\nheight = 720\nmonitor = \"wgc-screen-secondary\"\nwidth = 1280\n";
+
+        let updated = apply("screen_capture", document, "monitor", "0").expect("apply monitor");
+        let settings = Config::parse(&updated).expect("document");
+
+        assert_eq!(settings.get("monitor"), Some(WHOLE_DESKTOP));
+        assert_eq!(settings.get("device_id"), Some("wgc-screen-picker"));
     }
 
     #[test]

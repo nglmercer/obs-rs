@@ -71,6 +71,19 @@ impl SourceFactory for WindowsCaptureFactory {
 }
 
 fn selected_device(settings: &Config, target: WindowsTarget) -> String {
+    // The Windows screen-properties dialog exposes `monitor` because it is the
+    // stable display selector used by the monitor picker. Older Windows
+    // settings only carried `device_id`, so retain that as a compatibility
+    // fallback while making an explicit monitor selection authoritative.
+    if target == WindowsTarget::Screen {
+        if let Some(monitor) = settings
+            .get("monitor")
+            .map(str::trim)
+            .filter(|value| value.starts_with("wgc-screen-"))
+        {
+            return monitor.to_owned();
+        }
+    }
     settings
         .get("device_id")
         .map(str::trim)
@@ -231,5 +244,42 @@ impl WindowsCaptureSource {
         );
         self.failure = Some("reconnecting Windows capture helper".to_owned());
         self.retry_countdown = WINDOWS_CAPTURE_RETRY_FRAMES;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_explicit_screen_monitor_overrides_the_legacy_device_setting() {
+        let mut settings = Config::new();
+        settings
+            .set("device_id", "wgc-screen-picker")
+            .expect("device ID");
+        settings
+            .set("monitor", "wgc-screen-secondary")
+            .expect("monitor");
+
+        assert_eq!(
+            selected_device(&settings, WindowsTarget::Screen),
+            "wgc-screen-secondary"
+        );
+    }
+
+    #[test]
+    fn window_sources_keep_using_their_device_setting() {
+        let mut settings = Config::new();
+        settings
+            .set("device_id", "wgc-window-editor")
+            .expect("device ID");
+        settings
+            .set("monitor", "wgc-screen-secondary")
+            .expect("monitor");
+
+        assert_eq!(
+            selected_device(&settings, WindowsTarget::Window),
+            "wgc-window-editor"
+        );
     }
 }

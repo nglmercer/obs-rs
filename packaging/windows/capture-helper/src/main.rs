@@ -8,7 +8,7 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     error::Error,
     io::{self, BufWriter, Read, Write},
     process,
@@ -196,7 +196,7 @@ fn discover() -> Result<(), BoxError> {
         x = x.saturating_add(i32::try_from(width).unwrap_or(i32::MAX));
     }
 
-    let mut window_ids = HashSet::new();
+    let mut window_occurrences = HashMap::new();
     for window in Window::enumerate()? {
         if remaining_records == 0 {
             break;
@@ -211,10 +211,10 @@ fn discover() -> Result<(), BoxError> {
         {
             continue;
         }
-        let id = window_id(&title, &process_name);
-        if !window_ids.insert(id.clone()) {
-            continue;
-        }
+        let base_id = window_id(&title, &process_name);
+        let occurrence = window_occurrences.entry(base_id.clone()).or_insert(0);
+        let id = window_id_with_occurrence(&base_id, *occurrence);
+        *occurrence = occurrence.saturating_add(1);
         let name = if process_name.trim().is_empty() {
             title
         } else {
@@ -306,14 +306,24 @@ fn resolve_window(device: &str) -> Result<Window, BoxError> {
         return Ok(window);
     }
     let windows = Window::enumerate()?;
+    let mut window_occurrences = HashMap::new();
     windows
         .into_iter()
         .find(|window| {
             let title = window.title().unwrap_or_default();
             let process_name = window.process_name().unwrap_or_default();
-            window_id(&title, &process_name) == device
-                && window.width().is_ok_and(|width| width > 0)
-                && window.height().is_ok_and(|height| height > 0)
+            if title.trim().is_empty()
+                || !window.is_valid()
+                || !window.width().is_ok_and(|width| width > 0)
+                || !window.height().is_ok_and(|height| height > 0)
+            {
+                return false;
+            }
+            let base_id = window_id(&title, &process_name);
+            let occurrence = window_occurrences.entry(base_id.clone()).or_insert(0);
+            let candidate = window_id_with_occurrence(&base_id, *occurrence);
+            *occurrence = occurrence.saturating_add(1);
+            candidate == device
         })
         .ok_or_else(|| invalid("the selected window is no longer available"))
 }
@@ -531,6 +541,14 @@ fn window_id(title: &str, process_name: &str) -> String {
     format!("wgc-window-{:016x}", stable_hash(&key))
 }
 
+fn window_id_with_occurrence(base_id: &str, occurrence: usize) -> String {
+    if occurrence == 0 {
+        base_id.to_owned()
+    } else {
+        format!("{base_id}-{occurrence}")
+    }
+}
+
 fn monitor_id(device_name: &str) -> String {
     format!("wgc-screen-{:016x}", stable_hash(device_name))
 }
@@ -650,6 +668,16 @@ mod tests {
         assert_ne!(
             window_id("OBS-RS", "obs-rs.exe"),
             window_id("OBS-RS", "other.exe")
+        );
+    }
+
+    #[test]
+    fn duplicate_window_identities_are_disambiguated_without_changing_the_first_id() {
+        let base = window_id("OBS-RS", "obs-rs.exe");
+        assert_eq!(window_id_with_occurrence(&base, 0), base);
+        assert_ne!(
+            window_id_with_occurrence(&base, 0),
+            window_id_with_occurrence(&base, 1)
         );
     }
 }

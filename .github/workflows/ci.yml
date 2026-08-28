@@ -148,6 +148,7 @@ jobs:
             "obs-rs-capture-windows-helper.exe",
             "run-obs-rs.ps1",
             "verify-package.ps1",
+            "acceptance.ps1",
             "VERSION.txt",
             "SHA256SUMS.txt",
             "WINDOWS-README.md"
