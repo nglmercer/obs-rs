@@ -32,6 +32,8 @@ use obs_rs_audio::{
 #[cfg(target_os = "windows")]
 use obs_rs_audio_wasapi::WasapiAudioProvider;
 #[cfg(target_os = "windows")]
+use obs_rs_builtins::BuiltinPlugin;
+#[cfg(target_os = "windows")]
 use obs_rs_capture::{
     discover_nokhwa_camera_devices, CaptureError, CaptureKind, CaptureLifecycleState,
     CapturePermission, CaptureRequest, NokhwaCaptureDevice, PlatformCaptureAdapter,
@@ -51,6 +53,8 @@ use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 use obs_rs_output::OutputProfile;
 #[cfg(target_os = "windows")]
 use obs_rs_output::{MemoryMuxer, PacketKind, RleVideoEncoder};
+#[cfg(target_os = "windows")]
+use obs_rs_plugin_api::Plugin;
 #[cfg(target_os = "windows")]
 use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 
@@ -87,6 +91,7 @@ impl CheckResult {
 #[cfg(target_os = "windows")]
 fn main() -> ExitCode {
     let mut checks = vec![
+        ("builtin_capture_sources", check_builtin_capture_sources()),
         ("capture_helper", check_capture_helper()),
         ("discovery_stability", check_discovery_stability()),
         ("target_persistence", check_target_persistence()),
@@ -124,6 +129,58 @@ fn main() -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+#[cfg(target_os = "windows")]
+fn check_builtin_capture_sources() -> CheckResult {
+    let plugin = match BuiltinPlugin::new() {
+        Ok(plugin) => plugin,
+        Err(error) => return CheckResult::fail(format!("create built-in plugin: {error}")),
+    };
+    let mut kinds = plugin
+        .source_factories()
+        .iter()
+        .map(|factory| factory.kind().as_str())
+        .collect::<Vec<_>>();
+    kinds.sort_unstable();
+
+    let required = ["camera_capture", "screen_capture", "window_capture"];
+    let missing = required
+        .iter()
+        .filter(|kind| !kinds.contains(kind))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return CheckResult::fail(format!(
+            "Windows built-in plugin is missing capture source kinds: {}",
+            missing.join(",")
+        ));
+    }
+
+    let legacy = kinds
+        .iter()
+        .filter(|kind| {
+            matches!(
+                **kind,
+                "wayland_screen_capture"
+                    | "wayland_window_capture"
+                    | "x11_screen_capture"
+                    | "x11_window_capture"
+            )
+        })
+        .copied()
+        .collect::<Vec<_>>();
+    if !legacy.is_empty() {
+        return CheckResult::fail(format!(
+            "Windows built-in plugin registered Linux-only capture kinds: {}",
+            legacy.join(",")
+        ));
+    }
+
+    CheckResult::pass(format!(
+        "screen_capture=true window_capture=true camera_capture=true total_source_kinds={}",
+        kinds.len()
+    ))
 }
 
 #[cfg(target_os = "windows")]

@@ -71,7 +71,10 @@ packaging/windows/acceptance.ps1 -PackageDirectory <extracted-package> -RequireP
 The Windows check should be run with `OBSR_CAPTURE_HELPER` pointing at the
 release helper. Its output must be archived with the Windows build, including
 `pass`, `skip`, and `fail` results, rather than reduced to the process exit
-code.
+code. The first check also verifies that the packaged built-in plugin registers
+the canonical `screen_capture`, `window_capture`, and `camera_capture` kinds;
+this catches a mismatched/stale GUI package before a project can surface a
+misleading "source kind is not registered" error.
 
 On Windows, the source-properties display field belongs to the native
 `screen_capture` source and lists the WGC display IDs returned by the helper.
@@ -105,10 +108,10 @@ only scaffolded:
 - the built-in `media_source` is registered on every platform and reports an
   explicit unavailable capability without the optional native GStreamer
   feature; production builds use a bounded playbin/appsink video path;
-- the Windows check records immediate display/window discovery stability,
-  target-ID project round trips, and four-frame display runs at both 30 and
-  60 FPS; its audio stability check verifies endpoint identity/default-route
-  invariants;
+- the Windows check verifies canonical built-in capture-source registration,
+  immediate display/window discovery stability, target-ID project round trips,
+  and four-frame display runs at both 30 and 60 FPS; its audio stability check
+  verifies endpoint identity/default-route invariants;
 - native capture retries use media-time schedules, the helper publishes only
   its newest complete frame, bounded shutdown failures remain retryable, and
   live window IDs are tied to the owning PID/HWND rather than a mutable title;
