@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
 
 use std::{
     cmp::Ordering,

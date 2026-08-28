@@ -83,7 +83,10 @@ pub(super) fn wait_for_frame<F>(mut render: F) -> Result<VideoFrame, Box<dyn Err
 where
     F: FnMut() -> Result<Option<VideoFrame>, Box<dyn Error>>,
 {
-    for _ in 0..100 {
+    // Parallel GUI tests may initialize several WGPU adapters at once;
+    // keep the wait bounded while allowing a cold Windows renderer to
+    // finish startup under that contention.
+    for _ in 0..500 {
         if let Some(frame) = render()? {
             return Ok(frame);
         }

@@ -374,15 +374,19 @@ impl UpdateManager {
         let result = (|| {
             fs::create_dir(&temp_dir).map_err(|error| io_error("create staged update", &error))?;
             let artifact_path = temp_dir.join("artifact");
-            let mut file = OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&artifact_path)
-                .map_err(|error| io_error("create staged artifact", &error))?;
-            file.write_all(artifact)
-                .map_err(|error| io_error("write staged artifact", &error))?;
-            file.sync_all()
-                .map_err(|error| io_error("sync staged artifact", &error))?;
+            // The handle must be closed before the publish rename: Windows
+            // refuses to rename a directory that still has an open file in it.
+            {
+                let mut file = OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(&artifact_path)
+                    .map_err(|error| io_error("create staged artifact", &error))?;
+                file.write_all(artifact)
+                    .map_err(|error| io_error("write staged artifact", &error))?;
+                file.sync_all()
+                    .map_err(|error| io_error("sync staged artifact", &error))?;
+            }
             fs::rename(&temp_dir, &final_dir)
                 .map_err(|error| io_error("publish staged update", &error))?;
             Ok::<(), UpdateError>(())
@@ -443,17 +447,21 @@ impl UpdateManager {
 
 fn write_atomic_text(path: &Path, value: &str) -> Result<(), UpdateError> {
     let temp = path.with_extension("part");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&temp)
-        .map_err(|error| io_error("create pointer", &error))?;
-    file.write_all(value.as_bytes())
-        .and_then(|()| file.write_all(b"\n"))
-        .map_err(|error| io_error("write pointer", &error))?;
-    file.sync_all()
-        .map_err(|error| io_error("sync pointer", &error))?;
+    // The handle must be closed before the publish rename: Windows refuses to
+    // rename a file that is still open.
+    {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temp)
+            .map_err(|error| io_error("create pointer", &error))?;
+        file.write_all(value.as_bytes())
+            .and_then(|()| file.write_all(b"\n"))
+            .map_err(|error| io_error("write pointer", &error))?;
+        file.sync_all()
+            .map_err(|error| io_error("sync pointer", &error))?;
+    }
     fs::rename(temp, path).map_err(|error| io_error("publish pointer", &error))
 }
 

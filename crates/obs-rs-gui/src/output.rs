@@ -8,7 +8,10 @@ use std::{
 use obs_rs_audio::{
     AudioDeviceInfo, AudioFormat, AudioInputProvider, AudioMonitorMode, AudioOutputProvider,
 };
+#[cfg(not(target_os = "windows"))]
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
+#[cfg(target_os = "windows")]
+use obs_rs_audio_wasapi::WasapiAudioProvider;
 use obs_rs_engine::{
     output_capabilities_snapshot, EngineConfig, EngineSession, EngineWorker,
     OutputCapabilitiesSnapshot, OutputLifecycle, RemuxRecovery,
@@ -21,6 +24,11 @@ use obs_rs_output::{
 use obs_rs_project::Project;
 
 use crate::settings::{REPLAY_BUFFER_CAPACITY_MIB_DEFAULT, REPLAY_BUFFER_DURATION_DEFAULT};
+
+#[cfg(target_os = "windows")]
+const AUDIO_BACKEND_LABEL: &str = "WASAPI";
+#[cfg(not(target_os = "windows"))]
+const AUDIO_BACKEND_LABEL: &str = "PipeWire";
 
 mod audio;
 mod recording;
@@ -62,12 +70,13 @@ pub(crate) struct MultiviewTelemetry {
 /// GUI-owned handle over the portable engine output boundary.
 pub(crate) struct OutputRuntime {
     worker: EngineWorker,
-    audio_provider: Arc<PipeWireAudioProvider>,
+    audio_provider: Arc<dyn AudioInputProvider>,
     audio_format: AudioFormat,
     format: VideoFormat,
     last_revision: u64,
     format_drops: u64,
     audio_input_id: Option<String>,
+    desktop_audio_id: Option<String>,
     monitor_output_id: Option<String>,
     audio_devices_cache: Option<(Instant, Vec<AudioDeviceInfo>)>,
     recording_started_at: Option<Instant>,
@@ -165,6 +174,7 @@ impl OutputRuntime {
             audio_input_sync_offset_millis,
             desktop_audio_sync_offset_millis,
             None,
+            None,
             AudioMonitorMode::Off,
             AudioMonitorMode::Off,
         )
@@ -181,10 +191,14 @@ impl OutputRuntime {
         audio_input_id: Option<&str>,
         audio_input_sync_offset_millis: u32,
         desktop_audio_sync_offset_millis: u32,
+        desktop_audio_id: Option<&str>,
         monitor_output_id: Option<&str>,
         microphone_monitor_mode: AudioMonitorMode,
         desktop_monitor_mode: AudioMonitorMode,
     ) -> Result<Self, Box<dyn Error>> {
+        #[cfg(target_os = "windows")]
+        let audio_provider = Arc::new(WasapiAudioProvider::new());
+        #[cfg(not(target_os = "windows"))]
         let audio_provider = Arc::new(PipeWireAudioProvider::new());
         let provider_for_engine: Arc<dyn AudioInputProvider> = audio_provider.clone();
         let output_provider_for_engine: Arc<dyn AudioOutputProvider> = audio_provider.clone();
@@ -198,6 +212,9 @@ impl OutputRuntime {
         if let Some(audio_input_id) = audio_input_id {
             config = config.with_audio_input_id(audio_input_id);
         }
+        if let Some(desktop_audio_id) = desktop_audio_id {
+            config = config.with_desktop_audio_id(desktop_audio_id);
+        }
         if let Some(monitor_output_id) = monitor_output_id {
             config = config.with_monitor_output_id(monitor_output_id);
         }
@@ -210,6 +227,10 @@ impl OutputRuntime {
             last_revision: 0,
             format_drops: 0,
             audio_input_id: audio_input_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            desktop_audio_id: desktop_audio_id
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned),

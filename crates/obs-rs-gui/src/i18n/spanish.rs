@@ -231,6 +231,8 @@ pub(super) fn catalog() -> UiText {
             sample_rate: s("Frecuencia de muestreo"),
             channels: s("Canales"),
             audio_input_device: s("Micrófono / entrada"),
+            desktop_audio_device: s("Audio del escritorio / salida"),
+            desktop_audio_auto: s("Automático (salida predeterminada del sistema)"),
             audio_monitor_output: s("Salida de monitorización"),
             audio_monitor_output_disabled: s("Desactivada"),
             audio_monitor_output_missing_hint: s(
@@ -253,6 +255,9 @@ pub(super) fn catalog() -> UiText {
             audio_input_missing: s("(no conectada)"),
             audio_input_missing_hint: s(
                 "La entrada seleccionada no está en el grafo de audio ahora mismo. Sigue seleccionada y se usará en cuanto reaparezca; mientras tanto funciona el respaldo determinista.",
+            ),
+            desktop_audio_missing_hint: s(
+                "La salida seleccionada para el audio del escritorio no está disponible ahora. Se conserva y el bucle de retorno se reintentará cuando vuelva.",
             ),
             refresh_devices: s("Actualizar dispositivos"),
             channels_stereo: s("Estéreo"),

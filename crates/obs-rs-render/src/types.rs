@@ -32,6 +32,10 @@ pub enum RenderTargetRole {
     Projector,
     /// One bounded tile in the multiview compositor.
     MultiviewTile,
+    /// The source scene input of a transition compositor.
+    TransitionSource,
+    /// The destination scene input of a transition compositor.
+    TransitionDestination,
     /// A target whose pixels are being converted for an encoder.
     Encoder,
 }

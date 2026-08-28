@@ -40,9 +40,11 @@ pub(super) fn install_commit(
         // The picker's current choice, not the committed one, is what the user
         // is in the middle of making, so it is what survives the rebuild.
         let draft = draft_audio_input_id(&refresh_controller);
+        let draft_desktop_audio = draft_desktop_audio_id(&refresh_controller);
         let draft_monitor_output = draft_audio_monitor_output_id(&refresh_controller);
         let settings = AppSettings {
             audio_input_id: draft,
+            desktop_audio_id: draft_desktop_audio,
             audio_monitor_output_id: draft_monitor_output,
             microphone_monitor_mode: draft_monitor_mode(
                 refresh_controller
@@ -370,6 +372,15 @@ pub(super) fn read_draft(controller: &SettingsController) -> AppSettings {
         device_id.clone_into(&mut settings.audio_input_id);
     } else {
         settings.audio_input_id.clear();
+    }
+    if let Some(device_id) = controller
+        .audio_desktop_device_ids
+        .borrow()
+        .get(usize::try_from(window.get_desktop_audio_device_index()).unwrap_or(0))
+    {
+        device_id.clone_into(&mut settings.desktop_audio_id);
+    } else {
+        settings.desktop_audio_id.clear();
     }
     if let Some(device_id) = controller
         .audio_monitor_output_ids
@@ -761,6 +772,11 @@ pub(crate) fn apply_settings_snapshot(
     ) {
         notes.push(format!("audio input: {error}"));
     }
+    if let Err(error) = output.borrow_mut().set_desktop_audio_id(
+        (!settings.desktop_audio_id.is_empty()).then_some(settings.desktop_audio_id.as_str()),
+    ) {
+        notes.push(format!("desktop audio: {error}"));
+    }
     if let Err(error) = output.borrow_mut().set_channel_sync_offset_millis(
         crate::MIC_CHANNEL_ID,
         settings.audio_input_sync_offset_millis,
@@ -808,6 +824,12 @@ pub(crate) fn apply_settings_snapshot(
         notes.push(format!(
             "monitor output {} is not connected; monitoring will retry when it returns",
             settings.audio_monitor_output_id
+        ));
+    }
+    if !output.borrow_mut().desktop_audio_available() {
+        notes.push(format!(
+            "desktop audio output {} is not connected; loopback will retry when it returns",
+            settings.desktop_audio_id
         ));
     }
     // The mixer row names the device it is capturing, so the fader and meter

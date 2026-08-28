@@ -1,4 +1,5 @@
 use super::*;
+use obs_rs_config::Config;
 
 /// Verifies the slideshow properties path uses the directory-capable picker
 /// boundary and still commits the selected directory through the local draft.
@@ -76,9 +77,13 @@ pub(super) fn exercise_slideshow_directory_picker(
         "paths".into(),
         selected.to_string_lossy().into_owned().into(),
     );
-    assert!(window
-        .get_source_settings()
-        .contains(selected.to_string_lossy().as_ref()));
+    let edited_settings = Config::parse(&window.get_source_settings())
+        .expect("edited slideshow settings should remain valid");
+    assert_eq!(
+        edited_settings.get("paths"),
+        Some(selected.to_string_lossy().as_ref()),
+        "the path comparison must use decoded config values on Windows"
+    );
     window.invoke_accept_properties();
 
     let state_ref = state.borrow();

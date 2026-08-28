@@ -504,6 +504,7 @@ fn make_executable(path: &Path) -> Result<(), SandboxError> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn make_executable(_path: &Path) -> Result<(), SandboxError> {
     Ok(())
 }

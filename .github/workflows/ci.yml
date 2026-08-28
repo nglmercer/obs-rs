@@ -3,6 +3,7 @@ name: obs-rs quality
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,6 +30,29 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Audit native-language and unsafe boundaries
+        shell: pwsh
+        run: |
+          $nativeExtensions = @("c", "h", "cc", "cpp", "cxx", "hh", "hpp", "m", "mm", "cmake")
+          $nativeFiles = @(rg --files --hidden -g '!.git/**' -g '!target/**' | Where-Object {
+            $extension = [System.IO.Path]::GetExtension($_).TrimStart('.').ToLowerInvariant()
+            $nativeExtensions -contains $extension
+          })
+          if ($nativeFiles.Count -gt 0) {
+            $nativeFiles
+            throw "native source files are not allowed"
+          }
+          $markers = @(rg -n --hidden --glob '!.git/**' --glob '!target/**' --glob '!.github/**' --glob '!Cargo.lock' --glob '!*.md' '(extern "|no_mangle|repr\(C\)|cbindgen|bindgen|build\.rs|cc -|foreign-function)' .)
+          if ($markers.Count -gt 0) {
+            $markers
+            throw "native or FFI markers are not allowed"
+          }
+          $unsafe = @(rg -n --hidden --glob '!.git/**' --glob '!target/**' --glob '*.rs' '\bunsafe\s*(\{|fn\b|trait\b|impl\b|extern\b)' crates)
+          if ($unsafe.Count -gt 0) {
+            $unsafe
+            throw "unsafe Rust is not allowed in the workspace"
+          }
+
       - name: Check workspace
         run: cargo check --workspace --all-targets --all-features
 
@@ -43,3 +67,97 @@ jobs:
 
       - name: Build release artifacts
         run: cargo build --workspace --release
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets
+
+      - name: Run the Slint GUI wiring smoke test
+        run: cargo run -p obs-rs-gui -- --smoke
+
+      - name: Build the Windows capture helper
+        run: cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --release
+
+      - name: Test the Windows capture helper
+        run: cargo test --manifest-path packaging/windows/capture-helper/Cargo.toml
+
+      - name: Check capture helper formatting
+        run: cargo fmt --manifest-path packaging/windows/capture-helper/Cargo.toml -- --check
+
+      - name: Run capture helper Clippy
+        run: cargo clippy --manifest-path packaging/windows/capture-helper/Cargo.toml -- -D warnings
+
+      - name: Run the Windows capability check
+        shell: pwsh
+        env:
+          OBSR_CAPTURE_HELPER: ${{ github.workspace }}\packaging\windows\capture-helper\target\release\obs-rs-capture-windows-helper.exe
+        run: cargo run -p obs-rs-app --bin obs-rs-windows-check
+
+      - name: Run the headless Windows app smoke test
+        run: cargo run -p obs-rs-app
+
+      - name: Build and verify the Windows release bundle
+        shell: pwsh
+        run: |
+          $dist = Join-Path $env:RUNNER_TEMP "obs-rs-windows-dist"
+          .\packaging\windows\package.ps1 -Configuration release -OutputDirectory $dist
+          $archive = Get-ChildItem -LiteralPath $dist -Filter "obs-rs-windows-*-x86_64.zip" -File
+          if ($archive.Count -ne 1) {
+            throw "expected one versioned Windows archive"
+          }
+          $checksum = "$($archive.FullName).sha256"
+          if (-not (Test-Path -LiteralPath $checksum)) {
+            throw "archive checksum is missing"
+          }
+          if ($archive.Length -le 0) {
+            throw "Windows archive is empty"
+          }
+          $expectedHash = ((Get-Content -LiteralPath $checksum -Raw).Trim() -split "\s+")[0].ToLowerInvariant()
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive.FullName).Hash.ToLowerInvariant()
+          if ($expectedHash -ne $actualHash) {
+            throw "Windows archive checksum does not match"
+          }
+          $expanded = Join-Path $env:RUNNER_TEMP "obs-rs-windows-expanded"
+          if (Test-Path -LiteralPath $expanded) {
+            Remove-Item -LiteralPath $expanded -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $expanded
+          foreach ($requiredFile in @(
+            "obs-rs-gui.exe",
+            "obs-rs.exe",
+            "obs-rs-windows-check.exe",
+            "obs-rs-capture-windows-helper.exe",
+            "VERSION.txt",
+            "SHA256SUMS.txt",
+            "WINDOWS-README.md"
+          )) {
+            if ($null -eq (Get-ChildItem -LiteralPath $expanded -Recurse -Filter $requiredFile -File)) {
+              throw "Windows archive is missing $requiredFile"
+            }
+          }
+
+      - name: Upload the Windows release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-rs-windows
+          path: ${{ runner.temp }}/obs-rs-windows-dist/*
+          if-no-files-found: error

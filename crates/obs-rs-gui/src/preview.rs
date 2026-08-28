@@ -115,6 +115,10 @@ pub(crate) struct RuntimeDiagnostics {
     pub(crate) metrics: CompositorMetrics,
     pub(crate) usage: RuntimeUsage,
     pub(crate) limits: RuntimeLimits,
+    /// GPU adapter selected by the compositor, or the CPU fallback label.
+    pub(crate) gpu_adapter: String,
+    /// WGPU backend name, or the CPU fallback reason.
+    pub(crate) gpu_backend: String,
     /// One line per source that is currently failing.
     pub(crate) failures: Vec<String>,
     /// Persisted filters unavailable in the preview runtime.

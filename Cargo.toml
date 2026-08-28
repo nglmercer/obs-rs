@@ -2,6 +2,7 @@
 members = [
     "crates/obs-rs-app",
     "crates/obs-rs-audio",
+    "crates/obs-rs-audio-wasapi",
     "crates/obs-rs-builtins",
     "crates/obs-rs-capture",
     "crates/obs-rs-capture-macos",

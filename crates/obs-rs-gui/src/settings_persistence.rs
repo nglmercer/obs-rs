@@ -14,6 +14,8 @@ use super::{
 
 use std::path::{Path, PathBuf};
 
+use obs_rs_util::replace_file;
+
 impl AppSettings {
     #[cfg(test)]
     pub(crate) fn stream_endpoint(&self) -> Option<String> {
@@ -90,7 +92,7 @@ impl AppSettings {
         }
         let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
         std::fs::write(&temporary, self.to_config().serialize())?;
-        if let Err(error) = std::fs::rename(&temporary, path) {
+        if let Err(error) = replace_file(&temporary, path) {
             let _ = std::fs::remove_file(&temporary);
             return Err(error);
         }
@@ -363,6 +365,7 @@ impl AppSettings {
             rist,
             reference_address: text(config, "reference_address", &defaults.reference_address),
             audio_input_id: text(config, "audio_input_id", &defaults.audio_input_id),
+            desktop_audio_id: text(config, "desktop_audio_id", &defaults.desktop_audio_id),
             audio_monitor_output_id: text(
                 config,
                 "audio_monitor_output_id",
@@ -571,6 +574,7 @@ impl AppSettings {
             ("recording_format", self.recording_format.id().to_owned()),
             ("recording_codec", self.recording_codec.id().to_owned()),
             ("audio_input_id", self.audio_input_id.clone()),
+            ("desktop_audio_id", self.desktop_audio_id.clone()),
             (
                 "audio_monitor_output_id",
                 self.audio_monitor_output_id.clone(),
@@ -808,11 +812,21 @@ fn video_from_config(config: &Config, defaults: VideoSettings) -> VideoSettings 
 /// shell fragment, not a config document — so the home directory's `Videos`
 /// folder is used when it already exists and the per-user directory otherwise.
 pub(super) fn default_recording_directory() -> String {
+    #[cfg(target_os = "windows")]
+    let videos = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|home| home.join("Videos"))
+        .filter(|path| path.is_dir());
+    #[cfg(not(target_os = "windows"))]
     let videos = std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| home.join("Videos"))
         .filter(|path| path.is_dir());
-    videos.or_else(user_directory).map_or_else(
+    #[cfg(target_os = "windows")]
+    let fallback = || user_directory().map(|path| path.join("recordings"));
+    #[cfg(not(target_os = "windows"))]
+    let fallback = user_directory;
+    videos.or_else(fallback).map_or_else(
         || ".".to_owned(),
         |path| path.to_string_lossy().into_owned(),
     )

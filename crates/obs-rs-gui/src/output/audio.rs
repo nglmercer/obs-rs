@@ -3,9 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use obs_rs_audio::{
-    AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInputProvider, AudioMonitorMode,
-};
+use obs_rs_audio::{AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioMonitorMode};
 use obs_rs_media::VideoFrame;
 
 use super::{AudioInputEntry, AudioOutputEntry, OutputRuntime};
@@ -63,6 +61,20 @@ impl OutputRuntime {
     ) -> Result<(), Box<dyn Error>> {
         self.worker.set_audio_input_id(device_id)?;
         self.audio_input_id = device_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        Ok(())
+    }
+
+    /// Requests a live desktop-loopback render-device switch on the output
+    /// worker.
+    pub(crate) fn set_desktop_audio_id(
+        &mut self,
+        device_id: Option<&str>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.worker.set_desktop_audio_id(device_id)?;
+        self.desktop_audio_id = device_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
@@ -175,7 +187,10 @@ impl OutputRuntime {
     pub(crate) fn audio_devices_summary(&mut self) -> String {
         match self.discover_audio_devices() {
             Ok(devices) if devices.is_empty() => {
-                "PipeWire: no audio devices; deterministic fallback available".to_owned()
+                format!(
+                    "{}: no audio devices; deterministic fallback available",
+                    super::AUDIO_BACKEND_LABEL
+                )
             }
             Ok(devices) => devices
                 .iter()
@@ -198,12 +213,15 @@ impl OutputRuntime {
                 .collect::<Vec<_>>()
                 .join(" · "),
             Err(error) => {
-                format!("PipeWire unavailable: {error}; deterministic fallback available")
+                format!(
+                    "{} unavailable: {error}; deterministic fallback available",
+                    super::AUDIO_BACKEND_LABEL
+                )
             }
         }
     }
 
-    /// Returns discoverable `PipeWire` input devices as `(stable_id, label)`.
+    /// Returns discoverable platform input devices as `(stable_id, label)`.
     ///
     /// Discovery is cached briefly because opening Settings should not invoke
     /// `pw-dump` repeatedly while the user moves between fields.
@@ -216,7 +234,7 @@ impl OutputRuntime {
             .collect()
     }
 
-    /// Returns discoverable `PipeWire` output devices as `(stable_id, label)`.
+    /// Returns discoverable render devices as `(stable_id, label)`.
     pub(crate) fn audio_output_devices(&mut self) -> Vec<(String, String)> {
         self.discover_audio_devices()
             .unwrap_or_default()
@@ -288,7 +306,18 @@ impl OutputRuntime {
             .any(|(id, _)| *id == selected)
     }
 
-    /// Discards the discovery cache so the next read re-runs `pw-dump`.
+    /// Returns whether the selected desktop-loopback render device is
+    /// currently discoverable.
+    pub(crate) fn desktop_audio_available(&mut self) -> bool {
+        let Some(selected) = self.desktop_audio_id.clone() else {
+            return true;
+        };
+        self.audio_output_devices()
+            .iter()
+            .any(|(id, _)| *id == selected)
+    }
+
+    /// Discards the discovery cache so the next read re-queries the platform.
     ///
     /// This is what makes a hot-plug visible without waiting for the cache to
     /// expire, and it is why the refresh action is explicit rather than a poll.

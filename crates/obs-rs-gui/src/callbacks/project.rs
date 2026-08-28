@@ -12,7 +12,12 @@ use obs_rs_ui::{DesktopState, UiCommand};
 use slint::{ComponentHandle, Weak};
 
 use super::output::{scene_transition_spec, SceneTransitionInput};
-use crate::{refresh_ui, source_settings_for_canvas, MainWindow, OutputRuntime, PreviewSurface};
+use crate::{
+    refresh_ui, source_settings_for_canvas, MainWindow, OutputRuntime, PreviewSurface,
+    RuntimeDiagnostics,
+};
+#[cfg(target_os = "windows")]
+use obs_rs_capture_windows::WindowsCaptureAdapter;
 
 #[cfg(test)]
 #[path = "project_tests.rs"]
@@ -557,6 +562,7 @@ fn export_diagnostics(
                 diagnostics.filter_diagnostics.join("\n")
             },
         )?;
+        bundle.insert_text("platform", &platform_diagnostics(&diagnostics))?;
         bundle.insert_text("output", &output.borrow_mut().diagnostics_document())?;
         let mut writer = AtomicDiagnosticFileWriter::new(final_path, temp_path)?;
         Ok(writer.finalize(&bundle)?)
@@ -565,6 +571,49 @@ fn export_diagnostics(
         Ok(bytes) => ui.set_status_message(format!("Diagnostics exported: {bytes} bytes").into()),
         Err(error) => ui.set_status_message(format!("Diagnostics failed: {error}").into()),
     }
+}
+
+fn platform_diagnostics(diagnostics: &RuntimeDiagnostics) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        let windows_version = std::process::Command::new("cmd")
+            .args(["/C", "ver"])
+            .output()
+            .ok()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Windows version unavailable".to_owned());
+        let helper_version = WindowsCaptureAdapter::default()
+            .helper_version()
+            .unwrap_or_else(|error| format!("unavailable: {error}"));
+        format!(
+            "os={}\ngpu_adapter={}\ngpu_backend={}\ncapture_helper_version={}",
+            bounded_diagnostic_field(&windows_version),
+            bounded_diagnostic_field(&diagnostics.gpu_adapter),
+            bounded_diagnostic_field(&diagnostics.gpu_backend),
+            bounded_diagnostic_field(&helper_version),
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        format!(
+            "os={}\ngpu_adapter={}\ngpu_backend={}",
+            std::env::consts::OS,
+            bounded_diagnostic_field(&diagnostics.gpu_adapter),
+            bounded_diagnostic_field(&diagnostics.gpu_backend),
+        )
+    }
+}
+
+fn bounded_diagnostic_field(value: &str) -> String {
+    value
+        .chars()
+        .take(256)
+        .map(|character| match character {
+            '\r' | '\n' | '\t' => ' ',
+            other => other,
+        })
+        .collect()
 }
 
 fn add_scene_and_refresh(

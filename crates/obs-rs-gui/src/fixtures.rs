@@ -7,6 +7,8 @@ use std::{
 
 use obs_rs_builtins::BuiltinPlugin;
 use obs_rs_capture::{CameraMode, CaptureDeviceInfo, CaptureKind};
+#[cfg(target_os = "windows")]
+use obs_rs_capture_windows::WindowsCaptureAdapter;
 use obs_rs_config::Config;
 use obs_rs_media::{FrameRate, VideoFormat};
 use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
@@ -154,7 +156,13 @@ pub(crate) fn source_settings_for_canvas(
     let kind = kind.trim();
     if matches!(kind, "screen_capture" | "window_capture" | "camera_capture") {
         let fallback = match kind {
+            #[cfg(target_os = "windows")]
+            "screen_capture" => "wgc-screen-picker",
+            #[cfg(not(target_os = "windows"))]
             "screen_capture" => "screen-0",
+            #[cfg(target_os = "windows")]
+            "window_capture" => "wgc-window-picker",
+            #[cfg(not(target_os = "windows"))]
             "window_capture" => "window-0",
             // Keep an unplugged camera source addressable without inventing a
             // second camera backend. The runtime reports this Nokhwa ID as
@@ -208,7 +216,12 @@ pub(crate) fn source_settings_for_canvas(
 }
 
 /// Source kinds whose frames come from one selectable display.
+#[cfg(target_os = "linux")]
 pub(crate) const MONITOR_SOURCE_KINDS: [&str; 2] = ["x11_screen_capture", "wayland_screen_capture"];
+#[cfg(target_os = "windows")]
+pub(crate) const MONITOR_SOURCE_KINDS: [&str; 1] = ["screen_capture"];
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub(crate) const MONITOR_SOURCE_KINDS: [&str; 0] = [];
 
 /// Returns whether `kind` reads a display the user can choose.
 pub(crate) fn kind_selects_monitor(kind: &str) -> bool {
@@ -219,6 +232,7 @@ pub(crate) fn kind_selects_monitor(kind: &str) -> bool {
 ///
 /// On Wayland the compositor owns the picker, so OBS-RS asks the portal
 /// instead of drawing a monitor list it has no way to enumerate.
+#[cfg(target_os = "linux")]
 pub(crate) fn kind_uses_portal(kind: &str) -> bool {
     kind.trim() == "wayland_screen_capture"
 }
@@ -236,6 +250,10 @@ pub(crate) fn kind_runs_in_this_session(kind: &str) -> bool {
         // see Xwayland's own surfaces, so both are hidden rather than offered
         // as sources that would render a black frame.
         "x11_screen_capture" | "x11_window_capture" => !wayland_session(),
+        #[cfg(target_os = "windows")]
+        "screen_capture" => !platform_devices_for_kind(CaptureKind::Screen).is_empty(),
+        #[cfg(target_os = "windows")]
+        "window_capture" => !platform_devices_for_kind(CaptureKind::Window).is_empty(),
         _ => true,
     }
 }
@@ -349,16 +367,35 @@ pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
 
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
-    Vec::new()
+    #[cfg(target_os = "windows")]
+    {
+        WindowsCaptureAdapter::default()
+            .discover_displays()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|display| MonitorChoice {
+                id: display.id,
+                name: display.name,
+                x: display.x,
+                y: display.y,
+                width: display.width,
+                height: display.height,
+                primary: display.primary,
+            })
+            .collect()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
 }
 
 /// Returns the devices that a source-properties editor can select.
 ///
-/// The returned list matches the backend behind the source kind. The generic
-/// portable screen/window sources expose deterministic fallback devices; the
-/// camera source and Linux X11 sources expose only their native adapters. This
-/// prevents a device from appearing selectable in a factory where it would
-/// silently have no effect.
+/// The returned list matches the backend behind the source kind. Native
+/// Windows screen/window and camera sources expose only descriptors returned by
+/// their real adapters; no picker entry is synthesized when the backend is
+/// missing or unavailable.
 pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let kind = kind.trim();
     let wanted = match kind {
@@ -370,7 +407,18 @@ pub(crate) fn capture_devices(kind: &str) -> Vec<(String, String)> {
     let Ok(plugin) = BuiltinPlugin::new() else {
         return Vec::new();
     };
-    let mut devices = if kind == "camera_capture"
+    let native_generic = {
+        #[cfg(target_os = "windows")]
+        {
+            matches!(kind, "screen_capture" | "window_capture")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+    };
+    let mut devices = if native_generic
+        || kind == "camera_capture"
         || matches!(kind, "x11_screen_capture" | "x11_window_capture")
     {
         platform_devices_for_kind(wanted)

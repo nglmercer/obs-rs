@@ -520,6 +520,7 @@ fn exercise_monitor_keyboard_boundary(ui: &MainWindow, window: &crate::MonitorWi
     });
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(super) fn exercise_monitor_selection(
     ui: &MainWindow,
     state: &Rc<RefCell<DesktopState>>,
@@ -530,12 +531,22 @@ pub(super) fn exercise_monitor_selection(
         .preview_scene()
         .expect("preview scene")
         .to_owned();
-    let mut settings = source_settings("x11_screen_capture").expect("x11 defaults");
-    settings
-        .set("monitor", "DP-1")
-        .expect("monitor draft fixture");
-    let source = SourceSpec::new("gui-screen", "x11_screen_capture", "GUI screen", settings)
-        .expect("screen source");
+    let kind = if cfg!(target_os = "windows") {
+        "screen_capture"
+    } else {
+        "x11_screen_capture"
+    };
+    let settings = source_settings(kind).expect("screen defaults");
+    #[cfg(target_os = "linux")]
+    let settings = {
+        let mut settings = settings;
+        settings
+            .set("monitor", "DP-1")
+            .expect("monitor draft fixture");
+        settings
+    };
+    let source =
+        SourceSpec::new("gui-screen", kind, "GUI screen", settings).expect("screen source");
     state
         .borrow_mut()
         .dispatch(UiCommand::Project(ProjectCommand::AddSource {
@@ -553,7 +564,7 @@ pub(super) fn exercise_monitor_selection(
     refresh_ui(ui, state, surface);
     assert!(
         ui.get_selected_source_is_screen(),
-        "an X11 screen source must offer the display picker"
+        "a screen source must offer the display picker"
     );
 
     let controller = crate::install_monitor_window(ui, state, surface).expect("monitor controller");

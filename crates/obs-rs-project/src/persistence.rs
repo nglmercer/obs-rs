@@ -1,4 +1,5 @@
 use super::{error::ProjectError, model::Project, session::ProjectSession};
+use obs_rs_util::replace_file;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -82,7 +83,7 @@ impl ProjectFileStore {
                 operation: "sync project temporary file",
                 message: error.to_string(),
             })?;
-            fs::rename(&self.temp_path, &self.final_path).map_err(|error| ProjectError::Io {
+            replace_file(&self.temp_path, &self.final_path).map_err(|error| ProjectError::Io {
                 operation: "rename project file",
                 message: error.to_string(),
             })?;

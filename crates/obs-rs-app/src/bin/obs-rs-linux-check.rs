@@ -3,28 +3,44 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
+use std::process::ExitCode;
+#[cfg(target_os = "linux")]
 use std::{
     env,
     error::Error,
-    process::ExitCode,
     time::{Duration, Instant, SystemTime},
 };
 
+#[cfg(target_os = "linux")]
 use obs_rs_audio::{AudioDeviceKind, AudioFormat, AudioInputProvider};
+#[cfg(target_os = "linux")]
 use obs_rs_audio_pipewire::PipeWireAudioProvider;
+#[cfg(target_os = "linux")]
 use obs_rs_capture::{
     discover_nokhwa_cameras, x11_windows, CaptureError, NokhwaCaptureDevice, VideoCaptureDevice,
     X11CaptureDevice,
 };
+#[cfg(target_os = "linux")]
 use obs_rs_engine::{EngineConfig, EngineSession};
+#[cfg(target_os = "linux")]
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
+#[cfg(target_os = "linux")]
 use obs_rs_output::{MemoryMuxer, PacketKind};
 
+/// Non-Linux hosts have no X11/PipeWire vertical slice to probe.
+#[cfg(not(target_os = "linux"))]
+fn main() -> ExitCode {
+    println!("check=platform status=skip detail=obs-rs-linux-check requires Linux/X11");
+    ExitCode::SUCCESS
+}
+
+#[cfg(target_os = "linux")]
 struct CheckResult {
     status: &'static str,
     detail: String,
 }
 
+#[cfg(target_os = "linux")]
 impl CheckResult {
     const fn pass(detail: String) -> Self {
         Self {
@@ -48,6 +64,7 @@ impl CheckResult {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn main() -> ExitCode {
     let checks = [
         ("x11", check_x11()),
@@ -72,6 +89,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn check_x11() -> CheckResult {
     let Ok(display) = env::var("DISPLAY") else {
         return CheckResult::skip("DISPLAY is not set".to_owned());
@@ -113,6 +131,7 @@ fn check_x11() -> CheckResult {
 ///
 /// A session with no window manager reports no windows, which is a skip rather
 /// than a failure: window capture is unavailable, not broken.
+#[cfg(target_os = "linux")]
 fn check_x11_window() -> CheckResult {
     let Ok(display) = env::var("DISPLAY") else {
         return CheckResult::skip("DISPLAY is not set".to_owned());
@@ -182,6 +201,7 @@ fn check_x11_window() -> CheckResult {
 ///
 /// A host with no camera skips: a missing camera is a capability this machine
 /// lacks, not a defect in the adapter.
+#[cfg(target_os = "linux")]
 fn check_camera() -> CheckResult {
     let cameras = match discover_nokhwa_cameras() {
         Ok(cameras) => cameras,
@@ -233,6 +253,7 @@ fn check_camera() -> CheckResult {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn check_pipewire() -> CheckResult {
     let provider = PipeWireAudioProvider::new();
     let devices = match provider.discover() {
@@ -271,6 +292,7 @@ fn check_pipewire() -> CheckResult {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[allow(clippy::too_many_lines)] // The lifecycle is kept linear so cleanup/invariants stay visible.
 fn check_av_soak() -> CheckResult {
     let format = match VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("valid rate")) {
@@ -382,6 +404,7 @@ fn check_av_soak() -> CheckResult {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn resident_kib() -> Option<u64> {
     std::fs::read_to_string("/proc/self/status")
         .ok()?

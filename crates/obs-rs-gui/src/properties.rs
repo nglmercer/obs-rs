@@ -209,7 +209,11 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
             &RANDOMIZE,
         ],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
-        "screen_capture" | "window_capture" => vec![&DEVICE],
+        #[cfg(target_os = "windows")]
+        "screen_capture" => vec![&MONITOR, &DEVICE],
+        #[cfg(not(target_os = "windows"))]
+        "screen_capture" => vec![&DEVICE],
+        "window_capture" => vec![&DEVICE],
         "camera_capture" => {
             let mut camera_fields = vec![&DEVICE];
             if !camera_modes.is_empty() {

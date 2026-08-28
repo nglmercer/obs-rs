@@ -461,10 +461,13 @@ impl PreviewRenderer {
 
     /// Returns the engine snapshot the studio window shows.
     pub(crate) fn diagnostics(&self) -> RuntimeDiagnostics {
+        let (gpu_adapter, gpu_backend) = self.compositor.diagnostics();
         RuntimeDiagnostics {
             metrics: self.runtime.compositor_metrics(),
             usage: self.runtime.usage(),
             limits: self.runtime.limits(),
+            gpu_adapter,
+            gpu_backend,
             failures: self
                 .runtime
                 .source_failures()

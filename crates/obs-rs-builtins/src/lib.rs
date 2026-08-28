@@ -6,6 +6,8 @@
 use std::sync::Arc;
 
 use obs_rs_capture::CaptureKind;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use obs_rs_capture::PlatformCaptureAdapter;
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 use obs_rs_capture::PlatformCaptureProvider;
 #[cfg(target_os = "linux")]
@@ -19,6 +21,8 @@ mod portable;
 mod text;
 #[cfg(target_os = "linux")]
 mod wayland;
+#[cfg(target_os = "windows")]
+mod windows;
 #[cfg(target_os = "linux")]
 mod x11;
 
@@ -100,7 +104,7 @@ impl BuiltinPlugin {
                     .into_iter()
                     .map(obs_rs_capture::CameraDevice::into_info),
             );
-            return Ok(devices);
+            Ok(devices)
         }
         #[cfg(target_os = "windows")]
         {
@@ -115,7 +119,7 @@ impl BuiltinPlugin {
                     .into_iter()
                     .map(obs_rs_capture::CameraDevice::into_info),
             );
-            return Ok(devices);
+            Ok(devices)
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         PlatformCaptureProvider::new().discover()

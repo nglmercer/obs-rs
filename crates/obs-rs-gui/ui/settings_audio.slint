@@ -29,6 +29,8 @@ export component AudioPage inherits VerticalLayout {
     in property <int> channel-index;
     in property <[string]> audio-device-names;
     in-out property <int> audio-device-index;
+    in property <[string]> desktop-audio-device-names;
+    in-out property <int> desktop-audio-device-index;
     in property <[string]> audio-monitor-output-names;
     in-out property <int> audio-monitor-output-index;
     in property <[string]> microphone-monitor-mode-names;
@@ -40,11 +42,14 @@ export component AudioPage inherits VerticalLayout {
     in property <string> devices-summary;
     // True when the selected input is not currently in the audio graph.
     in property <bool> audio-input-missing;
+    // True when a selected desktop-loopback render device is not present.
+    in property <bool> desktop-audio-missing;
     // True when a selected monitor sink is not currently in the audio graph.
     in property <bool> audio-monitor-output-missing;
     callback select-sample-rate(int);
     callback select-channels(int);
     callback select-audio-device(int);
+    callback select-desktop-audio-device(int);
     callback select-audio-monitor-output(int);
     callback select-microphone-monitor-mode(int);
     callback select-desktop-monitor-mode(int);
@@ -87,6 +92,15 @@ export component AudioPage inherits VerticalLayout {
             }
         }
         SettingRow {
+            label: I18n.text.settings_ui.desktop_audio_device;
+            SettingsCombo {
+                model: root.desktop-audio-device-names;
+                current-index: root.desktop-audio-device-index;
+                accessible-label: I18n.text.settings_ui.desktop_audio_device;
+                selected(value) => { root.select-desktop-audio-device(self.current-index); }
+            }
+        }
+        SettingRow {
             label: I18n.text.settings_ui.audio_monitor_output;
             SettingsCombo {
                 model: root.audio-monitor-output-names;
@@ -99,6 +113,9 @@ export component AudioPage inherits VerticalLayout {
         // is not permanently carrying a warning it does not need.
         if root.audio-input-missing : SettingHint {
             text: I18n.text.settings_ui.audio_input_missing_hint;
+        }
+        if root.desktop-audio-missing : SettingHint {
+            text: I18n.text.settings_ui.desktop_audio_missing_hint;
         }
         if root.audio-monitor-output-missing : SettingHint {
             text: I18n.text.settings_ui.audio_monitor_output_missing_hint;

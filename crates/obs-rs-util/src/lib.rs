@@ -3,9 +3,11 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::all, clippy::pedantic)]
 
+pub mod file;
 pub mod json;
 pub mod random;
 
+pub use file::replace_file;
 pub use json::{Json, JsonError};
 pub use random::{fill_random, random_u64, RandomError, RandomPool};
 

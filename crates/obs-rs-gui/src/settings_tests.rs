@@ -14,6 +14,7 @@ fn settings_round_trip_through_the_config_document() {
         auto_record_when_streaming: true,
         sample_rate: 2,
         channels: 1,
+        desktop_audio_id: "wasapi:{desktop-output}".to_owned(),
         audio_monitor_output_id: "pipewire-output-7".to_owned(),
         microphone_monitor_mode: AudioMonitorMode::MonitorOnly,
         desktop_audio_monitor_mode: AudioMonitorMode::MonitorAndOutput,
@@ -679,6 +680,7 @@ fn audio_sync_offsets_are_bounded_before_runtime_use() {
 #[test]
 fn audio_monitor_settings_reject_unknown_modes_and_round_trip_valid_values() {
     let settings = AppSettings {
+        desktop_audio_id: "pipewire-output-42".to_owned(),
         audio_monitor_output_id: "pipewire-output-7".to_owned(),
         microphone_monitor_mode: AudioMonitorMode::MonitorOnly,
         desktop_audio_monitor_mode: AudioMonitorMode::MonitorAndOutput,
@@ -694,6 +696,7 @@ fn audio_monitor_settings_reject_unknown_modes_and_round_trip_valid_values() {
         decoded.audio_monitor_output_id,
         settings.audio_monitor_output_id
     );
+    assert_eq!(decoded.desktop_audio_id, settings.desktop_audio_id);
     assert_eq!(
         decoded.microphone_monitor_mode,
         AppSettings::default().microphone_monitor_mode
@@ -735,6 +738,13 @@ fn default_stream_config_selects_the_production_rtmp_path() {
     );
 }
 
+fn expected_recording_path(settings: &AppSettings, extension: &str) -> String {
+    std::path::Path::new(&settings.recording_directory)
+        .join(format!("2024-02-29 12-30-45.{extension}"))
+        .to_string_lossy()
+        .into_owned()
+}
+
 #[test]
 fn matroska_is_the_default_production_recording_format() {
     let settings = AppSettings::default();
@@ -755,7 +765,7 @@ fn mp4_recording_format_selects_a_production_extension() {
     };
     assert_eq!(
         settings.recording_file_path("2024-02-29 12-30-45"),
-        format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
+        expected_recording_path(&settings, "mp4")
     );
 }
 
@@ -767,7 +777,7 @@ fn automatic_remux_selects_an_mp4_final_path_only_for_unsplit_matroska() {
     };
     assert_eq!(
         settings.recording_file_path("2024-02-29 12-30-45"),
-        format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
+        expected_recording_path(&settings, "mp4")
     );
 
     let split = AppSettings {
@@ -801,7 +811,7 @@ fn fragmented_mp4_recording_format_selects_the_same_container_extension() {
     };
     assert_eq!(
         settings.recording_file_path("2024-02-29 12-30-45"),
-        format!("{}/2024-02-29 12-30-45.mp4", settings.recording_directory)
+        expected_recording_path(&settings, "mp4")
     );
     assert_eq!(
         RecordingFormat::from_id("fragmented-mp4"),
@@ -817,7 +827,7 @@ fn flv_recording_format_selects_a_production_extension() {
     };
     assert_eq!(
         settings.recording_file_path("2024-02-29 12-30-45"),
-        format!("{}/2024-02-29 12-30-45.flv", settings.recording_directory)
+        expected_recording_path(&settings, "flv")
     );
 }
 
@@ -829,7 +839,7 @@ fn mov_recording_format_selects_a_production_extension() {
     };
     assert_eq!(
         settings.recording_file_path("2024-02-29 12-30-45"),
-        format!("{}/2024-02-29 12-30-45.mov", settings.recording_directory)
+        expected_recording_path(&settings, "mov")
     );
 }
 
@@ -868,17 +878,25 @@ fn recording_stamps_are_sortable_utc_civil_times() {
         recording_filename_without_spaces: true,
         ..AppSettings::default()
     };
+    let expected = Path::new("/tmp")
+        .join("2024-02-29-12-30-45.mkv")
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(
         settings.recording_file_path("2024-02-29 12-30-45"),
-        "/tmp/2024-02-29-12-30-45.mkv"
+        expected
     );
     let spaced = AppSettings {
         recording_filename_without_spaces: false,
         ..settings
     };
+    let expected_spaced = Path::new("/tmp")
+        .join("2024-02-29 12-30-45.mkv")
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(
         spaced.recording_file_path("2024-02-29 12-30-45"),
-        "/tmp/2024-02-29 12-30-45.mkv"
+        expected_spaced
     );
 }
 

@@ -304,6 +304,7 @@ fn ui_layout_can_render_a_reference_snapshot() {
     ui_layout::render_monitor_window();
     ui_sources::exercise_add_source_window(&ui, &state, &surface);
     ui_sources::exercise_capture_device_properties_window(&ui, &state, &surface);
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     ui_layout::exercise_monitor_selection(&ui, &state, &surface);
     ui_output::exercise_recording_controls(&ui, &state, &surface);
     ui_navigation::exercise_menu_actions(&ui, &state, &surface, &docks);

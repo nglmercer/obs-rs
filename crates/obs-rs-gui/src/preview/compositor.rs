@@ -132,4 +132,23 @@ impl PreviewCompositor {
     pub(super) fn deferred_readback(&self) -> bool {
         matches!(self, Self::Wgpu(_))
     }
+
+    pub(super) fn diagnostics(&self) -> (String, String) {
+        match self {
+            Self::Wgpu(compositor) => (
+                compositor.backend.adapter_capabilities().name().to_owned(),
+                compositor
+                    .backend
+                    .adapter_capabilities()
+                    .backend()
+                    .to_owned(),
+            ),
+            Self::Cpu { reason } => (
+                "CPU fallback".to_owned(),
+                reason
+                    .clone()
+                    .unwrap_or_else(|| "CPU compositor".to_owned()),
+            ),
+        }
+    }
 }

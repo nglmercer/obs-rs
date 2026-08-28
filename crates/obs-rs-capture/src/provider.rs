@@ -1,9 +1,9 @@
 #[cfg(target_os = "linux")]
 use std::env;
 
+#[cfg(target_os = "linux")]
+use super::{adapter::PlatformCaptureAdapter, device::VideoCaptureDevice};
 use super::{
-    adapter::PlatformCaptureAdapter,
-    device::VideoCaptureDevice,
     error::CaptureError,
     types::{CaptureCatalog, CaptureDeviceInfo, CaptureKind},
 };

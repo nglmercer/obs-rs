@@ -9,6 +9,7 @@ fn app_settings_round_trip_the_selected_audio_input() {
     let path = std::env::temp_dir().join(format!("obs-rs-gui-settings-{token}.toml"));
     let settings = AppSettings {
         audio_input_id: "pipewire-node-42".to_owned(),
+        desktop_audio_id: "pipewire-output-42".to_owned(),
         audio_monitor_output_id: "pipewire-output-7".to_owned(),
         microphone_monitor_mode: obs_rs_audio::AudioMonitorMode::MonitorOnly,
         desktop_audio_monitor_mode: obs_rs_audio::AudioMonitorMode::MonitorAndOutput,
@@ -34,6 +35,7 @@ fn app_settings_round_trip_the_selected_audio_input() {
         reloaded.audio_monitor_output_id,
         settings.audio_monitor_output_id
     );
+    assert_eq!(reloaded.desktop_audio_id, settings.desktop_audio_id);
     assert_eq!(
         reloaded.microphone_monitor_mode,
         settings.microphone_monitor_mode

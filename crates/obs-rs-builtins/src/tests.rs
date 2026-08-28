@@ -509,18 +509,14 @@ fn image_slideshow_rejects_unbounded_interval_and_file_count() {
         Err(SourceError::InvalidSetting { key, .. }) if key == "transition_ms"
     ));
 
-    let path = std::env::temp_dir().join(format!(
-        "obs-rs-image-slideshow-count-{}.ppm",
-        std::process::id()
-    ));
-    std::fs::write(&path, b"P6\n1 1\n255\n\x00\xFF\x00").expect("write count fixture");
-    let path = path.to_str().expect("count path is UTF-8");
-    let paths = (0..65).map(|_| path).collect::<Vec<_>>().join("\n");
+    // Keep the fixture entries short: Windows' temporary directory prefix is
+    // long enough that 65 absolute paths would trip Config's per-value byte
+    // cap before the slideshow file-count guard is exercised.
+    let paths = (0..65).map(|_| "x").collect::<Vec<_>>().join("\n");
     assert!(matches!(
         factory.create("slideshow", &slideshow_settings(&paths, "2", "2", "100")),
         Err(SourceError::InvalidSetting { key, .. }) if key == "paths"
     ));
-    std::fs::remove_file(path).expect("remove count fixture");
 }
 
 #[test]
@@ -612,21 +608,36 @@ fn builtins_expose_the_capture_source_kind() {
 #[test]
 fn builtins_expose_platform_capture_kinds() {
     let plugin = BuiltinPlugin::new().expect("builtins are valid");
-    let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
     for kind in [BUILTIN_SCREEN_SOURCE_KIND, BUILTIN_WINDOW_SOURCE_KIND] {
         let factory = plugin
             .source_factories()
             .iter()
             .find(|factory| factory.kind().as_str() == kind)
             .expect("capture factory");
-        let mut source = factory
-            .create("capture", &settings("#000000FF"))
-            .expect("capture source");
-        let frame = source
-            .render(&VideoRequest::new(Timestamp::ZERO, format))
-            .expect("render")
-            .expect("frame");
-        assert_eq!(frame.format(), format);
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let format =
+                VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("rate")).expect("format");
+            let mut source = factory
+                .create("capture", &settings("#000000FF"))
+                .expect("capture source");
+            let frame = source
+                .render(&VideoRequest::new(Timestamp::ZERO, format))
+                .expect("render")
+                .expect("frame");
+            assert_eq!(frame.format(), format);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            // Windows screen/window sources are intentionally real helper
+            // sources. Their process and desktop-session checks belong to the
+            // Windows acceptance binary, not this portable factory test.
+            let _source = factory
+                .create("capture", &settings("#000000FF"))
+                .expect("capture source");
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

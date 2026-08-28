@@ -229,6 +229,8 @@ pub(super) fn catalog() -> UiText {
             sample_rate: s("Sample rate"),
             channels: s("Channels"),
             audio_input_device: s("Microphone / input"),
+            desktop_audio_device: s("Desktop audio / output"),
+            desktop_audio_auto: s("Automatic (system default output)"),
             audio_monitor_output: s("Monitor output"),
             audio_monitor_output_disabled: s("Disabled"),
             audio_monitor_output_missing_hint: s(
@@ -251,6 +253,9 @@ pub(super) fn catalog() -> UiText {
             audio_input_missing: s("(not connected)"),
             audio_input_missing_hint: s(
                 "The selected input is not in the audio graph right now. It stays selected and is used again as soon as it reappears; the deterministic fallback runs meanwhile.",
+            ),
+            desktop_audio_missing_hint: s(
+                "The selected desktop-audio output is not available right now. It stays selected and loopback will retry when it returns.",
             ),
             refresh_devices: s("Refresh devices"),
             channels_stereo: s("Stereo"),

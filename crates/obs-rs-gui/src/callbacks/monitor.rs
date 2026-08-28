@@ -71,7 +71,7 @@ impl MonitorController {
         self.window.global::<Palette>().set_tokens(tokens);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "linux", target_os = "windows")))]
     pub(crate) fn window(&self) -> &MonitorWindow {
         &self.window
     }
@@ -232,6 +232,7 @@ fn open_for_target(
     // On Wayland the compositor owns the picker: OBS-RS asks the portal and
     // stores the token it hands back, rather than showing a list of screens
     // it is not allowed to enumerate.
+    #[cfg(target_os = "linux")]
     if crate::kind_uses_portal(&kind) {
         share_through_portal(ui, state, controller, target.clone());
         return;
@@ -502,6 +503,17 @@ fn monitor_document(
         let _ = settings.set("display", &display);
     }
     settings.set("monitor", monitor).ok()?;
+    #[cfg(target_os = "windows")]
+    settings
+        .set(
+            "device_id",
+            if monitor.trim().is_empty() {
+                "wgc-screen-picker"
+            } else {
+                monitor
+            },
+        )
+        .ok()?;
     Some(settings.serialize())
 }
 

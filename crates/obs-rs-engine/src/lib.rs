@@ -67,14 +67,38 @@ use obs_rs_output::{
     PacketDropPolicy, ReconnectPolicy, SegmentedRecordingPolicy, StreamSession, TcpPacketTransport,
     WebSocketPacketTransport,
 };
-#[cfg(feature = "production-gstreamer")]
 use obs_rs_output_gstreamer::GStreamerCapabilitySnapshot;
 #[cfg(feature = "production-gstreamer")]
 pub use obs_rs_output_gstreamer::{
-    stinger_decode_capabilities, write_interrupted_remux_manifest, AudioEncoderCapability,
-    GStreamerStingerLoader, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
-    RemuxRecovery, StingerDecodeCapabilities, VideoEncoderCapability,
+    stinger_decode_capabilities, write_interrupted_remux_manifest, GStreamerStingerLoader,
+    RemuxRecovery, StingerDecodeCapabilities,
 };
+pub use obs_rs_output_gstreamer::{
+    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
+    VideoEncoderCapability,
+};
+#[cfg(not(feature = "production-gstreamer"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RemuxRecovery {
+    /// No native production-output runtime is provisioned in this build.
+    NoCandidate,
+    /// Kept shape-compatible with the provisioned native runtime.
+    Recovered { bytes: usize },
+}
+#[cfg(not(feature = "production-gstreamer"))]
+/// Reports that interrupted-remux recovery is unavailable in the portable
+/// build.
+/// # Errors
+///
+/// Always returns an explicit error because the optional native production
+/// output runtime is not included in the portable build.
+pub fn write_interrupted_remux_manifest(
+    _path: impl AsRef<std::path::Path>,
+) -> Result<(), EngineError> {
+    Err(EngineError::InvalidConfiguration(
+        "automatic remux requires the optional production-gstreamer feature".to_owned(),
+    ))
+}
 use obs_rs_plugin_api::VideoRequest;
 use obs_rs_project::Project;
 
@@ -88,7 +112,6 @@ const AUDIO_RECONNECT_INTERVAL_NANOS: u64 = 1_000_000_000;
 pub const MAX_FILTER_DIAGNOSTICS: usize = 64;
 
 /// Probes the production backend once and returns its typed GUI-safe model.
-#[cfg(feature = "production-gstreamer")]
 #[must_use]
 pub fn output_capabilities_snapshot() -> OutputCapabilitiesSnapshot {
     GStreamerCapabilitySnapshot::probe().capabilities()

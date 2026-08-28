@@ -112,7 +112,14 @@ impl RecordingFormat {
 /// another directory looked like it had lost every setting, so the default is
 /// the XDG config directory. A file that already exists in the working
 /// directory still wins, which keeps existing installs working unchanged.
+/// Windows uses `%APPDATA%` and falls back to `%LOCALAPPDATA%`.
 pub(crate) fn user_directory() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("APPDATA")
+        .or_else(|| std::env::var_os("LOCALAPPDATA"))
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())?;
+    #[cfg(not(target_os = "windows"))]
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
@@ -332,10 +339,13 @@ pub(crate) struct AppSettings {
     pub(crate) hls: HlsConfig,
     pub(crate) rist: RistConfig,
     pub(crate) reference_address: String,
-    /// Provider-stable audio input ID; empty selects the provider-declared
+    /// Provider-stable platform input ID; empty selects the provider-declared
     /// default input and keeps the deterministic fallback as a safe last
     /// resort.
     pub(crate) audio_input_id: String,
+    /// Provider-stable render-device ID used for desktop/system loopback;
+    /// empty selects the provider's default output route.
+    pub(crate) desktop_audio_id: String,
     /// Provider-stable local monitor-output ID; empty disables local playback.
     pub(crate) audio_monitor_output_id: String,
     /// Monitor destination policy for the microphone channel.
@@ -439,6 +449,7 @@ impl Default for AppSettings {
             rist: RistConfig::default(),
             reference_address: "127.0.0.1:9000".to_owned(),
             audio_input_id: String::new(),
+            desktop_audio_id: String::new(),
             audio_monitor_output_id: String::new(),
             microphone_monitor_mode: AudioMonitorMode::Off,
             desktop_audio_monitor_mode: AudioMonitorMode::Off,

@@ -12,11 +12,13 @@ path = "src/main.rs"
 
 [dependencies]
 obs-rs-audio = { path = "../obs-rs-audio" }
+obs-rs-audio-wasapi = { path = "../obs-rs-audio-wasapi" }
 obs-rs-audio-pipewire = { path = "../obs-rs-audio-pipewire" }
 obs-rs-benchmark = { path = "../obs-rs-benchmark" }
 obs-rs-clock = { path = "../obs-rs-clock" }
 obs-rs-builtins = { path = "../obs-rs-builtins" }
 obs-rs-capture = { path = "../obs-rs-capture" }
+obs-rs-capture-windows = { path = "../obs-rs-capture-windows" }
 obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-core = { path = "../obs-rs-core" }
 obs-rs-diagnostics = { path = "../obs-rs-diagnostics" }

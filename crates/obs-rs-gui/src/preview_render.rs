@@ -314,8 +314,13 @@ impl PreviewRenderer {
         target: RenderTarget,
         stinger: &StingerSnapshot,
     ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
-        let source = self.render_target(source_scene, target)?;
-        let destination = self.render_target(destination_scene, target)?;
+        // Stingers have the same two-input lifetime as ordinary transitions:
+        // keep their asynchronous source and destination readbacks separate.
+        let source_target = RenderTarget::new(RenderTargetRole::TransitionSource, target.format());
+        let destination_target =
+            RenderTarget::new(RenderTargetRole::TransitionDestination, target.format());
+        let source = self.render_target(source_scene, source_target)?;
+        let destination = self.render_target(destination_scene, destination_target)?;
         if self.deferred_readback() && (source.is_none() || destination.is_none()) {
             return Ok(None);
         }
@@ -352,8 +357,14 @@ impl PreviewRenderer {
         target: RenderTarget,
         transition: FrameTransition,
     ) -> Result<Option<VideoFrame>, Box<dyn Error>> {
-        let source = self.render_target(source_scene, target)?;
-        let destination = self.render_target(destination_scene, target)?;
+        // A transition needs two independent scene textures. Reusing the
+        // output role for both inputs lets the second WGPU submission replace
+        // the first one before either asynchronous readback has completed.
+        let source_target = RenderTarget::new(RenderTargetRole::TransitionSource, target.format());
+        let destination_target =
+            RenderTarget::new(RenderTargetRole::TransitionDestination, target.format());
+        let source = self.render_target(source_scene, source_target)?;
+        let destination = self.render_target(destination_scene, destination_target)?;
         if self.deferred_readback() && (source.is_none() || destination.is_none()) {
             return Ok(None);
         }
@@ -389,7 +400,10 @@ impl PreviewRenderer {
                 .static_preview_frames
                 .get(&(scene.to_owned(), target.format()))
                 .map(|pixels| (target.format(), Arc::clone(pixels))),
-            RenderTargetRole::Projector | RenderTargetRole::Encoder => None,
+            RenderTargetRole::Projector
+            | RenderTargetRole::TransitionSource
+            | RenderTargetRole::TransitionDestination
+            | RenderTargetRole::Encoder => None,
         };
         let frame = if let Some((cached_format, pixels)) = cached.as_ref() {
             Some(VideoFrame::from_shared(
@@ -421,7 +435,10 @@ impl PreviewRenderer {
                         Arc::new(frame.pixels().to_vec()),
                     );
                 }
-                RenderTargetRole::Projector | RenderTargetRole::Encoder => {}
+                RenderTargetRole::Projector
+                | RenderTargetRole::TransitionSource
+                | RenderTargetRole::TransitionDestination
+                | RenderTargetRole::Encoder => {}
             }
         }
         Ok(Some(frame))
