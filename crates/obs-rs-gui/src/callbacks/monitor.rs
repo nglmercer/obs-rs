@@ -106,26 +106,44 @@ impl MonitorController {
     }
 
     /// Fills the window from the live display list for `source`.
-    fn reload(&self, source_name: &str, current: Option<&str>) {
+    fn reload(&self, source_name: &str, current: Option<&str>) -> bool {
         let monitors = screen_monitors();
-        let selected = current
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .or_else(|| {
-                monitors
-                    .iter()
-                    .find(|monitor| monitor.primary)
-                    .or_else(|| monitors.first())
-                    .map(|monitor| monitor.id.clone())
-            })
-            .unwrap_or_default();
+        // Older Windows settings used the backend's automatic sentinel in
+        // `monitor`. Treat it as the picker default rather than as a missing
+        // display. A real but absent ID must remain unselected so the user
+        // cannot accidentally accept a stale target after hot-unplugging a
+        // monitor.
+        let current = current
+            .filter(|value| !cfg!(target_os = "windows") || value.trim() != "wgc-screen-picker");
+        let requested = current.map(str::trim).filter(|value| !value.is_empty());
+        let selected = requested.and_then(|value| {
+            monitors
+                .iter()
+                .find(|monitor| monitor.id == value)
+                .map(|monitor| monitor.id.clone())
+        });
+        let saved_target_missing = requested.is_some() && selected.is_none();
+        let selected = selected.unwrap_or_else(|| {
+            if saved_target_missing {
+                return String::new();
+            }
+            monitors
+                .iter()
+                .find(|monitor| monitor.primary)
+                .or_else(|| monitors.first())
+                .map(|monitor| monitor.id.clone())
+                .unwrap_or_default()
+        });
         self.window
-            .set_capture_whole_desktop(current.is_some_and(|value| value.trim().is_empty()));
+            .set_capture_whole_desktop(current.is_some_and(|value| {
+                value.trim().is_empty()
+                    || (cfg!(target_os = "windows") && value.trim() == "wgc-screen-picker")
+            }));
         self.window.set_source_name(source_name.into());
         *self.selected.borrow_mut() = selected;
         self.monitors.replace(monitors);
         self.refresh_rows();
+        saved_target_missing
     }
 
     /// Rebuilds the row model and the normalized layout map.
@@ -244,11 +262,11 @@ fn open_for_target(
         .set_text(crate::i18n::catalog(locale));
     controller.set_tokens(ui.global::<Palette>().get_tokens());
     let source_name = source_name_for_target(state, target);
-    controller.reload(
+    let saved_target_missing = controller.reload(
         &source_name,
         current_monitor_for_target(state, target).as_deref(),
     );
-    window.set_status(status_line(&controller.monitors.borrow()).into());
+    window.set_status(status_line(&controller.monitors.borrow(), saved_target_missing).into());
     match window.show() {
         Ok(()) => window.invoke_focus_keyboard_boundary(),
         Err(error) => ui.set_status_message(format!("Display picker: {error}").into()),
@@ -274,8 +292,10 @@ fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<MonitorC
         };
         let source = window.get_source_name().to_string();
         let current = current_monitor_for_target(&refresh_state, &target);
-        refresh_controller.reload(&source, current.as_deref());
-        window.set_status(status_line(&refresh_controller.monitors.borrow()).into());
+        let saved_target_missing = refresh_controller.reload(&source, current.as_deref());
+        window.set_status(
+            status_line(&refresh_controller.monitors.borrow(), saved_target_missing).into(),
+        );
     });
 
     let cancel_controller = Rc::clone(controller);
@@ -552,16 +572,26 @@ fn current_monitor_for_target(
 }
 
 /// Summarizes the detected displays under the list.
-fn status_line(monitors: &[MonitorChoice]) -> String {
-    if monitors.is_empty() {
-        return String::new();
+fn status_line(monitors: &[MonitorChoice], saved_target_missing: bool) -> String {
+    let detected = if monitors.is_empty() {
+        String::new()
+    } else {
+        let names = monitors
+            .iter()
+            .map(|monitor| monitor.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{} detected: {names}", monitors.len())
+    };
+    if saved_target_missing {
+        if detected.is_empty() {
+            "Saved display is unavailable; choose a new display".to_owned()
+        } else {
+            format!("{detected}; saved display is unavailable")
+        }
+    } else {
+        detected
     }
-    let names = monitors
-        .iter()
-        .map(|monitor| monitor.name.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{} detected: {names}", monitors.len())
 }
 
 #[cfg(test)]
@@ -610,10 +640,14 @@ mod tests {
 
     #[test]
     fn status_line_lists_the_detected_displays() {
-        assert_eq!(status_line(&[]), "");
+        assert_eq!(status_line(&[], false), "");
         assert_eq!(
-            status_line(&[monitor("DP-1", 0, 0, 1920, 1080)]),
+            status_line(&[monitor("DP-1", 0, 0, 1920, 1080)], false),
             "1 detected: DP-1"
+        );
+        assert_eq!(
+            status_line(&[monitor("DP-1", 0, 0, 1920, 1080)], true),
+            "1 detected: DP-1; saved display is unavailable"
         );
     }
 }
