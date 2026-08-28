@@ -46,8 +46,10 @@ control surfaces:
   `OBSFRM01` frame packets, a two-frame handoff queue, and frame-delivery
   timeouts.
 - `obs-rs-builtins` provides the built-in color, test-pattern, screen, window,
-  and Nokhwa-backed camera factories plus the Linux `x11_screen_capture` and
-  portal-backed `wayland_screen_capture` sources. A camera that is unplugged,
+  media, and Nokhwa-backed camera factories plus the Linux `x11_screen_capture`
+  and portal-backed `wayland_screen_capture` sources. Media playback uses the
+  optional production GStreamer boundary; without it the source stays explicit
+  and unavailable rather than substituting an image decoder. A camera that is unplugged,
   busy, or missing leaves its source in the scene, reports why, and reconnects
   on its own instead of failing the project load.
 - `obs-rs-core` owns the plugin registry, sources, scenes, CPU compositor, and
@@ -217,7 +219,9 @@ coordinates are preserved by discovery.
 The Audio settings page exposes the default or explicit microphone, desktop
 loopback render device, and local monitor output. Microphone and loopback
 streams use bounded shared-mode WASAPI queues; unplugged devices remain selected
-and are retried with typed diagnostics. Windows camera sources use the shared
+and are retried with typed diagnostics. The Windows acceptance probe also checks
+that endpoint IDs and default-route metadata are stable across immediate
+snapshots. Windows camera sources use the shared
 Nokhwa path, so there is one canonical camera catalog rather than a second helper
 camera implementation. Microphone/camera privacy permissions are controlled by
 Windows Settings.
@@ -226,7 +230,8 @@ The default Windows build uses the portable Rust reference output path and does
 not require GStreamer. RTMP, SRT, WebRTC, HLS, and other production profiles
 remain an explicitly optional GStreamer build; see
 [packaging/windows/README.md](packaging/windows/README.md) for its separate
-runtime/development prerequisites. Settings and diagnostics use `%APPDATA%`
+runtime/development prerequisites; the package script can bundle the matching
+runtime and plugin scanner for a self-contained production archive. Settings and diagnostics use `%APPDATA%`
 (or `%LOCALAPPDATA%` when needed) under `obs-rs`, and explicit user-supplied
 paths are preserved.
 
@@ -303,5 +308,7 @@ pass/skip/fail for X11, PipeWire, and the 300-tick A/V soak;
 `obs-rs-windows-check` covers the Windows helper, camera, WASAPI, A/V, and
 cleanup paths with explicit hardware skips. The project intentionally does not
 claim feature parity with OBS Studio: macOS capture, GPU/zero-copy rendering,
-production codecs and protocols, full GUI localization/property dialogs, signed
-plugin distribution, signing, and update channels remain roadmap work.
+full GUI localization/property dialogs, signed plugin distribution, signing,
+and archived Windows production/hardware acceptance remain roadmap work. Native
+production codecs and protocols are available only in builds supplied with the
+approved GStreamer development/runtime boundary.

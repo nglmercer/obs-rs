@@ -14,12 +14,17 @@ $runtimePlugins = Join-Path $runtime "lib\gstreamer-1.0"
 $runtimeScanner = Join-Path $runtime "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
 
 if (Test-Path -LiteralPath $runtimeBin -PathType Container) {
+    $runtimeCore = Join-Path $runtimeBin "gstreamer-1.0-0.dll"
+    $runtimeScanner = Join-Path $runtime "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
+    if (-not (Test-Path -LiteralPath $runtimeCore -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $runtimePlugins -PathType Container) -or
+        -not (Test-Path -LiteralPath $runtimeScanner -PathType Leaf)) {
+        throw "The bundled GStreamer runtime is incomplete; rebuild the package with -ProductionGStreamer"
+    }
     $env:PATH = "$runtimeBin;$root;$env:PATH"
     $env:GST_PLUGIN_PATH = $runtimePlugins
     $env:GST_PLUGIN_PATH_1_0 = $runtimePlugins
-    if (Test-Path -LiteralPath $runtimeScanner -PathType Leaf) {
-        $env:GST_PLUGIN_SCANNER = $runtimeScanner
-    }
+    $env:GST_PLUGIN_SCANNER = $runtimeScanner
     $env:GST_REGISTRY = Join-Path $runtime "registry.bin"
 }
 

@@ -42,4 +42,18 @@ foreach ($line in Get-Content -LiteralPath $sumsPath) {
     $checked++
 }
 
+$runtimeMarker = Join-Path $root "GSTREAMER-RUNTIME.txt"
+if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
+    $runtimeFiles = @(
+        @{ Path = (Join-Path $root "gstreamer\bin\gstreamer-1.0-0.dll"); Type = "Leaf" },
+        @{ Path = (Join-Path $root "gstreamer\lib\gstreamer-1.0"); Type = "Container" },
+        @{ Path = (Join-Path $root "gstreamer\libexec\gstreamer-1.0\gst-plugin-scanner.exe"); Type = "Leaf" }
+    )
+    foreach ($runtimeFile in $runtimeFiles) {
+        if (-not (Test-Path -LiteralPath $runtimeFile.Path -PathType $runtimeFile.Type)) {
+            throw "GStreamer runtime marker is present but the runtime is incomplete: $($runtimeFile.Path)"
+        }
+    }
+    Write-Output "Verified bundled GStreamer runtime inputs"
+}
 Write-Output "Verified $checked OBS-RS package files"

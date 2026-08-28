@@ -5,8 +5,9 @@ work. It deliberately separates a Windows build from a usable feature. A row
 is not complete until its last column has a recorded result from a real Windows
 acceptance run.
 
-Baseline: `6d76c9f` (`main`), audited on 2026-08-28. The
-`windows-full-compatibility` implementation pass is recorded below.
+Baseline: branch `windows-full-compatibility`, audited on 2026-08-28. The
+implementation pass is recorded below; the final column remains open until an
+archived Windows hardware run proves the complete behavior.
 
 ## Status legend
 
@@ -34,7 +35,7 @@ Windows features passed.
 | Image source | ✅ | — | ✅ | ◐ | Portable source and GUI tests cover the path. Run the packaged GUI and load PNG/JPEG/WebP files from a Windows path. |
 | Image slideshow | ✅ | — | ✅ | ◐ | Portable slideshow tests cover timing and selection. Verify directory/file dialogs and long-running playback in the Windows GUI. |
 | Text source | ✅ | — | ✅ | ◐ | Portable text rendering is covered. Verify fonts, Unicode text, and Windows DPI scaling in the packaged GUI. |
-| Media source | — | — | — | ☐ | No built-in media source factory is currently present; define the supported formats/backend before marking this row complete. |
+| Media source | ✅ | — | ◐ | ☐ | `media_source` is registered with an explicit idle/unavailable portable path and an optional GStreamer playbin/appsink path. Verify local MP4/WebM/H.264/AAC playback in the production package. |
 | Scene compositing | ✅ | — | ✅ | ◐ | Core compositor and transform tests pass portably. Verify the WGC/camera/audio sources in a real Windows scene. |
 | Transforms/crop/scale | ✅ | — | ✅ | ◐ | Core transform/scaler tests pass portably. Verify mixed-DPI source sizes and output scaling in the GUI. |
 | Preview | ✅ | — | ◐ | ☐ | GUI smoke tests exercise wiring and the renderer has portable tests. Verify real WGC frames reach the visible preview. |
@@ -42,7 +43,7 @@ Windows features passed.
 | Streaming | ✅ | — | ◐ | ☐ | Reference packet transports exist; production RTMP/SRT/etc. require the optional native GStreamer feature/runtime. Verify a real endpoint. |
 | Source persistence | ✅ | — | ✅ | ◐ | Project round-trip tests preserve source settings and target IDs. Reload a Windows project and capture the same selected display/window. |
 | Monitor/window hotplug | ✅ | ◐ | ◐ | ☐ | Discovery can be refreshed and capture loss triggers bounded reopen attempts; no hardware hotplug acceptance is recorded. |
-| Audio device hotplug | ✅ | ✅ | ◐ | ☐ | Discovery snapshots, default-route refresh, and engine reconnect logic exist. Change default devices and unplug the active route while recording. |
+| Audio device hotplug | ✅ | ✅ | ◐ | ☐ | WASAPI discovery snapshots, default-route refresh, and bounded engine reconnect logic exist; the Windows probe now checks stable IDs/default metadata. Change default devices and unplug the active route while recording. |
 | Diagnostics | ✅ | — | ◐ | ☐ | Windows version, GPU backend/adapter, and helper version are included in the diagnostics path. Export and inspect a packaged diagnostic bundle. |
 | Updater | ✅ | — | ◐ | ☐ | Windows-safe atomic publish logic exists. Exercise update, rollback/recovery, and locked-file behavior on a clean installation. |
 | Packaging | ✅ | — | ◐ | ☐ | The ZIP contains the GUI, app, check binary, helper, manifests, and checksums. Install/run it on a clean Windows 10/11 machine. |
@@ -61,8 +62,10 @@ cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --releas
 cargo test --manifest-path packaging/windows/capture-helper/Cargo.toml
 cargo clippy --manifest-path packaging/windows/capture-helper/Cargo.toml -- -D warnings
 cargo run -p obs-rs-app --bin obs-rs-windows-check
+OBSR_RS_REQUIRE_AUDIO_DEVICE_STABILITY=1 cargo run -p obs-rs-app --bin obs-rs-windows-check
 packaging/windows/package.ps1 -Configuration release -OutputDirectory <directory>
 packaging/windows/verify-package.ps1 -PackageDirectory <extracted-package>
+packaging/windows/acceptance.ps1 -PackageDirectory <extracted-package> -RequireProduction
 ```
 
 The Windows check should be run with `OBSR_CAPTURE_HELPER` pointing at the
@@ -98,7 +101,16 @@ only scaffolded:
   beside the entry points and report its version in diagnostics;
 - the Windows package includes `run-obs-rs.ps1` and
   `verify-package.ps1`; `-ProductionGStreamer` can copy a matching native
-  runtime and plugin tree into a self-contained archive;
+  runtime, plugin tree, and plugin scanner into a self-contained archive;
+- the built-in `media_source` is registered on every platform and reports an
+  explicit unavailable capability without the optional native GStreamer
+  feature; production builds use a bounded playbin/appsink video path;
+- the Windows check records immediate display/window discovery stability,
+  target-ID project round trips, and four-frame display runs at both 30 and
+  60 FPS; its audio stability check verifies endpoint identity/default-route
+  invariants;
+- native capture retries use media-time schedules, the helper publishes only
+  its newest complete frame, and bounded shutdown failures remain retryable;
 - `.github/workflows/hardware-soak.yml` provides a self-hosted Windows lane
   for the real display, window, audio, reference-output, and cleanup probes.
 
@@ -111,9 +123,10 @@ real media artifacts, and the GPU/audio/DPI matrix below.
 On 2026-08-28, this Windows host passed display capture, window capture,
 captured-frame reference recording, microphone input, monitor output, the
 desktop loopback, the two-second A/V soak, and three capture start/stop cycles.
-It skipped camera capture because no camera was connected. This is
-host-specific evidence; it does not close the cross-version, cross-GPU, or
-production-output acceptance rows.
+It also passed stable capture discovery, target persistence, and the 30/60 FPS
+display probe. It skipped camera capture because no camera was connected. This
+is host-specific evidence; it does not close the cross-version, cross-GPU,
+camera, or production-output acceptance rows.
 
 ## Acceptance record format
 

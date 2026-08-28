@@ -94,6 +94,7 @@ fn main() -> ExitCode {
         ("window", check_window()),
         ("reference_recording", check_reference_recording()),
         ("camera", check_camera()),
+        ("audio_device_stability", check_audio_device_stability()),
         ("microphone", check_microphone()),
         ("desktop_loopback", check_desktop_loopback()),
         ("monitor_output", check_monitor_output()),
@@ -946,6 +947,91 @@ fn selected_audio_device(
                 .iter()
                 .find(|device| device.kind() == kind && device.available())
         })
+}
+
+#[cfg(target_os = "windows")]
+fn check_audio_device_stability() -> CheckResult {
+    let provider = WasapiAudioProvider::new();
+    let first = match discover_audio(provider) {
+        Ok(devices) => devices,
+        Err(result) => return result,
+    };
+    let second = match discover_audio(provider) {
+        Ok(devices) => devices,
+        Err(result) => return result,
+    };
+    let snapshot = |devices: &[AudioDeviceInfo]| {
+        let mut entries = devices
+            .iter()
+            .map(|device| {
+                (
+                    device.kind(),
+                    device.id().to_owned(),
+                    device.name().to_owned(),
+                    device.available(),
+                    device.is_default(),
+                )
+            })
+            .collect::<Vec<_>>();
+        entries
+            .sort_by(|left, right| (left.0, &left.1, &left.2).cmp(&(right.0, &right.1, &right.2)));
+        entries
+    };
+    let first_snapshot = snapshot(&first);
+    let second_snapshot = snapshot(&second);
+    if first_snapshot != second_snapshot {
+        return CheckResult::fail(format!(
+            "WASAPI device snapshot changed between immediate calls: first={first_snapshot:?} second={second_snapshot:?}"
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for device in &first {
+        if !seen.insert((device.kind(), device.id().to_owned())) {
+            return CheckResult::fail(format!(
+                "WASAPI discovery returned duplicate {} endpoint {}",
+                audio_kind_name(device.kind()),
+                device.id()
+            ));
+        }
+    }
+    let defaults = [AudioDeviceKind::Input, AudioDeviceKind::Output]
+        .into_iter()
+        .map(|kind| {
+            first
+                .iter()
+                .filter(|device| device.kind() == kind && device.available() && device.is_default())
+                .count()
+        })
+        .collect::<Vec<_>>();
+    if defaults.iter().any(|count| *count > 1) {
+        return CheckResult::fail(format!(
+            "WASAPI discovery marked multiple default endpoints: input={} output={}",
+            defaults[0], defaults[1]
+        ));
+    }
+    if first.is_empty() {
+        return CheckResult::skip("WASAPI returned no input or output endpoints");
+    }
+    let inputs = first
+        .iter()
+        .filter(|device| device.kind() == AudioDeviceKind::Input)
+        .count();
+    let outputs = first
+        .iter()
+        .filter(|device| device.kind() == AudioDeviceKind::Output)
+        .count();
+    CheckResult::pass(format!(
+        "inputs={inputs} outputs={outputs} default_inputs={} default_outputs={}",
+        defaults[0], defaults[1]
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn audio_kind_name(kind: AudioDeviceKind) -> &'static str {
+    match kind {
+        AudioDeviceKind::Input => "input",
+        AudioDeviceKind::Output => "output",
+    }
 }
 
 #[cfg(target_os = "windows")]

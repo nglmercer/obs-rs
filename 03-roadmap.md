@@ -197,17 +197,19 @@ carry frames from a separate Rust process over a pipe or TCP reader. On Linux,
 the Unix socket, performs magic-cookie authentication when an Xauthority record is
 available, converts TrueColor masks to RGBA, and is wired into the built-in
 `x11_screen_capture` source. The parser and pixel conversion are covered by protocol
-fixtures; an X server is still required for a live capture run. macOS and Windows
-discovery remain separate future adapters.
+fixtures; an X server is still required for a live capture run. Windows now uses
+the separate WGC helper for screen/window discovery and the shared Nokhwa path
+for cameras; macOS retains its platform adapter boundary.
 
 `obs-rs-render` now supplies the portable render-backend contract and a deterministic
 CPU fallback for texture allocation, upload, ordered composition, readback, resource
 limits including aggregate byte accounting, raw packed/planar upload conversion, and
 simulated context-loss recovery. `PlatformCaptureProvider` exposes the host capability
 state to applications, and the Slint control room reports that state while retaining
-the deterministic CPU fallback. Hardware acceleration, native device contexts, and
-zero-copy resources remain separate integrations; macOS and Windows devices are not
-implemented yet.
+the deterministic CPU fallback. Windows screen/window and camera devices are
+implemented behind safe Rust boundaries; hardware acceleration, native device
+contexts, zero-copy resources, and archived hardware acceptance remain separate
+integrations.
 
 ### Exit criteria
 
@@ -418,9 +420,11 @@ display or audio service without claiming unsupported OBS parity.
 2. Capture-backed editor breadth: X11 windows, Linux camera, source property forms,
    and guided recovery.
 3. Device-clock audio adapters and long-duration synchronization under real hardware.
-4. macOS/Windows capture and accelerated render backends.
-5. Production codec/container/protocol decisions, signed plugins, and release
-   hardening beyond the reference packet boundary.
+4. macOS capture and accelerated render backends, plus Windows hardware/production
+   acceptance and zero-copy profiling.
+5. Production codec/container/protocol decisions beyond the approved native
+   boundary, signed plugins, and release hardening beyond the reference packet
+   boundary.
 
 ## Go/no-go rule
 
