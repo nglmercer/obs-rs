@@ -139,7 +139,7 @@ impl VideoCaptureDevice for NokhwaCaptureDevice {
         let actual = self
             .camera
             .set_camera_requset(requested)
-            .map_err(|error| map_nokhwa_error(&error))?;
+            .map_err(|error| map_nokhwa_format_error(&error, request.output_format()))?;
         let actual_mode = camera_format_to_mode(actual)
             .ok_or(CaptureError::UnsupportedFormat(request.output_format()))?;
         self.camera
@@ -531,13 +531,40 @@ fn resize_letterbox(
 }
 
 fn map_nokhwa_error(error: &NokhwaError) -> CaptureError {
+    map_nokhwa_message(error.to_string())
+}
+
+fn map_nokhwa_format_error(error: &NokhwaError, format: VideoFormat) -> CaptureError {
     let message = error.to_string();
+    if is_nokhwa_format_error(error, &message) {
+        CaptureError::UnsupportedFormat(format)
+    } else {
+        map_nokhwa_message(message)
+    }
+}
+
+fn map_nokhwa_message(message: String) -> CaptureError {
     let lower = message.to_ascii_lowercase();
     if lower.contains("permission") || lower.contains("denied") {
         CaptureError::PermissionDenied
     } else {
         CaptureError::PlatformUnavailable { message }
     }
+}
+
+fn is_nokhwa_format_error(error: &NokhwaError, message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    matches!(
+        error,
+        NokhwaError::UnsupportedOperationError(_) | NokhwaError::NotImplementedError(_)
+    ) || lower.contains("unsupported")
+        || lower.contains("not supported")
+        || lower.contains("no compatible")
+        || (lower.contains("format")
+            && (lower.contains("could not set")
+                || lower.contains("failed to set")
+                || lower.contains("cannot set")
+                || lower.contains("negotiate")))
 }
 
 #[cfg(target_os = "macos")]
@@ -594,5 +621,34 @@ mod tests {
             rgb_to_rgba(&[1, 2, 3, 4, 5, 6]),
             vec![1, 2, 3, 255, 4, 5, 6, 255]
         );
+    }
+
+    #[test]
+    fn unsupported_native_mode_errors_are_classified_for_fallback() {
+        let format = output(1280, 720);
+        assert!(is_nokhwa_format_error(
+            &NokhwaError::GeneralError("camera format is not supported".to_owned()),
+            "camera format is not supported"
+        ));
+        assert!(matches!(
+            map_nokhwa_format_error(
+                &NokhwaError::GeneralError("no compatible camera mode".to_owned()),
+                format
+            ),
+            CaptureError::UnsupportedFormat(actual) if actual == format
+        ));
+    }
+
+    #[test]
+    fn unrelated_native_mode_errors_remain_platform_failures() {
+        let format = output(1280, 720);
+        assert!(matches!(
+            map_nokhwa_format_error(
+                &NokhwaError::GeneralError("camera disconnected".to_owned()),
+                format
+            ),
+            CaptureError::PlatformUnavailable { message }
+                if message == "Error: camera disconnected"
+        ));
     }
 }

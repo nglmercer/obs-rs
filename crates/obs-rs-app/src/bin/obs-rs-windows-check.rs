@@ -355,13 +355,17 @@ fn open_windows_capture(
 }
 
 #[cfg(target_os = "windows")]
-fn wait_for_frame(
+fn wait_for_capture_frames(
     device: &mut ThreadedCaptureDevice,
     format: VideoFormat,
+    target_frames: usize,
     timeout: Duration,
-) -> Result<VideoFrame, CaptureError> {
+) -> Result<(VideoFrame, usize, Duration), CaptureError> {
+    let target_frames = target_frames.max(1);
+    let target_frames_u64 = u64::try_from(target_frames).unwrap_or(u64::MAX);
     let deadline = Instant::now() + timeout;
     let started = Instant::now();
+    let mut first = None;
     loop {
         let timestamp =
             Timestamp::from_nanos(u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
@@ -373,7 +377,31 @@ fn wait_for_frame(
                         actual: frame.format(),
                     });
                 }
-                return Ok(frame);
+                first.get_or_insert(frame);
+                let published = device.published_frames();
+                if published >= target_frames_u64 {
+                    let elapsed = started.elapsed();
+                    return first.map_or_else(
+                        || {
+                            Err(CaptureError::Protocol {
+                                message: "Windows capture returned no first frame".to_owned(),
+                            })
+                        },
+                        |frame| {
+                            Ok((
+                                frame,
+                                usize::try_from(published).unwrap_or(usize::MAX),
+                                elapsed,
+                            ))
+                        },
+                    );
+                }
+                if matches!(
+                    device.state(),
+                    CaptureLifecycleState::Lost | CaptureLifecycleState::Denied
+                ) {
+                    return Err(device.failure().unwrap_or(CaptureError::NotRunning));
+                }
             }
             Ok(None)
                 if matches!(
@@ -386,7 +414,11 @@ fn wait_for_frame(
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
             Ok(None) => {
                 return Err(CaptureError::Protocol {
-                    message: format!("Windows capture produced no frame within {timeout:?}"),
+                    message: format!(
+                        "Windows capture produced {}/{} published frames within {timeout:?}",
+                        device.published_frames(),
+                        target_frames
+                    ),
                 });
             }
             Err(error) => return Err(error),
@@ -411,52 +443,7 @@ fn capture_frames(
     timeout: Duration,
 ) -> Result<(VideoFrame, usize, Duration), CaptureError> {
     let mut capture = open_windows_capture(device, format);
-    let started = Instant::now();
-    let deadline = started + timeout;
-    let mut first = None;
-    let mut frames = 0_usize;
-    while frames < target_frames.max(1) {
-        let timestamp =
-            Timestamp::from_nanos(u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
-        match capture.poll_frame(timestamp) {
-            Ok(Some(frame)) if frame.format() == format => {
-                first.get_or_insert_with(|| frame.clone());
-                frames = frames.saturating_add(1);
-            }
-            Ok(Some(frame)) => {
-                let _ = capture.shutdown();
-                return Err(CaptureError::FrameFormatMismatch {
-                    expected: format,
-                    actual: frame.format(),
-                });
-            }
-            Ok(None)
-                if matches!(
-                    capture.state(),
-                    CaptureLifecycleState::Lost | CaptureLifecycleState::Denied
-                ) =>
-            {
-                let error = capture.failure().unwrap_or(CaptureError::NotRunning);
-                let _ = capture.shutdown();
-                return Err(error);
-            }
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(2)),
-            Ok(None) => {
-                let _ = capture.shutdown();
-                return Err(CaptureError::Protocol {
-                    message: format!(
-                        "Windows capture produced {frames}/{} frames within {timeout:?}",
-                        target_frames.max(1)
-                    ),
-                });
-            }
-            Err(error) => {
-                let _ = capture.shutdown();
-                return Err(error);
-            }
-        }
-    }
-    let elapsed = started.elapsed();
+    let result = wait_for_capture_frames(&mut capture, format, target_frames, timeout);
     let stopped = capture.shutdown();
     if !stopped {
         return Err(CaptureError::Protocol {
@@ -464,14 +451,7 @@ fn capture_frames(
                 .to_owned(),
         });
     }
-    first.map_or_else(
-        || {
-            Err(CaptureError::Protocol {
-                message: "Windows capture returned no first frame".to_owned(),
-            })
-        },
-        |frame| Ok((frame, frames, elapsed)),
-    )
+    result
 }
 
 #[cfg(target_os = "windows")]
@@ -921,15 +901,15 @@ fn check_camera() -> CheckResult {
         NokhwaCaptureDevice::from_device_id(&opener_id, &opener_name)
             .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
     });
-    let frame = wait_for_frame(&mut capture, format, Duration::from_secs(8));
+    let frames = wait_for_capture_frames(&mut capture, format, 4, Duration::from_secs(8));
     let stopped = capture.shutdown();
     if !stopped {
         return CheckResult::fail(
             "Nokhwa camera worker did not stop within its bounded grace period",
         );
     }
-    match frame {
-        Ok(frame) => {
+    match frames {
+        Ok((frame, frames, elapsed)) => {
             let mode = native_mode.map_or_else(
                 || "auto".to_owned(),
                 |mode| {
@@ -944,12 +924,14 @@ fn check_camera() -> CheckResult {
                 },
             );
             CheckResult::pass(format!(
-                "device={} modes={} selected_mode={} size={}x{}",
+                "device={} modes={} selected_mode={} size={}x{} frames={} elapsed_ms={}",
                 id,
                 camera.modes().len(),
                 mode,
                 frame.format().width(),
-                frame.format().height()
+                frame.format().height(),
+                frames,
+                elapsed.as_millis()
             ))
         }
         Err(error) => capture_check_result(&error),
