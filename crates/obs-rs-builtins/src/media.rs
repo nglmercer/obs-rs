@@ -2,7 +2,7 @@
 //!
 //! The portable built-ins decode still images themselves, but a general media
 //! source needs a demuxer, audio/video clocks, and codecs. Those are supplied
-//! by the optional native GStreamer boundary. Audio is consumed by a fakesink
+//! by the optional native `GStreamer` boundary. Audio is consumed by a fakesink
 //! here while the engine owns the live audio routes separately.
 
 use std::path::Path;

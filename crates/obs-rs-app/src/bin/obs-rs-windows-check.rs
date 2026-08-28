@@ -87,7 +87,10 @@ impl CheckResult {
 #[cfg(target_os = "windows")]
 fn main() -> ExitCode {
     let mut checks = vec![
+        ("discovery_stability", check_discovery_stability()),
+        ("target_persistence", check_target_persistence()),
         ("display", check_display()),
+        ("display_frame_rates", check_display_frame_rates()),
         ("window", check_window()),
         ("reference_recording", check_reference_recording()),
         ("camera", check_camera()),
@@ -396,15 +399,250 @@ fn capture_one(
     format: VideoFormat,
     timeout: Duration,
 ) -> Result<VideoFrame, CaptureError> {
+    capture_frames(device, format, 1, timeout).map(|(frame, _, _)| frame)
+}
+
+#[cfg(target_os = "windows")]
+fn capture_frames(
+    device: &obs_rs_capture::CaptureDeviceInfo,
+    format: VideoFormat,
+    target_frames: usize,
+    timeout: Duration,
+) -> Result<(VideoFrame, usize, Duration), CaptureError> {
     let mut capture = open_windows_capture(device, format);
-    let frame = wait_for_frame(&mut capture, format, timeout);
-    if !capture.shutdown() {
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let mut first = None;
+    let mut frames = 0_usize;
+    while frames < target_frames.max(1) {
+        let timestamp =
+            Timestamp::from_nanos(u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX));
+        match capture.poll_frame(timestamp) {
+            Ok(Some(frame)) if frame.format() == format => {
+                first.get_or_insert_with(|| frame.clone());
+                frames = frames.saturating_add(1);
+            }
+            Ok(Some(frame)) => {
+                let _ = capture.shutdown();
+                return Err(CaptureError::FrameFormatMismatch {
+                    expected: format,
+                    actual: frame.format(),
+                });
+            }
+            Ok(None)
+                if matches!(
+                    capture.state(),
+                    CaptureLifecycleState::Lost | CaptureLifecycleState::Denied
+                ) =>
+            {
+                let error = capture.failure().unwrap_or(CaptureError::NotRunning);
+                let _ = capture.shutdown();
+                return Err(error);
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(2)),
+            Ok(None) => {
+                let _ = capture.shutdown();
+                return Err(CaptureError::Protocol {
+                    message: format!(
+                        "Windows capture produced {frames}/{} frames within {timeout:?}",
+                        target_frames.max(1)
+                    ),
+                });
+            }
+            Err(error) => {
+                let _ = capture.shutdown();
+                return Err(error);
+            }
+        }
+    }
+    let elapsed = started.elapsed();
+    let stopped = capture.shutdown();
+    if !stopped {
         return Err(CaptureError::Protocol {
             message: "Windows capture worker did not stop within its bounded grace period"
                 .to_owned(),
         });
     }
-    frame
+    first.map_or_else(
+        || {
+            Err(CaptureError::Protocol {
+                message: "Windows capture returned no first frame".to_owned(),
+            })
+        },
+        |frame| Ok((frame, frames, elapsed)),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn check_discovery_stability() -> CheckResult {
+    let first = match discover_windows() {
+        Ok(devices) => devices,
+        Err(error) => return capture_check_result(&error),
+    };
+    let second = match discover_windows() {
+        Ok(devices) => devices,
+        Err(error) => return capture_check_result(&error),
+    };
+    let ids = |devices: &[obs_rs_capture::CaptureDeviceInfo], kind: CaptureKind| {
+        let mut ids = devices
+            .iter()
+            .filter(|device| device.kind() == kind)
+            .map(|device| device.id().to_string())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    };
+    let first_displays = ids(&first, CaptureKind::Screen);
+    let second_displays = ids(&second, CaptureKind::Screen);
+    if first_displays.is_empty() {
+        return CheckResult::skip("Windows Graphics Capture reported no displays");
+    }
+    if first_displays != second_displays {
+        return CheckResult::fail(format!(
+            "display IDs changed between immediate discovery calls: first={first_displays:?} second={second_displays:?}"
+        ));
+    }
+    let first_windows = ids(&first, CaptureKind::Window);
+    let second_windows = ids(&second, CaptureKind::Window);
+    let duplicate_ids = |ids: &[String]| ids.windows(2).any(|pair| pair[0] == pair[1]);
+    if duplicate_ids(&first_windows) || duplicate_ids(&second_windows) {
+        return CheckResult::fail("window discovery returned duplicate stable IDs");
+    }
+    let shared_windows = first_windows
+        .iter()
+        .filter(|id| second_windows.binary_search(id).is_ok())
+        .count();
+    if !first_windows.is_empty() && !second_windows.is_empty() && shared_windows == 0 {
+        return CheckResult::fail(
+            "window IDs were not stable across immediate discovery calls; target persistence is unsafe",
+        );
+    }
+    CheckResult::pass(format!(
+        "displays={} windows_first={} windows_second={} shared_windows={shared_windows}",
+        first_displays.len(),
+        first_windows.len(),
+        second_windows.len()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn check_target_persistence() -> CheckResult {
+    let devices = match discover_windows() {
+        Ok(devices) => devices,
+        Err(error) => return capture_check_result(&error),
+    };
+    let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
+        return CheckResult::skip("target persistence needs a connected Windows display");
+    };
+    let window = first_windows_device(&devices, CaptureKind::Window);
+    let format = probe_video_format();
+    let mut project = match Project::new("OBS-RS Windows target persistence") {
+        Ok(project) => project,
+        Err(error) => return CheckResult::fail(error.to_string()),
+    };
+    let mut profile = match Profile::new("windows-check", "Windows acceptance", format) {
+        Ok(profile) => profile,
+        Err(error) => return CheckResult::fail(error.to_string()),
+    };
+    let mut scene = match SceneSpec::new("program", "Program") {
+        Ok(scene) => scene,
+        Err(error) => return CheckResult::fail(error.to_string()),
+    };
+    let mut expected = Vec::new();
+    let mut add_target = |id: &str, kind: &str, device_id: &str, monitor: Option<&str>| {
+        let mut settings = Config::new();
+        settings.set("width", &format.width().to_string())?;
+        settings.set("height", &format.height().to_string())?;
+        settings.set("device_id", device_id)?;
+        settings.set("capture_cursor", "true")?;
+        settings.set("capture_border", "false")?;
+        if let Some(monitor) = monitor {
+            settings.set("monitor", monitor)?;
+        }
+        profile.add_source(SourceSpec::new(id, kind, id, settings)?)?;
+        scene.add_item(SceneItemSpec::for_source(id)?)?;
+        expected.push((
+            id.to_owned(),
+            kind.to_owned(),
+            device_id.to_owned(),
+            monitor.map(str::to_owned),
+        ));
+        Ok::<(), Box<dyn Error>>(())
+    };
+    if let Err(error) = add_target(
+        "display",
+        "screen_capture",
+        display.id().as_str(),
+        Some(display.id().as_str()),
+    ) {
+        return CheckResult::fail(error.to_string());
+    }
+    if let Some(window) = window {
+        if let Err(error) = add_target("window", "window_capture", window.id().as_str(), None) {
+            return CheckResult::fail(error.to_string());
+        }
+    }
+    if let Err(error) = profile
+        .add_scene(scene)
+        .and_then(|()| project.add_profile(profile))
+    {
+        return CheckResult::fail(error.to_string());
+    }
+    let decoded = match Project::parse(&project.serialize()) {
+        Ok(project) => project,
+        Err(error) => return CheckResult::fail(format!("parse persisted targets: {error}")),
+    };
+    let Some(profile) = decoded.profile("windows-check") else {
+        return CheckResult::fail("persisted target project lost its profile");
+    };
+    for (id, kind, device_id, monitor) in &expected {
+        let Some(source) = profile.source(id.as_str()) else {
+            return CheckResult::fail(format!("persisted target {id} is missing"));
+        };
+        if source.kind().as_str() != kind
+            || source.settings().get("device_id") != Some(device_id.as_str())
+            || source.settings().get("monitor") != monitor.as_deref()
+        {
+            return CheckResult::fail(format!(
+                "persisted target {id} changed: kind={} device_id={:?} monitor={:?}",
+                source.kind().as_str(),
+                source.settings().get("device_id"),
+                source.settings().get("monitor")
+            ));
+        }
+    }
+    CheckResult::pass(format!("persisted_targets={}", expected.len()))
+}
+
+#[cfg(target_os = "windows")]
+fn check_display_frame_rates() -> CheckResult {
+    let devices = match discover_windows() {
+        Ok(devices) => devices,
+        Err(error) => return capture_check_result(&error),
+    };
+    let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
+        return CheckResult::skip("frame-rate acceptance needs a connected display target");
+    };
+    let mut results = Vec::new();
+    for fps in [30_u32, 60_u32] {
+        let format = match VideoFormat::new(320, 180, FrameRate::new(fps, 1).expect("fps")) {
+            Ok(format) => format,
+            Err(error) => return CheckResult::fail(error.to_string()),
+        };
+        match capture_frames(display, format, 4, Duration::from_secs(8)) {
+            Ok((_, frames, elapsed)) => results.push(format!(
+                "{fps}fps_frames={frames}_elapsed_ms={}",
+                elapsed.as_millis()
+            )),
+            Err(error) => {
+                return capture_check_result_with_context(
+                    &error,
+                    &format!("{fps} FPS display capture"),
+                )
+            }
+        }
+    }
+    CheckResult::pass(format!("device={} {}", display.id(), results.join(" ")))
 }
 
 #[cfg(target_os = "windows")]

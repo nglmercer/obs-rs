@@ -4,6 +4,7 @@ param(
     [ValidateRange(1, 28800)]
     [int]$SoakSeconds = 1800,
     [switch]$RequireCamera,
+    [switch]$RequireProduction,
     [string]$ProductionStreamUrl = ""
 )
 
@@ -55,6 +56,7 @@ $metadata = [ordered]@{
     audio = @($audio)
     soak_seconds = $SoakSeconds
     camera_required = [bool]$RequireCamera
+    production_required = [bool]$RequireProduction
     production_stream_configured = -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)
 }
 $metadata | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $artifacts "machine.json") -Encoding utf8
@@ -64,7 +66,10 @@ $oldSoak = $env:OBS_RS_SOAK_SECONDS
 $oldEndpoint = $env:OBS_RS_PRODUCTION_STREAM_URL
 $oldArtifacts = $env:OBS_RS_ACCEPTANCE_ARTIFACTS
 $requiredNames = @(
+    "OBS_RS_REQUIRE_DISCOVERY_STABILITY",
+    "OBS_RS_REQUIRE_TARGET_PERSISTENCE",
     "OBS_RS_REQUIRE_DISPLAY",
+    "OBS_RS_REQUIRE_DISPLAY_FRAME_RATES",
     "OBS_RS_REQUIRE_WINDOW",
     "OBS_RS_REQUIRE_REFERENCE_RECORDING",
     "OBS_RS_REQUIRE_MICROPHONE",
@@ -84,12 +89,26 @@ if ($RequireCamera) {
     [Environment]::SetEnvironmentVariable("OBS_RS_REQUIRE_CAMERA", "1", "Process")
 }
 if (-not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
+    $oldRequired["OBS_RS_REQUIRE_PRODUCTION_OUTPUT"] = [Environment]::GetEnvironmentVariable(
+        "OBS_RS_REQUIRE_PRODUCTION_OUTPUT", "Process")
     $oldRequired["OBS_RS_REQUIRE_PRODUCTION_RECORDING"] = [Environment]::GetEnvironmentVariable(
         "OBS_RS_REQUIRE_PRODUCTION_RECORDING", "Process")
     $oldRequired["OBS_RS_REQUIRE_PRODUCTION_STREAMING"] = [Environment]::GetEnvironmentVariable(
         "OBS_RS_REQUIRE_PRODUCTION_STREAMING", "Process")
+    [Environment]::SetEnvironmentVariable("OBS_RS_REQUIRE_PRODUCTION_OUTPUT", "1", "Process")
     [Environment]::SetEnvironmentVariable("OBS_RS_REQUIRE_PRODUCTION_RECORDING", "1", "Process")
     [Environment]::SetEnvironmentVariable("OBS_RS_REQUIRE_PRODUCTION_STREAMING", "1", "Process")
+}
+if ($RequireProduction) {
+    foreach ($name in @(
+        "OBS_RS_REQUIRE_PRODUCTION_OUTPUT",
+        "OBS_RS_REQUIRE_PRODUCTION_RECORDING"
+    )) {
+        if (-not $oldRequired.ContainsKey($name)) {
+            $oldRequired[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+        }
+        [Environment]::SetEnvironmentVariable($name, "1", "Process")
+    }
 }
 
 $env:OBSR_CAPTURE_HELPER = $helper

@@ -46,11 +46,13 @@ checks, and writes bounded soak telemetry:
 ```
 
 Add `-RequireCamera` on a machine with a connected camera. A provisioned
-production-output runner can also pass `-ProductionStreamUrl` to require native
-Matroska recording and a real RTMP, RTMPS, SRT, or RIST endpoint. The endpoint is
-used only for the live check and is not written to the telemetry artifact. When
-native recording is enabled, the resulting `production-recording.mkv` is kept
-in the acceptance artifact directory for independent playback inspection.
+production-output runner can pass `-RequireProduction` to require native output
+capabilities and a real Matroska recording. Add `-ProductionStreamUrl` to also
+require a real RTMP, RTMPS, SRT, or RIST endpoint; this switch implies the
+production capability and recording checks. The endpoint is used only for the
+live check and is not written to the telemetry artifact. When native recording
+is enabled, the resulting `production-recording.mkv` is kept in the acceptance
+artifact directory for independent playback inspection.
 
 ## Platform requirements and limitations
 
@@ -88,8 +90,8 @@ Then build and package with the opt-in feature and a matching runtime tree:
   -GStreamerRuntimeDirectory 'C:\Program Files\gstreamer\1.0\msvc_x86_64'
 ```
 
-The runtime directory must contain `bin`, `lib\gstreamer-1.0`, and, when
-provided by the installer, `libexec\gstreamer-1.0\gst-plugin-scanner.exe`.
+The runtime directory must contain `bin\gstreamer-1.0-0.dll`,
+`lib\gstreamer-1.0`, and `libexec\gstreamer-1.0\gst-plugin-scanner.exe`.
 The matching development package is still required at build time. The
 packager copies the runtime DLLs and plugins into the archive and writes the
 selected runtime into `GSTREAMER-RUNTIME.txt`.

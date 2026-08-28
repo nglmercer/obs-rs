@@ -22,7 +22,16 @@ foreach ($line in Get-Content -LiteralPath $sumsPath) {
     if ([System.IO.Path]::IsPathRooted($relative)) {
         throw "Checksum path must be relative: $relative"
     }
-    $file = Join-Path $root ($relative.Replace("/", "\"))
+    try {
+        $file = [System.IO.Path]::GetFullPath(
+            (Join-Path $root ($relative.Replace("/", "\"))))
+    } catch {
+        throw "Checksum path is invalid: $relative"
+    }
+    $rootPrefix = $root.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $file.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Checksum path escapes the package directory: $relative"
+    }
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
         throw "Checksum target is missing: $relative"
     }

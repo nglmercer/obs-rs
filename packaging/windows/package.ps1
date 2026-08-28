@@ -25,6 +25,14 @@ if ($ProductionGStreamer) {
     if (-not (Test-Path -LiteralPath $gstreamerPlugins -PathType Container)) {
         throw "GStreamer runtime directory must contain lib\gstreamer-1.0: $gstreamerPlugins"
     }
+    $gstreamerCore = Join-Path $gstreamerBin "gstreamer-1.0-0.dll"
+    if (-not (Test-Path -LiteralPath $gstreamerCore -PathType Leaf)) {
+        throw "GStreamer runtime is missing the core DLL: $gstreamerCore"
+    }
+    $gstreamerScanner = Join-Path $gstreamerRoot "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
+    if (-not (Test-Path -LiteralPath $gstreamerScanner -PathType Leaf)) {
+        throw "GStreamer runtime is missing the plugin scanner: $gstreamerScanner"
+    }
 } else {
     $gstreamerRoot = $null
     $gstreamerBin = $null
@@ -103,11 +111,9 @@ if ($ProductionGStreamer) {
         Copy-Item -Destination $pluginDestination -Recurse
 
     $scanner = Join-Path $gstreamerRoot "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
-    if (Test-Path -LiteralPath $scanner -PathType Leaf) {
-        $scannerDestination = Join-Path $gstreamerDirectory "libexec\gstreamer-1.0"
-        New-Item -ItemType Directory -Force -Path $scannerDestination | Out-Null
-        Copy-Item -LiteralPath $scanner -Destination $scannerDestination
-    }
+    $scannerDestination = Join-Path $gstreamerDirectory "libexec\gstreamer-1.0"
+    New-Item -ItemType Directory -Force -Path $scannerDestination | Out-Null
+    Copy-Item -LiteralPath $scanner -Destination $scannerDestination
     $share = Join-Path $gstreamerRoot "share\gstreamer-1.0"
     if (Test-Path -LiteralPath $share -PathType Container) {
         $shareDestination = Join-Path $gstreamerDirectory "share\gstreamer-1.0"
@@ -118,7 +124,7 @@ if ($ProductionGStreamer) {
     @(
         "GStreamer runtime: $gstreamerRoot",
         "Native output feature: production-gstreamer",
-        "Launch with run-obs-rs.ps1 so GST_PLUGIN_PATH and the plugin scanner are configured.",
+        "Launch with run-obs-rs.ps1 so PATH, GST_PLUGIN_PATH, and the plugin scanner are configured.",
         "The runtime and Cargo development package must come from the same GStreamer release."
     ) | Set-Content -LiteralPath (Join-Path $stagingDirectory "GSTREAMER-RUNTIME.txt") -Encoding utf8
 }
