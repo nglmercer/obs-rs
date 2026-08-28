@@ -11,7 +11,7 @@ use std::{
     collections::HashMap,
     error::Error,
     io::{self, BufWriter, Read, Write},
-    process,
+    process, thread,
     time::{Duration, Instant},
 };
 
@@ -456,10 +456,34 @@ where
             Err(error) => return Err(invalid(format!("start graphics capture: {error}"))),
         }
     };
-    wait_for_parent_shutdown()?;
-    control
-        .stop()
-        .map_err(|error| invalid(format!("stop graphics capture: {error}")))
+    // Keep the parent-shutdown reader off the capture thread. A WGC target can
+    // close by itself (for example when its window is destroyed), and waiting
+    // on stdin alone would leave the helper alive with no frames forever.
+    let parent_shutdown = thread::Builder::new()
+        .name("obs-rs-capture-parent-shutdown".to_owned())
+        .spawn(wait_for_parent_shutdown)
+        .map_err(|error| invalid(format!("start parent shutdown watcher: {error}")))?;
+    loop {
+        if parent_shutdown.is_finished() {
+            let parent_result = parent_shutdown
+                .join()
+                .map_err(|_| invalid("parent shutdown watcher panicked"))?;
+            let stop_result = control
+                .stop()
+                .map_err(|error| invalid(format!("stop graphics capture: {error}")));
+            parent_result?;
+            return stop_result;
+        }
+        if control.is_finished() {
+            return match control.wait() {
+                Ok(()) => Err(invalid("Windows Graphics Capture target closed")),
+                Err(error) => Err(invalid(format!(
+                    "Windows Graphics Capture target closed: {error}"
+                ))),
+            };
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn border_toggle_is_unsupported(message: &str) -> bool {
@@ -703,6 +727,10 @@ impl GraphicsCaptureApiHandler for FrameWriter {
         self.writer.flush()?;
         self.output = output.into_pixels();
         Ok(())
+    }
+
+    fn on_closed(&mut self) -> Result<(), Self::Error> {
+        Err(invalid("Windows Graphics Capture target closed"))
     }
 }
 
