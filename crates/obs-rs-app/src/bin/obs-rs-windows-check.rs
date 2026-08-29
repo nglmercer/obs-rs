@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::{
     error::Error,
+    process::{Child, Command},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -98,6 +99,7 @@ fn main() -> ExitCode {
         ("display", check_display()),
         ("display_frame_rates", check_display_frame_rates()),
         ("window", check_window()),
+        ("window_lifecycle", check_window_lifecycle()),
         ("reference_recording", check_reference_recording()),
         ("camera", check_camera()),
         ("audio_device_stability", check_audio_device_stability()),
@@ -956,6 +958,133 @@ fn check_window() -> CheckResult {
         "no enumerated window could be captured: {}",
         failures.join("; ")
     ))
+}
+
+/// Opens a real top-level Windows window, captures its PID/HWND target, closes
+/// it, and verifies that the old target is rejected instead of falling back to
+/// whichever window happens to be in the foreground. This is intentionally a
+/// separate check from ordinary window capture: discovery stability alone does
+/// not prove that a persisted target remains authoritative after destruction.
+#[cfg(target_os = "windows")]
+fn check_window_lifecycle() -> CheckResult {
+    let mut process = match Command::new("notepad.exe").spawn() {
+        Ok(process) => process,
+        Err(error) => {
+            return CheckResult::skip(format!(
+                "could not start a test window for lifecycle acceptance: {error}"
+            ))
+        }
+    };
+    let result = check_window_lifecycle_process(&mut process);
+    // The process may have been closed by the test already. Only perform the
+    // fallback cleanup when the lifecycle check returned early; the normal
+    // path already waited for the child after closing its window.
+    if !matches!(process.try_wait(), Ok(Some(_))) {
+        let _ = process.kill();
+        let _ = process.wait();
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn check_window_lifecycle_process(process: &mut Child) -> CheckResult {
+    let pid = process.id();
+    let prefix = format!("wgc-window-{pid:08x}-");
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let target = loop {
+        let devices = match discover_windows() {
+            Ok(devices) => devices,
+            Err(error) => {
+                return capture_check_result_with_context(&error, "window lifecycle discovery")
+            }
+        };
+        if let Some(target) = devices.into_iter().find(|device| {
+            device.kind() == CaptureKind::Window
+                && device.permission() == CapturePermission::Granted
+                && device.id().as_str().starts_with(&prefix)
+        }) {
+            break target;
+        }
+        if Instant::now() >= deadline {
+            return CheckResult::skip(format!(
+                "test window PID {pid} was not exposed as a capturable WGC target"
+            ));
+        }
+        thread::sleep(Duration::from_millis(100));
+    };
+
+    let format = probe_video_format();
+    let (frame, frames, elapsed) = match capture_frames(&target, format, 4, Duration::from_secs(8))
+    {
+        Ok(result) => result,
+        Err(error) => {
+            return capture_check_result_with_context(&error, "window lifecycle initial capture")
+        }
+    };
+
+    if let Err(error) = process.kill() {
+        // A test window can close itself during startup. If it is already gone,
+        // `wait` below still gives us the normal cleanup path.
+        if process.try_wait().ok().flatten().is_none() {
+            return CheckResult::fail(format!("close test window PID {pid}: {error}"));
+        }
+    }
+    if let Err(error) = process.wait() {
+        return CheckResult::fail(format!("wait for test window PID {pid}: {error}"));
+    }
+
+    let disappeared_deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let devices = match discover_windows() {
+            Ok(devices) => devices,
+            Err(error) => {
+                return CheckResult::fail(format!(
+                    "rediscover closed test window PID {pid}: {error}"
+                ))
+            }
+        };
+        if !devices.iter().any(|device| device.id() == target.id()) {
+            break;
+        }
+        if Instant::now() >= disappeared_deadline {
+            return CheckResult::fail(format!(
+                "closed test window target {} remained in discovery",
+                target.id()
+            ));
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    // Re-opening the exact persisted ID must fail with the target-specific
+    // error. `capture_frames` also exercises the bounded worker shutdown path,
+    // so a helper that hangs after the close becomes a failed check rather than
+    // hanging the acceptance process indefinitely.
+    match capture_frames(&target, format, 1, Duration::from_secs(8)) {
+        Ok(_) => CheckResult::fail(format!(
+            "closed window target {} captured frames after PID {pid} exited",
+            target.id()
+        )),
+        Err(error) if is_closed_window_error(&error) => CheckResult::pass(format!(
+            "pid={} target={} initial_size={}x{} frames={} elapsed_ms={} closed_target_rejected=true",
+            pid,
+            target.id(),
+            frame.format().width(),
+            frame.format().height(),
+            frames,
+            elapsed.as_millis()
+        )),
+        Err(error) => CheckResult::fail(format!(
+            "closed window target {} returned an unexpected error: {error}",
+            target.id()
+        )),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_closed_window_error(error: &CaptureError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("selected window is no longer available")
+        || message.contains("graphics capture target closed")
 }
 
 #[cfg(target_os = "windows")]

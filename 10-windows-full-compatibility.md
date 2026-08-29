@@ -113,8 +113,9 @@ only scaffolded:
   feature; production builds use a bounded playbin/appsink video path;
 - the Windows check verifies canonical built-in capture-source registration,
   immediate display/window discovery stability, target-ID project round trips,
-  and four-frame display runs at both 30 and 60 FPS; its audio stability check
-  verifies endpoint identity/default-route invariants;
+  a real selected-window close/reopen rejection, and four-frame display runs at
+  both 30 and 60 FPS; its audio stability check verifies endpoint
+  identity/default-route invariants;
 - native output capability discovery is cached for the process after one
   allow-listed GStreamer probe; the Output page and exported diagnostics now
   distinguish an uncompiled adapter, a missing runtime, an incomplete plugin
