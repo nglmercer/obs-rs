@@ -1,9 +1,15 @@
 param(
-    [string]$PackageDirectory = $PSScriptRoot
+    [string]$PackageDirectory = $PSScriptRoot,
+    [ValidateSet("", "rtmp", "rtmps", "srt", "rist", "whip", "webrtc", "hls")]
+    [string]$RequiredStreamProtocol = ""
 )
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath $PackageDirectory).Path
+$requiredStreamProtocol = $RequiredStreamProtocol.Trim().ToLowerInvariant()
+if ($requiredStreamProtocol -in @("whip", "webrtc")) {
+    $requiredStreamProtocol = "webrtc"
+}
 $sumsPath = Join-Path $root "SHA256SUMS.txt"
 if (-not (Test-Path -LiteralPath $sumsPath -PathType Leaf)) {
     throw "SHA256SUMS.txt was not found in $root"
@@ -75,6 +81,23 @@ if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
         $markerVersionLine,
         '^GStreamer version:\s*(?<version>\S+)\s*$')
     $runtimeVersion = $markerVersionMatch.Groups["version"].Value
+    $streamGateLine = Get-Content -LiteralPath $runtimeMarker |
+        Where-Object { $_ -match '^Streaming protocol gate:\s*(?<protocol>\S+)\s*$' } |
+        Select-Object -First 1
+    $streamGate = if ($null -eq $streamGateLine) {
+        "none"
+    } else {
+        ([System.Text.RegularExpressions.Regex]::Match(
+                $streamGateLine,
+                '^Streaming protocol gate:\s*(?<protocol>\S+)\s*$')).Groups["protocol"].Value.ToLowerInvariant()
+    }
+    if ($streamGate -in @("whip", "webrtc")) {
+        $streamGate = "webrtc"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($requiredStreamProtocol) -and
+        $streamGate -ne $requiredStreamProtocol) {
+        throw "package streaming protocol gate does not match the requested acceptance protocol: gate=$streamGate requested=$requiredStreamProtocol"
+    }
     $runtimeFiles = @(
         @{ Path = (Join-Path $root "gstreamer\bin\gstreamer-1.0-0.dll"); Type = "Leaf" },
         @{ Path = (Join-Path $root "gstreamer\bin\gst-inspect-1.0.exe"); Type = "Leaf" },
@@ -152,6 +175,31 @@ if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
         })
         if ($availableH264Encoders.Count -eq 0) {
             throw "bundled GStreamer runtime does not provide an approved H.264 encoder"
+        }
+        if ($streamGate -ne "none") {
+            $requiredStreamingElements = switch ($streamGate) {
+                "rtmp" { @("flvmux") ; break }
+                "rtmps" { @("flvmux") ; break }
+                "srt" { @("mpegtsmux", "srtsink") ; break }
+                "rist" { @("mpegtsmux", "rtpmp2tpay", "ristsink") ; break }
+                "webrtc" { @("vp8enc", "opusenc", "webrtcbin", "whipclientsink") ; break }
+                "hls" { @("hlssink2") ; break }
+                default { throw "GStreamer runtime marker contains an unknown streaming protocol gate: $streamGate" }
+            }
+            $missingStreamingElements = @($requiredStreamingElements | Where-Object {
+                -not (Test-BundledGStreamerElement -Element $_)
+            })
+            if ($streamGate -in @("rtmp", "rtmps")) {
+                $hasRtmpSink = @(@("rtmp2sink", "rtmpsink") | Where-Object {
+                    Test-BundledGStreamerElement -Element $_
+                }).Count -gt 0
+                if (-not $hasRtmpSink) {
+                    $missingStreamingElements += "rtmp2sink or rtmpsink"
+                }
+            }
+            if ($missingStreamingElements.Count -gt 0) {
+                throw "bundled GStreamer runtime is missing production $streamGate streaming elements: $($missingStreamingElements -join ', ')"
+            }
         }
     } finally {
         $env:PATH = $oldPath

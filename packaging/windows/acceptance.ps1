@@ -22,7 +22,26 @@ foreach ($requiredPath in @($verifier, $launcher, $helper)) {
     }
 }
 
-& $verifier -PackageDirectory $root
+$requiredStreamProtocol = ""
+if (-not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
+    $productionEndpoint = $ProductionStreamUrl.Trim()
+    $delimiter = $productionEndpoint.IndexOf("://", [System.StringComparison]::Ordinal)
+    if ($delimiter -lt 1 -or $delimiter + 3 -ge $productionEndpoint.Length) {
+        throw "-ProductionStreamUrl must use a non-empty rtmp://, rtmps://, srt://, rist://, whip://, or webrtc:// endpoint"
+    }
+    $requiredStreamProtocol = $productionEndpoint.Substring(0, $delimiter).ToLowerInvariant()
+    if ($requiredStreamProtocol -in @("whip", "webrtc")) {
+        $requiredStreamProtocol = "webrtc"
+    }
+    if ($requiredStreamProtocol -notin @("rtmp", "rtmps", "srt", "rist", "webrtc")) {
+        throw "-ProductionStreamUrl uses unsupported protocol $requiredStreamProtocol"
+    }
+}
+$verifyArguments = @("-PackageDirectory", $root)
+if (-not [string]::IsNullOrWhiteSpace($requiredStreamProtocol)) {
+    $verifyArguments += @("-RequiredStreamProtocol", $requiredStreamProtocol)
+}
+& $verifier @verifyArguments
 if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
     throw "package verification failed with exit code $LASTEXITCODE"
 }

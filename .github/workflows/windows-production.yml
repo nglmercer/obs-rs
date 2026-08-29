@@ -98,11 +98,28 @@ jobs:
         shell: pwsh
         run: |
           $dist = Join-Path $env:RUNNER_TEMP "obs-rs-windows-production-dist"
-          .\packaging\windows\package.ps1 `
-            -Configuration release `
-            -OutputDirectory $dist `
-            -ProductionGStreamer `
-            -GStreamerRuntimeDirectory $env:GSTREAMER_1_0_ROOT
+          $packageArguments = @(
+            "-Configuration", "release",
+            "-OutputDirectory", $dist,
+            "-ProductionGStreamer",
+            "-GStreamerRuntimeDirectory", $env:GSTREAMER_1_0_ROOT
+          )
+          if (-not [string]::IsNullOrWhiteSpace($env:OBS_RS_PRODUCTION_STREAM_URL)) {
+            $streamUrl = $env:OBS_RS_PRODUCTION_STREAM_URL.Trim()
+            $delimiter = $streamUrl.IndexOf("://", [System.StringComparison]::Ordinal)
+            if ($delimiter -lt 1) {
+              throw "OBS_RS_PRODUCTION_STREAM_URL must contain a protocol delimiter"
+            }
+            $streamProtocol = $streamUrl.Substring(0, $delimiter).ToLowerInvariant()
+            if ($streamProtocol -in @("whip", "webrtc")) {
+              $streamProtocol = "webrtc"
+            }
+            if ($streamProtocol -notin @("rtmp", "rtmps", "srt", "rist", "webrtc")) {
+              throw "OBS_RS_PRODUCTION_STREAM_URL uses unsupported package-gate protocol $streamProtocol"
+            }
+            $packageArguments += @("-ProductionStreamProtocol", $streamProtocol)
+          }
+          & .\packaging\windows\package.ps1 @packageArguments
           if ($LASTEXITCODE -ne 0) { throw "production Windows package failed" }
           $archive = Get-ChildItem -LiteralPath $dist -Filter "obs-rs-windows-*-x86_64.zip" -File |
             Select-Object -First 1

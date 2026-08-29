@@ -116,8 +116,15 @@ Then build and package with the opt-in feature and a matching runtime tree:
 
 ```powershell
 .\packaging\windows\package.ps1 -ProductionGStreamer `
-  -GStreamerRuntimeDirectory 'C:\Program Files\gstreamer\1.0\msvc_x86_64'
+  -GStreamerRuntimeDirectory 'C:\Program Files\gstreamer\1.0\msvc_x86_64' `
+  -ProductionStreamProtocol rtmp
 ```
+
+`-ProductionStreamProtocol` is optional for a recording-only package. When
+provided, it accepts `rtmp`, `rtmps`, `srt`, `rist`, `hls`, `whip`, or `webrtc`
+(`whip` and `webrtc` share the `webrtc` gate) and requires the corresponding
+sink, parser, and encoder elements before packaging. The protocol gate is
+written to `GSTREAMER-RUNTIME.txt` and rechecked by `verify-package.ps1`.
 
 The runtime directory must contain `bin\gstreamer-1.0-0.dll`,
 `bin\gst-inspect-1.0.exe`, `bin\gst-discoverer-1.0.exe`,

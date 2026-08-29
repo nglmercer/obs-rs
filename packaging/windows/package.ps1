@@ -3,7 +3,9 @@ param(
     [string]$Configuration = "release",
     [string]$OutputDirectory = (Join-Path $PSScriptRoot "dist"),
     [switch]$ProductionGStreamer,
-    [string]$GStreamerRuntimeDirectory = ""
+    [string]$GStreamerRuntimeDirectory = "",
+    [ValidateSet("", "rtmp", "rtmps", "srt", "rist", "whip", "webrtc", "hls")]
+    [string]$ProductionStreamProtocol = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,6 +14,13 @@ $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
 $stagingDirectory = Join-Path $outputRoot "obs-rs"
 $helperManifest = Join-Path $repoRoot "packaging\windows\capture-helper\Cargo.toml"
 $gstreamerVersion = $null
+$streamProtocol = $ProductionStreamProtocol.Trim().ToLowerInvariant()
+if ($streamProtocol -in @("whip", "webrtc")) {
+    $streamProtocol = "webrtc"
+}
+if (-not $ProductionGStreamer -and -not [string]::IsNullOrWhiteSpace($streamProtocol)) {
+    throw "-ProductionStreamProtocol requires -ProductionGStreamer"
+}
 
 if ($ProductionGStreamer) {
     if ([string]::IsNullOrWhiteSpace($GStreamerRuntimeDirectory)) {
@@ -89,6 +98,31 @@ if ($ProductionGStreamer) {
     })
     if ($availableH264Encoders.Count -eq 0) {
         throw "GStreamer runtime does not provide an approved H.264 encoder"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($streamProtocol)) {
+        $requiredStreamingElements = switch ($streamProtocol) {
+            "rtmp" { @("flvmux") ; break }
+            "rtmps" { @("flvmux") ; break }
+            "srt" { @("mpegtsmux", "srtsink") ; break }
+            "rist" { @("mpegtsmux", "rtpmp2tpay", "ristsink") ; break }
+            "webrtc" { @("vp8enc", "opusenc", "webrtcbin", "whipclientsink") ; break }
+            "hls" { @("hlssink2") ; break }
+            default { @() ; break }
+        }
+        $missingStreamingElements = @($requiredStreamingElements | Where-Object {
+            -not (Test-GStreamerElement -Element $_)
+        })
+        if ($streamProtocol -in @("rtmp", "rtmps")) {
+            $hasRtmpSink = @(@("rtmp2sink", "rtmpsink") | Where-Object {
+                Test-GStreamerElement -Element $_
+            }).Count -gt 0
+            if (-not $hasRtmpSink) {
+                $missingStreamingElements += "rtmp2sink or rtmpsink"
+            }
+        }
+        if ($missingStreamingElements.Count -gt 0) {
+            throw "GStreamer runtime is missing production $streamProtocol streaming elements: $($missingStreamingElements -join ', ')"
+        }
     }
 } else {
     $gstreamerRoot = $null
@@ -193,6 +227,7 @@ if ($ProductionGStreamer) {
         "Native output feature: production-gstreamer",
         "Capability probe: gst-inspect-1.0.exe",
         "Recording probe: gst-discoverer-1.0.exe",
+        "Streaming protocol gate: $(if ([string]::IsNullOrWhiteSpace($streamProtocol)) { 'none' } else { $streamProtocol })",
         "The launcher and native adapter configure PATH, GST_PLUGIN_PATH, and the plugin scanner for the bundled runtime.",
         "The runtime and Cargo development package must come from the same GStreamer release."
     ) | Set-Content -LiteralPath (Join-Path $stagingDirectory "GSTREAMER-RUNTIME.txt") -Encoding utf8
