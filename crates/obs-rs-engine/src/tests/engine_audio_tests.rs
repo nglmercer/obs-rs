@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+use std::{sync::atomic::AtomicBool, time::Instant};
 
 use super::*;
 
@@ -749,6 +749,44 @@ impl AudioInputProvider for ReconnectingProvider {
     }
 }
 
+/// A provider whose reconnect call blocks long enough to expose accidental
+/// native device work on the media tick.
+struct SlowReconnectingProvider {
+    opens: Arc<AtomicUsize>,
+    reconnect_delay: Duration,
+}
+
+impl AudioInputProvider for SlowReconnectingProvider {
+    fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
+        Ok(vec![AudioDeviceInfo::new(
+            "slow-reconnecting-input",
+            "Slow reconnecting input",
+            AudioDeviceKind::Input,
+        )?])
+    }
+
+    fn open_input(
+        &self,
+        device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioInput>, obs_rs_audio::AudioDeviceError> {
+        if device_id != "slow-reconnecting-input" {
+            return Err(obs_rs_audio::AudioDeviceError::Unavailable(
+                device_id.to_owned(),
+            ));
+        }
+        let attempt = self.opens.fetch_add(1, Ordering::SeqCst);
+        if attempt > 0 {
+            std::thread::sleep(self.reconnect_delay);
+        }
+        Ok(Box::new(FailingAudioInput {
+            format,
+            inner: SimulatedAudioProvider::new().open_input("test-audio", format)?,
+            healthy_blocks: if attempt == 0 { 0 } else { usize::MAX },
+        }))
+    }
+}
+
 struct ReconnectingMonitorProvider {
     opens: Arc<AtomicUsize>,
 }
@@ -855,6 +893,46 @@ fn selected_audio_input_reconnects_after_a_bounded_media_interval() {
     assert_eq!(snapshot.audio_backend, "Reconnecting input");
     assert_eq!(opens.load(Ordering::SeqCst), 2);
     assert!(snapshot.last_error.is_none());
+}
+
+#[test]
+fn slow_audio_reconnect_does_not_block_the_media_tick() {
+    let opens = Arc::new(AtomicUsize::new(0));
+    let reconnect_delay = Duration::from_millis(250);
+    let config = EngineConfig::default()
+        .with_audio_provider(Arc::new(SlowReconnectingProvider {
+            opens: Arc::clone(&opens),
+            reconnect_delay,
+        }))
+        .with_audio_input_id("slow-reconnecting-input");
+    let mut engine = EngineSession::new(project(), config).expect("engine");
+
+    // The first input is intentionally dead. The initial drain reports the
+    // failure and schedules route work; subsequent drains let the worker reach
+    // the deliberately slow second open.
+    engine
+        .drain_audio_until(Timestamp::ZERO)
+        .expect("initial fallback audio");
+    for attempt in 0..100_u64 {
+        engine
+            .drain_audio_until(Timestamp::from_millis(10 + attempt))
+            .expect("fallback while reconnecting");
+        if opens.load(Ordering::SeqCst) >= 2 {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(opens.load(Ordering::SeqCst), 2);
+
+    let started = Instant::now();
+    engine
+        .drain_audio_until(Timestamp::from_millis(200))
+        .expect("media tick during reconnect");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < reconnect_delay / 2,
+        "media tick waited for the slow audio reopen: {elapsed:?}"
+    );
 }
 
 #[test]
