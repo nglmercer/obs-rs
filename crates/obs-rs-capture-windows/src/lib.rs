@@ -714,6 +714,22 @@ impl WindowsCaptureAdapter {
                     message: format!("read Windows capture helper reply: {output_error}{suffix}"),
                 });
             }
+            if let Some(bytes) = output_result
+                .as_ref()
+                .and_then(|result| result.as_ref().ok())
+                .map(|(_, bytes)| *bytes)
+                .filter(|bytes| discovery_reply_limit_error(*bytes).is_some())
+            {
+                // `read_helper_output` deliberately reads one byte past the
+                // limit so an oversized reply can be identified without
+                // allocating an unbounded buffer. Stop a helper that keeps
+                // writing after that boundary immediately; waiting for its
+                // normal exit would turn a protocol error into a ten-second
+                // command timeout.
+                let _ = terminate_child(&mut child, Some(stderr));
+                return Err(discovery_reply_limit_error(bytes)
+                    .expect("the reply size was checked immediately above"));
+            }
             match child.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) if Instant::now() >= deadline => {
@@ -775,11 +791,9 @@ impl WindowsCaptureAdapter {
                 });
             }
         };
-        if u64::try_from(bytes).unwrap_or(u64::MAX) > MAX_DISCOVERY_REPLY_BYTES {
+        if let Some(error) = discovery_reply_limit_error(bytes) {
             let _ = join_stderr_reader(Some(stderr));
-            return Err(CaptureError::ReplyTooLarge {
-                bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
-            });
+            return Err(error);
         }
         let diagnostics = join_stderr_reader(Some(stderr));
         if !status.success() {
@@ -799,6 +813,11 @@ fn read_helper_output(mut stdout: ChildStdout) -> Result<(String, usize), io::Er
         .take(MAX_DISCOVERY_REPLY_BYTES.saturating_add(1))
         .read_to_string(&mut output)?;
     Ok((output, bytes))
+}
+
+fn discovery_reply_limit_error(bytes: usize) -> Option<CaptureError> {
+    let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+    (bytes > MAX_DISCOVERY_REPLY_BYTES).then_some(CaptureError::ReplyTooLarge { bytes })
 }
 
 #[cfg(target_os = "windows")]
@@ -1240,6 +1259,16 @@ mod tests {
         assert!(matches!(
             parse_version_output("OBSRWIN1\tVERSION\t0.1.0\nOBSRWIN1\tVERSION\t0.1.0\n"),
             Err(CaptureError::Protocol { .. })
+        ));
+    }
+
+    #[test]
+    fn discovery_reply_limit_rejects_only_bytes_past_the_bound() {
+        let limit = usize::try_from(MAX_DISCOVERY_REPLY_BYTES).expect("limit fits usize");
+        assert!(discovery_reply_limit_error(limit).is_none());
+        assert!(matches!(
+            discovery_reply_limit_error(limit + 1),
+            Some(CaptureError::ReplyTooLarge { bytes }) if bytes == MAX_DISCOVERY_REPLY_BYTES + 1
         ));
     }
 
