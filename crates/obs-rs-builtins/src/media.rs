@@ -6,12 +6,19 @@
 //! here while the engine owns the live audio routes separately.
 
 use std::path::Path;
+#[cfg(feature = "production-gstreamer")]
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::portable::parse_format;
 use obs_rs_config::Config;
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_media::Timestamp;
 use obs_rs_media::{VideoFormat, VideoFrame};
+#[cfg(feature = "production-gstreamer")]
+use obs_rs_output_gstreamer::configure_bundled_runtime;
 use obs_rs_plugin_api::{PluginError, Source, SourceError, SourceFactory, VideoRequest};
 use obs_rs_util::Identifier;
 
@@ -19,6 +26,8 @@ use obs_rs_util::Identifier;
 pub const MEDIA_SOURCE_KIND: &str = "media_source";
 
 const MAX_MEDIA_PATH_BYTES: usize = 4 * 1024;
+#[cfg(feature = "production-gstreamer")]
+const MEDIA_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct MediaSourceFactory {
     kind: Identifier,
@@ -175,11 +184,13 @@ struct Playback {
     playbin: gst::Element,
     sink: gst_app::AppSink,
     eos: bool,
+    pending_frame: Option<Vec<u8>>,
 }
 
 #[cfg(feature = "production-gstreamer")]
 impl Playback {
     fn open(path: &Path, format: VideoFormat) -> Result<Self, SourceError> {
+        configure_bundled_runtime();
         gst::init().map_err(|error| native_error("initialize GStreamer", error))?;
         let path = path
             .canonicalize()
@@ -253,12 +264,45 @@ impl Playback {
         pipeline
             .set_state(gst::State::Playing)
             .map_err(|error| native_error("start media playback", error))?;
-        Ok(Self {
+        let mut playback = Self {
             pipeline,
             playbin,
             sink,
             eos: false,
-        })
+            pending_frame: None,
+        };
+        playback.wait_for_first_frame()?;
+        Ok(playback)
+    }
+
+    fn wait_for_first_frame(&mut self) -> Result<(), SourceError> {
+        let deadline = Instant::now() + MEDIA_STARTUP_TIMEOUT;
+        loop {
+            self.poll_bus()?;
+            if let Some(sample) = self.sink.try_pull_sample(gst::ClockTime::ZERO) {
+                let Some(buffer) = sample.buffer() else {
+                    continue;
+                };
+                let mapped = buffer
+                    .map_readable()
+                    .map_err(|error| native_error("map first decoded media frame", error))?;
+                self.pending_frame = Some(mapped.as_slice().to_vec());
+                return Ok(());
+            }
+            if self.eos {
+                return Err(native_error(
+                    "start media playback",
+                    "media file contains no video frames",
+                ));
+            }
+            if Instant::now() >= deadline {
+                return Err(native_error(
+                    "start media playback",
+                    "media playback produced no video frame within 5 seconds",
+                ));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn next_frame(
@@ -268,7 +312,7 @@ impl Playback {
         loop_media: bool,
     ) -> Result<Option<VideoFrame>, SourceError> {
         self.poll_bus()?;
-        if self.eos {
+        if self.pending_frame.is_none() && self.eos {
             if !loop_media {
                 return Ok(None);
             }
@@ -281,7 +325,7 @@ impl Playback {
             self.eos = false;
         }
 
-        let mut pixels = None;
+        let mut pixels = self.pending_frame.take();
         while let Some(sample) = self.sink.try_pull_sample(gst::ClockTime::ZERO) {
             let Some(buffer) = sample.buffer() else {
                 continue;

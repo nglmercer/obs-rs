@@ -4555,6 +4555,7 @@ dependencies = [
  "obs-rs-capture-windows",
  "obs-rs-config",
  "obs-rs-media",
+ "obs-rs-output-gstreamer",
  "obs-rs-plugin-api",
  "obs-rs-util",
 ]

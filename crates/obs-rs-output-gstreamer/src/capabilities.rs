@@ -73,7 +73,7 @@ pub(super) fn gst_inspect_command() -> Command {
 /// plugin and scanner locations from that layout. This setup is intentionally
 /// a no-op for source-tree and reference builds where the bundled directories
 /// do not exist.
-pub(super) fn configure_bundled_runtime() {
+pub fn configure_bundled_runtime() {
     let Some(executable_directory) = current_executable_directory() else {
         return;
     };

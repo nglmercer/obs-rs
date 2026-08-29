@@ -7,7 +7,11 @@ version.workspace = true
 
 [features]
 default = []
-production-gstreamer = ["dep:gstreamer", "dep:gstreamer-app"]
+production-gstreamer = [
+    "dep:gstreamer",
+    "dep:gstreamer-app",
+    "dep:obs-rs-output-gstreamer",
+]
 
 [dependencies]
 gstreamer = { version = "0.24", features = ["v1_20"], optional = true }
@@ -16,6 +20,7 @@ image = { version = "0.25.10", default-features = false, features = ["gif", "jpe
 obs-rs-capture = { path = "../obs-rs-capture" }
 obs-rs-config = { path = "../obs-rs-config" }
 obs-rs-media = { path = "../obs-rs-media" }
+obs-rs-output-gstreamer = { path = "../obs-rs-output-gstreamer", optional = true }
 obs-rs-plugin-api = { path = "../obs-rs-plugin-api" }
 obs-rs-util = { path = "../obs-rs-util" }
 
