@@ -267,23 +267,29 @@ fn check_production_streaming() -> CheckResult {
         };
         let Some((scheme, _)) = endpoint.split_once("://") else {
             return CheckResult::fail(
-                "OBS_RS_PRODUCTION_STREAM_URL must use rtmp://, rtmps://, srt://, or rist://",
+                "OBS_RS_PRODUCTION_STREAM_URL must use rtmp://, rtmps://, srt://, rist://, whip://, or webrtc://",
             );
         };
         let scheme = scheme.to_ascii_lowercase();
-        if !matches!(scheme.as_str(), "rtmp" | "rtmps" | "srt" | "rist") {
+        if !matches!(
+            scheme.as_str(),
+            "rtmp" | "rtmps" | "srt" | "rist" | "whip" | "webrtc"
+        ) {
             return CheckResult::fail(format!(
-                "unsupported production stream scheme {scheme}; expected rtmp/rtmps/srt/rist"
+                "unsupported production stream scheme {scheme}; expected rtmp/rtmps/srt/rist/whip/webrtc"
             ));
         }
+        let capability_protocol = if matches!(scheme.as_str(), "whip" | "webrtc") {
+            "webrtc"
+        } else {
+            scheme.as_str()
+        };
         let capabilities = output_capabilities_snapshot();
-        if !capabilities
-            .protocols()
-            .iter()
-            .any(|capability| capability.available() && capability.protocol().id() == scheme)
-        {
+        if !capabilities.protocols().iter().any(|capability| {
+            capability.available() && capability.protocol().id() == capability_protocol
+        }) {
             return CheckResult::skip(format!(
-                "status={} {}; required_protocol={scheme}",
+                "status={} {}; required_protocol={capability_protocol}",
                 capabilities.production_status().id(),
                 capabilities.production_status_detail()
             ));

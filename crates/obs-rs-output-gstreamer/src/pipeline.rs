@@ -405,9 +405,12 @@ fn is_element_name(value: &str) -> bool {
 }
 
 pub(super) fn valid_url(value: &str, scheme: &str) -> bool {
-    value.starts_with(scheme)
-        && value.len() <= 2_048
+    let expected_scheme = scheme.trim_end_matches("://");
+    value.len() <= 2_048
         && !value.bytes().any(|byte| byte.is_ascii_control())
+        && Url::parse(value).is_ok_and(|url| {
+            url.scheme() == expected_scheme && url.host_str().is_some_and(|host| !host.is_empty())
+        })
 }
 
 pub(super) fn valid_stream_url(value: &str, scheme: &str, require_path: bool) -> bool {

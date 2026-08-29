@@ -223,12 +223,25 @@ fn destinations_validate_schemes_passphrases_and_redact_secrets() {
         ("rtmp://media.example/live/key", OutputTransport::Rtmp),
         ("rtmps://media.example/live/key", OutputTransport::Rtmps),
         ("srt://media.example:9000", OutputTransport::SrtMpegTs),
+        ("whip://media.example/live/whip", OutputTransport::WebRtc),
+        ("webrtc://media.example/live/whip", OutputTransport::WebRtc),
     ] {
         let (profile, destination) =
             ProductionDestination::from_stream_endpoint(endpoint).expect("stream endpoint");
         assert_eq!(profile.transport(), expected);
         assert!(destination.validate_for(profile).is_ok());
         assert!(!format!("{destination:?}").contains("media.example"));
+        if expected == OutputTransport::WebRtc {
+            let ProductionDestination::WebRtc {
+                signaling_endpoint,
+                bearer_token,
+            } = destination
+            else {
+                panic!("WHIP endpoint must create a WebRTC destination");
+            };
+            assert!(signaling_endpoint.starts_with("https://media.example/"));
+            assert!(bearer_token.is_none());
+        }
     }
     for invalid in [
         "rtmp://media.example/live",
@@ -236,6 +249,7 @@ fn destinations_validate_schemes_passphrases_and_redact_secrets() {
         "srt://media.example",
         "srt://media.example:9000?passphrase=short",
         "https://media.example/live/key",
+        "whip:///missing-host",
     ] {
         assert!(
             ProductionDestination::from_stream_endpoint(invalid).is_err(),

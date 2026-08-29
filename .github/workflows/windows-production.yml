@@ -27,8 +27,8 @@ jobs:
     timeout-minutes: 510
     env:
       # Set the secret on the repository/environment to exercise a real
-      # RTMP/RTMPS/SRT/RIST destination. It is deliberately optional so the
-      # recording gate can run without publishing credentials.
+      # RTMP/RTMPS/SRT/RIST/WHIP destination. It is deliberately optional so
+      # the recording gate can run without publishing credentials.
       OBS_RS_PRODUCTION_STREAM_URL: ${{ secrets.OBS_RS_PRODUCTION_STREAM_URL }}
 
     steps:

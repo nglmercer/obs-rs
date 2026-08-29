@@ -646,7 +646,8 @@ impl EngineSession {
         self.replay_buffer.as_ref().map_or(0, ReplayBuffer::len)
     }
 
-    /// Opens a TCP or WebSocket OBS-RS packet stream.
+    /// Opens an OBS-RS packet stream or a native production stream when the
+    /// optional production-GStreamer feature is enabled.
     ///
     /// A refused or unreachable peer leaves the phase `Failed`, which is what
     /// distinguishes "the user never started a stream" from "the stream could

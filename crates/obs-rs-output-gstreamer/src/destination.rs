@@ -104,16 +104,18 @@ impl fmt::Debug for ProductionDestination {
 impl ProductionDestination {
     /// Parses an exact production streaming scheme into its profile and typed
     /// destination. Private OBSRPKT1 TCP/WebSocket endpoints are deliberately
-    /// outside this production boundary.
+    /// outside this production boundary. `whip://` and `webrtc://` are
+    /// transport-neutral aliases for an HTTPS WHIP signaling endpoint when no
+    /// bearer token is needed; the typed [`StreamTarget::Whip`] form remains
+    /// available for authenticated sessions.
     ///
     /// # Errors
     ///
     /// Rejects unsupported schemes and malformed protocol endpoints.
     pub fn from_stream_endpoint(endpoint: &str) -> Result<(OutputProfile, Self), GStreamerError> {
-        let scheme = Url::parse(endpoint)
-            .map_err(|error| GStreamerError::InvalidEndpoint(error.to_string()))?
-            .scheme()
-            .to_owned();
+        let parsed_endpoint = Url::parse(endpoint)
+            .map_err(|error| GStreamerError::InvalidEndpoint(error.to_string()))?;
+        let scheme = parsed_endpoint.scheme().to_owned();
         let (profile, destination) = match scheme.as_str() {
             "rtmp" => (
                 OutputProfile::rtmp_h264_aac(),
@@ -147,9 +149,31 @@ impl ProductionDestination {
                     },
                 )
             }
+            "whip" | "webrtc" => {
+                let (_, authority_and_path) = endpoint.split_once("://").ok_or_else(|| {
+                    GStreamerError::InvalidEndpoint(
+                        "WHIP endpoint must use whip:// or webrtc:// syntax".to_owned(),
+                    )
+                })?;
+                if parsed_endpoint.host_str().is_none() || authority_and_path.starts_with('/') {
+                    return Err(GStreamerError::InvalidEndpoint(
+                        "WHIP endpoint must include a host".to_owned(),
+                    ));
+                }
+                let url = Url::parse(&format!("https://{authority_and_path}"))
+                    .map_err(|error| GStreamerError::InvalidEndpoint(error.to_string()))?;
+                (
+                    OutputProfile::web_rtc_vp8_opus(),
+                    Self::WebRtc {
+                        signaling_endpoint: url.to_string(),
+                        bearer_token: None,
+                    },
+                )
+            }
             _ => {
                 return Err(GStreamerError::InvalidEndpoint(
-                    "expected an srt://, rist://, rtmp://, or rtmps:// endpoint".to_owned(),
+                    "expected an rtmp://, rtmps://, srt://, rist://, whip://, or webrtc:// endpoint"
+                        .to_owned(),
                 ));
             }
         };

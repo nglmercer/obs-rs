@@ -76,10 +76,12 @@ Add `-RequireCamera` on a machine with a connected camera. A provisioned
 production-output runner can pass `-RequireProduction` to require native output
 capabilities and a real Matroska recording. Add `-ProductionStreamUrl` to also
 require a real RTMP, RTMPS, SRT, or RIST endpoint; this switch implies the
-production capability and recording checks. The endpoint is used only for the
-live check and is not written to the telemetry artifact. When native recording
-is enabled, the resulting `production-recording.mkv` is kept in the acceptance
-artifact directory for independent playback inspection.
+production capability and recording checks. The endpoint may use RTMP, RTMPS,
+SRT, RIST, or an unauthenticated `whip://`/`webrtc://` alias for an HTTPS WHIP
+endpoint. It is used only for the live check and is not written to the telemetry
+artifact. When native recording is enabled, the resulting
+`production-recording.mkv` is kept in the acceptance artifact directory for
+independent playback inspection.
 
 ## Platform requirements and limitations
 
@@ -139,6 +141,6 @@ labelled `obs-rs-production` and expose `GSTREAMER_1_0_ROOT` and
 64-bit MSVC runtime and development installations. It packages the native
 runtime, verifies the extracted archive, and runs the real display, audio,
 recording, and cleanup checks. Set the optional repository/environment secret
-`OBS_RS_PRODUCTION_STREAM_URL` to require a real RTMP, RTMPS, SRT, or RIST
-streaming acceptance; set the repository variable
+`OBS_RS_PRODUCTION_STREAM_URL` to require a real RTMP, RTMPS, SRT, RIST, or
+unauthenticated WHIP streaming acceptance; set the repository variable
 `OBS_RS_REQUIRE_PRODUCTION_STREAMING` to `1` when that secret must be present.

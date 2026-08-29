@@ -169,10 +169,16 @@ impl StreamOutput {
                 "stream address is empty".to_owned(),
             ));
         }
-        let production_scheme = matches!(
-            address.split(':').next(),
-            Some("rtmp" | "rtmps" | "srt" | "rist")
-        );
+        let scheme = address
+            .split(':')
+            .next()
+            .map(|value| value.to_ascii_lowercase());
+        let production_scheme = scheme.as_deref().is_some_and(|scheme| {
+            matches!(
+                scheme,
+                "rtmp" | "rtmps" | "srt" | "rist" | "whip" | "webrtc"
+            )
+        });
         #[cfg(feature = "production-gstreamer")]
         if production_scheme {
             let (profile, destination) = ProductionDestination::from_stream_endpoint(address)?;
@@ -202,7 +208,7 @@ impl StreamOutput {
         #[cfg(not(feature = "production-gstreamer"))]
         if production_scheme {
             return Err(EngineError::InvalidConfiguration(
-                "SRT/RTMP/RTMPS/RIST support was not compiled into this host".to_owned(),
+                "SRT/RTMP/RTMPS/RIST/WHIP support was not compiled into this host".to_owned(),
             ));
         }
         let policy = ReconnectPolicy::new(reconnect_attempts);
