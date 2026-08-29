@@ -87,7 +87,7 @@ pub(super) fn catalog() -> UiText {
             automatic_display: s("Primary display (automatic)"),
             whole_desktop: s("Capture the whole desktop instead of one display"),
             refresh: s("Refresh"),
-            empty: s("No display was detected. Check that DISPLAY points at a running X11 server."),
+            empty: s("No display was detected. Use Refresh to retry display discovery."),
             unavailable_display: s("Unavailable display"),
             select_monitor: s("Select display"),
             not_a_screen_source: s("Select a screen capture source first."),

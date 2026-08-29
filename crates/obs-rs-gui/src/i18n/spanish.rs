@@ -88,7 +88,7 @@ pub(super) fn catalog() -> UiText {
             whole_desktop: s("Capturar todo el escritorio en lugar de una pantalla"),
             refresh: s("Actualizar"),
             empty: s(
-                "No se detectó ninguna pantalla. Comprueba que DISPLAY apunte a un servidor X11 activo.",
+                "No se detectó ninguna pantalla. Usa Actualizar para volver a intentarlo.",
             ),
             unavailable_display: s("Pantalla no disponible"),
             select_monitor: s("Seleccionar pantalla"),
