@@ -31,7 +31,7 @@ Windows features passed.
 | Camera capture | ✅ | ✅ | ◐ | ☐ | Nokhwa is used with the Windows Media Foundation input feature. The Windows check now queries native modes and performs two same-ID start/stop cycles. Verify integrated, USB/UVC, capture-card, replug, and mode negotiation cases. |
 | Microphone input | ✅ | ✅ | ◐ | ☐ | WASAPI/CPAL input and format fallback are implemented. Record with a physical microphone and verify timestamp continuity. |
 | Desktop/system audio | ✅ | ✅ | ◐ | ☐ | WASAPI output endpoints are opened as loopback inputs. Verify audible desktop playback, silence handling, and default-render-device changes. |
-| Audio monitoring/output | ✅ | ✅ | ◐ | ☐ | WASAPI output sinks and the monitor worker exist. Verify monitoring while recording, format conversion, and unplug/replug recovery. |
+| Audio monitoring/output | ✅ | ✅ | ◐ | ☐ | WASAPI output sinks and the monitor worker exist; the worker negotiates common 48/44.1 kHz mono/stereo endpoint formats and converts the monitor bus off the media tick. Verify monitoring while recording, format conversion, and unplug/replug recovery. |
 | Image source | ✅ | — | ✅ | ◐ | Portable source and GUI tests cover the path. Run the packaged GUI and load PNG/JPEG/WebP files from a Windows path. |
 | Image slideshow | ✅ | — | ✅ | ◐ | Portable slideshow tests cover timing and selection. Verify directory/file dialogs and long-running playback in the Windows GUI. |
 | Text source | ✅ | — | ✅ | ◐ | Portable text rendering is covered. Verify fonts, Unicode text, and Windows DPI scaling in the packaged GUI. |

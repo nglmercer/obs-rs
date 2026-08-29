@@ -146,7 +146,9 @@ impl AudioOutputWorkerHandle {
 /// performed by the mixer, capture thread, engine command handler, or GUI.
 /// The handoff queue stores complete bounded [`AudioBuffer`] values and uses a
 /// drop-on-pressure `try_write` API; program output therefore continues when a
-/// monitor device is slow or unavailable.
+/// monitor device is slow or unavailable. If a sink cannot accept the engine
+/// mix format, the worker tries a bounded set of common endpoint formats and
+/// resamples/maps the monitor bus on its own thread.
 pub struct AudioOutputWorker {
     handle: AudioOutputWorkerHandle,
     cancelled: Arc<AtomicBool>,
@@ -155,6 +157,10 @@ pub struct AudioOutputWorker {
 
 impl AudioOutputWorker {
     /// Starts a worker that opens `device_id` at `format` on its own thread.
+    ///
+    /// The endpoint is first opened at the engine format. If that is not
+    /// accepted, common 48/44.1 kHz mono/stereo formats are tried and the
+    /// submitted monitor blocks are converted before they reach the sink.
     ///
     /// # Errors
     ///
