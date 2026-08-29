@@ -525,6 +525,19 @@ fn exercise_monitor_keyboard_boundary(ui: &MainWindow, window: &crate::MonitorWi
     });
 }
 
+#[cfg(target_os = "windows")]
+fn assert_windows_screen_property_rows(window: &crate::SourcePropertiesWindow) {
+    let property_keys = (0..window.get_property_rows().row_count())
+        .filter_map(|index| window.get_property_rows().row_data(index))
+        .map(|row| row.key.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        property_keys,
+        ["capture_cursor", "capture_border", "width", "height"],
+        "Windows display selection must be exposed by the dedicated picker, not a duplicate combo box"
+    );
+}
+
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(super) fn exercise_monitor_selection(
     ui: &MainWindow,
@@ -620,6 +633,8 @@ pub(super) fn exercise_monitor_selection(
         properties_window.get_monitor_visible(),
         "nested screen properties keep the target-aware monitor picker"
     );
+    #[cfg(target_os = "windows")]
+    assert_windows_screen_property_rows(properties_window);
     properties_window.invoke_open_monitor_window();
     let monitor_window = crate::callbacks::monitor::MonitorController::window(&controller);
     assert_eq!(

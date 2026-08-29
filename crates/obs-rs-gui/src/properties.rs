@@ -238,10 +238,11 @@ fn fields(kind: &str, camera_modes: &[CameraMode]) -> Vec<&'static Field> {
         "media_source" => vec![&MEDIA_PATH, &MEDIA_LOOP],
         "text_source" => vec![&TEXT, &COLOR, &FONT_SIZE],
         #[cfg(target_os = "windows")]
-        // `monitor` is the user-facing selector. It synchronizes the native
-        // `device_id` behind the scenes, so exposing both fields would give
-        // Windows users two controls that can disagree with one another.
-        "screen_capture" => vec![&MONITOR, &CURSOR, &BORDER],
+        // Windows screen selection is rendered by the dedicated monitor
+        // picker in `source_properties_window.slint`. Keep the persisted
+        // `monitor` key in the apply/migration paths, but do not render a
+        // second generic combo box that can disagree with that picker.
+        "screen_capture" => vec![&CURSOR, &BORDER],
         #[cfg(not(target_os = "windows"))]
         "screen_capture" => vec![&DEVICE],
         #[cfg(target_os = "windows")]
@@ -811,13 +812,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             screen_keys,
-            [
-                "monitor",
-                "capture_cursor",
-                "capture_border",
-                "width",
-                "height"
-            ]
+            ["capture_cursor", "capture_border", "width", "height"]
         );
         assert_eq!(
             window_keys,
@@ -845,13 +840,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             keys,
-            [
-                "monitor",
-                "capture_cursor",
-                "capture_border",
-                "width",
-                "height"
-            ]
+            ["capture_cursor", "capture_border", "width", "height"]
         );
     }
 
