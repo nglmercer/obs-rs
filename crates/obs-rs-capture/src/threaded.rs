@@ -244,6 +244,7 @@ fn capture_loop(
         return;
     }
     if let Err(error) = device.start_capture(request) {
+        device.stop();
         finish(mailbox, Some(error));
         return;
     }
@@ -295,6 +296,12 @@ fn capture_loop(
                 next_deadline = Instant::now() + IDLE_POLL;
             }
             Err(error) => {
+                // A device can have acquired native resources before its
+                // next-frame call fails. Run the same teardown hook as the
+                // normal stop path before publishing the terminal state;
+                // otherwise a failed helper/camera can outlive its source and
+                // keep the physical device or child process open.
+                device.stop();
                 finish(mailbox, Some(error));
                 return;
             }
@@ -427,6 +434,69 @@ mod tests {
     struct WedgedDevice {
         info: CaptureDeviceInfo,
         release: Arc<AtomicBool>,
+    }
+
+    struct FailingDevice {
+        info: CaptureDeviceInfo,
+        stopped: Arc<AtomicBool>,
+    }
+
+    impl VideoCaptureDevice for FailingDevice {
+        fn info(&self) -> &CaptureDeviceInfo {
+            &self.info
+        }
+
+        fn start(&mut self, _format: VideoFormat) -> Result<(), CaptureError> {
+            Ok(())
+        }
+
+        fn stop(&mut self) {
+            self.stopped.store(true, Ordering::Release);
+        }
+
+        fn is_running(&self) -> bool {
+            true
+        }
+
+        fn next_frame(
+            &mut self,
+            _timestamp: Timestamp,
+        ) -> Result<Option<VideoFrame>, CaptureError> {
+            Err(CaptureError::NotRunning)
+        }
+    }
+
+    #[test]
+    fn a_frame_failure_stops_the_underlying_device_before_reporting_it() {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let opener_stopped = Arc::clone(&stopped);
+        let mut device = ThreadedCaptureDevice::open(
+            CaptureRequest::output(format()),
+            "failing-device",
+            move || {
+                Ok(Box::new(FailingDevice {
+                    info: CaptureDeviceInfo::new(
+                        "failing-device",
+                        "failing-device",
+                        CaptureKind::Camera,
+                    )?,
+                    stopped: opener_stopped,
+                }) as Box<dyn VideoCaptureDevice>)
+            },
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut result = Ok(None);
+        while Instant::now() < deadline {
+            result = device.poll_frame(Timestamp::ZERO);
+            if result.is_err() {
+                break;
+            }
+            thread::sleep(IDLE_POLL);
+        }
+
+        assert!(matches!(result, Err(CaptureError::NotRunning)));
+        assert!(stopped.load(Ordering::Acquire));
     }
 
     impl VideoCaptureDevice for WedgedDevice {
