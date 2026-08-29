@@ -803,9 +803,17 @@ impl EngineSession {
         };
         self.streaming_lifecycle = OutputLifecycle::Stopping;
         let _ = stream.pump();
-        stream.close()?;
-        self.streaming_lifecycle = OutputLifecycle::Idle;
-        Ok(())
+        match stream.close() {
+            Ok(()) => {
+                self.streaming_lifecycle = OutputLifecycle::Idle;
+                Ok(())
+            }
+            Err(error) => {
+                self.streaming_lifecycle = OutputLifecycle::Failed;
+                self.last_error = Some(error.to_string());
+                Err(error)
+            }
+        }
     }
 
     /// Returns the explicit recording phase, including a failed start or commit.
