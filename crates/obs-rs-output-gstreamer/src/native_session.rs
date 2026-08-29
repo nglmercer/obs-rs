@@ -19,6 +19,8 @@ use super::{
     write_interrupted_remux_manifest, NativeOutputState, PipelineDescription,
 };
 
+const LOCAL_PIPELINE_START_TIMEOUT: gst::ClockTime = gst::ClockTime::from_seconds(5);
+
 /// Timestamp, queue/drop, reconnect, drift, keyframe, and submit timing data.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct OutputSessionTelemetry {
@@ -186,9 +188,18 @@ impl GStreamerOutputSession {
             1_000_000_000_u64.saturating_mul(u64::from(video_format.frame_rate().denominator()))
                 / u64::from(video_format.frame_rate().numerator()),
         );
-        pipeline
-            .set_state(gst::State::Playing)
-            .map_err(native_error)?;
+        if let Err(error) = pipeline.set_state(gst::State::Playing) {
+            let _ = pipeline.set_state(gst::State::Null);
+            let _ = recover_stale_recording_artifact(temp_path.as_deref());
+            return Err(native_error(error));
+        }
+        if is_local_recording_transport(plan.profile().transport()) {
+            if let Err(error) = ensure_pipeline_startable(&pipeline) {
+                let _ = pipeline.set_state(gst::State::Null);
+                let _ = recover_stale_recording_artifact(temp_path.as_deref());
+                return Err(error);
+            }
+        }
         if let Some(final_path) = remux_final_path.as_deref() {
             if let Err(error) = write_interrupted_remux_manifest(final_path) {
                 let _ = pipeline.set_state(gst::State::Null);
@@ -376,14 +387,7 @@ impl GStreamerOutputSession {
         // Live muxers do not publish a local index and remote sinks may never
         // acknowledge EOS after a network loss. Stop them immediately so the
         // UI cannot hang for the recording-only finalization timeout.
-        if !matches!(
-            self.transport,
-            OutputTransport::Matroska
-                | OutputTransport::Mp4
-                | OutputTransport::Mov
-                | OutputTransport::Flv
-                | OutputTransport::Hls
-        ) {
+        if !is_local_recording_transport(self.transport) {
             self.pipeline
                 .set_state(gst::State::Null)
                 .map_err(native_error)?;
@@ -443,26 +447,13 @@ impl GStreamerOutputSession {
     /// Returns the pipeline error when a recording fails or live recovery fails.
     pub fn poll_health(&mut self) -> Result<(), GStreamerError> {
         self.refresh_queue_levels();
-        let failed = self.pipeline.bus().is_some_and(|bus| {
-            bus.pop_filtered(&[gst::MessageType::Error])
-                .is_some_and(|message| matches!(message.view(), gst::MessageView::Error(_)))
-        });
-        if !failed {
+        let Some(failure) = take_pipeline_error(&self.pipeline) else {
             return Ok(());
-        }
+        };
         self.state = NativeOutputState::Lost;
-        if matches!(
-            self.transport,
-            OutputTransport::Matroska
-                | OutputTransport::Mp4
-                | OutputTransport::Mov
-                | OutputTransport::Flv
-                | OutputTransport::Hls
-        ) {
+        if is_local_recording_transport(self.transport) {
             self.state = NativeOutputState::Failed;
-            return Err(GStreamerError::Native(
-                "recording pipeline reported an asynchronous error".to_owned(),
-            ));
+            return Err(failure);
         }
         let now = Instant::now();
         self.schedule_reconnect(now);
@@ -482,14 +473,7 @@ impl GStreamerOutputSession {
         &mut self,
         now: Instant,
     ) -> Result<ReconnectOutcome, GStreamerError> {
-        if matches!(
-            self.transport,
-            OutputTransport::Matroska
-                | OutputTransport::Mp4
-                | OutputTransport::Mov
-                | OutputTransport::Flv
-                | OutputTransport::Hls
-        ) {
+        if is_local_recording_transport(self.transport) {
             return Err(GStreamerError::Native(
                 "file outputs cannot reconnect".to_owned(),
             ));
@@ -562,6 +546,50 @@ impl GStreamerOutputSession {
                 .delay_for_attempt(self.reconnect_attempts),
         );
     }
+}
+
+fn is_local_recording_transport(transport: OutputTransport) -> bool {
+    matches!(
+        transport,
+        OutputTransport::Matroska
+            | OutputTransport::Mp4
+            | OutputTransport::Mov
+            | OutputTransport::Flv
+            | OutputTransport::Hls
+    )
+}
+
+fn ensure_pipeline_startable(pipeline: &gst::Pipeline) -> Result<(), GStreamerError> {
+    let (state_change, current, pending) = pipeline.state(Some(LOCAL_PIPELINE_START_TIMEOUT));
+    if let Some(error) = take_pipeline_error(pipeline) {
+        return Err(error);
+    }
+    if state_change.is_err() {
+        return Err(GStreamerError::Native(
+            "local production pipeline failed during startup".to_owned(),
+        ));
+    }
+    // A non-live appsrc cannot preroll without its first media buffer, so a
+    // recording may legitimately remain Paused while Playing is pending.
+    // Accept that state, but reject a transition that no longer targets
+    // Playing; the bus check above catches the useful encoder/muxer detail.
+    if current != gst::State::Playing && pending != gst::State::Playing {
+        return Err(GStreamerError::Native(format!(
+            "local production pipeline did not start toward Playing (current={current:?}, pending={pending:?})"
+        )));
+    }
+    Ok(())
+}
+
+fn take_pipeline_error(pipeline: &gst::Pipeline) -> Option<GStreamerError> {
+    let message = pipeline.bus()?.pop_filtered(&[gst::MessageType::Error])?;
+    let gst::MessageView::Error(error) = message.view() else {
+        return None;
+    };
+    Some(GStreamerError::Native(format!(
+        "production pipeline error: {}",
+        error.error()
+    )))
 }
 
 impl StreamingTransport for GStreamerOutputSession {
