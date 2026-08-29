@@ -257,10 +257,9 @@ if (-not $helperMatch.Success) {
     throw "Windows capture helper returned an invalid OBSRWIN1 version reply: $helperOutput"
 }
 $packageVersion = (Get-Content -LiteralPath (Join-Path $root "VERSION.txt") -Raw).Trim()
-$helperMajor = $helperMatch.Groups["version"].Value.Split('.')[0]
-$packageMajor = $packageVersion.Split('.')[0]
-if ($helperMajor -ne $packageMajor) {
-    throw "Windows capture helper major version does not match package version: helper=$($helperMatch.Groups["version"].Value) package=$packageVersion"
+$helperVersion = $helperMatch.Groups["version"].Value
+if ($helperVersion -ne $packageVersion) {
+    throw "Windows capture helper version does not match package version: helper=$helperVersion package=$packageVersion"
 }
-Write-Output "Verified Windows capture helper protocol OBSRWIN1 version $($helperMatch.Groups["version"].Value)"
+Write-Output "Verified Windows capture helper protocol OBSRWIN1 version $helperVersion"
 Write-Output "Verified $checked OBS-RS package files"
