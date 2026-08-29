@@ -683,29 +683,57 @@ fn check_display_frame_rates() -> CheckResult {
         Ok(devices) => devices,
         Err(error) => return capture_check_result(&error),
     };
-    let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
+    let displays = devices
+        .iter()
+        .filter(|device| device.kind() == CaptureKind::Screen)
+        .filter(|device| device.permission() == CapturePermission::Granted)
+        .take(8)
+        .collect::<Vec<_>>();
+    if displays.is_empty() {
         return CheckResult::skip("frame-rate acceptance needs a connected display target");
-    };
-    let mut results = Vec::new();
-    for fps in [30_u32, 60_u32] {
-        let format = match VideoFormat::new(320, 180, FrameRate::new(fps, 1).expect("fps")) {
-            Ok(format) => format,
-            Err(error) => return CheckResult::fail(error.to_string()),
-        };
-        match capture_frames(display, format, 4, Duration::from_secs(8)) {
-            Ok((_, frames, elapsed)) => results.push(format!(
-                "{fps}fps_frames={frames}_elapsed_ms={}",
-                elapsed.as_millis()
-            )),
-            Err(error) => {
-                return capture_check_result_with_context(
-                    &error,
-                    &format!("{fps} FPS display capture"),
-                )
+    }
+    let mut failures = Vec::new();
+    let mut unavailable = 0_usize;
+    for display in &displays {
+        let mut results = Vec::new();
+        let mut candidate_unavailable = false;
+        for fps in [30_u32, 60_u32] {
+            let format = match VideoFormat::new(320, 180, FrameRate::new(fps, 1).expect("fps")) {
+                Ok(format) => format,
+                Err(error) => return CheckResult::fail(error.to_string()),
+            };
+            match capture_frames(display, format, 4, Duration::from_secs(8)) {
+                Ok((_, frames, elapsed)) => results.push(format!(
+                    "{fps}fps_frames={frames}_elapsed_ms={}",
+                    elapsed.as_millis()
+                )),
+                Err(error) if is_hardware_unavailable(&error) => {
+                    candidate_unavailable = true;
+                    failures.push(format!("{}: {fps} FPS unavailable: {error}", display.id()));
+                    break;
+                }
+                Err(error) => {
+                    failures.push(format!("{}: {fps} FPS: {error}", display.id()));
+                    break;
+                }
             }
         }
+        if results.len() == 2 {
+            return CheckResult::pass(format!("device={} {}", display.id(), results.join(" ")));
+        }
+        if candidate_unavailable {
+            unavailable = unavailable.saturating_add(1);
+        }
     }
-    CheckResult::pass(format!("device={} {}", display.id(), results.join(" ")))
+    let detail = format!(
+        "no enumerated display passed 30/60 FPS capture: {}",
+        failures.join("; ")
+    );
+    if unavailable == displays.len() {
+        CheckResult::skip(detail)
+    } else {
+        CheckResult::fail(detail)
+    }
 }
 
 #[cfg(target_os = "windows")]
