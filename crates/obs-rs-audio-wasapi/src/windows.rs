@@ -434,9 +434,22 @@ impl OutputCallbackQueue {
     }
 }
 
+const MAX_NORMALIZED_SAMPLE: f32 = f32::from_bits(0x3f7f_ffff);
+
+fn write_samples<T>(data: &mut [T], queue: &mut OutputCallbackQueue)
+where
+    T: cpal::Sample + cpal::FromSample<f32>,
+{
+    for sample in data {
+        let value = queue.next_sample().clamp(-1.0, MAX_NORMALIZED_SAMPLE);
+        *sample = cpal::FromSample::from_sample_(value);
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
-    reason = "the callback receives the fixed stream state and bounded queue explicitly"
+    clippy::too_many_lines,
+    reason = "the callback receives fixed stream state and dispatches every CPAL sample format"
 )]
 fn build_output_stream(
     device: &Device,
@@ -454,6 +467,17 @@ fn build_output_stream(
         }
     };
     match sample_format {
+        SampleFormat::I8 => {
+            let mut queue = OutputCallbackQueue::new(receiver);
+            device
+                .build_output_stream(
+                    config,
+                    move |data: &mut [i8], _| write_samples(data, &mut queue),
+                    error_callback,
+                    Some(READ_TIMEOUT),
+                )
+                .map_err(|error| unavailable("build WASAPI i8 output stream", error))
+        }
         SampleFormat::F32 => {
             let mut queue = OutputCallbackQueue::new(receiver);
             device
@@ -484,6 +508,39 @@ fn build_output_stream(
                 )
                 .map_err(|error| unavailable("build WASAPI i16 output stream", error))
         }
+        SampleFormat::I24 => {
+            let mut queue = OutputCallbackQueue::new(receiver);
+            device
+                .build_output_stream(
+                    config,
+                    move |data: &mut [cpal::I24], _| write_samples(data, &mut queue),
+                    error_callback,
+                    Some(READ_TIMEOUT),
+                )
+                .map_err(|error| unavailable("build WASAPI i24 output stream", error))
+        }
+        SampleFormat::I32 => {
+            let mut queue = OutputCallbackQueue::new(receiver);
+            device
+                .build_output_stream(
+                    config,
+                    move |data: &mut [i32], _| write_samples(data, &mut queue),
+                    error_callback,
+                    Some(READ_TIMEOUT),
+                )
+                .map_err(|error| unavailable("build WASAPI i32 output stream", error))
+        }
+        SampleFormat::I64 => {
+            let mut queue = OutputCallbackQueue::new(receiver);
+            device
+                .build_output_stream(
+                    config,
+                    move |data: &mut [i64], _| write_samples(data, &mut queue),
+                    error_callback,
+                    Some(READ_TIMEOUT),
+                )
+                .map_err(|error| unavailable("build WASAPI i64 output stream", error))
+        }
         SampleFormat::U16 => {
             let mut queue = OutputCallbackQueue::new(receiver);
             device
@@ -499,6 +556,39 @@ fn build_output_stream(
                 )
                 .map_err(|error| unavailable("build WASAPI u16 output stream", error))
         }
+        SampleFormat::U24 => {
+            let mut queue = OutputCallbackQueue::new(receiver);
+            device
+                .build_output_stream(
+                    config,
+                    move |data: &mut [cpal::U24], _| write_samples(data, &mut queue),
+                    error_callback,
+                    Some(READ_TIMEOUT),
+                )
+                .map_err(|error| unavailable("build WASAPI u24 output stream", error))
+        }
+        SampleFormat::U32 => {
+            let mut queue = OutputCallbackQueue::new(receiver);
+            device
+                .build_output_stream(
+                    config,
+                    move |data: &mut [u32], _| write_samples(data, &mut queue),
+                    error_callback,
+                    Some(READ_TIMEOUT),
+                )
+                .map_err(|error| unavailable("build WASAPI u32 output stream", error))
+        }
+        SampleFormat::U64 => {
+            let mut queue = OutputCallbackQueue::new(receiver);
+            device
+                .build_output_stream(
+                    config,
+                    move |data: &mut [u64], _| write_samples(data, &mut queue),
+                    error_callback,
+                    Some(READ_TIMEOUT),
+                )
+                .map_err(|error| unavailable("build WASAPI u64 output stream", error))
+        }
         SampleFormat::U8 => {
             let mut queue = OutputCallbackQueue::new(receiver);
             device
@@ -513,6 +603,17 @@ fn build_output_stream(
                     Some(READ_TIMEOUT),
                 )
                 .map_err(|error| unavailable("build WASAPI u8 output stream", error))
+        }
+        SampleFormat::F64 => {
+            let mut queue = OutputCallbackQueue::new(receiver);
+            device
+                .build_output_stream(
+                    config,
+                    move |data: &mut [f64], _| write_samples(data, &mut queue),
+                    error_callback,
+                    Some(READ_TIMEOUT),
+                )
+                .map_err(|error| unavailable("build WASAPI f64 output stream", error))
         }
         other => Err(AudioDeviceError::Unavailable(format!(
             "unsupported WASAPI output sample format {other:?}"
@@ -552,6 +653,26 @@ fn float_to_u8(sample: f32) -> u8 {
     (((sample.clamp(-1.0, 1.0) + 1.0) * 127.5).round()) as u8
 }
 
+fn sample_to_f32<T>(sample: T) -> f32
+where
+    T: cpal::Sample,
+    f32: cpal::FromSample<T>,
+{
+    sample.to_sample()
+}
+
+fn send_typed_samples<T>(sender: &SyncSender<CallbackBlock>, samples: &[T])
+where
+    T: cpal::Sample,
+    f32: cpal::FromSample<T>,
+{
+    send_samples(sender, samples.iter().copied().map(sample_to_f32));
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the callback dispatches every CPAL sample format explicitly"
+)]
 fn build_stream(
     device: &Device,
     config: StreamConfig,
@@ -568,6 +689,14 @@ fn build_stream(
         let _ = error_sender.try_send(block);
     };
     match sample_format {
+        SampleFormat::I8 => device
+            .build_input_stream(
+                config,
+                move |data: &[i8], _| send_typed_samples(&sender, data),
+                error_callback,
+                Some(READ_TIMEOUT),
+            )
+            .map_err(|error| unavailable("build WASAPI i8 input stream", error)),
         SampleFormat::F32 => device
             .build_input_stream(
                 config,
@@ -589,6 +718,30 @@ fn build_stream(
                 Some(READ_TIMEOUT),
             )
             .map_err(|error| unavailable("build WASAPI i16 input stream", error)),
+        SampleFormat::I24 => device
+            .build_input_stream(
+                config,
+                move |data: &[cpal::I24], _| send_typed_samples(&sender, data),
+                error_callback,
+                Some(READ_TIMEOUT),
+            )
+            .map_err(|error| unavailable("build WASAPI i24 input stream", error)),
+        SampleFormat::I32 => device
+            .build_input_stream(
+                config,
+                move |data: &[i32], _| send_typed_samples(&sender, data),
+                error_callback,
+                Some(READ_TIMEOUT),
+            )
+            .map_err(|error| unavailable("build WASAPI i32 input stream", error)),
+        SampleFormat::I64 => device
+            .build_input_stream(
+                config,
+                move |data: &[i64], _| send_typed_samples(&sender, data),
+                error_callback,
+                Some(READ_TIMEOUT),
+            )
+            .map_err(|error| unavailable("build WASAPI i64 input stream", error)),
         SampleFormat::U16 => device
             .build_input_stream(
                 config,
@@ -603,6 +756,30 @@ fn build_stream(
                 Some(READ_TIMEOUT),
             )
             .map_err(|error| unavailable("build WASAPI u16 input stream", error)),
+        SampleFormat::U24 => device
+            .build_input_stream(
+                config,
+                move |data: &[cpal::U24], _| send_typed_samples(&sender, data),
+                error_callback,
+                Some(READ_TIMEOUT),
+            )
+            .map_err(|error| unavailable("build WASAPI u24 input stream", error)),
+        SampleFormat::U32 => device
+            .build_input_stream(
+                config,
+                move |data: &[u32], _| send_typed_samples(&sender, data),
+                error_callback,
+                Some(READ_TIMEOUT),
+            )
+            .map_err(|error| unavailable("build WASAPI u32 input stream", error)),
+        SampleFormat::U64 => device
+            .build_input_stream(
+                config,
+                move |data: &[u64], _| send_typed_samples(&sender, data),
+                error_callback,
+                Some(READ_TIMEOUT),
+            )
+            .map_err(|error| unavailable("build WASAPI u64 input stream", error)),
         SampleFormat::U8 => device
             .build_input_stream(
                 config,
@@ -617,6 +794,14 @@ fn build_stream(
                 Some(READ_TIMEOUT),
             )
             .map_err(|error| unavailable("build WASAPI u8 input stream", error)),
+        SampleFormat::F64 => device
+            .build_input_stream(
+                config,
+                move |data: &[f64], _| send_typed_samples(&sender, data),
+                error_callback,
+                Some(READ_TIMEOUT),
+            )
+            .map_err(|error| unavailable("build WASAPI f64 input stream", error)),
         other => Err(AudioDeviceError::Unavailable(format!(
             "unsupported WASAPI sample format {other:?}"
         ))),
@@ -671,6 +856,35 @@ mod tests {
         assert_eq!(float_to_u8(0.0), 128);
         assert_eq!(float_to_u8(1.0), u8::MAX);
         assert_eq!(float_to_u8(2.0), u8::MAX);
+    }
+
+    #[test]
+    fn extended_pcm_formats_convert_through_the_float_domain() {
+        let min_i24 = cpal::I24::new(-8_388_608).expect("i24 minimum");
+        let max_i24 = cpal::I24::new(8_388_607).expect("i24 maximum");
+        assert!((sample_to_f32(min_i24) + 1.0).abs() < 0.000_001);
+        assert!((sample_to_f32(max_i24) - 1.0).abs() < 0.000_001);
+        assert!((sample_to_f32(i64::MIN) + 1.0).abs() < 0.000_001);
+        assert!((sample_to_f32(i64::MAX) - 1.0).abs() < 0.000_001);
+
+        let (sender, receiver) = mpsc::sync_channel(CALLBACK_QUEUE_CAPACITY);
+        sender
+            .send(vec![-1.0, 0.0, 1.0])
+            .expect("bounded queue accepts samples");
+        let mut queue = OutputCallbackQueue::new(receiver);
+        let mut i24_samples = [min_i24, cpal::I24::new(0).expect("i24 zero"), max_i24];
+        write_samples(&mut i24_samples, &mut queue);
+        assert_eq!(i24_samples, [min_i24, cpal::I24::new(0).unwrap(), max_i24]);
+
+        sender
+            .send(vec![-1.0, 0.0, 1.0])
+            .expect("bounded queue accepts samples");
+        let mut i64_samples = [i64::MIN, 0, i64::MAX];
+        write_samples(&mut i64_samples, &mut queue);
+        assert_eq!(i64_samples[0], i64::MIN);
+        assert_eq!(i64_samples[1], 0);
+        assert!(i64_samples[2] > 0);
+        assert!((sample_to_f32(i64_samples[2]) - 1.0).abs() < 0.000_001);
     }
 
     #[test]
