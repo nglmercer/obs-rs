@@ -9,6 +9,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use obs_rs_util::Json;
 
+use super::super::capabilities::configure_bundled_runtime;
 use super::super::GStreamerError;
 use super::{
     native_error, publish_recording_artifact, recover_stale_recording_artifact,
@@ -253,6 +254,7 @@ pub fn remux_matroska_to_mp4(
     source_path: impl AsRef<Path>,
     final_path: impl Into<PathBuf>,
 ) -> Result<usize, GStreamerError> {
+    configure_bundled_runtime();
     gst::init().map_err(native_error)?;
     let source_path = source_path.as_ref();
     let final_path = final_path.into();
@@ -452,6 +454,7 @@ pub fn remux_matroska_to_mp4(
 pub fn recover_interrupted_remux_recording(
     final_path: impl AsRef<Path>,
 ) -> Result<RemuxRecovery, GStreamerError> {
+    configure_bundled_runtime();
     gst::init().map_err(native_error)?;
     let final_path = final_path.as_ref();
     if !final_path

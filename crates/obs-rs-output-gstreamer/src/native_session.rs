@@ -10,6 +10,7 @@ use obs_rs_output::{
     StreamingTransport,
 };
 
+use super::super::capabilities::configure_bundled_runtime;
 use super::super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
 use super::{
     appsrc, configure_encoders, configure_segmented_location_callback, configure_sink,
@@ -151,6 +152,7 @@ impl GStreamerOutputSession {
         audio_format: AudioFormat,
         reconnect_policy: ReconnectPolicy,
     ) -> Result<Self, GStreamerError> {
+        configure_bundled_runtime();
         gst::init().map_err(native_error)?;
         destination.validate_for(plan.profile())?;
         let pipeline_description = pipeline_description(plan, destination)?;

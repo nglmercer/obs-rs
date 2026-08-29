@@ -185,7 +185,7 @@ if ($ProductionGStreamer) {
         "GStreamer version: $gstreamerVersion",
         "Native output feature: production-gstreamer",
         "Capability probe: gst-inspect-1.0.exe",
-        "Launch with run-obs-rs.ps1 so PATH, GST_PLUGIN_PATH, and the plugin scanner are configured.",
+        "The launcher and native adapter configure PATH, GST_PLUGIN_PATH, and the plugin scanner for the bundled runtime.",
         "The runtime and Cargo development package must come from the same GStreamer release."
     ) | Set-Content -LiteralPath (Join-Path $stagingDirectory "GSTREAMER-RUNTIME.txt") -Encoding utf8
 }

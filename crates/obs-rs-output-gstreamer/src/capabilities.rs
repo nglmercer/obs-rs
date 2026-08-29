@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, process::Command, sync::OnceLock};
+use std::{
+    collections::BTreeMap,
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::OnceLock,
+};
 
 use obs_rs_output::{
     AudioCodec, EncoderPreset, OutputCapabilities, OutputProfileKind, RateControl, VideoCodec,
@@ -32,6 +38,7 @@ const AV1_ENCODERS: &[&str] = &[
 /// tool that belongs to the bundled runtime instead of accidentally probing a
 /// different system installation.
 pub(super) fn gst_inspect_command() -> Command {
+    configure_bundled_runtime();
     if let Some(path) = std::env::var_os("OBSR_GST_INSPECT") {
         if !path.is_empty() {
             return Command::new(path);
@@ -45,13 +52,94 @@ pub(super) fn gst_inspect_command() -> Command {
     };
     if let Ok(executable) = std::env::current_exe() {
         if let Some(parent) = executable.parent() {
-            let bundled = parent.join(executable_name);
-            if bundled.is_file() {
-                return Command::new(bundled);
+            for bundled in [
+                parent.join(executable_name),
+                parent.join("gstreamer").join("bin").join(executable_name),
+            ] {
+                if bundled.is_file() {
+                    return Command::new(bundled);
+                }
             }
         }
     }
     Command::new(executable_name)
+}
+
+/// Makes a packaged runtime usable when the GUI executable is launched
+/// directly instead of through `run-obs-rs.ps1`.
+///
+/// The package keeps `GStreamer` below `gstreamer/` while the entry points stay
+/// at the archive root. `GStreamer` otherwise has no reliable way to infer the
+/// plugin and scanner locations from that layout. This setup is intentionally
+/// a no-op for source-tree and reference builds where the bundled directories
+/// do not exist.
+pub(super) fn configure_bundled_runtime() {
+    let Some(executable_directory) = current_executable_directory() else {
+        return;
+    };
+    let runtime = executable_directory.join("gstreamer");
+    let runtime_bin = runtime.join("bin");
+    let plugins = runtime.join("lib").join("gstreamer-1.0");
+    let scanner =
+        runtime
+            .join("libexec")
+            .join("gstreamer-1.0")
+            .join(if cfg!(target_os = "windows") {
+                "gst-plugin-scanner.exe"
+            } else {
+                "gst-plugin-scanner"
+            });
+    if !runtime_bin.is_dir() || !plugins.is_dir() || !scanner.is_file() {
+        return;
+    }
+
+    prepend_environment_paths(
+        "PATH",
+        &[runtime_bin.as_path(), executable_directory.as_path()],
+    );
+    prepend_environment_paths("GST_PLUGIN_PATH", &[plugins.as_path()]);
+    prepend_environment_paths("GST_PLUGIN_PATH_1_0", &[plugins.as_path()]);
+
+    if env::var_os("GST_PLUGIN_SCANNER")
+        .as_deref()
+        .is_none_or(|path| !Path::new(path).is_file())
+    {
+        env::set_var("GST_PLUGIN_SCANNER", &scanner);
+    }
+    let registry = runtime.join("registry.bin");
+    if env::var_os("GST_REGISTRY").is_none() {
+        env::set_var("GST_REGISTRY", registry);
+    }
+    let inspect = runtime_bin.join(if cfg!(target_os = "windows") {
+        "gst-inspect-1.0.exe"
+    } else {
+        "gst-inspect-1.0"
+    });
+    if env::var_os("OBSR_GST_INSPECT").is_none() && inspect.is_file() {
+        env::set_var("OBSR_GST_INSPECT", inspect);
+    }
+}
+
+fn current_executable_directory() -> Option<PathBuf> {
+    env::current_exe().ok()?.parent().map(Path::to_owned)
+}
+
+fn prepend_environment_paths(name: &str, additions: &[&Path]) {
+    let existing = env::var_os(name)
+        .as_deref()
+        .map(env::split_paths)
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let mut paths = additions
+        .iter()
+        .filter(|addition| !existing.iter().any(|path| path == **addition))
+        .map(|path| (*path).to_owned())
+        .collect::<Vec<_>>();
+    paths.extend(existing);
+    if let Ok(value) = env::join_paths(paths) {
+        env::set_var(name, value);
+    }
 }
 
 /// Approved plugin selection, including hardware/software encoder choice.

@@ -16,6 +16,8 @@ use obs_rs_media::{
     MAX_STINGER_MEMORY_BYTES, MIN_STINGER_FRAME_DURATION_NANOS,
 };
 
+use super::super::capabilities::configure_bundled_runtime;
+
 /// The loader never waits indefinitely for a broken native decoder.
 const MAX_STINGER_DECODE_TIME: Duration = Duration::from_mins(2);
 /// The bounded sample pull interval keeps cancellation responsive.
@@ -86,6 +88,7 @@ impl StingerDecodeCapabilities {
 /// pipeline. The result is safe to publish to the toolkit-neutral UI model.
 #[must_use]
 pub fn stinger_decode_capabilities() -> StingerDecodeCapabilities {
+    configure_bundled_runtime();
     if gst::init().is_err() {
         return StingerDecodeCapabilities {
             hardware_decoder: None,
@@ -130,6 +133,7 @@ fn decode_stinger(
     if cancellation.is_cancelled() {
         return Err(resource_error(StingerResourceFailure::Cancelled));
     }
+    configure_bundled_runtime();
     gst::init().map_err(|_| resource_error(StingerResourceFailure::DecoderUnavailable))?;
     if request.spec().hardware_decode() && !stinger_decode_capabilities().hardware_available() {
         return Err(resource_error(StingerResourceFailure::DecoderUnavailable));

@@ -40,8 +40,10 @@ administrator access.
 
 If the archive was built with `-ProductionGStreamer`, start the GUI with
 `.\run-obs-rs.ps1 gui`. The launcher configures the bundled native DLLs,
-approved plugin directory, and plugin scanner. A default archive remains
-reference-output-only and does not include GStreamer.
+approved plugin directory, and plugin scanner. The native adapter also
+discovers the same `gstreamer` directory when an entry point is launched
+directly. A default archive remains reference-output-only and does not include
+GStreamer.
 
 For a real interactive-session check after extraction:
 
@@ -120,7 +122,8 @@ The matching development package is still required at build time. The
 packager copies the runtime DLLs, capability probe, and plugins into the
 archive and writes the selected runtime into `GSTREAMER-RUNTIME.txt`. The
 launcher sets `OBSR_GST_INSPECT` so capability discovery cannot accidentally
-use a different GStreamer installation from `PATH`.
+use a different GStreamer installation from `PATH`; direct entry-point
+launches apply the equivalent bundled-runtime setup in the native adapter.
 
 The Windows CI job intentionally runs the default feature set, so a machine
 without those native GStreamer packages still has a complete check, test, and
