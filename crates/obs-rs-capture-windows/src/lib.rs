@@ -12,11 +12,12 @@
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::{
+    collections::HashMap,
     io::{self, BufReader, Read},
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use obs_rs_capture::{
@@ -45,6 +46,9 @@ const HELPER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const HELPER_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(target_os = "windows")]
 const HELPER_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+static HELPER_VERSION_CACHE: std::sync::OnceLock<Mutex<HashMap<PathBuf, CachedHelperVersion>>> =
+    std::sync::OnceLock::new();
 
 /// A display returned by Windows Graphics Capture discovery.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -755,10 +759,61 @@ fn join_helper_output(
 
 #[cfg(target_os = "windows")]
 fn validate_helper_version(helper: &Path) -> Result<(), CaptureError> {
+    let fingerprint = helper_fingerprint(helper);
+    if let (Some(fingerprint), Some(cache)) = (
+        fingerprint.as_ref(),
+        HELPER_VERSION_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .ok(),
+    ) {
+        if let Some(cached) = cache.get(helper).filter(|cached| {
+            cached.length == fingerprint.length && cached.modified == fingerprint.modified
+        }) {
+            return validate_version_compatibility(&cached.version);
+        }
+    }
+
     let adapter = WindowsCaptureAdapter::new(helper.to_owned());
     let output = adapter.run_helper(&["--protocol", WINDOWS_HELPER_PROTOCOL, "--version"])?;
-    let _ = parse_version_output(&output)?;
+    let version = parse_version_output(&output)?;
+    // Cache only successful validation. A missing helper, a temporarily locked
+    // executable, or a transient process failure must be retried on the next
+    // source start instead of being memoized as a permanent incompatibility.
+    if let Some(fingerprint) = fingerprint {
+        if let Ok(mut cache) = HELPER_VERSION_CACHE
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+        {
+            cache.insert(
+                helper.to_owned(),
+                CachedHelperVersion {
+                    length: fingerprint.length,
+                    modified: fingerprint.modified,
+                    version,
+                },
+            );
+        }
+    }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CachedHelperVersion {
+    length: u64,
+    modified: Option<SystemTime>,
+    version: String,
+}
+
+#[cfg(target_os = "windows")]
+fn helper_fingerprint(helper: &Path) -> Option<CachedHelperVersion> {
+    let metadata = helper.metadata().ok()?;
+    Some(CachedHelperVersion {
+        length: metadata.len(),
+        modified: metadata.modified().ok(),
+        version: String::new(),
+    })
 }
 
 #[cfg(target_os = "windows")]
