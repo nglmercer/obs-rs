@@ -97,6 +97,18 @@ impl RecordingOutput {
         }
     }
 
+    #[cfg_attr(
+        not(feature = "production-gstreamer"),
+        allow(clippy::unnecessary_wraps, clippy::unused_self)
+    )]
+    pub(super) fn poll_health(&mut self) -> Result<(), EngineError> {
+        #[cfg(feature = "production-gstreamer")]
+        if let Self::Production { session } = self {
+            session.poll_health()?;
+        }
+        Ok(())
+    }
+
     pub(super) fn finalize(&mut self) -> Result<usize, EngineError> {
         match self {
             Self::Reference(writer) => writer.finalize().map_err(Into::into),

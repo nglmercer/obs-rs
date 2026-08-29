@@ -787,6 +787,26 @@ impl EngineSession {
         }
     }
 
+    /// Polls every active output without waiting for a new media item.
+    ///
+    /// Native recording pipelines expose asynchronous bus failures just like
+    /// live streaming pipelines. Keeping this control-plane poll separate from
+    /// media submission lets the worker notice a dead encoder, muxer, or sink
+    /// while the scene is static or the compositor is temporarily idle.
+    pub fn pump_outputs(&mut self) -> Result<(), EngineError> {
+        let recording_error = self
+            .recording
+            .as_mut()
+            .and_then(|recording| recording.poll_health().err());
+        if let Some(error) = recording_error.as_ref() {
+            self.recording_lifecycle = OutputLifecycle::Failed;
+            self.last_error = Some(error.to_string());
+        }
+
+        let streaming_error = self.pump_stream().err();
+        streaming_error.or(recording_error).map_or(Ok(()), Err)
+    }
+
     /// Stops streaming and closes its transport.
     pub fn finish_streaming(&mut self) -> Result<(), EngineError> {
         let Some(mut stream) = self.streaming.take() else {

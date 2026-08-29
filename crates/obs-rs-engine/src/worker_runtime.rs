@@ -3,9 +3,10 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
-        mpsc::{Receiver, TrySendError},
+        mpsc::{Receiver, RecvTimeoutError, TrySendError},
         Arc, Mutex,
     },
+    time::Duration,
 };
 
 #[cfg(feature = "production-gstreamer")]
@@ -16,6 +17,8 @@ use super::{
     EngineError, EngineSession, EngineWorkerSnapshot, OutputEvent, OutputLifecycle,
     ReplaySaveStatus, WorkerCommand, OUTPUT_EVENT_CAPACITY,
 };
+
+const OUTPUT_HEALTH_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[allow(
     clippy::needless_pass_by_value,
@@ -33,7 +36,18 @@ pub(super) fn worker_loop(
     queued_frames: Arc<AtomicUsize>,
     output_events: Arc<Mutex<VecDeque<OutputEvent>>>,
 ) {
-    while let Ok(command) = receiver.recv() {
+    loop {
+        let command = match receiver.recv_timeout(OUTPUT_HEALTH_POLL_INTERVAL) {
+            Ok(command) => command,
+            Err(RecvTimeoutError::Timeout) => {
+                if session.is_recording() || session.is_streaming() {
+                    pump_outputs(&mut session);
+                    publish_snapshot(&session, &snapshot, &dropped_frames, &queued_frames, true);
+                }
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         let shutdown = match command {
             WorkerCommand::StartRecording(path, encoder_config, reply) => {
                 let result = start_recording(&mut session, path, encoder_config);
@@ -307,7 +321,7 @@ pub(super) fn worker_loop(
             WorkerCommand::Shutdown => true,
         };
 
-        pump_stream(&mut session);
+        pump_outputs(&mut session);
         publish_snapshot(
             &session,
             &snapshot,
@@ -324,11 +338,9 @@ pub(super) fn worker_loop(
     publish_snapshot(&session, &snapshot, &dropped_frames, &queued_frames, false);
 }
 
-fn pump_stream(session: &mut EngineSession) {
-    if session.is_streaming() {
-        if let Err(error) = session.pump_stream() {
-            session.last_error = Some(error.to_string());
-        }
+fn pump_outputs(session: &mut EngineSession) {
+    if let Err(error) = session.pump_outputs() {
+        session.last_error = Some(error.to_string());
     }
 }
 
