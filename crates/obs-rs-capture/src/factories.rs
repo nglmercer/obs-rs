@@ -412,6 +412,7 @@ impl Source for NativeCameraSource {
             && device_id == self.device_id
             && native_mode == self.native_mode
             && self.device.is_some()
+            && !self.shutdown_blocked
         {
             return Ok(());
         }

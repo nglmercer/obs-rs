@@ -314,7 +314,9 @@ fn spawn_open(
 const fn is_permission_denial(error: &CaptureError) -> bool {
     matches!(
         error,
-        CaptureError::PermissionDenied | CaptureError::PermissionRequired
+        CaptureError::PermissionDenied
+            | CaptureError::PermissionRequired
+            | CaptureError::PermissionUnavailable
     )
 }
 

@@ -254,6 +254,20 @@ fn asynchronous_capture_distinguishes_denial_and_retryable_loss() {
 }
 
 #[test]
+fn unavailable_permission_handling_is_terminal() {
+    let mut unavailable =
+        AsyncCaptureDevice::open(format(), || Err(CaptureError::PermissionUnavailable));
+    for _ in 0..10_000 {
+        if unavailable.poll_frame(Timestamp::ZERO).is_err() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(unavailable.state(), CaptureLifecycleState::Denied);
+    assert_eq!(unavailable.retry(), Err(CaptureError::AlreadyRunning));
+}
+
+#[test]
 fn stream_device_round_trips_bounded_rgba_packets() {
     let format = format();
     let first = VideoFrame::solid(format, Timestamp::from_millis(10), [1, 2, 3, 255]);

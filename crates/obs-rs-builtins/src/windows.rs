@@ -162,6 +162,7 @@ impl Source for WindowsCaptureSource {
             && device_id == self.device_id
             && capture_cursor == self.capture_cursor
             && capture_border == self.capture_border
+            && !self.shutdown_blocked
         {
             return Ok(());
         }

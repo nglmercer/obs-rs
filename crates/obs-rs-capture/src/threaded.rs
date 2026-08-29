@@ -327,7 +327,9 @@ fn finish(mailbox: &Arc<Mailbox>, error: Option<CaptureError>) {
 const fn is_permission_denial(error: &CaptureError) -> bool {
     matches!(
         error,
-        CaptureError::PermissionDenied | CaptureError::PermissionRequired
+        CaptureError::PermissionDenied
+            | CaptureError::PermissionRequired
+            | CaptureError::PermissionUnavailable
     )
 }
 
@@ -398,6 +400,27 @@ mod tests {
         }
         assert!(matches!(result, Err(CaptureError::NotRunning)));
         assert_eq!(device.state(), CaptureLifecycleState::Lost);
+    }
+
+    #[test]
+    fn unavailable_permission_handling_reports_a_terminal_state() {
+        let mut device = ThreadedCaptureDevice::open(
+            CaptureRequest::output(format()),
+            "permission-unavailable",
+            move || Err(CaptureError::PermissionUnavailable),
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut result = Ok(None);
+        while Instant::now() < deadline {
+            result = device.poll_frame(Timestamp::ZERO);
+            if result.is_err() {
+                break;
+            }
+            thread::sleep(IDLE_POLL);
+        }
+        assert!(matches!(result, Err(CaptureError::PermissionUnavailable)));
+        assert_eq!(device.state(), CaptureLifecycleState::Denied);
     }
 
     /// A device whose `next_frame` never returns, like a wedged camera driver.
