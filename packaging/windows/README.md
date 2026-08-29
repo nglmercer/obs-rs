@@ -81,7 +81,9 @@ SRT, RIST, or an unauthenticated `whip://`/`webrtc://` alias for an HTTPS WHIP
 endpoint. It is used only for the live check and is not written to the telemetry
 artifact. When native recording is enabled, the resulting
 `production-recording.mkv` is kept in the acceptance artifact directory for
-independent playback inspection.
+independent playback inspection. Add `-RequireProductionHls` to require the
+local HLS playlist/segment check as well; it implies the native-runtime package
+requirement but does not need a network endpoint.
 
 ## Platform requirements and limitations
 

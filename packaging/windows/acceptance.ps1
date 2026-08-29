@@ -5,6 +5,7 @@ param(
     [int]$SoakSeconds = 1800,
     [switch]$RequireCamera,
     [switch]$RequireProduction,
+    [switch]$RequireProductionHls,
     [string]$ProductionStreamUrl = $env:OBS_RS_PRODUCTION_STREAM_URL
 )
 
@@ -76,6 +77,7 @@ $metadata = [ordered]@{
     soak_seconds = $SoakSeconds
     camera_required = [bool]$RequireCamera
     production_required = [bool]$RequireProduction
+    production_hls_required = [bool]$RequireProductionHls
     production_stream_configured = -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)
 }
 $metadata | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $artifacts "machine.json") -Encoding utf8
@@ -133,8 +135,14 @@ if ($RequireProduction) {
         [Environment]::SetEnvironmentVariable($name, "1", "Process")
     }
 }
+if ($RequireProductionHls) {
+    $oldRequired["OBS_RS_REQUIRE_PRODUCTION_HLS"] = [Environment]::GetEnvironmentVariable(
+        "OBS_RS_REQUIRE_PRODUCTION_HLS", "Process")
+    [Environment]::SetEnvironmentVariable("OBS_RS_REQUIRE_PRODUCTION_HLS", "1", "Process")
+}
 
-if ($RequireProduction -or -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
+if ($RequireProduction -or $RequireProductionHls -or
+    -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
     $runtimeMarker = Join-Path $root "GSTREAMER-RUNTIME.txt"
     if (-not (Test-Path -LiteralPath $runtimeMarker -PathType Leaf)) {
         throw "production acceptance requires a package built with -ProductionGStreamer"
@@ -192,7 +200,8 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Windows acceptance checks failed with exit code $LASTEXITCODE"
     }
-    if ($RequireProduction -or -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
+    if ($RequireProduction -or $RequireProductionHls -or
+        -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
         Test-ProductionRecordingArtifact `
             -RecordingPath (Join-Path $artifacts "production-recording.mkv") `
             -ArtifactDirectory $artifacts
