@@ -40,7 +40,8 @@ fast build is picked up automatically.
 
 The script creates `packaging/windows/dist/obs-rs-windows-<version>-x86_64.zip`
 and a matching `.sha256` file. The archive includes `VERSION.txt`,
-`SHA256SUMS.txt`, `THIRD-PARTY-NOTICES.md`, `WINDOWS-README.md`, the two app
+`SHA256SUMS.txt` (covering every payload file), `THIRD-PARTY-NOTICES.md`,
+`WINDOWS-README.md`, the two app
 entry points, the acceptance scripts, and the helper. Extract the `obs-rs`
 directory and run `install.ps1` once if a per-user uninstall entry is wanted.
 The entry points to the included `uninstall.ps1` and does not require

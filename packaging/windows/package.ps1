@@ -278,7 +278,7 @@ $noticeLines += @($metadata.packages |
     })
 $noticeLines | Set-Content -LiteralPath (Join-Path $stagingDirectory "THIRD-PARTY-NOTICES.md") -Encoding utf8
 
-$payloadChecksums = @(Get-ChildItem -LiteralPath $stagingDirectory -File -Recurse |
+$payloadChecksums = @(Get-ChildItem -LiteralPath $stagingDirectory -File -Recurse -Force |
     Sort-Object FullName |
     ForEach-Object {
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
@@ -286,6 +286,14 @@ $payloadChecksums = @(Get-ChildItem -LiteralPath $stagingDirectory -File -Recurs
         "$hash  $($relative.Replace("\", "/"))"
     })
 $payloadChecksums | Set-Content -LiteralPath (Join-Path $stagingDirectory "SHA256SUMS.txt") -Encoding ascii
+$verificationArguments = @("-PackageDirectory", $stagingDirectory)
+if ($streamProtocols.Count -gt 0) {
+    $verificationArguments += @("-RequiredStreamProtocol", $streamProtocols)
+}
+& (Join-Path $stagingDirectory "verify-package.ps1") @verificationArguments
+if ($LASTEXITCODE -ne 0) {
+    throw "staged Windows package verification failed with exit code $LASTEXITCODE"
+}
 Compress-Archive -Path $stagingDirectory -DestinationPath $archivePath -CompressionLevel Optimal
 $archiveHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
 "$archiveHash  $archiveName" | Set-Content -LiteralPath $checksumPath -Encoding ascii

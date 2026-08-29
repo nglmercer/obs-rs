@@ -42,6 +42,9 @@ foreach ($relative in $requiredFiles) {
 }
 
 $checked = 0
+$rootPrefix = $root.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
+$listedFiles = New-Object 'System.Collections.Generic.HashSet[string]' `
+    ([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($line in Get-Content -LiteralPath $sumsPath) {
     if ([string]::IsNullOrWhiteSpace($line)) {
         continue
@@ -60,18 +63,32 @@ foreach ($line in Get-Content -LiteralPath $sumsPath) {
     } catch {
         throw "Checksum path is invalid: $relative"
     }
-    $rootPrefix = $root.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
     if (-not $file.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Checksum path escapes the package directory: $relative"
     }
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
         throw "Checksum target is missing: $relative"
     }
+    $canonicalRelative = $file.Substring($rootPrefix.Length).Replace("\", "/")
+    if (-not $listedFiles.Add($canonicalRelative)) {
+        throw "Checksum target is listed more than once: $canonicalRelative"
+    }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash
     if ($actual -ine $parts[0]) {
         throw "Checksum mismatch: $relative"
     }
     $checked++
+}
+$payloadFiles = @(Get-ChildItem -LiteralPath $root -File -Recurse -Force |
+    Where-Object { $_.FullName -ne $sumsPath } |
+    ForEach-Object {
+        $_.FullName.Substring($rootPrefix.Length).Replace("\", "/")
+    })
+$unlistedFiles = @($payloadFiles | Where-Object { -not $listedFiles.Contains($_) })
+if ($unlistedFiles.Count -gt 0) {
+    $preview = ($unlistedFiles | Select-Object -First 10) -join ", "
+    $suffix = if ($unlistedFiles.Count -gt 10) { ", ..." } else { "" }
+    throw "Package payload files are missing from SHA256SUMS.txt: $preview$suffix"
 }
 
 $runtimeMarker = Join-Path $root "GSTREAMER-RUNTIME.txt"
