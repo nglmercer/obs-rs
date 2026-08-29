@@ -132,13 +132,15 @@ real media artifacts, and the GPU/audio/DPI matrix below.
 
 ## Latest local probe
 
-On 2026-08-28, this Windows host passed display capture, window capture,
-captured-frame reference recording, microphone input, monitor output, the
-desktop loopback, the two-second A/V soak, and three capture start/stop cycles.
-It also passed stable capture discovery, target persistence, and the 30/60 FPS
-display probe. It skipped camera capture because no camera was connected. This
-is host-specific evidence; it does not close the cross-version, cross-GPU,
-camera, or production-output acceptance rows.
+On 2026-08-29, this Windows host passed display capture, window capture,
+window-target lifecycle rejection after the test window closed, captured-frame
+reference recording, microphone input, monitor output, the desktop loopback,
+the two-second A/V soak, and three capture start/stop cycles. It also passed
+stable capture discovery, target persistence, and the 30/60 FPS display probe.
+It skipped camera capture because no camera was connected. The native-output
+checks were skipped because this probe used the default reference-only build.
+This is host-specific evidence; it does not close the cross-version,
+cross-GPU, camera, or production-output acceptance rows.
 
 ## Acceptance record format
 

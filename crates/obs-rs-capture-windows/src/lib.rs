@@ -43,6 +43,8 @@ const HELPER_SHUTDOWN_GRACE: Duration = Duration::from_millis(750);
 #[cfg(target_os = "windows")]
 const HELPER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(target_os = "windows")]
+const HELPER_FAILURE_EXIT_GRACE: Duration = Duration::from_millis(100);
+#[cfg(target_os = "windows")]
 const HELPER_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(target_os = "windows")]
 const HELPER_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
@@ -497,19 +499,45 @@ impl NativeHelperDevice {
     /// kept as a denied lifecycle state so the source does not retry a native
     /// request that requires an operator action.
     fn enrich_helper_failure(&mut self, fallback: CaptureError) -> CaptureError {
-        let status = match self.child.as_mut() {
-            Some(child) => match child.try_wait() {
-                Ok(status) => status,
-                Err(error) => {
-                    return CaptureError::Io {
-                        message: format!(
-                            "inspect Windows capture helper after failure: {error}; {fallback}"
-                        ),
-                    };
-                }
-            },
-            None => return fallback,
+        let Some(child) = self.child.as_mut() else {
+            return fallback;
         };
+        let mut status = match child.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                return CaptureError::Io {
+                    message: format!(
+                        "inspect Windows capture helper after failure: {error}; {fallback}"
+                    ),
+                };
+            }
+        };
+        // stdout can close just before the helper process publishes its exit
+        // status. Give the helper a short, bounded window to expose the
+        // target-specific stderr message so a destroyed window is not
+        // reported as an opaque protocol EOF.
+        if status.is_none()
+            && matches!(
+                &fallback,
+                CaptureError::Protocol { message }
+                    if message == "Windows capture helper frame stream ended"
+            )
+        {
+            let deadline = Instant::now() + HELPER_FAILURE_EXIT_GRACE;
+            while status.is_none() && Instant::now() < deadline {
+                thread::sleep(HELPER_POLL_INTERVAL);
+                status = match child.try_wait() {
+                    Ok(status) => status,
+                    Err(error) => {
+                        return CaptureError::Io {
+                            message: format!(
+                                "inspect Windows capture helper after failure: {error}; {fallback}"
+                            ),
+                        };
+                    }
+                };
+            }
+        }
         let Some(status) = status else {
             return fallback;
         };
