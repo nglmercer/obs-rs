@@ -84,6 +84,10 @@ writes bounded soak telemetry:
 .\acceptance.ps1 -SoakSeconds 1800
 ```
 
+The default run validates the reference Windows package and does not require
+the optional native GStreamer media source or production output backend. Use
+`-RequireProduction` to require those native media/output checks.
+
 Add `-RequireCamera` on a machine with a connected camera. A provisioned
 production-output runner can pass `-RequireProduction` to require native output
 capabilities and a real Matroska recording. Add `-ProductionStreamUrl` to also

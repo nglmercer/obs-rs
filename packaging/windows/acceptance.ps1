@@ -106,8 +106,7 @@ $requiredNames = @(
     "OBS_RS_REQUIRE_DESKTOP_LOOPBACK",
     "OBS_RS_REQUIRE_MONITOR_OUTPUT",
     "OBS_RS_REQUIRE_AV_SOAK",
-    "OBS_RS_REQUIRE_CLEANUP_RESTART",
-    "OBS_RS_REQUIRE_MEDIA_SOURCE"
+    "OBS_RS_REQUIRE_CLEANUP_RESTART"
 )
 $oldRequired = @{}
 foreach ($name in $requiredNames) {
