@@ -12,9 +12,10 @@ use obs_rs_util::Json;
 use super::super::capabilities::configure_bundled_runtime;
 use super::super::GStreamerError;
 use super::{
-    native_error, publish_recording_artifact, recover_stale_recording_artifact,
-    remove_stale_recording_path, RemuxRecovery, MAX_REMUX_MANIFEST_BYTES,
-    MAX_REMUX_RECOVERY_CANDIDATES, MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES, REMUX_MANIFEST_FORMAT,
+    native_error, native_pipeline_error, publish_recording_artifact,
+    recover_stale_recording_artifact, remove_stale_recording_path, RemuxRecovery,
+    MAX_REMUX_MANIFEST_BYTES, MAX_REMUX_RECOVERY_CANDIDATES, MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES,
+    REMUX_MANIFEST_FORMAT,
 };
 
 /// Finds recoverable automatic-remux destinations in a bounded directory scan.
@@ -405,9 +406,9 @@ pub fn remux_matroska_to_mp4(
     );
     let pipeline_result = match message.as_ref().map(|message| message.view()) {
         Some(gst::MessageView::Eos(_)) => Ok(()),
-        Some(gst::MessageView::Error(error)) => Err(GStreamerError::Native(format!(
-            "remux pipeline reported an error: {}",
-            error.error()
+        Some(gst::MessageView::Error(error)) => Err(GStreamerError::Native(native_pipeline_error(
+            "remux pipeline reported an error",
+            error,
         ))),
         _ => Err(GStreamerError::Native(
             "remux pipeline timed out".to_owned(),

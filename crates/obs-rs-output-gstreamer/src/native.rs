@@ -1,3 +1,6 @@
+use gstreamer as gst;
+use gstreamer::prelude::*;
+
 #[path = "native_pipeline.rs"]
 mod native_pipeline;
 #[path = "native_recording.rs"]
@@ -66,3 +69,53 @@ pub const MAX_REMUX_RECOVERY_DIRECTORY_ENTRIES: usize = 4_096;
 pub const MAX_REMUX_MANIFEST_BYTES: usize = 4_096;
 
 pub(super) const REMUX_MANIFEST_FORMAT: &str = "obs-rs-remux-manifest-v1";
+
+const MAX_NATIVE_ERROR_DEBUG_CHARS: usize = 512;
+
+/// Formats a native pipeline error without allowing GStreamer debug text to
+/// grow the control-plane error indefinitely.
+pub(super) fn native_pipeline_error(context: &str, error: &gst::message::Error) -> String {
+    let mut message = format!("{context}: {}", error.error());
+    if let Some(source) = error.src() {
+        let source_name = source.name();
+        if !source_name.is_empty() {
+            message.push_str("; source=");
+            message.push_str(source_name.as_str());
+        }
+    }
+    if let Some(debug) = error.debug() {
+        let debug = debug.trim();
+        if !debug.is_empty() {
+            message.push_str("; debug=");
+            message.push_str(&bounded_native_error_debug(debug));
+        }
+    }
+    message
+}
+
+fn bounded_native_error_debug(value: &str) -> String {
+    let mut characters = value.chars();
+    let bounded = characters
+        .by_ref()
+        .take(MAX_NATIVE_ERROR_DEBUG_CHARS)
+        .collect::<String>();
+    if characters.next().is_some() {
+        format!("{bounded}…")
+    } else {
+        bounded
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bounded_native_error_debug, MAX_NATIVE_ERROR_DEBUG_CHARS};
+
+    #[test]
+    fn native_error_debug_is_bounded() {
+        let value = "x".repeat(MAX_NATIVE_ERROR_DEBUG_CHARS + 1);
+        let bounded = bounded_native_error_debug(&value);
+
+        assert_eq!(bounded.chars().count(), MAX_NATIVE_ERROR_DEBUG_CHARS + 1);
+        assert!(bounded.ends_with('…'));
+    }
+}

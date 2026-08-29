@@ -14,10 +14,10 @@ use super::super::capabilities::configure_bundled_runtime;
 use super::super::{GStreamerError, ProductionDestination, ProductionPipelinePlan};
 use super::{
     appsrc, configure_encoders, configure_segmented_location_callback, configure_sink,
-    configure_sources, native_error, pipeline_description, publish_recording_artifact,
-    publish_segmented_recording, recover_stale_recording_artifact, recover_stale_remux_manifest,
-    recover_stale_segment_artifacts, remux_matroska_to_mp4, video_caps,
-    write_interrupted_remux_manifest, NativeOutputState, PipelineDescription,
+    configure_sources, native_error, native_pipeline_error, pipeline_description,
+    publish_recording_artifact, publish_segmented_recording, recover_stale_recording_artifact,
+    recover_stale_remux_manifest, recover_stale_segment_artifacts, remux_matroska_to_mp4,
+    video_caps, write_interrupted_remux_manifest, NativeOutputState, PipelineDescription,
 };
 
 const LOCAL_PIPELINE_START_TIMEOUT: gst::ClockTime = gst::ClockTime::from_seconds(5);
@@ -416,10 +416,10 @@ impl GStreamerOutputSession {
             Some(gst::MessageView::Eos(_)) => {}
             Some(gst::MessageView::Error(error)) => {
                 self.state = NativeOutputState::Failed;
-                let _ = error;
-                return Err(GStreamerError::Native(
-                    "recording pipeline reported an asynchronous error".to_owned(),
-                ));
+                return Err(GStreamerError::Native(native_pipeline_error(
+                    "recording pipeline reported an asynchronous error",
+                    error,
+                )));
             }
             _ => {
                 self.state = NativeOutputState::Failed;
@@ -599,9 +599,9 @@ fn take_pipeline_failure(pipeline: &gst::Pipeline) -> Option<GStreamerError> {
         .bus()?
         .pop_filtered(&[gst::MessageType::Error, gst::MessageType::Eos])?;
     match message.view() {
-        gst::MessageView::Error(error) => Some(GStreamerError::Native(format!(
-            "production pipeline error: {}",
-            error.error()
+        gst::MessageView::Error(error) => Some(GStreamerError::Native(native_pipeline_error(
+            "production pipeline error",
+            error,
         ))),
         gst::MessageView::Eos(_) => Some(GStreamerError::Native(
             "production pipeline reached EOS unexpectedly".to_owned(),
