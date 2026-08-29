@@ -51,7 +51,9 @@ use obs_rs_engine::{EngineConfig, EngineSession};
 #[cfg(target_os = "windows")]
 use obs_rs_media::{FrameRate, Timestamp, VideoFormat, VideoFrame};
 #[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
-use obs_rs_output::OutputProfile;
+use obs_rs_output::{
+    AudioEncoderConfig, HlsConfig, OutputProfile, StreamTarget, VideoEncoderConfig,
+};
 #[cfg(target_os = "windows")]
 use obs_rs_output::{MemoryMuxer, PacketKind, RleVideoEncoder};
 #[cfg(target_os = "windows")]
@@ -111,6 +113,7 @@ fn main() -> ExitCode {
     ];
     checks.push(("production_output", check_production_output()));
     checks.push(("production_recording", check_production_recording()));
+    checks.push(("production_hls", check_production_hls()));
     checks.push(("production_streaming", check_production_streaming()));
     let mut failed = false;
     for (name, result) in checks {
@@ -342,6 +345,122 @@ fn check_production_streaming() -> CheckResult {
             "device={} protocol={} video_submitted={} audio_submitted={} dropped={}",
             display_id, scheme, metrics.video_submitted, metrics.audio_submitted, metrics.dropped
         ))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn check_production_hls() -> CheckResult {
+    #[cfg(not(feature = "production-gstreamer"))]
+    {
+        CheckResult::skip(
+            "production HLS output is not compiled; use the production-gstreamer package",
+        )
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    {
+        let capabilities = output_capabilities_snapshot();
+        if !capabilities
+            .protocols()
+            .iter()
+            .any(|capability| capability.available() && capability.protocol().id() == "hls")
+        {
+            return CheckResult::skip(format!(
+                "status={} {}; required_protocol=hls",
+                capabilities.production_status().id(),
+                capabilities.production_status_detail()
+            ));
+        }
+
+        let devices = match discover_windows() {
+            Ok(devices) => devices,
+            Err(error) => return capture_check_result(&error),
+        };
+        let format = probe_video_format();
+        let (display_id, frame) = match capture_first_working_display(
+            &devices,
+            format,
+            Duration::from_secs(8),
+            "production HLS",
+        ) {
+            Ok(capture) => capture,
+            Err(result) => return result,
+        };
+        let directory = native_hls_directory();
+        let result = (|| -> Result<(u64, u64), String> {
+            let target = StreamTarget::Hls(HlsConfig {
+                directory: directory.clone(),
+                segment_duration_secs: 1,
+                playlist_size: 3,
+                low_latency: false,
+            });
+            let mut engine = acceptance_engine(format)?;
+            if let Err(error) = engine.start_streaming_target_configured(
+                &target,
+                &VideoEncoderConfig::default(),
+                &AudioEncoderConfig::default(),
+            ) {
+                let _ = engine.finish_streaming();
+                return Err(format!("start native HLS output: {error}"));
+            }
+            for index in 0_u64..40 {
+                let timestamp = Timestamp::from_nanos(index.saturating_mul(33_333_333));
+                let stamped = frame.at_timestamp(timestamp);
+                if let Err(error) = engine.push_program_frame(&stamped) {
+                    let _ = engine.finish_streaming();
+                    return Err(format!("push native HLS media: {error}"));
+                }
+            }
+            engine
+                .finish_streaming()
+                .map_err(|error| format!("finish native HLS output: {error}"))?;
+
+            let playlist_path = directory.join("playlist.m3u8");
+            let playlist = std::fs::read_to_string(&playlist_path)
+                .map_err(|error| format!("read native HLS playlist: {error}"))?;
+            if !playlist.starts_with("#EXTM3U") || !playlist.contains("#EXTINF:") {
+                return Err("native HLS playlist is missing media entries".to_owned());
+            }
+            let mut segments = 0_u64;
+            let mut bytes = 0_u64;
+            for entry in std::fs::read_dir(&directory)
+                .map_err(|error| format!("read native HLS directory: {error}"))?
+            {
+                let entry = entry.map_err(|error| format!("read native HLS entry: {error}"))?;
+                let path = entry.path();
+                if path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("ts"))
+                {
+                    let length = entry
+                        .metadata()
+                        .map_err(|error| format!("stat native HLS segment: {error}"))?
+                        .len();
+                    if length > 0 {
+                        segments = segments.saturating_add(1);
+                        bytes = bytes.saturating_add(length);
+                    }
+                }
+            }
+            if segments == 0 || bytes == 0 {
+                return Err(format!(
+                    "native HLS output has no non-empty transport segments: segments={segments} bytes={bytes}"
+                ));
+            }
+            Ok((segments, bytes))
+        })();
+        let cleanup = remove_hls_directory(&directory);
+        match (result, cleanup) {
+            (Ok((segments, bytes)), Ok(())) => CheckResult::pass(format!(
+                "device={display_id} protocol=hls segments={segments} bytes={bytes}"
+            )),
+            (Ok(_), Err(error)) => CheckResult::fail(error),
+            (Err(error), Ok(())) => CheckResult::fail(error),
+            (Err(error), Err(cleanup_error)) => {
+                CheckResult::fail(format!("{error}; cleanup failed: {cleanup_error}"))
+            }
+        }
     }
 }
 
@@ -981,6 +1100,29 @@ fn native_recording_path() -> PathBuf {
         "obs-rs-windows-check-{}-{token}.mkv",
         std::process::id()
     ))
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn native_hls_directory() -> PathBuf {
+    let token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    std::env::temp_dir().join(format!(
+        "obs-rs-windows-check-{}-{token}-hls",
+        std::process::id()
+    ))
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn remove_hls_directory(directory: &Path) -> Result<(), String> {
+    match std::fs::remove_dir_all(directory) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "remove native HLS directory {}: {error}",
+            directory.display()
+        )),
+    }
 }
 
 #[cfg(all(target_os = "windows", feature = "production-gstreamer"))]

@@ -151,3 +151,6 @@ recording, and cleanup checks. Set the optional repository/environment secret
 `OBS_RS_PRODUCTION_STREAM_URL` to require a real RTMP, RTMPS, SRT, RIST, or
 unauthenticated WHIP streaming acceptance; set the repository variable
 `OBS_RS_REQUIRE_PRODUCTION_STREAMING` to `1` when that secret must be present.
+The check also exercises local HLS playlist/segment output whenever the
+packaged runtime exposes `hlssink2`; set `OBS_RS_REQUIRE_PRODUCTION_HLS=1` to
+make that check mandatory on a production runner.

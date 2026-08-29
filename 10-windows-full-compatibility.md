@@ -40,7 +40,7 @@ Windows features passed.
 | Transforms/crop/scale | ✅ | — | ✅ | ◐ | Core transform/scaler tests pass portably. Verify mixed-DPI source sizes and output scaling in the GUI. |
 | Preview | ✅ | — | ◐ | ☐ | GUI smoke tests exercise wiring and the renderer has portable tests. Verify real WGC frames reach the visible preview. |
 | Recording | ✅ | — | ◐ | ☐ | Reference `OBSRPKT1` recording works; normal Windows builds remain reference-only unless the optional native GStreamer runtime is supplied. Verify a playable production file. |
-| Streaming | ✅ | — | ◐ | ☐ | Reference packet transports exist; production RTMP/SRT/etc. require the optional native GStreamer feature/runtime. Verify a real endpoint. |
+| Streaming | ✅ | — | ◐ | ☐ | Reference packet transports exist; production HLS is now probed locally when `hlssink2` is available, while RTMP/SRT/etc. require the optional native GStreamer feature/runtime and a real endpoint. Verify a real playlist and endpoint. |
 | Source persistence | ✅ | — | ✅ | ◐ | Project round-trip tests preserve source settings and target IDs. Reload a Windows project and capture the same selected display/window. |
 | Monitor/window hotplug | ✅ | ◐ | ◐ | ☐ | Discovery can be refreshed and capture loss triggers bounded reopen attempts; no hardware hotplug acceptance is recorded. |
 | Audio device hotplug | ✅ | ✅ | ◐ | ☐ | WASAPI discovery snapshots, default-route refresh, and bounded engine reconnect logic exist; the Windows probe now checks stable IDs/default metadata. Change default devices and unplug the active route while recording. |
@@ -116,6 +116,9 @@ only scaffolded:
   a real selected-window close/reopen rejection, and four-frame display runs at
   both 30 and 60 FPS; its audio stability check verifies endpoint
   identity/default-route invariants;
+- the Windows check exercises native HLS without a network endpoint when the
+  packaged runtime exposes `hlssink2`, validating the playlist and non-empty
+  transport segments before removing its temporary output directory;
 - native output capability discovery is cached for the process after one
   allow-listed GStreamer probe; the Output page and exported diagnostics now
   distinguish an uncompiled adapter, a missing runtime, an incomplete plugin
@@ -141,6 +144,11 @@ It skipped camera capture because no camera was connected. The native-output
 checks were skipped because this probe used the default reference-only build.
 This is host-specific evidence; it does not close the cross-version,
 cross-GPU, camera, or production-output acceptance rows.
+
+The production Windows check also includes `production_hls`. It is skipped in
+reference-only builds or when the native runtime lacks an HLS profile; set
+`OBS_RS_REQUIRE_PRODUCTION_HLS=1` for a production runner that must provide
+that local playlist acceptance.
 
 ## Acceptance record format
 
