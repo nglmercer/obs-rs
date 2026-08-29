@@ -620,6 +620,15 @@ impl RgbaResizePlan {
                 "captured frame payload is shorter than its dimensions",
             ));
         }
+        if self.source_width == self.target_width && self.source_height == self.target_height {
+            // Most display captures are already at the requested output size.
+            // Reuse the destination allocation but skip the per-pixel loop in
+            // that common case; the frame still crosses the protocol boundary
+            // with an owned buffer.
+            target.clear();
+            target.extend_from_slice(&source[..source_size]);
+            return Ok(());
+        }
         target.clear();
         target.resize(self.target_size, 0);
         for (y, source_row) in self.source_rows.iter().copied().enumerate() {
@@ -897,6 +906,17 @@ mod tests {
             cached,
             resize_rgba(&source, 2, 2, 4, 1).expect("reference resize")
         );
+    }
+
+    #[test]
+    fn identity_resize_copies_the_complete_frame_without_scaling() {
+        let source = [1, 2, 3, 4, 5, 6, 7, 8];
+        let plan = RgbaResizePlan::new(2, 1, 2, 1).expect("resize plan");
+        let mut target = vec![99; 32];
+
+        plan.resize(&source, &mut target).expect("identity resize");
+
+        assert_eq!(target, source);
     }
 
     #[test]
