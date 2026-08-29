@@ -53,7 +53,7 @@ debug = 0
 [profile.test]
 debug = 1
 incremental = true
-codegen-units = 256
+codegen-units = 16
 
 [profile.test.package."*"]
 debug = 0
@@ -70,6 +70,13 @@ codegen-units = 256
 
 [profile.dev-fast.package."*"]
 debug = 0
+
+# Slint's generated test harness is large and the MSVC linker is sensitive to
+# very high codegen-unit counts here. Keep the rest of the fast profile highly
+# parallel, but use a bounded unit count for the GUI crate so `cargo test`
+# remains linkable on Windows.
+[profile.dev-fast.package."obs-rs-gui"]
+codegen-units = 16
 
 [profile.release]
 codegen-units = 1

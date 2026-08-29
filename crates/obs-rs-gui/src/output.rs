@@ -718,7 +718,7 @@ impl OutputRuntime {
                     )
                 });
         format!(
-            "worker_alive={} project_revision={} recording={} streaming={} replay_lifecycle={} replay_save={} replay_packets={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} desktop_audio_backend={} desktop_audio_active={} audio_devices={} monitor_output_state={} monitor_output_queued={} monitor_output_dropped={} monitor_output_reconnects={} monitor_output_error={} output_capability_status={} output_capability_detail={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_queue_bytes={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} av_sync_obs={} av_sync_in_sync={} av_sync_behind={} av_sync_ahead={} av_sync_max_ns={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} filter_diagnostics={:?} last_error={}",
+            "worker_alive={} project_revision={} recording={} streaming={} replay_lifecycle={} replay_save={} replay_packets={} stream_protocol={} recording_lifecycle={} streaming_lifecycle={} stream_state={:?} audio_backend={} audio_fallback={} audio_active_device_id={} desktop_audio_backend={} desktop_audio_active={} desktop_audio_active_device_id={} audio_devices={} monitor_output_state={} monitor_output_queued={} monitor_output_dropped={} monitor_output_reconnects={} monitor_output_error={} output_capability_status={} output_capability_detail={} worker_queued_frames={} stream_queue_bytes={} stream_submitted={} stream_dropped={} stream_reconnects={} native_queue_bytes={} native_submit_max_nanos={} output_submit_p50_nanos={} output_submit_p95_nanos={} output_submit_p99_nanos={} output_submit_max_nanos={} video_encode_p50_nanos={} video_encode_p95_nanos={} video_encode_p99_nanos={} video_encode_max_nanos={} audio_encode_p95_nanos={} audio_blocks_per_video_tick={} av_sync_obs={} av_sync_in_sync={} av_sync_behind={} av_sync_ahead={} av_sync_max_ns={} frame_drops={} format_drops={} unscalable_drops={} ticks={} video_frames={} audio_blocks={} audio_fallback_blocks={} audio_peak_milli={} filter_diagnostics={:?} last_error={}",
             snapshot.alive,
             self.last_revision,
             engine.recording,
@@ -732,8 +732,13 @@ impl OutputRuntime {
             engine.stream_state,
             engine.audio_backend,
             engine.audio_fallback,
+            engine.audio_active_device_id.as_deref().unwrap_or("none"),
             engine.desktop_audio.label(),
             engine.desktop_audio.is_capturing(),
+            engine
+                .desktop_audio_active_device_id
+                .as_deref()
+                .unwrap_or("none"),
             devices,
             monitor_state,
             monitor_queued,

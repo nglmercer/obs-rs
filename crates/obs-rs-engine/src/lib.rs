@@ -433,11 +433,13 @@ impl EngineSession {
             stream_state: self.stream_state(),
             audio_backend: self.audio_backend.clone(),
             audio_fallback: self.audio_fallback,
+            audio_active_device_id: self.audio_active_device_id.clone(),
             desktop_audio: if self.desktop_audio.is_some() {
                 DesktopAudioSource::Monitor(self.desktop_audio_backend.clone())
             } else {
                 DesktopAudioSource::Silent(self.desktop_audio_backend.clone())
             },
+            desktop_audio_active_device_id: self.desktop_audio_active_device_id.clone(),
             monitor_output: self
                 .monitor_output_worker
                 .as_ref()

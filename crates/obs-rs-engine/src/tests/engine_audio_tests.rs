@@ -403,6 +403,14 @@ fn automatic_audio_routes_prefer_provider_defaults_over_discovery_order() {
         engine.snapshot().desktop_audio,
         DesktopAudioSource::Monitor("Default speakers".to_owned())
     );
+    assert_eq!(
+        engine.snapshot().audio_active_device_id.as_deref(),
+        Some("default-input")
+    );
+    assert_eq!(
+        engine.snapshot().desktop_audio_active_device_id.as_deref(),
+        Some("default-output")
+    );
 }
 
 #[derive(Debug)]

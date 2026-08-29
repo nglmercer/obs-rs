@@ -385,6 +385,9 @@ fn the_desktop_channel_names_its_monitor_or_admits_it_is_silent() {
             "a silent desktop channel says so in diagnostics"
         ),
     }
+    let diagnostics = output.diagnostics_document();
+    assert!(diagnostics.contains("audio_active_device_id="));
+    assert!(diagnostics.contains("desktop_audio_active_device_id="));
 }
 
 #[test]

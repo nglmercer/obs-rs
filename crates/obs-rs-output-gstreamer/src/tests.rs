@@ -8,7 +8,8 @@ use obs_rs_output::{
 };
 
 use super::capabilities::{
-    encoder_option_capabilities, property_present, protocol_capabilities, video_encoder_capability,
+    encoder_option_capabilities, production_profiles_with, property_present, protocol_capabilities,
+    video_encoder_capability,
 };
 use super::pipeline::{element_available, first_matching};
 
@@ -53,6 +54,32 @@ fn capability_model_separates_protocol_codec_and_encoder_implementation() {
     assert!(hardware.hardware());
     assert!(!software.hardware());
     assert_ne!(hardware.id(), software.id());
+}
+
+#[test]
+fn production_profiles_require_the_elements_used_by_each_graph() {
+    let selected = std::collections::BTreeMap::from([
+        ("h264", "openh264enc".to_owned()),
+        ("aac", "avenc_aac".to_owned()),
+        ("rtmp_sink", "rtmp2sink".to_owned()),
+    ]);
+
+    let complete = production_profiles_with(&selected, |_| true);
+    assert!(complete.contains(&OutputProfileKind::MatroskaH264Aac));
+    assert!(complete.contains(&OutputProfileKind::Mp4H264Aac));
+    assert!(complete.contains(&OutputProfileKind::RtmpH264Aac));
+
+    let without_pipeline_queue = production_profiles_with(&selected, |element| element != "queue");
+    assert!(without_pipeline_queue.is_empty());
+
+    let without_recording_sink =
+        production_profiles_with(&selected, |element| element != "filesink");
+    assert!(!without_recording_sink.contains(&OutputProfileKind::MatroskaH264Aac));
+    assert!(!without_recording_sink.contains(&OutputProfileKind::Mp4H264Aac));
+    assert!(without_recording_sink.contains(&OutputProfileKind::RtmpH264Aac));
+
+    let without_h264_parser = production_profiles_with(&selected, |element| element != "h264parse");
+    assert!(without_h264_parser.is_empty());
 }
 
 #[test]

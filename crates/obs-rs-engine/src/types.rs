@@ -206,7 +206,11 @@ pub struct EngineSnapshot {
     pub stream_state: Option<StreamState>,
     pub audio_backend: String,
     pub audio_fallback: bool,
+    /// Runtime identity of the device currently feeding the microphone.
+    pub audio_active_device_id: Option<String>,
     pub desktop_audio: DesktopAudioSource,
+    /// Runtime identity of the playback route currently feeding desktop audio.
+    pub desktop_audio_active_device_id: Option<String>,
     pub monitor_output: Option<AudioOutputWorkerSnapshot>,
     pub filter_diagnostics: Vec<String>,
     pub stream_metrics: Option<StreamMetrics>,

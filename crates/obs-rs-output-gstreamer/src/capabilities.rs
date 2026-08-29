@@ -660,58 +660,75 @@ fn remux_elements_available() -> bool {
 }
 
 fn production_profiles(selected: &BTreeMap<&'static str, String>) -> Vec<OutputProfileKind> {
+    production_profiles_with(selected, element_available)
+}
+
+pub(super) fn production_profiles_with(
+    selected: &BTreeMap<&'static str, String>,
+    mut available: impl FnMut(&str) -> bool,
+) -> Vec<OutputProfileKind> {
     let has = |role| selected.contains_key(role);
+    // Every native graph starts with these bounded appsrc conversion stages.
+    // If one is absent, reporting a codec/container as available only moves
+    // the failure from capability discovery to output start.
+    if ![
+        "appsrc",
+        "queue",
+        "videoconvert",
+        "audioconvert",
+        "audioresample",
+    ]
+    .into_iter()
+    .all(&mut available)
+    {
+        return Vec::new();
+    }
+    let filesink = available("filesink");
+    let h264_parser = has("h264") && available("h264parse");
+    let hevc_parser = has("hevc") && available("h265parse");
+    let av1_parser = has("av1") && available("av1parse");
     let mut profiles = Vec::new();
-    if has("h264") && has("aac") && element_available("matroskamux") {
+    if h264_parser && has("aac") && filesink && available("matroskamux") {
         profiles.push(OutputProfileKind::MatroskaH264Aac);
     }
-    if has("hevc")
-        && has("aac")
-        && element_available("h265parse")
-        && element_available("matroskamux")
-    {
+    if hevc_parser && has("aac") && filesink && available("matroskamux") {
         profiles.push(OutputProfileKind::MatroskaHevcAac);
     }
-    if has("av1") && has("aac") && element_available("av1parse") && element_available("matroskamux")
-    {
+    if av1_parser && has("aac") && filesink && available("matroskamux") {
         profiles.push(OutputProfileKind::MatroskaAv1Aac);
     }
-    if has("h264") && has("aac") && element_available("mp4mux") {
+    if h264_parser && has("aac") && filesink && available("mp4mux") {
         profiles.extend([
             OutputProfileKind::Mp4H264Aac,
             OutputProfileKind::FragmentedMp4H264Aac,
         ]);
     }
-    if has("h264") && has("aac") && element_available("qtmux") {
+    if h264_parser && has("aac") && filesink && available("qtmux") {
         profiles.push(OutputProfileKind::MovH264Aac);
     }
-    if has("h264") && has("aac") && element_available("flvmux") {
+    if h264_parser && has("aac") && filesink && available("flvmux") {
         profiles.push(OutputProfileKind::FlvH264Aac);
     }
-    if has("h264") && has("aac") && element_available("flvmux") && has("rtmp_sink") {
+    if h264_parser && has("aac") && available("flvmux") && has("rtmp_sink") {
         profiles.extend([
             OutputProfileKind::RtmpH264Aac,
             OutputProfileKind::RtmpsH264Aac,
         ]);
     }
-    if has("h264") && has("aac") && element_available("mpegtsmux") && element_available("srtsink") {
+    if h264_parser && has("aac") && available("mpegtsmux") && available("srtsink") {
         profiles.push(OutputProfileKind::SrtMpegTsH264Aac);
     }
-    if has("vp8")
-        && has("opus")
-        && element_available("webrtcbin")
-        && element_available("whipclientsink")
-    {
+    if has("vp8") && has("opus") && available("webrtcbin") && available("whipclientsink") {
         profiles.push(OutputProfileKind::WebRtcVp8Opus);
     }
-    if has("h264") && has("aac") && element_available("hlssink2") {
+    if h264_parser && has("aac") && available("hlssink2") {
         profiles.push(OutputProfileKind::HlsH264Aac);
     }
-    if has("h264")
+    if h264_parser
         && has("aac")
-        && element_available("mpegtsmux")
-        && element_available("rtpmp2tpay")
-        && element_available("ristsink")
+        && available("mpegtsmux")
+        && available("rtpmp2tpay")
+        && available("ristsink")
     {
         profiles.push(OutputProfileKind::RistMpegTsH264Aac);
     }
