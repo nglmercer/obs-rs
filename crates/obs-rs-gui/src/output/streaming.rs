@@ -124,12 +124,22 @@ const fn stream_protocol_name(protocol: StreamProtocol) -> &'static str {
 
 #[cfg(test)]
 pub(crate) fn stream_protocol_label(address: &str) -> &'static str {
-    match address.trim().split(':').next() {
-        Some("srt") => "SRT",
-        Some("rtmp") => "RTMP",
-        Some("rtmps") => "RTMPS",
-        Some("rist") => "RIST",
-        Some("ws" | "wss") => "OBSR-WebSocket",
-        _ => "OBSR-TCP",
+    let scheme = address.trim().split(':').next().unwrap_or_default();
+    if scheme.eq_ignore_ascii_case("srt") {
+        "SRT"
+    } else if scheme.eq_ignore_ascii_case("rtmp") {
+        "RTMP"
+    } else if scheme.eq_ignore_ascii_case("rtmps") {
+        "RTMPS"
+    } else if scheme.eq_ignore_ascii_case("rist") {
+        "RIST"
+    } else if scheme.eq_ignore_ascii_case("whip") || scheme.eq_ignore_ascii_case("webrtc") {
+        "WHIP"
+    } else if scheme.eq_ignore_ascii_case("hls") {
+        "HLS"
+    } else if scheme.eq_ignore_ascii_case("ws") || scheme.eq_ignore_ascii_case("wss") {
+        "OBSR-WebSocket"
+    } else {
+        "OBSR-TCP"
     }
 }

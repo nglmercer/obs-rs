@@ -18,6 +18,9 @@ fn stream_protocol_status_uses_redacted_scheme_labels() {
         ("srt://media.example:9000?passphrase=top-secret", "SRT"),
         ("rtmp://media.example/live/top-secret", "RTMP"),
         ("rtmps://media.example/live/top-secret", "RTMPS"),
+        ("whip://media.example/live/top-secret", "WHIP"),
+        ("WEBRTC://media.example/live/top-secret", "WHIP"),
+        ("hls://C:/captures/live", "HLS"),
         ("ws://127.0.0.1:9000/private", "OBSR-WebSocket"),
         ("127.0.0.1:9000", "OBSR-TCP"),
     ];
