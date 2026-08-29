@@ -4,7 +4,7 @@ use std::{
     collections::VecDeque,
     str::FromStr,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
         Arc, Mutex,
     },
@@ -127,6 +127,7 @@ struct WasapiInput {
     format: AudioFormat,
     state: AudioInputState,
     receiver: Receiver<CallbackBlock>,
+    callback_overrun: Arc<AtomicBool>,
     pending: Vec<f32>,
     stream: Option<Stream>,
 }
@@ -183,12 +184,14 @@ impl WasapiInput {
         };
         let (sender, receiver) = mpsc::sync_channel(CALLBACK_QUEUE_CAPACITY);
         let error_sender = sender.clone();
+        let callback_overrun = Arc::new(AtomicBool::new(false));
         let stream = build_stream(
             device,
             cpal_config,
             config.sample_format(),
             sender,
             error_sender,
+            Arc::clone(&callback_overrun),
         )?;
         stream
             .play()
@@ -197,6 +200,7 @@ impl WasapiInput {
             format,
             state: AudioInputState::Stopped,
             receiver,
+            callback_overrun,
             pending: Vec::new(),
             stream: Some(stream),
         })
@@ -204,6 +208,13 @@ impl WasapiInput {
 
     fn take_samples(&mut self, count: usize) -> Result<Vec<f32>, AudioDeviceError> {
         while self.pending.len() < count {
+            if self.callback_overrun.swap(false, Ordering::AcqRel) {
+                self.pending.clear();
+                self.state = AudioInputState::Failed;
+                return Err(AudioDeviceError::Unavailable(
+                    "WASAPI input callback queue overflowed; audio blocks were dropped".to_owned(),
+                ));
+            }
             let block = self.receiver.recv_timeout(READ_TIMEOUT).map_err(|error| {
                 self.state = AudioInputState::Failed;
                 match error {
@@ -661,12 +672,19 @@ where
     sample.to_sample()
 }
 
-fn send_typed_samples<T>(sender: &SyncSender<CallbackBlock>, samples: &[T])
-where
+fn send_typed_samples<T>(
+    sender: &SyncSender<CallbackBlock>,
+    samples: &[T],
+    callback_overrun: &AtomicBool,
+) where
     T: cpal::Sample,
     f32: cpal::FromSample<T>,
 {
-    send_samples(sender, samples.iter().copied().map(sample_to_f32));
+    send_samples(
+        sender,
+        samples.iter().copied().map(sample_to_f32),
+        callback_overrun,
+    );
 }
 
 #[allow(
@@ -679,6 +697,7 @@ fn build_stream(
     sample_format: SampleFormat,
     sender: SyncSender<CallbackBlock>,
     error_sender: SyncSender<CallbackBlock>,
+    callback_overrun: Arc<AtomicBool>,
 ) -> Result<Stream, AudioDeviceError> {
     let error_callback = move |error: cpal::Error| {
         let block = if error.kind() == cpal::ErrorKind::Xrun {
@@ -692,7 +711,7 @@ fn build_stream(
         SampleFormat::I8 => device
             .build_input_stream(
                 config,
-                move |data: &[i8], _| send_typed_samples(&sender, data),
+                move |data: &[i8], _| send_typed_samples(&sender, data, &callback_overrun),
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -700,7 +719,9 @@ fn build_stream(
         SampleFormat::F32 => device
             .build_input_stream(
                 config,
-                move |data: &[f32], _| send_samples(&sender, data.iter().copied()),
+                move |data: &[f32], _| {
+                    send_samples(&sender, data.iter().copied(), &callback_overrun);
+                },
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -712,6 +733,7 @@ fn build_stream(
                     send_samples(
                         &sender,
                         data.iter().map(|sample| f32::from(*sample) / 32_768.0),
+                        &callback_overrun,
                     );
                 },
                 error_callback,
@@ -721,7 +743,7 @@ fn build_stream(
         SampleFormat::I24 => device
             .build_input_stream(
                 config,
-                move |data: &[cpal::I24], _| send_typed_samples(&sender, data),
+                move |data: &[cpal::I24], _| send_typed_samples(&sender, data, &callback_overrun),
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -729,7 +751,7 @@ fn build_stream(
         SampleFormat::I32 => device
             .build_input_stream(
                 config,
-                move |data: &[i32], _| send_typed_samples(&sender, data),
+                move |data: &[i32], _| send_typed_samples(&sender, data, &callback_overrun),
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -737,7 +759,7 @@ fn build_stream(
         SampleFormat::I64 => device
             .build_input_stream(
                 config,
-                move |data: &[i64], _| send_typed_samples(&sender, data),
+                move |data: &[i64], _| send_typed_samples(&sender, data, &callback_overrun),
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -750,6 +772,7 @@ fn build_stream(
                         &sender,
                         data.iter()
                             .map(|sample| (f32::from(*sample) - 32_768.0) / 32_768.0),
+                        &callback_overrun,
                     );
                 },
                 error_callback,
@@ -759,7 +782,7 @@ fn build_stream(
         SampleFormat::U24 => device
             .build_input_stream(
                 config,
-                move |data: &[cpal::U24], _| send_typed_samples(&sender, data),
+                move |data: &[cpal::U24], _| send_typed_samples(&sender, data, &callback_overrun),
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -767,7 +790,7 @@ fn build_stream(
         SampleFormat::U32 => device
             .build_input_stream(
                 config,
-                move |data: &[u32], _| send_typed_samples(&sender, data),
+                move |data: &[u32], _| send_typed_samples(&sender, data, &callback_overrun),
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -775,7 +798,7 @@ fn build_stream(
         SampleFormat::U64 => device
             .build_input_stream(
                 config,
-                move |data: &[u64], _| send_typed_samples(&sender, data),
+                move |data: &[u64], _| send_typed_samples(&sender, data, &callback_overrun),
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -788,6 +811,7 @@ fn build_stream(
                         &sender,
                         data.iter()
                             .map(|sample| (f32::from(*sample) - 128.0) / 128.0),
+                        &callback_overrun,
                     );
                 },
                 error_callback,
@@ -797,7 +821,7 @@ fn build_stream(
         SampleFormat::F64 => device
             .build_input_stream(
                 config,
-                move |data: &[f64], _| send_typed_samples(&sender, data),
+                move |data: &[f64], _| send_typed_samples(&sender, data, &callback_overrun),
                 error_callback,
                 Some(READ_TIMEOUT),
             )
@@ -808,13 +832,14 @@ fn build_stream(
     }
 }
 
-fn send_samples<I>(sender: &SyncSender<CallbackBlock>, samples: I)
+fn send_samples<I>(sender: &SyncSender<CallbackBlock>, samples: I, callback_overrun: &AtomicBool)
 where
     I: IntoIterator<Item = f32>,
 {
     let mut block = Vec::new();
     for sample in samples {
         if block.len() >= MAX_CALLBACK_SAMPLES {
+            callback_overrun.store(true, Ordering::Release);
             let _ = sender.try_send(CallbackBlock::Error(format!(
                 "WASAPI callback exceeded the {MAX_CALLBACK_SAMPLES}-sample block limit"
             )));
@@ -822,8 +847,13 @@ where
         }
         block.push(sample);
     }
-    if let Err(TrySendError::Disconnected(_)) = sender.try_send(CallbackBlock::Samples(block)) {
-        // The stream is being torn down. There is no consumer left to notify.
+    match sender.try_send(CallbackBlock::Samples(block)) {
+        Ok(()) | Err(TrySendError::Disconnected(_)) => {
+            // The stream is being torn down when the receiver is disconnected.
+        }
+        Err(TrySendError::Full(_)) => {
+            callback_overrun.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -907,11 +937,57 @@ mod tests {
     #[test]
     fn input_callback_rejects_samples_beyond_the_bound() {
         let (sender, receiver) = mpsc::sync_channel(CALLBACK_QUEUE_CAPACITY);
-        send_samples(&sender, std::iter::repeat_n(0.0, MAX_CALLBACK_SAMPLES + 1));
+        let callback_overrun = AtomicBool::new(false);
+        send_samples(
+            &sender,
+            std::iter::repeat_n(0.0, MAX_CALLBACK_SAMPLES + 1),
+            &callback_overrun,
+        );
         assert!(matches!(
             receiver.try_recv().expect("callback error"),
             CallbackBlock::Error(_)
         ));
+        assert!(callback_overrun.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn input_callback_reports_a_full_queue_without_blocking() {
+        let (sender, _receiver) = mpsc::sync_channel(CALLBACK_QUEUE_CAPACITY);
+        for _ in 0..CALLBACK_QUEUE_CAPACITY {
+            sender
+                .try_send(CallbackBlock::Samples(vec![0.0]))
+                .expect("fill callback queue");
+        }
+        let callback_overrun = AtomicBool::new(false);
+
+        send_samples(&sender, [0.5], &callback_overrun);
+
+        assert!(callback_overrun.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn input_queue_overrun_fails_the_reader_and_discards_pending_samples() {
+        let format = AudioFormat::new(48_000, 1).expect("format");
+        let (_sender, receiver) = mpsc::sync_channel(CALLBACK_QUEUE_CAPACITY);
+        let callback_overrun = Arc::new(AtomicBool::new(true));
+        let mut input = WasapiInput {
+            format,
+            state: AudioInputState::Running,
+            receiver,
+            callback_overrun,
+            pending: vec![0.25],
+            stream: None,
+        };
+
+        let error = input
+            .take_samples(2)
+            .expect_err("queue overrun should fail input");
+
+        assert!(
+            matches!(error, AudioDeviceError::Unavailable(message) if message.contains("queue overflowed"))
+        );
+        assert_eq!(input.state, AudioInputState::Failed);
+        assert!(input.pending.is_empty());
     }
 
     #[test]
@@ -926,6 +1002,7 @@ mod tests {
             format,
             state: AudioInputState::Stopped,
             receiver,
+            callback_overrun: Arc::new(AtomicBool::new(false)),
             pending: Vec::new(),
             stream: None,
         };
