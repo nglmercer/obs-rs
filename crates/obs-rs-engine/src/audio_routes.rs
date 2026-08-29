@@ -29,8 +29,16 @@ pub(crate) struct AudioRouteRequest {
     pub(crate) format: AudioFormat,
     pub(crate) microphone_requested_id: Option<String>,
     pub(crate) microphone_active_id: Option<String>,
+    /// The active microphone ID can remain stable after its native stream has
+    /// failed (for example, when WASAPI invalidates a client without changing
+    /// the endpoint's identity). A failed stream must be reopened even when
+    /// discovery returns the same ID.
+    pub(crate) microphone_active_failed: bool,
     pub(crate) desktop_requested_id: Option<String>,
     pub(crate) desktop_active_id: Option<String>,
+    /// See [`Self::microphone_active_failed`], for the render endpoint used by
+    /// desktop loopback capture.
+    pub(crate) desktop_active_failed: bool,
 }
 
 /// A result from the bounded automatic-route worker.
@@ -166,6 +174,7 @@ fn refresh_routes(
                 AudioDeviceKind::Input,
                 request.microphone_requested_id.as_deref(),
                 request.microphone_active_id.as_deref(),
+                request.microphone_active_failed,
                 request.format,
             ),
             refresh_route(
@@ -174,6 +183,7 @@ fn refresh_routes(
                 AudioDeviceKind::Output,
                 request.desktop_requested_id.as_deref(),
                 request.desktop_active_id.as_deref(),
+                request.desktop_active_failed,
                 request.format,
             ),
         ),
@@ -198,6 +208,7 @@ fn refresh_route(
     kind: AudioDeviceKind,
     requested_id: Option<&str>,
     active_id: Option<&str>,
+    active_failed: bool,
     format: AudioFormat,
 ) -> AudioRouteUpdate {
     let Some((device_id, device_name)) = select_audio_device(devices, kind, requested_id) else {
@@ -206,7 +217,7 @@ fn refresh_route(
             None => format!("automatic {kind:?} audio route is unavailable"),
         });
     };
-    if active_id == Some(device_id.as_str()) {
+    if active_id == Some(device_id.as_str()) && !active_failed {
         return AudioRouteUpdate::Unchanged;
     }
     let opened = if kind == AudioDeviceKind::Output {
@@ -349,4 +360,49 @@ fn bounded_error(error: impl std::fmt::Display) -> String {
         .chars()
         .take(MAX_ROUTE_ERROR_CHARS)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use obs_rs_audio::SimulatedAudioProvider;
+
+    #[test]
+    fn failed_active_route_reopens_even_when_identity_is_unchanged() {
+        let provider: Arc<dyn AudioInputProvider> = Arc::new(SimulatedAudioProvider::new());
+        let mut device = AudioDeviceInfo::new(
+            "test-audio",
+            "Deterministic test signal",
+            AudioDeviceKind::Input,
+        )
+        .expect("device");
+        device.set_default(true);
+        let devices = [device];
+        let format = AudioFormat::new(48_000, 2).expect("format");
+
+        assert!(matches!(
+            refresh_route(
+                &provider,
+                &devices,
+                AudioDeviceKind::Input,
+                None,
+                Some("test-audio"),
+                false,
+                format,
+            ),
+            AudioRouteUpdate::Unchanged
+        ));
+        assert!(matches!(
+            refresh_route(
+                &provider,
+                &devices,
+                AudioDeviceKind::Input,
+                None,
+                Some("test-audio"),
+                true,
+                format,
+            ),
+            AudioRouteUpdate::Opened(route) if route.device_id == "test-audio"
+        ));
+    }
 }

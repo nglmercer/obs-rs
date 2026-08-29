@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use obs_rs_audio::AudioInputProvider;
+use obs_rs_audio::{AudioInputProvider, AudioInputState};
 use obs_rs_output::AudioEncoder;
 
 use super::{
@@ -77,12 +77,19 @@ impl EngineSession {
         // their current stream is missing or has degraded to a fallback. This
         // keeps a selected microphone/render endpoint from performing native
         // discovery or opening work on the engine/audio tick.
+        let microphone_failed = self.audio_input.state() == AudioInputState::Failed;
+        let desktop_failed = self
+            .desktop_audio
+            .as_ref()
+            .is_some_and(|desktop| desktop.state() == AudioInputState::Failed);
         let watches_microphone = self.config.audio_input_id.is_none()
             || self.audio_fallback
-            || self.audio_active_device_id.is_none();
+            || self.audio_active_device_id.is_none()
+            || microphone_failed;
         let watches_desktop = self.config.desktop_audio_id.is_none()
             || self.desktop_audio.is_none()
-            || self.desktop_audio_active_device_id.is_none();
+            || self.desktop_audio_active_device_id.is_none()
+            || desktop_failed;
         if (!watches_microphone && !watches_desktop)
             || timestamp < self.audio_route_refresh_at
             || self.audio_route_request_pending
@@ -98,8 +105,10 @@ impl EngineSession {
             format: self.config.audio_format,
             microphone_requested_id: self.config.audio_input_id.clone(),
             microphone_active_id: self.audio_active_device_id.clone(),
+            microphone_active_failed: microphone_failed,
             desktop_requested_id: self.config.desktop_audio_id.clone(),
             desktop_active_id: self.desktop_audio_active_device_id.clone(),
+            desktop_active_failed: desktop_failed,
         };
         self.audio_route_request_pending = self.audio_route_worker.try_refresh(request);
     }
