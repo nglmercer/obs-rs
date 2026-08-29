@@ -51,78 +51,99 @@ if ($ProductionGStreamer) {
     if (-not (Test-Path -LiteralPath $gstreamerScanner -PathType Leaf)) {
         throw "GStreamer runtime is missing the plugin scanner: $gstreamerScanner"
     }
-    $probeOutput = (& $gstreamerInspect --version 2>&1 | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw "GStreamer capability probe could not start: $gstreamerInspect"
-    }
-    $probeMatch = [System.Text.RegularExpressions.Regex]::Match(
-        $probeOutput,
-        '(?im)\bversion\s+(?<version>\d+\.\d+(?:\.\d+)?)')
-    if (-not $probeMatch.Success) {
-        throw "GStreamer capability probe returned no parseable version: $probeOutput"
-    }
-    $gstreamerVersion = $probeMatch.Groups["version"].Value
-    function Test-GStreamerElement {
-        param(
-            [Parameter(Mandatory = $true)]
-            [string]$Element
-        )
+    # gst-inspect must load the exact runtime that will be copied into the
+    # package. Without these variables, a clean machine can probe the global
+    # installation (or no installation at all) and falsely report bundled
+    # plugins as missing. Restore every process variable before returning so
+    # packaging does not alter the caller's PowerShell session.
+    $oldPath = $env:PATH
+    $oldPluginPath = $env:GST_PLUGIN_PATH
+    $oldPluginPath10 = $env:GST_PLUGIN_PATH_1_0
+    $oldScanner = $env:GST_PLUGIN_SCANNER
+    try {
+        $env:PATH = "$gstreamerBin;$repoRoot;$oldPath"
+        $env:GST_PLUGIN_PATH = $gstreamerPlugins
+        $env:GST_PLUGIN_PATH_1_0 = $gstreamerPlugins
+        $env:GST_PLUGIN_SCANNER = $gstreamerScanner
 
-        & $gstreamerInspect --exists $Element 2>&1 | Out-Null
-        return $LASTEXITCODE -eq 0
-    }
-    $requiredElements = @(
-        "appsrc",
-        "queue",
-        "videoconvert",
-        "audioconvert",
-        "audioresample",
-        "avenc_aac",
-        "h264parse",
-        "matroskamux",
-        "mp4mux",
-        "filesrc",
-        "matroskademux",
-        "aacparse",
-        "filesink"
-    )
-    $missingElements = @($requiredElements | Where-Object {
-        -not (Test-GStreamerElement -Element $_)
-    })
-    if ($missingElements.Count -gt 0) {
-        throw "GStreamer runtime is missing production recording elements: $($missingElements -join ', ')"
-    }
-    $h264Encoders = @("vah264enc", "vaapih264enc", "nvh264enc", "openh264enc")
-    $availableH264Encoders = @($h264Encoders | Where-Object {
-        Test-GStreamerElement -Element $_
-    })
-    if ($availableH264Encoders.Count -eq 0) {
-        throw "GStreamer runtime does not provide an approved H.264 encoder"
-    }
-    if (-not [string]::IsNullOrWhiteSpace($streamProtocol)) {
-        $requiredStreamingElements = switch ($streamProtocol) {
-            "rtmp" { @("flvmux") ; break }
-            "rtmps" { @("flvmux") ; break }
-            "srt" { @("mpegtsmux", "srtsink") ; break }
-            "rist" { @("mpegtsmux", "rtpmp2tpay", "ristsink") ; break }
-            "webrtc" { @("vp8enc", "opusenc", "webrtcbin", "whipclientsink") ; break }
-            "hls" { @("hlssink2") ; break }
-            default { @() ; break }
+        $probeOutput = (& $gstreamerInspect --version 2>&1 | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0) {
+            throw "GStreamer capability probe could not start: $gstreamerInspect"
         }
-        $missingStreamingElements = @($requiredStreamingElements | Where-Object {
+        $probeMatch = [System.Text.RegularExpressions.Regex]::Match(
+            $probeOutput,
+            '(?im)\bversion\s+(?<version>\d+\.\d+(?:\.\d+)?)')
+        if (-not $probeMatch.Success) {
+            throw "GStreamer capability probe returned no parseable version: $probeOutput"
+        }
+        $gstreamerVersion = $probeMatch.Groups["version"].Value
+        function Test-GStreamerElement {
+            param(
+                [Parameter(Mandatory = $true)]
+                [string]$Element
+            )
+
+            & $gstreamerInspect --exists $Element 2>&1 | Out-Null
+            return $LASTEXITCODE -eq 0
+        }
+        $requiredElements = @(
+            "appsrc",
+            "queue",
+            "videoconvert",
+            "audioconvert",
+            "audioresample",
+            "avenc_aac",
+            "h264parse",
+            "matroskamux",
+            "mp4mux",
+            "filesrc",
+            "matroskademux",
+            "aacparse",
+            "filesink"
+        )
+        $missingElements = @($requiredElements | Where-Object {
             -not (Test-GStreamerElement -Element $_)
         })
-        if ($streamProtocol -in @("rtmp", "rtmps")) {
-            $hasRtmpSink = @(@("rtmp2sink", "rtmpsink") | Where-Object {
-                Test-GStreamerElement -Element $_
-            }).Count -gt 0
-            if (-not $hasRtmpSink) {
-                $missingStreamingElements += "rtmp2sink or rtmpsink"
+        if ($missingElements.Count -gt 0) {
+            throw "GStreamer runtime is missing production recording elements: $($missingElements -join ', ')"
+        }
+        $h264Encoders = @("vah264enc", "vaapih264enc", "nvh264enc", "openh264enc")
+        $availableH264Encoders = @($h264Encoders | Where-Object {
+            Test-GStreamerElement -Element $_
+        })
+        if ($availableH264Encoders.Count -eq 0) {
+            throw "GStreamer runtime does not provide an approved H.264 encoder"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($streamProtocol)) {
+            $requiredStreamingElements = switch ($streamProtocol) {
+                "rtmp" { @("flvmux") ; break }
+                "rtmps" { @("flvmux") ; break }
+                "srt" { @("mpegtsmux", "srtsink") ; break }
+                "rist" { @("mpegtsmux", "rtpmp2tpay", "ristsink") ; break }
+                "webrtc" { @("vp8enc", "opusenc", "webrtcbin", "whipclientsink") ; break }
+                "hls" { @("hlssink2") ; break }
+                default { @() ; break }
+            }
+            $missingStreamingElements = @($requiredStreamingElements | Where-Object {
+                -not (Test-GStreamerElement -Element $_)
+            })
+            if ($streamProtocol -in @("rtmp", "rtmps")) {
+                $hasRtmpSink = @(@("rtmp2sink", "rtmpsink") | Where-Object {
+                    Test-GStreamerElement -Element $_
+                }).Count -gt 0
+                if (-not $hasRtmpSink) {
+                    $missingStreamingElements += "rtmp2sink or rtmpsink"
+                }
+            }
+            if ($missingStreamingElements.Count -gt 0) {
+                throw "GStreamer runtime is missing production $streamProtocol streaming elements: $($missingStreamingElements -join ', ')"
             }
         }
-        if ($missingStreamingElements.Count -gt 0) {
-            throw "GStreamer runtime is missing production $streamProtocol streaming elements: $($missingStreamingElements -join ', ')"
-        }
+    } finally {
+        $env:PATH = $oldPath
+        $env:GST_PLUGIN_PATH = $oldPluginPath
+        $env:GST_PLUGIN_PATH_1_0 = $oldPluginPath10
+        $env:GST_PLUGIN_SCANNER = $oldScanner
     }
 } else {
     $gstreamerRoot = $null

@@ -142,7 +142,10 @@ The runtime directory must contain `bin\gstreamer-1.0-0.dll`,
 `libexec\gstreamer-1.0\gst-plugin-scanner.exe`.
 The matching development package is still required at build time. The
 packager copies the runtime DLLs, capability/recording probes, and plugins
-into the archive and writes the selected runtime into `GSTREAMER-RUNTIME.txt`. The
+into the archive and writes the selected runtime into `GSTREAMER-RUNTIME.txt`.
+Its package-time capability probe is pointed at that exact runtime tree, so a
+different system-wide GStreamer installation cannot produce a false plugin
+failure. The
 launcher sets `OBSR_GST_INSPECT` so capability discovery cannot accidentally
 use a different GStreamer installation from `PATH`; direct entry-point
 launches apply the equivalent bundled-runtime setup in the native adapter.
