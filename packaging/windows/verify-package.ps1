@@ -9,6 +9,27 @@ if (-not (Test-Path -LiteralPath $sumsPath -PathType Leaf)) {
     throw "SHA256SUMS.txt was not found in $root"
 }
 
+$requiredFiles = @(
+    "obs-rs-gui.exe",
+    "obs-rs.exe",
+    "obs-rs-windows-check.exe",
+    "obs-rs-capture-windows-helper.exe",
+    "install.ps1",
+    "uninstall.ps1",
+    "run-obs-rs.ps1",
+    "verify-package.ps1",
+    "acceptance.ps1",
+    "WINDOWS-README.md",
+    "VERSION.txt",
+    "THIRD-PARTY-NOTICES.md"
+)
+foreach ($relative in $requiredFiles) {
+    $requiredPath = Join-Path $root $relative
+    if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+        throw "Required OBS-RS package file is missing: $relative"
+    }
+}
+
 $checked = 0
 foreach ($line in Get-Content -LiteralPath $sumsPath) {
     if ([string]::IsNullOrWhiteSpace($line)) {
@@ -139,4 +160,23 @@ if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
     }
     Write-Output "Verified bundled GStreamer runtime inputs"
 }
+
+$helper = Join-Path $root "obs-rs-capture-windows-helper.exe"
+$helperOutput = (& $helper --protocol OBSRWIN1 --version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Windows capture helper version probe failed"
+}
+$helperMatch = [System.Text.RegularExpressions.Regex]::Match(
+    $helperOutput,
+    '(?m)^OBSRWIN1\tVERSION\t(?<version>\d+\.\d+(?:\.\d+)?)\s*$')
+if (-not $helperMatch.Success) {
+    throw "Windows capture helper returned an invalid OBSRWIN1 version reply: $helperOutput"
+}
+$packageVersion = (Get-Content -LiteralPath (Join-Path $root "VERSION.txt") -Raw).Trim()
+$helperMajor = $helperMatch.Groups["version"].Value.Split('.')[0]
+$packageMajor = $packageVersion.Split('.')[0]
+if ($helperMajor -ne $packageMajor) {
+    throw "Windows capture helper major version does not match package version: helper=$($helperMatch.Groups["version"].Value) package=$packageVersion"
+}
+Write-Output "Verified Windows capture helper protocol OBSRWIN1 version $($helperMatch.Groups["version"].Value)"
 Write-Output "Verified $checked OBS-RS package files"

@@ -210,17 +210,15 @@ fn check_production_recording() -> CheckResult {
             Ok(devices) => devices,
             Err(error) => return capture_check_result(&error),
         };
-        let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
-            return CheckResult::skip(
-                "production recording needs a connected Windows display target",
-            );
-        };
         let format = probe_video_format();
-        let frame = match capture_one(display, format, Duration::from_secs(8)) {
-            Ok(frame) => frame,
-            Err(error) => {
-                return capture_check_result_with_context(&error, "production recording capture")
-            }
+        let (display_id, frame) = match capture_first_working_display(
+            &devices,
+            format,
+            Duration::from_secs(8),
+            "production recording",
+        ) {
+            Ok(capture) => capture,
+            Err(result) => return result,
         };
         let path = native_recording_path();
         let result = record_native_frames(&path, format, &frame);
@@ -236,7 +234,7 @@ fn check_production_recording() -> CheckResult {
                     artifact.map_or_else(String::new, |path| format!(" artifact={path}"));
                 CheckResult::pass(format!(
                     "device={} profile={} frames={} bytes={} container=Matroska{artifact}",
-                    display.id(),
+                    display_id,
                     profile.kind().id(),
                     frames,
                     bytes
@@ -294,17 +292,15 @@ fn check_production_streaming() -> CheckResult {
             Ok(devices) => devices,
             Err(error) => return capture_check_result(&error),
         };
-        let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
-            return CheckResult::skip(
-                "production streaming needs a connected Windows display target",
-            );
-        };
         let format = probe_video_format();
-        let frame = match capture_one(display, format, Duration::from_secs(8)) {
-            Ok(frame) => frame,
-            Err(error) => {
-                return capture_check_result_with_context(&error, "production streaming capture")
-            }
+        let (display_id, frame) = match capture_first_working_display(
+            &devices,
+            format,
+            Duration::from_secs(8),
+            "production streaming",
+        ) {
+            Ok(capture) => capture,
+            Err(result) => return result,
         };
         let mut engine = match acceptance_engine(format) {
             Ok(engine) => engine,
@@ -338,11 +334,7 @@ fn check_production_streaming() -> CheckResult {
         }
         CheckResult::pass(format!(
             "device={} protocol={} video_submitted={} audio_submitted={} dropped={}",
-            display.id(),
-            scheme,
-            metrics.video_submitted,
-            metrics.audio_submitted,
-            metrics.dropped
+            display_id, scheme, metrics.video_submitted, metrics.audio_submitted, metrics.dropped
         ))
     }
 }
@@ -420,6 +412,49 @@ fn first_windows_device(
         .iter()
         .find(|device| device.kind() == kind && device.permission() == CapturePermission::Granted)
         .or_else(|| devices.iter().find(|device| device.kind() == kind))
+}
+
+#[cfg(target_os = "windows")]
+fn capture_first_working_display(
+    devices: &[obs_rs_capture::CaptureDeviceInfo],
+    format: VideoFormat,
+    timeout: Duration,
+    context: &str,
+) -> Result<(String, VideoFrame), CheckResult> {
+    let displays = devices
+        .iter()
+        .filter(|device| device.kind() == CaptureKind::Screen)
+        .filter(|device| device.permission() == CapturePermission::Granted)
+        .take(8)
+        .collect::<Vec<_>>();
+    if displays.is_empty() {
+        return Err(CheckResult::skip(format!(
+            "{context} needs a connected Windows display target"
+        )));
+    }
+
+    let mut failures = Vec::new();
+    let mut unavailable = 0_usize;
+    for display in displays.iter().copied() {
+        match capture_one(display, format, timeout) {
+            Ok(frame) => return Ok((display.id().to_string(), frame)),
+            Err(error) if is_hardware_unavailable(&error) => {
+                unavailable = unavailable.saturating_add(1);
+                failures.push(format!("{}: unavailable: {error}", display.id()));
+            }
+            Err(error) => failures.push(format!("{}: {error}", display.id())),
+        }
+    }
+
+    let detail = format!(
+        "{context} could not capture any enumerated display: {}",
+        failures.join("; ")
+    );
+    if unavailable == displays.len() {
+        Err(CheckResult::skip(detail))
+    } else {
+        Err(CheckResult::fail(detail))
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -788,13 +823,15 @@ fn check_reference_recording() -> CheckResult {
         Ok(devices) => devices,
         Err(error) => return capture_check_result(&error),
     };
-    let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
-        return CheckResult::skip("reference recording needs a connected Windows display target");
-    };
     let format = probe_video_format();
-    let frame = match capture_one(display, format, Duration::from_secs(8)) {
-        Ok(frame) => frame,
-        Err(error) => return capture_check_result_with_context(&error, "recording capture"),
+    let (display_id, frame) = match capture_first_working_display(
+        &devices,
+        format,
+        Duration::from_secs(8),
+        "reference recording",
+    ) {
+        Ok(capture) => capture,
+        Err(result) => return result,
     };
     let path = reference_recording_path();
     let result = record_captured_frame(&path, format, &frame);
@@ -807,10 +844,7 @@ fn check_reference_recording() -> CheckResult {
     )));
     match result {
         Ok((bytes, packets)) => CheckResult::pass(format!(
-            "device={} bytes={} packets={} container=OBSRPKT1",
-            display.id(),
-            bytes,
-            packets
+            "device={display_id} bytes={bytes} packets={packets} container=OBSRPKT1"
         )),
         Err(error) => CheckResult::fail(error),
     }
