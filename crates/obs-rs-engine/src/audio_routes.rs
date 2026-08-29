@@ -310,6 +310,7 @@ fn open_audio_with_conversion(
                     mix_format,
                     pending: VecDeque::new(),
                     next_source_timestamp: None,
+                    source_timestamp_remainder: 0,
                 }));
             }
             Err(error) => last_error = Some(error),
@@ -328,6 +329,10 @@ struct ConvertedAudioInput {
     mix_format: AudioFormat,
     pending: VecDeque<f32>,
     next_source_timestamp: Option<Timestamp>,
+    /// Fractional nanoseconds left after advancing the source timeline. The
+    /// remainder is expressed in source-rate ticks, so repeated blocks retain
+    /// the exact rational duration instead of flooring every block separately.
+    source_timestamp_remainder: u64,
 }
 
 impl AudioInput for ConvertedAudioInput {
@@ -364,11 +369,14 @@ impl AudioInput for ConvertedAudioInput {
             let source_timestamp = self.next_source_timestamp.unwrap_or(timestamp);
             let input = self.input.read_block(source_timestamp, source_frames)?;
             let converted = self.converter.process(&input)?;
-            self.next_source_timestamp = Some(advance_audio_timestamp(
+            let (next_source_timestamp, remainder) = advance_audio_timestamp(
                 source_timestamp,
                 input.frames(),
                 source.sample_rate(),
-            )?);
+                self.source_timestamp_remainder,
+            )?;
+            self.next_source_timestamp = Some(next_source_timestamp);
+            self.source_timestamp_remainder = remainder;
             if converted.frames() == 0 {
                 return Err(AudioDeviceError::Unavailable(
                     "audio resampler produced no frames".to_owned(),
@@ -389,16 +397,28 @@ fn advance_audio_timestamp(
     timestamp: Timestamp,
     frames: usize,
     sample_rate: u32,
-) -> Result<Timestamp, AudioDeviceError> {
-    let nanos = u128::try_from(frames)
+    remainder: u64,
+) -> Result<(Timestamp, u64), AudioDeviceError> {
+    if sample_rate == 0 {
+        return Err(AudioDeviceError::Unavailable(
+            "audio sample rate cannot be zero".to_owned(),
+        ));
+    }
+    let numerator = u128::try_from(frames)
         .map_err(|_| AudioDeviceError::Unavailable("audio frame count overflowed".to_owned()))?
-        .saturating_mul(1_000_000_000)
-        / u128::from(sample_rate);
+        .checked_mul(1_000_000_000)
+        .and_then(|value| value.checked_add(u128::from(remainder)))
+        .ok_or_else(|| AudioDeviceError::Unavailable("audio timestamp overflowed".to_owned()))?;
+    let sample_rate = u128::from(sample_rate);
+    let nanos = numerator / sample_rate;
+    let remainder = u64::try_from(numerator % sample_rate)
+        .map_err(|_| AudioDeviceError::Unavailable("audio timestamp overflowed".to_owned()))?;
     let nanos = u64::try_from(nanos)
         .map_err(|_| AudioDeviceError::Unavailable("audio timestamp overflowed".to_owned()))?;
-    timestamp
+    let timestamp = timestamp
         .checked_add(nanos)
-        .ok_or_else(|| AudioDeviceError::Unavailable("audio timestamp overflowed".to_owned()))
+        .ok_or_else(|| AudioDeviceError::Unavailable("audio timestamp overflowed".to_owned()))?;
+    Ok((timestamp, remainder))
 }
 
 fn bounded_error(error: impl std::fmt::Display) -> String {
@@ -539,5 +559,18 @@ mod tests {
             .samples()
             .chunks_exact(2)
             .all(|frame| (frame[0] - frame[1]).abs() < f32::EPSILON));
+    }
+
+    #[test]
+    fn audio_timestamp_preserves_fractional_sample_duration() {
+        let mut timestamp = Timestamp::ZERO;
+        let mut remainder = 0;
+        for _ in 0..44_100 {
+            (timestamp, remainder) =
+                advance_audio_timestamp(timestamp, 1, 44_100, remainder).expect("timestamp");
+        }
+
+        assert_eq!(timestamp.as_nanos(), 1_000_000_000);
+        assert_eq!(remainder, 0);
     }
 }
