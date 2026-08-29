@@ -464,18 +464,62 @@ impl VideoCaptureDevice for NativeHelperDevice {
             return Ok(Some(frame));
         }
         match mailbox.failure() {
-            Some(error) => Err(error),
+            Some(error) => Err(self.enrich_helper_failure(error)),
             None if !self.first_frame_received
                 && self.started_at.elapsed() >= HELPER_FIRST_FRAME_TIMEOUT =>
             {
-                Err(CaptureError::PlatformUnavailable {
-                    message: format!(
-                        "Windows capture helper produced no frame within {} seconds",
-                        HELPER_FIRST_FRAME_TIMEOUT.as_secs()
-                    ),
-                })
+                Err(
+                    self.enrich_helper_failure(CaptureError::PlatformUnavailable {
+                        message: format!(
+                            "Windows capture helper produced no frame within {} seconds",
+                            HELPER_FIRST_FRAME_TIMEOUT.as_secs()
+                        ),
+                    }),
+                )
             }
             None => Ok(None),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl NativeHelperDevice {
+    /// Adds the native process exit and bounded stderr to a frame failure.
+    ///
+    /// The frame reader owns stdout and therefore cannot inspect the helper's
+    /// exit status. Waiting for that status here is non-blocking; when the
+    /// process has already exited, its stderr pipe is closed and joining the
+    /// bounded diagnostics reader is safe. A permission/privacy failure is
+    /// kept as a denied lifecycle state so the source does not retry a native
+    /// request that requires an operator action.
+    fn enrich_helper_failure(&mut self, fallback: CaptureError) -> CaptureError {
+        let status = match self.child.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    return CaptureError::Io {
+                        message: format!(
+                            "inspect Windows capture helper after failure: {error}; {fallback}"
+                        ),
+                    };
+                }
+            },
+            None => return fallback,
+        };
+        let Some(status) = status else {
+            return fallback;
+        };
+        let diagnostics = join_stderr_reader(self.stderr.take());
+        if status.success() {
+            if diagnostics.is_empty() {
+                fallback
+            } else {
+                CaptureError::Protocol {
+                    message: format!("{fallback}: {diagnostics}"),
+                }
+            }
+        } else {
+            classify_helper_exit(status, &diagnostics)
         }
     }
 }
@@ -801,6 +845,30 @@ fn helper_exit_message(status: std::process::ExitStatus, diagnostics: &str) -> S
 }
 
 #[cfg(target_os = "windows")]
+fn classify_helper_exit(status: std::process::ExitStatus, diagnostics: &str) -> CaptureError {
+    let message = helper_exit_message(status, diagnostics);
+    if is_permission_failure(&message) {
+        CaptureError::PermissionDenied
+    } else {
+        CaptureError::PlatformUnavailable { message }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_permission_failure(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "access is denied",
+        "permission denied",
+        "privacy",
+        "not authorized",
+        "unauthorized",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+}
+
+#[cfg(target_os = "windows")]
 fn launch_error(operation: &str, error: &std::io::Error) -> CaptureError {
     if error.kind() == std::io::ErrorKind::NotFound {
         CaptureError::PlatformUnavailable {
@@ -1112,5 +1180,23 @@ mod tests {
         assert_eq!(frame.timestamp(), Timestamp::from_millis(33));
         assert_eq!(frame.pixels(), &[0, 255, 0, 255]);
         assert!(mailbox.take_latest().is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn helper_permission_diagnostics_are_classified_without_false_positives() {
+        assert!(is_permission_failure(
+            "Windows Graphics Capture failed: access is denied"
+        ));
+        assert!(is_permission_failure(
+            "the camera is blocked by a privacy setting"
+        ));
+        assert!(is_permission_failure("capture is not authorized"));
+        assert!(!is_permission_failure(
+            "the selected display is no longer available"
+        ));
+        assert!(!is_permission_failure(
+            "Windows Graphics Capture target closed"
+        ));
     }
 }
