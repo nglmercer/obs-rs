@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Mutex;
 
 struct CountingOutput {
     format: AudioFormat,
@@ -37,6 +38,42 @@ struct RecoveringOutputProvider {
     attempts: Arc<AtomicUsize>,
     writes: Arc<AtomicUsize>,
     failures_before_open: usize,
+}
+
+struct NativeFormatOutput {
+    format: AudioFormat,
+    writes: Arc<Mutex<Vec<AudioBuffer>>>,
+}
+
+impl AudioOutput for NativeFormatOutput {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
+
+    fn state(&self) -> AudioOutputState {
+        AudioOutputState::Running
+    }
+
+    fn write_block(&mut self, buffer: &AudioBuffer) -> Result<(), AudioDeviceError> {
+        if buffer.format() != self.format {
+            return Err(AudioDeviceError::Audio(AudioError::FormatMismatch {
+                expected: self.format,
+                actual: buffer.format(),
+            }));
+        }
+        self.writes
+            .lock()
+            .expect("native output writes lock")
+            .push(buffer.clone());
+        Ok(())
+    }
+
+    fn stop(&mut self) {}
+}
+
+struct NativeFormatOutputProvider {
+    writes: Arc<Mutex<Vec<AudioBuffer>>>,
+    native_format: AudioFormat,
 }
 
 struct GateOutput {
@@ -143,6 +180,29 @@ impl AudioOutputProvider for RecoveringOutputProvider {
     }
 }
 
+impl AudioOutputProvider for NativeFormatOutputProvider {
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+        Ok(Vec::new())
+    }
+
+    fn open_output(
+        &self,
+        _device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+        if format != self.native_format {
+            return Err(AudioDeviceError::Unavailable(format!(
+                "native sink only accepts {0:?}, requested {format:?}",
+                self.native_format
+            )));
+        }
+        Ok(Box::new(NativeFormatOutput {
+            format: self.native_format,
+            writes: Arc::clone(&self.writes),
+        }))
+    }
+}
+
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -214,7 +274,11 @@ fn asynchronous_monitor_output_reopens_after_a_temporary_device_loss() {
         Arc::new(RecoveringOutputProvider {
             attempts: Arc::clone(&attempts),
             writes: Arc::clone(&writes),
-            failures_before_open: 1,
+            // One worker open now tries the bounded mix-format fallback list;
+            // fail that complete negotiation once so the test still exercises
+            // the worker's reconnect path instead of succeeding on a fallback
+            // candidate during the first attempt.
+            failures_before_open: 4,
         }),
         "recovering-output",
         format(),
@@ -239,6 +303,48 @@ fn asynchronous_monitor_output_reopens_after_a_temporary_device_loss() {
     let snapshot = handle.snapshot();
     assert_eq!(snapshot.state, AudioOutputWorkerState::Running);
     assert_eq!(snapshot.reconnects, 1);
+    drop(worker);
+    assert!(wait_until(Duration::from_secs(1), || {
+        matches!(handle.snapshot().state, AudioOutputWorkerState::Stopped)
+    }));
+}
+
+#[test]
+fn asynchronous_monitor_output_converts_to_a_native_device_format() {
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let native_format = AudioFormat::new(44_100, 1).expect("native mono format");
+    let worker = AudioOutputWorker::spawn(
+        Arc::new(NativeFormatOutputProvider {
+            writes: Arc::clone(&writes),
+            native_format,
+        }),
+        "native-format-output",
+        format(),
+        2,
+    )
+    .expect("output worker");
+    let handle = worker.handle();
+
+    let samples = (0..480)
+        .flat_map(|_| [0.25_f32, 0.5_f32])
+        .collect::<Vec<_>>();
+    let input = AudioBuffer::new(format(), Timestamp::ZERO, samples).expect("mix buffer");
+    assert!(handle.try_write(input));
+    assert!(wait_until(Duration::from_secs(2), || {
+        writes.lock().expect("native output writes lock").len() == 1
+    }));
+
+    let written = writes
+        .lock()
+        .expect("native output writes lock")
+        .first()
+        .cloned()
+        .expect("converted output block");
+    assert_eq!(written.format(), native_format);
+    assert_eq!(written.frames(), 441);
+    assert!((written.sample(0, 0).expect("first mono sample") - 0.375).abs() < 0.000_001);
+    assert_eq!(handle.snapshot().state, AudioOutputWorkerState::Running);
+
     drop(worker);
     assert!(wait_until(Duration::from_secs(1), || {
         matches!(handle.snapshot().state, AudioOutputWorkerState::Stopped)

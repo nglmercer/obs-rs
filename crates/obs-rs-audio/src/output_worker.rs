@@ -9,7 +9,10 @@ use std::{
     time::Duration,
 };
 
-use super::{AudioBuffer, AudioFormat, AudioOutputProvider};
+use super::{
+    AudioBuffer, AudioDeviceError, AudioFormat, AudioOutput, AudioOutputProvider, AudioOutputState,
+    AudioResampler,
+};
 
 const STATE_STARTING: u8 = 0;
 const STATE_RUNNING: u8 = 1;
@@ -18,6 +21,8 @@ const STATE_STOPPED: u8 = 3;
 const MAX_ERROR_MESSAGE_CHARS: usize = 512;
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
+
+const COMMON_OUTPUT_FORMATS: [(u32, u16); 4] = [(48_000, 2), (44_100, 2), (48_000, 1), (44_100, 1)];
 
 /// Lifecycle state published by an asynchronous monitoring-output worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -266,7 +271,7 @@ fn run_output_worker(
             return;
         }
 
-        let mut output = match provider.open_output(&device_id, format) {
+        let mut output = match open_output_with_conversion(&provider, &device_id, format) {
             Ok(output) => output,
             Err(error) => {
                 fail_worker(&state, &last_error, error);
@@ -279,25 +284,6 @@ fn run_output_worker(
                 continue;
             }
         };
-        if output.format() != format {
-            fail_worker(
-                &state,
-                &last_error,
-                format!(
-                    "monitor output format {:?} does not match {:?}",
-                    output.format(),
-                    format
-                ),
-            );
-            output.stop();
-            drain_queue(&receiver, &queued_blocks);
-            reconnects.fetch_add(1, Ordering::Relaxed);
-            if !wait_for_reconnect(&cancelled) {
-                state.store(STATE_STOPPED, Ordering::Release);
-                return;
-            }
-            continue;
-        }
         state.store(STATE_STARTING, Ordering::Release);
 
         loop {
@@ -354,6 +340,78 @@ fn wait_for_reconnect(cancelled: &AtomicBool) -> bool {
         thread::sleep(remaining.min(Duration::from_millis(20)));
     }
     false
+}
+
+fn open_output_with_conversion(
+    provider: &Arc<dyn AudioOutputProvider>,
+    device_id: &str,
+    mix_format: AudioFormat,
+) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+    let mut candidates = vec![mix_format];
+    for (sample_rate, channels) in COMMON_OUTPUT_FORMATS {
+        let candidate = AudioFormat::new(sample_rate, channels)?;
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+
+    let mut last_error = None;
+    for requested_format in candidates {
+        match provider.open_output(device_id, requested_format) {
+            Ok(output) => {
+                let device_format = output.format();
+                if device_format == mix_format {
+                    return Ok(output);
+                }
+                let converter = AudioResampler::new(mix_format, device_format)?;
+                return Ok(Box::new(ConvertedAudioOutput {
+                    output,
+                    converter,
+                    mix_format,
+                }));
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        AudioDeviceError::Unavailable(format!(
+            "audio output {device_id} does not accept a supported format"
+        ))
+    }))
+}
+
+struct ConvertedAudioOutput {
+    output: Box<dyn AudioOutput>,
+    converter: AudioResampler,
+    mix_format: AudioFormat,
+}
+
+impl AudioOutput for ConvertedAudioOutput {
+    fn format(&self) -> AudioFormat {
+        self.mix_format
+    }
+
+    fn state(&self) -> AudioOutputState {
+        self.output.state()
+    }
+
+    fn write_block(&mut self, buffer: &AudioBuffer) -> Result<(), AudioDeviceError> {
+        if buffer.format() != self.mix_format {
+            return Err(AudioDeviceError::Audio(super::AudioError::FormatMismatch {
+                expected: self.mix_format,
+                actual: buffer.format(),
+            }));
+        }
+        let converted = self
+            .converter
+            .process(buffer)
+            .map_err(AudioDeviceError::from)?;
+        self.output.write_block(&converted)
+    }
+
+    fn stop(&mut self) {
+        self.output.stop();
+    }
 }
 
 fn drain_queue(receiver: &mpsc::Receiver<AudioBuffer>, queued_blocks: &AtomicUsize) {
