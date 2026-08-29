@@ -26,7 +26,7 @@ Windows features passed.
 
 | Feature | Builds | Discovers | Actually captures/works | E2E tested on Windows | Evidence / next acceptance |
 | --- | --- | --- | --- | --- | --- |
-| Display capture | ✅ | ✅ | ◐ | ☐ | `obs-rs-capture-windows` launches the WGC helper and the Windows check probes one display. Capture at 30/60 fps on 1080p, 1440p, and 4K. |
+| Display capture | ✅ | ✅ | ◐ | ☐ | `obs-rs-capture-windows` launches the WGC helper and the Windows check probes one display; immediate discovery now verifies stable IDs, geometry, dimensions, and the primary marker. Capture at 30/60 fps on 1080p, 1440p, and 4K. |
 | Window capture | ✅ | ✅ | ◐ | ☐ | The helper enumerates top-level windows and emits PID+HWND IDs that survive title changes and resize; legacy title/process IDs remain resolvable. Verify minimize, close/reopen, cloaking, and process restart. |
 | Camera capture | ✅ | ✅ | ◐ | ☐ | Nokhwa is used with the Windows Media Foundation input feature. The Windows check now queries native modes and performs two same-ID start/stop cycles. Verify integrated, USB/UVC, capture-card, replug, and mode negotiation cases. |
 | Microphone input | ✅ | ✅ | ◐ | ☐ | WASAPI/CPAL input and format fallback are implemented. Record with a physical microphone and verify timestamp continuity. |
@@ -112,7 +112,8 @@ only scaffolded:
   explicit unavailable capability without the optional native GStreamer
   feature; production builds use a bounded playbin/appsink video path;
 - the Windows check verifies canonical built-in capture-source registration,
-  immediate display/window discovery stability, target-ID project round trips,
+  immediate display/window discovery and display-layout metadata stability,
+  target-ID project round trips,
   a real selected-window close/reopen rejection, and four-frame display runs at
   both 30 and 60 FPS; its audio stability check verifies endpoint
   identity/default-route invariants;

@@ -843,6 +843,39 @@ fn check_discovery_stability() -> CheckResult {
             "display IDs changed between immediate discovery calls: first={first_displays:?} second={second_displays:?}"
         ));
     }
+    let adapter = WindowsCaptureAdapter::default();
+    let first_display_info = match adapter.discover_displays() {
+        Ok(displays) => displays,
+        Err(error) => return capture_check_result(&error),
+    };
+    let second_display_info = match adapter.discover_displays() {
+        Ok(displays) => displays,
+        Err(error) => return capture_check_result(&error),
+    };
+    if first_display_info != second_display_info {
+        return CheckResult::fail(format!(
+            "display metadata changed between immediate discovery calls: first={first_display_info:?} second={second_display_info:?}"
+        ));
+    }
+    let primary_displays = first_display_info
+        .iter()
+        .filter(|display| display.primary)
+        .count();
+    if primary_displays != 1 {
+        return CheckResult::fail(format!(
+            "display discovery reported {primary_displays} primary displays"
+        ));
+    }
+    if first_display_info
+        .iter()
+        .any(|display| display.width == 0 || display.height == 0)
+    {
+        return CheckResult::fail("display discovery reported a zero-sized display");
+    }
+    let negative_origin_displays = first_display_info
+        .iter()
+        .filter(|display| display.x < 0 || display.y < 0)
+        .count();
     let first_windows = ids(&first, CaptureKind::Window);
     let second_windows = ids(&second, CaptureKind::Window);
     let duplicate_ids = |ids: &[String]| ids.windows(2).any(|pair| pair[0] == pair[1]);
@@ -859,8 +892,8 @@ fn check_discovery_stability() -> CheckResult {
         );
     }
     CheckResult::pass(format!(
-        "displays={} windows_first={} windows_second={} shared_windows={shared_windows}",
-        first_displays.len(),
+        "displays={} primary_displays={primary_displays} negative_origin_displays={negative_origin_displays} display_metadata_stable=true windows_first={} windows_second={} shared_windows={shared_windows}",
+        first_display_info.len(),
         first_windows.len(),
         second_windows.len()
     ))
