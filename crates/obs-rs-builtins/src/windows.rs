@@ -196,6 +196,20 @@ impl Source for WindowsCaptureSource {
                 requested: request.format(),
             });
         }
+        if self.shutdown_blocked {
+            let timestamp = request.timestamp();
+            if self.device.state() == CaptureLifecycleState::Lost
+                && self.retry_schedule.due(timestamp)
+            {
+                self.reopen(timestamp);
+            } else {
+                return Err(SourceError::Unavailable(
+                    self.failure.clone().unwrap_or_else(|| {
+                        "the previous Windows capture helper is still shutting down".to_owned()
+                    }),
+                ));
+            }
+        }
         if matches!(
             self.device.state(),
             CaptureLifecycleState::Lost | CaptureLifecycleState::Denied
@@ -256,7 +270,13 @@ impl WindowsCaptureSource {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
     use super::*;
+    use obs_rs_capture::CaptureError;
 
     #[test]
     fn an_explicit_screen_monitor_overrides_the_legacy_device_setting() {
@@ -302,5 +322,46 @@ mod tests {
             selected_device(&settings, WindowsTarget::Window),
             "wgc-window-editor"
         );
+    }
+
+    #[test]
+    fn a_capture_does_not_serve_a_stale_frame_while_shutdown_is_blocked() {
+        let format = VideoFormat::new(320, 180, obs_rs_media::FrameRate::new(30, 1).expect("rate"))
+            .expect("format");
+        let release = Arc::new(AtomicBool::new(false));
+        let opener_release = Arc::clone(&release);
+        let device = ThreadedCaptureDevice::open(
+            CaptureRequest::output(format),
+            "blocked-shutdown-test",
+            move || {
+                while !opener_release.load(Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(CaptureError::NotRunning)
+            },
+        );
+        let kind = Identifier::new(SCREEN_CAPTURE_SOURCE_KIND).expect("source kind");
+        let mut source = WindowsCaptureSource {
+            kind,
+            name: "Blocked shutdown".to_owned(),
+            target: WindowsTarget::Screen,
+            device_id: "wgc-screen-picker".to_owned(),
+            format,
+            capture_cursor: true,
+            capture_border: false,
+            device,
+            failure: Some("the previous Windows capture helper is still shutting down".to_owned()),
+            retry_schedule: CaptureRetrySchedule::new(WINDOWS_CAPTURE_RETRY_INTERVAL_NANOS),
+            shutdown_blocked: true,
+        };
+
+        let result = source.render(&VideoRequest::new(Timestamp::ZERO, format));
+        release.store(true, Ordering::Release);
+
+        assert!(matches!(
+            result,
+            Err(SourceError::Unavailable(message))
+                if message.contains("previous Windows capture helper")
+        ));
     }
 }
