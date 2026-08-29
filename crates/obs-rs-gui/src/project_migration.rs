@@ -81,9 +81,20 @@ pub(crate) fn migrate_project_for_host(mut project: Project) -> (Project, bool) 
                     changed = true;
                 }
                 if target_kind == "screen_capture" && settings.get("monitor").is_none() {
-                    // Keep the native Windows screen schema explicit: an empty
-                    // monitor means the automatic primary-display target.
-                    set_setting(&mut settings, "monitor", "");
+                    // Keep the native Windows screen schema explicit. Preserve
+                    // an older compatible display target when it exists;
+                    // otherwise an empty monitor means the automatic
+                    // primary-display target. Writing an empty value for every
+                    // legacy source would silently move an explicitly saved
+                    // monitor back to the primary display.
+                    let monitor = settings
+                        .get("device_id")
+                        .filter(|device_id| {
+                            device_id.starts_with("wgc-screen-")
+                                && *device_id != "wgc-screen-picker"
+                        })
+                        .map_or_else(String::new, |device_id| device_id.trim().to_owned());
+                    set_setting(&mut settings, "monitor", &monitor);
                     changed = true;
                 }
 
@@ -227,6 +238,37 @@ mod tests {
         let (project, changed) = migrate_project_for_host(project);
         assert!(!changed);
         assert_eq!(project, original);
+    }
+
+    #[test]
+    fn preserves_a_legacy_windows_display_target_when_adding_the_monitor_key() {
+        let format = VideoFormat::new(1_280, 720, FrameRate::new(30, 1).expect("frame rate"))
+            .expect("video format");
+        let mut project = Project::new("migration").expect("project");
+        let mut profile = Profile::new("live", "Live", format).expect("profile");
+        let mut settings = Config::new();
+        set_setting(&mut settings, "device_id", "wgc-screen-secondary");
+        let source = SourceSpec::new("screen", "wayland_screen_capture", "Screen", settings)
+            .expect("source");
+        profile.add_source(source).expect("source registry");
+        project.add_profile(profile).expect("profile registry");
+
+        let (project, changed) = migrate_project_for_host(project);
+        assert!(changed);
+        let source = project
+            .profile("live")
+            .expect("profile")
+            .source("screen")
+            .expect("source");
+        assert_eq!(source.kind().as_str(), "screen_capture");
+        assert_eq!(
+            source.settings().get("device_id"),
+            Some("wgc-screen-secondary")
+        );
+        assert_eq!(
+            source.settings().get("monitor"),
+            Some("wgc-screen-secondary")
+        );
     }
 
     #[test]
