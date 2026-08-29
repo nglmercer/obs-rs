@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::{
-    io::{BufReader, Read},
-    process::{Child, ChildStderr, ChildStdin, Command, Stdio},
+    io::{self, BufReader, Read},
+    process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -41,6 +41,8 @@ const MAX_HELPER_DIAGNOSTICS_BYTES: u64 = 32 * 1024;
 const HELPER_SHUTDOWN_GRACE: Duration = Duration::from_millis(750);
 #[cfg(target_os = "windows")]
 const HELPER_POLL_INTERVAL: Duration = Duration::from_millis(10);
+#[cfg(target_os = "windows")]
+const HELPER_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A display returned by Windows Graphics Capture discovery.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -516,6 +518,10 @@ fn read_helper_frames(
 
 #[cfg(target_os = "windows")]
 impl WindowsCaptureAdapter {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "bounded process polling, pipe cleanup, and diagnostics stay together at this native boundary"
+    )]
     fn run_helper(&self, args: &[&str]) -> Result<String, CaptureError> {
         let mut child = Command::new(&self.helper)
             .args(args)
@@ -531,7 +537,7 @@ impl WindowsCaptureAdapter {
                 return Err(error);
             }
         };
-        let Some(mut stdout) = child.stdout.take() else {
+        let Some(stdout) = child.stdout.take() else {
             let diagnostics = terminate_child(&mut child, Some(stderr));
             return Err(CaptureError::Protocol {
                 message: if diagnostics.is_empty() {
@@ -541,15 +547,103 @@ impl WindowsCaptureAdapter {
                 },
             });
         };
-        let mut output = String::new();
-        let bytes = match stdout
-            .by_ref()
-            .take(MAX_DISCOVERY_REPLY_BYTES.saturating_add(1))
-            .read_to_string(&mut output)
+        let stdout_reader = match thread::Builder::new()
+            .name("obs-rs-capture-helper-discovery".to_owned())
+            .spawn(move || read_helper_output(stdout))
         {
-            Ok(bytes) => bytes,
+            Ok(reader) => reader,
             Err(error) => {
                 let diagnostics = terminate_child(&mut child, Some(stderr));
+                let suffix = if diagnostics.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {diagnostics}")
+                };
+                return Err(CaptureError::Io {
+                    message: format!("start Windows capture helper output reader: {error}{suffix}"),
+                });
+            }
+        };
+        let mut stdout_reader = Some(stdout_reader);
+        let mut output_result = None;
+        let deadline = Instant::now() + HELPER_COMMAND_TIMEOUT;
+        let status = loop {
+            if output_result.is_none()
+                && stdout_reader
+                    .as_ref()
+                    .is_some_and(std::thread::JoinHandle::is_finished)
+            {
+                output_result =
+                    Some(join_helper_output(stdout_reader.take().expect(
+                        "finished helper output reader must still be owned by the command",
+                    )));
+            }
+            if matches!(output_result.as_ref(), Some(Err(_))) {
+                let output_error = output_result
+                    .take()
+                    .and_then(Result::err)
+                    .expect("helper output error was present");
+                let diagnostics = terminate_child(&mut child, Some(stderr));
+                let suffix = if diagnostics.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {diagnostics}")
+                };
+                return Err(CaptureError::Io {
+                    message: format!("read Windows capture helper reply: {output_error}{suffix}"),
+                });
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if let Some(reader) = stdout_reader.take() {
+                        let _ = reader.join();
+                    }
+                    let diagnostics = join_stderr_reader(Some(stderr));
+                    let suffix = if diagnostics.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {diagnostics}")
+                    };
+                    return Err(CaptureError::Io {
+                        message: format!(
+                            "Windows capture helper did not finish within {} seconds{suffix}",
+                            HELPER_COMMAND_TIMEOUT.as_secs()
+                        ),
+                    });
+                }
+                Ok(None) => thread::sleep(HELPER_POLL_INTERVAL),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if let Some(reader) = stdout_reader.take() {
+                        let _ = reader.join();
+                    }
+                    let diagnostics = join_stderr_reader(Some(stderr));
+                    let suffix = if diagnostics.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {diagnostics}")
+                    };
+                    return Err(CaptureError::Io {
+                        message: format!("wait for Windows capture helper: {error}{suffix}"),
+                    });
+                }
+            }
+        };
+        let output_result = output_result.unwrap_or_else(|| {
+            join_helper_output(
+                stdout_reader
+                    .take()
+                    .expect("helper output reader must finish when the child process exits"),
+            )
+        });
+        let (output, bytes) = match output_result {
+            Ok(output) => output,
+            Err(error) => {
+                let diagnostics = join_stderr_reader(Some(stderr));
                 let suffix = if diagnostics.is_empty() {
                     String::new()
                 } else {
@@ -560,27 +654,12 @@ impl WindowsCaptureAdapter {
                 });
             }
         };
-        let too_large = u64::try_from(bytes).unwrap_or(u64::MAX) > MAX_DISCOVERY_REPLY_BYTES;
-        if too_large {
-            terminate_child(&mut child, Some(stderr));
+        if u64::try_from(bytes).unwrap_or(u64::MAX) > MAX_DISCOVERY_REPLY_BYTES {
+            let _ = join_stderr_reader(Some(stderr));
             return Err(CaptureError::ReplyTooLarge {
                 bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
             });
         }
-        let status = match child.wait() {
-            Ok(status) => status,
-            Err(error) => {
-                let diagnostics = join_stderr_reader(Some(stderr));
-                let suffix = if diagnostics.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {diagnostics}")
-                };
-                return Err(CaptureError::Io {
-                    message: format!("wait for Windows capture helper: {error}{suffix}"),
-                });
-            }
-        };
         let diagnostics = join_stderr_reader(Some(stderr));
         if !status.success() {
             return Err(CaptureError::Protocol {
@@ -589,6 +668,25 @@ impl WindowsCaptureAdapter {
         }
         Ok(output)
     }
+}
+
+#[cfg(target_os = "windows")]
+fn read_helper_output(mut stdout: ChildStdout) -> Result<(String, usize), io::Error> {
+    let mut output = String::new();
+    let bytes = stdout
+        .by_ref()
+        .take(MAX_DISCOVERY_REPLY_BYTES.saturating_add(1))
+        .read_to_string(&mut output)?;
+    Ok((output, bytes))
+}
+
+#[cfg(target_os = "windows")]
+fn join_helper_output(
+    reader: JoinHandle<Result<(String, usize), io::Error>>,
+) -> Result<(String, usize), io::Error> {
+    reader
+        .join()
+        .map_err(|_| io::Error::other("Windows capture helper output reader panicked"))?
 }
 
 #[cfg(target_os = "windows")]
