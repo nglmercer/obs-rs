@@ -13,3 +13,12 @@ clippy-all-fast = "clippy --workspace --all-targets --profile dev-fast -- -D war
 gui = "build -p obs-rs-gui --profile dev-fast"
 gui-check = "check -p obs-rs-gui --all-targets --profile dev-fast"
 gui-test = "test -p obs-rs-gui --bin obs-rs-gui --profile dev-fast"
+
+# Focused Windows iteration. These commands still compile the required path
+# dependencies, but avoid pulling unrelated workspace binaries into the edit
+# loop. The target-specific check is useful on a non-Windows host as well.
+app = "build -p obs-rs-app --bin obs-rs --profile dev-fast"
+app-check = "check -p obs-rs-app --bin obs-rs --profile dev-fast"
+windows-check = "build -p obs-rs-app --bin obs-rs-windows-check --profile dev-fast"
+windows-check-check = "check -p obs-rs-app --bin obs-rs-windows-check --profile dev-fast"
+windows-check-target = "check --target x86_64-pc-windows-msvc -p obs-rs-app --bin obs-rs-windows-check --profile dev-fast"

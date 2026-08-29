@@ -143,6 +143,11 @@ cargo clippy-fast  # quick clippy pass with -D warnings
 cargo clippy-all-fast # clippy every workspace target with -D warnings
 cargo gui-check    # check only GUI targets with dev-fast
 cargo gui-test     # run the GUI test binary with dev-fast
+cargo app          # build only the desktop app with dev-fast
+cargo app-check    # check only the desktop app binary
+cargo windows-check # build the Windows acceptance binary locally
+cargo windows-check-check # check the Windows acceptance binary
+cargo windows-check-target # cross-check it for x86_64-pc-windows-msvc
 ```
 
 Use the ordinary commands for canonical CI/release-style verification.

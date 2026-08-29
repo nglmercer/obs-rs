@@ -70,6 +70,10 @@ codegen-units = 256
 
 [profile.dev-fast.package."*"]
 debug = 0
+# Keep third-party and path dependencies at the fastest code-generation level.
+# The package being iterated remains at opt-level=1, while rebuilding a large
+# dependency graph does not pay the optimization cost on every edit.
+opt-level = 0
 
 # Slint's generated test harness is large and the MSVC linker is sensitive to
 # very high codegen-unit counts here. Keep the rest of the fast profile highly
