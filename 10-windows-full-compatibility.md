@@ -127,8 +127,9 @@ only scaffolded:
   distinguish an uncompiled adapter, a missing runtime, an incomplete plugin
   installation, and a ready production backend;
 - native capture retries use media-time schedules, the helper publishes only
-  its newest complete frame, bounded shutdown failures remain retryable, and
-  live window IDs are tied to the owning PID/HWND rather than a mutable title;
+  its newest complete frame, direct helper-process polling surfaces crashes
+  immediately, bounded shutdown failures remain retryable, and live window
+  IDs are tied to the owning PID/HWND rather than a mutable title;
 - `.github/workflows/hardware-soak.yml` provides a self-hosted Windows lane
   for the real display, window, audio, reference-output, and cleanup probes.
 

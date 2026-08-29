@@ -469,6 +469,31 @@ impl VideoCaptureDevice for NativeHelperDevice {
             self.first_frame_received = true;
             return Ok(Some(frame));
         }
+        // The frame reader observes stdout asynchronously. Poll the process
+        // itself as well so a crashed helper becomes visible on this call even
+        // when the reader thread has not reached EOF yet. This closes the
+        // small window in which a compositor could keep rendering an empty
+        // source while the native process was already gone.
+        let status = if let Some(child) = self.child.as_mut() {
+            match child.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    return Err(CaptureError::Io {
+                        message: format!(
+                            "inspect Windows capture helper after frame poll: {error}"
+                        ),
+                    })
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(status) = status {
+            let failure = mailbox
+                .failure()
+                .unwrap_or_else(|| classify_helper_exit(status, ""));
+            return Err(self.enrich_helper_failure(failure));
+        }
         match mailbox.failure() {
             Some(error) => Err(self.enrich_helper_failure(error)),
             None if !self.first_frame_received
