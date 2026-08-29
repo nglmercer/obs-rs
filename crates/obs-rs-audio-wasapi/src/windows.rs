@@ -29,6 +29,39 @@ const OUTPUT_STATE_STOPPED: u8 = 0;
 const OUTPUT_STATE_RUNNING: u8 = 1;
 const OUTPUT_STATE_FAILED: u8 = 2;
 
+/// Chooses the closest endpoint range for a requested mix format.
+///
+/// Shared-mode Windows endpoints frequently expose a fixed native format: a
+/// microphone may be mono, a render endpoint may be 5.1, or a USB device may
+/// only advertise 44.1 kHz. The engine already owns a bounded channel/rate
+/// converter, so rejecting those devices here would throw away a recoverable
+/// route. Prefer the requested channel count first, then the nearest rate,
+/// and clamp the requested rate into the selected range.
+fn select_supported_config(
+    ranges: impl IntoIterator<Item = cpal::SupportedStreamConfigRange>,
+    requested: AudioFormat,
+) -> Option<cpal::SupportedStreamConfig> {
+    let requested_rate = requested.sample_rate();
+    let requested_channels = requested.channels();
+    ranges
+        .into_iter()
+        .min_by_key(|range| {
+            let channel_distance = u32::from(range.channels().abs_diff(requested_channels));
+            let rate_distance = if range.contains_rate(requested_rate) {
+                0
+            } else if requested_rate < range.min_sample_rate() {
+                range.min_sample_rate() - requested_rate
+            } else {
+                requested_rate - range.max_sample_rate()
+            };
+            (channel_distance, rate_distance)
+        })
+        .and_then(|range| {
+            let rate = requested_rate.clamp(range.min_sample_rate(), range.max_sample_rate());
+            range.try_with_sample_rate(rate)
+        })
+}
+
 enum CallbackBlock {
     Samples(Vec<f32>),
     Xrun,
@@ -156,27 +189,26 @@ impl WasapiInput {
                     "WASAPI endpoint does not support loopback".to_owned(),
                 ));
             }
-            device
-                .supported_output_configs()
-                .map_err(|error| unavailable("query WASAPI loopback formats", error))?
-                .find_map(|range| {
-                    (range.channels() == channels && range.contains_rate(sample_rate))
-                        .then(|| range.with_sample_rate(sample_rate))
-                })
+            select_supported_config(
+                device
+                    .supported_output_configs()
+                    .map_err(|error| unavailable("query WASAPI loopback formats", error))?,
+                format,
+            )
         } else {
-            device
-                .supported_input_configs()
-                .map_err(|error| unavailable("query WASAPI input formats", error))?
-                .find_map(|range| {
-                    (range.channels() == channels && range.contains_rate(sample_rate))
-                        .then(|| range.with_sample_rate(sample_rate))
-                })
+            select_supported_config(
+                device
+                    .supported_input_configs()
+                    .map_err(|error| unavailable("query WASAPI input formats", error))?,
+                format,
+            )
         }
         .ok_or_else(|| {
             AudioDeviceError::Unavailable(format!(
-                "WASAPI endpoint does not support {sample_rate} Hz / {channels} channels",
+                "WASAPI endpoint exposes no usable format for {sample_rate} Hz / {channels} channels",
             ))
         })?;
+        let actual_format = AudioFormat::new(config.sample_rate(), config.channels())?;
         let cpal_config = StreamConfig {
             channels: config.channels(),
             sample_rate: config.sample_rate(),
@@ -197,7 +229,7 @@ impl WasapiInput {
             .play()
             .map_err(|error| unavailable("start WASAPI input stream", error))?;
         Ok(Self {
-            format,
+            format: actual_format,
             state: AudioInputState::Stopped,
             receiver,
             callback_overrun,
@@ -302,18 +334,18 @@ impl WasapiOutput {
         }
         let channels = format.channels();
         let sample_rate = format.sample_rate();
-        let config = device
-            .supported_output_configs()
-            .map_err(|error| unavailable("query WASAPI output formats", error))?
-            .find_map(|range| {
-                (range.channels() == channels && range.contains_rate(sample_rate))
-                    .then(|| range.with_sample_rate(sample_rate))
-            })
-            .ok_or_else(|| {
-                AudioDeviceError::Unavailable(format!(
-                    "WASAPI output does not support {sample_rate} Hz / {channels} channels",
-                ))
-            })?;
+        let config = select_supported_config(
+            device
+                .supported_output_configs()
+                .map_err(|error| unavailable("query WASAPI output formats", error))?,
+            format,
+        )
+        .ok_or_else(|| {
+            AudioDeviceError::Unavailable(format!(
+                "WASAPI output exposes no usable format for {sample_rate} Hz / {channels} channels",
+            ))
+        })?;
+        let actual_format = AudioFormat::new(config.sample_rate(), config.channels())?;
         let cpal_config = StreamConfig {
             channels: config.channels(),
             sample_rate: config.sample_rate(),
@@ -334,7 +366,7 @@ impl WasapiOutput {
             .play()
             .map_err(|error| unavailable("start WASAPI output stream", error))?;
         Ok(Self {
-            format,
+            format: actual_format,
             state,
             last_error,
             sender: Some(sender),
@@ -1012,5 +1044,52 @@ mod tests {
         };
         let samples = input.take_samples(2).expect("samples after xrun");
         assert_eq!(samples, vec![0.25, -0.25]);
+    }
+
+    #[test]
+    fn endpoint_negotiation_prefers_requested_channels_over_rate() {
+        let requested = AudioFormat::new(48_000, 2).expect("requested format");
+        let config = select_supported_config(
+            [
+                cpal::SupportedStreamConfigRange::new(
+                    1,
+                    48_000,
+                    48_000,
+                    cpal::SupportedBufferSize::Unknown,
+                    SampleFormat::F32,
+                ),
+                cpal::SupportedStreamConfigRange::new(
+                    2,
+                    44_100,
+                    44_100,
+                    cpal::SupportedBufferSize::Unknown,
+                    SampleFormat::I16,
+                ),
+            ],
+            requested,
+        )
+        .expect("a nearby endpoint format");
+
+        assert_eq!(config.channels(), 2);
+        assert_eq!(config.sample_rate(), 44_100);
+    }
+
+    #[test]
+    fn endpoint_negotiation_accepts_fixed_multichannel_devices() {
+        let requested = AudioFormat::new(48_000, 2).expect("requested format");
+        let config = select_supported_config(
+            [cpal::SupportedStreamConfigRange::new(
+                6,
+                44_100,
+                44_100,
+                cpal::SupportedBufferSize::Unknown,
+                SampleFormat::F32,
+            )],
+            requested,
+        )
+        .expect("a fixed multichannel endpoint format");
+
+        assert_eq!(config.channels(), 6);
+        assert_eq!(config.sample_rate(), 44_100);
     }
 }
