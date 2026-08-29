@@ -198,7 +198,9 @@ fn check_production_recording() -> CheckResult {
         let profile = OutputProfile::matroska_h264_aac();
         if !capabilities.recording_formats().contains(&profile.kind()) {
             return CheckResult::skip(format!(
-                "native runtime does not advertise {} recording",
+                "status={} {}; required_recording_profile={}",
+                capabilities.production_status().id(),
+                capabilities.production_status_detail(),
                 profile.kind().id()
             ));
         }
@@ -281,7 +283,9 @@ fn check_production_streaming() -> CheckResult {
             .any(|capability| capability.available() && capability.protocol().id() == scheme)
         {
             return CheckResult::skip(format!(
-                "native runtime does not advertise the {scheme} production protocol"
+                "status={} {}; required_protocol={scheme}",
+                capabilities.production_status().id(),
+                capabilities.production_status_detail()
             ));
         }
         let devices = match discover_windows() {
@@ -362,16 +366,20 @@ fn check_production_output() -> CheckResult {
             .map(|capability| capability.protocol().id())
             .collect::<Vec<_>>();
         if protocols.is_empty() {
-            return CheckResult::skip(
-                "GStreamer is compiled in, but no approved production encoder/sink is available",
-            );
+            return CheckResult::skip(format!(
+                "status={} {}",
+                capabilities.production_status().id(),
+                capabilities.production_status_detail()
+            ));
         }
         return CheckResult::pass(format!(
-            "protocols={} recording_formats={} video_encoders={} audio_encoders={}",
+            "status={} protocols={} recording_formats={} video_encoders={} audio_encoders={} detail={}",
+            capabilities.production_status().id(),
             protocols.join(","),
             capabilities.recording_formats().len(),
             capabilities.video_encoders().len(),
             capabilities.audio_encoders().len(),
+            capabilities.production_status_detail(),
         ));
     }
 }
