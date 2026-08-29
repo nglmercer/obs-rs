@@ -599,6 +599,24 @@ fn a_stream_that_cannot_connect_reports_failed_and_can_be_retried() {
     assert_eq!(engine.streaming_lifecycle(), OutputLifecycle::Idle);
 }
 
+#[cfg(not(feature = "production-gstreamer"))]
+#[test]
+fn reference_only_build_rejects_persisted_production_stream_targets_clearly() {
+    let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+    let target = obs_rs_output::StreamTarget::Hls(obs_rs_output::HlsConfig::default());
+
+    let error = engine
+        .start_streaming_target_configured(
+            &target,
+            &obs_rs_output::VideoEncoderConfig::default(),
+            &obs_rs_output::AudioEncoderConfig::default(),
+        )
+        .expect_err("reference builds cannot open an HLS target");
+
+    assert!(error.to_string().contains("production-gstreamer feature"));
+    assert_eq!(engine.streaming_lifecycle(), OutputLifecycle::Failed);
+}
+
 #[cfg(feature = "production-gstreamer")]
 #[test]
 #[ignore = "requires a local native production sink; run on a reference output host"]

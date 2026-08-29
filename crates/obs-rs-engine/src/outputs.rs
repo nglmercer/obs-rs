@@ -1,12 +1,10 @@
 use obs_rs_audio::{AudioBuffer, AudioFormat};
 use obs_rs_media::{RawVideoFrame, VideoFormat, VideoFrame};
-#[cfg(feature = "production-gstreamer")]
-use obs_rs_output::StreamTarget;
 use obs_rs_output::{
     AtomicPacketFileWriter, AudioEncoderConfig, AudioInputRequirement, EncodedPacket,
     PacketDropPolicy, ReconnectOutcome, ReconnectPolicy, SegmentedPacketFileWriter, StreamMetrics,
-    StreamSession, StreamState, StreamingTransport, TcpPacketTransport, VideoEncoderConfig,
-    VideoInputRequirement, WebSocketPacketTransport,
+    StreamSession, StreamState, StreamTarget, StreamingTransport, TcpPacketTransport,
+    VideoEncoderConfig, VideoInputRequirement, WebSocketPacketTransport,
 };
 #[cfg(feature = "production-gstreamer")]
 use obs_rs_output_gstreamer::{
@@ -271,6 +269,32 @@ impl StreamOutput {
                 reconnect_attempts,
             )?,
         ))
+    }
+
+    #[cfg(not(feature = "production-gstreamer"))]
+    pub(super) fn connect_target(
+        target: &StreamTarget,
+        capacity_bytes: usize,
+        reconnect_attempts: u32,
+        video_format: VideoFormat,
+        audio_format: AudioFormat,
+        video: &VideoEncoderConfig,
+        audio: &AudioEncoderConfig,
+    ) -> Result<Self, EngineError> {
+        let StreamTarget::Reference { address } = target else {
+            return Err(EngineError::InvalidConfiguration(
+                "production streaming targets require the production-gstreamer feature".to_owned(),
+            ));
+        };
+
+        Self::connect(
+            address,
+            capacity_bytes,
+            reconnect_attempts,
+            video_format,
+            audio_format,
+            Some((video, audio)),
+        )
     }
 
     pub(super) fn submit(&mut self, packet: EncodedPacket) -> Result<(), EngineError> {

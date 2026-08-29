@@ -688,21 +688,15 @@ impl EngineSession {
             audio,
         );
         #[cfg(not(feature = "production-gstreamer"))]
-        let result = target
-            .endpoint()
-            .ok_or_else(|| {
-                EngineError::InvalidConfiguration("stream target is incomplete".to_owned())
-            })
-            .and_then(|address| {
-                StreamOutput::connect(
-                    &address,
-                    self.config.output_queue_bytes,
-                    self.config.reconnect_attempts,
-                    self.format,
-                    self.config.audio_format,
-                    Some((video, audio)),
-                )
-            });
+        let result = StreamOutput::connect_target(
+            target,
+            self.config.output_queue_bytes,
+            self.config.reconnect_attempts,
+            self.format,
+            self.config.audio_format,
+            video,
+            audio,
+        );
         match result {
             Ok(stream) => {
                 self.streaming = Some(stream);
