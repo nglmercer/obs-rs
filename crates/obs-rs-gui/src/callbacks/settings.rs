@@ -11,7 +11,7 @@ use std::{
 };
 
 use obs_rs_audio::AudioFormat;
-use obs_rs_engine::ProductionProtocol;
+use obs_rs_engine::{ProductionOutputStatus, ProductionProtocol};
 use obs_rs_media::{FrameRate, ScaleFilter, VideoFormat};
 use obs_rs_output::{
     AudioCodec, EncoderImplementation, EncoderPreset, OutputProfileKind, RateControl,

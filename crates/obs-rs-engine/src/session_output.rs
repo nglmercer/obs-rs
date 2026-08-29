@@ -403,7 +403,7 @@ impl EngineSession {
         profile: OutputProfile,
         encoder_config: Option<&(VideoEncoderConfig, AudioEncoderConfig)>,
     ) -> Result<(), EngineError> {
-        let capabilities = GStreamerCapabilitySnapshot::probe();
+        let capabilities = GStreamerCapabilitySnapshot::probe_cached();
         let plan = encoder_config.map_or_else(
             || ProductionPipelinePlan::negotiate(profile, destination, &capabilities),
             |(video, audio)| {
@@ -465,7 +465,7 @@ impl EngineSession {
             } else {
                 OutputProfile::matroska_h264_aac()
             };
-            let capabilities = GStreamerCapabilitySnapshot::probe();
+            let capabilities = GStreamerCapabilitySnapshot::probe_cached();
             let plan = encoder_config.map_or_else(
                 || ProductionPipelinePlan::negotiate(profile, &destination, &capabilities),
                 |(video, audio)| {

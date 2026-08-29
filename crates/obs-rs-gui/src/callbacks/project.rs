@@ -619,6 +619,7 @@ fn platform_diagnostics(diagnostics: &RuntimeDiagnostics) -> String {
             |devices| format!("cameras={}", devices.len()),
         );
         let output_capabilities = obs_rs_engine::output_capabilities_snapshot();
+        let output_status = output_capabilities.production_status();
         let production_protocols = output_capabilities
             .protocols()
             .iter()
@@ -627,7 +628,9 @@ fn platform_diagnostics(diagnostics: &RuntimeDiagnostics) -> String {
             })
             .count();
         let output_inventory = format!(
-            "native_runtime={} production_output={} recording_formats={} production_protocols={}",
+            "status={} native_adapter_compiled={} native_runtime={} production_output={} recording_formats={} production_protocols={}",
+            output_status.id(),
+            output_capabilities.native_adapter_compiled(),
             output_capabilities
                 .native_runtime_version()
                 .unwrap_or("unavailable"),
@@ -636,7 +639,7 @@ fn platform_diagnostics(diagnostics: &RuntimeDiagnostics) -> String {
             production_protocols,
         );
         format!(
-            "os={}\ngpu_adapter={}\ngpu_backend={}\ncapture_helper_version={}\ncapture_inventory={}\ncamera_inventory={}\noutput_capabilities={}",
+            "os={}\ngpu_adapter={}\ngpu_backend={}\ncapture_helper_version={}\ncapture_inventory={}\ncamera_inventory={}\noutput_capabilities={}\noutput_capability_detail={}",
             bounded_diagnostic_field(&windows_version),
             bounded_diagnostic_field(&diagnostics.gpu_adapter),
             bounded_diagnostic_field(&diagnostics.gpu_backend),
@@ -644,6 +647,7 @@ fn platform_diagnostics(diagnostics: &RuntimeDiagnostics) -> String {
             bounded_diagnostic_field(&capture_inventory),
             bounded_diagnostic_field(&camera_inventory),
             bounded_diagnostic_field(&output_inventory),
+            bounded_diagnostic_field(&output_capabilities.production_status_detail()),
         )
     }
     #[cfg(not(target_os = "windows"))]

@@ -139,8 +139,23 @@ fn disabled_native_feature_never_claims_production_support() {
             .supports(OutputProfileKind::MatroskaH264Aac));
         let snapshot = capabilities.capabilities();
         assert!(snapshot.native_runtime_version().is_none());
+        assert!(!snapshot.native_adapter_compiled());
+        assert_eq!(
+            snapshot.production_status(),
+            ProductionOutputStatus::NativeAdapterNotCompiled
+        );
+        assert!(snapshot
+            .production_status_detail()
+            .contains("native GStreamer adapter is not compiled"));
         assert!(!snapshot.supports_production_output());
     }
+}
+
+#[test]
+fn cached_capability_probe_is_stable_for_the_process() {
+    let first = GStreamerCapabilitySnapshot::probe_cached();
+    let second = GStreamerCapabilitySnapshot::probe_cached();
+    assert_eq!(first, second);
 }
 
 #[test]

@@ -14,8 +14,8 @@ mod signaling;
 
 pub use capabilities::{
     AudioEncoderCapability, GStreamerCapabilitySnapshot, OutputCapabilitiesSnapshot,
-    ProductionProtocol, ProtocolCapability, VideoEncoderCapability, VideoEncoderOption,
-    VideoEncoderOptionCapabilities,
+    ProductionOutputStatus, ProductionProtocol, ProtocolCapability, VideoEncoderCapability,
+    VideoEncoderOption, VideoEncoderOptionCapabilities,
 };
 pub use destination::ProductionDestination;
 pub use pipeline::ProductionPipelinePlan;

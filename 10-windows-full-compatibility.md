@@ -115,6 +115,10 @@ only scaffolded:
   immediate display/window discovery stability, target-ID project round trips,
   and four-frame display runs at both 30 and 60 FPS; its audio stability check
   verifies endpoint identity/default-route invariants;
+- native output capability discovery is cached for the process after one
+  allow-listed GStreamer probe; the Output page and exported diagnostics now
+  distinguish an uncompiled adapter, a missing runtime, an incomplete plugin
+  installation, and a ready production backend;
 - native capture retries use media-time schedules, the helper publishes only
   its newest complete frame, bounded shutdown failures remain retryable, and
   live window IDs are tied to the owning PID/HWND rather than a mutable title;

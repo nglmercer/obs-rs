@@ -176,7 +176,7 @@ impl StreamOutput {
         #[cfg(feature = "production-gstreamer")]
         if production_scheme {
             let (profile, destination) = ProductionDestination::from_stream_endpoint(address)?;
-            let capabilities = GStreamerCapabilitySnapshot::probe();
+            let capabilities = GStreamerCapabilitySnapshot::probe_cached();
             let plan = encoder_config.map_or_else(
                 || ProductionPipelinePlan::negotiate(profile, &destination, &capabilities),
                 |(video, audio)| {
@@ -248,7 +248,7 @@ impl StreamOutput {
             );
         }
         let (profile, destination) = ProductionDestination::from_stream_target(target)?;
-        let capabilities = GStreamerCapabilitySnapshot::probe();
+        let capabilities = GStreamerCapabilitySnapshot::probe_cached();
         let plan = ProductionPipelinePlan::negotiate_configured(
             profile,
             &destination,

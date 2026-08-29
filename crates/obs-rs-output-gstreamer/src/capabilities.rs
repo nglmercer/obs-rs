@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, process::Command};
+use std::{collections::BTreeMap, process::Command, sync::OnceLock};
 
 use obs_rs_output::{
     AudioCodec, EncoderPreset, OutputCapabilities, OutputProfileKind, RateControl, VideoCodec,
@@ -58,11 +58,14 @@ pub(super) fn gst_inspect_command() -> Command {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GStreamerCapabilitySnapshot {
     runtime_version: Option<String>,
+    runtime_probe_error: Option<String>,
     selected_elements: BTreeMap<&'static str, String>,
     pub(super) output: OutputCapabilities,
     protocols: Vec<ProtocolCapability>,
     pub(super) video_encoders: Vec<VideoEncoderCapability>,
     pub(super) audio_encoders: Vec<AudioEncoderCapability>,
+    segmented_recording: bool,
+    remux: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -75,6 +78,42 @@ pub enum ProductionProtocol {
     Matroska,
     Hls,
     Rist,
+}
+
+/// Explains why encoded production output is or is not available.
+///
+/// The portable reference output remains usable in every state. The status is
+/// deliberately separate from [`OutputCapabilitiesSnapshot::supports_production_output`]
+/// so the UI and diagnostics can distinguish a build-time omission from a
+/// missing runtime or an incomplete plugin installation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProductionOutputStatus {
+    /// This binary was built without the optional native adapter.
+    NativeAdapterNotCompiled,
+    /// The native adapter exists, but its matching `GStreamer` runtime could not
+    /// be started or identified.
+    RuntimeUnavailable,
+    /// The runtime started, but no approved encoded profile was discovered.
+    NoUsableProfile,
+    /// At least one approved recording or streaming profile is available.
+    Ready,
+}
+
+impl ProductionOutputStatus {
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::NativeAdapterNotCompiled => "native-adapter-not-compiled",
+            Self::RuntimeUnavailable => "runtime-unavailable",
+            Self::NoUsableProfile => "no-usable-profile",
+            Self::Ready => "ready",
+        }
+    }
+
+    #[must_use]
+    pub const fn ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
 }
 
 impl ProductionProtocol {
@@ -246,9 +285,13 @@ impl AudioEncoderCapability {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputCapabilitiesSnapshot {
     /// Version reported by the native runtime used to probe the approved
-    /// elements. `None` means this binary was built without the native
-    /// adapter, or the runtime could not be started.
+    /// elements. `None` means the native adapter is not compiled or the
+    /// runtime could not be started.
     runtime_version: Option<String>,
+    /// Whether this binary contains the optional native `GStreamer` adapter.
+    native_adapter_compiled: bool,
+    /// Bounded stderr/launch detail from the runtime probe, when it failed.
+    runtime_probe_error: Option<String>,
     protocols: Vec<ProtocolCapability>,
     video_encoders: Vec<VideoEncoderCapability>,
     audio_encoders: Vec<AudioEncoderCapability>,
@@ -263,6 +306,70 @@ impl OutputCapabilitiesSnapshot {
     #[must_use]
     pub fn native_runtime_version(&self) -> Option<&str> {
         self.runtime_version.as_deref()
+    }
+
+    /// Returns whether the optional native adapter was compiled into this
+    /// binary.
+    #[must_use]
+    pub const fn native_adapter_compiled(&self) -> bool {
+        self.native_adapter_compiled
+    }
+
+    /// Returns the bounded runtime launch detail, if probing failed.
+    #[must_use]
+    pub fn native_runtime_probe_error(&self) -> Option<&str> {
+        self.runtime_probe_error.as_deref()
+    }
+
+    /// Returns the reasoned production-output state.
+    #[must_use]
+    pub fn production_status(&self) -> ProductionOutputStatus {
+        if !self.native_adapter_compiled {
+            ProductionOutputStatus::NativeAdapterNotCompiled
+        } else if self.runtime_version.is_none() {
+            ProductionOutputStatus::RuntimeUnavailable
+        } else if self.supports_production_output() {
+            ProductionOutputStatus::Ready
+        } else {
+            ProductionOutputStatus::NoUsableProfile
+        }
+    }
+
+    /// Returns a bounded, operator-facing explanation suitable for diagnostics
+    /// and a settings hint. It contains no endpoint or credential data.
+    #[must_use]
+    pub fn production_status_detail(&self) -> String {
+        let video_encoders = self.video_encoders.len();
+        let audio_encoders = self.audio_encoders.len();
+        let recording_formats = self.recording_formats.len();
+        let production_protocols = self
+            .protocols
+            .iter()
+            .filter(|capability| {
+                capability.available() && capability.protocol() != ProductionProtocol::Reference
+            })
+            .count();
+        let detail = match self.production_status() {
+            ProductionOutputStatus::NativeAdapterNotCompiled => {
+                "native GStreamer adapter is not compiled; only the portable reference output is available".to_owned()
+            }
+            ProductionOutputStatus::RuntimeUnavailable => {
+                let reason = self
+                    .native_runtime_probe_error()
+                    .unwrap_or("gst-inspect-1.0 could not be started");
+                format!(
+                    "native GStreamer adapter is compiled, but the runtime is unavailable: {reason}"
+                )
+            }
+            ProductionOutputStatus::NoUsableProfile => format!(
+                "GStreamer runtime is available, but no approved production profile was found (video_encoders={video_encoders}, audio_encoders={audio_encoders}, recording_formats={recording_formats}, production_protocols={production_protocols})"
+            ),
+            ProductionOutputStatus::Ready => format!(
+                "GStreamer runtime {} is ready (video_encoders={video_encoders}, audio_encoders={audio_encoders}, recording_formats={recording_formats}, production_protocols={production_protocols})",
+                self.native_runtime_version().unwrap_or("unknown")
+            ),
+        };
+        bounded_probe_detail(&detail)
     }
 
     /// Returns whether at least one approved production profile is usable.
@@ -324,27 +431,32 @@ impl GStreamerCapabilitySnapshot {
         if !cfg!(feature = "native") {
             return Self {
                 runtime_version: None,
+                runtime_probe_error: None,
                 selected_elements: BTreeMap::new(),
                 output: OutputCapabilities::reference_only(),
                 protocols: unavailable_protocols(),
                 video_encoders: Vec::new(),
                 audio_encoders: Vec::new(),
+                segmented_recording: false,
+                remux: false,
             };
         }
-        let runtime_version = gst_inspect_command()
-            .arg("--version")
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+        let runtime_probe = probe_runtime_version();
+        let (runtime_version, runtime_probe_error) = match runtime_probe {
+            Ok(version) => (Some(version), None),
+            Err(error) => (None, Some(error)),
+        };
         let Some(runtime_version) = runtime_version else {
             return Self {
                 runtime_version: None,
+                runtime_probe_error,
                 selected_elements: BTreeMap::new(),
                 output: OutputCapabilities::reference_only(),
                 protocols: unavailable_protocols(),
                 video_encoders: Vec::new(),
                 audio_encoders: Vec::new(),
+                segmented_recording: false,
+                remux: false,
             };
         };
 
@@ -398,38 +510,42 @@ impl GStreamerCapabilitySnapshot {
             .filter(|element| element_available(element))
             .map(audio_encoder_capability)
             .collect();
+        let segmented_recording = element_available("splitmuxsink");
+        let remux = remux_elements_available();
         Self {
             runtime_version: Some(runtime_version),
+            runtime_probe_error: None,
             selected_elements: selected,
             output,
             protocols,
             video_encoders,
             audio_encoders,
+            segmented_recording,
+            remux,
         }
+    }
+
+    /// Probes the approved runtime once per process and returns cloned typed
+    /// snapshots to later callers. Packaged runtimes are immutable for the
+    /// lifetime of a process, and avoiding another dozen `gst-inspect` child
+    /// processes on every output start keeps recovery off the UI path.
+    #[must_use]
+    pub fn probe_cached() -> Self {
+        static CACHE: OnceLock<GStreamerCapabilitySnapshot> = OnceLock::new();
+        CACHE.get_or_init(Self::probe).clone()
     }
 
     /// Reports whether the native split-muxer boundary is available.
     #[must_use]
     pub fn supports_segmented_recording(&self) -> bool {
-        self.runtime_version.is_some() && element_available("splitmuxsink")
+        self.segmented_recording
     }
 
     /// Reports whether the approved native elements can remux the production
     /// Matroska profile without decoding or re-encoding media.
     #[must_use]
     pub fn supports_remux(&self) -> bool {
-        self.runtime_version.is_some()
-            && [
-                "filesrc",
-                "matroskademux",
-                "h264parse",
-                "aacparse",
-                "mp4mux",
-                "filesink",
-            ]
-            .into_iter()
-            .chain(["queue"])
-            .all(element_available)
+        self.remux
     }
 
     #[must_use]
@@ -451,6 +567,8 @@ impl GStreamerCapabilitySnapshot {
     pub fn capabilities(&self) -> OutputCapabilitiesSnapshot {
         OutputCapabilitiesSnapshot {
             runtime_version: self.runtime_version.clone(),
+            native_adapter_compiled: cfg!(feature = "native"),
+            runtime_probe_error: self.runtime_probe_error.clone(),
             protocols: self.protocols.clone(),
             video_encoders: self.video_encoders.clone(),
             audio_encoders: self.audio_encoders.clone(),
@@ -487,6 +605,58 @@ impl GStreamerCapabilitySnapshot {
             remux: self.supports_remux(),
         }
     }
+}
+
+fn probe_runtime_version() -> Result<String, String> {
+    let output = gst_inspect_command()
+        .arg("--version")
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = bounded_probe_detail(&stderr);
+        return Err(if stderr.is_empty() {
+            format!(
+                "gst-inspect-1.0 exited with {}",
+                output
+                    .status
+                    .code()
+                    .map_or_else(|| "a signal".to_owned(), |code| code.to_string())
+            )
+        } else {
+            stderr
+        });
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if version.is_empty() {
+        return Err("gst-inspect-1.0 returned an empty version".to_owned());
+    }
+    Ok(version)
+}
+
+fn bounded_probe_detail(value: &str) -> String {
+    value
+        .chars()
+        .take(256)
+        .map(|character| match character {
+            '\r' | '\n' | '\t' => ' ',
+            other => other,
+        })
+        .collect()
+}
+
+fn remux_elements_available() -> bool {
+    [
+        "filesrc",
+        "matroskademux",
+        "h264parse",
+        "aacparse",
+        "mp4mux",
+        "filesink",
+        "queue",
+    ]
+    .into_iter()
+    .all(element_available)
 }
 
 fn production_profiles(selected: &BTreeMap<&'static str, String>) -> Vec<OutputProfileKind> {

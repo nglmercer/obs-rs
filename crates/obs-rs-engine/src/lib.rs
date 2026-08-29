@@ -74,8 +74,8 @@ pub use obs_rs_output_gstreamer::{
     RemuxRecovery, StingerDecodeCapabilities,
 };
 pub use obs_rs_output_gstreamer::{
-    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionProtocol, ProtocolCapability,
-    VideoEncoderCapability,
+    AudioEncoderCapability, OutputCapabilitiesSnapshot, ProductionOutputStatus, ProductionProtocol,
+    ProtocolCapability, VideoEncoderCapability,
 };
 #[cfg(not(feature = "production-gstreamer"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,7 +113,7 @@ pub const MAX_FILTER_DIAGNOSTICS: usize = 64;
 /// Probes the production backend once and returns its typed GUI-safe model.
 #[must_use]
 pub fn output_capabilities_snapshot() -> OutputCapabilitiesSnapshot {
-    GStreamerCapabilitySnapshot::probe().capabilities()
+    GStreamerCapabilitySnapshot::probe_cached().capabilities()
 }
 
 /// The portable engine session.

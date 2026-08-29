@@ -75,7 +75,7 @@ pub(crate) struct SettingsController {
     /// Kept separately so changing the UI locale can rebuild the status text
     /// without probing `GStreamer` on the UI thread.
     production_runtime_version: Option<String>,
-    production_output_supported: bool,
+    production_status: ProductionOutputStatus,
 }
 
 /// The directory choosers the Browse button can drive.
@@ -184,8 +184,8 @@ impl SettingsController {
         populate_static_models(&self.window);
         apply_production_status(
             &self.window,
+            self.production_status,
             self.production_runtime_version.as_deref(),
-            self.production_output_supported,
         );
         self.window
             .global::<Palette>()
@@ -331,7 +331,7 @@ pub(crate) fn install_settings_window(
         draft_video: RefCell::new(VideoSettings::default()),
         browse_tool: detect_browse_tool(),
         production_runtime_version: capabilities.native_runtime_version().map(str::to_owned),
-        production_output_supported: capabilities.supports_production_output(),
+        production_status: capabilities.production_status(),
     });
 
     // The settings document is the persisted source of truth; the canvas
@@ -344,8 +344,8 @@ pub(crate) fn install_settings_window(
     populate_static_models(&controller.window);
     apply_production_status(
         &controller.window,
+        controller.production_status,
         controller.production_runtime_version.as_deref(),
-        controller.production_output_supported,
     );
     install_stream_protocol_switch(&controller);
     output
@@ -596,8 +596,8 @@ pub(super) fn populate_stream_models(
 ) {
     apply_production_status(
         window,
+        output.capabilities().production_status(),
         output.capabilities().native_runtime_version(),
-        output.capabilities().supports_production_output(),
     );
     let mut protocol_ids = Vec::new();
     let mut protocol_names = Vec::new();
@@ -645,17 +645,23 @@ pub(super) fn populate_stream_models(
 /// reference path and a binary that can produce ordinary encoded media.
 fn apply_production_status(
     window: &SettingsWindow,
+    production_status: ProductionOutputStatus,
     runtime_version: Option<&str>,
-    production_supported: bool,
 ) {
     let text = window.global::<I18n>().get_text().settings_ui;
-    let status = production_supported
-        .then_some(runtime_version)
-        .flatten()
-        .map_or_else(
-            || text.production_backend_unavailable.to_string(),
+    let status = match production_status {
+        ProductionOutputStatus::NativeAdapterNotCompiled => {
+            text.production_backend_not_compiled.to_string()
+        }
+        ProductionOutputStatus::RuntimeUnavailable => {
+            text.production_backend_runtime_unavailable.to_string()
+        }
+        ProductionOutputStatus::NoUsableProfile => text.production_backend_no_profile.to_string(),
+        ProductionOutputStatus::Ready => runtime_version.map_or_else(
+            || text.production_backend_no_profile.to_string(),
             |version| format!("{}{}", text.production_backend_ready, version),
-        );
+        ),
+    };
     window.set_production_status(status.into());
 }
 
