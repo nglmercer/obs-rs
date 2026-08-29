@@ -970,9 +970,54 @@ fn check_target_persistence() -> CheckResult {
             ));
         }
     }
+    let persisted_display = devices.iter().find(|device| {
+        device.kind() == CaptureKind::Screen && device.id().as_str() == display.id().as_str()
+    });
+    let Some(persisted_display) = persisted_display else {
+        return CheckResult::fail(format!(
+            "display target {} disappeared after project reload",
+            display.id()
+        ));
+    };
+    let (_, display_frames, _) =
+        match capture_frames(persisted_display, format, 1, Duration::from_secs(8)) {
+            Ok(result) => result,
+            Err(error) => {
+                return capture_check_result_with_context(
+                    &error,
+                    "capture persisted display target after project reload",
+                )
+            }
+        };
+    let mut captured_targets = 1_usize;
+    if let Some(expected_window) = expected
+        .iter()
+        .find(|(_, kind, _, _)| kind == "window_capture")
+    {
+        let Some(persisted_window) = devices.iter().find(|device| {
+            device.kind() == CaptureKind::Window
+                && device.id().as_str() == expected_window.2.as_str()
+        }) else {
+            return CheckResult::fail(format!(
+                "window target {} disappeared after project reload",
+                expected_window.2
+            ));
+        };
+        match capture_frames(persisted_window, format, 1, Duration::from_secs(8)) {
+            Ok(_) => captured_targets = captured_targets.saturating_add(1),
+            Err(error) => {
+                return capture_check_result_with_context(
+                    &error,
+                    "capture persisted window target after project reload",
+                )
+            }
+        }
+    }
     CheckResult::pass(format!(
-        "persisted_targets={} bytes={} file_round_trip=true",
+        "persisted_targets={} captured_after_reload={} display_frames={} bytes={} file_round_trip=true",
         expected.len(),
+        captured_targets,
+        display_frames,
         bytes
     ))
 }
