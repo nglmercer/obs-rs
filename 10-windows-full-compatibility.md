@@ -35,7 +35,7 @@ Windows features passed.
 | Image source | ✅ | — | ✅ | ◐ | Portable source and GUI tests cover the path. Run the packaged GUI and load PNG/JPEG/WebP files from a Windows path. |
 | Image slideshow | ✅ | — | ✅ | ◐ | Portable slideshow tests cover timing and selection. Verify directory/file dialogs and long-running playback in the Windows GUI. |
 | Text source | ✅ | — | ✅ | ◐ | Portable text rendering is covered. Verify fonts, Unicode text, and Windows DPI scaling in the packaged GUI. |
-| Media source | ✅ | — | ◐ | ☐ | `media_source` is registered with an explicit idle/unavailable portable path and an optional GStreamer playbin/appsink path. Verify local MP4/WebM/H.264/AAC playback in the production package. |
+| Media source | ✅ | — | ◐ | ☐ | `media_source` is registered with an explicit idle/unavailable portable path and an optional GStreamer playbin/appsink path. The Windows production check now feeds a real native Matroska artifact back through the source and verifies first-frame decode plus replacement. Verify local MP4/WebM/H.264/AAC playback in the production package. |
 | Scene compositing | ✅ | — | ✅ | ◐ | Core compositor and transform tests pass portably. Verify the WGC/camera/audio sources in a real Windows scene. |
 | Transforms/crop/scale | ✅ | — | ✅ | ◐ | Core transform/scaler tests pass portably. Verify mixed-DPI source sizes and output scaling in the GUI. |
 | Preview | ✅ | — | ◐ | ☐ | GUI smoke tests exercise wiring and the renderer has portable tests. Verify real WGC frames reach the visible preview. |
@@ -119,6 +119,9 @@ only scaffolded:
 - the Windows check exercises native HLS without a network endpoint when the
   packaged runtime exposes `hlssink2`, validating the playlist and non-empty
   transport segments before removing its temporary output directory;
+- the Windows check exercises the native `media_source` path by reopening a
+  generated Matroska artifact through GStreamer and validating decoded RGBA
+  frames before removing the fixture;
 - native output capability discovery is cached for the process after one
   allow-listed GStreamer probe; the Output page and exported diagnostics now
   distinguish an uncompiled adapter, a missing runtime, an incomplete plugin

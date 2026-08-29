@@ -106,7 +106,8 @@ $requiredNames = @(
     "OBS_RS_REQUIRE_DESKTOP_LOOPBACK",
     "OBS_RS_REQUIRE_MONITOR_OUTPUT",
     "OBS_RS_REQUIRE_AV_SOAK",
-    "OBS_RS_REQUIRE_CLEANUP_RESTART"
+    "OBS_RS_REQUIRE_CLEANUP_RESTART",
+    "OBS_RS_REQUIRE_MEDIA_SOURCE"
 )
 $oldRequired = @{}
 foreach ($name in $requiredNames) {
@@ -139,6 +140,9 @@ if ($RequireProduction) {
         }
         [Environment]::SetEnvironmentVariable($name, "1", "Process")
     }
+    $oldRequired["OBS_RS_REQUIRE_MEDIA_SOURCE"] = [Environment]::GetEnvironmentVariable(
+        "OBS_RS_REQUIRE_MEDIA_SOURCE", "Process")
+    [Environment]::SetEnvironmentVariable("OBS_RS_REQUIRE_MEDIA_SOURCE", "1", "Process")
 }
 if ($RequireProductionHls) {
     $oldRequired["OBS_RS_REQUIRE_PRODUCTION_HLS"] = [Environment]::GetEnvironmentVariable(

@@ -58,6 +58,8 @@ use obs_rs_output::{
 use obs_rs_output::{MemoryMuxer, PacketKind, RleVideoEncoder};
 #[cfg(target_os = "windows")]
 use obs_rs_plugin_api::Plugin;
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+use obs_rs_plugin_api::{Source, SourceFactory, VideoRequest};
 #[cfg(target_os = "windows")]
 use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 
@@ -113,6 +115,7 @@ fn main() -> ExitCode {
     ];
     checks.push(("production_output", check_production_output()));
     checks.push(("production_recording", check_production_recording()));
+    checks.push(("media_source", check_media_source()));
     checks.push(("production_hls", check_production_hls()));
     checks.push(("production_streaming", check_production_streaming()));
     let mut failed = false;
@@ -247,6 +250,112 @@ fn check_production_recording() -> CheckResult {
             (Err(error), _) => CheckResult::fail(error),
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn check_media_source() -> CheckResult {
+    #[cfg(not(feature = "production-gstreamer"))]
+    {
+        CheckResult::skip(
+            "native media playback is not compiled; use the production-gstreamer package",
+        )
+    }
+
+    #[cfg(feature = "production-gstreamer")]
+    {
+        let capabilities = output_capabilities_snapshot();
+        let profile = OutputProfile::matroska_h264_aac();
+        if !capabilities.recording_formats().contains(&profile.kind()) {
+            return CheckResult::skip(format!(
+                "status={} {}; media fixture requires a native Matroska recording",
+                capabilities.production_status().id(),
+                capabilities.production_status_detail()
+            ));
+        }
+        let devices = match discover_windows() {
+            Ok(devices) => devices,
+            Err(error) => return capture_check_result(&error),
+        };
+        let format = probe_video_format();
+        let (display_id, frame) = match capture_first_working_display(
+            &devices,
+            format,
+            Duration::from_secs(8),
+            "media source",
+        ) {
+            Ok(capture) => capture,
+            Err(result) => return result,
+        };
+        let path = native_media_fixture_path();
+        let recording = record_native_frames(&path, format, &frame);
+        let result = recording.and_then(|(_, _)| exercise_native_media_source(&path, format));
+        remove_recording_artifacts(&path);
+        match result {
+            Ok(frames) => CheckResult::pass(format!(
+                "device={display_id} source=media_source decoded_frames={frames} replacement=true"
+            )),
+            Err(error) => CheckResult::fail(error),
+        }
+    }
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn exercise_native_media_source(path: &Path, format: VideoFormat) -> Result<u64, String> {
+    let plugin = BuiltinPlugin::new().map_err(|error| format!("create built-ins: {error}"))?;
+    let factory = plugin
+        .source_factories()
+        .iter()
+        .find(|factory| factory.kind().as_str() == obs_rs_builtins::MEDIA_SOURCE_KIND)
+        .ok_or_else(|| "built-in media_source factory is missing".to_owned())?;
+    let path = path
+        .to_str()
+        .ok_or_else(|| "native media fixture path is not valid UTF-8".to_owned())?;
+    let mut settings = Config::new();
+    settings
+        .set("path", path)
+        .map_err(|error| format!("configure media source path: {error}"))?;
+    settings
+        .set("loop", "true")
+        .map_err(|error| format!("configure media source loop: {error}"))?;
+    settings
+        .set("width", &format.width().to_string())
+        .map_err(|error| format!("configure media source width: {error}"))?;
+    settings
+        .set("height", &format.height().to_string())
+        .map_err(|error| format!("configure media source height: {error}"))?;
+    let mut source = factory
+        .create("Windows media acceptance", &settings)
+        .map_err(|error| format!("open media source: {error}"))?;
+    let first = source
+        .render(&VideoRequest::new(Timestamp::ZERO, format))
+        .map_err(|error| format!("decode first media frame: {error}"))?
+        .ok_or_else(|| "media source returned no first frame".to_owned())?;
+    if first.format() != format {
+        return Err(format!(
+            "media source returned the wrong format: expected={format:?} actual={:?}",
+            first.format()
+        ));
+    }
+
+    // Replacing the same path must reopen the native playback graph cleanly;
+    // this is the path used when a user changes media properties in the GUI.
+    source
+        .update(&settings)
+        .map_err(|error| format!("replace media source: {error}"))?;
+    let replacement = source
+        .render(&VideoRequest::new(
+            Timestamp::from_nanos(33_333_333),
+            format,
+        ))
+        .map_err(|error| format!("decode replacement media frame: {error}"))?
+        .ok_or_else(|| "media source returned no replacement frame".to_owned())?;
+    if replacement.format() != format {
+        return Err(format!(
+            "replacement media source returned the wrong format: expected={format:?} actual={:?}",
+            replacement.format()
+        ));
+    }
+    Ok(2)
 }
 
 #[cfg(target_os = "windows")]
@@ -1099,6 +1208,17 @@ fn native_recording_path() -> PathBuf {
         .map_or(0, |duration| duration.as_nanos());
     std::env::temp_dir().join(format!(
         "obs-rs-windows-check-{}-{token}.mkv",
+        std::process::id()
+    ))
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn native_media_fixture_path() -> PathBuf {
+    let token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    std::env::temp_dir().join(format!(
+        "obs-rs-windows-check-{}-{token}-media.mkv",
         std::process::id()
     ))
 }
