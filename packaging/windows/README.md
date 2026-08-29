@@ -13,6 +13,14 @@ the MSVC target installed:
 .\packaging\windows\package.ps1
 ```
 
+For a local portable smoke package without release optimization, use the
+incremental `dev-fast` profile. It writes and reads `target\dev-fast` for both
+the workspace binaries and the separate capture helper:
+
+```powershell
+.\packaging\windows\package.ps1 -Configuration dev-fast
+```
+
 For faster local helper iteration, use the matching development profile:
 
 ```powershell

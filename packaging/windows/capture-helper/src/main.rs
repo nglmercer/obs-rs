@@ -631,23 +631,27 @@ impl RgbaResizePlan {
         }
         target.clear();
         target.resize(self.target_size, 0);
-        for (y, source_row) in self.source_rows.iter().copied().enumerate() {
-            let target_row = y
-                .checked_mul(self.target_width)
-                .and_then(|pixels| pixels.checked_mul(4))
-                .ok_or_else(|| invalid("output frame dimensions overflow"))?;
-            for (x, source_column) in self.source_columns.iter().copied().enumerate() {
-                let source_index = source_row
-                    .checked_add(source_column)
-                    .ok_or_else(|| invalid("captured frame dimensions overflow"))?;
-                let target_index = target_row
-                    .checked_add(
-                        x.checked_mul(4)
-                            .ok_or_else(|| invalid("output frame dimensions overflow"))?,
-                    )
-                    .ok_or_else(|| invalid("output frame dimensions overflow"))?;
-                target[target_index..target_index + 4]
-                    .copy_from_slice(&source[source_index..source_index + 4]);
+        let target_row_size = self
+            .target_width
+            .checked_mul(4)
+            .ok_or_else(|| invalid("output frame dimensions overflow"))?;
+        // All source byte offsets are validated while building the plan. Row
+        // chunks provide the destination base offset, avoiding checked row and
+        // column multiplication in the 4K frame loop.
+        for (source_row, target_row) in self
+            .source_rows
+            .iter()
+            .copied()
+            .zip(target.chunks_exact_mut(target_row_size))
+        {
+            for (source_column, target_pixel) in self
+                .source_columns
+                .iter()
+                .copied()
+                .zip(target_row.chunks_exact_mut(4))
+            {
+                let source_index = source_row + source_column;
+                target_pixel.copy_from_slice(&source[source_index..source_index + 4]);
             }
         }
         Ok(())

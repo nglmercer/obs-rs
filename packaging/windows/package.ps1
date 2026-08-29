@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("debug", "release")]
+    [ValidateSet("debug", "dev-fast", "release")]
     [string]$Configuration = "release",
     [string]$OutputDirectory = (Join-Path $PSScriptRoot "dist"),
     [switch]$ProductionGStreamer,
@@ -117,7 +117,11 @@ if (Test-Path -LiteralPath $checksumPath) {
 }
 New-Item -ItemType Directory -Force -Path $stagingDirectory | Out-Null
 
-$profileArguments = if ($Configuration -eq "release") { @("--release") } else { @() }
+$profileArguments = switch ($Configuration) {
+    "release" { @("--release"); break }
+    "dev-fast" { @("--profile", "dev-fast"); break }
+    default { @() }
+}
 $featureArguments = if ($ProductionGStreamer) { @("--features", "production-gstreamer") } else { @() }
 & cargo build --locked -p obs-rs-gui $profileArguments $featureArguments
 if ($LASTEXITCODE -ne 0) {
@@ -132,7 +136,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "capture helper build failed with exit code $LASTEXITCODE"
 }
 
-$profileDirectory = if ($Configuration -eq "release") { "release" } else { "debug" }
+$profileDirectory = $Configuration
 $guiBinary = Join-Path $repoRoot "target\$profileDirectory\obs-rs-gui.exe"
 $appBinary = Join-Path $repoRoot "target\$profileDirectory\obs-rs.exe"
 $checkBinary = Join-Path $repoRoot "target\$profileDirectory\obs-rs-windows-check.exe"

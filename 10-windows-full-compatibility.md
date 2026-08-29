@@ -64,6 +64,7 @@ cargo clippy --manifest-path packaging/windows/capture-helper/Cargo.toml -- -D w
 cargo run -p obs-rs-app --bin obs-rs-windows-check
 OBSR_RS_REQUIRE_AUDIO_DEVICE_STABILITY=1 cargo run -p obs-rs-app --bin obs-rs-windows-check
 packaging/windows/package.ps1 -Configuration release -OutputDirectory <directory>
+packaging/windows/package.ps1 -Configuration dev-fast -OutputDirectory <directory>
 packaging/windows/verify-package.ps1 -PackageDirectory <extracted-package>
 packaging/windows/acceptance.ps1 -PackageDirectory <extracted-package> -RequireProduction
 ```
