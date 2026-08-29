@@ -53,7 +53,9 @@ For a real interactive-session check after extraction:
 
 `pass`, `skip`, and `fail` are intentionally distinct. Hardware or privacy
 conditions are reported as typed skips; protocol, frame-format, lifecycle, and
-cleanup errors fail the command.
+cleanup errors fail the command. On a production package, the native recording
+check also runs the bundled `gst-discoverer-1.0.exe` against the preserved
+Matroska artifact and requires both video and audio streams to be discoverable.
 
 The first result is `capture_helper`. It verifies the packaged helper's
 OBSRWIN1 protocol and compatible major version before any display or window
@@ -116,11 +118,12 @@ Then build and package with the opt-in feature and a matching runtime tree:
 ```
 
 The runtime directory must contain `bin\gstreamer-1.0-0.dll`,
-`bin\gst-inspect-1.0.exe`, `lib\gstreamer-1.0`, and
+`bin\gst-inspect-1.0.exe`, `bin\gst-discoverer-1.0.exe`,
+`lib\gstreamer-1.0`, and
 `libexec\gstreamer-1.0\gst-plugin-scanner.exe`.
 The matching development package is still required at build time. The
-packager copies the runtime DLLs, capability probe, and plugins into the
-archive and writes the selected runtime into `GSTREAMER-RUNTIME.txt`. The
+packager copies the runtime DLLs, capability/recording probes, and plugins
+into the archive and writes the selected runtime into `GSTREAMER-RUNTIME.txt`. The
 launcher sets `OBSR_GST_INSPECT` so capability discovery cannot accidentally
 use a different GStreamer installation from `PATH`; direct entry-point
 launches apply the equivalent bundled-runtime setup in the native adapter.

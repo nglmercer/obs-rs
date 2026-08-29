@@ -65,6 +65,7 @@ $oldHelper = $env:OBSR_CAPTURE_HELPER
 $oldSoak = $env:OBS_RS_SOAK_SECONDS
 $oldEndpoint = $env:OBS_RS_PRODUCTION_STREAM_URL
 $oldArtifacts = $env:OBS_RS_ACCEPTANCE_ARTIFACTS
+$oldDiscoverer = $env:OBSR_GST_DISCOVERER
 $requiredNames = @(
     "OBS_RS_REQUIRE_CAPTURE_HELPER",
     "OBS_RS_REQUIRE_DISCOVERY_STABILITY",
@@ -121,6 +122,39 @@ if ($RequireProduction -or -not [string]::IsNullOrWhiteSpace($ProductionStreamUr
     }
 }
 
+function Test-ProductionRecordingArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RecordingPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ArtifactDirectory
+    )
+
+    if (-not (Test-Path -LiteralPath $RecordingPath -PathType Leaf)) {
+        throw "production acceptance did not produce a recording artifact: $RecordingPath"
+    }
+    $discoverer = $env:OBSR_GST_DISCOVERER
+    if ([string]::IsNullOrWhiteSpace($discoverer)) {
+        $discoverer = Join-Path $root "gstreamer\bin\gst-discoverer-1.0.exe"
+    }
+    if (-not (Test-Path -LiteralPath $discoverer -PathType Leaf)) {
+        throw "production acceptance is missing the bundled recording probe: $discoverer"
+    }
+    $probePath = Join-Path $ArtifactDirectory "production-recording-discovery.txt"
+    $probeOutput = @(& $discoverer -v $RecordingPath 2>&1)
+    $probeExitCode = $LASTEXITCODE
+    $probeText = $probeOutput | Out-String
+    $probeOutput | Set-Content -LiteralPath $probePath -Encoding utf8
+    if ($probeExitCode -ne 0) {
+        throw "production recording could not be discovered by gst-discoverer (exit $probeExitCode); see $probePath"
+    }
+    if ($probeText -notmatch '(?im)\bvideo\s*:' -or
+        $probeText -notmatch '(?im)\baudio\s*:') {
+        throw "production recording discovery did not report both video and audio streams; see $probePath"
+    }
+    Write-Output "Verified playable production recording with audio/video streams: $RecordingPath"
+}
+
 $env:OBSR_CAPTURE_HELPER = $helper
 $env:OBS_RS_SOAK_SECONDS = $SoakSeconds.ToString()
 $env:OBS_RS_ACCEPTANCE_ARTIFACTS = $artifacts
@@ -139,11 +173,17 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Windows acceptance checks failed with exit code $LASTEXITCODE"
     }
+    if ($RequireProduction -or -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
+        Test-ProductionRecordingArtifact `
+            -RecordingPath (Join-Path $artifacts "production-recording.mkv") `
+            -ArtifactDirectory $artifacts
+    }
 } finally {
     $env:OBSR_CAPTURE_HELPER = $oldHelper
     $env:OBS_RS_SOAK_SECONDS = $oldSoak
     $env:OBS_RS_PRODUCTION_STREAM_URL = $oldEndpoint
     $env:OBS_RS_ACCEPTANCE_ARTIFACTS = $oldArtifacts
+    $env:OBSR_GST_DISCOVERER = $oldDiscoverer
     foreach ($name in $oldRequired.Keys) {
         [Environment]::SetEnvironmentVariable($name, $oldRequired[$name], "Process")
     }

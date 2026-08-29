@@ -34,6 +34,10 @@ if ($ProductionGStreamer) {
     if (-not (Test-Path -LiteralPath $gstreamerInspect -PathType Leaf)) {
         throw "GStreamer runtime is missing the capability probe tool: $gstreamerInspect"
     }
+    $gstreamerDiscoverer = Join-Path $gstreamerBin "gst-discoverer-1.0.exe"
+    if (-not (Test-Path -LiteralPath $gstreamerDiscoverer -PathType Leaf)) {
+        throw "GStreamer runtime is missing the production recording probe: $gstreamerDiscoverer"
+    }
     $gstreamerScanner = Join-Path $gstreamerRoot "libexec\gstreamer-1.0\gst-plugin-scanner.exe"
     if (-not (Test-Path -LiteralPath $gstreamerScanner -PathType Leaf)) {
         throw "GStreamer runtime is missing the plugin scanner: $gstreamerScanner"
@@ -90,6 +94,7 @@ if ($ProductionGStreamer) {
     $gstreamerRoot = $null
     $gstreamerBin = $null
     $gstreamerPlugins = $null
+    $gstreamerDiscoverer = $null
 }
 
 $metadata = (& cargo metadata --format-version 1 --locked | Out-String | ConvertFrom-Json)
@@ -164,6 +169,8 @@ if ($ProductionGStreamer) {
     }
     Copy-Item -LiteralPath $gstreamerInspect -Destination $stagingDirectory
     Copy-Item -LiteralPath $gstreamerInspect -Destination $runtimeBinDestination
+    Copy-Item -LiteralPath $gstreamerDiscoverer -Destination $stagingDirectory
+    Copy-Item -LiteralPath $gstreamerDiscoverer -Destination $runtimeBinDestination
     $pluginDestination = Join-Path $gstreamerDirectory "lib\gstreamer-1.0"
     New-Item -ItemType Directory -Force -Path $pluginDestination | Out-Null
     Get-ChildItem -LiteralPath $gstreamerPlugins -Force |
@@ -185,6 +192,7 @@ if ($ProductionGStreamer) {
         "GStreamer version: $gstreamerVersion",
         "Native output feature: production-gstreamer",
         "Capability probe: gst-inspect-1.0.exe",
+        "Recording probe: gst-discoverer-1.0.exe",
         "The launcher and native adapter configure PATH, GST_PLUGIN_PATH, and the plugin scanner for the bundled runtime.",
         "The runtime and Cargo development package must come from the same GStreamer release."
     ) | Set-Content -LiteralPath (Join-Path $stagingDirectory "GSTREAMER-RUNTIME.txt") -Encoding utf8

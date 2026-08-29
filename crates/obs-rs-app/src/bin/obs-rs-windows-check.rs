@@ -930,6 +930,7 @@ fn record_native_frames(
     if persisted.len() < 4 || persisted[..4] != [0x1A, 0x45, 0xDF, 0xA3] {
         return Err("native recording is not an EBML/Matroska file".to_owned());
     }
+    validate_native_recording(path)?;
     Ok((bytes, 4))
 }
 
@@ -981,6 +982,70 @@ fn remove_recording_artifacts(path: &Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(path.with_extension("mkv.part"));
     let _ = std::fs::remove_file(path.with_extension("mp4.part"));
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn gst_discoverer_command() -> Command {
+    if let Some(path) = std::env::var_os("OBSR_GST_DISCOVERER").filter(|path| !path.is_empty()) {
+        return Command::new(path);
+    }
+    let executable_name = "gst-discoverer-1.0.exe";
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            for bundled in [
+                parent.join(executable_name),
+                parent.join("gstreamer").join("bin").join(executable_name),
+            ] {
+                if bundled.is_file() {
+                    return Command::new(bundled);
+                }
+            }
+        }
+    }
+    Command::new(executable_name)
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn validate_native_recording(path: &Path) -> Result<(), String> {
+    let output = gst_discoverer_command()
+        .arg("-v")
+        .arg(path)
+        .output()
+        .map_err(|error| format!("start gst-discoverer-1.0: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+    if !output.status.success() {
+        return Err(format!(
+            "gst-discoverer-1.0 rejected the production recording: {}",
+            bounded_external_output(&combined)
+        ));
+    }
+    let lower = combined.to_ascii_lowercase();
+    let has_video = lower
+        .lines()
+        .any(|line| line.contains("video:") || line.contains("video/x-"));
+    let has_audio = lower
+        .lines()
+        .any(|line| line.contains("audio:") || line.contains("audio/x-"));
+    if !has_video || !has_audio {
+        return Err(format!(
+            "gst-discoverer-1.0 did not report both video and audio streams: video={has_video} audio={has_audio}"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
+fn bounded_external_output(value: &str) -> String {
+    value
+        .chars()
+        .take(512)
+        .map(|character| match character {
+            '\r' | '\n' | '\t' => ' ',
+            other => other,
+        })
+        .collect()
 }
 
 #[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
