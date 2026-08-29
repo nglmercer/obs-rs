@@ -621,9 +621,23 @@ impl EngineWorker {
     ) -> Result<(), EngineError> {
         set_streaming_lifecycle(&self.snapshot, OutputLifecycle::Starting);
         push_output_event(&self.output_events, OutputEvent::Starting);
-        self.sender
+        match self
+            .sender
             .try_send(WorkerCommand::StartStreamingTarget(target, video, audio))
-            .map_err(|error| command_enqueue_error(&error))
+        {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = command_enqueue_error(&error);
+                set_streaming_lifecycle(&self.snapshot, OutputLifecycle::Failed);
+                push_output_event(
+                    &self.output_events,
+                    OutputEvent::Failed {
+                        reason: error.to_string(),
+                    },
+                );
+                Err(error)
+            }
+        }
     }
 
     fn start_streaming_with_config(

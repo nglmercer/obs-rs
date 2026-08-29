@@ -63,6 +63,41 @@ fn stream_start_returns_without_waiting_for_worker_or_transport_setup() {
 }
 
 #[test]
+fn typed_stream_start_reports_a_full_worker_queue_as_failed() {
+    let worker = worker(1);
+    let (entered_send, entered_receive) = mpsc::channel();
+    let (release_send, release_receive) = mpsc::channel();
+    worker
+        .sender
+        .send(WorkerCommand::TestBlock(entered_send, release_receive))
+        .expect("block command");
+    entered_receive.recv().expect("worker entered barrier");
+    worker
+        .sender
+        .send(WorkerCommand::FinishStreaming)
+        .expect("fill worker queue");
+
+    let result = worker.start_streaming_target_configured(
+        StreamTarget::Reference {
+            address: "127.0.0.1:0".to_owned(),
+        },
+        VideoEncoderConfig::default(),
+        AudioEncoderConfig::default(),
+    );
+    assert!(matches!(result, Err(EngineError::Worker(reason)) if reason.contains("queue is full")));
+    assert_eq!(
+        worker.snapshot().engine.streaming_lifecycle,
+        OutputLifecycle::Failed
+    );
+    assert!(matches!(
+        worker.take_output_events().as_slice(),
+        [OutputEvent::Starting, OutputEvent::Failed { .. }]
+    ));
+
+    release_send.send(()).expect("release worker");
+}
+
+#[test]
 fn stream_stop_returns_without_waiting_for_worker_teardown() {
     let worker = Arc::new(worker(1));
     let (entered_send, entered_receive) = mpsc::channel();
