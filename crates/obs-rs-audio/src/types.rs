@@ -2,6 +2,25 @@ use super::error::AudioError;
 /// Maximum number of interleaved audio frames in one owned buffer.
 pub const MAX_AUDIO_FRAMES: usize = 1_048_576;
 
+/// Common endpoint formats tried after the engine's preferred mix format.
+///
+/// WASAPI shared-mode devices usually accept 48 kHz or 44.1 kHz, but fixed
+/// native endpoints such as some USB interfaces and virtual cables may expose
+/// only 96 kHz, 32 kHz, or 16 kHz. Keeping this list bounded lets the route and
+/// monitor workers negotiate those devices without probing arbitrary formats.
+pub const COMMON_AUDIO_DEVICE_FORMATS: [(u32, u16); 10] = [
+    (48_000, 2),
+    (44_100, 2),
+    (48_000, 1),
+    (44_100, 1),
+    (96_000, 2),
+    (32_000, 2),
+    (16_000, 2),
+    (96_000, 1),
+    (32_000, 1),
+    (16_000, 1),
+];
+
 /// A validated interleaved audio format.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AudioFormat {

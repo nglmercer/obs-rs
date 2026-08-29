@@ -10,7 +10,7 @@ use std::{
 
 use obs_rs_audio::{
     AudioBuffer, AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInput,
-    AudioInputProvider, AudioInputState, AudioResampler,
+    AudioInputProvider, AudioInputState, AudioResampler, COMMON_AUDIO_DEVICE_FORMATS,
 };
 use obs_rs_media::Timestamp;
 
@@ -280,7 +280,7 @@ fn open_audio_with_conversion(
     loopback: bool,
 ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
     let mut candidates = vec![mix_format];
-    for (rate, channels) in [(48_000, 2), (44_100, 2), (48_000, 1), (44_100, 1)] {
+    for (rate, channels) in COMMON_AUDIO_DEVICE_FORMATS {
         let candidate = AudioFormat::new(rate, channels)?;
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
@@ -294,11 +294,18 @@ fn open_audio_with_conversion(
             provider.open_input(device_id, device_format)
         };
         match opened {
-            Ok(input) if device_format == mix_format => return Ok(input),
             Ok(input) => {
+                // A provider may negotiate a nearby format instead of the
+                // requested one. Build the converter from the actual input
+                // contract so the first block cannot be interpreted with the
+                // wrong sample rate or channel layout.
+                let actual_format = input.format();
+                if actual_format == mix_format {
+                    return Ok(input);
+                }
                 return Ok(Box::new(ConvertedAudioInput {
                     input,
-                    converter: AudioResampler::new(device_format, mix_format)?,
+                    converter: AudioResampler::new(actual_format, mix_format)?,
                     mix_format,
                 }));
             }
@@ -367,6 +374,54 @@ mod tests {
     use super::*;
     use obs_rs_audio::SimulatedAudioProvider;
 
+    struct FixedFormatProvider {
+        format: AudioFormat,
+    }
+
+    impl AudioInputProvider for FixedFormatProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+            Ok(Vec::new())
+        }
+
+        fn open_input(
+            &self,
+            _device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+            if format != self.format {
+                return Err(AudioDeviceError::Unavailable(format!(
+                    "fixed test input only accepts {0:?}, requested {format:?}",
+                    self.format
+                )));
+            }
+            SimulatedAudioProvider::new().open_input("test-audio", format)
+        }
+    }
+
+    struct NegotiatingFormatProvider {
+        requested: AudioFormat,
+        actual: AudioFormat,
+    }
+
+    impl AudioInputProvider for NegotiatingFormatProvider {
+        fn discover(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+            Ok(Vec::new())
+        }
+
+        fn open_input(
+            &self,
+            _device_id: &str,
+            format: AudioFormat,
+        ) -> Result<Box<dyn AudioInput>, AudioDeviceError> {
+            if format != self.requested {
+                return Err(AudioDeviceError::Unavailable(
+                    "test provider rejected this requested format".to_owned(),
+                ));
+            }
+            SimulatedAudioProvider::new().open_input("test-audio", self.actual)
+        }
+    }
+
     #[test]
     fn failed_active_route_reopens_even_when_identity_is_unchanged() {
         let provider: Arc<dyn AudioInputProvider> = Arc::new(SimulatedAudioProvider::new());
@@ -404,5 +459,45 @@ mod tests {
             ),
             AudioRouteUpdate::Opened(route) if route.device_id == "test-audio"
         ));
+    }
+
+    #[test]
+    fn route_negotiation_reaches_fixed_96_khz_endpoint_formats() {
+        let mix_format = AudioFormat::new(48_000, 2).expect("mix format");
+        let native_format = AudioFormat::new(96_000, 1).expect("native format");
+        let provider: Arc<dyn AudioInputProvider> = Arc::new(FixedFormatProvider {
+            format: native_format,
+        });
+
+        let mut input = open_input_with_conversion(&provider, "fixed-96k", mix_format)
+            .expect("the bounded fallback list should reach 96 kHz mono");
+        assert_eq!(input.format(), mix_format);
+        let block = input
+            .read_block(Timestamp::ZERO, 480)
+            .expect("fixed-rate input should be converted");
+        assert_eq!(block.frames(), 480);
+        assert_eq!(block.format(), mix_format);
+    }
+
+    #[test]
+    fn route_conversion_uses_the_provider_negotiated_format() {
+        let mix_format = AudioFormat::new(48_000, 2).expect("mix format");
+        let actual_format = AudioFormat::new(96_000, 1).expect("actual format");
+        let provider: Arc<dyn AudioInputProvider> = Arc::new(NegotiatingFormatProvider {
+            requested: mix_format,
+            actual: actual_format,
+        });
+
+        let mut input = open_input_with_conversion(&provider, "negotiated", mix_format)
+            .expect("the provider should open the requested format");
+        assert_eq!(input.format(), mix_format);
+        let block = input
+            .read_block(Timestamp::ZERO, 480)
+            .expect("the negotiated format should be converted");
+        assert_eq!(block.frames(), 480);
+        assert!(block
+            .samples()
+            .chunks_exact(2)
+            .all(|frame| (frame[0] - frame[1]).abs() < f32::EPSILON));
     }
 }

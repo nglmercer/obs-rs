@@ -278,7 +278,7 @@ fn asynchronous_monitor_output_reopens_after_a_temporary_device_loss() {
             // fail that complete negotiation once so the test still exercises
             // the worker's reconnect path instead of succeeding on a fallback
             // candidate during the first attempt.
-            failures_before_open: 4,
+            failures_before_open: 10,
         }),
         "recovering-output",
         format(),

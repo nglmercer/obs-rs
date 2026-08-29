@@ -11,7 +11,7 @@ use std::{
 
 use super::{
     AudioBuffer, AudioDeviceError, AudioFormat, AudioOutput, AudioOutputProvider, AudioOutputState,
-    AudioResampler,
+    AudioResampler, COMMON_AUDIO_DEVICE_FORMATS,
 };
 
 const STATE_STARTING: u8 = 0;
@@ -21,8 +21,6 @@ const STATE_STOPPED: u8 = 3;
 const MAX_ERROR_MESSAGE_CHARS: usize = 512;
 const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
-
-const COMMON_OUTPUT_FORMATS: [(u32, u16); 4] = [(48_000, 2), (44_100, 2), (48_000, 1), (44_100, 1)];
 
 /// Lifecycle state published by an asynchronous monitoring-output worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -354,7 +352,7 @@ fn open_output_with_conversion(
     mix_format: AudioFormat,
 ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
     let mut candidates = vec![mix_format];
-    for (sample_rate, channels) in COMMON_OUTPUT_FORMATS {
+    for (sample_rate, channels) in COMMON_AUDIO_DEVICE_FORMATS {
         let candidate = AudioFormat::new(sample_rate, channels)?;
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
