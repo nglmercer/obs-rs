@@ -61,7 +61,9 @@ use obs_rs_plugin_api::Plugin;
 #[cfg(all(target_os = "windows", feature = "production-gstreamer"))]
 use obs_rs_plugin_api::{Source, SourceFactory, VideoRequest};
 #[cfg(target_os = "windows")]
-use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
+use obs_rs_project::{
+    Profile, Project, ProjectFileStore, ProjectSession, SceneItemSpec, SceneSpec, SourceSpec,
+};
 
 #[cfg(target_os = "windows")]
 struct CheckResult {
@@ -927,9 +929,27 @@ fn check_target_persistence() -> CheckResult {
     {
         return CheckResult::fail(error.to_string());
     }
-    let decoded = match Project::parse(&project.serialize()) {
-        Ok(project) => project,
-        Err(error) => return CheckResult::fail(format!("parse persisted targets: {error}")),
+    let final_path = target_persistence_path();
+    let temp_path = final_path.with_extension("obsr.tmp");
+    let store = match ProjectFileStore::new(&final_path, &temp_path) {
+        Ok(store) => store,
+        Err(error) => return CheckResult::fail(format!("create target project store: {error}")),
+    };
+    let persisted = (|| {
+        let mut session = ProjectSession::new(project);
+        let bytes = store
+            .save(&mut session)
+            .map_err(|error| format!("save target project: {error}"))?;
+        let decoded = store
+            .load()
+            .map_err(|error| format!("load target project: {error}"))?;
+        Ok::<_, String>((decoded, bytes))
+    })();
+    let _ = std::fs::remove_file(&final_path);
+    let _ = std::fs::remove_file(&temp_path);
+    let (decoded, bytes) = match persisted {
+        Ok(persisted) => persisted,
+        Err(error) => return CheckResult::fail(error),
     };
     let Some(profile) = decoded.profile("windows-check") else {
         return CheckResult::fail("persisted target project lost its profile");
@@ -950,7 +970,11 @@ fn check_target_persistence() -> CheckResult {
             ));
         }
     }
-    CheckResult::pass(format!("persisted_targets={}", expected.len()))
+    CheckResult::pass(format!(
+        "persisted_targets={} bytes={} file_round_trip=true",
+        expected.len(),
+        bytes
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -1197,6 +1221,17 @@ fn reference_recording_path() -> std::path::PathBuf {
         .map_or(0, |duration| duration.as_nanos());
     std::env::temp_dir().join(format!(
         "obs-rs-windows-check-{}-{token}.obsr",
+        std::process::id()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn target_persistence_path() -> std::path::PathBuf {
+    let token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    std::env::temp_dir().join(format!(
+        "obs-rs-windows-check-{}-{token}-targets.obsr",
         std::process::id()
     ))
 }

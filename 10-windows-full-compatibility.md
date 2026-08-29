@@ -41,7 +41,7 @@ Windows features passed.
 | Preview | ✅ | — | ◐ | ☐ | GUI smoke tests exercise wiring and the renderer has portable tests. Verify real WGC frames reach the visible preview. |
 | Recording | ✅ | — | ◐ | ☐ | Reference `OBSRPKT1` recording works; normal Windows builds remain reference-only unless the optional native GStreamer runtime is supplied. Verify a playable production file. |
 | Streaming | ✅ | — | ◐ | ☐ | Reference packet transports exist; production HLS is now probed locally when `hlssink2` is available, while RTMP/SRT/etc. require the optional native GStreamer feature/runtime and a real endpoint. Verify a real playlist and endpoint. |
-| Source persistence | ✅ | — | ✅ | ◐ | Project round-trip tests preserve source settings and target IDs. Reload a Windows project and capture the same selected display/window. |
+| Source persistence | ✅ | — | ✅ | ◐ | Project round-trip tests preserve source settings and target IDs. The Windows probe now saves and loads a real project file before checking the selected display/window. Reload it and capture the same targets on hardware. |
 | Monitor/window hotplug | ✅ | ◐ | ◐ | ☐ | Discovery can be refreshed and capture loss triggers bounded reopen attempts; no hardware hotplug acceptance is recorded. |
 | Audio device hotplug | ✅ | ✅ | ◐ | ☐ | WASAPI discovery snapshots, default-route refresh, and bounded engine reconnect logic exist; the Windows probe now checks stable IDs/default metadata. Change default devices and unplug the active route while recording. |
 | Diagnostics | ✅ | — | ◐ | ☐ | Windows version, GPU backend/adapter, and helper version are included in the diagnostics path. Export and inspect a packaged diagnostic bundle. |
