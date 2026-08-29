@@ -143,6 +143,7 @@ jobs:
         env:
           OBS_RS_HARDWARE_SOAK_SECONDS: ${{ inputs.duration_seconds }}
           OBS_RS_REQUIRE_PRODUCTION_STREAMING: ${{ vars.OBS_RS_REQUIRE_PRODUCTION_STREAMING || '0' }}
+          OBS_RS_REQUIRE_PRODUCTION_HLS: ${{ vars.OBS_RS_REQUIRE_PRODUCTION_HLS || '0' }}
         run: |
           $packageInfo = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "production-package.txt")
           $packageRoot = ($packageInfo | Where-Object { $_ -like "PACKAGE_ROOT=*" } | Select-Object -First 1).Substring(13)
@@ -155,6 +156,9 @@ jobs:
           )
           if ([bool]::Parse("${{ inputs.require_camera }}")) {
             $arguments += "-RequireCamera"
+          }
+          if ($env:OBS_RS_REQUIRE_PRODUCTION_HLS -in @("1", "true", "yes", "on")) {
+            $arguments += "-RequireProductionHls"
           }
           if ([string]::IsNullOrWhiteSpace($env:OBS_RS_PRODUCTION_STREAM_URL) -and
               $env:OBS_RS_REQUIRE_PRODUCTION_STREAMING -in @("1", "true", "yes", "on")) {

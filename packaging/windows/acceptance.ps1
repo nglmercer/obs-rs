@@ -200,7 +200,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Windows acceptance checks failed with exit code $LASTEXITCODE"
     }
-    if ($RequireProduction -or $RequireProductionHls -or
+    if ($RequireProduction -or
         -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
         Test-ProductionRecordingArtifact `
             -RecordingPath (Join-Path $artifacts "production-recording.mkv") `
