@@ -271,11 +271,11 @@ impl Playback {
             eos: false,
             pending_frame: None,
         };
-        playback.wait_for_first_frame()?;
+        playback.wait_for_first_frame(format)?;
         Ok(playback)
     }
 
-    fn wait_for_first_frame(&mut self) -> Result<(), SourceError> {
+    fn wait_for_first_frame(&mut self, format: VideoFormat) -> Result<(), SourceError> {
         let deadline = Instant::now() + MEDIA_STARTUP_TIMEOUT;
         loop {
             self.poll_bus()?;
@@ -286,7 +286,11 @@ impl Playback {
                 let mapped = buffer
                     .map_readable()
                     .map_err(|error| native_error("map first decoded media frame", error))?;
-                self.pending_frame = Some(mapped.as_slice().to_vec());
+                self.pending_frame = Some(
+                    tighten_rgba_pixels(format, mapped.as_slice()).map_err(|error| {
+                        native_error("normalize first decoded media frame", error)
+                    })?,
+                );
                 return Ok(());
             }
             if self.eos {
@@ -333,7 +337,10 @@ impl Playback {
             let mapped = buffer
                 .map_readable()
                 .map_err(|error| native_error("map decoded media frame", error))?;
-            pixels = Some(mapped.as_slice().to_vec());
+            pixels = Some(
+                tighten_rgba_pixels(format, mapped.as_slice())
+                    .map_err(|error| native_error("normalize decoded media frame", error))?,
+            );
         }
         self.poll_bus()?;
         let Some(pixels) = pixels else {
@@ -362,6 +369,46 @@ impl Playback {
         }
         Ok(())
     }
+}
+
+/// Converts a decoded RGBA buffer into the tightly packed layout required by
+/// [`VideoFrame`]. GStreamer may align each row beyond `width * 4` bytes, so
+/// the mapped buffer is not always safe to pass through unchanged.
+#[cfg(any(feature = "production-gstreamer", test))]
+fn tighten_rgba_pixels(format: VideoFormat, pixels: &[u8]) -> Result<Vec<u8>, String> {
+    let expected = format.rgba_bytes();
+    if pixels.len() == expected {
+        return Ok(pixels.to_vec());
+    }
+
+    let height = usize::try_from(format.height())
+        .map_err(|error| format!("RGBA height conversion failed: {error}"))?;
+    let width = usize::try_from(format.width())
+        .map_err(|error| format!("RGBA width conversion failed: {error}"))?;
+    let row_bytes = width
+        .checked_mul(4)
+        .ok_or_else(|| "RGBA row size overflowed".to_owned())?;
+    if pixels.len() < expected || pixels.len() % height != 0 {
+        return Err(format!(
+            "decoded RGBA buffer has {} bytes; expected {} bytes or a padded row layout",
+            pixels.len(),
+            expected
+        ));
+    }
+
+    let stride = pixels.len() / height;
+    if stride < row_bytes {
+        return Err(format!(
+            "decoded RGBA row stride is {stride} bytes; expected at least {row_bytes}"
+        ));
+    }
+
+    let mut tight = Vec::with_capacity(expected);
+    for row in pixels.chunks_exact(stride) {
+        tight.extend_from_slice(&row[..row_bytes]);
+    }
+    debug_assert_eq!(tight.len(), expected);
+    Ok(tight)
 }
 
 #[cfg(feature = "production-gstreamer")]
@@ -397,6 +444,7 @@ fn native_error(context: &str, error: impl std::fmt::Display) -> SourceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use obs_rs_media::FrameRate;
 
     #[test]
     fn empty_media_path_is_an_idle_source_setting() {
@@ -433,5 +481,29 @@ mod tests {
             parse_media_settings(&missing),
             Err(SourceError::InvalidSetting { key, .. }) if key == "path"
         ));
+    }
+
+    #[test]
+    fn decoded_rgba_rows_are_tightened_without_copying_padding() {
+        let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("valid rate"))
+            .expect("valid format");
+        let padded = [
+            1, 2, 3, 4, 5, 6, 7, 8, 0xaa, 0xbb, 0xcc, 0xdd, // row 1
+            9, 10, 11, 12, 13, 14, 15, 16, 0xee, 0xff, 0x11, 0x22, // row 2
+        ];
+
+        assert_eq!(
+            tighten_rgba_pixels(format, &padded).expect("padding is valid"),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
+    }
+
+    #[test]
+    fn decoded_rgba_layout_rejects_truncated_or_ambiguous_buffers() {
+        let format = VideoFormat::new(2, 2, FrameRate::new(30, 1).expect("valid rate"))
+            .expect("valid format");
+
+        assert!(tighten_rgba_pixels(format, &[0; 15]).is_err());
+        assert!(tighten_rgba_pixels(format, &[0; 17]).is_err());
     }
 }
