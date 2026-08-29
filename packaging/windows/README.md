@@ -13,6 +13,15 @@ the MSVC target installed:
 .\packaging\windows\package.ps1
 ```
 
+For faster local helper iteration, use the matching development profile:
+
+```powershell
+cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast
+```
+
+The GUI searches the helper's `target\dev-fast` directory before the ordinary
+debug and release directories, so a local fast build is picked up automatically.
+
 The script creates `packaging/windows/dist/obs-rs-windows-<version>-x86_64.zip`
 and a matching `.sha256` file. The archive includes `VERSION.txt`,
 `SHA256SUMS.txt`, `THIRD-PARTY-NOTICES.md`, `WINDOWS-README.md`, the two app
