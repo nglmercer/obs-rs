@@ -188,6 +188,16 @@ pub trait AudioOutput: Send {
     /// Returns the current lifecycle state.
     fn state(&self) -> AudioOutputState;
 
+    /// Returns the latest backend diagnostic when the output has failed.
+    ///
+    /// Native callbacks can observe a device removal while no audio block is
+    /// being submitted. The asynchronous output worker uses this optional
+    /// reason when it notices the failed state during its idle poll. Portable
+    /// outputs may keep the default when they have no richer diagnostic.
+    fn failure_reason(&self) -> Option<String> {
+        None
+    }
+
     /// Writes one complete block without changing its media timestamp.
     ///
     /// # Errors

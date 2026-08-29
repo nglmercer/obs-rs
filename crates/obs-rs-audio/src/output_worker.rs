@@ -306,6 +306,20 @@ fn run_output_worker(
                         drain_queue(&receiver, &queued_blocks);
                         return;
                     }
+                    if output.state() == AudioOutputState::Failed {
+                        let error = output.failure_reason().map_or_else(
+                            || {
+                                AudioDeviceError::Unavailable(
+                                    "audio output entered a failed state".to_owned(),
+                                )
+                            },
+                            AudioDeviceError::Unavailable,
+                        );
+                        fail_worker(&state, &last_error, error);
+                        drain_queue(&receiver, &queued_blocks);
+                        output.stop();
+                        break;
+                    }
                     continue;
                 }
             };
@@ -397,6 +411,10 @@ impl AudioOutput for ConvertedAudioOutput {
 
     fn state(&self) -> AudioOutputState {
         self.output.state()
+    }
+
+    fn failure_reason(&self) -> Option<String> {
+        self.output.failure_reason()
     }
 
     fn write_block(&mut self, buffer: &AudioBuffer) -> Result<(), AudioDeviceError> {

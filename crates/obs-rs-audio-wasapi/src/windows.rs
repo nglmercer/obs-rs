@@ -374,6 +374,10 @@ impl AudioOutput for WasapiOutput {
         }
     }
 
+    fn failure_reason(&self) -> Option<String> {
+        self.last_error.lock().ok().and_then(|error| error.clone())
+    }
+
     fn write_block(&mut self, buffer: &AudioBuffer) -> Result<(), AudioDeviceError> {
         if buffer.format() != self.format {
             return Err(AudioDeviceError::Audio(

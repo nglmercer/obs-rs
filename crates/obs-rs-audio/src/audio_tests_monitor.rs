@@ -116,6 +116,40 @@ struct GateOutputProvider {
     writes: Arc<AtomicUsize>,
 }
 
+struct FailingWhenIdleOutput {
+    format: AudioFormat,
+    started: Instant,
+    fail_after: Duration,
+}
+
+impl AudioOutput for FailingWhenIdleOutput {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
+
+    fn state(&self) -> AudioOutputState {
+        if self.started.elapsed() >= self.fail_after {
+            AudioOutputState::Failed
+        } else {
+            AudioOutputState::Running
+        }
+    }
+
+    fn failure_reason(&self) -> Option<String> {
+        Some("test output was removed while idle".to_owned())
+    }
+
+    fn write_block(&mut self, _buffer: &AudioBuffer) -> Result<(), AudioDeviceError> {
+        Ok(())
+    }
+
+    fn stop(&mut self) {}
+}
+
+struct FailingWhenIdleProvider {
+    attempts: Arc<AtomicUsize>,
+}
+
 impl AudioOutputProvider for GateOutputProvider {
     fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
         Ok(Vec::new())
@@ -132,6 +166,32 @@ impl AudioOutputProvider for GateOutputProvider {
             release: Arc::clone(&self.release),
             writes: Arc::clone(&self.writes),
         }))
+    }
+}
+
+impl AudioOutputProvider for FailingWhenIdleProvider {
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+        Ok(Vec::new())
+    }
+
+    fn open_output(
+        &self,
+        _device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+        let attempt = self.attempts.fetch_add(1, Ordering::AcqRel);
+        if attempt == 0 {
+            Ok(Box::new(FailingWhenIdleOutput {
+                format,
+                started: Instant::now(),
+                fail_after: Duration::from_millis(30),
+            }))
+        } else {
+            Ok(Box::new(CountingOutput {
+                format,
+                writes: Arc::new(AtomicUsize::new(0)),
+            }))
+        }
     }
 }
 
@@ -307,6 +367,37 @@ fn asynchronous_monitor_output_reopens_after_a_temporary_device_loss() {
     assert!(wait_until(Duration::from_secs(1), || {
         matches!(handle.snapshot().state, AudioOutputWorkerState::Stopped)
     }));
+}
+
+#[test]
+fn asynchronous_monitor_output_reconnects_after_an_idle_device_failure() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let worker = AudioOutputWorker::spawn(
+        Arc::new(FailingWhenIdleProvider {
+            attempts: Arc::clone(&attempts),
+        }),
+        "idle-failure-output",
+        format(),
+        1,
+    )
+    .expect("output worker");
+    let handle = worker.handle();
+
+    assert!(wait_until(Duration::from_secs(1), || {
+        matches!(handle.snapshot().state, AudioOutputWorkerState::Failed)
+            && handle.snapshot().last_error.as_deref()
+                == Some("audio device unavailable: test output was removed while idle")
+    }));
+    assert_eq!(attempts.load(Ordering::Acquire), 1);
+
+    assert!(wait_until(Duration::from_secs(2), || {
+        attempts.load(Ordering::Acquire) >= 2
+            && matches!(
+                handle.snapshot().state,
+                AudioOutputWorkerState::Starting | AudioOutputWorkerState::Running
+            )
+    }));
+    drop(worker);
 }
 
 #[test]
