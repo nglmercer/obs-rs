@@ -961,53 +961,92 @@ fn check_camera() -> CheckResult {
     };
     let id = camera.id().to_string();
     let name = camera.name().to_owned();
-    let native_mode = camera.modes().first().copied();
-    let opener_id = id.clone();
-    let opener_name = name.clone();
+    // The picker catalog intentionally skips native mode probing because
+    // Media Foundation drivers can make that query expensive. Acceptance
+    // must perform the explicit selected-device query so a successful camera
+    // result proves more than an automatic fallback.
+    let modes = match obs_rs_capture::discover_nokhwa_camera_modes(&id) {
+        Ok(modes) => modes,
+        Err(error) if is_hardware_unavailable(&error) => {
+            return capture_check_result_with_context(&error, "camera mode discovery")
+        }
+        Err(error) => return CheckResult::fail(format!("camera mode discovery failed: {error}")),
+    };
+    let native_mode = modes.first().copied();
     let format = probe_video_format();
+    let mut last_frame = None;
+    let mut total_frames = 0_u64;
+    let mut total_elapsed = Duration::ZERO;
+    for cycle in 0..2 {
+        match capture_camera_cycle(&id, &name, format, native_mode) {
+            Ok((frame, frames, elapsed)) => {
+                last_frame = Some(frame);
+                total_frames = total_frames.saturating_add(u64::try_from(frames).unwrap_or(0));
+                total_elapsed = total_elapsed.saturating_add(elapsed);
+            }
+            Err(error) if is_hardware_unavailable(&error) => {
+                return capture_check_result_with_context(
+                    &error,
+                    &format!("camera capture cycle {cycle}"),
+                )
+            }
+            Err(error) => {
+                return CheckResult::fail(format!("camera capture cycle {cycle} failed: {error}"))
+            }
+        }
+    }
+    let mode = native_mode.map_or_else(
+        || "auto".to_owned(),
+        |mode| {
+            format!(
+                "{}x{}@{}/{} {}",
+                mode.width(),
+                mode.height(),
+                mode.frame_rate().numerator(),
+                mode.frame_rate().denominator(),
+                mode.pixel_format()
+            )
+        },
+    );
+    let Some(frame) = last_frame else {
+        return CheckResult::fail("camera cycles completed without a frame");
+    };
+    CheckResult::pass(format!(
+        "device={} modes={} selected_mode={} size={}x{} cycles=2 frames={} elapsed_ms={}",
+        id,
+        modes.len(),
+        mode,
+        frame.format().width(),
+        frame.format().height(),
+        total_frames,
+        total_elapsed.as_millis()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn capture_camera_cycle(
+    id: &str,
+    name: &str,
+    format: VideoFormat,
+    native_mode: Option<obs_rs_capture::CameraMode>,
+) -> Result<(VideoFrame, usize, Duration), CaptureError> {
+    let opener_id = id.to_owned();
+    let opener_name = name.to_owned();
     let request = native_mode.map_or_else(
         || CaptureRequest::output(format),
         |mode| CaptureRequest::camera(format, mode),
     );
-    let mut capture = ThreadedCaptureDevice::open(request, &name, move || {
+    let mut capture = ThreadedCaptureDevice::open(request, name, move || {
         NokhwaCaptureDevice::from_device_id(&opener_id, &opener_name)
             .map(|device| Box::new(device) as Box<dyn VideoCaptureDevice>)
     });
     let frames = wait_for_capture_frames(&mut capture, format, 4, Duration::from_secs(8));
-    let stopped = capture.shutdown();
-    if !stopped {
-        return CheckResult::fail(
-            "Nokhwa camera worker did not stop within its bounded grace period",
-        );
+    if !capture.shutdown() {
+        return Err(CaptureError::Protocol {
+            message: "Nokhwa camera worker did not stop within its bounded grace period".to_owned(),
+        });
     }
-    match frames {
-        Ok((frame, frames, elapsed)) => {
-            let mode = native_mode.map_or_else(
-                || "auto".to_owned(),
-                |mode| {
-                    format!(
-                        "{}x{}@{}/{} {}",
-                        mode.width(),
-                        mode.height(),
-                        mode.frame_rate().numerator(),
-                        mode.frame_rate().denominator(),
-                        mode.pixel_format()
-                    )
-                },
-            );
-            CheckResult::pass(format!(
-                "device={} modes={} selected_mode={} size={}x{} frames={} elapsed_ms={}",
-                id,
-                camera.modes().len(),
-                mode,
-                frame.format().width(),
-                frame.format().height(),
-                frames,
-                elapsed.as_millis()
-            ))
-        }
-        Err(error) => capture_check_result(&error),
-    }
+    frames
 }
 
 #[cfg(target_os = "windows")]

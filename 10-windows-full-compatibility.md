@@ -28,7 +28,7 @@ Windows features passed.
 | --- | --- | --- | --- | --- | --- |
 | Display capture | ✅ | ✅ | ◐ | ☐ | `obs-rs-capture-windows` launches the WGC helper and the Windows check probes one display. Capture at 30/60 fps on 1080p, 1440p, and 4K. |
 | Window capture | ✅ | ✅ | ◐ | ☐ | The helper enumerates top-level windows and emits PID+HWND IDs that survive title changes and resize; legacy title/process IDs remain resolvable. Verify minimize, close/reopen, cloaking, and process restart. |
-| Camera capture | ✅ | ✅ | ◐ | ☐ | Nokhwa is used with the Windows Media Foundation input feature. Verify integrated, USB/UVC, capture-card, replug, and mode negotiation cases. |
+| Camera capture | ✅ | ✅ | ◐ | ☐ | Nokhwa is used with the Windows Media Foundation input feature. The Windows check now queries native modes and performs two same-ID start/stop cycles. Verify integrated, USB/UVC, capture-card, replug, and mode negotiation cases. |
 | Microphone input | ✅ | ✅ | ◐ | ☐ | WASAPI/CPAL input and format fallback are implemented. Record with a physical microphone and verify timestamp continuity. |
 | Desktop/system audio | ✅ | ✅ | ◐ | ☐ | WASAPI output endpoints are opened as loopback inputs. Verify audible desktop playback, silence handling, and default-render-device changes. |
 | Audio monitoring/output | ✅ | ✅ | ◐ | ☐ | WASAPI output sinks and the monitor worker exist. Verify monitoring while recording, format conversion, and unplug/replug recovery. |
@@ -61,6 +61,8 @@ cargo run -p obs-rs-gui -- --smoke
 cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --release
 cargo test --manifest-path packaging/windows/capture-helper/Cargo.toml
 cargo clippy --manifest-path packaging/windows/capture-helper/Cargo.toml -- -D warnings
+cargo check-fast
+cargo check-all-fast
 cargo run -p obs-rs-app --bin obs-rs-windows-check
 OBSR_RS_REQUIRE_AUDIO_DEVICE_STABILITY=1 cargo run -p obs-rs-app --bin obs-rs-windows-check
 packaging/windows/package.ps1 -Configuration release -OutputDirectory <directory>
