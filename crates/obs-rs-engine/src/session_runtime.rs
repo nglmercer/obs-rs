@@ -4,11 +4,9 @@ use obs_rs_audio::AudioInputProvider;
 use obs_rs_output::AudioEncoder;
 
 use super::{
-    audio::{open_live_audio_input, open_live_desktop_audio},
     audio_routes::{AudioRouteRequest, AudioRouteUpdate, ROUTE_REFRESH_INTERVAL_NANOS},
     AudioBuffer, AudioInputRequirement, EncodedPacket, EngineError, EngineSession, RawVideoFrame,
     SimulatedAudioProvider, Timestamp, VideoFrame, VideoInputRequirement, VideoRequest,
-    AUDIO_RECONNECT_INTERVAL_NANOS,
 };
 
 impl EngineSession {
@@ -29,9 +27,9 @@ impl EngineSession {
         while self.audio_route_worker.take_result().is_some() {}
     }
 
-    /// Polls and schedules automatic route work without performing provider
-    /// discovery or device opening on the engine/audio tick.
-    fn poll_automatic_audio_routes(&mut self, timestamp: Timestamp) {
+    /// Polls and schedules route work without performing provider discovery or
+    /// device opening on the engine/audio tick.
+    fn poll_audio_routes(&mut self, timestamp: Timestamp) {
         while let Some(result) = self.audio_route_worker.take_result() {
             self.audio_route_request_pending = false;
             if result.sequence != self.audio_route_request_sequence {
@@ -44,12 +42,13 @@ impl EngineSession {
                     self.audio_backend = route.device_name;
                     self.audio_active_device_id = Some(route.device_id);
                     self.audio_fallback = false;
-                    self.audio_reconnect_at = None;
                     self.audio_input_delay.reset();
                     self.last_error = None;
                 }
                 AudioRouteUpdate::Unavailable(reason) => {
-                    let _ = reason;
+                    if self.config.audio_input_id.is_some() {
+                        self.last_error = Some(reason);
+                    }
                 }
                 AudioRouteUpdate::Unchanged => {}
             }
@@ -61,24 +60,29 @@ impl EngineSession {
                     self.desktop_audio = Some(route.input);
                     self.desktop_audio_backend = route.device_name;
                     self.desktop_audio_active_device_id = Some(route.device_id);
-                    self.desktop_audio_reconnect_at = None;
                     self.desktop_audio_delay.reset();
                     self.last_error = None;
                 }
                 AudioRouteUpdate::Unavailable(reason) => {
-                    let _ = reason;
+                    if self.config.desktop_audio_id.is_some() {
+                        self.last_error = Some(reason);
+                    }
                 }
                 AudioRouteUpdate::Unchanged => {}
             }
         }
 
-        // Keep automatic routes under the worker even when startup discovery
-        // found no device, or when the live route has already degraded to a
-        // fallback/silent state. That is what lets a microphone, playback
-        // endpoint, or default-device change recover without making the
-        // engine/audio tick perform native discovery or opening work.
-        let watches_microphone = self.config.audio_input_id.is_none();
-        let watches_desktop = self.config.desktop_audio_id.is_none();
+        // Keep automatic routes under the worker continuously so default-device
+        // changes are observed. Explicit routes join the same worker whenever
+        // their current stream is missing or has degraded to a fallback. This
+        // keeps a selected microphone/render endpoint from performing native
+        // discovery or opening work on the engine/audio tick.
+        let watches_microphone = self.config.audio_input_id.is_none()
+            || self.audio_fallback
+            || self.audio_active_device_id.is_none();
+        let watches_desktop = self.config.desktop_audio_id.is_none()
+            || self.desktop_audio.is_none()
+            || self.desktop_audio_active_device_id.is_none();
         if (!watches_microphone && !watches_desktop)
             || timestamp < self.audio_route_refresh_at
             || self.audio_route_request_pending
@@ -101,13 +105,6 @@ impl EngineSession {
     }
 
     fn read_audio_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
-        // Explicit selections retain their bounded synchronous retry for
-        // compatibility with the selected-route error path. Automatic routes
-        // are retried by `AudioRouteWorker` so a native provider cannot block
-        // the media tick while a device is absent or being re-enumerated.
-        if self.audio_fallback && self.config.audio_input_id.is_some() {
-            self.try_reconnect_audio(timestamp);
-        }
         match self
             .audio_input
             .read_block(timestamp, self.config.audio_block_frames)
@@ -120,14 +117,9 @@ impl EngineSession {
                 self.audio_fallback = true;
                 self.audio_backend = format!("simulated fallback ({error})");
                 self.last_error = Some(error.to_string());
-                self.audio_reconnect_at = self
-                    .config
-                    .audio_input_id
-                    .is_some()
-                    .then(|| timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS))
-                    .flatten();
                 self.audio_input = SimulatedAudioProvider::new()
                     .open_input("test-audio", self.config.audio_format)?;
+                self.audio_route_refresh_at = Timestamp::ZERO;
                 // The fallback signal runs on its own clock, so the timeline's
                 // idea of the next audio deadline — computed against the real
                 // device that just failed — is stale. Dropping it forces the
@@ -142,48 +134,14 @@ impl EngineSession {
         }
     }
 
-    fn try_reconnect_audio(&mut self, timestamp: Timestamp) {
-        let Some(next_attempt) = self.audio_reconnect_at else {
-            return;
-        };
-        if timestamp < next_attempt {
-            return;
-        }
-
-        self.audio_reconnect_at = timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS);
-        let Some((audio_input, audio_backend, audio_active_device_id)) = open_live_audio_input(
-            &self.config.audio_provider,
-            self.config.audio_format,
-            self.config.audio_input_id.as_deref(),
-        ) else {
-            return;
-        };
-
-        self.audio_input.stop();
-        self.audio_input_delay.reset();
-        self.audio_input = audio_input;
-        self.audio_backend = audio_backend;
-        self.audio_fallback = false;
-        self.audio_active_device_id = Some(audio_active_device_id);
-        self.audio_reconnect_at = None;
-        self.next_audio_deadline = None;
-        self.last_error = None;
-    }
-
     /// Reads one desktop block, or silence when no monitor is open.
     ///
     /// A monitor that fails mid-session is closed rather than retried every
     /// block: the desktop channel degrades to silence and says so in the
-    /// backend label. Explicit monitor selections are retried at a bounded
-    /// media-time interval; automatic routes are reopened by the route worker,
-    /// which keeps a broken device from stalling every tick.
+    /// backend label. The route worker reopens both explicit and automatic
+    /// selections without making the media tick perform native work.
     fn read_desktop_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
         let frames = self.config.audio_block_frames;
-        // Automatic routes are reopened by `AudioRouteWorker`; only an
-        // explicitly selected monitor uses the synchronous compatibility retry.
-        if self.config.desktop_audio_id.is_some() {
-            self.try_reconnect_desktop_audio(timestamp);
-        }
         if let Some(desktop) = self.desktop_audio.as_mut() {
             match desktop.read_block(timestamp, frames) {
                 Ok(buffer) => return Ok(buffer),
@@ -193,12 +151,7 @@ impl EngineSession {
                     self.desktop_audio_delay.reset();
                     self.desktop_audio_active_device_id = None;
                     self.desktop_audio_backend = format!("unavailable ({error})");
-                    self.desktop_audio_reconnect_at = self
-                        .config
-                        .desktop_audio_id
-                        .is_some()
-                        .then(|| timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS))
-                        .flatten();
+                    self.audio_route_refresh_at = Timestamp::ZERO;
                     self.last_error = Some(error.to_string());
                 }
             }
@@ -207,38 +160,11 @@ impl EngineSession {
         Ok(buffer)
     }
 
-    fn try_reconnect_desktop_audio(&mut self, timestamp: Timestamp) {
-        let Some(next_attempt) = self.desktop_audio_reconnect_at else {
-            return;
-        };
-        if timestamp < next_attempt {
-            return;
-        }
-
-        self.desktop_audio_reconnect_at = timestamp.checked_add(AUDIO_RECONNECT_INTERVAL_NANOS);
-        let Some((desktop_audio, desktop_audio_backend, desktop_audio_active_device_id)) =
-            open_live_desktop_audio(
-                &self.config.audio_provider,
-                self.config.audio_format,
-                self.config.desktop_audio_id.as_deref(),
-            )
-        else {
-            return;
-        };
-
-        self.desktop_audio = Some(desktop_audio);
-        self.desktop_audio_delay.reset();
-        self.desktop_audio_backend = desktop_audio_backend;
-        self.desktop_audio_active_device_id = Some(desktop_audio_active_device_id);
-        self.desktop_audio_reconnect_at = None;
-        self.last_error = None;
-    }
-
     pub(super) fn drain_audio_until(
         &mut self,
         timestamp: Timestamp,
     ) -> Result<Vec<AudioBuffer>, EngineError> {
-        self.poll_automatic_audio_routes(timestamp);
+        self.poll_audio_routes(timestamp);
         let mut audio_blocks = Vec::new();
         while self
             .next_audio_deadline

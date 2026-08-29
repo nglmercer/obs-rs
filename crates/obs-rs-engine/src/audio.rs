@@ -4,13 +4,10 @@ use obs_rs_audio::{
     AudioBuffer, AudioDeviceKind, AudioFormat, AudioInput, AudioInputProvider,
     SimulatedAudioProvider,
 };
-use obs_rs_media::Timestamp;
 
 use super::audio_routes::{
     open_input_with_conversion, open_loopback_with_conversion, select_audio_device,
 };
-use super::AUDIO_RECONNECT_INTERVAL_NANOS;
-
 pub(super) fn open_audio_input(
     provider: &Arc<dyn AudioInputProvider>,
     format: AudioFormat,
@@ -25,10 +22,6 @@ pub(super) fn open_audio_input(
         .open_input("test-audio", format)
         .unwrap_or_else(|error| unreachable!("fallback audio format is valid: {error}"));
     (fallback, "simulated fallback".to_owned(), true, None)
-}
-
-pub(super) fn audio_reconnect_deadline(enabled: bool) -> Option<Timestamp> {
-    enabled.then_some(Timestamp::from_nanos(AUDIO_RECONNECT_INTERVAL_NANOS))
 }
 
 pub(super) fn open_live_audio_input(
@@ -76,18 +69,6 @@ pub(super) fn open_desktop_audio(
             None,
         ),
     }
-}
-
-pub(super) fn open_live_desktop_audio(
-    provider: &Arc<dyn AudioInputProvider>,
-    format: AudioFormat,
-    requested_id: Option<&str>,
-) -> Option<(Box<dyn AudioInput>, String, String)> {
-    let devices = provider.discover().ok()?;
-    let (device_id, device_name) =
-        select_audio_device(&devices, AudioDeviceKind::Output, requested_id)?;
-    let input = open_loopback_with_conversion(provider, &device_id, format).ok()?;
-    Some((input, device_name, device_id))
 }
 
 #[allow(

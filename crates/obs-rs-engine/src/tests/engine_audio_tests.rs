@@ -835,9 +835,21 @@ fn selected_audio_input_reconnects_after_a_bounded_media_interval() {
     assert!(engine.snapshot().audio_fallback);
     assert_eq!(opens.load(Ordering::SeqCst), 1);
 
-    engine
-        .drain_audio_until(Timestamp::from_millis(1_100))
-        .expect("reconnected audio blocks");
+    let mut recovered = false;
+    for attempt in 0..100_u64 {
+        engine
+            .drain_audio_until(Timestamp::from_millis(1_100 + attempt * 10))
+            .expect("reconnected audio blocks");
+        if !engine.snapshot().audio_fallback {
+            recovered = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(
+        recovered,
+        "selected input did not reconnect off the audio tick"
+    );
     let snapshot = engine.snapshot();
     assert!(!snapshot.audio_fallback);
     assert_eq!(snapshot.audio_backend, "Reconnecting input");
@@ -904,9 +916,21 @@ fn selected_desktop_monitor_reconnects_after_a_bounded_media_interval() {
     );
     assert_eq!(opens.load(Ordering::SeqCst), 1);
 
-    engine
-        .drain_audio_until(Timestamp::from_millis(1_100))
-        .expect("reconnected desktop blocks");
+    let mut recovered = false;
+    for attempt in 0..100_u64 {
+        engine
+            .drain_audio_until(Timestamp::from_millis(1_100 + attempt * 10))
+            .expect("reconnected desktop blocks");
+        if engine.snapshot().desktop_audio.is_capturing() {
+            recovered = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(
+        recovered,
+        "selected desktop monitor did not reconnect off the audio tick"
+    );
     let snapshot = engine.snapshot();
     assert_eq!(
         snapshot.desktop_audio,

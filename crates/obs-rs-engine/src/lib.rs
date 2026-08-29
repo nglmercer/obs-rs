@@ -20,7 +20,7 @@ mod session_runtime;
 mod types;
 mod worker;
 
-use audio::{audio_peak_milli, audio_reconnect_deadline, open_audio_input, open_desktop_audio};
+use audio::{audio_peak_milli, open_audio_input, open_desktop_audio};
 pub use config::EngineConfig;
 pub use filters::{
     compile_audio_filter, compile_audio_filter_report, compile_filter, compile_filter_report,
@@ -107,7 +107,6 @@ const DEFAULT_TIMELINE_TOLERANCE_NANOS: u64 = 5_000_000;
 const DEFAULT_OUTPUT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_RECONNECT_ATTEMPTS: u32 = 3;
 const DEFAULT_MONITOR_OUTPUT_QUEUE_BLOCKS: usize = 8;
-const AUDIO_RECONNECT_INTERVAL_NANOS: u64 = 1_000_000_000;
 /// Maximum number of persisted-filter diagnostics retained in one snapshot.
 pub const MAX_FILTER_DIAGNOSTICS: usize = 64;
 
@@ -136,8 +135,6 @@ pub struct EngineSession {
     audio_fallback: bool,
     /// Runtime identity of the device currently feeding the microphone.
     audio_active_device_id: Option<String>,
-    /// Next media timestamp at which a selected input may be reopened.
-    audio_reconnect_at: Option<Timestamp>,
     /// Bounded delay line for the microphone channel.
     audio_input_delay: AudioDelayLine,
     /// Absent when no playback monitor could be opened, which keeps the desktop
@@ -146,11 +143,9 @@ pub struct EngineSession {
     desktop_audio_backend: String,
     /// Runtime identity of the playback route currently feeding desktop audio.
     desktop_audio_active_device_id: Option<String>,
-    /// Next media timestamp at which a selected monitor may be reopened.
-    desktop_audio_reconnect_at: Option<Timestamp>,
     /// Bounded delay line for the desktop channel.
     desktop_audio_delay: AudioDelayLine,
-    /// Discovers and opens automatic route replacements off the audio tick.
+    /// Discovers and opens audio-route replacements off the audio tick.
     audio_route_worker: AudioRouteWorker,
     /// Next media timestamp at which a non-blocking route refresh may be queued.
     audio_route_refresh_at: Timestamp,
@@ -262,12 +257,8 @@ impl EngineSession {
         )?;
         let (audio_input, audio_backend, audio_fallback, audio_active_device_id) =
             open_audio_input(&audio_provider, audio_format, audio_input_id.as_deref());
-        let audio_reconnect_at =
-            audio_reconnect_deadline(audio_fallback && audio_input_id.is_some());
         let (desktop_audio, desktop_audio_backend, desktop_audio_active_device_id) =
             open_desktop_audio(&audio_provider, audio_format, desktop_audio_id.as_deref());
-        let desktop_audio_reconnect_at =
-            audio_reconnect_deadline(desktop_audio.is_none() && desktop_audio_id.is_some());
         let audio_route_worker = AudioRouteWorker::spawn(Arc::clone(&audio_provider))
             .map_err(|error| EngineError::InvalidConfiguration(error.to_string()))?;
         let (monitor_output_worker, monitor_output_handle) =
@@ -321,12 +312,10 @@ impl EngineSession {
             audio_backend,
             audio_fallback,
             audio_active_device_id,
-            audio_reconnect_at,
             audio_input_delay,
             desktop_audio,
             desktop_audio_backend,
             desktop_audio_active_device_id,
-            desktop_audio_reconnect_at,
             desktop_audio_delay,
             audio_route_worker,
             audio_route_refresh_at: Timestamp::ZERO,

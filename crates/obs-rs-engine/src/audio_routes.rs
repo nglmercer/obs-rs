@@ -21,7 +21,7 @@ const ROUTE_QUEUE_CAPACITY: usize = 1;
 const MAX_ROUTE_ERROR_CHARS: usize = 512;
 const ROUTE_SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 
-/// One automatic-route refresh request. The sequence lets the engine discard a
+/// One audio-route refresh request. The sequence lets the engine discard a
 /// result that was already in flight when the user changed an explicit device
 /// selection.
 pub(crate) struct AudioRouteRequest {
@@ -57,7 +57,7 @@ pub(crate) struct AudioRoute {
     pub(crate) device_name: String,
 }
 
-/// A bounded worker that discovers and opens automatic audio routes.
+/// A bounded worker that discovers and opens audio routes.
 pub(crate) struct AudioRouteWorker {
     sender: SyncSender<AudioRouteRequest>,
     result: Arc<Mutex<Option<AudioRouteResult>>>,
