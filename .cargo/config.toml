@@ -1,0 +1,12 @@
+[alias]
+# Fast local iteration. Keep the broad commands explicit so a developer does
+# not accidentally compile the production GStreamer feature while iterating.
+dev = "build --workspace --profile dev-fast"
+check-fast = "check --workspace --all-targets --profile dev-fast"
+test-fast = "test --workspace --all-targets --profile dev-fast"
+clippy-fast = "clippy --workspace --all-targets --profile dev-fast -- -D warnings"
+
+# The GUI is the slowest and most frequently changed package in this repo.
+gui = "build -p obs-rs-gui --profile dev-fast"
+gui-check = "check -p obs-rs-gui --all-targets --profile dev-fast"
+gui-test = "test -p obs-rs-gui --bin obs-rs-gui --profile dev-fast"

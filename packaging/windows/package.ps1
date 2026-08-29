@@ -201,7 +201,7 @@ $noticeLines += @($metadata.packages |
     Sort-Object name, version |
     ForEach-Object {
         $license = if ([string]::IsNullOrWhiteSpace($_.license)) { "license metadata unavailable" } else { $_.license }
-        "- $($_.name) $($_.version) — $license — $($_.source)"
+        "- $($_.name) $($_.version) - $license - $($_.source)"
     })
 $noticeLines | Set-Content -LiteralPath (Join-Path $stagingDirectory "THIRD-PARTY-NOTICES.md") -Encoding utf8
 

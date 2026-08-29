@@ -123,6 +123,32 @@ cargo run -p obs-rs-app --bin obs-rs-benchmark --release
 scripts/release-artifacts.sh [dist]
 ```
 
+### Fast local development
+
+The default `dev` and `test` profiles keep assertions and overflow checks,
+emit compact line-table debug information for workspace crates, and omit debug
+information from dependencies. This keeps incremental artifacts much smaller
+while preserving useful backtraces for code in this repository.
+
+For an opt-in moderately optimized local build, use these Cargo aliases:
+
+```text
+cargo dev          # build the workspace with the incremental dev-fast profile
+cargo gui          # build only the GUI with dev-fast
+cargo check-fast   # check all workspace targets with dev-fast
+cargo test-fast    # test all workspace targets with dev-fast
+cargo clippy-fast  # clippy all workspace targets with -D warnings
+cargo gui-check    # check only GUI targets with dev-fast
+cargo gui-test     # run the GUI test binary with dev-fast
+```
+
+Use the ordinary commands for canonical CI/release-style verification.
+`cargo clean` removes all profiles and their incremental state for this
+checkout when a toolchain or profile change makes the cache stale. The local
+toolchain does not force a linker cache or alternate linker; if `sccache` or a
+known-good Windows LLD installation is added later, it should be configured
+locally rather than required by the repository.
+
 The demo registers the built-in plugin, probes and registers the reference sandbox
 source executable when it is available, creates a scene, adds two sources, applies a
 scene-item transform/filter, renders through the bounded video pipeline and render

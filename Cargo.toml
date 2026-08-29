@@ -35,6 +35,42 @@ edition = "2021"
 version = "0.1.0"
 publish = false
 
+# Keep the default development profile quick to compile and small on disk. The
+# workspace uses explicit source-level diagnostics for its own crates; full
+# debug information in every third-party dependency is rarely useful during
+# ordinary GUI iteration and is the main contributor to repeated target growth.
+[profile.dev]
+debug = 1
+incremental = true
+codegen-units = 256
+
+[profile.dev.package."*"]
+debug = 0
+
+# Test binaries keep assertions and overflow checks, but do not need complete
+# dependency debug information either. This also keeps repeated `cargo test`
+# runs from rebuilding or linking unnecessarily large artifacts.
+[profile.test]
+debug = 1
+incremental = true
+codegen-units = 256
+
+[profile.test.package."*"]
+debug = 0
+
+# Opt-in profile for local preview/GUI work. `opt-level = 1` makes the app and
+# workspace crates responsive enough to exercise capture/output behavior while
+# retaining incremental compilation and high codegen parallelism.
+[profile.dev-fast]
+inherits = "dev"
+opt-level = 1
+debug = 1
+incremental = true
+codegen-units = 256
+
+[profile.dev-fast.package."*"]
+debug = 0
+
 [profile.release]
 codegen-units = 1
 debug = 0
