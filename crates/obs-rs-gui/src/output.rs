@@ -798,6 +798,26 @@ impl OutputRuntime {
             (OutputLifecycle::Failed, OutputLifecycle::Failed)
         }
     }
+
+    /// Returns the latest reason for a failed recording, when one is
+    /// available. The engine keeps one bounded error slot for the worker, so
+    /// this is intentionally read only while the recording phase is failed;
+    /// unrelated input/device diagnostics must not be presented as a recording
+    /// failure while the output is healthy.
+    pub(crate) fn recording_failure_reason(&self) -> Option<String> {
+        let snapshot = self.worker.snapshot();
+        (snapshot.engine.recording_lifecycle == OutputLifecycle::Failed)
+            .then(|| snapshot.engine.last_error)
+            .flatten()
+    }
+
+    /// Returns the latest reason for a failed stream, when one is available.
+    pub(crate) fn streaming_failure_reason(&self) -> Option<String> {
+        let snapshot = self.worker.snapshot();
+        let failed = snapshot.engine.streaming_lifecycle == OutputLifecycle::Failed
+            || snapshot.engine.stream_state == Some(StreamState::Failed);
+        failed.then(|| snapshot.engine.last_error).flatten()
+    }
 }
 
 fn monitor_state_label(state: AudioOutputWorkerState) -> &'static str {

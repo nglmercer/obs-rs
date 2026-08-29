@@ -621,7 +621,13 @@ pub(crate) fn reconcile_output_lifecycle(
             .dispatch(obs_rs_ui::UiCommand::StopRecording);
         ui.set_recording(false);
         if recording == obs_rs_engine::OutputLifecycle::Failed {
-            ui.set_status_message("Recording stopped after an output failure".into());
+            let reason = output
+                .borrow()
+                .recording_failure_reason()
+                .unwrap_or_else(|| "the recording pipeline stopped unexpectedly".to_owned());
+            ui.set_status_message(
+                format!("Recording stopped after an output failure: {reason}").into(),
+            );
             ui.set_active_modal(11);
         }
     }
@@ -631,7 +637,13 @@ pub(crate) fn reconcile_output_lifecycle(
             .dispatch(obs_rs_ui::UiCommand::StopStreaming);
         ui.set_streaming(false);
         if streaming == obs_rs_engine::OutputLifecycle::Failed {
-            ui.set_status_message("Streaming stopped after transport failure".into());
+            let reason = output
+                .borrow()
+                .streaming_failure_reason()
+                .unwrap_or_else(|| "the streaming transport stopped unexpectedly".to_owned());
+            ui.set_status_message(
+                format!("Streaming stopped after transport failure: {reason}").into(),
+            );
             ui.set_active_modal(11);
         }
     }
