@@ -714,18 +714,43 @@ fn check_display() -> CheckResult {
         Ok(devices) => devices,
         Err(error) => return capture_check_result(&error),
     };
-    let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
+    let displays = devices
+        .iter()
+        .filter(|device| device.kind() == CaptureKind::Screen)
+        .filter(|device| device.permission() == CapturePermission::Granted)
+        .take(8)
+        .collect::<Vec<_>>();
+    if displays.is_empty() {
         return CheckResult::skip("Windows Graphics Capture reported no connected display");
-    };
-    match capture_one(display, probe_video_format(), Duration::from_secs(8)) {
-        Ok(frame) => CheckResult::pass(format!(
-            "device={} size={}x{} timestamp_ns={}",
-            display.id(),
-            frame.format().width(),
-            frame.format().height(),
-            frame.timestamp().as_nanos()
-        )),
-        Err(error) => capture_check_result(&error),
+    }
+    let mut failures = Vec::new();
+    let mut unavailable = 0_usize;
+    for display in &displays {
+        match capture_one(display, probe_video_format(), Duration::from_secs(8)) {
+            Ok(frame) => {
+                return CheckResult::pass(format!(
+                    "device={} size={}x{} timestamp_ns={}",
+                    display.id(),
+                    frame.format().width(),
+                    frame.format().height(),
+                    frame.timestamp().as_nanos()
+                ));
+            }
+            Err(error) if is_hardware_unavailable(&error) => {
+                unavailable = unavailable.saturating_add(1);
+                failures.push(format!("{}: unavailable: {error}", display.id()));
+            }
+            Err(error) => failures.push(format!("{}: {error}", display.id())),
+        }
+    }
+    let detail = format!(
+        "no enumerated display could be captured: {}",
+        failures.join("; ")
+    );
+    if unavailable == displays.len() {
+        CheckResult::skip(detail)
+    } else {
+        CheckResult::fail(detail)
     }
 }
 
@@ -936,7 +961,9 @@ fn check_window() -> CheckResult {
         return CheckResult::skip("Windows reported no capturable top-level window");
     }
     let mut failures = Vec::new();
-    for window in windows.into_iter().take(8) {
+    let mut unavailable = 0_usize;
+    let candidates = windows.into_iter().take(8).collect::<Vec<_>>();
+    for window in &candidates {
         match capture_frames(window, probe_video_format(), 4, Duration::from_secs(8)) {
             Ok((frame, frames, elapsed)) => {
                 return CheckResult::pass(format!(
@@ -949,10 +976,17 @@ fn check_window() -> CheckResult {
                 ));
             }
             Err(error) if is_hardware_unavailable(&error) => {
-                return capture_check_result_with_context(&error, "window capture");
+                unavailable = unavailable.saturating_add(1);
+                failures.push(format!("{}: unavailable: {error}", window.id()));
             }
             Err(error) => failures.push(format!("{}: {error}", window.id())),
         }
+    }
+    if unavailable == candidates.len() {
+        return CheckResult::skip(format!(
+            "no enumerated window could be captured: {}",
+            failures.join("; ")
+        ));
     }
     CheckResult::fail(format!(
         "no enumerated window could be captured: {}",
@@ -1093,71 +1127,97 @@ fn check_camera() -> CheckResult {
         Ok(cameras) => cameras,
         Err(error) => return capture_check_result(&error),
     };
-    let Some(camera) = cameras.first() else {
+    if cameras.is_empty() {
         return CheckResult::skip("no native Nokhwa camera is present");
-    };
+    }
+    let mut failures = Vec::new();
+    let mut unavailable = 0_usize;
+    let candidates = cameras.into_iter().take(8).collect::<Vec<_>>();
+    for camera in &candidates {
+        match probe_camera(camera) {
+            Ok(report) => {
+                let mode = report.native_mode.map_or_else(
+                    || "auto".to_owned(),
+                    |mode| {
+                        format!(
+                            "{}x{}@{}/{} {}",
+                            mode.width(),
+                            mode.height(),
+                            mode.frame_rate().numerator(),
+                            mode.frame_rate().denominator(),
+                            mode.pixel_format()
+                        )
+                    },
+                );
+                return CheckResult::pass(format!(
+                    "device={} modes={} selected_mode={} size={}x{} cycles=2 frames={} elapsed_ms={}",
+                    camera.id(),
+                    report.modes.len(),
+                    mode,
+                    report.frame.format().width(),
+                    report.frame.format().height(),
+                    report.frames,
+                    report.elapsed.as_millis()
+                ));
+            }
+            Err(error) if is_hardware_unavailable(&error) => {
+                unavailable = unavailable.saturating_add(1);
+                failures.push(format!("{}: unavailable: {error}", camera.id()));
+            }
+            Err(error) => failures.push(format!("{}: {error}", camera.id())),
+        }
+    }
+    if unavailable == candidates.len() {
+        return CheckResult::skip(format!(
+            "no enumerated camera could be captured: {}",
+            failures.join("; ")
+        ));
+    }
+    CheckResult::fail(format!(
+        "no enumerated camera could be captured: {}",
+        failures.join("; ")
+    ))
+}
+
+#[cfg(target_os = "windows")]
+struct CameraProbeReport {
+    modes: Vec<obs_rs_capture::CameraMode>,
+    native_mode: Option<obs_rs_capture::CameraMode>,
+    frame: VideoFrame,
+    frames: u64,
+    elapsed: Duration,
+}
+
+#[cfg(target_os = "windows")]
+fn probe_camera(camera: &obs_rs_capture::CameraDevice) -> Result<CameraProbeReport, CaptureError> {
     let id = camera.id().to_string();
     let name = camera.name().to_owned();
     // The picker catalog intentionally skips native mode probing because
     // Media Foundation drivers can make that query expensive. Acceptance
     // must perform the explicit selected-device query so a successful camera
     // result proves more than an automatic fallback.
-    let modes = match obs_rs_capture::discover_nokhwa_camera_modes(&id) {
-        Ok(modes) => modes,
-        Err(error) if is_hardware_unavailable(&error) => {
-            return capture_check_result_with_context(&error, "camera mode discovery")
-        }
-        Err(error) => return CheckResult::fail(format!("camera mode discovery failed: {error}")),
-    };
+    let modes = obs_rs_capture::discover_nokhwa_camera_modes(&id)?;
     let native_mode = modes.first().copied();
     let format = probe_video_format();
     let mut last_frame = None;
     let mut total_frames = 0_u64;
     let mut total_elapsed = Duration::ZERO;
-    for cycle in 0..2 {
-        match capture_camera_cycle(&id, &name, format, native_mode) {
-            Ok((frame, frames, elapsed)) => {
-                last_frame = Some(frame);
-                total_frames = total_frames.saturating_add(u64::try_from(frames).unwrap_or(0));
-                total_elapsed = total_elapsed.saturating_add(elapsed);
-            }
-            Err(error) if is_hardware_unavailable(&error) => {
-                return capture_check_result_with_context(
-                    &error,
-                    &format!("camera capture cycle {cycle}"),
-                )
-            }
-            Err(error) => {
-                return CheckResult::fail(format!("camera capture cycle {cycle} failed: {error}"))
-            }
-        }
+    for _ in 0..2 {
+        let (frame, frames, elapsed) = capture_camera_cycle(&id, &name, format, native_mode)?;
+        last_frame = Some(frame);
+        total_frames = total_frames.saturating_add(u64::try_from(frames).unwrap_or(0));
+        total_elapsed = total_elapsed.saturating_add(elapsed);
     }
-    let mode = native_mode.map_or_else(
-        || "auto".to_owned(),
-        |mode| {
-            format!(
-                "{}x{}@{}/{} {}",
-                mode.width(),
-                mode.height(),
-                mode.frame_rate().numerator(),
-                mode.frame_rate().denominator(),
-                mode.pixel_format()
-            )
-        },
-    );
-    let Some(frame) = last_frame else {
-        return CheckResult::fail("camera cycles completed without a frame");
-    };
-    CheckResult::pass(format!(
-        "device={} modes={} selected_mode={} size={}x{} cycles=2 frames={} elapsed_ms={}",
-        id,
-        modes.len(),
-        mode,
-        frame.format().width(),
-        frame.format().height(),
-        total_frames,
-        total_elapsed.as_millis()
-    ))
+    let frame = last_frame.ok_or_else(|| CaptureError::Protocol {
+        message: "camera cycles completed without a frame".to_owned(),
+    })?;
+    Ok(CameraProbeReport {
+        modes,
+        native_mode,
+        frame,
+        frames: total_frames,
+        elapsed: total_elapsed,
+    })
 }
 
 #[cfg(target_os = "windows")]
