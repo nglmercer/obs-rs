@@ -112,6 +112,45 @@ fn live_protocols_build_exact_mux_and_sink_graphs() {
 }
 
 #[test]
+fn whip_pipeline_uses_explicit_raw_av_request_pads_and_signaller_properties() {
+    gst::init().expect("GStreamer runtime");
+    if gst::ElementFactory::find("whipclientsink").is_none() {
+        return;
+    }
+
+    let plan = plan(OutputProfile::web_rtc_vp8_opus());
+    let destination = ProductionDestination::WebRtc {
+        signaling_endpoint: "https://media.example/whip/endpoint".to_owned(),
+        bearer_token: Some("token".to_owned()),
+    };
+    let description = pipeline_description(&plan, &destination).expect("WHIP graph");
+    assert!(description.description.contains("output_sink.video_0"));
+    assert!(description.description.contains("output_sink.audio_0"));
+    assert!(description.description.contains("videoconvert"));
+    assert!(description.description.contains("audioconvert"));
+
+    let element = gst::parse::launch_full(
+        &description.description,
+        None,
+        gst::ParseFlags::FATAL_ERRORS,
+    )
+    .expect("WHIP pipeline parses");
+    let pipeline = element.downcast::<gst::Pipeline>().expect("pipeline type");
+    configure_sink(&pipeline, &destination, None).expect("WHIP sink configuration");
+    let sink = pipeline.by_name("output_sink").expect("WHIP sink");
+    assert!(
+        sink.lookup("signaller::whip-endpoint").is_ok()
+            || sink.find_property("whip-endpoint").is_some()
+            || sink.find_property("endpoint").is_some()
+    );
+    assert!(
+        sink.lookup("signaller::auth-token").is_ok()
+            || sink.find_property("auth-token").is_some()
+            || sink.find_property("bearer-token").is_some()
+    );
+}
+
+#[test]
 fn openh264_and_aac_tuning_reaches_native_encoder_properties() {
     gst::init().expect("GStreamer runtime");
     if gst::ElementFactory::find("openh264enc").is_none()

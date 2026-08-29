@@ -300,14 +300,31 @@ fn live_pipeline_description(
         }
         (OutputTransport::SrtMpegTs, ProductionDestination::Srt { .. }) =>
             Ok(PipelineDescription::live(format!("{video}h264parse config-interval=-1 ! mux. {audio}aacparse ! mux. mpegtsmux name=mux ! srtsink name=output_sink"))),
-        (OutputTransport::WebRtc, ProductionDestination::WebRtc { .. }) =>
-            Ok(PipelineDescription::live(format!("whipclientsink name=output_sink appsrc name=video_source ! queue max-size-bytes={} leaky=downstream ! videoconvert ! output_sink. appsrc name=audio_source ! queue max-size-bytes={} leaky=downstream ! audioconvert ! audioresample ! output_sink.", plan.bounded_queue_bytes(), plan.bounded_queue_bytes()))),
+        (OutputTransport::WebRtc, ProductionDestination::WebRtc { .. }) => Ok(
+            PipelineDescription::live(webrtc_pipeline_description(plan.bounded_queue_bytes())),
+        ),
         (OutputTransport::Hls, ProductionDestination::Hls { .. }) =>
             Ok(PipelineDescription::live(format!("hlssink2 name=output_sink {video}h264parse ! output_sink.video {audio}aacparse ! output_sink.audio"))),
         (OutputTransport::RistMpegTs, ProductionDestination::Rist { .. }) =>
             Ok(PipelineDescription::live(format!("{video}h264parse config-interval=-1 ! mux. {audio}aacparse ! mux. mpegtsmux name=mux ! rtpmp2tpay ! ristsink name=output_sink"))),
         _ => Err(GStreamerError::InvalidEndpoint("destination does not match pipeline".to_owned())),
     }
+}
+
+/// Builds the raw audio/video graph consumed by `whipclientsink`.
+///
+/// The sink exposes request pads named `video_%u` and `audio_%u`.  Naming the
+/// first request pads explicitly keeps the graph deterministic and avoids
+/// relying on the shorthand `output_sink.` syntax, which is ambiguous for a
+/// sink with multiple media pad templates.
+fn webrtc_pipeline_description(queue: usize) -> String {
+    format!(
+        "whipclientsink name=output_sink "
+            "appsrc name=video_source ! queue max-size-bytes={queue} leaky=downstream "
+            "! videoconvert ! output_sink.video_0 "
+            "appsrc name=audio_source ! queue max-size-bytes={queue} leaky=downstream "
+            "! audioconvert ! audioresample ! output_sink.audio_0"
+    )
 }
 
 fn matroska_parser(codec: VideoCodec) -> Result<&'static str, GStreamerError> {
@@ -576,6 +593,21 @@ fn set_first_string_property(element: &gst::Element, names: &[&str], value: &str
     }
 }
 
+fn set_first_child_string_property(element: &gst::Element, names: &[&str], value: &str) -> bool {
+    for name in names {
+        if name.contains("::") {
+            if element.lookup(name).is_ok() {
+                element.set_child_property_from_str(name, value);
+                return true;
+            }
+        } else if element.find_property(name).is_some() {
+            element.set_property_from_str(name, value);
+            return true;
+        }
+    }
+    false
+}
+
 pub(super) fn configure_sink(
     pipeline: &gst::Pipeline,
     destination: &ProductionDestination,
@@ -615,9 +647,25 @@ pub(super) fn configure_sink(
             signaling_endpoint,
             bearer_token,
         } => {
-            set_first_string_property(&sink, &["whip-endpoint", "endpoint"], signaling_endpoint);
+            if !set_first_child_string_property(
+                &sink,
+                &["signaller::whip-endpoint", "whip-endpoint", "endpoint"],
+                signaling_endpoint,
+            ) {
+                return Err(GStreamerError::Native(
+                    "WHIP sink does not expose a signaling endpoint property".to_owned(),
+                ));
+            }
             if let Some(token) = bearer_token {
-                set_first_string_property(&sink, &["auth-token", "bearer-token"], token);
+                if !set_first_child_string_property(
+                    &sink,
+                    &["signaller::auth-token", "auth-token", "bearer-token"],
+                    token,
+                ) {
+                    return Err(GStreamerError::Native(
+                        "WHIP sink does not expose an authentication-token property".to_owned(),
+                    ));
+                }
             }
         }
         ProductionDestination::Hls {
