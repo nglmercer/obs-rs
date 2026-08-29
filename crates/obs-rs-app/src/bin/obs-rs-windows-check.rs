@@ -421,12 +421,7 @@ fn capture_first_working_display(
     timeout: Duration,
     context: &str,
 ) -> Result<(String, VideoFrame), CheckResult> {
-    let displays = devices
-        .iter()
-        .filter(|device| device.kind() == CaptureKind::Screen)
-        .filter(|device| device.permission() == CapturePermission::Granted)
-        .take(8)
-        .collect::<Vec<_>>();
+    let displays = windows_display_candidates(devices);
     if displays.is_empty() {
         return Err(CheckResult::skip(format!(
             "{context} needs a connected Windows display target"
@@ -455,6 +450,18 @@ fn capture_first_working_display(
     } else {
         Err(CheckResult::fail(detail))
     }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_display_candidates(
+    devices: &[obs_rs_capture::CaptureDeviceInfo],
+) -> Vec<&obs_rs_capture::CaptureDeviceInfo> {
+    devices
+        .iter()
+        .filter(|device| device.kind() == CaptureKind::Screen)
+        .filter(|device| device.permission() == CapturePermission::Granted)
+        .take(8)
+        .collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -718,12 +725,7 @@ fn check_display_frame_rates() -> CheckResult {
         Ok(devices) => devices,
         Err(error) => return capture_check_result(&error),
     };
-    let displays = devices
-        .iter()
-        .filter(|device| device.kind() == CaptureKind::Screen)
-        .filter(|device| device.permission() == CapturePermission::Granted)
-        .take(8)
-        .collect::<Vec<_>>();
+    let displays = windows_display_candidates(&devices);
     if displays.is_empty() {
         return CheckResult::skip("frame-rate acceptance needs a connected display target");
     }
@@ -777,12 +779,7 @@ fn check_display() -> CheckResult {
         Ok(devices) => devices,
         Err(error) => return capture_check_result(&error),
     };
-    let displays = devices
-        .iter()
-        .filter(|device| device.kind() == CaptureKind::Screen)
-        .filter(|device| device.permission() == CapturePermission::Granted)
-        .take(8)
-        .collect::<Vec<_>>();
+    let displays = windows_display_candidates(&devices);
     if displays.is_empty() {
         return CheckResult::skip("Windows Graphics Capture reported no connected display");
     }
@@ -1588,13 +1585,14 @@ fn check_monitor_output() -> CheckResult {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the soak keeps capture, audio, and bounded cleanup assertions in one acceptance check"
+)]
 fn check_av_soak() -> CheckResult {
     let devices = match discover_windows() {
         Ok(devices) => devices,
         Err(error) => return capture_check_result(&error),
-    };
-    let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
-        return CheckResult::skip("A/V soak needs a connected Windows display capture target");
     };
     let provider = WasapiAudioProvider::new();
     let audio_devices = match discover_audio(provider) {
@@ -1607,6 +1605,23 @@ fn check_av_soak() -> CheckResult {
         return CheckResult::skip("A/V soak needs a microphone or render loopback endpoint");
     };
     let format = probe_video_format();
+    // Probe displays through the same candidate policy as the ordinary
+    // capture checks. The soak then reopens the selected stable target for
+    // its longer run, instead of assuming the first enumerated monitor is
+    // capturable.
+    let (display_id, _) =
+        match capture_first_working_display(&devices, format, Duration::from_secs(8), "A/V soak") {
+            Ok(capture) => capture,
+            Err(result) => return result,
+        };
+    let Some(display) = devices
+        .iter()
+        .find(|device| device.id().to_string() == display_id)
+    else {
+        return CheckResult::fail(format!(
+            "A/V soak selected display {display_id}, but it disappeared before reopen"
+        ));
+    };
     let mut capture = open_windows_capture(display, format);
     let (mut audio, audio_format) = match open_probe_input(provider, audio_device) {
         Ok(input) => input,
@@ -1683,7 +1698,7 @@ fn check_av_soak() -> CheckResult {
         ));
     }
     CheckResult::pass(format!(
-        "seconds={seconds} frames={frames} audio_blocks={audio_blocks} audio_device={}",
+        "device={display_id} seconds={seconds} frames={frames} audio_blocks={audio_blocks} audio_device={}",
         audio_device.id()
     ))
 }
@@ -1694,19 +1709,54 @@ fn check_cleanup_restart() -> CheckResult {
         Ok(devices) => devices,
         Err(error) => return capture_check_result(&error),
     };
-    let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
+    let displays = windows_display_candidates(&devices);
+    if displays.is_empty() {
         return CheckResult::skip("cleanup/restart needs a connected Windows display target");
-    };
+    }
     let format = probe_video_format();
-    for cycle in 0..3 {
-        if let Err(error) = capture_one(display, format, Duration::from_secs(8)) {
-            return capture_check_result_with_context(
-                &error,
-                &format!("cleanup/restart cycle {cycle} failed"),
-            );
+    let mut failures = Vec::new();
+    let mut unavailable = 0_usize;
+    for display in displays.iter().copied() {
+        let mut candidate_failed = false;
+        let mut candidate_unavailable = false;
+        for cycle in 0..3 {
+            match capture_one(display, format, Duration::from_secs(8)) {
+                Ok(_) => {}
+                Err(error) if is_hardware_unavailable(&error) => {
+                    candidate_failed = true;
+                    candidate_unavailable = true;
+                    failures.push(format!(
+                        "{}: cycle {cycle} unavailable: {error}",
+                        display.id()
+                    ));
+                    break;
+                }
+                Err(error) => {
+                    candidate_failed = true;
+                    failures.push(format!("{}: cycle {cycle}: {error}", display.id()));
+                    break;
+                }
+            }
+        }
+        if !candidate_failed {
+            return CheckResult::pass(format!(
+                "device={} three capture start/stop cycles joined cleanly",
+                display.id()
+            ));
+        }
+        if candidate_unavailable {
+            unavailable = unavailable.saturating_add(1);
         }
     }
-    CheckResult::pass("three capture start/stop cycles joined cleanly")
+    let detail = format!(
+        "no enumerated display passed three capture start/stop cycles: {}",
+        failures.join("; ")
+    );
+    if unavailable == displays.len() {
+        CheckResult::skip(detail)
+    } else {
+        CheckResult::fail(detail)
+    }
 }
 
 #[cfg(target_os = "windows")]
