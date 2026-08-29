@@ -10,9 +10,11 @@ clippy-fast = "clippy --workspace --profile dev-fast -- -D warnings"
 clippy-all-fast = "clippy --workspace --all-targets --profile dev-fast -- -D warnings"
 
 # The GUI is the slowest and most frequently changed package in this repo.
-gui = "build -p obs-rs-gui --profile dev-fast"
-gui-check = "check -p obs-rs-gui --all-targets --profile dev-fast"
-gui-test = "test -p obs-rs-gui --bin obs-rs-gui --profile dev-fast"
+# Use its bounded-memory profile so Slint/WGPU tests do not make the linker
+# hold the whole workspace's debug information in memory.
+gui = "build -p obs-rs-gui --profile dev-fast-gui"
+gui-check = "check -p obs-rs-gui --all-targets --profile dev-fast-gui"
+gui-test = "test -p obs-rs-gui --bin obs-rs-gui --profile dev-fast-gui"
 
 # Focused Windows iteration. These commands still compile the required path
 # dependencies, but avoid pulling unrelated workspace binaries into the edit
@@ -28,5 +30,6 @@ windows-check-target = "check --target x86_64-pc-windows-msvc -p obs-rs-app --bi
 # root artifact; the separately maintained Windows helper target is documented
 # below because it has its own Cargo manifest and target directory.
 clean-fast = "clean --profile dev-fast"
+clean-gui-fast = "clean --profile dev-fast-gui"
 clean-release = "clean --release"
 clean-workspace = "clean --workspace"

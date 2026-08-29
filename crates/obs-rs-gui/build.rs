@@ -17,7 +17,8 @@ fn compile_ui() {
     // the dark style or every LineEdit and Button lands as a light-grey block.
     // Debug element metadata lets the headless UI test click real menu targets;
     // release builds omit it so production item trees stay compact.
-    let emit_debug_info = std::env::var("PROFILE").is_ok_and(|profile| profile != "release");
+    let emit_debug_info = std::env::var("PROFILE")
+        .is_ok_and(|profile| !matches!(profile.as_str(), "release" | "dev-fast-gui"));
     let config = slint_build::CompilerConfiguration::new()
         .with_style("fluent-dark".to_owned())
         .with_debug_info(emit_debug_info);

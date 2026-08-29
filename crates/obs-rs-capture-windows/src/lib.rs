@@ -245,7 +245,7 @@ fn helper_search_paths() -> Vec<PathBuf> {
             if !helper_manifest.is_file() {
                 continue;
             }
-            for profile in ["dev-fast", "debug", "release"] {
+            for profile in ["dev-fast-gui", "dev-fast", "debug", "release"] {
                 paths.push(
                     ancestor
                         .join("packaging")

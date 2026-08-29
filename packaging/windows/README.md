@@ -27,8 +27,16 @@ For faster local helper iteration, use the matching development profile:
 cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast
 ```
 
-The GUI searches the helper's `target\dev-fast` directory before the ordinary
-debug and release directories, so a local fast build is picked up automatically.
+The `cargo gui` alias uses the bounded-memory `dev-fast-gui` profile. Build the
+helper with the same profile when iterating on both components:
+
+```powershell
+cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast-gui
+```
+
+The GUI searches the helper's `target\dev-fast-gui` and `target\dev-fast`
+directories before the ordinary debug and release directories, so a local
+fast build is picked up automatically.
 
 The script creates `packaging/windows/dist/obs-rs-windows-<version>-x86_64.zip`
 and a matching `.sha256` file. The archive includes `VERSION.txt`,

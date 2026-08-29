@@ -25,6 +25,15 @@ codegen-units = 256
 [profile.dev-fast.package."*"]
 debug = 0
 
+[profile.dev-fast-gui]
+inherits = "dev-fast"
+debug = 0
+codegen-units = 16
+
+[profile.dev-fast-gui.package."*"]
+debug = 0
+opt-level = 0
+
 [dependencies]
 obs-rs-capture = { path = "../../../crates/obs-rs-capture" }
 obs-rs-media = { path = "../../../crates/obs-rs-media" }

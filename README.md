@@ -134,21 +134,22 @@ For an opt-in moderately optimized local build, use these Cargo aliases:
 
 ```text
 cargo dev          # build the workspace with the incremental dev-fast profile
-cargo gui          # build only the GUI with dev-fast
+cargo gui          # build only the GUI with bounded-memory dev-fast-gui
 cargo check-fast   # quick library/bin check; does not build examples/tests/benches
 cargo check-all-fast # check every workspace target with dev-fast
 cargo test-fast    # run the normal workspace test set with dev-fast
 cargo test-all-fast # include examples and benches in the test build
 cargo clippy-fast  # quick clippy pass with -D warnings
 cargo clippy-all-fast # clippy every workspace target with -D warnings
-cargo gui-check    # check only GUI targets with dev-fast
-cargo gui-test     # run the GUI test binary with dev-fast
+cargo gui-check    # check only GUI targets with dev-fast-gui
+cargo gui-test     # run the GUI test binary with dev-fast-gui
 cargo app          # build only the desktop app with dev-fast
 cargo app-check    # check only the desktop app binary
 cargo windows-check # build the Windows acceptance binary locally
 cargo windows-check-check # check the Windows acceptance binary
 cargo windows-check-target # cross-check it for x86_64-pc-windows-msvc
 cargo clean-fast # remove only root dev-fast artifacts
+cargo clean-gui-fast # remove only root dev-fast-gui GUI artifacts
 cargo clean-release # remove only root release artifacts
 cargo clean-workspace # remove every root workspace profile
 ```

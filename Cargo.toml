@@ -75,12 +75,24 @@ debug = 0
 # dependency graph does not pay the optimization cost on every edit.
 opt-level = 0
 
-# Slint's generated test harness is large and the MSVC linker is sensitive to
-# very high codegen-unit counts here. Keep the rest of the fast profile highly
-# parallel, but use a bounded unit count for the GUI crate so `cargo test`
-# remains linkable on Windows.
+# When the GUI is built as a dependency, keep its generated test harness below
+# the MSVC linker's memory cliff while the rest of the fast profile stays
+# highly parallel.
 [profile.dev-fast.package."obs-rs-gui"]
 codegen-units = 16
+
+# The GUI is the largest local target because Slint and WGPU generate a large
+# test harness. This profile is intentionally opt-in through the GUI aliases:
+# it keeps incremental compilation, but removes line tables and bounds peak
+# linker memory during frequent GUI checks/tests.
+[profile.dev-fast-gui]
+inherits = "dev-fast"
+debug = 0
+codegen-units = 16
+
+[profile.dev-fast-gui.package."*"]
+debug = 0
+opt-level = 0
 
 [profile.release]
 codegen-units = 1
