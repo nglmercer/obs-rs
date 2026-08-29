@@ -1030,7 +1030,8 @@ fn record_native_frames(
     engine
         .start_recording_profile(path, OutputProfile::matroska_h264_aac())
         .map_err(|error| format!("start native recording: {error}"))?;
-    for index in 0..4_u64 {
+    const ACCEPTANCE_FRAMES: u64 = 40;
+    for index in 0..ACCEPTANCE_FRAMES {
         let timestamp = Timestamp::from_nanos(index.saturating_mul(33_333_333));
         let stamped = frame.at_timestamp(timestamp);
         if let Err(error) = engine.push_program_frame(&stamped) {
@@ -1056,7 +1057,7 @@ fn record_native_frames(
         return Err("native recording is not an EBML/Matroska file".to_owned());
     }
     validate_native_recording(path)?;
-    Ok((bytes, 4))
+    Ok((bytes, ACCEPTANCE_FRAMES))
 }
 
 #[cfg(target_os = "windows")]

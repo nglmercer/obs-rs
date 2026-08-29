@@ -96,6 +96,8 @@ jobs:
 
       - name: Build and verify the production Windows package
         shell: pwsh
+        env:
+          OBS_RS_REQUIRE_PRODUCTION_HLS: ${{ vars.OBS_RS_REQUIRE_PRODUCTION_HLS || '0' }}
         run: |
           $dist = Join-Path $env:RUNNER_TEMP "obs-rs-windows-production-dist"
           $packageArguments = @(
@@ -104,6 +106,7 @@ jobs:
             "-ProductionGStreamer",
             "-GStreamerRuntimeDirectory", $env:GSTREAMER_1_0_ROOT
           )
+          $requiredPackageProtocols = @()
           if (-not [string]::IsNullOrWhiteSpace($env:OBS_RS_PRODUCTION_STREAM_URL)) {
             $streamUrl = $env:OBS_RS_PRODUCTION_STREAM_URL.Trim()
             $delimiter = $streamUrl.IndexOf("://", [System.StringComparison]::Ordinal)
@@ -117,7 +120,14 @@ jobs:
             if ($streamProtocol -notin @("rtmp", "rtmps", "srt", "rist", "webrtc")) {
               throw "OBS_RS_PRODUCTION_STREAM_URL uses unsupported package-gate protocol $streamProtocol"
             }
-            $packageArguments += @("-ProductionStreamProtocol", $streamProtocol)
+            $requiredPackageProtocols += $streamProtocol
+          }
+          if ($env:OBS_RS_REQUIRE_PRODUCTION_HLS -in @("1", "true", "yes", "on")) {
+            $requiredPackageProtocols += "hls"
+          }
+          $requiredPackageProtocols = @($requiredPackageProtocols | Select-Object -Unique)
+          if ($requiredPackageProtocols.Count -gt 0) {
+            $packageArguments += @("-ProductionStreamProtocol", $requiredPackageProtocols)
           }
           & .\packaging\windows\package.ps1 @packageArguments
           if ($LASTEXITCODE -ne 0) { throw "production Windows package failed" }
@@ -132,8 +142,11 @@ jobs:
           $packageRoot = Get-ChildItem -LiteralPath $expanded -Directory -Filter "obs-rs" |
             Select-Object -First 1
           if ($null -eq $packageRoot) { throw "expanded production archive has no obs-rs directory" }
-          & (Join-Path $packageRoot.FullName "verify-package.ps1") `
-            -PackageDirectory $packageRoot.FullName
+          $verifyArguments = @("-PackageDirectory", $packageRoot.FullName)
+          if ($requiredPackageProtocols.Count -gt 0) {
+            $verifyArguments += @("-RequiredStreamProtocol", $requiredPackageProtocols)
+          }
+          & (Join-Path $packageRoot.FullName "verify-package.ps1") @verifyArguments
           if ($LASTEXITCODE -ne 0) { throw "production package verification failed" }
           "ARCHIVE=$($archive.FullName)" | Set-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "production-package.txt") -Encoding utf8
           "PACKAGE_ROOT=$($packageRoot.FullName)" | Add-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "production-package.txt") -Encoding utf8

@@ -23,7 +23,7 @@ foreach ($requiredPath in @($verifier, $launcher, $helper)) {
     }
 }
 
-$requiredStreamProtocol = ""
+$requiredStreamProtocols = @()
 if (-not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
     $productionEndpoint = $ProductionStreamUrl.Trim()
     $delimiter = $productionEndpoint.IndexOf("://", [System.StringComparison]::Ordinal)
@@ -37,10 +37,15 @@ if (-not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
     if ($requiredStreamProtocol -notin @("rtmp", "rtmps", "srt", "rist", "webrtc")) {
         throw "-ProductionStreamUrl uses unsupported protocol $requiredStreamProtocol"
     }
+    $requiredStreamProtocols += $requiredStreamProtocol
 }
+if ($RequireProductionHls) {
+    $requiredStreamProtocols += "hls"
+}
+$requiredStreamProtocols = @($requiredStreamProtocols | Select-Object -Unique)
 $verifyArguments = @("-PackageDirectory", $root)
-if (-not [string]::IsNullOrWhiteSpace($requiredStreamProtocol)) {
-    $verifyArguments += @("-RequiredStreamProtocol", $requiredStreamProtocol)
+if ($requiredStreamProtocols.Count -gt 0) {
+    $verifyArguments += @("-RequiredStreamProtocol", $requiredStreamProtocols)
 }
 & $verifier @verifyArguments
 if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {

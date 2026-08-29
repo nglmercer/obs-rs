@@ -130,11 +130,17 @@ Then build and package with the opt-in feature and a matching runtime tree:
   -ProductionStreamProtocol rtmp
 ```
 
-`-ProductionStreamProtocol` is optional for a recording-only package. When
-provided, it accepts `rtmp`, `rtmps`, `srt`, `rist`, `hls`, `whip`, or `webrtc`
-(`whip` and `webrtc` share the `webrtc` gate) and requires the corresponding
-sink, parser, and encoder elements before packaging. The protocol gate is
-written to `GSTREAMER-RUNTIME.txt` and rechecked by `verify-package.ps1`.
+`-ProductionStreamProtocol` is optional for a recording-only package. It accepts
+`rtmp`, `rtmps`, `srt`, `rist`, `hls`, `whip`, or `webrtc` (`whip` and `webrtc`
+share the `webrtc` gate). Multiple gates can be requested with a PowerShell
+array, for example `-ProductionStreamProtocol rtmp,hls`; each gate requires its
+corresponding sink, parser, and encoder elements before packaging. The selected
+gates are written to `GSTREAMER-RUNTIME.txt` and rechecked by
+`verify-package.ps1`.
+
+The verifier accepts the same array syntax, for example
+`.\verify-package.ps1 -RequiredStreamProtocol rtmp,hls`, and requires every
+requested gate to be present in the package marker.
 
 The runtime directory must contain `bin\gstreamer-1.0-0.dll`,
 `bin\gst-inspect-1.0.exe`, `bin\gst-discoverer-1.0.exe`,
@@ -167,4 +173,5 @@ unauthenticated WHIP streaming acceptance; set the repository variable
 The check also exercises local HLS playlist/segment output whenever the
 packaged runtime exposes `hlssink2`; set `OBS_RS_REQUIRE_PRODUCTION_HLS=1` to
 make that check mandatory on a production runner. The production workflow
-forwards that repository variable as `-RequireProductionHls`.
+forwards that repository variable as `-RequireProductionHls` and adds an HLS
+package gate alongside any external streaming protocol gate.

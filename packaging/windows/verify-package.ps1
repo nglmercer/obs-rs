@@ -1,15 +1,20 @@
 param(
     [string]$PackageDirectory = $PSScriptRoot,
     [ValidateSet("", "rtmp", "rtmps", "srt", "rist", "whip", "webrtc", "hls")]
-    [string]$RequiredStreamProtocol = ""
+    [string[]]$RequiredStreamProtocol = @()
 )
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath $PackageDirectory).Path
-$requiredStreamProtocol = $RequiredStreamProtocol.Trim().ToLowerInvariant()
-if ($requiredStreamProtocol -in @("whip", "webrtc")) {
-    $requiredStreamProtocol = "webrtc"
-}
+$requiredStreamProtocols = @(
+    $RequiredStreamProtocol |
+        ForEach-Object { $_.Trim().ToLowerInvariant() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        ForEach-Object {
+            if ($_ -in @("whip", "webrtc")) { "webrtc" } else { $_ }
+        } |
+        Select-Object -Unique
+)
 $sumsPath = Join-Path $root "SHA256SUMS.txt"
 if (-not (Test-Path -LiteralPath $sumsPath -PathType Leaf)) {
     throw "SHA256SUMS.txt was not found in $root"
@@ -70,6 +75,10 @@ foreach ($line in Get-Content -LiteralPath $sumsPath) {
 }
 
 $runtimeMarker = Join-Path $root "GSTREAMER-RUNTIME.txt"
+if ($requiredStreamProtocols.Count -gt 0 -and
+    -not (Test-Path -LiteralPath $runtimeMarker -PathType Leaf)) {
+    throw "requested streaming protocol gates require a packaged GStreamer runtime marker"
+}
 if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
     $markerVersionLine = Get-Content -LiteralPath $runtimeMarker |
         Where-Object { $_ -match '^GStreamer version:\s*(?<version>\S+)\s*$' } |
@@ -82,21 +91,30 @@ if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
         '^GStreamer version:\s*(?<version>\S+)\s*$')
     $runtimeVersion = $markerVersionMatch.Groups["version"].Value
     $streamGateLine = Get-Content -LiteralPath $runtimeMarker |
-        Where-Object { $_ -match '^Streaming protocol gate:\s*(?<protocol>\S+)\s*$' } |
+        Where-Object { $_ -match '^Streaming protocol gates?:\s*(?<protocols>\S+)\s*$' } |
         Select-Object -First 1
-    $streamGate = if ($null -eq $streamGateLine) {
-        "none"
+    $streamGates = if ($null -eq $streamGateLine) {
+        @("none")
     } else {
-        ([System.Text.RegularExpressions.Regex]::Match(
+        $gateText = ([System.Text.RegularExpressions.Regex]::Match(
                 $streamGateLine,
-                '^Streaming protocol gate:\s*(?<protocol>\S+)\s*$')).Groups["protocol"].Value.ToLowerInvariant()
+                '^Streaming protocol gates?:\s*(?<protocols>\S+)\s*$')).Groups["protocols"].Value
+        @($gateText -split ',' |
+            ForEach-Object { $_.Trim().ToLowerInvariant() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object {
+                if ($_ -in @("whip", "webrtc")) { "webrtc" } else { $_ }
+            } |
+            Select-Object -Unique)
     }
-    if ($streamGate -in @("whip", "webrtc")) {
-        $streamGate = "webrtc"
+    if ($streamGates.Count -eq 0) {
+        $streamGates = @("none")
     }
-    if (-not [string]::IsNullOrWhiteSpace($requiredStreamProtocol) -and
-        $streamGate -ne $requiredStreamProtocol) {
-        throw "package streaming protocol gate does not match the requested acceptance protocol: gate=$streamGate requested=$requiredStreamProtocol"
+    $missingRequestedGates = @($requiredStreamProtocols | Where-Object {
+        $_ -notin $streamGates
+    })
+    if ($missingRequestedGates.Count -gt 0) {
+        throw "package streaming protocol gates do not match the requested acceptance protocols: gates=$($streamGates -join ',') missing=$($missingRequestedGates -join ',')"
     }
     $runtimeFiles = @(
         @{ Path = (Join-Path $root "gstreamer\bin\gstreamer-1.0-0.dll"); Type = "Leaf" },
@@ -176,7 +194,7 @@ if (Test-Path -LiteralPath $runtimeMarker -PathType Leaf) {
         if ($availableH264Encoders.Count -eq 0) {
             throw "bundled GStreamer runtime does not provide an approved H.264 encoder"
         }
-        if ($streamGate -ne "none") {
+        foreach ($streamGate in @($streamGates | Where-Object { $_ -ne "none" })) {
             $requiredStreamingElements = switch ($streamGate) {
                 "rtmp" { @("flvmux") ; break }
                 "rtmps" { @("flvmux") ; break }
