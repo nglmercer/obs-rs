@@ -17,7 +17,7 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::{
     apply_source_settings_to,
-    fixtures::{desktop_bounds, kind_selects_monitor, screen_monitors, MonitorChoice},
+    fixtures::{desktop_bounds, kind_selects_monitor, screen_monitor_discovery, MonitorChoice},
     source_target, target_settings_document, I18n, MainWindow, MonitorRow, MonitorWindow, Palette,
     PreviewSurface, SourceTarget,
 };
@@ -106,8 +106,8 @@ impl MonitorController {
     }
 
     /// Fills the window from the live display list for `source`.
-    fn reload(&self, source_name: &str, current: Option<&str>) -> bool {
-        let monitors = screen_monitors();
+    fn reload(&self, source_name: &str, current: Option<&str>) -> (bool, Option<String>) {
+        let (monitors, discovery_error) = screen_monitor_discovery();
         // Older Windows settings used the backend's automatic sentinel in
         // `monitor`. Treat it as the picker default rather than as a missing
         // display. A real but absent ID must remain unselected so the user
@@ -143,7 +143,7 @@ impl MonitorController {
         *self.selected.borrow_mut() = selected;
         self.monitors.replace(monitors);
         self.refresh_rows();
-        saved_target_missing
+        (saved_target_missing, discovery_error)
     }
 
     /// Rebuilds the row model and the normalized layout map.
@@ -267,11 +267,18 @@ fn open_for_target(
     window.set_whole_desktop_label(automatic_label);
     controller.set_tokens(ui.global::<Palette>().get_tokens());
     let source_name = source_name_for_target(state, target);
-    let saved_target_missing = controller.reload(
+    let (saved_target_missing, discovery_error) = controller.reload(
         &source_name,
         current_monitor_for_target(state, target).as_deref(),
     );
-    window.set_status(status_line(&controller.monitors.borrow(), saved_target_missing).into());
+    window.set_status(
+        status_line(
+            &controller.monitors.borrow(),
+            saved_target_missing,
+            discovery_error.as_deref(),
+        )
+        .into(),
+    );
     match window.show() {
         Ok(()) => window.invoke_focus_keyboard_boundary(),
         Err(error) => ui.set_status_message(format!("Display picker: {error}").into()),
@@ -302,9 +309,15 @@ fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<MonitorC
         crate::fixtures::invalidate_capture_cache(obs_rs_capture::CaptureKind::Screen, None);
         let source = window.get_source_name().to_string();
         let current = current_monitor_for_target(&refresh_state, &target);
-        let saved_target_missing = refresh_controller.reload(&source, current.as_deref());
+        let (saved_target_missing, discovery_error) =
+            refresh_controller.reload(&source, current.as_deref());
         window.set_status(
-            status_line(&refresh_controller.monitors.borrow(), saved_target_missing).into(),
+            status_line(
+                &refresh_controller.monitors.borrow(),
+                saved_target_missing,
+                discovery_error.as_deref(),
+            )
+            .into(),
         );
     });
 
@@ -598,7 +611,11 @@ fn monitor_target_from_settings(settings: &Config) -> Option<String> {
 }
 
 /// Summarizes the detected displays under the list.
-fn status_line(monitors: &[MonitorChoice], saved_target_missing: bool) -> String {
+fn status_line(
+    monitors: &[MonitorChoice],
+    saved_target_missing: bool,
+    discovery_error: Option<&str>,
+) -> String {
     let detected = if monitors.is_empty() {
         String::new()
     } else {
@@ -609,14 +626,19 @@ fn status_line(monitors: &[MonitorChoice], saved_target_missing: bool) -> String
             .join(", ");
         format!("{} detected: {names}", monitors.len())
     };
-    if saved_target_missing {
-        if detected.is_empty() {
-            "Saved display is unavailable; choose a new display".to_owned()
-        } else {
-            format!("{detected}; saved display is unavailable")
+    let discovery = discovery_error.map(|error| format!("Display discovery unavailable: {error}"));
+    match (saved_target_missing, detected.is_empty(), discovery) {
+        (true, true, Some(discovery)) => {
+            format!("{discovery}; saved display is unavailable")
         }
-    } else {
-        detected
+        (true, true, None) => "Saved display is unavailable; choose a new display".to_owned(),
+        (true, false, Some(discovery)) => {
+            format!("{detected}; {discovery}; saved display is unavailable")
+        }
+        (true, false, None) => format!("{detected}; saved display is unavailable"),
+        (false, true, Some(discovery)) => discovery,
+        (false, _, None) => detected,
+        (false, false, Some(discovery)) => format!("{detected}; {discovery}"),
     }
 }
 
@@ -666,14 +688,34 @@ mod tests {
 
     #[test]
     fn status_line_lists_the_detected_displays() {
-        assert_eq!(status_line(&[], false), "");
+        assert_eq!(status_line(&[], false, None), "");
         assert_eq!(
-            status_line(&[monitor("DP-1", 0, 0, 1920, 1080)], false),
+            status_line(&[monitor("DP-1", 0, 0, 1920, 1080)], false, None),
             "1 detected: DP-1"
         );
         assert_eq!(
-            status_line(&[monitor("DP-1", 0, 0, 1920, 1080)], true),
+            status_line(&[monitor("DP-1", 0, 0, 1920, 1080)], true, None),
             "1 detected: DP-1; saved display is unavailable"
+        );
+    }
+
+    #[test]
+    fn status_line_explains_a_failed_display_probe() {
+        assert_eq!(
+            status_line(
+                &[],
+                false,
+                Some("Windows display discovery failed: helper missing")
+            ),
+            "Display discovery unavailable: Windows display discovery failed: helper missing"
+        );
+        assert_eq!(
+            status_line(
+                &[],
+                true,
+                Some("Windows display discovery failed: desktop is locked")
+            ),
+            "Display discovery unavailable: Windows display discovery failed: desktop is locked; saved display is unavailable"
         );
     }
 

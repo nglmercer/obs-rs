@@ -467,30 +467,53 @@ pub(crate) fn desktop_bounds(monitors: &[MonitorChoice]) -> DesktopBounds {
 /// Returns an empty list when no display server is reachable, which the picker
 /// reports rather than silently offering a choice that cannot be honoured.
 pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
+    screen_monitor_discovery().0
+}
+
+/// Returns the current display catalog and an operator-facing discovery error.
+///
+/// A successful catalog is cached briefly because the properties dialog asks
+/// for it while rebuilding several related rows. Failed discovery is never
+/// cached: a helper that was just installed, restarted, or unlocked must be
+/// retried on the next picker open instead of leaving an empty list behind for
+/// the cache lifetime.
+pub(crate) fn screen_monitor_discovery() -> (Vec<MonitorChoice>, Option<String>) {
     let cache = MONITOR_DISCOVERY_CACHE.get_or_init(|| Mutex::new(None));
     let now = Instant::now();
     if let Ok(snapshot) = cache.lock() {
         if let Some((fetched, monitors)) = snapshot.as_ref() {
             if now.duration_since(*fetched) < MONITOR_DISCOVERY_CACHE_TTL {
-                return monitors.clone();
+                return (monitors.clone(), None);
             }
         }
     }
 
-    let monitors = discover_screen_monitors();
-    if let Ok(mut snapshot) = cache.lock() {
-        *snapshot = Some((Instant::now(), monitors.clone()));
+    match discover_screen_monitors() {
+        Ok(monitors) => {
+            if let Ok(mut snapshot) = cache.lock() {
+                *snapshot = Some((Instant::now(), monitors.clone()));
+            }
+            (monitors, None)
+        }
+        Err(error) => {
+            // Do not retain a failed probe. This is important for the separate
+            // Windows helper: a transient process/desktop-lock failure should
+            // recover on the next open or explicit refresh.
+            if let Ok(mut snapshot) = cache.lock() {
+                *snapshot = None;
+            }
+            (Vec::new(), Some(error))
+        }
     }
-    monitors
 }
 
 #[cfg(target_os = "linux")]
-fn discover_screen_monitors() -> Vec<MonitorChoice> {
-    let Ok(display) = std::env::var("DISPLAY") else {
-        return Vec::new();
-    };
-    obs_rs_capture::x11_monitors(&display)
-        .unwrap_or_default()
+fn discover_screen_monitors() -> Result<Vec<MonitorChoice>, String> {
+    let display =
+        std::env::var("DISPLAY").map_err(|error| format!("DISPLAY is unavailable: {error}"))?;
+    let monitors = obs_rs_capture::x11_monitors(&display)
+        .map_err(|error| format!("X11 display discovery failed: {error}"))?;
+    Ok(monitors
         .into_iter()
         .map(|monitor| MonitorChoice {
             // The `RandR` name is what the capture backend resolves, so it is
@@ -503,14 +526,15 @@ fn discover_screen_monitors() -> Vec<MonitorChoice> {
             height: monitor.height(),
             primary: monitor.primary(),
         })
-        .collect()
+        .collect())
 }
 
 #[cfg(target_os = "windows")]
-fn discover_screen_monitors() -> Vec<MonitorChoice> {
-    WindowsCaptureAdapter::default()
+fn discover_screen_monitors() -> Result<Vec<MonitorChoice>, String> {
+    let displays = WindowsCaptureAdapter::default()
         .discover_displays()
-        .unwrap_or_default()
+        .map_err(|error| format!("Windows display discovery failed: {error}"))?;
+    Ok(displays
         .into_iter()
         .map(|display| MonitorChoice {
             id: display.id,
@@ -521,12 +545,12 @@ fn discover_screen_monitors() -> Vec<MonitorChoice> {
             height: display.height,
             primary: display.primary,
         })
-        .collect()
+        .collect())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-fn discover_screen_monitors() -> Vec<MonitorChoice> {
-    Vec::new()
+fn discover_screen_monitors() -> Result<Vec<MonitorChoice>, String> {
+    Err("screen display discovery is unavailable on this platform".to_owned())
 }
 
 /// Returns the devices that a source-properties editor can select.
