@@ -11,7 +11,7 @@ use std::{
 
 use super::{
     AudioBuffer, AudioDeviceError, AudioFormat, AudioOutput, AudioOutputProvider, AudioOutputState,
-    AudioResampler, COMMON_AUDIO_DEVICE_FORMATS,
+    StreamingAudioResampler, COMMON_AUDIO_DEVICE_FORMATS,
 };
 
 const STATE_STARTING: u8 = 0;
@@ -367,7 +367,7 @@ fn open_output_with_conversion(
                 if device_format == mix_format {
                     return Ok(output);
                 }
-                let converter = AudioResampler::new(mix_format, device_format)?;
+                let converter = StreamingAudioResampler::new(mix_format, device_format)?;
                 return Ok(Box::new(ConvertedAudioOutput {
                     output,
                     converter,
@@ -386,7 +386,7 @@ fn open_output_with_conversion(
 
 struct ConvertedAudioOutput {
     output: Box<dyn AudioOutput>,
-    converter: AudioResampler,
+    converter: StreamingAudioResampler,
     mix_format: AudioFormat,
 }
 

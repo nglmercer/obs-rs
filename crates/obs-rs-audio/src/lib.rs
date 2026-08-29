@@ -55,7 +55,7 @@ pub use pacing::{
     AudioClock, AudioDeadline, AudioPacer, AudioPacingResult, AudioScheduler, MonotonicAudioClock,
 };
 pub use queue::{AudioDropPolicy, AudioPushOutcome, AudioQueue};
-pub use resampler::AudioResampler;
+pub use resampler::{AudioResampler, StreamingAudioResampler};
 pub use sync::{
     AudioCorrection, AvSyncController, AvSyncMetrics, AvSyncMonitor, AvSyncObservation, SyncAction,
     SyncState,

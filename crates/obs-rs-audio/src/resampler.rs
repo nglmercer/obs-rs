@@ -302,3 +302,205 @@ impl AudioResampler {
         self.output
     }
 }
+
+/// Stateful linear resampler for a continuous stream of interleaved buffers.
+///
+/// [`AudioResampler::process`] is intentionally a standalone-buffer
+/// operation. Device adapters, however, receive a sequence of blocks and
+/// must carry the fractional sample position and one frame of look-ahead
+/// across those boundaries. This type keeps that state so a rate-converted
+/// WASAPI route does not restart interpolation at every callback block.
+#[derive(Debug)]
+pub struct StreamingAudioResampler {
+    resampler: AudioResampler,
+    /// The last input frame is retained for interpolation across blocks.
+    previous_frame: Option<Vec<f32>>,
+    /// Number of input frames accepted by the stream.
+    input_frames: u64,
+    /// Rational input position of the next output sample, in units of the
+    /// output sample rate.
+    position: u64,
+    /// Number of output frames already emitted.
+    output_frames: u64,
+    /// Timestamp corresponding to input frame zero.
+    start_timestamp: Option<obs_rs_media::Timestamp>,
+}
+
+impl StreamingAudioResampler {
+    /// Creates a stateful converter between two audio formats.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError`] when either format is invalid.
+    pub fn new(input: AudioFormat, output: AudioFormat) -> Result<Self, AudioError> {
+        Ok(Self {
+            resampler: AudioResampler::new(input, output)?,
+            previous_frame: None,
+            input_frames: 0,
+            position: 0,
+            output_frames: 0,
+            start_timestamp: None,
+        })
+    }
+
+    /// Converts the next contiguous input block and preserves the fractional
+    /// phase for the following block.
+    ///
+    /// A final input frame is held as look-ahead until the next call. Device
+    /// adapters are live streams, so this avoids inventing an endpoint sample
+    /// at every block boundary. Callers that need to flush a finite clip can
+    /// append one final duplicate frame before the last call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AudioError::FormatMismatch`] for a wrong source format,
+    /// [`AudioError::BufferTooLarge`] for an oversized result, or
+    /// [`AudioError::ScheduleOverflow`] when the continuous sample clock is
+    /// too large to represent.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn process(&mut self, input: &AudioBuffer) -> Result<AudioBuffer, AudioError> {
+        if input.format() != self.resampler.input {
+            return Err(AudioError::FormatMismatch {
+                expected: self.resampler.input,
+                actual: input.format(),
+            });
+        }
+        if input.frames() == 0 {
+            let timestamp = self.start_timestamp.unwrap_or(input.timestamp());
+            return AudioBuffer::silence(self.resampler.output, timestamp, 0);
+        }
+
+        let start_frame = self.input_frames;
+        let input_frames =
+            u64::try_from(input.frames()).map_err(|_| AudioError::ScheduleOverflow)?;
+        let end_frame = start_frame
+            .checked_add(input_frames)
+            .ok_or(AudioError::ScheduleOverflow)?;
+        let input_rate = u64::from(self.resampler.input.sample_rate);
+        let output_rate = u64::from(self.resampler.output.sample_rate);
+        let input_channels = usize::from(self.resampler.input.channels);
+        let output_channels = usize::from(self.resampler.output.channels);
+        let previous_frame = self.previous_frame.as_deref();
+        let first_output_frame = self.output_frames;
+        let mut samples = Vec::new();
+
+        // The next output is usable only when both interpolation endpoints
+        // have arrived. The final input frame becomes the retained endpoint
+        // for the next block.
+        while self.position / output_rate < end_frame.saturating_sub(1) {
+            let source_index = self.position / output_rate;
+            let fraction = (self.position % output_rate) as f32 / output_rate as f32;
+            let first = frame_at(
+                previous_frame,
+                input,
+                start_frame,
+                source_index,
+                input_channels,
+            );
+            let second = frame_at(
+                previous_frame,
+                input,
+                start_frame,
+                source_index.saturating_add(1),
+                input_channels,
+            );
+            let (Some(first), Some(second)) = (first, second) else {
+                // This is an internal stream invariant: all positions older
+                // than the retained frame should already have been emitted.
+                // Stop safely if a provider violates contiguity instead of
+                // indexing outside the bounded input buffer.
+                break;
+            };
+            for channel in 0..output_channels {
+                let first_sample = mapped_channel(
+                    first,
+                    self.resampler.input.layout,
+                    self.resampler.output.layout,
+                    channel,
+                );
+                let second_sample = mapped_channel(
+                    second,
+                    self.resampler.input.layout,
+                    self.resampler.output.layout,
+                    channel,
+                );
+                samples.push(first_sample + (second_sample - first_sample) * fraction);
+            }
+            self.position = self
+                .position
+                .checked_add(input_rate)
+                .ok_or(AudioError::ScheduleOverflow)?;
+            self.output_frames = self
+                .output_frames
+                .checked_add(1)
+                .ok_or(AudioError::ScheduleOverflow)?;
+            if samples.len() / output_channels > MAX_AUDIO_FRAMES {
+                return Err(AudioError::BufferTooLarge {
+                    frames: samples.len() / output_channels,
+                });
+            }
+        }
+
+        self.input_frames = end_frame;
+        let last_frame = input.frames() - 1;
+        let last_start = last_frame
+            .checked_mul(input_channels)
+            .ok_or(AudioError::ScheduleOverflow)?;
+        self.previous_frame =
+            Some(input.samples()[last_start..last_start + input_channels].to_vec());
+        let start_timestamp = *self.start_timestamp.get_or_insert(input.timestamp());
+        let timestamp = sample_timestamp(
+            start_timestamp,
+            first_output_frame,
+            self.resampler.output.sample_rate,
+        )?;
+        AudioBuffer::new(self.resampler.output, timestamp, samples)
+    }
+
+    /// Returns the source format accepted by this converter.
+    #[must_use]
+    pub const fn input_format(&self) -> AudioFormat {
+        self.resampler.input
+    }
+
+    /// Returns the converted format emitted by this converter.
+    #[must_use]
+    pub const fn output_format(&self) -> AudioFormat {
+        self.resampler.output
+    }
+}
+
+fn frame_at<'a>(
+    previous_frame: Option<&'a [f32]>,
+    input: &'a AudioBuffer,
+    start_frame: u64,
+    index: u64,
+    channels: usize,
+) -> Option<&'a [f32]> {
+    if index < start_frame {
+        return if index.saturating_add(1) == start_frame {
+            previous_frame
+        } else {
+            None
+        };
+    }
+    let local = usize::try_from(index.checked_sub(start_frame)?).ok()?;
+    let start = local.checked_mul(channels)?;
+    input.samples().get(start..start.checked_add(channels)?)
+}
+
+fn sample_timestamp(
+    start: obs_rs_media::Timestamp,
+    output_frame: u64,
+    sample_rate: u32,
+) -> Result<obs_rs_media::Timestamp, AudioError> {
+    let offset = output_frame
+        .checked_mul(1_000_000_000_u64)
+        .map(u128::from)
+        .ok_or(AudioError::ScheduleOverflow)?
+        / u128::from(sample_rate);
+    let offset = u64::try_from(offset).map_err(|_| AudioError::ScheduleOverflow)?;
+    start
+        .checked_add(offset)
+        .ok_or(AudioError::ScheduleOverflow)
+}

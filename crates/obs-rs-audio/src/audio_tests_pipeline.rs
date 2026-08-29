@@ -195,6 +195,85 @@ fn resampler_block_timing_report() {
 }
 
 #[test]
+#[allow(clippy::cast_precision_loss)]
+fn streaming_resampler_preserves_phase_across_rate_converted_blocks() {
+    let input_format = AudioFormat::new(44_100, 1).expect("input format");
+    let output_format = AudioFormat::new(48_000, 1).expect("output format");
+    let mut resampler =
+        StreamingAudioResampler::new(input_format, output_format).expect("streaming resampler");
+    let mut next_output = 0_u64;
+    let mut emitted = 0_usize;
+
+    for block in 0..8_u64 {
+        let start = usize::try_from(block * 441).expect("bounded test frame index");
+        let input = AudioBuffer::new(
+            input_format,
+            Timestamp::from_nanos(block * 10_000_000),
+            (start..start + 441).map(|sample| sample as f32).collect(),
+        )
+        .expect("ramp input");
+        let converted = resampler.process(&input).expect("convert block");
+
+        assert_eq!(
+            converted.timestamp(),
+            Timestamp::from_nanos(next_output * 1_000_000_000 / 48_000)
+        );
+        for sample in converted.samples() {
+            let expected = next_output as f64 * 44_100.0 / 48_000.0;
+            assert!(
+                (f64::from(*sample) - expected).abs() < 0.001,
+                "sample {next_output} was {sample}, expected {expected}"
+            );
+            next_output += 1;
+            emitted += 1;
+        }
+    }
+
+    // One look-ahead sample is intentionally held until another block arrives;
+    // all emitted samples still follow one continuous source position without
+    // a reset or duplicate at each 441-frame boundary.
+    assert_eq!(emitted, 8 * 479 + 7);
+}
+
+#[test]
+#[allow(clippy::cast_precision_loss)]
+fn streaming_resampler_keeps_downsampled_blocks_on_one_sample_clock() {
+    let input_format = AudioFormat::new(48_000, 1).expect("input format");
+    let output_format = AudioFormat::new(44_100, 1).expect("output format");
+    let mut resampler =
+        StreamingAudioResampler::new(input_format, output_format).expect("streaming resampler");
+    let mut next_output = 0_u64;
+    let mut emitted = 0_usize;
+
+    for block in 0..8_u64 {
+        let start = usize::try_from(block * 480).expect("bounded test frame index");
+        let input = AudioBuffer::new(
+            input_format,
+            Timestamp::from_nanos(block * 10_000_000),
+            (start..start + 480).map(|sample| sample as f32).collect(),
+        )
+        .expect("ramp input");
+        let converted = resampler.process(&input).expect("convert block");
+
+        assert_eq!(
+            converted.timestamp(),
+            Timestamp::from_nanos(next_output * 1_000_000_000 / 44_100)
+        );
+        for sample in converted.samples() {
+            let expected = next_output as f64 * 48_000.0 / 44_100.0;
+            assert!(
+                (f64::from(*sample) - expected).abs() < 0.001,
+                "sample {next_output} was {sample}, expected {expected}"
+            );
+            next_output += 1;
+            emitted += 1;
+        }
+    }
+
+    assert_eq!(emitted, 8 * 441);
+}
+
+#[test]
 fn delay_line_preserves_order_and_reuses_the_input_shape() {
     let mono = AudioFormat::new(1_000, 1).expect("mono format");
     let mut delay = AudioDelayLine::with_block_frames(mono, 3, 2).expect("delay line");

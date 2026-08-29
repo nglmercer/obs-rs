@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
@@ -10,7 +11,7 @@ use std::{
 
 use obs_rs_audio::{
     AudioBuffer, AudioDeviceError, AudioDeviceInfo, AudioDeviceKind, AudioFormat, AudioInput,
-    AudioInputProvider, AudioInputState, AudioResampler, COMMON_AUDIO_DEVICE_FORMATS,
+    AudioInputProvider, AudioInputState, StreamingAudioResampler, COMMON_AUDIO_DEVICE_FORMATS,
 };
 use obs_rs_media::Timestamp;
 
@@ -305,8 +306,10 @@ fn open_audio_with_conversion(
                 }
                 return Ok(Box::new(ConvertedAudioInput {
                     input,
-                    converter: AudioResampler::new(actual_format, mix_format)?,
+                    converter: StreamingAudioResampler::new(actual_format, mix_format)?,
                     mix_format,
+                    pending: VecDeque::new(),
+                    next_source_timestamp: None,
                 }));
             }
             Err(error) => last_error = Some(error),
@@ -321,8 +324,10 @@ fn open_audio_with_conversion(
 
 struct ConvertedAudioInput {
     input: Box<dyn AudioInput>,
-    converter: AudioResampler,
+    converter: StreamingAudioResampler,
     mix_format: AudioFormat,
+    pending: VecDeque<f32>,
+    next_source_timestamp: Option<Timestamp>,
 }
 
 impl AudioInput for ConvertedAudioInput {
@@ -339,26 +344,61 @@ impl AudioInput for ConvertedAudioInput {
         timestamp: Timestamp,
         frames: usize,
     ) -> Result<AudioBuffer, AudioDeviceError> {
-        let source = self.converter.input_format();
-        let source_frames = (frames
-            .saturating_mul(source.sample_rate() as usize)
-            .saturating_add(self.mix_format.sample_rate() as usize - 1))
-            / self.mix_format.sample_rate() as usize;
-        let input = self.input.read_block(timestamp, source_frames.max(1))?;
-        let converted = self.converter.process(&input)?;
-        if converted.frames() == frames {
-            return Ok(converted);
+        if frames > obs_rs_audio::MAX_AUDIO_FRAMES {
+            return Err(AudioDeviceError::Audio(
+                obs_rs_audio::AudioError::BufferTooLarge { frames },
+            ));
         }
-        let sample_count = frames.saturating_mul(usize::from(self.mix_format.channels()));
-        let mut samples = converted.samples().to_vec();
-        samples.resize(sample_count, 0.0);
-        samples.truncate(sample_count);
+        let source = self.converter.input_format();
+        let channels = usize::from(self.mix_format.channels());
+        let sample_count = frames.checked_mul(channels).ok_or(AudioDeviceError::Audio(
+            obs_rs_audio::AudioError::BufferTooLarge { frames },
+        ))?;
+        while self.pending.len() < sample_count {
+            let missing_frames = (sample_count - self.pending.len()).div_ceil(channels);
+            let source_frames = (missing_frames
+                .saturating_mul(source.sample_rate() as usize)
+                .saturating_add(self.mix_format.sample_rate() as usize - 1))
+                / self.mix_format.sample_rate() as usize;
+            let source_frames = source_frames.max(1);
+            let source_timestamp = self.next_source_timestamp.unwrap_or(timestamp);
+            let input = self.input.read_block(source_timestamp, source_frames)?;
+            let converted = self.converter.process(&input)?;
+            self.next_source_timestamp = Some(advance_audio_timestamp(
+                source_timestamp,
+                input.frames(),
+                source.sample_rate(),
+            )?);
+            if converted.frames() == 0 {
+                return Err(AudioDeviceError::Unavailable(
+                    "audio resampler produced no frames".to_owned(),
+                ));
+            }
+            self.pending.extend(converted.into_samples());
+        }
+        let samples = self.pending.drain(..sample_count).collect();
         AudioBuffer::new(self.mix_format, timestamp, samples).map_err(Into::into)
     }
 
     fn stop(&mut self) {
         self.input.stop();
     }
+}
+
+fn advance_audio_timestamp(
+    timestamp: Timestamp,
+    frames: usize,
+    sample_rate: u32,
+) -> Result<Timestamp, AudioDeviceError> {
+    let nanos = u128::try_from(frames)
+        .map_err(|_| AudioDeviceError::Unavailable("audio frame count overflowed".to_owned()))?
+        .saturating_mul(1_000_000_000)
+        / u128::from(sample_rate);
+    let nanos = u64::try_from(nanos)
+        .map_err(|_| AudioDeviceError::Unavailable("audio timestamp overflowed".to_owned()))?;
+    timestamp
+        .checked_add(nanos)
+        .ok_or_else(|| AudioDeviceError::Unavailable("audio timestamp overflowed".to_owned()))
 }
 
 fn bounded_error(error: impl std::fmt::Display) -> String {
