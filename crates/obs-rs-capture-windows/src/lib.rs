@@ -43,6 +43,8 @@ const HELPER_SHUTDOWN_GRACE: Duration = Duration::from_millis(750);
 const HELPER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(target_os = "windows")]
 const HELPER_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+const HELPER_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A display returned by Windows Graphics Capture discovery.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -284,6 +286,8 @@ struct NativeHelperDevice {
     frames: Option<Arc<HelperFrameMailbox>>,
     reader: Option<JoinHandle<()>>,
     format: Option<VideoFormat>,
+    started_at: Instant,
+    first_frame_received: bool,
 }
 
 #[cfg(target_os = "windows")]
@@ -306,6 +310,8 @@ impl NativeHelperDevice {
             frames: None,
             reader: None,
             format: None,
+            started_at: Instant::now(),
+            first_frame_received: false,
         })
     }
 }
@@ -406,6 +412,8 @@ impl VideoCaptureDevice for NativeHelperDevice {
         self.frames = Some(frame_mailbox);
         self.reader = Some(reader);
         self.format = Some(format);
+        self.started_at = Instant::now();
+        self.first_frame_received = false;
         Ok(())
     }
 
@@ -416,6 +424,7 @@ impl VideoCaptureDevice for NativeHelperDevice {
         // a packet read.
         self.frames = None;
         self.format = None;
+        self.first_frame_received = false;
         // Closing stdin is the helper's graceful shutdown request. A bounded
         // wait below keeps a stuck native capture session from blocking the
         // engine or GUI indefinitely.
@@ -451,10 +460,21 @@ impl VideoCaptureDevice for NativeHelperDevice {
     fn next_frame(&mut self, _timestamp: Timestamp) -> Result<Option<VideoFrame>, CaptureError> {
         let mailbox = self.frames.as_ref().ok_or(CaptureError::NotRunning)?;
         if let Some(frame) = mailbox.take_latest() {
+            self.first_frame_received = true;
             return Ok(Some(frame));
         }
         match mailbox.failure() {
             Some(error) => Err(error),
+            None if !self.first_frame_received
+                && self.started_at.elapsed() >= HELPER_FIRST_FRAME_TIMEOUT =>
+            {
+                Err(CaptureError::PlatformUnavailable {
+                    message: format!(
+                        "Windows capture helper produced no frame within {} seconds",
+                        HELPER_FIRST_FRAME_TIMEOUT.as_secs()
+                    ),
+                })
+            }
             None => Ok(None),
         }
     }
