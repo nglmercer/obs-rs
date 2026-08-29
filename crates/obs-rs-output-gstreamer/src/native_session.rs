@@ -383,6 +383,11 @@ impl GStreamerOutputSession {
     ///
     /// Returns a native or filesystem finalization error.
     pub fn close(&mut self) -> Result<(), GStreamerError> {
+        // A pipeline can publish an asynchronous Error or EOS between the
+        // last media submission and the user's stop action. Consume that
+        // signal before sending the intentional EOS below; otherwise a
+        // truncated recording could be mistaken for a clean finalization.
+        self.poll_health()?;
         self.ensure_ready()?;
         let _ = self.video.end_of_stream();
         let _ = self.audio.end_of_stream();
@@ -390,35 +395,41 @@ impl GStreamerOutputSession {
         // acknowledge EOS after a network loss. Stop them immediately so the
         // UI cannot hang for the recording-only finalization timeout.
         if !is_local_recording_transport(self.transport) {
-            self.pipeline
-                .set_state(gst::State::Null)
-                .map_err(native_error)?;
+            if let Err(error) = self.pipeline.set_state(gst::State::Null) {
+                self.state = NativeOutputState::Failed;
+                return Err(native_error(error));
+            }
             self.state = NativeOutputState::Closed;
             return Ok(());
         }
-        if let Some(bus) = self.pipeline.bus() {
-            let message = bus.timed_pop_filtered(
-                gst::ClockTime::from_seconds(10),
-                &[gst::MessageType::Eos, gst::MessageType::Error],
-            );
-            match message.as_ref().map(|message| message.view()) {
-                Some(gst::MessageView::Eos(_)) => {}
-                Some(gst::MessageView::Error(error)) => {
-                    self.state = NativeOutputState::Failed;
-                    let _ = error;
-                    return Err(GStreamerError::Native(
-                        "recording pipeline reported an asynchronous error".to_owned(),
-                    ));
-                }
-                _ => {
-                    self.state = NativeOutputState::Failed;
-                    return Err(GStreamerError::Native("pipeline EOS timed out".to_owned()));
-                }
+        let Some(bus) = self.pipeline.bus() else {
+            self.state = NativeOutputState::Failed;
+            return Err(GStreamerError::Native(
+                "recording pipeline has no message bus".to_owned(),
+            ));
+        };
+        let message = bus.timed_pop_filtered(
+            gst::ClockTime::from_seconds(10),
+            &[gst::MessageType::Eos, gst::MessageType::Error],
+        );
+        match message.as_ref().map(|message| message.view()) {
+            Some(gst::MessageView::Eos(_)) => {}
+            Some(gst::MessageView::Error(error)) => {
+                self.state = NativeOutputState::Failed;
+                let _ = error;
+                return Err(GStreamerError::Native(
+                    "recording pipeline reported an asynchronous error".to_owned(),
+                ));
+            }
+            _ => {
+                self.state = NativeOutputState::Failed;
+                return Err(GStreamerError::Native("pipeline EOS timed out".to_owned()));
             }
         }
-        self.pipeline
-            .set_state(gst::State::Null)
-            .map_err(native_error)?;
+        if let Err(error) = self.pipeline.set_state(gst::State::Null) {
+            self.state = NativeOutputState::Failed;
+            return Err(native_error(error));
+        }
         let committed_bytes = if let Some(final_path) = &self.remux_final_path {
             let temp = self.temp_path.as_ref().ok_or_else(|| {
                 GStreamerError::Native("remux source temporary path is missing".to_owned())
@@ -449,7 +460,7 @@ impl GStreamerOutputSession {
     /// Returns the pipeline error when a recording fails or live recovery fails.
     pub fn poll_health(&mut self) -> Result<(), GStreamerError> {
         self.refresh_queue_levels();
-        let Some(failure) = take_pipeline_error(&self.pipeline) else {
+        let Some(failure) = take_pipeline_failure(&self.pipeline) else {
             return Ok(());
         };
         self.state = NativeOutputState::Lost;
@@ -563,7 +574,7 @@ fn is_local_recording_transport(transport: OutputTransport) -> bool {
 
 fn ensure_pipeline_startable(pipeline: &gst::Pipeline) -> Result<(), GStreamerError> {
     let (state_change, current, pending) = pipeline.state(Some(LOCAL_PIPELINE_START_TIMEOUT));
-    if let Some(error) = take_pipeline_error(pipeline) {
+    if let Some(error) = take_pipeline_failure(pipeline) {
         return Err(error);
     }
     if state_change.is_err() {
@@ -583,15 +594,20 @@ fn ensure_pipeline_startable(pipeline: &gst::Pipeline) -> Result<(), GStreamerEr
     Ok(())
 }
 
-fn take_pipeline_error(pipeline: &gst::Pipeline) -> Option<GStreamerError> {
-    let message = pipeline.bus()?.pop_filtered(&[gst::MessageType::Error])?;
-    let gst::MessageView::Error(error) = message.view() else {
-        return None;
-    };
-    Some(GStreamerError::Native(format!(
-        "production pipeline error: {}",
-        error.error()
-    )))
+fn take_pipeline_failure(pipeline: &gst::Pipeline) -> Option<GStreamerError> {
+    let message = pipeline
+        .bus()?
+        .pop_filtered(&[gst::MessageType::Error, gst::MessageType::Eos])?;
+    match message.view() {
+        gst::MessageView::Error(error) => Some(GStreamerError::Native(format!(
+            "production pipeline error: {}",
+            error.error()
+        ))),
+        gst::MessageView::Eos(_) => Some(GStreamerError::Native(
+            "production pipeline reached EOS unexpectedly".to_owned(),
+        )),
+        _ => None,
+    }
 }
 
 impl StreamingTransport for GStreamerOutputSession {
