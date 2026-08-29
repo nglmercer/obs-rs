@@ -80,6 +80,12 @@ pub(crate) fn migrate_project_for_host(mut project: Project) -> (Project, bool) 
                     set_setting(&mut settings, "capture_border", "false");
                     changed = true;
                 }
+                if target_kind == "screen_capture" && settings.get("monitor").is_none() {
+                    // Keep the native Windows screen schema explicit: an empty
+                    // monitor means the automatic primary-display target.
+                    set_setting(&mut settings, "monitor", "");
+                    changed = true;
+                }
 
                 if changed {
                     source
@@ -193,6 +199,7 @@ mod tests {
         );
         assert_eq!(source.settings().get("capture_cursor"), Some("true"));
         assert_eq!(source.settings().get("capture_border"), Some("false"));
+        assert_eq!(source.settings().get("monitor"), Some(""));
         assert_eq!(source.settings().get("restore_token"), None);
         assert!(project
             .profile("live")

@@ -90,6 +90,7 @@ pub(super) fn catalog() -> UiText {
             empty: s(
                 "No se detectó ninguna pantalla. Comprueba que DISPLAY apunte a un servidor X11 activo.",
             ),
+            unavailable_display: s("Pantalla no disponible"),
             select_monitor: s("Seleccionar pantalla"),
             not_a_screen_source: s("Selecciona primero una fuente de captura de pantalla."),
             applied: s("Pantalla aplicada: "),

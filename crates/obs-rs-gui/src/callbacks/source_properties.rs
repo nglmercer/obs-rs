@@ -327,7 +327,14 @@ fn monitor_summary(document: &str, locale: UiLocale) -> SharedString {
         })
     });
     let monitor = monitor.unwrap_or_default();
-    let monitor = monitor.trim();
+    monitor_summary_for_target(monitor.trim(), locale, &crate::fixtures::screen_monitors())
+}
+
+fn monitor_summary_for_target(
+    monitor: &str,
+    locale: UiLocale,
+    monitors: &[crate::fixtures::MonitorChoice],
+) -> SharedString {
     if monitor.is_empty() || (cfg!(target_os = "windows") && monitor == "wgc-screen-picker") {
         crate::i18n::with_catalog(locale, |text| {
             if cfg!(target_os = "windows") {
@@ -336,8 +343,12 @@ fn monitor_summary(document: &str, locale: UiLocale) -> SharedString {
                 text.monitor_ui.whole_desktop.clone()
             }
         })
+    } else if let Some(display) = monitors.iter().find(|display| display.id == monitor) {
+        format!("{} ({})", display.name, display.geometry()).into()
     } else {
-        monitor.into()
+        let unavailable =
+            crate::i18n::with_catalog(locale, |text| text.monitor_ui.unavailable_display.clone());
+        format!("{unavailable} ({monitor})").into()
     }
 }
 
@@ -388,11 +399,27 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn legacy_windows_device_id_is_used_when_monitor_is_missing() {
-        let document = "device_id = \"wgc-screen-secondary\"\n";
+        assert_eq!(
+            monitor_summary_for_target("wgc-screen-secondary", UiLocale::English, &[]),
+            "Unavailable display (wgc-screen-secondary)"
+        );
+    }
+
+    #[test]
+    fn explicit_monitor_summary_uses_the_friendly_geometry_label() {
+        let monitors = [crate::fixtures::MonitorChoice {
+            id: "wgc-screen-primary".to_owned(),
+            name: "Primary".to_owned(),
+            x: -1_920,
+            y: 0,
+            width: 1_920,
+            height: 1_080,
+            primary: true,
+        }];
 
         assert_eq!(
-            monitor_summary(document, UiLocale::English),
-            "wgc-screen-secondary"
+            monitor_summary_for_target("wgc-screen-primary", UiLocale::English, &monitors),
+            "Primary (1920x1080 at -1920,0)"
         );
     }
 
