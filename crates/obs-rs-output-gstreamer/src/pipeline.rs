@@ -1,10 +1,16 @@
+use std::collections::BTreeSet;
+#[cfg(feature = "native")]
+use std::sync::OnceLock;
+
 use obs_rs_output::{
     AudioCodec, AudioEncoderConfig, OutputAudioCodec, OutputProfile, OutputProfileKind,
     OutputVideoCodec, VideoCodec, VideoEncoderConfig,
 };
 use url::Url;
 
-use super::capabilities::{gst_inspect_command, GStreamerCapabilitySnapshot};
+#[cfg(feature = "native")]
+use super::capabilities::gst_inspect_command;
+use super::capabilities::GStreamerCapabilitySnapshot;
 use super::destination::ProductionDestination;
 use super::{GStreamerError, MAX_PRODUCTION_METADATA_BYTES, PRODUCTION_METADATA_MAGIC};
 
@@ -322,10 +328,80 @@ const fn profile_audio_codec(codec: OutputAudioCodec) -> AudioCodec {
 }
 
 pub(super) fn element_available(element: &str) -> bool {
-    gst_inspect_command()
-        .args(["--exists", element])
-        .status()
-        .is_ok_and(|status| status.success())
+    #[cfg(feature = "native")]
+    {
+        return match element_catalog() {
+            ElementCatalog::Listed(elements) => elements.contains(element),
+            ElementCatalog::ProbeEach => gst_inspect_command()
+                .args(["--exists", element])
+                .status()
+                .is_ok_and(|status| status.success()),
+        };
+    }
+
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = element;
+        false
+    }
+}
+
+/// The output adapter asks about the same small allow-list of elements several
+/// times while choosing a profile. Running `gst-inspect-1.0 --exists` once per
+/// element is especially expensive on Windows, where every child process also
+/// has to load the packaged DLL search path. Prefer one registry listing and
+/// keep the per-element command as a compatibility fallback for unusual
+/// runtimes whose listing command fails.
+#[cfg(feature = "native")]
+enum ElementCatalog {
+    Listed(BTreeSet<String>),
+    ProbeEach,
+}
+
+#[cfg(feature = "native")]
+fn element_catalog() -> &'static ElementCatalog {
+    static CATALOG: OnceLock<ElementCatalog> = OnceLock::new();
+    CATALOG.get_or_init(|| {
+        let Ok(output) = gst_inspect_command().output() else {
+            return ElementCatalog::ProbeEach;
+        };
+        if !output.status.success() {
+            return ElementCatalog::ProbeEach;
+        }
+        let elements = parse_element_names(&String::from_utf8_lossy(&output.stdout));
+        if elements.is_empty() {
+            ElementCatalog::ProbeEach
+        } else {
+            ElementCatalog::Listed(elements)
+        }
+    })
+}
+
+/// Parses the stable `plugin: element` rows emitted by `gst-inspect-1.0`
+/// without accepting summary lines or arbitrary text as element names.
+#[allow(dead_code)]
+pub(super) fn parse_element_names(output: &str) -> BTreeSet<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.trim().splitn(3, ':');
+            let _plugin = fields.next()?;
+            let element = fields.next()?.trim();
+            if is_element_name(element) {
+                Some(element.to_owned())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+fn is_element_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
 pub(super) fn valid_url(value: &str, scheme: &str) -> bool {

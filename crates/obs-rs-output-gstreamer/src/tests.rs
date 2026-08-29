@@ -11,7 +11,7 @@ use super::capabilities::{
     encoder_option_capabilities, production_profiles_with, property_present, protocol_capabilities,
     video_encoder_capability,
 };
-use super::pipeline::{element_available, first_matching};
+use super::pipeline::{element_available, first_matching, parse_element_names};
 
 #[test]
 fn rtmp_sink_selection_prefers_rtmp2_and_falls_back_to_legacy() {
@@ -183,6 +183,23 @@ fn cached_capability_probe_is_stable_for_the_process() {
     let first = GStreamerCapabilitySnapshot::probe_cached();
     let second = GStreamerCapabilitySnapshot::probe_cached();
     assert_eq!(first, second);
+}
+
+#[test]
+fn gst_inspect_catalog_parser_ignores_headers_and_summaries() {
+    let elements = parse_element_names(
+        "audioconvert: audioconvert\n\
+         coreelements: queue\n\
+         Total count: 2 plugins, 2 features\n\
+         malformed: not an element name\n",
+    );
+
+    assert_eq!(
+        elements,
+        ["audioconvert".to_owned(), "queue".to_owned()]
+            .into_iter()
+            .collect()
+    );
 }
 
 #[test]

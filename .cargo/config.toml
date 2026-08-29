@@ -22,3 +22,11 @@ app-check = "check -p obs-rs-app --bin obs-rs --profile dev-fast"
 windows-check = "build -p obs-rs-app --bin obs-rs-windows-check --profile dev-fast"
 windows-check-check = "check -p obs-rs-app --bin obs-rs-windows-check --profile dev-fast"
 windows-check-target = "check --target x86_64-pc-windows-msvc -p obs-rs-app --bin obs-rs-windows-check --profile dev-fast"
+
+# Scope cleanup to the profile that is usually consuming space. The explicit
+# workspace alias is useful when a toolchain/profile change invalidates every
+# root artifact; the separately maintained Windows helper target is documented
+# below because it has its own Cargo manifest and target directory.
+clean-fast = "clean --profile dev-fast"
+clean-release = "clean --release"
+clean-workspace = "clean --workspace"

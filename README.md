@@ -148,14 +148,25 @@ cargo app-check    # check only the desktop app binary
 cargo windows-check # build the Windows acceptance binary locally
 cargo windows-check-check # check the Windows acceptance binary
 cargo windows-check-target # cross-check it for x86_64-pc-windows-msvc
+cargo clean-fast # remove only root dev-fast artifacts
+cargo clean-release # remove only root release artifacts
+cargo clean-workspace # remove every root workspace profile
 ```
 
 Use the ordinary commands for canonical CI/release-style verification.
-`cargo clean` removes all profiles and their incremental state for this
-checkout when a toolchain or profile change makes the cache stale. The local
-toolchain does not force a linker cache or alternate linker; if `sccache` or a
-known-good Windows LLD installation is added later, it should be configured
-locally rather than required by the repository.
+`cargo clean` (or `cargo clean-workspace`) removes all root profiles and their
+incremental state when a toolchain or profile change makes the cache stale.
+The standalone Windows capture helper has its own target directory, so clean
+it explicitly when needed:
+
+```powershell
+cargo clean --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast
+# Full helper cleanup: omit --profile dev-fast
+```
+
+The local toolchain does not force a linker cache or alternate linker; if
+`sccache` or a known-good Windows LLD installation is added later, it should be
+configured locally rather than required by the repository.
 
 The demo registers the built-in plugin, probes and registers the reference sandbox
 source executable when it is available, creates a scene, adds two sources, applies a
