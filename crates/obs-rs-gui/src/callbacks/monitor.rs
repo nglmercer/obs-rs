@@ -295,6 +295,11 @@ fn install_selection(state: &Rc<RefCell<DesktopState>>, controller: &Rc<MonitorC
         let Some(target) = refresh_controller.target.borrow().clone() else {
             return;
         };
+        // Refresh is an explicit hot-plug request. The ordinary picker path
+        // uses a short-lived snapshot so repainting properties does not spawn
+        // the helper repeatedly, but this action must observe a monitor that
+        // was just connected or removed immediately.
+        crate::fixtures::invalidate_capture_cache(obs_rs_capture::CaptureKind::Screen, None);
         let source = window.get_source_name().to_string();
         let current = current_monitor_for_target(&refresh_state, &target);
         let saved_target_missing = refresh_controller.reload(&source, current.as_deref());

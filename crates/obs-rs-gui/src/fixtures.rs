@@ -19,6 +19,7 @@ use obs_rs_project::{Profile, Project, SceneItemSpec, SceneSpec, SourceSpec};
 /// round-trips. Keep one short-lived snapshot for repeated device-picker
 /// refreshes while still allowing hot-plug changes to appear promptly.
 const PLATFORM_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(1);
+const MONITOR_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(1);
 const CAMERA_MODE_CACHE_TTL: Duration = Duration::from_secs(5);
 pub(crate) const DEFAULT_CANVAS_WIDTH: u32 = 1_280;
 pub(crate) const DEFAULT_CANVAS_HEIGHT: u32 = 720;
@@ -26,8 +27,10 @@ pub(crate) const DEFAULT_CANVAS_FPS: u32 = 30;
 
 type PlatformDiscoveryCache = BTreeMap<CaptureKind, (Instant, Vec<CaptureDeviceInfo>)>;
 type CameraModeCache = BTreeMap<String, (Instant, Vec<CameraMode>)>;
+type MonitorDiscoveryCache = Option<(Instant, Vec<MonitorChoice>)>;
 
 static PLATFORM_DISCOVERY_CACHE: OnceLock<Mutex<PlatformDiscoveryCache>> = OnceLock::new();
+static MONITOR_DISCOVERY_CACHE: OnceLock<Mutex<MonitorDiscoveryCache>> = OnceLock::new();
 static CAMERA_MODE_CACHE: OnceLock<Mutex<CameraModeCache>> = OnceLock::new();
 
 /// Drops cached native capture descriptors before an explicit picker refresh.
@@ -40,6 +43,13 @@ pub(crate) fn invalidate_capture_cache(kind: CaptureKind, camera_id: Option<&str
     if let Some(cache) = PLATFORM_DISCOVERY_CACHE.get() {
         if let Ok(mut snapshot) = cache.lock() {
             snapshot.remove(&kind);
+        }
+    }
+    if kind == CaptureKind::Screen {
+        if let Some(cache) = MONITOR_DISCOVERY_CACHE.get() {
+            if let Ok(mut snapshot) = cache.lock() {
+                *snapshot = None;
+            }
         }
     }
     if kind == CaptureKind::Camera {
@@ -456,8 +466,26 @@ pub(crate) fn desktop_bounds(monitors: &[MonitorChoice]) -> DesktopBounds {
 ///
 /// Returns an empty list when no display server is reachable, which the picker
 /// reports rather than silently offering a choice that cannot be honoured.
-#[cfg(target_os = "linux")]
 pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
+    let cache = MONITOR_DISCOVERY_CACHE.get_or_init(|| Mutex::new(None));
+    let now = Instant::now();
+    if let Ok(snapshot) = cache.lock() {
+        if let Some((fetched, monitors)) = snapshot.as_ref() {
+            if now.duration_since(*fetched) < MONITOR_DISCOVERY_CACHE_TTL {
+                return monitors.clone();
+            }
+        }
+    }
+
+    let monitors = discover_screen_monitors();
+    if let Ok(mut snapshot) = cache.lock() {
+        *snapshot = Some((Instant::now(), monitors.clone()));
+    }
+    monitors
+}
+
+#[cfg(target_os = "linux")]
+fn discover_screen_monitors() -> Vec<MonitorChoice> {
     let Ok(display) = std::env::var("DISPLAY") else {
         return Vec::new();
     };
@@ -478,29 +506,27 @@ pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
         .collect()
 }
 
-#[cfg(not(target_os = "linux"))]
-pub(crate) fn screen_monitors() -> Vec<MonitorChoice> {
-    #[cfg(target_os = "windows")]
-    {
-        WindowsCaptureAdapter::default()
-            .discover_displays()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|display| MonitorChoice {
-                id: display.id,
-                name: display.name,
-                x: display.x,
-                y: display.y,
-                width: display.width,
-                height: display.height,
-                primary: display.primary,
-            })
-            .collect()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Vec::new()
-    }
+#[cfg(target_os = "windows")]
+fn discover_screen_monitors() -> Vec<MonitorChoice> {
+    WindowsCaptureAdapter::default()
+        .discover_displays()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|display| MonitorChoice {
+            id: display.id,
+            name: display.name,
+            x: display.x,
+            y: display.y,
+            width: display.width,
+            height: display.height,
+            primary: display.primary,
+        })
+        .collect()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn discover_screen_monitors() -> Vec<MonitorChoice> {
+    Vec::new()
 }
 
 /// Returns the devices that a source-properties editor can select.
