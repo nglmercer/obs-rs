@@ -160,6 +160,9 @@ export component StreamPage inherits VerticalLayout {
             checked <=> root.hls-low-latency;
             toggled(value) => { root.changed(); }
         }
+        if root.show-hls && root.hls-low-latency : SettingsWarning {
+            text: I18n.text.settings_ui.hls_low_latency_unavailable;
+        }
         if root.show-rist : SettingRow {
             label: I18n.text.settings_ui.address;
             SettingsField { text <=> root.rist-host; edited => { root.changed(); } }
@@ -175,6 +178,9 @@ export component StreamPage inherits VerticalLayout {
         if root.show-rist : SettingRow {
             label: I18n.text.settings_ui.shared_secret;
             SettingsField { text <=> root.rist-shared-secret; input-type: InputType.password; edited => { root.changed(); } }
+        }
+        if root.show-rist && root.rist-shared-secret != "" : SettingsWarning {
+            text: I18n.text.settings_ui.rist_shared_secret_unavailable;
         }
         if root.show-reference : SettingRow {
             label: I18n.text.settings_ui.stream_server;
@@ -208,4 +214,3 @@ export component StreamPage inherits VerticalLayout {
 // Output owns every encoding decision, in the two presentations OBS offers:
 // Simple is bitrate and quality presets, Advanced is the encoder configuration
 // the engine actually accepts.
-

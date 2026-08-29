@@ -259,6 +259,31 @@ fn destinations_validate_schemes_passphrases_and_redact_secrets() {
 }
 
 #[test]
+fn native_output_reports_unsupported_hls_and_rist_options() {
+    let hls_error = ProductionDestination::Hls {
+        directory: std::path::PathBuf::from("hls-output"),
+        segment_duration_secs: 4,
+        playlist_size: 6,
+        low_latency: true,
+    }
+    .validate_for(OutputProfile::hls_h264_aac())
+    .expect_err("native HLS must reject unsupported low-latency mode");
+    assert!(hls_error.to_string().contains("low-latency"));
+    assert!(hls_error.to_string().contains("LL-HLS"));
+
+    let rist_error = ProductionDestination::Rist {
+        host: "127.0.0.1".to_owned(),
+        port: 5_000,
+        sender_buffer_ms: 1_000,
+        shared_secret: Some("do-not-leak-this".to_owned()),
+    }
+    .validate_for(OutputProfile::rist_mpeg_ts_h264_aac())
+    .expect_err("native RIST must reject unsupported shared-secret mode");
+    assert!(rist_error.to_string().contains("shared-secret"));
+    assert!(!rist_error.to_string().contains("do-not-leak-this"));
+}
+
+#[test]
 fn production_metadata_decoder_is_bounded_and_rejects_trailing_records() {
     let valid = concat!(
         "OBSRGST1\n",

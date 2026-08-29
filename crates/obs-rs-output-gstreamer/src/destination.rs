@@ -243,6 +243,34 @@ impl ProductionDestination {
     /// Rejects scheme mismatches, empty paths, control characters, and missing
     /// WebRTC signaling.
     pub fn validate_for(&self, profile: OutputProfile) -> Result<(), GStreamerError> {
+        if profile.transport() == OutputTransport::Hls
+            && matches!(
+                self,
+                Self::Hls {
+                    low_latency: true,
+                    ..
+                }
+            )
+        {
+            return Err(GStreamerError::InvalidEndpoint(
+                "native HLS output does not support low-latency mode; disable it or use a backend with LL-HLS support"
+                    .to_owned(),
+            ));
+        }
+        if profile.transport() == OutputTransport::RistMpegTs
+            && matches!(
+                self,
+                Self::Rist {
+                    shared_secret: Some(_),
+                    ..
+                }
+            )
+        {
+            return Err(GStreamerError::InvalidEndpoint(
+                "native RIST output does not support shared-secret encryption; clear the secret or use an encrypted RIST backend"
+                    .to_owned(),
+            ));
+        }
         let valid = match (profile.transport(), self) {
             (OutputTransport::Matroska, Self::Recording(path)) => {
                 recording_path_has_extension(path, "mkv")
