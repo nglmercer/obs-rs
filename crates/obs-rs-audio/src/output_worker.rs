@@ -307,14 +307,7 @@ fn run_output_worker(
                         return;
                     }
                     if output.state() == AudioOutputState::Failed {
-                        let error = output.failure_reason().map_or_else(
-                            || {
-                                AudioDeviceError::Unavailable(
-                                    "audio output entered a failed state".to_owned(),
-                                )
-                            },
-                            AudioDeviceError::Unavailable,
-                        );
+                        let error = output_failure(&*output);
                         fail_worker(&state, &last_error, error);
                         drain_queue(&receiver, &queued_blocks);
                         output.stop();
@@ -329,6 +322,13 @@ fn run_output_worker(
                 state.store(STATE_STOPPED, Ordering::Release);
                 drain_queue(&receiver, &queued_blocks);
                 return;
+            }
+            if output.state() == AudioOutputState::Failed {
+                let error = output_failure(&*output);
+                fail_worker(&state, &last_error, error);
+                drain_queue(&receiver, &queued_blocks);
+                output.stop();
+                break;
             }
             if let Err(error) = output.write_block(&buffer) {
                 fail_worker(&state, &last_error, error);
@@ -346,6 +346,13 @@ fn run_output_worker(
             return;
         }
     }
+}
+
+fn output_failure(output: &dyn AudioOutput) -> AudioDeviceError {
+    output.failure_reason().map_or_else(
+        || AudioDeviceError::Unavailable("audio output entered a failed state".to_owned()),
+        AudioDeviceError::Unavailable,
+    )
 }
 
 fn wait_for_reconnect(cancelled: &AtomicBool) -> bool {

@@ -150,6 +150,42 @@ struct FailingWhenIdleProvider {
     attempts: Arc<AtomicUsize>,
 }
 
+struct FailingBeforeWriteOutput {
+    format: AudioFormat,
+    failed: Arc<AtomicBool>,
+    writes: Arc<AtomicUsize>,
+}
+
+impl AudioOutput for FailingBeforeWriteOutput {
+    fn format(&self) -> AudioFormat {
+        self.format
+    }
+
+    fn state(&self) -> AudioOutputState {
+        if self.failed.load(Ordering::Acquire) {
+            AudioOutputState::Failed
+        } else {
+            AudioOutputState::Running
+        }
+    }
+
+    fn failure_reason(&self) -> Option<String> {
+        Some("test output failed before queued audio was written".to_owned())
+    }
+
+    fn write_block(&mut self, _buffer: &AudioBuffer) -> Result<(), AudioDeviceError> {
+        self.writes.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn stop(&mut self) {}
+}
+
+struct FailingBeforeWriteProvider {
+    failed: Arc<AtomicBool>,
+    writes: Arc<AtomicUsize>,
+}
+
 impl AudioOutputProvider for GateOutputProvider {
     fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
         Ok(Vec::new())
@@ -192,6 +228,24 @@ impl AudioOutputProvider for FailingWhenIdleProvider {
                 writes: Arc::new(AtomicUsize::new(0)),
             }))
         }
+    }
+}
+
+impl AudioOutputProvider for FailingBeforeWriteProvider {
+    fn discover_outputs(&self) -> Result<Vec<AudioDeviceInfo>, AudioDeviceError> {
+        Ok(Vec::new())
+    }
+
+    fn open_output(
+        &self,
+        _device_id: &str,
+        format: AudioFormat,
+    ) -> Result<Box<dyn AudioOutput>, AudioDeviceError> {
+        Ok(Box::new(FailingBeforeWriteOutput {
+            format,
+            failed: Arc::clone(&self.failed),
+            writes: Arc::clone(&self.writes),
+        }))
     }
 }
 
@@ -397,6 +451,42 @@ fn asynchronous_monitor_output_reconnects_after_an_idle_device_failure() {
                 AudioOutputWorkerState::Starting | AudioOutputWorkerState::Running
             )
     }));
+    drop(worker);
+}
+
+#[test]
+fn asynchronous_monitor_output_drops_queued_audio_after_endpoint_failure() {
+    let failed = Arc::new(AtomicBool::new(false));
+    let writes = Arc::new(AtomicUsize::new(0));
+    let worker = AudioOutputWorker::spawn(
+        Arc::new(FailingBeforeWriteProvider {
+            failed: Arc::clone(&failed),
+            writes: Arc::clone(&writes),
+        }),
+        "pre-write-failure-output",
+        format(),
+        1,
+    )
+    .expect("output worker");
+    let handle = worker.handle();
+
+    assert!(wait_until(Duration::from_secs(1), || {
+        matches!(
+            handle.snapshot().state,
+            AudioOutputWorkerState::Starting | AudioOutputWorkerState::Running
+        )
+    }));
+    failed.store(true, Ordering::Release);
+    assert!(handle.try_write(buffer(&[0.7, 0.7])));
+
+    assert!(wait_until(Duration::from_secs(1), || {
+        matches!(handle.snapshot().state, AudioOutputWorkerState::Failed)
+            && handle.snapshot().last_error.as_deref()
+                == Some(
+                    "audio device unavailable: test output failed before queued audio was written",
+                )
+    }));
+    assert_eq!(writes.load(Ordering::Acquire), 0);
     drop(worker);
 }
 
