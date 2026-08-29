@@ -389,10 +389,11 @@ fn discover_display() -> Option<DisplayChoice> {
         .into_iter()
         .chain(["screen_capture"])
         .find_map(|kind| {
-            capture_devices(kind)
+            let kind = crate::project_migration::host_source_kind(kind).to_owned();
+            capture_devices(&kind)
                 .first()
                 .map(|(_, name)| DisplayChoice {
-                    kind: kind.to_owned(),
+                    kind,
                     // The source factory reuses the current first display when
                     // it serializes its settings; the label is what the user
                     // needs to review here.

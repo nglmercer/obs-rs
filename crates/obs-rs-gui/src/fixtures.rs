@@ -341,7 +341,21 @@ pub(crate) fn kind_uses_portal(kind: &str) -> bool {
 /// portal to ask. Offering the wrong one is how a screen source ends up
 /// showing nothing, so the Add Source list hides it instead.
 pub(crate) fn kind_runs_in_this_session(kind: &str) -> bool {
-    match crate::project_migration::host_source_kind(kind) {
+    let raw_kind = kind.trim();
+    #[cfg(target_os = "windows")]
+    if matches!(
+        raw_kind,
+        "wayland_screen_capture"
+            | "wayland_window_capture"
+            | "x11_screen_capture"
+            | "x11_window_capture"
+    ) {
+        // These identifiers are retained only for project migration. They are
+        // not registered Windows factories, so they must not influence setup
+        // discovery or reappear as a selectable Windows backend.
+        return false;
+    }
+    match crate::project_migration::host_source_kind(raw_kind) {
         "wayland_screen_capture" => wayland_session(),
         // The X11 adapters share one limitation: under Wayland they only ever
         // see Xwayland's own surfaces, so both are hidden rather than offered

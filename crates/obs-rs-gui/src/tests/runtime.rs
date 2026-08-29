@@ -358,6 +358,15 @@ fn only_screen_capture_kinds_offer_the_monitor_picker() {
     assert!(!kind_selects_monitor("screen_capture"));
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+fn legacy_linux_capture_kinds_are_not_candidates_for_windows_setup() {
+    assert!(!crate::kind_runs_in_this_session("wayland_screen_capture"));
+    assert!(!crate::kind_runs_in_this_session("x11_screen_capture"));
+    assert!(crate::kind_runs_in_this_session("screen_capture"));
+    assert!(crate::kind_runs_in_this_session("window_capture"));
+}
+
 #[test]
 fn the_desktop_channel_names_its_monitor_or_admits_it_is_silent() {
     let format = VideoFormat::new(64, 36, FrameRate::new(30, 1).expect("rate")).expect("format");

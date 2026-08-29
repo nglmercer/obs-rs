@@ -206,7 +206,14 @@ pub(crate) fn add_source_window(controller: &Rc<AddSourceController>) -> &AddSou
 fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourceController>) {
     let window = &controller.window;
     let text = window.global::<I18n>().get_text().add_source_ui;
-    let active_kind = controller.kind.borrow().clone();
+    // Keep the Add Source boundary on the host backend as well as the project
+    // load boundary. A stale Linux alias must not become a new Windows source
+    // just because it arrived through a cached selection or plugin catalogue.
+    let active_kind =
+        crate::project_migration::host_source_kind(&controller.kind.borrow()).to_owned();
+    if active_kind.as_str() != controller.kind.borrow().as_str() {
+        active_kind.clone_into(&mut controller.kind.borrow_mut());
+    }
 
     let mut kind_rows = vec![SourceKindRow {
         id: RECENT_KIND.into(),
@@ -216,12 +223,8 @@ fn refresh_window(state: &Rc<RefCell<DesktopState>>, controller: &Rc<AddSourceCo
         index: 0,
         count: 0,
     }];
-    let mut listed = crate::preview::builtin_source_kinds()
+    let mut listed = host_source_kinds(crate::preview::builtin_source_kinds())
         .into_iter()
-        // A screen kind that cannot work in this session is hidden rather than
-        // offered: the X11 adapter under Wayland only sees Xwayland's own
-        // surfaces, which is a black frame, and the portal needs a compositor.
-        .filter(|kind| crate::kind_runs_in_this_session(kind.as_str()))
         .map(|kind| SourceKindRow {
             id: kind.as_str().into(),
             label: kind_label(&text, kind.as_str()),
@@ -343,19 +346,20 @@ fn create_source(
     kind: &str,
     visible: bool,
 ) -> Result<String, Box<dyn Error>> {
+    let kind = crate::project_migration::host_source_kind(kind).to_owned();
     let (profile, scene) = target(state)?;
-    let id = unique_source_id(state, &scene, kind);
+    let id = unique_source_id(state, &scene, &kind);
     let name = format!(
         "{} {}",
-        kind_display(kind),
-        next_ordinal(state, &scene, kind)
+        kind_display(&kind),
+        next_ordinal(state, &scene, &kind)
     );
     let (canvas_width, canvas_height) = canvas_size(state);
     let source = SourceSpec::new(
         &id,
-        kind,
+        &kind,
         &name,
-        source_settings_for_canvas(kind, canvas_width, canvas_height)?,
+        source_settings_for_canvas(&kind, canvas_width, canvas_height)?,
     )?;
     state
         .borrow_mut()
@@ -365,7 +369,7 @@ fn create_source(
             source,
         }))?;
     set_visibility(state, &profile, &scene, &id, visible)?;
-    place_overlay(state, &profile, &scene, &id, kind)?;
+    place_overlay(state, &profile, &scene, &id, &kind)?;
     // Select the new item immediately so Properties opens on the source the
     // user just created, which is especially important for choosing a camera
     // or screen device after creation.
@@ -679,9 +683,27 @@ fn kind_icon(kind: &str) -> &'static str {
     }
 }
 
+/// Canonicalizes and filters the builtin catalogue for the current host.
+///
+/// Factories normally already expose host-native IDs, but keeping this at the
+/// UI boundary prevents duplicate screen entries when a plugin or an older
+/// cached catalogue contributes a Linux alias to a Windows session. The
+/// session capability filter remains here so the Add Source list never offers
+/// a backend that cannot produce frames in the current desktop session.
+fn host_source_kinds(kinds: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut canonical = BTreeSet::new();
+    for kind in kinds {
+        let kind = crate::project_migration::host_source_kind(&kind).to_owned();
+        if crate::kind_runs_in_this_session(&kind) {
+            canonical.insert(kind);
+        }
+    }
+    canonical.into_iter().collect()
+}
+
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
-    use super::kind_label;
+    use super::{host_source_kinds, kind_label};
     use crate::i18n::catalog;
     use obs_rs_ui::UiLocale;
 
@@ -696,6 +718,19 @@ mod tests {
         assert_ne!(
             kind_label(&text, "wayland_screen_capture"),
             text.kind_wayland_screen_capture
+        );
+    }
+
+    #[test]
+    fn legacy_linux_capture_kinds_are_canonicalized_and_deduplicated() {
+        assert_eq!(
+            host_source_kinds([
+                "wayland_screen_capture".to_owned(),
+                "screen_capture".to_owned(),
+                "x11_screen_capture".to_owned(),
+                "window_capture".to_owned(),
+            ]),
+            ["screen_capture".to_owned(), "window_capture".to_owned()]
         );
     }
 }
