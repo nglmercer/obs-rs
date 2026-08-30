@@ -301,7 +301,15 @@ impl GStreamerOutputSession {
         bytes: Vec<u8>,
     ) -> Result<(), GStreamerError> {
         self.poll_health()?;
-        self.ensure_ready()?;
+        if self.state == NativeOutputState::Retrying {
+            // Live outputs do not keep an unbounded application-side media
+            // queue. During the bounded reconnect backoff, discard this
+            // frame instead of submitting it to the failed old appsrc and
+            // turning a recoverable outage into a terminal output error.
+            self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
+            return Ok(());
+        }
+        self.ensure_media_ready()?;
         if self
             .telemetry
             .last_video_timestamp
@@ -340,7 +348,11 @@ impl GStreamerOutputSession {
     pub fn push_audio(&mut self, buffer: AudioBuffer) -> Result<(), GStreamerError> {
         validate_audio_format(self.audio_format, buffer.format())?;
         self.poll_health()?;
-        self.ensure_ready()?;
+        if self.state == NativeOutputState::Retrying {
+            self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
+            return Ok(());
+        }
+        self.ensure_media_ready()?;
         let timestamp = buffer.timestamp();
         if self
             .telemetry
@@ -395,7 +407,7 @@ impl GStreamerOutputSession {
         // signal before sending the intentional EOS below; otherwise a
         // truncated recording could be mistaken for a clean finalization.
         self.poll_health()?;
-        self.ensure_ready()?;
+        self.ensure_open()?;
         let _ = self.video.end_of_stream();
         let _ = self.audio.end_of_stream();
         // Live muxers do not publish a local index and remote sinks may never
@@ -596,7 +608,13 @@ impl GStreamerOutputSession {
         Ok((pipeline, video, audio))
     }
 
-    fn ensure_ready(&self) -> Result<(), GStreamerError> {
+    fn ensure_media_ready(&self) -> Result<(), GStreamerError> {
+        (self.state == NativeOutputState::Ready)
+            .then_some(())
+            .ok_or_else(|| GStreamerError::Native(format!("output session is {:?}", self.state)))
+    }
+
+    fn ensure_open(&self) -> Result<(), GStreamerError> {
         matches!(
             self.state,
             NativeOutputState::Ready | NativeOutputState::Retrying

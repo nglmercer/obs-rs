@@ -859,3 +859,40 @@ fn native_health_poll_services_a_pending_reconnect_deadline() {
     assert_eq!(session.telemetry().reconnects(), 1);
     assert_eq!(session.state(), NativeOutputState::Ready);
 }
+
+#[test]
+fn native_media_submission_drops_frames_during_reconnect_backoff() {
+    let plan = plan(OutputProfile::rtmp_h264_aac());
+    let destination = ProductionDestination::Rtmp {
+        endpoint: "rtmp://127.0.0.1:9/live/key".to_owned(),
+    };
+    let video = VideoFormat::new(
+        16,
+        16,
+        obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+    )
+    .expect("video format");
+    let audio = AudioFormat::new(48_000, 2).expect("audio format");
+    let policy = ReconnectPolicy::with_backoff(
+        1,
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_secs(1),
+    );
+    let mut session = GStreamerOutputSession::start_with_reconnect_policy(
+        &plan,
+        &destination,
+        video,
+        audio,
+        policy,
+    )
+    .expect("live session");
+    session.state = NativeOutputState::Retrying;
+    session.next_reconnect_at = Some(Instant::now() + std::time::Duration::from_secs(1));
+
+    session
+        .push_video(VideoFrame::solid(video, Timestamp::ZERO, [0, 0, 0, 255]))
+        .expect("backoff should not fail media submission");
+
+    assert_eq!(session.telemetry().video_submitted(), 0);
+    assert_eq!(session.telemetry().dropped(), 1);
+}
