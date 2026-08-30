@@ -465,9 +465,13 @@ impl VideoCaptureDevice for NativeHelperDevice {
 
     fn next_frame(&mut self, _timestamp: Timestamp) -> Result<Option<VideoFrame>, CaptureError> {
         let mailbox = self.frames.as_ref().ok_or(CaptureError::NotRunning)?;
-        if let Some(frame) = mailbox.take_latest() {
-            self.first_frame_received = true;
-            return Ok(Some(frame));
+        // A helper can publish a final frame immediately before its capture
+        // thread reports EOF or a protocol error. Surface that failure before
+        // consuming the queued frame; otherwise a compositor may render one
+        // stale frame after the native process has already died and postpone
+        // recovery by another tick.
+        if let Some(error) = mailbox.failure() {
+            return Err(self.enrich_helper_failure(error));
         }
         // The frame reader observes stdout asynchronously. Poll the process
         // itself as well so a crashed helper becomes visible on this call even
@@ -494,22 +498,28 @@ impl VideoCaptureDevice for NativeHelperDevice {
                 .unwrap_or_else(|| classify_helper_exit(status, ""));
             return Err(self.enrich_helper_failure(failure));
         }
-        match mailbox.failure() {
-            Some(error) => Err(self.enrich_helper_failure(error)),
-            None if !self.first_frame_received
-                && self.started_at.elapsed() >= HELPER_FIRST_FRAME_TIMEOUT =>
-            {
-                Err(
-                    self.enrich_helper_failure(CaptureError::PlatformUnavailable {
-                        message: format!(
-                            "Windows capture helper produced no frame within {} seconds",
-                            HELPER_FIRST_FRAME_TIMEOUT.as_secs()
-                        ),
-                    }),
-                )
-            }
-            None => Ok(None),
+        let frame = mailbox.take_latest();
+        // Recheck after the process poll/frame handoff to close the race where
+        // the reader records a failure between the first check and taking the
+        // latest frame. The failure remains authoritative over a stale frame.
+        if let Some(error) = mailbox.failure() {
+            return Err(self.enrich_helper_failure(error));
         }
+        if let Some(frame) = frame {
+            self.first_frame_received = true;
+            return Ok(Some(frame));
+        }
+        if !self.first_frame_received && self.started_at.elapsed() >= HELPER_FIRST_FRAME_TIMEOUT {
+            return Err(
+                self.enrich_helper_failure(CaptureError::PlatformUnavailable {
+                    message: format!(
+                        "Windows capture helper produced no frame within {} seconds",
+                        HELPER_FIRST_FRAME_TIMEOUT.as_secs()
+                    ),
+                }),
+            );
+        }
+        Ok(None)
     }
 }
 
@@ -1364,6 +1374,35 @@ mod tests {
         assert_eq!(frame.timestamp(), Timestamp::from_millis(33));
         assert_eq!(frame.pixels(), &[0, 255, 0, 255]);
         assert!(mailbox.take_latest().is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn helper_failure_takes_precedence_over_a_queued_stale_frame() {
+        let format = VideoFormat::new(1, 1, obs_rs_media::FrameRate::new(30, 1).unwrap())
+            .expect("valid format");
+        let mailbox = Arc::new(HelperFrameMailbox::default());
+        mailbox.publish(VideoFrame::solid(format, Timestamp::ZERO, [255, 0, 0, 255]));
+        mailbox.fail(CaptureError::Protocol {
+            message: "Windows capture helper frame stream ended".to_owned(),
+        });
+
+        let mut device = NativeHelperDevice::new(
+            Path::new("missing-helper.exe"),
+            "wgc-screen-picker",
+            CaptureKind::Screen,
+            None,
+            None,
+        )
+        .expect("device");
+        device.frames = Some(mailbox);
+        device.format = Some(format);
+
+        assert!(matches!(
+            device.next_frame(Timestamp::ZERO),
+            Err(CaptureError::Protocol { message })
+                if message == "Windows capture helper frame stream ended"
+        ));
     }
 
     #[cfg(target_os = "windows")]
