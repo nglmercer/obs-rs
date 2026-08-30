@@ -908,8 +908,51 @@ fn check_target_persistence() -> CheckResult {
     let Some(display) = first_windows_device(&devices, CaptureKind::Screen) else {
         return CheckResult::skip("target persistence needs a connected Windows display");
     };
-    let window = first_windows_device(&devices, CaptureKind::Window);
     let format = probe_video_format();
+    // Discovery can include a window that disappears or rejects conversion to
+    // GraphicsCaptureItem between enumeration and open (for example a short
+    // lived popup or a protected surface). Select the first target that really
+    // produces a frame so this check tests persistence rather than the order
+    // of the helper's catalog.
+    let window = {
+        let candidates = devices
+            .iter()
+            .filter(|device| device.kind() == CaptureKind::Window)
+            .filter(|device| device.permission() == CapturePermission::Granted)
+            .take(8)
+            .collect::<Vec<_>>();
+        let mut failures = Vec::new();
+        let mut unavailable = 0_usize;
+        let mut selected = None;
+        for candidate in &candidates {
+            match capture_one(candidate, format, Duration::from_secs(8)) {
+                Ok(_) => {
+                    selected = Some(*candidate);
+                    break;
+                }
+                Err(error) if is_hardware_unavailable(&error) => {
+                    unavailable = unavailable.saturating_add(1);
+                    failures.push(format!("{}: unavailable: {error}", candidate.id()));
+                }
+                Err(error) => failures.push(format!("{}: {error}", candidate.id())),
+            }
+        }
+        if let Some(selected) = selected {
+            Some(selected)
+        } else if candidates.is_empty() {
+            None
+        } else if unavailable == candidates.len() {
+            return CheckResult::skip(format!(
+                "target persistence found no capturable window: {}",
+                failures.join("; ")
+            ));
+        } else {
+            return CheckResult::fail(format!(
+                "target persistence found no capturable window: {}",
+                failures.join("; ")
+            ));
+        }
+    };
     let mut project = match Project::new("OBS-RS Windows target persistence") {
         Ok(project) => project,
         Err(error) => return CheckResult::fail(error.to_string()),
