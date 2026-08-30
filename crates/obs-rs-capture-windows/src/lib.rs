@@ -155,7 +155,7 @@ impl WindowsCaptureAdapter {
         {
             let output = self.run_helper(&["--protocol", WINDOWS_HELPER_PROTOCOL, "--discover"])?;
             let (_, displays) = parse_discovery_output(&output)?;
-            require_displays(displays)
+            require_display_catalog(displays)
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -1140,18 +1140,10 @@ fn parse_discovery_output(
             message: "Windows discovery contains duplicate display IDs".to_owned(),
         });
     }
-    let primary_displays = displays.iter().filter(|display| display.primary).count();
-    if primary_displays != 1 {
-        return Err(CaptureError::Protocol {
-            message: format!(
-                "Windows discovery must contain exactly one primary display, found {primary_displays}"
-            ),
-        });
-    }
     Ok((devices, displays))
 }
 
-fn require_displays(
+fn require_display_catalog(
     displays: Vec<WindowsDisplayInfo>,
 ) -> Result<Vec<WindowsDisplayInfo>, CaptureError> {
     if displays.is_empty() {
@@ -1159,6 +1151,14 @@ fn require_displays(
             message: "Windows Graphics Capture reported no displays".to_owned(),
         })
     } else {
+        let primary_displays = displays.iter().filter(|display| display.primary).count();
+        if primary_displays != 1 {
+            return Err(CaptureError::Protocol {
+                message: format!(
+                    "Windows discovery must contain exactly one primary display, found {primary_displays}"
+                ),
+            });
+        }
         Ok(displays)
     }
 }
@@ -1274,14 +1274,14 @@ mod tests {
         let no_primary =
             "OBSRWIN1\tDISCOVERY\t1\nOBSRWIN1\tVERSION\t0.1.0\nscreen\twgc-screen-1\tDisplay\t0\t0\t1920\t1080\t0\n";
         assert!(matches!(
-            parse_discovery_output(no_primary),
+            parse_discovery_output(no_primary).and_then(|(_, displays)| require_display_catalog(displays)),
             Err(CaptureError::Protocol { message })
                 if message.contains("exactly one primary display")
         ));
 
         let two_primaries = "OBSRWIN1\tDISCOVERY\t1\nOBSRWIN1\tVERSION\t0.1.0\nscreen\twgc-screen-1\tPrimary 1\t0\t0\t1920\t1080\t1\nscreen\twgc-screen-2\tPrimary 2\t1920\t0\t1920\t1080\t1\n";
         assert!(matches!(
-            parse_discovery_output(two_primaries),
+            parse_discovery_output(two_primaries).and_then(|(_, displays)| require_display_catalog(displays)),
             Err(CaptureError::Protocol { message })
                 if message.contains("exactly one primary display")
         ));
@@ -1290,7 +1290,7 @@ mod tests {
     #[test]
     fn empty_display_catalog_is_retryable_unavailability() {
         assert!(matches!(
-            require_displays(Vec::new()),
+            require_display_catalog(Vec::new()),
             Err(CaptureError::PlatformUnavailable { message })
                 if message == "Windows Graphics Capture reported no displays"
         ));
