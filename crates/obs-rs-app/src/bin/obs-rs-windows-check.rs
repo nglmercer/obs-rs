@@ -1030,12 +1030,28 @@ fn check_target_persistence() -> CheckResult {
     let Some(profile) = decoded.profile("windows-check") else {
         return CheckResult::fail("persisted target project lost its profile");
     };
+    let persisted_format = profile.video_format();
+    if persisted_format != format {
+        return CheckResult::fail(format!(
+            "persisted profile video format changed: expected={}x{}@{}/{} actual={}x{}@{}/{}",
+            format.width(),
+            format.height(),
+            format.frame_rate().numerator(),
+            format.frame_rate().denominator(),
+            persisted_format.width(),
+            persisted_format.height(),
+            persisted_format.frame_rate().numerator(),
+            persisted_format.frame_rate().denominator(),
+        ));
+    }
+    let mut loaded_targets = Vec::with_capacity(expected.len());
     for (id, kind, device_id, monitor) in &expected {
         let Some(source) = profile.source(id.as_str()) else {
             return CheckResult::fail(format!("persisted target {id} is missing"));
         };
+        let loaded_device_id = source.settings().get("device_id");
         if source.kind().as_str() != kind
-            || source.settings().get("device_id") != Some(device_id.as_str())
+            || loaded_device_id != Some(device_id.as_str())
             || source.settings().get("monitor") != monitor.as_deref()
         {
             return CheckResult::fail(format!(
@@ -1045,41 +1061,61 @@ fn check_target_persistence() -> CheckResult {
                 source.settings().get("monitor")
             ));
         }
+        let Some(loaded_device_id) = loaded_device_id else {
+            return CheckResult::fail(format!(
+                "persisted target {id} has no device_id after project reload"
+            ));
+        };
+        loaded_targets.push((id.as_str(), kind.as_str(), loaded_device_id));
     }
+    let Some((_, _, persisted_display_id)) = loaded_targets
+        .iter()
+        .find(|(_, kind, _)| *kind == "screen_capture")
+    else {
+        return CheckResult::fail("persisted target project lost its display source");
+    };
     let persisted_display = devices.iter().find(|device| {
-        device.kind() == CaptureKind::Screen && device.id().as_str() == display.id().as_str()
+        device.kind() == CaptureKind::Screen && device.id().as_str() == *persisted_display_id
     });
     let Some(persisted_display) = persisted_display else {
         return CheckResult::fail(format!(
             "display target {} disappeared after project reload",
-            display.id()
+            persisted_display_id
         ));
     };
-    let (_, display_frames, _) =
-        match capture_frames(persisted_display, format, 1, Duration::from_secs(8)) {
-            Ok(result) => result,
-            Err(error) => {
-                return capture_check_result_with_context(
-                    &error,
-                    "capture persisted display target after project reload",
-                )
-            }
-        };
+    let (_, display_frames, _) = match capture_frames(
+        persisted_display,
+        persisted_format,
+        1,
+        Duration::from_secs(8),
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            return capture_check_result_with_context(
+                &error,
+                "capture persisted display target after project reload",
+            )
+        }
+    };
     let mut captured_targets = 1_usize;
-    if let Some(expected_window) = expected
+    if let Some((_, _, persisted_window_id)) = loaded_targets
         .iter()
-        .find(|(_, kind, _, _)| kind == "window_capture")
+        .find(|(_, kind, _)| *kind == "window_capture")
     {
         let Some(persisted_window) = devices.iter().find(|device| {
-            device.kind() == CaptureKind::Window
-                && device.id().as_str() == expected_window.2.as_str()
+            device.kind() == CaptureKind::Window && device.id().as_str() == *persisted_window_id
         }) else {
             return CheckResult::fail(format!(
                 "window target {} disappeared after project reload",
-                expected_window.2
+                persisted_window_id
             ));
         };
-        match capture_frames(persisted_window, format, 1, Duration::from_secs(8)) {
+        match capture_frames(
+            persisted_window,
+            persisted_format,
+            1,
+            Duration::from_secs(8),
+        ) {
             Ok(_) => captured_targets = captured_targets.saturating_add(1),
             Err(error) => {
                 return capture_check_result_with_context(
