@@ -155,7 +155,7 @@ impl WindowsCaptureAdapter {
         {
             let output = self.run_helper(&["--protocol", WINDOWS_HELPER_PROTOCOL, "--discover"])?;
             let (_, displays) = parse_discovery_output(&output)?;
-            Ok(displays)
+            require_displays(displays)
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -1143,6 +1143,18 @@ fn parse_discovery_output(
     Ok((devices, displays))
 }
 
+fn require_displays(
+    displays: Vec<WindowsDisplayInfo>,
+) -> Result<Vec<WindowsDisplayInfo>, CaptureError> {
+    if displays.is_empty() {
+        Err(CaptureError::PlatformUnavailable {
+            message: "Windows Graphics Capture reported no displays".to_owned(),
+        })
+    } else {
+        Ok(displays)
+    }
+}
+
 fn parse_version_output(output: &str) -> Result<String, CaptureError> {
     let mut version = None;
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
@@ -1246,6 +1258,15 @@ mod tests {
         assert!(matches!(
             parse_discovery_output(incompatible),
             Err(CaptureError::Protocol { .. })
+        ));
+    }
+
+    #[test]
+    fn empty_display_catalog_is_retryable_unavailability() {
+        assert!(matches!(
+            require_displays(Vec::new()),
+            Err(CaptureError::PlatformUnavailable { message })
+                if message == "Windows Graphics Capture reported no displays"
         ));
     }
 
