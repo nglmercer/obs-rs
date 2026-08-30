@@ -1,4 +1,9 @@
-use std::{fs, mem::size_of, path::PathBuf, time::Instant};
+use std::{
+    fs,
+    mem::size_of,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -545,8 +550,7 @@ impl GStreamerOutputSession {
         let (pipeline, video, audio) = match self.build_live_pipeline() {
             Ok(pipeline) => pipeline,
             Err(error) => {
-                self.state = NativeOutputState::Failed;
-                return Err(error);
+                return self.defer_reconnect_after_failure(now, error);
             }
         };
         self.pipeline = pipeline;
@@ -560,6 +564,23 @@ impl GStreamerOutputSession {
         self.telemetry.reconnects = self.telemetry.reconnects.saturating_add(1);
         self.state = NativeOutputState::Ready;
         Ok(ReconnectOutcome::Reconnected)
+    }
+
+    fn defer_reconnect_after_failure(
+        &mut self,
+        now: Instant,
+        error: GStreamerError,
+    ) -> Result<ReconnectOutcome, GStreamerError> {
+        if self.reconnect_attempts >= self.reconnect_policy.max_attempts() {
+            self.state = NativeOutputState::Failed;
+            return Err(error);
+        }
+        self.schedule_reconnect(now);
+        self.state = NativeOutputState::Retrying;
+        let retry_after = self
+            .next_reconnect_at
+            .map_or(Duration::ZERO, |deadline| deadline.duration_since(now));
+        Ok(ReconnectOutcome::Deferred { retry_after })
     }
 
     fn build_live_pipeline(

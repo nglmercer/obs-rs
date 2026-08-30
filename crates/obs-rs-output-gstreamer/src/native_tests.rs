@@ -828,6 +828,57 @@ fn native_reconnect_honors_a_bounded_deferred_retry() {
 }
 
 #[test]
+fn native_reconnect_build_failures_use_the_remaining_retry_budget() {
+    let plan = plan(OutputProfile::rtmp_h264_aac());
+    let destination = ProductionDestination::Rtmp {
+        endpoint: "rtmp://127.0.0.1:9/live/key".to_owned(),
+    };
+    let video = VideoFormat::new(
+        16,
+        16,
+        obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+    )
+    .expect("video format");
+    let audio = AudioFormat::new(48_000, 2).expect("audio format");
+    let policy = ReconnectPolicy::with_backoff(
+        3,
+        std::time::Duration::from_millis(100),
+        std::time::Duration::from_millis(250),
+    );
+    let mut session = GStreamerOutputSession::start_with_reconnect_policy(
+        &plan,
+        &destination,
+        video,
+        audio,
+        policy,
+    )
+    .expect("live session");
+    let now = Instant::now();
+    session.reconnect_attempts = 1;
+
+    assert_eq!(
+        session.defer_reconnect_after_failure(
+            now,
+            GStreamerError::Native("temporary sink failure".to_owned()),
+        ),
+        Ok(ReconnectOutcome::Deferred {
+            retry_after: std::time::Duration::from_millis(200),
+        })
+    );
+    assert_eq!(session.state(), NativeOutputState::Retrying);
+
+    session.reconnect_attempts = policy.max_attempts();
+    assert!(matches!(
+        session.defer_reconnect_after_failure(
+            now,
+            GStreamerError::Native("retry budget exhausted".to_owned()),
+        ),
+        Err(GStreamerError::Native(message)) if message == "retry budget exhausted"
+    ));
+    assert_eq!(session.state(), NativeOutputState::Failed);
+}
+
+#[test]
 fn native_health_poll_services_a_pending_reconnect_deadline() {
     let plan = plan(OutputProfile::rtmp_h264_aac());
     let destination = ProductionDestination::Rtmp {
