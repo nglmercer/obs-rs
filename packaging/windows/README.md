@@ -34,6 +34,10 @@ helper with the same profile when iterating on both components:
 cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast-gui
 ```
 
+Use `cargo gui-run` or `cargo gui-smoke` when launching the rebuilt GUI locally;
+both commands select the same bounded-memory profile, so an older `target\\debug`
+executable cannot be mistaken for the current Windows build.
+
 The GUI searches the helper's `target\dev-fast-gui` and `target\dev-fast`
 directories before the ordinary debug and release directories, so a local
 fast build is picked up automatically.

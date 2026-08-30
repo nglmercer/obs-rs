@@ -143,6 +143,8 @@ cargo clippy-fast  # quick clippy pass with -D warnings
 cargo clippy-all-fast # clippy every workspace target with -D warnings
 cargo gui-check    # check only GUI targets with dev-fast-gui
 cargo gui-test     # run the GUI test binary with dev-fast-gui
+cargo gui-run      # run the GUI with the bounded-memory dev-fast-gui profile
+cargo gui-smoke    # rebuild/run the current GUI and exit after startup wiring
 cargo app          # build only the desktop app with dev-fast
 cargo app-check    # check only the desktop app binary
 cargo windows-check # build the Windows acceptance binary locally
