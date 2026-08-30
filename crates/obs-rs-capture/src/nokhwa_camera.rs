@@ -188,18 +188,20 @@ impl VideoCaptureDevice for NokhwaCaptureDevice {
         buffer
             .decode_image_to_buffer::<RgbFormat>(&mut self.rgb_scratch)
             .map_err(|error| map_nokhwa_error(&error))?;
-        let rgba = rgb_to_rgba(&self.rgb_scratch);
-        let pixels = if source_width == usize::try_from(output_format.width()).unwrap_or(0)
-            && source_height == usize::try_from(output_format.height()).unwrap_or(0)
-        {
-            rgba
+        let destination_width = usize::try_from(output_format.width()).unwrap_or(0);
+        let destination_height = usize::try_from(output_format.height()).unwrap_or(0);
+        let pixels = if source_width == destination_width && source_height == destination_height {
+            rgb_to_rgba(&self.rgb_scratch)
         } else {
-            resize_letterbox(
-                &rgba,
+            // Write the normalized RGBA image directly while scaling. This
+            // avoids retaining a second full-size RGBA allocation for every
+            // resized camera frame.
+            resize_letterbox_rgb(
+                &self.rgb_scratch,
                 source_width,
                 source_height,
-                usize::try_from(output_format.width()).unwrap_or(0),
-                usize::try_from(output_format.height()).unwrap_or(0),
+                destination_width,
+                destination_height,
             )?
         };
         let frame =
@@ -540,10 +542,10 @@ fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
     rgba
 }
 
-/// Resizes a native camera image into the existing normalized output canvas
+/// Resizes a decoded RGB camera image into the normalized RGBA output canvas
 /// without stretching its aspect ratio.
-fn resize_letterbox(
-    source: &[u8],
+fn resize_letterbox_rgb(
+    source_rgb: &[u8],
     source_width: usize,
     source_height: usize,
     destination_width: usize,
@@ -551,9 +553,9 @@ fn resize_letterbox(
 ) -> Result<Vec<u8>, CaptureError> {
     let source_bytes = source_width
         .checked_mul(source_height)
-        .and_then(|pixels| pixels.checked_mul(4))
+        .and_then(|pixels| pixels.checked_mul(3))
         .ok_or(CaptureError::ReplyTooLarge { bytes: u64::MAX })?;
-    if source.len() != source_bytes
+    if source_rgb.len() != source_bytes
         || source_width == 0
         || source_height == 0
         || destination_width == 0
@@ -606,11 +608,11 @@ fn resize_letterbox(
                 .checked_div(scaled_width)
                 .unwrap_or(0)
                 .min(source_width - 1);
-            let source_offset = (source_y * source_width + source_x) * 4;
+            let source_offset = (source_y * source_width + source_x) * 3;
             let output_offset =
                 ((offset_y + destination_y) * destination_width + offset_x + destination_x) * 4;
-            output[output_offset..output_offset + 4]
-                .copy_from_slice(&source[source_offset..source_offset + 4]);
+            output[output_offset..output_offset + 3]
+                .copy_from_slice(&source_rgb[source_offset..source_offset + 3]);
         }
     }
     Ok(output)
@@ -736,6 +738,18 @@ mod tests {
         assert_eq!(
             rgb_to_rgba(&[1, 2, 3, 4, 5, 6]),
             vec![1, 2, 3, 255, 4, 5, 6, 255]
+        );
+    }
+
+    #[test]
+    fn resized_rgb_frames_are_letterboxed_with_opaque_alpha() {
+        assert_eq!(
+            resize_letterbox_rgb(&[1, 2, 3, 4, 5, 6], 2, 1, 4, 4).expect("resize"),
+            vec![
+                0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 1, 2, 3, 255, 1, 2, 3, 255,
+                4, 5, 6, 255, 4, 5, 6, 255, 1, 2, 3, 255, 1, 2, 3, 255, 4, 5, 6, 255, 4, 5, 6, 255,
+                0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+            ]
         );
     }
 
