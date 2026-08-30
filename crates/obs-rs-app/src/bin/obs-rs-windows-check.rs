@@ -1871,7 +1871,14 @@ fn open_probe_input(
     for (sample_rate, channels) in PROBE_AUDIO_FORMATS {
         let format = AudioFormat::new(sample_rate, channels).map_err(AudioDeviceError::from)?;
         match provider.open_input(device.id(), format) {
-            Ok(input) => return Ok((input, format)),
+            Ok(input) => {
+                // WASAPI shared mode may negotiate a fixed endpoint format
+                // (for example, a mono microphone when stereo was requested).
+                // The returned input contract is authoritative for both the
+                // block assertion and the timestamp/format used by the soak.
+                let actual_format = input.format();
+                return Ok((input, actual_format));
+            }
             Err(error) => last_error = Some(error),
         }
     }
@@ -1889,7 +1896,10 @@ fn open_probe_loopback(
     for (sample_rate, channels) in PROBE_AUDIO_FORMATS {
         let format = AudioFormat::new(sample_rate, channels).map_err(AudioDeviceError::from)?;
         match provider.open_loopback(device.id(), format) {
-            Ok(input) => return Ok((input, format)),
+            Ok(input) => {
+                let actual_format = input.format();
+                return Ok((input, actual_format));
+            }
             Err(error) => last_error = Some(error),
         }
     }
@@ -1907,7 +1917,10 @@ fn open_probe_output(
     for (sample_rate, channels) in PROBE_AUDIO_FORMATS {
         let format = AudioFormat::new(sample_rate, channels).map_err(AudioDeviceError::from)?;
         match provider.open_output(device.id(), format) {
-            Ok(output) => return Ok((output, format)),
+            Ok(output) => {
+                let actual_format = output.format();
+                return Ok((output, actual_format));
+            }
             Err(error) => last_error = Some(error),
         }
     }
@@ -1970,7 +1983,7 @@ fn check_desktop_loopback() -> CheckResult {
         Ok(output) => output,
         Err(error) => return CheckResult::skip(error.to_string()),
     };
-    let silence = match AudioBuffer::silence(format, Timestamp::ZERO, 480) {
+    let silence = match AudioBuffer::silence(render.format(), Timestamp::ZERO, 480) {
         Ok(buffer) => buffer,
         Err(error) => {
             render.stop();
