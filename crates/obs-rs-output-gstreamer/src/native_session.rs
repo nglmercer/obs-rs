@@ -101,6 +101,7 @@ pub struct GStreamerOutputSession {
     reconnect_attempts: u32,
     next_reconnect_at: Option<Instant>,
     video_format: VideoFormat,
+    audio_format: AudioFormat,
     video_pixel_format: PixelFormat,
 }
 
@@ -226,6 +227,7 @@ impl GStreamerOutputSession {
             reconnect_attempts: 0,
             next_reconnect_at: None,
             video_format,
+            audio_format,
             video_pixel_format: PixelFormat::Rgba8,
         })
     }
@@ -332,6 +334,7 @@ impl GStreamerOutputSession {
     ///
     /// Rejects closed sessions, timestamp regression, or downstream failure.
     pub fn push_audio(&mut self, buffer: AudioBuffer) -> Result<(), GStreamerError> {
+        validate_audio_format(self.audio_format, buffer.format())?;
         self.poll_health()?;
         self.ensure_ready()?;
         let timestamp = buffer.timestamp();
@@ -561,6 +564,15 @@ impl GStreamerOutputSession {
     }
 }
 
+fn validate_audio_format(expected: AudioFormat, actual: AudioFormat) -> Result<(), GStreamerError> {
+    if actual == expected {
+        return Ok(());
+    }
+    Err(GStreamerError::Native(format!(
+        "audio buffer format {actual:?} does not match the configured output format {expected:?}"
+    )))
+}
+
 fn is_local_recording_transport(transport: OutputTransport) -> bool {
     matches!(
         transport,
@@ -641,5 +653,22 @@ impl Drop for GStreamerOutputSession {
                 let _ = recover_stale_segment_artifacts(base_path, policy);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_audio_format, AudioFormat};
+
+    #[test]
+    fn audio_format_contract_accepts_exact_format_only() {
+        let configured = AudioFormat::new(48_000, 2).expect("configured format");
+        assert!(validate_audio_format(configured, configured).is_ok());
+
+        let mismatched = AudioFormat::new(44_100, 2).expect("mismatched format");
+        let error = validate_audio_format(configured, mismatched).expect_err("format mismatch");
+        let message = error.to_string();
+        assert!(message.contains("does not match"));
+        assert!(message.contains("44_100") || message.contains("44100"));
     }
 }

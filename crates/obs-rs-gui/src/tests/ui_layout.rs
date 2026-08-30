@@ -604,6 +604,36 @@ pub(super) fn exercise_monitor_selection(
     );
     drop(state_ref);
 
+    // The top-level properties route is the path a user reaches from the
+    // source dock. It must canonicalize migrated platform kinds on Windows,
+    // keep the dedicated monitor picker visible, and never expose the old
+    // Wayland form or a duplicate monitor combo box.
+    let properties =
+        crate::install_source_properties_window_with_monitor(ui, state, surface, Some(&controller))
+            .expect("target-aware properties controller");
+    ui.invoke_open_source_properties_window();
+    let properties_window =
+        crate::callbacks::source_properties::SourcePropertiesController::window(&properties);
+    assert_eq!(
+        properties_window.get_source_kind(),
+        "screen_capture",
+        "Windows screen properties use the canonical capture kind"
+    );
+    assert!(
+        properties_window.get_monitor_visible(),
+        "top-level Windows screen properties expose the monitor picker"
+    );
+    assert!(
+        !properties_window
+            .get_source_kind_label()
+            .to_string()
+            .contains("Wayland"),
+        "Windows screen properties do not render the legacy Wayland label"
+    );
+    #[cfg(target_os = "windows")]
+    assert_windows_screen_property_rows(properties_window);
+    properties_window.invoke_accept_properties();
+
     // A nested screen item must keep its stable path all the way through the
     // properties dialog and into the monitor picker, even when another root
     // source becomes selected while the dialog is being opened.
