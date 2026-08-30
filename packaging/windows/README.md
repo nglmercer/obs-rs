@@ -24,15 +24,19 @@ the workspace binaries and the separate capture helper:
 For faster local helper iteration, use the matching development profile:
 
 ```powershell
-cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast
+cargo helper
 ```
 
 The `cargo gui` alias uses the bounded-memory `dev-fast-gui` profile. Build the
 helper with the same profile when iterating on both components:
 
 ```powershell
-cargo build --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast-gui
+cargo helper-gui
 ```
+
+The helper has a separate target directory. Reclaim only its profile that is
+consuming space with `cargo clean-helper-fast`, `cargo clean-helper-gui`, or
+`cargo clean-helper-release`; these do not remove the root workspace cache.
 
 Use `cargo gui-run` or `cargo gui-smoke` when launching the rebuilt GUI locally;
 both commands select the same bounded-memory profile, so an older `target\\debug`

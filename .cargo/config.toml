@@ -27,6 +27,13 @@ windows-check = "build -p obs-rs-app --bin obs-rs-windows-check --profile dev-fa
 windows-check-check = "check -p obs-rs-app --bin obs-rs-windows-check --profile dev-fast"
 windows-check-target = "check --target x86_64-pc-windows-msvc -p obs-rs-app --bin obs-rs-windows-check --profile dev-fast"
 
+# The capture helper is intentionally outside the root workspace. Keep its
+# common build/test/cleanup operations discoverable and profile-scoped too.
+helper = "build --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast"
+helper-check = "check --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast"
+helper-test = "test --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast"
+helper-gui = "build --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast-gui"
+
 # Scope cleanup to the profile that is usually consuming space. The explicit
 # workspace alias is useful when a toolchain/profile change invalidates every
 # root artifact; the separately maintained Windows helper target is documented
@@ -35,3 +42,6 @@ clean-fast = "clean --profile dev-fast"
 clean-gui-fast = "clean --profile dev-fast-gui"
 clean-release = "clean --release"
 clean-workspace = "clean --workspace"
+clean-helper-fast = "clean --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast"
+clean-helper-gui = "clean --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast-gui"
+clean-helper-release = "clean --manifest-path packaging/windows/capture-helper/Cargo.toml --release"

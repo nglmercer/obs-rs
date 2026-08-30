@@ -150,22 +150,25 @@ cargo app-check    # check only the desktop app binary
 cargo windows-check # build the Windows acceptance binary locally
 cargo windows-check-check # check the Windows acceptance binary
 cargo windows-check-target # cross-check it for x86_64-pc-windows-msvc
+cargo helper # build the standalone capture helper with dev-fast
+cargo helper-check # check the standalone capture helper
+cargo helper-test # test the standalone capture helper
+cargo helper-gui # build the helper with the GUI-sized fast profile
 cargo clean-fast # remove only root dev-fast artifacts
 cargo clean-gui-fast # remove only root dev-fast-gui GUI artifacts
 cargo clean-release # remove only root release artifacts
 cargo clean-workspace # remove every root workspace profile
+cargo clean-helper-fast # remove only helper dev-fast artifacts
+cargo clean-helper-gui # remove only helper dev-fast-gui artifacts
+cargo clean-helper-release # remove only helper release artifacts
 ```
 
 Use the ordinary commands for canonical CI/release-style verification.
 `cargo clean` (or `cargo clean-workspace`) removes all root profiles and their
 incremental state when a toolchain or profile change makes the cache stale.
-The standalone Windows capture helper has its own target directory, so clean
-it explicitly when needed:
-
-```powershell
-cargo clean --manifest-path packaging/windows/capture-helper/Cargo.toml --profile dev-fast
-# Full helper cleanup: omit --profile dev-fast
-```
+The standalone Windows capture helper has its own target directory; use the
+`clean-helper-*` aliases when that cache needs to be reclaimed without
+touching the root workspace.
 
 The local toolchain does not force a linker cache or alternate linker; if
 `sccache` or a known-good Windows LLD installation is added later, it should be
