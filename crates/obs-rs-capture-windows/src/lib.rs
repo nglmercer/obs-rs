@@ -1140,6 +1140,14 @@ fn parse_discovery_output(
             message: "Windows discovery contains duplicate display IDs".to_owned(),
         });
     }
+    let primary_displays = displays.iter().filter(|display| display.primary).count();
+    if primary_displays != 1 {
+        return Err(CaptureError::Protocol {
+            message: format!(
+                "Windows discovery must contain exactly one primary display, found {primary_displays}"
+            ),
+        });
+    }
     Ok((devices, displays))
 }
 
@@ -1258,6 +1266,24 @@ mod tests {
         assert!(matches!(
             parse_discovery_output(incompatible),
             Err(CaptureError::Protocol { .. })
+        ));
+    }
+
+    #[test]
+    fn discovery_rejects_a_catalog_without_exactly_one_primary_display() {
+        let no_primary =
+            "OBSRWIN1\tDISCOVERY\t1\nOBSRWIN1\tVERSION\t0.1.0\nscreen\twgc-screen-1\tDisplay\t0\t0\t1920\t1080\t0\n";
+        assert!(matches!(
+            parse_discovery_output(no_primary),
+            Err(CaptureError::Protocol { message })
+                if message.contains("exactly one primary display")
+        ));
+
+        let two_primaries = "OBSRWIN1\tDISCOVERY\t1\nOBSRWIN1\tVERSION\t0.1.0\nscreen\twgc-screen-1\tPrimary 1\t0\t0\t1920\t1080\t1\nscreen\twgc-screen-2\tPrimary 2\t1920\t0\t1920\t1080\t1\n";
+        assert!(matches!(
+            parse_discovery_output(two_primaries),
+            Err(CaptureError::Protocol { message })
+                if message.contains("exactly one primary display")
         ));
     }
 
