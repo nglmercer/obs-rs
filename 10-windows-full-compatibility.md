@@ -106,8 +106,9 @@ only scaffolded:
   `packaging/windows/capture-helper/`, while packaged builds keep the helper
   beside the entry points and report its version in diagnostics;
 - the Windows package includes `run-obs-rs.ps1` and
-  `verify-package.ps1`; `-ProductionGStreamer` can copy a matching native
-  runtime, plugin tree, and plugin scanner into a self-contained archive;
+  `verify-package.ps1`; verification rejects truncated or non-x86_64 PE entry
+  points, and `-ProductionGStreamer` can copy a matching native runtime,
+  plugin tree, and plugin scanner into a self-contained archive;
 - the built-in `media_source` is registered on every platform and reports an
   explicit unavailable capability without the optional native GStreamer
   feature; production builds use a bounded playbin/appsink video path;

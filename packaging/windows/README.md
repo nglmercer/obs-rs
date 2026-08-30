@@ -53,7 +53,8 @@ and a matching `.sha256` file. The archive includes `VERSION.txt`,
 entry points, the acceptance scripts, and the helper. Extract the `obs-rs`
 directory and run `install.ps1` once if a per-user uninstall entry is wanted.
 The entry points to the included `uninstall.ps1` and does not require
-administrator access.
+administrator access. `verify-package.ps1` also rejects truncated, non-PE, or
+non-x86_64 entry points before a bundle can be accepted.
 
 If the archive was built with `-ProductionGStreamer`, start the GUI with
 `.\run-obs-rs.ps1 gui`. The launcher configures the bundled native DLLs,

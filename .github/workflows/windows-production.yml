@@ -100,12 +100,12 @@ jobs:
           OBS_RS_REQUIRE_PRODUCTION_HLS: ${{ vars.OBS_RS_REQUIRE_PRODUCTION_HLS || '0' }}
         run: |
           $dist = Join-Path $env:RUNNER_TEMP "obs-rs-windows-production-dist"
-          $packageArguments = @(
-            "-Configuration", "release",
-            "-OutputDirectory", $dist,
-            "-ProductionGStreamer",
-            "-GStreamerRuntimeDirectory", $env:GSTREAMER_1_0_ROOT
-          )
+          $packageArguments = @{
+            Configuration = "release"
+            OutputDirectory = $dist
+            ProductionGStreamer = $true
+            GStreamerRuntimeDirectory = $env:GSTREAMER_1_0_ROOT
+          }
           $requiredPackageProtocols = @()
           if (-not [string]::IsNullOrWhiteSpace($env:OBS_RS_PRODUCTION_STREAM_URL)) {
             $streamUrl = $env:OBS_RS_PRODUCTION_STREAM_URL.Trim()
@@ -127,7 +127,7 @@ jobs:
           }
           $requiredPackageProtocols = @($requiredPackageProtocols | Select-Object -Unique)
           if ($requiredPackageProtocols.Count -gt 0) {
-            $packageArguments += @("-ProductionStreamProtocol", $requiredPackageProtocols)
+            $packageArguments["ProductionStreamProtocol"] = $requiredPackageProtocols
           }
           & .\packaging\windows\package.ps1 @packageArguments
           if ($LASTEXITCODE -ne 0) { throw "production Windows package failed" }
@@ -142,9 +142,11 @@ jobs:
           $packageRoot = Get-ChildItem -LiteralPath $expanded -Directory -Filter "obs-rs" |
             Select-Object -First 1
           if ($null -eq $packageRoot) { throw "expanded production archive has no obs-rs directory" }
-          $verifyArguments = @("-PackageDirectory", $packageRoot.FullName)
+          $verifyArguments = @{
+            PackageDirectory = $packageRoot.FullName
+          }
           if ($requiredPackageProtocols.Count -gt 0) {
-            $verifyArguments += @("-RequiredStreamProtocol", $requiredPackageProtocols)
+            $verifyArguments["RequiredStreamProtocol"] = $requiredPackageProtocols
           }
           & (Join-Path $packageRoot.FullName "verify-package.ps1") @verifyArguments
           if ($LASTEXITCODE -ne 0) { throw "production package verification failed" }
@@ -161,17 +163,17 @@ jobs:
           $packageInfo = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE "production-package.txt")
           $packageRoot = ($packageInfo | Where-Object { $_ -like "PACKAGE_ROOT=*" } | Select-Object -First 1).Substring(13)
           $artifacts = Join-Path $env:GITHUB_WORKSPACE "windows-production-artifacts"
-          $arguments = @(
-            "-PackageDirectory", $packageRoot,
-            "-OutputDirectory", $artifacts,
-            "-SoakSeconds", ([int]$env:OBS_RS_HARDWARE_SOAK_SECONDS),
-            "-RequireProduction"
-          )
+          $arguments = @{
+            PackageDirectory = $packageRoot
+            OutputDirectory = $artifacts
+            SoakSeconds = [int]$env:OBS_RS_HARDWARE_SOAK_SECONDS
+            RequireProduction = $true
+          }
           if ([bool]::Parse("${{ inputs.require_camera }}")) {
-            $arguments += "-RequireCamera"
+            $arguments["RequireCamera"] = $true
           }
           if ($env:OBS_RS_REQUIRE_PRODUCTION_HLS -in @("1", "true", "yes", "on")) {
-            $arguments += "-RequireProductionHls"
+            $arguments["RequireProductionHls"] = $true
           }
           if ([string]::IsNullOrWhiteSpace($env:OBS_RS_PRODUCTION_STREAM_URL) -and
               $env:OBS_RS_REQUIRE_PRODUCTION_STREAMING -in @("1", "true", "yes", "on")) {

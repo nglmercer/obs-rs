@@ -286,9 +286,11 @@ $payloadChecksums = @(Get-ChildItem -LiteralPath $stagingDirectory -File -Recurs
         "$hash  $($relative.Replace("\", "/"))"
     })
 $payloadChecksums | Set-Content -LiteralPath (Join-Path $stagingDirectory "SHA256SUMS.txt") -Encoding ascii
-$verificationArguments = @("-PackageDirectory", $stagingDirectory)
+$verificationArguments = @{
+    PackageDirectory = $stagingDirectory
+}
 if ($streamProtocols.Count -gt 0) {
-    $verificationArguments += @("-RequiredStreamProtocol", $streamProtocols)
+    $verificationArguments["RequiredStreamProtocol"] = $streamProtocols
 }
 & (Join-Path $stagingDirectory "verify-package.ps1") @verificationArguments
 if ($LASTEXITCODE -ne 0) {

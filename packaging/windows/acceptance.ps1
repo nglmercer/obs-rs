@@ -43,9 +43,11 @@ if ($RequireProductionHls) {
     $requiredStreamProtocols += "hls"
 }
 $requiredStreamProtocols = @($requiredStreamProtocols | Select-Object -Unique)
-$verifyArguments = @("-PackageDirectory", $root)
+$verifyArguments = @{
+    PackageDirectory = $root
+}
 if ($requiredStreamProtocols.Count -gt 0) {
-    $verifyArguments += @("-RequiredStreamProtocol", $requiredStreamProtocols)
+    $verifyArguments["RequiredStreamProtocol"] = $requiredStreamProtocols
 }
 & $verifier @verifyArguments
 if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {

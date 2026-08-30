@@ -41,6 +41,64 @@ foreach ($relative in $requiredFiles) {
     }
 }
 
+function Test-WindowsX64Executable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $stream = $null
+    $reader = $null
+    try {
+        $stream = [System.IO.File]::Open(
+            $Path,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read)
+        if ($stream.Length -lt 0x40) {
+            throw "file is too small to contain a PE header"
+        }
+        $reader = [System.IO.BinaryReader]::new($stream)
+        if ($reader.ReadUInt16() -ne 0x5a4d) {
+            throw "missing the MZ signature"
+        }
+        $stream.Position = 0x3c
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0 -or $peOffset -gt $stream.Length - 24) {
+            throw "contains an invalid PE header offset"
+        }
+        $stream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x00004550) {
+            throw "missing the PE signature"
+        }
+        if ($reader.ReadUInt16() -ne 0x8664) {
+            throw "is not an x86_64 PE executable"
+        }
+    } catch {
+        throw "Windows package executable is invalid ($RelativePath): $($_.Exception.Message)"
+    } finally {
+        if ($null -ne $reader) {
+            $reader.Dispose()
+        } elseif ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
+}
+
+foreach ($relative in @(
+    "obs-rs-gui.exe",
+    "obs-rs.exe",
+    "obs-rs-windows-check.exe",
+    "obs-rs-capture-windows-helper.exe"
+)) {
+    Test-WindowsX64Executable `
+        -Path (Join-Path $root $relative) `
+        -RelativePath $relative
+}
+Write-Output "Verified x86_64 PE entry points"
+
 $checked = 0
 $rootPrefix = $root.TrimEnd("\", "/") + [System.IO.Path]::DirectorySeparatorChar
 $listedFiles = New-Object 'System.Collections.Generic.HashSet[string]' `
