@@ -88,6 +88,12 @@ writes bounded soak telemetry:
 .\acceptance.ps1 -SoakSeconds 1800
 ```
 
+The runner keeps the human-readable `windows-check.txt` and also writes
+`windows-check.json`. The JSON artifact includes the overall exit status,
+pass/skip/fail counts, every parsed check with its detail, and any unexpected
+launcher output. This makes an accepted run auditable without scraping console
+text and makes hardware-limited skips visible in CI artifact viewers.
+
 The default run validates the reference Windows package and does not require
 the optional native GStreamer media source or production output backend. Use
 `-RequireProduction` to require those native media/output checks.

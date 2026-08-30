@@ -198,15 +198,51 @@ if (-not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
 }
 
 $resultPath = Join-Path $artifacts "windows-check.txt"
+$reportPath = Join-Path $artifacts "windows-check.json"
 $guiSmokePath = Join-Path $artifacts "gui-smoke.txt"
 try {
     & $launcher gui --smoke 2>&1 | Tee-Object -FilePath $guiSmokePath
     if ($LASTEXITCODE -ne 0) {
         throw "packaged GUI smoke test failed with exit code $LASTEXITCODE"
     }
-    & $launcher check 2>&1 | Tee-Object -FilePath $resultPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Windows acceptance checks failed with exit code $LASTEXITCODE"
+
+    $checkOutput = @(& $launcher check 2>&1)
+    $checkExitCode = $LASTEXITCODE
+    $checkOutput | Tee-Object -FilePath $resultPath
+
+    $checkRecords = [System.Collections.Generic.List[object]]::new()
+    $unparsedOutput = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $checkOutput) {
+        $lineText = [string]$line
+        if ($lineText -match '^\s*check=(?<name>\S+)\s+status=(?<status>pass|skip|fail)\s+detail=(?<detail>.*)$') {
+            $checkRecords.Add([ordered]@{
+                    name = $Matches.name
+                    status = $Matches.status
+                    detail = $Matches.detail
+                })
+        } else {
+            $unparsedOutput.Add($lineText)
+        }
+    }
+
+    $counts = [ordered]@{
+        pass = @($checkRecords | Where-Object { $_.status -eq "pass" }).Count
+        skip = @($checkRecords | Where-Object { $_.status -eq "skip" }).Count
+        fail = @($checkRecords | Where-Object { $_.status -eq "fail" }).Count
+    }
+    $report = [ordered]@{
+        schema_version = 1
+        captured_at_utc = [DateTime]::UtcNow.ToString("o")
+        status = if ($checkExitCode -eq 0) { "pass" } else { "fail" }
+        exit_code = $checkExitCode
+        counts = $counts
+        checks = @($checkRecords)
+        unparsed_output = @($unparsedOutput)
+    }
+    $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding utf8
+
+    if ($checkExitCode -ne 0) {
+        throw "Windows acceptance checks failed with exit code $checkExitCode; see $reportPath"
     }
     if ($RequireProduction -or
         -not [string]::IsNullOrWhiteSpace($ProductionStreamUrl)) {
