@@ -41,7 +41,7 @@ pub(super) fn worker_loop(
             Ok(command) => command,
             Err(RecvTimeoutError::Timeout) => {
                 if session.is_recording() || session.is_streaming() {
-                    pump_outputs(&mut session);
+                    pump_outputs(&mut session, &output_events);
                     publish_snapshot(&session, &snapshot, &dropped_frames, &queued_frames, true);
                 }
                 continue;
@@ -139,14 +139,30 @@ pub(super) fn worker_loop(
             WorkerCommand::PushFrame(frame) => {
                 queued_frames.fetch_sub(1, Ordering::Relaxed);
                 if let Err(error) = session.push_program_frame(&frame) {
-                    session.last_error = Some(error.to_string());
+                    let stream_failed = session.handle_media_error(&error);
+                    if stream_failed {
+                        push_output_event(
+                            &output_events,
+                            OutputEvent::Failed {
+                                reason: error.to_string(),
+                            },
+                        );
+                    }
                 }
                 false
             }
             WorkerCommand::PushRawFrame(frame) => {
                 queued_frames.fetch_sub(1, Ordering::Relaxed);
                 if let Err(error) = session.push_program_raw_frame(&frame) {
-                    session.last_error = Some(error.to_string());
+                    let stream_failed = session.handle_media_error(&error);
+                    if stream_failed {
+                        push_output_event(
+                            &output_events,
+                            OutputEvent::Failed {
+                                reason: error.to_string(),
+                            },
+                        );
+                    }
                 }
                 false
             }
@@ -321,7 +337,7 @@ pub(super) fn worker_loop(
             WorkerCommand::Shutdown => true,
         };
 
-        pump_outputs(&mut session);
+        pump_outputs(&mut session, &output_events);
         publish_snapshot(
             &session,
             &snapshot,
@@ -338,9 +354,21 @@ pub(super) fn worker_loop(
     publish_snapshot(&session, &snapshot, &dropped_frames, &queued_frames, false);
 }
 
-fn pump_outputs(session: &mut EngineSession) {
+fn pump_outputs(session: &mut EngineSession, output_events: &Arc<Mutex<VecDeque<OutputEvent>>>) {
+    let was_streaming = session.is_streaming();
     if let Err(error) = session.pump_outputs() {
         session.last_error = Some(error.to_string());
+        if was_streaming && session.streaming_lifecycle() == OutputLifecycle::Failed {
+            push_output_event(
+                output_events,
+                OutputEvent::Failed {
+                    reason: session
+                        .last_error
+                        .clone()
+                        .unwrap_or_else(|| error.to_string()),
+                },
+            );
+        }
     }
 }
 

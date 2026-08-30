@@ -799,12 +799,62 @@ impl EngineSession {
             .as_mut()
             .and_then(|recording| recording.poll_health().err());
         if let Some(error) = recording_error.as_ref() {
-            self.recording_lifecycle = OutputLifecycle::Failed;
+            self.discard_failed_recording();
             self.last_error = Some(error.to_string());
         }
 
         let streaming_error = self.pump_stream().err();
+        if streaming_error.is_some() {
+            // `pump_stream` reports the terminal transport error, but the
+            // worker must also release the failed handle. Otherwise the GUI
+            // observes `Failed` while the next start is rejected as `Busy`.
+            self.discard_failed_streaming();
+        }
         streaming_error.or(recording_error).map_or(Ok(()), Err)
+    }
+
+    /// Applies a media-submission failure to the active output handles.
+    ///
+    /// Output failures happen on the worker thread, after the command that
+    /// queued the frame has already returned. Keeping a dead recording or
+    /// stream in the session would make the lifecycle snapshot look failed
+    /// while preventing a retry. Non-output media errors are retained for
+    /// diagnostics but do not stop healthy outputs.
+    pub(super) fn handle_media_error(&mut self, error: &EngineError) -> bool {
+        let is_output_error = match error {
+            EngineError::Output(_) => true,
+            #[cfg(feature = "production-gstreamer")]
+            EngineError::ProductionOutput(_) => true,
+            _ => false,
+        };
+        if !is_output_error {
+            self.last_error = Some(error.to_string());
+            return false;
+        }
+
+        let had_streaming = self.streaming.is_some();
+        if self.recording.is_some() {
+            self.discard_failed_recording();
+        }
+        if self.streaming.is_some() {
+            self.discard_failed_streaming();
+        }
+        self.last_error = Some(error.to_string());
+        had_streaming
+    }
+
+    fn discard_failed_recording(&mut self) {
+        if let Some(mut recording) = self.recording.take() {
+            recording.abort();
+        }
+        self.recording_lifecycle = OutputLifecycle::Failed;
+    }
+
+    fn discard_failed_streaming(&mut self) {
+        if let Some(mut streaming) = self.streaming.take() {
+            let _ = streaming.close();
+        }
+        self.streaming_lifecycle = OutputLifecycle::Failed;
     }
 
     /// Stops streaming and closes its transport.

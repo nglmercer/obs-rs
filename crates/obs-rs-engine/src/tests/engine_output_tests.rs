@@ -759,6 +759,60 @@ fn reference_tcp_and_websocket_streams_keep_packetized_encoding() {
     }
 }
 
+#[test]
+fn failed_media_output_releases_recording_and_stream_handles() {
+    let token = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("obs-rs-output-recovery-{token}.obsr"));
+    let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+    engine.start_recording(&path).expect("recording");
+
+    let mut stream = StreamSession::new(
+        TcpPacketTransport::new("127.0.0.1:9"),
+        1_048_576,
+        PacketDropPolicy::DropNewest,
+        ReconnectPolicy::new(1),
+    )
+    .expect("stream");
+    stream.close();
+    engine.streaming = Some(StreamOutput::Tcp(stream));
+    engine.streaming_lifecycle = OutputLifecycle::Running;
+
+    let frame = VideoFrame::solid(engine.format(), Timestamp::ZERO, [24, 96, 180, 255]);
+    let error = engine
+        .push_program_frame(&frame)
+        .expect_err("closed stream must reject media");
+    assert!(matches!(error, EngineError::Output(_)));
+    assert!(engine.handle_media_error(&error));
+
+    assert!(!engine.is_recording());
+    assert!(!engine.is_streaming());
+    assert_eq!(engine.recording_lifecycle(), OutputLifecycle::Failed);
+    assert_eq!(engine.streaming_lifecycle(), OutputLifecycle::Failed);
+    assert!(!path.exists(), "failed output must not publish a recording");
+}
+
+#[test]
+fn terminal_stream_health_failure_releases_stream_handle() {
+    let mut engine = EngineSession::new(project(), EngineConfig::default()).expect("engine");
+    let mut stream = StreamSession::new(
+        TcpPacketTransport::new("127.0.0.1:9"),
+        1_048_576,
+        PacketDropPolicy::DropNewest,
+        ReconnectPolicy::new(1),
+    )
+    .expect("stream");
+    stream.close();
+    engine.streaming = Some(StreamOutput::Tcp(stream));
+    engine.streaming_lifecycle = OutputLifecycle::Running;
+
+    assert!(engine.pump_outputs().is_err());
+    assert!(!engine.is_streaming());
+    assert_eq!(engine.streaming_lifecycle(), OutputLifecycle::Failed);
+}
+
 #[cfg(feature = "production-gstreamer")]
 #[test]
 fn reference_recording_and_rtmp_encode_once_and_submit_raw_once() {
