@@ -74,10 +74,20 @@ fn platform_devices_for_kind(kind: CaptureKind) -> Vec<CaptureDeviceInfo> {
         }
     }
 
-    let devices = BuiltinPlugin::new()
-        .ok()
-        .and_then(|plugin| plugin.discover_platform_capture_devices_for_kind(kind).ok())
-        .unwrap_or_default();
+    let devices = match BuiltinPlugin::new() {
+        Ok(plugin) => match plugin.discover_platform_capture_devices_for_kind(kind) {
+            Ok(devices) => devices,
+            Err(_) => {
+                // A native helper/device probe can fail transiently while the
+                // desktop is locked, a camera is being opened by another
+                // process, or an endpoint is changing. Do not cache an empty
+                // catalog for that failure: the next picker refresh/open must
+                // retry discovery immediately.
+                return Vec::new();
+            }
+        },
+        Err(_) => return Vec::new(),
+    };
     if let Ok(mut snapshot) = cache.lock() {
         snapshot.insert(kind, (Instant::now(), devices.clone()));
     }
