@@ -34,6 +34,9 @@ codegen-units = 16
 debug = 0
 opt-level = 0
 
+[build-dependencies]
+embed-resource = "=3.0.11"
+
 [dependencies]
 obs-rs-capture = { path = "../../../crates/obs-rs-capture" }
 obs-rs-media = { path = "../../../crates/obs-rs-media" }

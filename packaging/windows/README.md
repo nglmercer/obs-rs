@@ -109,6 +109,9 @@ interactive desktop. Windows may deny or blank minimized, occluded, protected,
 DRM, secure-desktop, or privacy-restricted content. Window target IDs are
 session-stable; display IDs use Windows monitor device names where available.
 Per-monitor DPI and negative virtual-desktop coordinates are retained.
+The native capture helper embeds a PerMonitorV2 application manifest, so the
+monitor rectangles and window coordinates it reports are physical desktop
+coordinates even when displays use different scaling factors.
 
 The Audio page selects a default or explicit WASAPI microphone, render-device
 loopback route, and local monitor output. Windows privacy settings govern
