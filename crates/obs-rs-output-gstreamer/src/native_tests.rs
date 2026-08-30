@@ -826,3 +826,36 @@ fn native_reconnect_honors_a_bounded_deferred_retry() {
     );
     assert_eq!(session.state(), NativeOutputState::Ready);
 }
+
+#[test]
+fn native_health_poll_services_a_pending_reconnect_deadline() {
+    let plan = plan(OutputProfile::rtmp_h264_aac());
+    let destination = ProductionDestination::Rtmp {
+        endpoint: "rtmp://127.0.0.1:9/live/key".to_owned(),
+    };
+    let video = VideoFormat::new(
+        16,
+        16,
+        obs_rs_media::FrameRate::new(30, 1).expect("frame rate"),
+    )
+    .expect("video format");
+    let audio = AudioFormat::new(48_000, 2).expect("audio format");
+    let mut session = GStreamerOutputSession::start_with_reconnect_policy(
+        &plan,
+        &destination,
+        video,
+        audio,
+        ReconnectPolicy::immediate(1),
+    )
+    .expect("live session");
+
+    // A prior poll has already moved the session into its retry state. The
+    // next poll must make the due reconnect attempt even when the old bus has
+    // no second error message to consume.
+    session.state = NativeOutputState::Retrying;
+    session.next_reconnect_at = Some(Instant::now());
+    session.poll_health().expect("pending reconnect");
+
+    assert_eq!(session.telemetry().reconnects(), 1);
+    assert_eq!(session.state(), NativeOutputState::Ready);
+}

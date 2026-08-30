@@ -467,17 +467,29 @@ impl GStreamerOutputSession {
     /// Returns the pipeline error when a recording fails or live recovery fails.
     pub fn poll_health(&mut self) -> Result<(), GStreamerError> {
         self.refresh_queue_levels();
-        let Some(failure) = take_pipeline_failure(&self.pipeline) else {
-            return Ok(());
-        };
-        self.state = NativeOutputState::Lost;
-        if is_local_recording_transport(self.transport) {
-            self.state = NativeOutputState::Failed;
-            return Err(failure);
+        if let Some(failure) = take_pipeline_failure(&self.pipeline) {
+            self.state = NativeOutputState::Lost;
+            if is_local_recording_transport(self.transport) {
+                self.state = NativeOutputState::Failed;
+                return Err(failure);
+            }
+            // Schedule only once for this failure. Once the session enters
+            // Retrying, subsequent health polls must service the pending
+            // deadline even though the old pipeline no longer has another bus
+            // message to report.
+            if self.next_reconnect_at.is_none() {
+                self.schedule_reconnect(Instant::now());
+            }
         }
-        let now = Instant::now();
-        self.schedule_reconnect(now);
-        self.reconnect_live_at(now).map(|_| ())
+        if !is_local_recording_transport(self.transport)
+            && matches!(
+                self.state,
+                NativeOutputState::Lost | NativeOutputState::Retrying
+            )
+        {
+            return self.reconnect_live_at(Instant::now()).map(|_| ());
+        }
+        Ok(())
     }
 
     /// Rebuilds a live transport after an application/network loss signal.
