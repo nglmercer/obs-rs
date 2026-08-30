@@ -88,6 +88,8 @@ pub struct GStreamerOutputSession {
     pipeline: gst::Pipeline,
     pub(super) video: gst_app::AppSrc,
     pub(super) audio: gst_app::AppSrc,
+    plan: ProductionPipelinePlan,
+    destination: ProductionDestination,
     state: NativeOutputState,
     telemetry: OutputSessionTelemetry,
     committed_bytes: Option<usize>,
@@ -214,6 +216,8 @@ impl GStreamerOutputSession {
             pipeline,
             video,
             audio,
+            plan: plan.clone(),
+            destination: destination.clone(),
             state: NativeOutputState::Ready,
             telemetry: OutputSessionTelemetry::default(),
             committed_bytes: None,
@@ -510,17 +514,74 @@ impl GStreamerOutputSession {
         }
         self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
         self.state = NativeOutputState::Retrying;
-        self.pipeline
-            .set_state(gst::State::Null)
-            .map_err(native_error)?;
-        if let Err(error) = self.pipeline.set_state(gst::State::Playing) {
+        if let Err(error) = self.pipeline.set_state(gst::State::Null) {
             self.state = NativeOutputState::Failed;
             return Err(native_error(error));
         }
+        let (pipeline, video, audio) = match self.build_live_pipeline() {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                self.state = NativeOutputState::Failed;
+                return Err(error);
+            }
+        };
+        self.pipeline = pipeline;
+        self.video = video;
+        self.audio = audio;
+        // A prior raw-video submission may have renegotiated the old appsrc to
+        // NV12/P010. The replacement starts with the configured RGBA caps; the
+        // next raw frame will explicitly renegotiate if it uses another layout.
+        self.video_pixel_format = PixelFormat::Rgba8;
         self.next_reconnect_at = None;
         self.telemetry.reconnects = self.telemetry.reconnects.saturating_add(1);
         self.state = NativeOutputState::Ready;
         Ok(ReconnectOutcome::Reconnected)
+    }
+
+    fn build_live_pipeline(
+        &self,
+    ) -> Result<(gst::Pipeline, gst_app::AppSrc, gst_app::AppSrc), GStreamerError> {
+        configure_bundled_runtime();
+        gst::init().map_err(native_error)?;
+        let PipelineDescription {
+            description,
+            final_path,
+            temp_path,
+            remux_final_path,
+            segmented_policy,
+        } = pipeline_description(&self.plan, &self.destination)?;
+        if final_path.is_some()
+            || temp_path.is_some()
+            || remux_final_path.is_some()
+            || segmented_policy.is_some()
+        {
+            return Err(GStreamerError::Native(
+                "live reconnect unexpectedly produced a recording pipeline".to_owned(),
+            ));
+        }
+        let element = gst::parse::launch_full(&description, None, gst::ParseFlags::FATAL_ERRORS)
+            .map_err(native_error)?;
+        let pipeline = element.downcast::<gst::Pipeline>().map_err(|_| {
+            GStreamerError::Native("GStreamer did not create a live reconnect pipeline".to_owned())
+        })?;
+        if self.plan.profile().transport() != OutputTransport::WebRtc {
+            configure_encoders(&pipeline, &self.plan, self.video_format)?;
+        }
+        configure_sink(&pipeline, &self.destination, None)?;
+        let video = appsrc(&pipeline, "video_source")?;
+        let audio = appsrc(&pipeline, "audio_source")?;
+        configure_sources(
+            &video,
+            &audio,
+            &self.plan,
+            self.video_format,
+            self.audio_format,
+        )?;
+        if let Err(error) = pipeline.set_state(gst::State::Playing) {
+            let _ = pipeline.set_state(gst::State::Null);
+            return Err(native_error(error));
+        }
+        Ok((pipeline, video, audio))
     }
 
     fn ensure_ready(&self) -> Result<(), GStreamerError> {
