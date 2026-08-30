@@ -357,7 +357,6 @@ pub(super) fn worker_loop(
 fn pump_outputs(session: &mut EngineSession, output_events: &Arc<Mutex<VecDeque<OutputEvent>>>) {
     let was_streaming = session.is_streaming();
     if let Err(error) = session.pump_outputs() {
-        session.last_error = Some(error.to_string());
         if was_streaming && session.streaming_lifecycle() == OutputLifecycle::Failed {
             push_output_event(
                 output_events,
