@@ -421,22 +421,17 @@ struct ChangingDefaultProvider {
 
 impl AudioInputProvider for ChangingDefaultProvider {
     fn discover(&self) -> Result<Vec<AudioDeviceInfo>, obs_rs_audio::AudioDeviceError> {
-        let input_id = if self.phase.load(Ordering::Acquire) == 0 {
-            "first-input"
-        } else {
-            "second-input"
-        };
-        let input_name = if input_id == "first-input" {
-            "First microphone"
-        } else {
-            "Second microphone"
-        };
-        let mut input = AudioDeviceInfo::new(input_id, input_name, AudioDeviceKind::Input)?;
-        input.set_default(true);
+        let second_is_default = self.phase.load(Ordering::Acquire) != 0;
+        let mut first =
+            AudioDeviceInfo::new("first-input", "First microphone", AudioDeviceKind::Input)?;
+        first.set_default(!second_is_default);
+        let mut second =
+            AudioDeviceInfo::new("second-input", "Second microphone", AudioDeviceKind::Input)?;
+        second.set_default(second_is_default);
         let mut output =
             AudioDeviceInfo::new("stable-output", "Stable speakers", AudioDeviceKind::Output)?;
         output.set_default(true);
-        Ok(vec![input, output])
+        Ok(vec![first, second, output])
     }
 
     fn open_input(
@@ -616,6 +611,46 @@ fn explicit_audio_selection_ignores_a_live_default_change() {
         engine.audio_active_device_id.as_deref(),
         Some("first-input")
     );
+}
+
+#[test]
+fn explicit_audio_routes_drop_stale_endpoints_after_hot_unplug() {
+    let available = Arc::new(AtomicBool::new(true));
+    let config = EngineConfig::default()
+        .with_audio_provider(Arc::new(DeferredAudioProvider {
+            available: Arc::clone(&available),
+            opens: Arc::new(AtomicUsize::new(0)),
+        }))
+        .with_audio_input_id("deferred-input")
+        .with_desktop_audio_id("deferred-output");
+    let mut engine = EngineSession::new(project(), config).expect("engine");
+
+    assert_eq!(
+        engine.audio_active_device_id.as_deref(),
+        Some("deferred-input")
+    );
+    assert_eq!(
+        engine.desktop_audio_active_device_id.as_deref(),
+        Some("deferred-output")
+    );
+
+    available.store(false, Ordering::Release);
+    for attempt in 0..100_u64 {
+        engine
+            .drain_audio_until(Timestamp::from_millis(500 + attempt * 10))
+            .expect("hot-unplug route audio");
+        if engine.audio_active_device_id.is_none()
+            && engine.desktop_audio_active_device_id.is_none()
+        {
+            break;
+        }
+        std::thread::yield_now();
+    }
+
+    assert!(engine.audio_active_device_id.is_none());
+    assert!(engine.desktop_audio_active_device_id.is_none());
+    assert!(engine.snapshot().audio_fallback);
+    assert!(!engine.snapshot().desktop_audio.is_capturing());
 }
 
 #[derive(Debug)]

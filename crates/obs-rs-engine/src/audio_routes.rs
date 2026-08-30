@@ -56,7 +56,14 @@ pub(crate) enum AudioRouteUpdate {
     /// A new input was opened off the engine/audio tick.
     Opened(AudioRoute),
     /// The requested or automatic route is not currently available.
-    Unavailable(String),
+    Unavailable {
+        reason: String,
+        /// The provider snapshot no longer contains the route that was
+        /// feeding the engine. This is distinct from an endpoint that is
+        /// present but temporarily failed to open: only the former should
+        /// tear down an otherwise healthy active route.
+        active_device_missing: bool,
+    },
 }
 
 /// An opened input together with the provider identity used to select it.
@@ -191,8 +198,14 @@ fn refresh_routes(
         Err(error) => {
             let reason = bounded_error(error);
             (
-                AudioRouteUpdate::Unavailable(reason.clone()),
-                AudioRouteUpdate::Unavailable(reason),
+                AudioRouteUpdate::Unavailable {
+                    reason: reason.clone(),
+                    active_device_missing: false,
+                },
+                AudioRouteUpdate::Unavailable {
+                    reason,
+                    active_device_missing: false,
+                },
             )
         }
     };
@@ -212,11 +225,19 @@ fn refresh_route(
     active_failed: bool,
     format: AudioFormat,
 ) -> AudioRouteUpdate {
+    let active_device_missing = active_id.is_some_and(|active| {
+        !devices
+            .iter()
+            .any(|device| device.kind() == kind && device.id() == active && device.available())
+    });
     let Some((device_id, device_name)) = select_audio_device(devices, kind, requested_id) else {
-        return AudioRouteUpdate::Unavailable(match requested_id {
-            Some(requested) => format!("configured audio route {requested} is unavailable"),
-            None => format!("automatic {kind:?} audio route is unavailable"),
-        });
+        return AudioRouteUpdate::Unavailable {
+            reason: match requested_id {
+                Some(requested) => format!("configured audio route {requested} is unavailable"),
+                None => format!("automatic {kind:?} audio route is unavailable"),
+            },
+            active_device_missing,
+        };
     };
     if active_id == Some(device_id.as_str()) && !active_failed {
         return AudioRouteUpdate::Unchanged;
@@ -232,7 +253,10 @@ fn refresh_route(
             device_id,
             device_name,
         }),
-        Err(error) => AudioRouteUpdate::Unavailable(bounded_error(error)),
+        Err(error) => AudioRouteUpdate::Unavailable {
+            reason: bounded_error(error),
+            active_device_missing: false,
+        },
     }
 }
 
@@ -518,6 +542,28 @@ mod tests {
                 format,
             ),
             AudioRouteUpdate::Opened(route) if route.device_id == "test-audio"
+        ));
+    }
+
+    #[test]
+    fn route_refresh_marks_an_active_endpoint_missing_after_hot_unplug() {
+        let provider: Arc<dyn AudioInputProvider> = Arc::new(SimulatedAudioProvider::new());
+        let format = AudioFormat::new(48_000, 2).expect("format");
+
+        assert!(matches!(
+            refresh_route(
+                &provider,
+                &[],
+                AudioDeviceKind::Input,
+                Some("test-audio"),
+                Some("test-audio"),
+                false,
+                format,
+            ),
+            AudioRouteUpdate::Unavailable {
+                active_device_missing: true,
+                ..
+            }
         ));
     }
 

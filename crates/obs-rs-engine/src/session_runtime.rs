@@ -51,9 +51,30 @@ impl EngineSession {
         while self.audio_route_worker.take_result().is_some() {}
     }
 
+    /// Replaces a failed microphone endpoint with the deterministic silent
+    /// clock while the route worker waits for the endpoint to return.
+    fn switch_microphone_to_fallback(
+        &mut self,
+        reason: impl Into<String>,
+    ) -> Result<(), EngineError> {
+        let reason = reason.into();
+        self.audio_input.stop();
+        self.audio_input =
+            SimulatedAudioProvider::new().open_input("test-audio", self.config.audio_format)?;
+        self.audio_input_delay.reset();
+        self.audio_active_device_id = None;
+        self.audio_fallback = true;
+        self.audio_backend = format!("simulated fallback ({reason})");
+        self.audio_route_refresh_at = Timestamp::ZERO;
+        // The fallback signal runs on its own clock, so any deadline computed
+        // against the removed native endpoint must be re-anchored.
+        self.next_audio_deadline = None;
+        Ok(())
+    }
+
     /// Polls and schedules route work without performing provider discovery or
     /// device opening on the engine/audio tick.
-    fn poll_audio_routes(&mut self, timestamp: Timestamp) {
+    fn poll_audio_routes(&mut self, timestamp: Timestamp) -> Result<(), EngineError> {
         while let Some(result) = self.audio_route_worker.take_result() {
             self.audio_route_request_pending = false;
             if result.sequence != self.audio_route_request_sequence {
@@ -70,8 +91,14 @@ impl EngineSession {
                     self.audio_input_delay.reset();
                     self.microphone_route_error = None;
                 }
-                AudioRouteUpdate::Unavailable(reason) => {
-                    if self.config.audio_input_id.is_some() {
+                AudioRouteUpdate::Unavailable {
+                    reason,
+                    active_device_missing,
+                } => {
+                    if active_device_missing {
+                        self.switch_microphone_to_fallback(reason.clone())?;
+                    }
+                    if self.config.audio_input_id.is_some() || active_device_missing {
                         self.microphone_route_error = Some(reason);
                     }
                 }
@@ -88,8 +115,20 @@ impl EngineSession {
                     self.desktop_audio_delay.reset();
                     self.desktop_audio_route_error = None;
                 }
-                AudioRouteUpdate::Unavailable(reason) => {
-                    if self.config.desktop_audio_id.is_some() {
+                AudioRouteUpdate::Unavailable {
+                    reason,
+                    active_device_missing,
+                } => {
+                    if active_device_missing {
+                        if let Some(desktop) = self.desktop_audio.as_mut() {
+                            desktop.stop();
+                        }
+                        self.desktop_audio = None;
+                        self.desktop_audio_delay.reset();
+                        self.desktop_audio_active_device_id = None;
+                        self.desktop_audio_backend = format!("unavailable ({reason})");
+                    }
+                    if self.config.desktop_audio_id.is_some() || active_device_missing {
                         self.desktop_audio_route_error = Some(reason);
                     }
                 }
@@ -98,29 +137,39 @@ impl EngineSession {
             self.refresh_audio_route_error(previous_audio_error);
         }
 
-        // Keep automatic routes under the worker continuously so default-device
-        // changes are observed. Explicit routes join the same worker whenever
-        // their current stream is missing or has degraded to a fallback. This
-        // keeps a selected microphone/render endpoint from performing native
-        // discovery or opening work on the engine/audio tick.
+        // Keep automatic and explicitly selected routes under the worker
+        // continuously after their first block so default-device changes and
+        // endpoint hot-unplug are observed even before a native callback
+        // reports failure. An unchanged active ID is cheap: the worker returns
+        // `Unchanged` without reopening it. Discovery/opening still stays off
+        // the engine tick. Skipping the very first probe avoids queueing a
+        // redundant `Unchanged` request before a newly opened explicit route
+        // has delivered its first block.
         let microphone_failed = self.audio_input.state() == AudioInputState::Failed;
         let desktop_failed = self
             .desktop_audio
             .as_ref()
             .is_some_and(|desktop| desktop.state() == AudioInputState::Failed);
+        let microphone_started = self.audio_input.state() != AudioInputState::Stopped;
+        let desktop_started = self
+            .desktop_audio
+            .as_ref()
+            .is_some_and(|desktop| desktop.state() != AudioInputState::Stopped);
         let watches_microphone = self.config.audio_input_id.is_none()
             || self.audio_fallback
             || self.audio_active_device_id.is_none()
+            || microphone_started
             || microphone_failed;
         let watches_desktop = self.config.desktop_audio_id.is_none()
             || self.desktop_audio.is_none()
             || self.desktop_audio_active_device_id.is_none()
+            || desktop_started
             || desktop_failed;
         if (!watches_microphone && !watches_desktop)
             || timestamp < self.audio_route_refresh_at
             || self.audio_route_request_pending
         {
-            return;
+            return Ok(());
         }
         self.audio_route_refresh_at = timestamp
             .checked_add(ROUTE_REFRESH_INTERVAL_NANOS)
@@ -137,6 +186,7 @@ impl EngineSession {
             desktop_active_failed: desktop_failed,
         };
         self.audio_route_request_pending = self.audio_route_worker.try_refresh(request);
+        Ok(())
     }
 
     fn read_audio_block(&mut self, timestamp: Timestamp) -> Result<AudioBuffer, EngineError> {
@@ -146,23 +196,11 @@ impl EngineSession {
         {
             Ok(buffer) => Ok(buffer),
             Err(error) => {
-                self.audio_input.stop();
-                self.audio_input_delay.reset();
-                self.audio_active_device_id = None;
-                self.audio_fallback = true;
-                self.audio_backend = format!("simulated fallback ({error})");
+                let reason = error.to_string();
                 let previous_audio_error = self.audio_route_error();
-                self.microphone_route_error = Some(error.to_string());
+                self.microphone_route_error = Some(reason.clone());
                 self.refresh_audio_route_error(previous_audio_error);
-                self.audio_input = SimulatedAudioProvider::new()
-                    .open_input("test-audio", self.config.audio_format)?;
-                self.audio_route_refresh_at = Timestamp::ZERO;
-                // The fallback signal runs on its own clock, so the timeline's
-                // idea of the next audio deadline — computed against the real
-                // device that just failed — is stale. Dropping it forces the
-                // next tick to re-anchors the audio deadlines to the current
-                // video timestamp instead of chasing a device that is gone.
-                self.next_audio_deadline = None;
+                self.switch_microphone_to_fallback(reason)?;
                 let buffer = self
                     .audio_input
                     .read_block(timestamp, self.config.audio_block_frames)?;
@@ -203,7 +241,7 @@ impl EngineSession {
         &mut self,
         timestamp: Timestamp,
     ) -> Result<Vec<AudioBuffer>, EngineError> {
-        self.poll_audio_routes(timestamp);
+        self.poll_audio_routes(timestamp)?;
         let mut audio_blocks = Vec::new();
         while self
             .next_audio_deadline
